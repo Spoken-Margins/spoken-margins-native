@@ -52,7 +52,7 @@ public struct FriendMarginsIntro: Equatable, Sendable {
 
     /// The one sender's name, or nil for several senders or none named.
     static func singleName(_ margins: [ItemListeningChoices.WaitingMargin]) -> String? {
-        let names = Set(margins.map { $0.senderName.trimmingCharacters(in: .whitespacesAndNewlines) })
+        let names = Set(margins.map { FriendName.usable($0.senderName) ?? "" })
         guard names.count == 1, let name = names.first, !name.isEmpty else { return nil }
         return name
     }

@@ -110,4 +110,17 @@ final class FriendMarginsIntroTests: XCTestCase {
         XCTAssertEqual(intro.countLine, "1 Margin · about 1 min")
         XCTAssertNotNil(intro.explanation)
     }
+
+    /// A stand-in label names nobody (#4125): one sender's stand-in reads "a friend", never "From Unsigned sender".
+    /// Two different labels, stand-in or not, stay two senders, as before the stand-in rule.
+    func testAStandInSenderLabelReadsAsAFriendAndTwoLabelsStayTwoSenders() throws {
+        for label in ["Unsigned sender", "Imported collection", "Someone", "your friend"] {
+            let intro = try XCTUnwrap(FriendMarginsIntro(unheardFriendMargins: [spoken(30, from: label)]))
+            XCTAssertEqual(intro.senderLine, "From a friend", label)
+        }
+        let two = try XCTUnwrap(FriendMarginsIntro(unheardFriendMargins: [
+            reply(30, from: "Someone"), reply(30, from: "", to: "mine-2"),
+        ]))
+        XCTAssertEqual(two.senderLine, "Replies from friends")
+    }
 }

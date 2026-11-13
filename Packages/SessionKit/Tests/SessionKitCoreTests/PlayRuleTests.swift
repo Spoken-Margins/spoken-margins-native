@@ -257,4 +257,86 @@ final class PlayRuleTests: XCTestCase {
             XCTAssertEqual(PlayRule.startAction(sessions: sessions), expected, name)
         }
     }
+
+    // MARK: Margins behind the saved place on the item screen (#4125)
+
+    private func textSession(_ id: String, charOffset: Int, percent: Int = 40) -> Session {
+        Session(
+            id: id, itemId: "item", updatedAt: Date(timeIntervalSince1970: 1), status: "in_progress", phase: .itemPlayback,
+            currentTargetType: .itemTextTTS, currentTargetId: "item",
+            position: Position(charOffset: charOffset, mediaTimeMs: nil), completionPercent: percent, playbackRate: 1)
+    }
+
+    /// A Margin at a media time and, for an article, a character position.
+    private func entry(_ id: String, mediaMs: Int, char: Int?) -> SharedMarginReview.Entry {
+        let record = ImportedCommentaryInterjection(
+            id: id, layerId: "ana", packageScopedId: id, createdAt: early,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: "Words",
+            audioPath: "ImportedCommentary/\(id).m4a", audioDurationMs: 4_000,
+            resolution: ImportedAnchorResolution(
+                evidenceClass: .acousticVerified, localStartChar: char, localMediaTimeMs: mediaMs, confidence: 1))
+        return SharedMarginReview.Entry(layer: layer(), interjection: record, mediaTimeMs: mediaMs, isApproximate: false)
+    }
+
+    /// One row per state the design lists (#4125). Media compares by time, text by character, and a place unknown on
+    /// either side is not behind. Row "left at the end" fails on `main`, which has no such function and skips them.
+    func testWhichMarginsSitBehindTheSavedPlaceOnTheItemScreen() {
+        let all = margins() // 2:00, 10:00, 25:00
+        let ids = { (entries: [SharedMarginReview.Entry]) in entries.map(\.marginId) }
+        let table: [(String, [Session], [SharedMarginReview.Entry], [String])] = [
+            ("not started", [], all, []),
+            ("mid-way: the first two are behind", [session("a", percent: 40, mediaTimeMs: 720_000)], all, [marginId(0), marginId(1)]),
+            ("before the first Margin", [session("a", percent: 2, mediaTimeMs: 30_000)], all, []),
+            ("exactly at a Margin: that one plays in place", [session("a", percent: 5, mediaTimeMs: 120_000)], all, []),
+            ("left at the end: every one is behind", [session("a", percent: 99, mediaTimeMs: end)], all, [marginId(0), marginId(1), marginId(2)]),
+            ("finished: replays from 0, none behind", [finished()], all, []),
+            ("marked 100% but not finished: replays from 0, none behind", [session("a", percent: 100, mediaTimeMs: end)], all, []),
+            ("an older finished beside a newer one in progress",
+             [finished(updated: 1), session("b", percent: 40, mediaTimeMs: 720_000, updated: 2)], all, [marginId(0), marginId(1)]),
+            ("a newer finished beside an older one in progress",
+             [session("b", percent: 40, mediaTimeMs: 720_000, updated: 1), finished(updated: 2)], all, []),
+            ("abandoned only", [session("c", phase: .abandoned, percent: 50, mediaTimeMs: 900_000)], all, []),
+            ("media session with no place yet", [session("a", percent: 0)], all, []),
+            ("no Margins", [session("a", percent: 40, mediaTimeMs: 720_000)], [], []),
+        ]
+        for (name, sessions, entries, expected) in table {
+            XCTAssertEqual(ids(PlayRule.marginsBehindSavedPlace(entries, sessions: sessions)), expected, name)
+        }
+    }
+
+    func testAnArticlesMarginsAreComparedByCharacterNotMediaTime() {
+        let behind = entry("m0", mediaMs: 5_000, char: 400)
+        let ahead = entry("m1", mediaMs: 5_000, char: 4_000)
+        let unplaced = entry("m2", mediaMs: 5_000, char: nil)
+        let atPlace = entry("m3", mediaMs: 5_000, char: 1_000)
+        let sessions = [textSession("t", charOffset: 1_000)]
+        let result = PlayRule.marginsBehindSavedPlace([behind, ahead, unplaced, atPlace], sessions: sessions)
+        XCTAssertEqual(result.map(\.marginId), [behind.marginId], "only the one before the offset; unplaced is not behind")
+        XCTAssertEqual(
+            PlayRule.marginsBehindSavedPlace([behind], sessions: [textSession("t", charOffset: 0)]), [],
+            "a text session at the start has nothing behind it")
+    }
+
+    func testTheSavedPlaceIsAtTheEndOnlyFromNinetyNineUpToButNotIncludingOneHundred() {
+        let table: [(String, [Session], Bool)] = [
+            ("none", [], false),
+            ("40%", [session("a", percent: 40, mediaTimeMs: 720_000)], false),
+            ("98%", [session("a", percent: 98, mediaTimeMs: 1_764_000)], false),
+            ("99%", [session("a", percent: 99, mediaTimeMs: end)], true),
+            ("100%: begins again", [session("a", percent: 100, mediaTimeMs: end)], false),
+            ("finished", [finished()], false),
+            ("a newer 99% over an older 40%",
+             [session("a", percent: 40, mediaTimeMs: 720_000, updated: 1), session("b", percent: 99, mediaTimeMs: end, updated: 2)], true),
+        ]
+        for (name, sessions, expected) in table {
+            XCTAssertEqual(PlayRule.savedPlaceIsAtEnd(sessions: sessions), expected, name)
+        }
+    }
+
+    /// The Library row keeps asking about every Margin it can't place, as before: the new function is for a surface
+    /// that holds the sessions, and `decide` is unchanged.
+    func testTheLibraryRowStillAsksAboutEveryMarginItCannotPlace() throws {
+        let sessions = [session("a", percent: 99, mediaTimeMs: end)]
+        assertDecision(context(row: try row(sessions)), ask([0, 1, 2]), "row only, left at the end")
+    }
 }

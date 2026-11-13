@@ -106,6 +106,36 @@ public enum PlayRule {
         return .askFirst(marginsBehind: behind)
     }
 
+    /// The friend Margins the item screen's Play would skip (#4125): those behind the place `startItem` resumes. It
+    /// reads the open item's sessions, so it is for a surface that holds them; `decide` keeps the Library row's own
+    /// reading (a row holds no place). Like is compared with like: a media session's playhead against each Margin's
+    /// place in the media, a text session's character offset against the Margin's character position. A place that
+    /// is unknown on either side is not behind, so an article with a Margin ahead of the place, or with no usable
+    /// position, plays in place with no question (#3059). A session at 100%, a finished one or none begins at 0, so
+    /// nothing is behind it.
+    public static func marginsBehindSavedPlace(_ entries: [SharedMarginReview.Entry], sessions: [Session]) -> [SharedMarginReview.Entry] {
+        guard let session = resumedSession(in: sessions) else { return [] }
+        if let mediaTimeMs = session.position.mediaTimeMs {
+            return entries.filter { $0.mediaTimeMs < mediaTimeMs }
+        }
+        let charOffset = session.position.charOffset
+        guard charOffset > 0 else { return [] }
+        return entries.filter { ($0.interjection.resolution.localStartChar ?? .max) < charOffset }
+    }
+
+    /// The saved place is at the very end: the session Play resumes is at 99% or more, but not at 100%, where Play
+    /// begins again (`SessionContinuation.continueResumes`). Resuming there plays the last seconds and finishes, so
+    /// "without the Margins" is better said as starting over (#4125).
+    public static func savedPlaceIsAtEnd(sessions: [Session]) -> Bool {
+        (resumedSession(in: sessions)?.completionPercent ?? 0) >= 99
+    }
+
+    private static func resumedSession(in sessions: [Session]) -> Session? {
+        guard let session = SessionContinuation.preferredContinuationSession(in: sessions),
+              SessionContinuation.continueResumes(session) else { return nil }
+        return session
+    }
+
     /// What `startItem` does with the item's saved sessions: carry on the one Play resumes, else begin a new one.
     public enum StartAction: Equatable, Sendable {
         case resume(Session)
