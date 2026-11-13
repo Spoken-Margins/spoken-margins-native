@@ -164,15 +164,15 @@ struct ExperienceMarginDetailView: View {
                                 .foregroundStyle(AppColors.secondaryText)
                                 .accessibilityIdentifier("marginDetail.replyMissingParent.label")
                         }
-                        Button("Make independent", systemImage: "arrowshape.turn.up.left") {
+                        Button(MarginReplyWords.stopReplyingTitle, systemImage: "xmark") {
                             model.setSavedMarginReply(current.interjection, to: nil)
                         }
                         .accessibilityIdentifier("marginDetail.makeIndependent.button")
                     }
                 } else if let answered = row.interjection.replyTo {
                     // Switched to independent from this screen: the way back stays until the screen closes (#473).
-                    Section("Independent Margin") {
-                        Text("This Margin no longer answers a shared Margin.")
+                    Section {
+                        Text("\(MarginReplyWords.notAReply).")
                             .foregroundStyle(AppColors.secondaryText)
                             .accessibilityIdentifier("marginDetail.independent.label")
                         Button("Reply again", systemImage: "arrowshape.turn.up.left.fill") {

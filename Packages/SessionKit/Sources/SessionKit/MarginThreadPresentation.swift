@@ -222,17 +222,18 @@ public struct MarginReplyDraft: Equatable, Sendable {
     public let link: MarginReplyLink
     public let parentSenderLabel: String
     public let parentText: String
+    /// Where the sender was in their source when they left the Margin, for naming one that has no words (#3890).
+    public let parentTimeMs: Int?
 
     public init(parent: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer) {
         link = parent.replyLink(in: layer)
         parentSenderLabel = MarginLayerSynthesis.label(layer.displayLabel)
         parentText = parent.approvedTranscript
+        parentTimeMs = parent.anchorEvidence.mediaTimeMs.flatMap { $0 >= 0 ? $0 : nil }
     }
 
-    /// One line for the recording and writing screens.
+    /// One line for the recording and writing screens (`MarginReplyWords.replyingCaption`).
     public var caption: String {
-        let words = parentText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let excerpt = words.count > 90 ? String(words.prefix(90)) + "…" : words
-        return excerpt.isEmpty ? "Replying to \(parentSenderLabel)" : "Replying to \(parentSenderLabel): \u{201C}\(excerpt)\u{201D}"
+        MarginReplyWords.replyingCaption(senderLabel: parentSenderLabel, parentText: parentText, parentTimeMs: parentTimeMs)
     }
 }

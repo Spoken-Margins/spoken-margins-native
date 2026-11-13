@@ -181,7 +181,7 @@ final class MarginThreadPresentationTests: XCTestCase {
         let long = imported("a2", layer: "layer-a", scoped: "a-2", time: nil, offset: 2, text: String(repeating: "word ", count: 60))
         XCTAssertTrue(MarginReplyDraft(parent: long, in: layerA).caption.hasSuffix("…\u{201D}"))
         let blank = imported("a3", layer: "layer-a", scoped: "a-3", time: nil, offset: 3, text: "  ")
-        XCTAssertEqual(MarginReplyDraft(parent: blank, in: layerA).caption, "Replying to Ana")
+        XCTAssertEqual(MarginReplyDraft(parent: blank, in: layerA).caption, "Replying to Ana's Margin", "no words, no sender time")
     }
 
     private func imported(

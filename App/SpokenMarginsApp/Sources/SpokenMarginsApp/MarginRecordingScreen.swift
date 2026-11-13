@@ -118,7 +118,8 @@ struct MarginRecordingScreen: View {
     private var replyCaption: some View {
         if let reply = state.reply {
             ExperienceReplyChoiceRow(
-                choice: reply, captionColor: .white, identifierPrefix: "recording",
+                choice: reply, captionColor: .white, controlColor: AppColors.listeningAccent,
+                identifierPrefix: "recording",
                 switchReply: actions.toggleReply
             )
         }

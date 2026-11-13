@@ -48,7 +48,8 @@ struct MarginWritingSheet<Accessory: View>: View {
 
                     if let reply {
                         ExperienceReplyChoiceRow(
-                            choice: reply, captionColor: AppColors.secondaryText, identifierPrefix: "writtenMargin",
+                            choice: reply, captionColor: AppColors.secondaryText, controlColor: AppColors.evergreen,
+                            identifierPrefix: "writtenMargin",
                             switchReply: toggleReply
                         )
                     }

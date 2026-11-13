@@ -60,29 +60,28 @@ public struct MarginReplyChoice: Equatable, Sendable {
         isIndependent.toggle()
     }
 
-    /// The line the recording, writing and Margin screens show: whom the Margin answers, or that it no longer does.
+    /// The line the recording, writing and Margin screens show: whom the Margin answers, or that it is not a reply.
     public var caption: String? {
         guard let suggested else { return nil }
-        return isIndependent ? "Independent Margin, not a reply to \(suggested.parentSenderLabel)" : suggested.caption
+        return isIndependent ? MarginReplyWords.notAReply : suggested.caption
     }
 
     /// What the writing screen's empty editor asks (#3792). While the Margin answers a friend it names them, since the
     /// line above the editor already says "Replying to …" and "What do you want to remember?" would name a second job.
-    /// A sender with no name reads "your friend", never the stand-in label. Independent, or answering nobody, it is
-    /// the ordinary question.
+    /// A sender with no name reads "What do you want to say back?", never the stand-in label. Independent, or answering
+    /// nobody, it is the ordinary question.
     public var writingPrompt: String {
         guard let reply = effective else { return Self.rememberPrompt }
-        // A draft's label is "Someone" (`MarginLayerSynthesis.unnamedSenderLabel`) when the layer named nobody.
-        let name = SharedPacketArrival.senderName(reply.parentSenderLabel)
-            .flatMap { $0.caseInsensitiveCompare(MarginLayerSynthesis.unnamedSenderLabel) == .orderedSame ? nil : $0 }
-        return "What do you want to say to \(name ?? "your friend")?"
+        guard let name = MarginReplyWords.senderName(reply.parentSenderLabel) else { return MarginReplyWords.sayBackPrompt }
+        return "What do you want to say to \(name)?"
     }
 
     public static let rememberPrompt = "What do you want to remember?"
 
-    /// The control that switches it, named for what it does: the words carry the state, not colour alone.
+    /// The control that switches it, named for what it does: "Stop replying" while it answers, "Reply to Sam" to undo
+    /// it. The words carry the state, not colour alone (#3890).
     public var switchTitle: String? {
         guard let suggested else { return nil }
-        return isIndependent ? "Reply to \(suggested.parentSenderLabel)" : "Make independent"
+        return isIndependent ? "Reply to \(MarginReplyWords.name(suggested.parentSenderLabel))" : MarginReplyWords.stopReplyingTitle
     }
 }

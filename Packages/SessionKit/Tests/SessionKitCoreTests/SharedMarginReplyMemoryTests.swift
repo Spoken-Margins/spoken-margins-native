@@ -122,16 +122,34 @@ final class SharedMarginReplyMemoryTests: XCTestCase {
         let ana = draft("a1", from: layer("a", label: "Ana"))
         var choice = MarginReplyChoice(suggested: ana)
         XCTAssertEqual(choice.caption, ana.caption)
-        XCTAssertEqual(choice.switchTitle, "Make independent")
+        XCTAssertEqual(choice.switchTitle, "Stop replying")
         choice.toggle()
-        XCTAssertEqual(choice.caption, "Independent Margin, not a reply to Ana")
+        XCTAssertEqual(choice.caption, "Not a reply")
         XCTAssertEqual(choice.switchTitle, "Reply to Ana")
         XCTAssertNil(MarginReplyChoice().caption)
         XCTAssertNil(MarginReplyChoice().switchTitle)
     }
 
-    /// #3792: the empty editor names the person the Margin answers, so the screen has one job; "Make independent"
-    /// flips it back at once, and a sender with no name is "your friend", never the stand-in label.
+    /// #3890: the way back names "a friend" when the sender set no name, and no state ever shows the old words.
+    func testAFriendWithNoNameIsNamedAFriendAfterStoppingToo() {
+        var choice = MarginReplyChoice(suggested: draft("a1", from: layer("a", label: MarginLayerSynthesis.unnamedSenderLabel)))
+        XCTAssertEqual(choice.caption, "Replying to a friend: \u{201C}Words a1\u{201D}")
+        XCTAssertEqual(choice.switchTitle, "Stop replying")
+        choice.toggle()
+        XCTAssertEqual(choice.caption, "Not a reply")
+        XCTAssertEqual(choice.switchTitle, "Reply to a friend")
+        for state in 0..<2 {
+            for text in [choice.caption, choice.switchTitle].compactMap({ $0 }) {
+                for old in ["Someone", "independent", "Independent"] {
+                    XCTAssertFalse(text.contains(old), "\(text) (state \(state)) still says \(old)")
+                }
+            }
+            choice.toggle()
+        }
+    }
+
+    /// #3792: the empty editor names the person the Margin answers, so the screen has one job; "Stop replying"
+    /// flips it back at once, and a sender with no name is asked "What do you want to say back?", never the stand-in label.
     func testTheWritingPromptNamesWhoTheMarginAnswers() {
         var choice = MarginReplyChoice(suggested: draft("a1", from: layer("a", label: "Ana")))
         XCTAssertEqual(choice.writingPrompt, "What do you want to say to Ana?")
@@ -144,9 +162,9 @@ final class SharedMarginReplyMemoryTests: XCTestCase {
     }
 
     func testTheWritingPromptNeverSaysTheStandInForANamelessSender() {
-        for label in ["", "   ", SharedPacketArrival.unsignedSenderLabel, SharedPacketArrival.importedCollectionLabel, MarginLayerSynthesis.unnamedSenderLabel, "someone"] {
+        for label in ["", "   ", SharedPacketArrival.unsignedSenderLabel, SharedPacketArrival.importedCollectionLabel, MarginLayerSynthesis.unnamedSenderLabel, "someone", " SOMEONE "] {
             let choice = MarginReplyChoice(suggested: draft("a1", from: layer("a", label: label)))
-            XCTAssertEqual(choice.writingPrompt, "What do you want to say to your friend?", "label: \(label)")
+            XCTAssertEqual(choice.writingPrompt, "What do you want to say back?", "label: \(label)")
         }
         let padded = MarginReplyChoice(suggested: draft("a1", from: layer("a", label: "  Ana  ")))
         XCTAssertEqual(padded.writingPrompt, "What do you want to say to Ana?")

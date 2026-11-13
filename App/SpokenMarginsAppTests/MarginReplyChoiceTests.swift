@@ -6,7 +6,7 @@ import XCTest
 import UIKit
 #endif
 
-/// The "Make independent" switch is honoured wherever it is shown (#473): before the microphone is running, and
+/// The "Stop replying" switch is honoured wherever it is shown (#473): before the microphone is running, and
 /// in what a written draft journals for a closed app. Each fails when the line that implements it is removed.
 @MainActor
 final class MarginReplyChoiceTests: XCTestCase {
