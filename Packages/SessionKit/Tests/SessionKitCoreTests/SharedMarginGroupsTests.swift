@@ -136,7 +136,7 @@ final class SharedMarginGroupsTests: XCTestCase {
 
     func testSeveralItemsSwitchTheListInsteadOfOpeningOne() {
         let row = fresh([friendMargin("1", item: "a"), friendMargin("2", item: "a"), friendMargin("3", item: "b")])
-        XCTAssertEqual(row?.text, "3 new Margins from friends on 2 items")
+        XCTAssertEqual(row?.text, "3 new Margins from friends on 2 episodes or articles")
         XCTAssertNil(row?.itemID)
         XCTAssertEqual(row?.accessibilityHint, "Shows shared Margins.")
     }

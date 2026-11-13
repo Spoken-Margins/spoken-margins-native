@@ -15,7 +15,7 @@ SOURCES = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
 # Files whose context menus are rows, with the reason for any menu that is not.
 ROW_MENUS = {
     "PlaybackTimelineListView.swift": 1,
-    "ExperienceMarginsScreen.swift": 1,
+    "ExperienceMarginsScreen.swift": 2,  # own Margin rows, and shared Margin rows (Play this moment, Details)
     "ExperienceLibraryScreen.swift": 1,
     "ExperienceSourcesScreen.swift": 1,
 }
@@ -38,6 +38,8 @@ class RowAccessibilityActionTests(unittest.TestCase):
         margins = _read("ExperienceMarginsScreen.swift")
         self.assertIn(".contextMenu { ownMarginActions(row) }", margins)
         self.assertIn(".accessibilityActions { ownMarginActions(row) }", margins)
+        self.assertIn('Button("Play this moment") { model.playSharedMarginMoment(row) }', margins)
+        self.assertIn('Button("Details") { selectedSharedMargin = row }', margins)
 
     def test_library_accessibility_actions_use_the_menus_guards(self):
         text = _read("ExperienceLibraryScreen.swift")

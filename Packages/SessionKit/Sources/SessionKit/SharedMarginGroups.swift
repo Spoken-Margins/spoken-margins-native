@@ -96,7 +96,7 @@ public enum SharedMarginGroups {
                 newCount: fresh.count, itemCount: 1, itemID: only, text: "\(friendLine) · \(title)",
                 accessibilityLabel: "\(friendLine), on \(title)")
         }
-        let text = "\(fresh.count) new \(noun) from friends on \(keys.count) \(keys.count == 1 ? "item" : "items")"
+        let text = "\(fresh.count) new \(noun) from friends on \(keys.count) \(keys.count == 1 ? "episode or article" : "episodes or articles")"
         return NewFromFriends(newCount: fresh.count, itemCount: keys.count, itemID: nil, text: text, accessibilityLabel: text)
     }
 
