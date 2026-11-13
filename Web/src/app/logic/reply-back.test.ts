@@ -7,7 +7,7 @@ import { writePacket } from '../../packet/write.ts';
 import type { Margin } from '../../shared/model.ts';
 import { cueFor } from './arrival.ts';
 import {
-  candidateLabel, friendNames, nothingPickedReason, pickedMargins, preselected, replyBackOffer, savedFileNextStep, savedMarginCard,
+  candidateLabel, friendNames, nothingPickedReason, pickedMargins, preselected, replyBackOffer, nowCard, savedFileNextStep, savedMarginCard,
 } from './reply-back.ts';
 
 const D1 = 'a'.repeat(64);
@@ -126,7 +126,7 @@ test('saved card: an unnamed sender reads "your friend", as the other cards do',
   assert.deepEqual(savedMarginCard(blank, undefined), { sentence: SAVED('your friend') });
 });
 
-test('saved card: it replaces the countdown and the after-last card; an episode that can\'t play keeps its own', () => {
+test('saved card: it replaces the after-last card; an episode that can\'t play keeps its own (the countdown is nowCard\'s)', () => {
   const margins = [friend(1), friend(9), mine];
   const countdown = cueFor(margins, 15, 'Ana');
   assert.equal(countdown?.kind, 'countdown');
@@ -136,6 +136,49 @@ test('saved card: it replaces the countdown and the after-last card; an episode 
   assert.deepEqual(savedMarginCard(margins, after), { sentence: SAVED('Ana') });
   const failed = cueFor(margins, 15, 'Ana', { failed: true, heardWithoutEpisode: false });
   assert.equal(savedMarginCard(margins, failed), undefined);
+});
+
+// #4092: the saved sentence sits on top of the countdown, so Skip does not go missing after the listener's own Margin.
+// The friend's Margins are at 10 s and 90 s (see `friend`); the lead-in is the 20 s before a Margin.
+test('#4092 now card: after a save the sentence sits above the countdown and its Skip stays', () => {
+  const margins = [friend(1), friend(9), mine];
+  const rows = [
+    { name: 'first Margin 10 s ahead, in its lead-in', time: 0, leadIn: true, skipTo: 9.7 },
+    { name: 'next Margin 60 s ahead, outside the lead-in', time: 30, leadIn: false, skipTo: 70 },
+  ];
+  for (const row of rows) {
+    const cue = cueFor(margins, row.time, 'Ana');
+    assert.equal(cue?.kind, 'countdown', row.name);
+    const card = nowCard(margins, cue, true);
+    assert.equal(card.saved, SAVED('Ana'), row.name);
+    assert.equal(card.cue, cue, `${row.name}: the countdown and its Skip are kept`);
+    assert.equal(card.cue?.kind === 'countdown' && card.cue.leadIn, row.leadIn, row.name);
+    assert.equal(card.cue?.kind === 'countdown' && card.cue.skip.to, row.skipTo, row.name);
+    assert.deepEqual(nowCard(margins, cue, false), { cue }, `${row.name}: not saved is today's card`);
+  }
+});
+
+test('#4092 now card: two Skips from the saved card still reach the Margin in two steps (2026-10-31)', () => {
+  const margins = [friend(9), mine]; // the friend's Margin at 90 s
+  const first = nowCard(margins, cueFor(margins, 0, 'Ana'), true).cue;
+  assert.equal(first?.kind, 'countdown');
+  if (first?.kind !== 'countdown') return;
+  assert.equal(first.skip.to, 70, 'the first Skip lands 20 s before the Margin');
+  const second = nowCard(margins, cueFor(margins, first.skip.to, 'Ana'), true).cue;
+  assert.equal(second?.kind === 'countdown' && second.leadIn, true);
+  assert.ok(second?.kind === 'countdown' && second.skip.to > 89 && second.skip.to <= 90, 'the second lands on the Margin, never past it');
+});
+
+test('#4092 now card: after the last Margin the sentence is alone; an episode that can\'t play keeps its card; no cue is the sentence alone', () => {
+  const margins = [friend(1), mine];
+  const after = cueFor(margins, 999, 'Ana');
+  assert.equal(after?.kind, 'after-last');
+  assert.deepEqual(nowCard(margins, after, true), { saved: SAVED('Ana') });
+  assert.deepEqual(nowCard(margins, after, false), { cue: after });
+  const failed = cueFor(margins, 15, 'Ana', { failed: true, heardWithoutEpisode: false });
+  assert.deepEqual(nowCard(margins, failed, true), { cue: failed });
+  assert.deepEqual(nowCard(margins, undefined, true), { saved: SAVED('Ana') });
+  assert.deepEqual(nowCard([mine], undefined, true), { cue: undefined }, 'an item of the listener\'s own gets nothing');
 });
 
 test('#3784: a Margin made since the page opened starts ticked, so Send is not greyed out; an older private note does not', () => {
