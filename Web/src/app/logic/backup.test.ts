@@ -159,3 +159,17 @@ test('a backup opens as its packets from every way in, named or not; a packet or
   assert.deepEqual(await packetsToOpen(junk, 'x.zip'), [{ name: 'x.zip', bytes: junk }]);
   assert.deepEqual(await packetsToOpen(junk, undefined), [{ name: undefined, bytes: junk }]);
 });
+
+test('a backup never carries the name typed for sharing: it is written with the three arguments, no sender (#4107)', async () => {
+  // The same wiring as services.ts: a fourth argument would become the packet's sender, as it does for Share.
+  const argumentCounts: number[] = [];
+  const wired = async (...args: Parameters<WritePacket> | [...Parameters<WritePacket>, string]) => {
+    argumentCounts.push(args.length);
+    const [ep, margins, sh, sender] = args as [Episode, Margin[], typeof show | undefined, string | undefined];
+    const written = await writePacket(ep, margins, { ...(sh && { show: sh }), ...(sender && { sender }) });
+    return { bytes: written.bytes, fileName: written.fileName, mimeType: written.mimeType, included: written.included };
+  };
+  const result = await buildBackup({ episodes: [episode], shows: [show], margins: writtenMargins() }, wired as WritePacket);
+  assert.deepEqual(argumentCounts, [3]);
+  assert.equal((await readPacket(result.file!.bytes)).sender, undefined);
+});

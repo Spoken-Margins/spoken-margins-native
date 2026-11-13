@@ -58,7 +58,7 @@ export function Settings() {
 
       <section className="settings-section">
         <h2>Privacy</h2>
-        <p>Your shows, your place in each episode and your Margins stay in this browser, and there is no account. Our server reads a feed for you only when your browser can’t and you’ve said yes, and it keeps nothing about it. Opening a shared link fetches its locked copy from our server, which can’t read it.</p>
+        <p>Your shows, your place in each episode and your Margins stay in this browser, and there is no account. A name you type when sharing stays here too, and goes only into the files you share. Our server reads a feed for you only when your browser can’t and you’ve said yes, and it keeps nothing about it. Opening a shared link fetches its locked copy from our server, which can’t read it.</p>
         <details className="more">
           <summary>More about privacy</summary>
           <p>Clearing this site’s data in your browser removes them.</p>

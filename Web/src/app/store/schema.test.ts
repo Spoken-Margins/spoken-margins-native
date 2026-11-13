@@ -91,3 +91,10 @@ test('the transcription answer reads back, and an unknown value means not asked 
   assert.equal(readSettings([{ key: 'transcription', value: 'always' }]).transcription, '');
   assert.equal(readSettings([{ key: 'transcription', value: true }]).transcription, '');
 });
+
+test('the name typed in the Share panel reads back, and anything but text means none (#4107)', () => {
+  assert.equal(readSettings([]).senderName, '');
+  assert.equal(readSettings([{ key: 'senderName', value: 'Sam' }]).senderName, 'Sam');
+  assert.equal(readSettings([{ key: 'senderName', value: 7 }]).senderName, '');
+  assert.equal(readSettings([{ key: 'senderName', value: true }]).senderName, '');
+});

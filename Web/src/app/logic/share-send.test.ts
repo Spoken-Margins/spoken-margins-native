@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import type { Margin } from '../../shared/model.ts';
 import { replyBackOffer } from './reply-back.ts';
-import { sendFile, sendRefusedNextStep } from './share-send.ts';
+import { senderForPacket, senderNameHint, sendFile, sendRefusedNextStep } from './share-send.ts';
 
 const file = new File([new Uint8Array([1, 2, 3])], 'Margins.spokenmargins', { type: 'application/vnd.spokenmargins.package+zip' });
 const failing = (name: string, message = '') => async (): Promise<void> => {
@@ -52,4 +52,29 @@ test('#4095: the refusal sentence names the next step, never the error', () => {
     'This browser wouldn’t open its share sheet. Tap Save as a file, then send the file in a message.',
   );
   for (const sentence of [sendRefusedNextStep(offer), sendRefusedNextStep(undefined)]) assert.doesNotMatch(sentence, /denied|NotAllowed|permission/i);
+});
+
+test('#4107: the typed name goes on the file trimmed, and a blank one signs nothing', () => {
+  const rows: [string, string | undefined][] = [
+    ['Sam', 'Sam'],
+    ['  Sam  ', 'Sam'],
+    ['\tSam\n', 'Sam'],
+    ['Sam Rivera', 'Sam Rivera'],
+    ['  Sam   Rivera ', 'Sam   Rivera'],
+    ['Zoë', 'Zoë'],
+    ['Zoe\u0301', 'Zoe\u0301'],
+    ['山田', '山田'],
+    ['', undefined],
+    ['   ', undefined],
+    ['\n\t ', undefined],
+  ];
+  for (const [typed, sent] of rows) assert.equal(senderForPacket(typed), sent, JSON.stringify(typed));
+});
+
+test('#4107: the name field says who it is for, as the rest of Share names them', () => {
+  const kept = 'Kept in this browser.';
+  assert.equal(senderNameHint([]), `So your friend knows who these are from. ${kept}`);
+  assert.equal(senderNameHint(['Cole']), `So Cole knows who these are from. ${kept}`);
+  assert.equal(senderNameHint(['Cole', 'Sam']), `So Cole and Sam know who these are from. ${kept}`);
+  assert.equal(senderNameHint(['Cole', 'Sam', 'Ada']), `So Cole, Sam and 1 other know who these are from. ${kept}`);
 });
