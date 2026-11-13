@@ -167,6 +167,8 @@ final class AddedAgainLibraryTests: XCTestCase {
         _ = try engine.importBrowserTextInBackground(named)
 
         XCTAssertEqual(try visibleRows().first?.id, item.id)
+        XCTAssertEqual(try store.loadItem(id: item.id).createdAt?.timeIntervalSince1970 ?? 0,
+                       tenDaysAgo.timeIntervalSince1970, accuracy: 1, "the first-added date is kept")
     }
 
     /// The share the owner made while something else played: the off-main import (PDFs and web PDFs take it) marks it

@@ -177,8 +177,10 @@ struct BrowserTextImporter: Sendable {
         )
         // A row already saved under this id (a handoff naming its own id, a file or selection, an edition taken before)
         // is replaced, and its sessions are still filed under the id: asked for again, they no longer make it finished.
-        if let listenerAddedAt, !stillListeningItemIds.contains(itemId), try existingItem(id: itemId) != nil {
-            return .records(ItemFinishedRule.addedAgain(item, at: listenerAddedAt), deterministicMap, document) // #4178
+        if let listenerAddedAt, !stillListeningItemIds.contains(itemId), let replaced = try existingItem(id: itemId) {
+            var item = ItemFinishedRule.addedAgain(item, at: listenerAddedAt) // #4178
+            item.createdAt = replaced.createdAt ?? item.createdAt // the first-added date is kept, as on every re-add
+            return .records(item, deterministicMap, document)
         }
         return .records(item, deterministicMap, document)
     }
