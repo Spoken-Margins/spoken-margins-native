@@ -26,7 +26,7 @@ struct FriendMarginsSummary: View {
             if let line = intro.missingParentLine {
                 Text(line)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppColors.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("item.friendIntro.missingParent")
             }
