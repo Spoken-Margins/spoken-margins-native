@@ -1300,6 +1300,10 @@ button:disabled {
   font-weight: 600;
 }
 
+.reply-back-all {
+  justify-self: start;
+}
+
 .reply-back-list {
   list-style: none;
   margin: 0;

@@ -15,6 +15,8 @@
 //   for the layers, and a layer's label is its Margins' `author`.
 // - The app skips deleted or non-item Margins (Swift :36, :50); every web Margin is live and anchored in time.
 import type { Margin } from '../../shared/model.ts';
+import { LIMITS } from '../../packet/format.ts';
+import { TOO_MANY_MARGINS } from '../../packet/write.ts';
 import { senderName, type MarginCue } from './arrival.ts';
 
 export interface ReplyBackOffer {
@@ -124,6 +126,40 @@ export function preselected(offer: ReplyBackOffer, since: number = Number.POSITI
 export function nothingPickedReason(offer: ReplyBackOffer | undefined, toWriteCount: number): string | undefined {
   if (toWriteCount > 0) return undefined;
   return offer ? 'Tick at least one Margin above to send it.' : 'There is nothing to share yet.';
+}
+
+/** The words on the button above the reply list: what the next tap does (#4093). */
+export type SelectAllLabel = 'Select all' | 'Select none';
+
+/** Whether every listed Margin is ticked. False for an empty list, which has no button. */
+export function allPicked(candidates: readonly Margin[], picked: ReadonlySet<string>): boolean {
+  return candidates.length > 0 && candidates.every((m) => picked.has(m.id));
+}
+
+/** "Select none" when everything listed is ticked, else "Select all": the label always says what the next tap does. */
+export function selectAllLabel(everyPicked: boolean): SelectAllLabel {
+  return everyPicked ? 'Select none' : 'Select all';
+}
+
+/**
+ * The ticks the "Select all" / "Select none" button sets: every listed Margin to `value`, and nothing else. Only the
+ * offer's candidates are passed, and the friend's own Margins are never among them (`replyBackOffer`).
+ */
+export function pickAll(candidates: readonly Margin[], value: boolean): Record<string, boolean> {
+  return Object.fromEntries(candidates.map((m) => [m.id, value]));
+}
+
+/** The writer's limit, said before the tap: undefined up to `LIMITS.margins` ticked. */
+export function tooManyReason(pickedCount: number): string | undefined {
+  return pickedCount > LIMITS.margins ? TOO_MANY_MARGINS : undefined;
+}
+
+/**
+ * Why Send and Save are greyed, in words: nothing ticked, or too many ticked. The too-many sentence is said only where
+ * a list lets the listener untick (an offer); with no list the writer's own error toast stays the only notice.
+ */
+export function whyNotShared(offer: ReplyBackOffer | undefined, toWriteCount: number): string | undefined {
+  return nothingPickedReason(offer, toWriteCount) ?? (offer ? tooManyReason(toWriteCount) : undefined);
 }
 
 /**

@@ -148,6 +148,40 @@ test('saving a Margin on a friend\u2019s item says what Share does with it, unti
   await context.close();
 });
 
+test('the reply list has one Select all / Select none button, and none for a single row (#4093)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  await page.goto(LINK);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  const write = async (words: string) => {
+    await playing.getByRole('button', { name: 'Write a Margin' }).click();
+    await playing.getByLabel(/Your Margin at/).fill(words);
+    await playing.getByRole('button', { name: 'Save Margin' }).click();
+  };
+  await write('First answer.');
+  const reply = playing.locator('.reply-back');
+  await expect(reply.getByRole('checkbox', { name: /First answer\./ })).toBeChecked();
+  // One row is one tap either way: no button.
+  await expect(reply.getByRole('button')).toHaveCount(0);
+  await write('Second answer.');
+  // Two rows, both ticked (made since the page opened): the button offers to untick them.
+  const toggle = reply.getByRole('button', { name: 'Select none' });
+  await expect(toggle).toBeVisible();
+  const save = playing.getByRole('button', { name: 'Save as a file' });
+  await toggle.click();
+  await expect(reply.getByRole('checkbox', { checked: true })).toHaveCount(0);
+  await expect(save).toBeDisabled();
+  await expect(playing.getByRole('status').filter({ hasText: 'Tick at least one Margin above to send it.' })).toBeVisible();
+  // Select all ticks every row again; unticking one turns the label back.
+  await reply.getByRole('button', { name: 'Select all' }).click();
+  await expect(reply.getByRole('checkbox', { checked: true })).toHaveCount(2);
+  await expect(save).toBeEnabled();
+  await reply.getByRole('checkbox', { name: /Second answer\./ }).uncheck();
+  await expect(reply.getByRole('button', { name: 'Select all' })).toBeVisible();
+  await context.close();
+});
+
 test('a browser that refuses the share sheet: Send goes, Save as a file stays, and the listener reads the next step, not "Permission denied" (#4095)', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   // Chrome on Android refuses a share that runs after the tap has gone stale; stand in for it.

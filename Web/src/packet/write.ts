@@ -90,6 +90,9 @@ export function sharedWords(margin: Margin, itemTitle: string): string {
   return voicePlaceholder({ atSeconds: margin.atSeconds, title: itemTitle, recordedAt: new Date(margin.createdAt) });
 }
 
+/** What the writer says when more than `LIMITS.margins` Margins are picked. The Share panel says it too, before the tap (#4093). */
+export const TOO_MANY_MARGINS = 'Spoken Margins shares up to 50 Margins at a time. Pick fewer, then share again.';
+
 export async function writePacket(episode: Episode, margins: readonly Margin[], options: WritePacketOptions = {}): Promise<WrittenPacket> {
   const title = swiftTrim(episode.title);
   const ordered = [...margins].sort((a, b) => a.atSeconds - b.atSeconds);
@@ -103,7 +106,7 @@ export async function writePacket(episode: Episode, margins: readonly Margin[], 
         : "These Margins have no words yet, so there's nothing to share. Add their text, then share them.");
   }
   if (withText.length > LIMITS.margins) {
-    throw new PacketError('cannotShare', `${withText.length} Margins`, 'Spoken Margins shares up to 50 Margins at a time. Pick fewer, then share again.');
+    throw new PacketError('cannotShare', `${withText.length} Margins`, TOO_MANY_MARGINS);
   }
   if (!title || characterCount(title) > LIMITS.titleCharacters) {
     throw new PacketError('cannotShare', 'episode title is empty or too long');

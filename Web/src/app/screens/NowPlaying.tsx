@@ -10,7 +10,7 @@ import { cueFor, friendMargins, leading, possessive, readsAloud, senderName, spe
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
 import {
-  candidateLabel, nothingPickedReason, pickedMargins, preselected, replyBackOffer, savedFileNextStep, savedMarginCard,
+  allPicked, candidateLabel, pickAll, pickedMargins, preselected, replyBackOffer, savedFileNextStep, savedMarginCard, selectAllLabel, whyNotShared,
 } from '../logic/reply-back.ts';
 import { plainError } from '../logic/messages.ts';
 import { sendFile, sendRefusedNextStep } from '../logic/share-send.ts';
@@ -405,9 +405,10 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const starting = offer ? preselected(offer, PAGE_OPENED_AT) : new Set<string>();
   const picked = new Set([...(offer?.candidates ?? [])].map((m) => m.id).filter((id) => changed[id] ?? starting.has(id)));
   const toWrite = offer ? pickedMargins(offer, picked) : margins;
-  const nothingPicked = toWrite.length === 0;
   // Greyed buttons say why (#3784), and point at the sentence so a screen reader reads it too.
-  const whyNot = nothingPickedReason(offer, toWrite.length);
+  const whyNot = whyNotShared(offer, toWrite.length);
+  // Nothing ticked, or more ticked than the writer takes (#4093): the buttons are greyed, and the sentence says why.
+  const blocked = whyNot !== undefined;
   // What to do with a saved file, kept on the panel: a toast is gone in six seconds.
   const [nextStep, setNextStep] = useState<string>();
   // The browser refused its share sheet (#4095): Send is replaced by the sentence and Save as a file.
@@ -454,6 +455,17 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
       {offer && (
         <fieldset className="reply-back">
           <legend>{offer.title}</legend>
+          {/* One row needs no "all". The label says what the next tap does, so a double tap ends where it began (#4093). */}
+          {offer.candidates.length > 1 && (
+            <button
+              type="button"
+              className="button reply-back-all"
+              disabled={busy}
+              onClick={() => setChanged({ ...changed, ...pickAll(offer.candidates, !allPicked(offer.candidates, picked)) })}
+            >
+              {selectAllLabel(allPicked(offer.candidates, picked))}
+            </button>
+          )}
           <ul className="reply-back-list">
             {offer.candidates.map((margin) => (
               <li key={margin.id}>
@@ -478,18 +490,18 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
       </div>
       <div className="share-actions">
         {bridge ? (
-          <button type="button" className="button" disabled={busy || nothingPicked} aria-describedby={whyNot ? 'share-why-not' : undefined} onClick={() => void share('send')}>
+          <button type="button" className="button" disabled={busy || blocked} aria-describedby={whyNot ? 'share-why-not' : undefined} onClick={() => void share('send')}>
             <ShareIcon />
             Save or send
           </button>
         ) : (
-          <button type="button" id="share-save" className="button" disabled={busy || nothingPicked} aria-describedby={whyNot || nextStep ? 'share-why-not' : undefined} onClick={() => void share('save')}>
+          <button type="button" id="share-save" className="button" disabled={busy || blocked} aria-describedby={whyNot || nextStep ? 'share-why-not' : undefined} onClick={() => void share('save')}>
             <DownloadIcon />
             Save as a file
           </button>
         )}
         {!bridge && sendable && !sendRefused && (
-          <button type="button" className="button" disabled={busy || nothingPicked} aria-describedby={whyNot ? 'share-why-not' : undefined} onClick={() => void share('send')}>
+          <button type="button" className="button" disabled={busy || blocked} aria-describedby={whyNot ? 'share-why-not' : undefined} onClick={() => void share('send')}>
             <ShareIcon />
             Send
           </button>
