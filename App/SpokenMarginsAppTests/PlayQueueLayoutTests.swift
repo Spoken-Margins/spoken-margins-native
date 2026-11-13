@@ -177,6 +177,33 @@ final class PlayQueueLayoutTests: XCTestCase {
         }
     }
 
+    /// #3891, third report: the owner's phone (build 37) still reset the list's Edit mode about every half second with the
+    /// fix above in it. A `.sheet` hands its content the presenter's environment, which `.equatable()` does not stop and
+    /// which the test above never changed. The Library's environment does change while audio plays (the mini player's
+    /// clearance follows the pill's height), so this presenter changes an environment value on every publish. Under the
+    /// UIKit presentation nothing reaches the sheet: no redraw, no row redraw, Edit mode held, no row animating.
+    func testInEditModeTheQueueRowsHoldStillWhileThePresenterChangesItsEnvironmentOnEveryPublish() async throws {
+        let model = try makeModel(itemCount: 3)
+        for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
+        let mounted = try mount(AnyView(EnvironmentChangingQueueSheetPresenter(model: model)), size: .large)
+        defer { mounted.close() }
+        _ = try await settledList(in: mounted) { $0.totalItems >= 3 }
+        let settled = try await enterEditMode(in: mounted)
+        let sheetBefore = try await bodyRunsOnceTheSheetIsQuiet()
+        let rowsBefore = try await rowRunsOnceTheRowsAreQuiet()
+        try await waitForTheRowsToStopAnimating(in: settled.view)
+
+        let idle = try await editModeWhilePublishing(model, list: settled.view)
+
+        XCTAssertEqual(PlayQueueSheetProbe.bodyRuns, sheetBefore,
+                       "20 environment changes redrew the sheet \(PlayQueueSheetProbe.bodyRuns - sheetBefore) times")
+        XCTAssertEqual(PlayQueueSheetProbe.rowRuns, rowsBefore,
+                       "20 environment changes redrew the rows \(PlayQueueSheetProbe.rowRuns - rowsBefore) times")
+        XCTAssertEqual(idle.notEditing, 0, "Edit mode went off in \(idle.notEditing) of \(idle.looks) looks with nothing touched; "
+                           + "after: \(Self.editState(of: settled.view))")
+        XCTAssertTrue(idle.animating.isEmpty, "Rows were animating with nothing touched: \(idle.animating.sorted())")
+    }
+
     /// The control for the test above, run against the plain `.sheet` the Library had. The test above only means something
     /// if this presenter shows the fault it guards: with a plain `.sheet`, a publish that changes nothing must re-run the
     /// presentation (its content closure), which the host's test says never happens, or knock Edit mode off, or set a row
@@ -655,6 +682,21 @@ private struct QueueSheetPresenter: View {
     var body: some View {
         Color.clear
             .playQueueSheet(isPresented: $isPresented, model: model)
+    }
+}
+
+/// The Library's shape with its environment changing on every publish, as the mini player's clearance can while audio
+/// plays (#3891, third report).
+private struct EnvironmentChangingQueueSheetPresenter: View {
+    @ObservedObject var model: Gate1AppModel
+    @State private var isPresented = true
+    @State private var publishes = 0
+
+    var body: some View {
+        Color.clear
+            .playQueueSheet(isPresented: $isPresented, model: model)
+            .environment(\.miniPlayerClearance, CGFloat(publishes % 2))
+            .onReceive(model.objectWillChange) { _ in publishes += 1 }
     }
 }
 
