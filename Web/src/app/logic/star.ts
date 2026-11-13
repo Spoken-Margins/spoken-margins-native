@@ -23,3 +23,13 @@ export function withStar(margin: Margin, on: boolean): Margin {
   const { starred: _was, ...rest } = margin;
   return on ? { ...rest, starred: true } : rest;
 }
+
+/**
+ * A rewritten Margin keeps the star the stored one has. The voice composer keeps its own copy of the Margin it saved and
+ * writes it again when the words arrive or the reply link changes, and the listener may have starred the row since; that
+ * older copy must not take the star off. A Margin that says nothing about a star takes the stored one; starring or
+ * unstarring is `withStar` through the store's own write, never this.
+ */
+export function keepingStar(margin: Margin, stored: Margin | undefined): Margin {
+  return stored !== undefined && isStarred(stored) && !isStarred(margin) ? withStar(margin, true) : margin;
+}
