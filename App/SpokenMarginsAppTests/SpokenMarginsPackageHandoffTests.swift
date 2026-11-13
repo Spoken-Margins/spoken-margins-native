@@ -770,9 +770,20 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             layer,
             records: [resolved, absent]
         ))
-        XCTAssertFalse(Gate1AppModel.isImportedCommentaryLayerPlaybackEligible(
+        // A passage missing from this copy still has a Margin to play, after the others (#3789).
+        XCTAssertTrue(Gate1AppModel.isImportedCommentaryLayerPlaybackEligible(
             layer,
             records: [absent]
+        ))
+        XCTAssertFalse(Gate1AppModel.isImportedCommentaryLayerPlaybackEligible(
+            layer,
+            records: []
+        ))
+        var wrongSource = layer
+        wrongSource.sourceResolutionStatus = .wrongSource
+        XCTAssertFalse(Gate1AppModel.isImportedCommentaryLayerPlaybackEligible(
+            wrongSource,
+            records: [resolved, absent]
         ))
     }
 
