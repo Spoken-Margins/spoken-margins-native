@@ -90,6 +90,16 @@ public enum TargetType: String, Codable, Equatable, Sendable {
     case assistantTurnTTS = "assistant_turn_tts"
     case summaryTurnTTS = "summary_turn_tts"
     case browserOwnedMedia = "browser_owned_media"
+
+    /// Targets whose audio is text read aloud by a speech client, as opposed to media played from a time. The
+    /// speech clients refuse a start with nothing left to say, so anything asking "was that the end of the text?"
+    /// asks here and covers a generated turn as it covers the item (#4067, #4199).
+    var isTextSpeech: Bool {
+        switch self {
+        case .itemTextTTS, .assistantTurnTTS, .summaryTurnTTS: return true
+        case .transcriptBackedMedia, .browserOwnedMedia: return false
+        }
+    }
 }
 
 public enum InterjectionTargetType: String, Codable, Equatable, Sendable {

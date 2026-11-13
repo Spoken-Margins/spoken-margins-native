@@ -22,5 +22,9 @@ final class TextSpeechAtTheEndSystemSpeechTests: XCTestCase {
     func testAMoveAwayFromTheEndAfterARefusedStartIsNotTakenForTheEnd() throws {
         try TextSpeechAtTheEndInventory.moveAwayAfterARefusedStart(audio: makeSpeech())
     }
+
+    func testAMarginAtTheEndOfAGeneratedTurnLandsThereWithTheSystemSpeechClient() throws {
+        try TextSpeechAtTheEndInventory.generatedTurnMarginAtTheEnd(audio: { makeSpeech() })
+    }
 }
 #endif

@@ -16,6 +16,11 @@ final class TextSpeechAtTheEndTests: XCTestCase {
         try TextSpeechAtTheEndInventory.moveAwayAfterARefusedStart(audio: TextSpeechAtTheEndInventory.RefusingAtTheEndSpeech())
     }
 
+    /// #4199: the generated turns (an AI answer, an interjection summary) take the same answer as an item's text.
+    func testAMarginAtTheEndOfAGeneratedTurnLandsThereWithoutAnError() throws {
+        try TextSpeechAtTheEndInventory.generatedTurnMarginAtTheEnd(audio: { TextSpeechAtTheEndInventory.RefusingAtTheEndSpeech() })
+    }
+
     func testARefusedStartStopsTheSpeechThatWasPlaying() throws {
         try TextSpeechAtTheEndInventory.refusedStartStopsTheOldSpeech()
     }

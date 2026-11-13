@@ -5707,11 +5707,13 @@ public final class SessionEngine {
                 try audio.play(targetId: session.currentTargetId, from: plan.audioOffset)
             }
         } catch SessionKitError.invalidCommandForState(let reason)
-            where session.currentTargetType == .itemTextTTS && EmptyTextStart.isNothingLeftToRead(reason) {
+            where session.currentTargetType.isTextSpeech && EmptyTextStart.isNothingLeftToRead(reason) {
             // The place is at (or past) the last speakable character, so there is no speech to start. That is the
             // end of the text, not a failure: remember it, and the progress tick finishes the item as it does when
             // the speech reached its end unseen (#3928). The one answer for every way of starting speech from here
             // (resume, a Margin's place, a chapter jump, a restart after a Margin) instead of a guard on each (#4067).
+            // It holds for every target that is spoken text, an AI answer or a summary as much as the item's own
+            // text (#4199): the tick ends a turn as it does when its speech reaches the end, paused where it stands.
             // A refusal leaves whatever was speaking before it speaking: stop it, as every other end of the text does.
             try audio.stop()
             emptyTextStart = EmptyTextStart(session: session)
