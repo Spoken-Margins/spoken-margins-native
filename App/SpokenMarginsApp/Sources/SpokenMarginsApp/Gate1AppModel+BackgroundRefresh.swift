@@ -156,7 +156,7 @@ extension Gate1AppModel {
     /// the finished session off `selectedItem`, and a stale one would resume it instead of offering to restart. Rare,
     /// so the main-thread read is acceptable here. Every other tap reloads in the background.
     func refreshSelectedItemAfterTransport() {
-        if snapshot.sourceProgressPercent >= 100 { refreshSelectedItem() } else { refreshSelectedItemInBackground() }
+        if snapshot.sourceProgressPercent >= ItemFinishedRule.atEndPercent { refreshSelectedItem() } else { refreshSelectedItemInBackground() }
     }
 
     /// The Library list and the Recently deleted list from one read, published when they changed. A single-row change

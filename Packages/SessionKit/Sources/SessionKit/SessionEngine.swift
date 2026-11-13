@@ -6385,7 +6385,7 @@ public final class SessionEngine {
         lastSavedMediaTimeMs[stamped.id] = stamped.position.mediaTimeMs
         lastProgressWriteAt[stamped.id] = timestamp
         if unsavedProgressSessionId == stamped.id { unsavedProgressSessionId = nil }
-        if stamped.completionPercent > 98,
+        if stamped.completionPercent >= ItemFinishedRule.listenedPercent,
            completionPercentIsMeasured(stamped),
            var item = try? repository.loadItem(id: stamped.itemId),
            item.sourceCompletedAt == nil,
