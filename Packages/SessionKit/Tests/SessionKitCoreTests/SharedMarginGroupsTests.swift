@@ -105,6 +105,48 @@ final class SharedMarginGroupsTests: XCTestCase {
         XCTAssertEqual(MarginCountText.itemLine(1, newCount: 1, isNewest: true), "Newest · 1 Margin · 1 new")
     }
 
+    // MARK: The "New from friends" row and the chip count
+
+    private func fresh(_ entries: [MarginCollection.SharedEntry], library: Set<String> = ["a", "b"]) -> SharedMarginGroups.NewFromFriends? {
+        SharedMarginGroups.newFromFriends(entries, libraryItemIDs: library)
+    }
+
+    func testNothingNewGivesNoRow() {
+        XCTAssertNil(fresh([]))
+        XCTAssertNil(fresh([friendMargin("1", heard: true)]))
+    }
+
+    func testOneFriendOnOneItemNamesFriendAndItemAndOpensIt() {
+        let row = fresh([friendMargin("1", title: "Bill Gates says to prepare"), friendMargin("2", title: "Bill Gates says to prepare"), friendMargin("3", heard: true)])
+        XCTAssertEqual(row?.text, "2 new Margins from Sam · Bill Gates says to prepare")
+        XCTAssertEqual(row?.itemID, "a")
+        XCTAssertEqual(row?.chipText, "2 new")
+        XCTAssertEqual(row?.accessibilityHint, "Opens it.")
+        XCTAssertEqual(row?.accessibilityLabel, "2 new Margins from Sam, on Bill Gates says to prepare")
+    }
+
+    func testOneNewMarginReadsSingular() {
+        XCTAssertEqual(fresh([friendMargin("1", title: "T")])?.text, "1 new Margin from Sam · T")
+    }
+
+    func testTwoFriendsOrAnUnnamedOneFallBackToTheSharedWords() {
+        XCTAssertEqual(fresh([friendMargin("1", sender: "Sam", title: "T"), friendMargin("2", sender: "Ana", title: "T")])?.text, "2 new shared Margins · T")
+        XCTAssertEqual(fresh([friendMargin("1", sender: "Unsigned sender", title: "T")])?.text, "1 new shared Margin · T")
+    }
+
+    func testSeveralItemsSwitchTheListInsteadOfOpeningOne() {
+        let row = fresh([friendMargin("1", item: "a"), friendMargin("2", item: "a"), friendMargin("3", item: "b")])
+        XCTAssertEqual(row?.text, "3 new Margins from friends on 2 items")
+        XCTAssertNil(row?.itemID)
+        XCTAssertEqual(row?.accessibilityHint, "Shows shared Margins.")
+    }
+
+    func testNewMarginsOutsideTheLibraryNeverOpenAnItem() {
+        let row = fresh([friendMargin("1", item: "gone"), friendMargin("2", item: nil)])
+        XCTAssertNil(row?.itemID)
+        XCTAssertEqual(row?.newCount, 2)
+    }
+
     func testThreeHundredMarginsOnFortyItemsBuildQuickly() {
         let items = (0..<40).map { "i\($0)" }
         let all = (0..<300).map { friendMargin("m\($0)", item: items[$0 % 40], recordedAgo: Double($0), ms: $0 * 1_000) }

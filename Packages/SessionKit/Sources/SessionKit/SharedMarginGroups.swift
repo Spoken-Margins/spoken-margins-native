@@ -64,6 +64,42 @@ public enum SharedMarginGroups {
         return result
     }
 
+    /// The Mine list's one-row shortcut to friends' unheard Margins (#4105), and the count on the Shared chip.
+    public struct NewFromFriends: Equatable, Sendable {
+        public let newCount: Int
+        public let itemCount: Int
+        /// The Library item the row opens: set only when every new Margin is on one item in the Library. Otherwise the
+        /// row switches the list to Shared.
+        public let itemID: String?
+        public let text: String
+        public let accessibilityLabel: String
+        public var accessibilityHint: String { itemID == nil ? "Shows shared Margins." : "Opens it." }
+        /// "2 new" for the capsule on the Shared chip; VoiceOver reads "Shared, 2 new".
+        public var chipText: String { "\(newCount) new" }
+    }
+
+    /// The unheard Margins among `entries` (the scope's, not narrowed by search), or nil when there are none.
+    /// One item: "2 new Margins from Sam · Bill Gates says to prepare…" (the friend line reads "2 new shared Margins"
+    /// when the senders are several or unnamed). Several: "5 new Margins from friends on 3 items".
+    public static func newFromFriends(_ entries: [MarginCollection.SharedEntry], libraryItemIDs: Set<String>) -> NewFromFriends? {
+        let fresh = entries.filter { $0.interjection.showsAsNew }
+        guard !fresh.isEmpty else { return nil }
+        let keys = Set(fresh.map { entry in entry.layer.itemId.flatMap { libraryItemIDs.contains($0) ? $0 : nil } ?? "" })
+        let noun = fresh.count == 1 ? "Margin" : "Margins"
+        if keys.count == 1, let only = keys.first, !only.isEmpty {
+            let title = fresh[0].itemTitle
+            let names = Set(fresh.compactMap { FriendName.usable($0.layer.displayLabel) })
+            let allNamed = fresh.allSatisfy { FriendName.usable($0.layer.displayLabel) != nil }
+            let friendLine = names.count == 1 && allNamed
+                ? "\(fresh.count) new \(noun) from \(names.first!)" : "\(fresh.count) new shared \(noun)"
+            return NewFromFriends(
+                newCount: fresh.count, itemCount: 1, itemID: only, text: "\(friendLine) · \(title)",
+                accessibilityLabel: "\(friendLine), on \(title)")
+        }
+        let text = "\(fresh.count) new \(noun) from friends on \(keys.count) \(keys.count == 1 ? "item" : "items")"
+        return NewFromFriends(newCount: fresh.count, itemCount: keys.count, itemID: nil, text: text, accessibilityLabel: text)
+    }
+
     /// One item's Margins in the order the review plays them.
     static func playOrder(_ entries: [MarginCollection.SharedEntry]) -> [MarginCollection.SharedEntry] {
         func key(_ entry: MarginCollection.SharedEntry) -> (rank: Int, position: Int, createdAt: Date, id: String) {
