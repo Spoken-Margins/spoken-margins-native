@@ -5,9 +5,9 @@ import Foundation
 ///
 /// The name is the packet's sender label (`ImportedCommentaryLayer.displayLabel`), which comes from the sender's app
 /// and isn't proven, so rows group on what a listener would read as the same name: spaces at the ends and doubled
-/// inside don't count, nor do letter case or how an accent was typed. A packet with no name has no row unless the
-/// caller asks for one (`includeUnnamed`, #4104): then every nameless packet, and every one carrying a stand-in
-/// ("Unsigned sender", "Someone", "Your friend"), forms one "A friend" row, never merged with a real name. Only Margins on items in the Library count, so each row has something to open.
+/// inside don't count, nor do letter case or how an accent was typed. A packet with no name, or one carrying a stand-in
+/// ("Unsigned sender", "Someone", "Your friend"), still gets a row (#4104): all of them form one "A friend" row, never
+/// merged with a real name. Only Margins on items in the Library count, so each row has something to open.
 public enum FollowingFriends {
     public struct Friend: Identifiable, Hashable, Sendable {
         /// The grouping key, stable while the name reads the same.
@@ -47,7 +47,7 @@ public enum FollowingFriends {
     /// The grouping key of that row: empty, which no real name produces, so a sender literally named "A friend" stays apart.
     static let unnamedKey = ""
 
-    public static func friends(from entries: [MarginCollection.SharedEntry], includeUnnamed: Bool = false) -> [Friend] {
+    public static func friends(from entries: [MarginCollection.SharedEntry]) -> [Friend] {
         struct Group {
             var name: String
             var newest: Date
@@ -60,18 +60,13 @@ public enum FollowingFriends {
             guard let itemId = entry.layer.itemId else { continue }
             let name: String
             let key: String
-            if includeUnnamed {
-                if let usable = FriendName.usable(entry.layer.displayLabel).flatMap(displayName) {
-                    name = usable
-                    key = groupingKey(usable)
-                } else {
-                    name = unnamedFriendName
-                    key = unnamedKey
-                }
-            } else if let shown = displayName(entry.layer.displayLabel) {
-                name = shown
-                key = groupingKey(shown)
-            } else { continue }
+            if let usable = FriendName.usable(entry.layer.displayLabel).flatMap(displayName) {
+                name = usable
+                key = groupingKey(usable)
+            } else {
+                name = unnamedFriendName
+                key = unnamedKey
+            }
             let date = activityDate(entry)
             var group = groups[key] ?? Group(name: name, newest: date)
             if date > group.newest { group.newest = date; group.name = name }

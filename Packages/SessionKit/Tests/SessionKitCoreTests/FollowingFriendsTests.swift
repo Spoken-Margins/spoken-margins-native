@@ -66,23 +66,25 @@ final class FollowingFriendsTests: XCTestCase {
         XCTAssertEqual(friends.map(\.summary), Array(repeating: "1 Margin on 1 episode", count: 4))
     }
 
-    func testUnnamedPacketsAndItemsOutsideTheLibraryHaveNoRow() {
+    func testNamelessPacketsShareAnAFriendRowAndItemsOutsideTheLibraryHaveNone() {
         let friends = FollowingFriends.friends(from: [
             entry("a", from: nil, item: "ep"),
             entry("b", from: "", item: "ep"),
             entry("c", from: "   \n", item: "ep"),
             entry("d", from: "Cole", item: nil),
         ])
-        XCTAssertEqual(friends, [])
+        XCTAssertEqual(friends.map(\.name), ["A friend"])
+        XCTAssertEqual(friends.first?.marginCount, 3)
         XCTAssertEqual(FollowingFriends.friends(from: []), [])
+        XCTAssertEqual(FollowingFriends.friends(from: [entry("d", from: "Cole", item: nil)]), [])
     }
 
     /// #4104: a packet with no usable name still gets a row, apart from every real name.
-    func testIncludeUnnamedGivesNamelessAndStandInPacketsOneAFriendRow() {
+    func testNamelessAndStandInPacketsFormOneAFriendRow() {
         let nameless: [String?] = [nil, "", "   \n", "Unsigned sender", "unsigned  SENDER", "Imported collection", "Someone", "Your friend", "YOUR FRIEND "]
         var entries = nameless.enumerated().map { entry("n\($0.offset)", from: $0.element, item: "ep\($0.offset % 2)", seconds: $0.offset) }
         entries.append(entry("real", from: "Cole", item: "ep0", seconds: 99))
-        let friends = FollowingFriends.friends(from: entries, includeUnnamed: true)
+        let friends = FollowingFriends.friends(from: entries)
         XCTAssertEqual(friends.map(\.name).sorted(), ["A friend", "Cole"])
         let unnamed = friends.first { $0.name == "A friend" }
         XCTAssertEqual(unnamed?.id, "")
@@ -94,25 +96,25 @@ final class FollowingFriendsTests: XCTestCase {
     func testASenderNamedAFriendStaysSeparateFromTheUnnamedRow() {
         let friends = FollowingFriends.friends(from: [
             entry("a", from: "A friend", item: "ep", seconds: 1), entry("b", from: nil, item: "ep", seconds: 2),
-        ], includeUnnamed: true)
+        ])
         XCTAssertEqual(friends.count, 2)
         XCTAssertEqual(Set(friends.map(\.id)), ["", "a friend"])
     }
 
-    func testIncludeUnnamedKeepsNamesGroupingAndDropsItemsOutsideTheLibrary() {
+    func testNamesStillGroupAndItemsOutsideTheLibraryAreDropped() {
         let friends = FollowingFriends.friends(from: [
             entry("a", from: "Zo\u{00EB}", item: "ep", seconds: 1), entry("b", from: "ZOE\u{0308} ", item: "ep", seconds: 2),
             entry("c", from: nil, item: nil), entry("d", from: "Someone", item: nil),
-        ], includeUnnamed: true)
+        ])
         XCTAssertEqual(friends.count, 1)
         XCTAssertEqual(friends.first?.marginCount, 2)
-        XCTAssertEqual(FollowingFriends.friends(from: [], includeUnnamed: true), [])
+        XCTAssertEqual(FollowingFriends.friends(from: []), [])
     }
 
     func testAnUnnamedPacketImportedNowSortsFirstEvenRecordedLongAgo() {
         let recent = entry("a", from: "Cole", item: "ep", seconds: 5)
         let old = entry("b", from: nil, item: "ep2", seconds: -40 * 86_400, importedAfter: 60)
-        let friends = FollowingFriends.friends(from: [recent, old], includeUnnamed: true)
+        let friends = FollowingFriends.friends(from: [recent, old])
         XCTAssertEqual(friends.map(\.name), ["A friend", "Cole"])
     }
 

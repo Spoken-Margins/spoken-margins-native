@@ -9,7 +9,7 @@ extension Gate1AppModel {
     var followingFriends: [FollowingFriends.Friend] {
         FollowingFriends.friends(from: sharedMarginRows.map {
             MarginCollection.SharedEntry(interjection: $0.interjection, layer: $0.layer, itemTitle: $0.itemTitle)
-        }, includeUnnamed: true) // a packet with no usable name is still a row, "A friend" (#4104)
+        }) // a packet with no usable name is still a row, "A friend" (#4104)
     }
 
     /// Friends and the shows that are not Quiet, newest first. Quiet shows stay in `followingShowListCache.quiet`.

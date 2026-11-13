@@ -203,10 +203,12 @@ Following puts every friend who sent Margins and every followed show in one list
    - Pass: that item opens directly.
 4. Go back and tap a friend who sent Margins on several items.
    - Pass: an items screen opens, newest first. Each item shows its title, the Library's kind and source line, progress or played state, and "N Margins" with how many are new, in words. Tapping an item opens it.
-5. With an empty Library, open Following.
+5. Import a packet from a friend who gave no name (a nameless file, or the web page's "Your friend"), then open Following.
+   - Pass: an "A friend" row sits first with "N new" at its trailing edge, and tapping it opens the item (or the items screen when there are several). A friend who does have a name keeps their own row.
+6. With an empty Library, open Following.
    - Pass: "You're not following anything yet" shows. With the offline profile, "Showing the last local snapshot" shows above the list.
 
-Check the row text against #3291 ("Cole", "3 Margins on 1 episode") and that VoiceOver reads each friend row as "<name>, <summary>". No step may rely on red or green alone. The ordering rules have host tests (`FollowingFeedTests`); this journey covers what they cannot: the built list, the quiet section and the items screen.
+Check the row text against #3291 ("Cole", "3 Margins on 1 episode") and that VoiceOver reads each friend row as "<name>, <summary>, N new" (the last part only when something is new). No step may rely on red or green alone. The ordering rules have host tests (`FollowingFeedTests`); this journey covers what they cannot: the built list, the quiet section and the items screen.
 
 ## J14 — Coming back to a friend's Margins after hearing the episode
 
