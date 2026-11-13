@@ -78,6 +78,11 @@ export function replyingCaption(senderLabel: string | undefined, parentText: str
   return `Replying to ${replyName(senderLabel)}: “${quoted}”`;
 }
 
+/** "Reply to Cole’s Margin at 1:45": a saved reply's line, and the spoken name of the Reply button on that Margin. */
+export function replyMarginName(parent: { author?: string; atSeconds: number }): string {
+  return `Reply to ${replyPossessive(parent.author)} Margin${atClock(parent.atSeconds)}`;
+}
+
 /**
  * The line on one of the listener's own Margins in a list, or undefined when it never was a reply. `parent` is the
  * Margin it answers, looked up by `replyToId ?? formerReplyToId`, and undefined when that Margin is no longer on the
@@ -90,5 +95,5 @@ export function rowLine(
   if (own.replyToId === undefined && own.formerReplyToId === undefined) return undefined;
   if (own.replyToId === undefined) return NOT_A_REPLY;
   if (parent === undefined) return 'Reply to a Margin that isn’t here';
-  return `Reply to ${replyPossessive(parent.author)} Margin${atClock(parent.atSeconds)}`;
+  return replyMarginName(parent);
 }

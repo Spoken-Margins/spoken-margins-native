@@ -6,7 +6,13 @@ import { shortDate } from '../format.ts';
 import { useMarginFilePicker, type OpenMarginFile, type OpenShareLink } from '../import.tsx';
 import { parseShareLink } from '../logic/share-link.ts';
 import { marginGroups, newestMarginId } from '../logic/library.ts';
+import { plainError } from '../logic/messages.ts';
+import { firesByItself } from '../logic/margin-autoplay.ts';
+import { parentOf, resumeReplying, stopReplying } from '../logic/reply-choice.ts';
+import { replyMarginName, replyTo, rowLine, STOP_REPLYING } from '../logic/reply-words.ts';
+import { NotSavedError } from '../logic/storage.ts';
 import { usePlayer } from '../player.tsx';
+import { useUi } from '../ui.tsx';
 import { VoiceButton } from '../voice.tsx';
 
 export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void; onOpenFile: OpenMarginFile; onOpenLink: OpenShareLink }) {
@@ -86,7 +92,7 @@ export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void
             </header>
             <ol className="margin-list">
               {group.margins.map((margin) => (
-                <MarginRow key={margin.id} margin={margin} newest={margin.id === newestId} onPlay={onPlay} />
+                <MarginRow key={margin.id} margin={margin} parent={parentOf(margin, data.margins)} newest={margin.id === newestId} onPlay={onPlay} />
               ))}
             </ol>
           </section>
@@ -96,11 +102,48 @@ export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void
   );
 }
 
-export function MarginRow({ margin, newest, onPlay, compact }: { margin: Margin; newest?: boolean; onPlay?: () => void; compact?: boolean }) {
+/**
+ * One Margin in a list. The listener's own Margins that are, or were, replies say whom they answer, with a button that
+ * stops the reply and puts it back (#4107, B5). A friend's row gets a "Reply" button when the list passes `onReply`
+ * (Now Playing's does; the Margins tab stays a list to play from). `parent` is the Margin a reply answers, found by the
+ * caller among all the Margins.
+ */
+export function MarginRow({
+  margin,
+  newest,
+  onPlay,
+  compact,
+  parent,
+  onReply,
+  replyDisabled,
+}: {
+  margin: Margin;
+  newest?: boolean;
+  onPlay?: () => void;
+  compact?: boolean;
+  parent?: Margin;
+  onReply?: (friend: Margin) => void;
+  /** A composer is open: a second reply can't begin, and a saved reply can't change under the composer's own copy of it, until it closes. */
+  replyDisabled?: boolean;
+}) {
   const player = usePlayer();
+  const data = useData();
+  const { toast } = useUi();
   const label = margin.text ? margin.text : `Voice Margin, ${formatClock(margin.voice?.durationSeconds ?? 0)} long`;
-  // The visible row says more than the label used to: keep the tag, author and date in the spoken name.
-  const details = [newest ? 'Newest' : '', margin.author ?? '', compact ? '' : shortDate(margin.createdAt)].filter(Boolean).join(', ');
+  const replyLine = margin.author === undefined ? rowLine(margin, parent) : undefined;
+  // The visible row says more than the label used to: keep the tag, author, date and reply line in the spoken name.
+  const details = [newest ? 'Newest' : '', margin.author ?? '', compact ? '' : shortDate(margin.createdAt), replyLine ?? ''].filter(Boolean).join(', ');
+  // "Stop replying" and "Reply to Cole" are one button: it needs the Margin it answers, or answered, to be on the episode.
+  const stoppable = replyLine !== undefined && parent !== undefined;
+  const replying = margin.replyToId !== undefined;
+  const change = async () => {
+    try {
+      await data.addMargin(replying ? stopReplying(margin) : resumeReplying(margin));
+    } catch (error) {
+      // A storage failure has already said what wasn't saved.
+      if (!(error instanceof NotSavedError)) toast(`The reply wasn’t updated: ${plainError(error)}`, 'problem');
+    }
+  };
   return (
     <li className={`margin${newest ? ' is-newest' : ''}`}>
       <button
@@ -122,9 +165,20 @@ export function MarginRow({ margin, newest, onPlay, compact }: { margin: Margin;
               {shortDate(margin.createdAt)}
             </span>
           )}
+          {replyLine !== undefined && <span className="row-meta reply-meta">{replyLine}</span>}
         </span>
       </button>
       {margin.voice && <VoiceButton voice={margin.voice} />}
+      {stoppable && (
+        <button type="button" className="margin-reply" disabled={replyDisabled} onClick={() => void change()}>
+          {replying ? STOP_REPLYING : replyTo(parent.author)}
+        </button>
+      )}
+      {onReply && firesByItself(margin) && (
+        <button type="button" className="margin-reply" aria-label={replyMarginName(margin)} disabled={replyDisabled} onClick={() => onReply(margin)}>
+          Reply
+        </button>
+      )}
     </li>
   );
 }

@@ -361,6 +361,121 @@ test('Record stops the friend’s clip so the microphone does not hear it, names
   await context.close();
 });
 
+/** Opens the link, waits for the friend's written Margin (0:30) to show, and writes `words` while it does: a saved reply. */
+async function saveReply(page: Page, words: string): Promise<Page> {
+  await page.goto(LINK);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  // The episode is playing and the countdown is up before the clock is moved, so the seek is not overwritten by the page's own resume.
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
+  await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 28; });
+  await expect(playing.getByTestId('arrived-margin')).toContainText('Web fixture wrote this', { timeout: 30_000 });
+  await playing.getByRole('button', { name: 'Write a Margin' }).click();
+  await playing.getByLabel(/Your Margin at/).fill(words);
+  await playing.getByRole('button', { name: 'Save Margin' }).click();
+  return playing;
+}
+
+test('a saved reply says whom it answers; "Stop replying" takes it out of the file and "Reply to" puts it back (#4107, B5)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  const playing = await saveReply(page, 'Agreed, and here is why.');
+  const mine = playing.locator('li.margin').filter({ hasText: 'Agreed, and here is why.' });
+  await expect(mine).toContainText('Reply to Web fixture’s Margin at 0:30');
+  expect(await mine.getByRole('button').first().getAttribute('aria-label')).toContain('Reply to Web fixture’s Margin at 0:30');
+  expect((await savedPacket(page, playing)).read.margins[0].replyToId).toMatch(FRIEND_FIRST);
+  // While a composer is open the row's button waits, so it can't change a Margin under the composer's own copy.
+  await playing.getByRole('button', { name: 'Write a Margin' }).click();
+  await expect(mine.getByRole('button', { name: 'Stop replying' })).toBeDisabled();
+  await playing.getByRole('button', { name: 'Cancel' }).click();
+  // Stop replying: the row says so, and the file carries the Margin as the listener's own, with no reply artifact.
+  const stop = mine.getByRole('button', { name: 'Stop replying' });
+  expect((await stop.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  await stop.click();
+  await expect(mine).toContainText('Not a reply');
+  await expect(mine).not.toContainText('Reply to Web fixture’s Margin');
+  const stopped = await savedPacket(page, playing);
+  expect(stopped.read.margins.map((m) => m.text)).toEqual(['Agreed, and here is why.']);
+  expect(stopped.read.margins[0].replyToId).toBeUndefined();
+  expect(stopped.paths).not.toContain(CONVERSATION);
+  // It stays stopped after a reload (the link is kept on the stored Margin, not in the page), and the Margins tab can put it back.
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
+  const inTab = page.locator('li.margin').filter({ hasText: 'Agreed, and here is why.' });
+  await expect(inTab).toContainText('Not a reply');
+  await inTab.getByRole('button', { name: 'Reply to Web fixture', exact: true }).click();
+  await expect(inTab).toContainText('Reply to Web fixture’s Margin at 0:30');
+  await expect(inTab.getByRole('button', { name: 'Stop replying' })).toBeVisible();
+  await context.close();
+});
+
+test('a Margin saved after × is "Not a reply" in its row, with a way back (#4107, B5)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  await page.goto(LINK);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
+  await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 28; });
+  await expect(playing.getByTestId('arrived-margin')).toContainText('Web fixture wrote this', { timeout: 30_000 });
+  await playing.getByRole('button', { name: 'Write a Margin' }).click();
+  await playing.locator('.reply-row').getByRole('button', { name: 'Stop replying' }).click();
+  await playing.getByLabel(/Your Margin at/).fill('A note of my own.');
+  await playing.getByRole('button', { name: 'Save Margin' }).click();
+  const mine = playing.locator('li.margin').filter({ hasText: 'A note of my own.' });
+  await expect(mine).toContainText('Not a reply');
+  await mine.getByRole('button', { name: 'Reply to Web fixture', exact: true }).click();
+  await expect(mine).toContainText('Reply to Web fixture’s Margin at 0:30');
+  expect((await savedPacket(page, playing)).read.margins[0].replyToId).toMatch(FRIEND_FIRST);
+  // And the Margins tab says the same.
+  await playing.getByRole('button', { name: 'Close Now Playing' }).click();
+  await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
+  await expect(page.locator('li.margin').filter({ hasText: 'A note of my own.' })).toContainText('Reply to Web fixture’s Margin at 0:30');
+  await expect(page.locator('li.margin').filter({ hasText: 'A note of my own.' }).getByRole('button', { name: 'Stop replying' })).toBeVisible();
+  // A friend's row there stays a list to play from: no Reply button.
+  await expect(page.getByRole('button', { name: /^Reply to Web fixture’s Margin at/ })).toHaveCount(0);
+  await context.close();
+});
+
+test('Reply on a friend’s row moves to its moment and opens the composer answering it; the other Reply buttons wait (#4107, B5)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  // No microphone, so the Record composer shows its problem and offers "Write it instead", which keeps the reply.
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
+      configurable: true,
+      value: () => Promise.reject(new DOMException('Permission denied', 'NotAllowedError')),
+    });
+  });
+  const page = await friendPage(context);
+  await page.goto(LINK);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
+  // Far from either Margin and not in a reply window: Record would answer nothing. The row's Reply answers the 2:05 one.
+  const second = playing.getByRole('button', { name: 'Reply to Web fixture’s Margin at 2:05', exact: true });
+  const first = playing.getByRole('button', { name: 'Reply to Web fixture’s Margin at 0:30', exact: true });
+  await expect(first).toHaveText('Reply');
+  expect((await second.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  await second.click();
+  const row = playing.locator('.reply-row');
+  await expect(row).toContainText('Replying to Web fixture: “This is a web Margin, recorded for the packet test.”');
+  expect(await audioTime(page)).toBeGreaterThanOrEqual(124.5);
+  expect(await audioTime(page)).toBeLessThan(131);
+  // One composer at a time: the Reply buttons are greyed while it is open.
+  await expect(first).toBeDisabled();
+  await expect(second).toBeDisabled();
+  await playing.getByRole('button', { name: 'Write it instead' }).click();
+  await expect(row).toContainText('Replying to Web fixture');
+  await playing.getByLabel(/Your Margin at 2:05/).fill('Answering the spoken one.');
+  await playing.getByRole('button', { name: 'Save Margin' }).click();
+  await expect(first).toBeEnabled();
+  const saved = await savedPacket(page, playing);
+  expect(saved.read.margins.map((m) => m.text)).toEqual(['Answering the spoken one.']);
+  expect(saved.read.margins[0].replyToId).toMatch(FRIEND_SECOND);
+  expect(saved.paths).toContain(CONVERSATION);
+  await context.close();
+});
+
 test('Play or Pause while the friend’s clip is playing drops the clip and its card, so it stops answering that Margin (#4107, B4)', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);

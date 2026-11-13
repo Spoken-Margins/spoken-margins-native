@@ -538,6 +538,8 @@ button:disabled {
 .margin {
   position: relative;
   display: flex;
+  /* The reply buttons (#4107) wrap under the words on a narrow screen rather than squeezing them. */
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   padding-left: 14px;
@@ -561,7 +563,7 @@ button:disabled {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  flex: 1;
+  flex: 1 1 14em;
   min-width: 0;
   min-height: 52px;
   padding: 12px 12px 12px 0;
@@ -594,6 +596,19 @@ button:disabled {
 .margin-voice-label {
   font-family: var(--ui);
   font-weight: 600;
+}
+
+.margin-reply {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  margin-right: 6px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--tint-soft);
+  color: var(--tint);
+  font-weight: 650;
+  font-size: 0.9375rem;
 }
 
 .voice-button {
