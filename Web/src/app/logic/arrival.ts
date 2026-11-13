@@ -7,6 +7,7 @@ import type { Episode, Margin, PlaybackPosition } from '../../shared/model.ts';
 import type { PacketRead } from '../ports.ts';
 import { findEpisode } from './import.ts';
 import { listenState } from './library.ts';
+import { senderNameOrNone } from './reply-words.ts';
 import { firesByItself } from './margin-autoplay.ts';
 
 /** How far before a Margin the first Skip lands, so the friend hears the episode's own lead-in (2026-10-31 call). */
@@ -30,11 +31,18 @@ export function stopsPlayback(margin: Margin): boolean {
   return margin.voice !== undefined || readsAloud(margin);
 }
 
-/** The sender's name as the friend sees it. The packet's name is the sender's own claim, so it is only ever text. */
+/**
+ * The sender's name as the friend sees it. The packet's name is the sender's own claim, so it is only ever text. A label
+ * that stands in for a missing name ("Your friend", "Someone", "Unsigned sender", "Imported collection", in any case) is
+ * "your friend", so the countdown, the Share title and the reply row never name a sender two ways (reply-words.ts).
+ */
 export function senderName(sender: string | undefined): string {
-  const name = sender?.trim();
-  // "Your friend" is what import stores when the sender gave no name; mid-sentence it reads in lower case.
-  return name && name.toLowerCase() !== 'your friend' ? name : 'your friend';
+  return senderNameOrNone(sender) ?? 'your friend';
+}
+
+/** A Margin's own author, or the packet's sender when the author is blank or only stands in for a missing name (#4107). */
+function namedAuthor(author: string | undefined, sender: string | undefined): string | undefined {
+  return senderNameOrNone(author) ?? sender;
 }
 
 /** A name at the start of a sentence: "your friend" becomes "Your friend"; a name is left as the sender wrote it. */
@@ -194,19 +202,19 @@ export function cueFor(margins: readonly Margin[], time: number, sender: string 
   const friends = friendMargins(margins).filter(stopsPlayback);
   if (friends.length === 0) return undefined;
   if (episode?.failed) {
-    const who = senderName(friends[0].author?.trim() || sender);
+    const who = senderName(namedAuthor(friends[0].author, sender));
     return episode.heardWithoutEpisode
       ? { kind: 'unplayable-done', who, sentence: ARRIVAL_WORDS.episodeCantPlayDone(who) }
       : { kind: 'unplayable', who, sentence: ARRIVAL_WORDS.episodeCantPlay(who), button: ARRIVAL_WORDS.hearMargins(who) };
   }
   const index = friends.findIndex((m) => m.atSeconds > time + PAST_SECONDS);
   if (index === -1) {
-    const last = senderName(friends[friends.length - 1].author?.trim() || sender);
+    const last = senderName(namedAuthor(friends[friends.length - 1].author, sender));
     return { kind: 'after-last', who: last, lead: leading(last) };
   }
   const next = friends[index];
   // Two friends can have Margins on one episode: the countdown names whose is next.
-  const who = senderName(next.author?.trim() || sender);
+  const who = senderName(namedAuthor(next.author, sender));
   const away = next.atSeconds - time;
   const ordinal = friends.length === 1 ? '' : index === 0 ? 'first ' : index === friends.length - 1 ? 'last ' : 'next ';
   const leadIn = away <= LEAD_IN_SECONDS + 1;
@@ -227,7 +235,7 @@ export function cueFor(margins: readonly Margin[], time: number, sender: string 
 export function speakingLine(margin: Margin, margins: readonly Margin[], sender: string | undefined): { title: string; position: string } {
   const friends = friendMargins(margins);
   const place = friends.findIndex((m) => m.id === margin.id) + 1;
-  const who = leading(senderName(margin.author?.trim() || sender));
+  const who = leading(senderName(namedAuthor(margin.author, sender)));
   return {
     title: margin.voice ? `${who} is speaking` : `${who} wrote this`,
     position: place > 0 ? `${place} of ${friends.length}` : '',
