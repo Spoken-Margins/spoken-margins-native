@@ -46,8 +46,14 @@ final class PlayerRunRecorderTests: XCTestCase {
         XCTAssertEqual(late, .newQuick, "a Margin taken while the player is not playing or paused is filed by the rest of the rule")
     }
 
-    /// #4079: a Margin recorded from the Watch with no live session goes to the item the phone has loaded, also when it
-    /// is paused, at the place it is paused. Fails without the parked run: this was `.newQuick`.
+    private func decide(_ runs: [LiveSessionFiling.PlayerRun], at seconds: TimeInterval, now: TimeInterval) -> LiveSessionFiling.Decision {
+        LiveSessionFiling.decide(
+            .init(marginId: "m\(seconds)", markedAt: at(seconds)), sessions: [], deletions: .init(), playerRuns: runs, now: at(now)
+        )
+    }
+
+    /// #4079: a Margin recorded from the Watch with no live session goes to the item the phone was playing, also once the
+    /// Watch has paused it, at the place it is paused. Fails without the parked stretch: this was `.newQuick`.
     func testAMarginTakenWhileAnItemIsPausedFilesAtItsPlace() {
         var recorder = PlayerRunRecorder()
         recorder.observe(playing(0), at: at(0))
@@ -55,44 +61,71 @@ final class PlayerRunRecorderTests: XCTestCase {
         recorder.observe(pausedOn("ep", ms: 5_100), at: at(5.2))
         recorder.observe(pausedOn("ep", ms: 5_100), at: at(20))
         let runs = recorder.runs(at: at(60))
-        for (name, marked, expected) in [
-            ("during the play run", 3.0, 3_000), ("at the pause", 5.1, 5_100),
-            ("long after, still paused", 45.0, 5_100)
-        ] as [(String, TimeInterval, Int)] {
-            let decision = LiveSessionFiling.decide(
-                .init(marginId: name, markedAt: at(marked)), sessions: [], deletions: .init(), playerRuns: runs, now: at(60)
-            )
-            XCTAssertEqual(decision, .playerItem(itemId: "ep", positionMs: expected), name)
-        }
+        XCTAssertEqual(decide(runs, at: 3, now: 60), .playerItem(itemId: "ep", positionMs: 3_000))
+        XCTAssertEqual(decide(runs, at: 5.1, now: 60), .playerItem(itemId: "ep", positionMs: 5_100))
+        XCTAssertEqual(decide(runs, at: 45, now: 60), .playerItem(itemId: "ep", positionMs: 5_100), "inside the hold")
     }
 
-    func testAPausedItemStopsHoldingWhenPlayingResumesOrAnotherItemLoads() {
+    func testAPausedItemOlderThanTheHoldDoesNotPark() {
         var recorder = PlayerRunRecorder()
-        recorder.observe(pausedOn("one", ms: 9_000), at: at(0))
+        recorder.observe(playing(5_000), at: at(0))
+        recorder.observe(pausedOn("ep", ms: 5_000), at: at(0.2))
+        let late = PlayerRunRecorder.parkedHold + 120
+        let runs = recorder.runs(at: at(late))
+        XCTAssertEqual(decide(runs, at: late - 10, now: late), .newQuick, "a pause left for hours holds nothing")
+        XCTAssertEqual(decide(runs, at: PlayerRunRecorder.parkedHold - 10, now: late), .playerItem(itemId: "ep", positionMs: 5_000))
+    }
+
+    func testAPausedItemRestoredAtLaunchWithNoPlayRunDoesNotPark() {
+        var recorder = PlayerRunRecorder()
+        recorder.observe(pausedOn("ep", ms: 70_000), at: at(0))
+        recorder.observe(pausedOn("ep", ms: 70_000), at: at(30))
+        XCTAssertTrue(recorder.runs(at: at(60)).isEmpty)
+        XCTAssertEqual(decide(recorder.runs(at: at(60)), at: 40, now: 60), .newQuick)
+    }
+
+    func testAFinishedItemDoesNotPark() {
+        var snapshot = SessionSnapshot()
+        snapshot.itemId = "ep"
+        snapshot.currentMediaTimeMs = 9_000
+        snapshot.status = .paused
+        snapshot.phase = .finished
+        XCTAssertFalse(PlayerRunRecorder.observation(of: snapshot).isPaused)
+        var recorder = PlayerRunRecorder()
+        recorder.observe(playing(8_000), at: at(0))
+        recorder.observe(PlayerRunRecorder.observation(of: snapshot), at: at(1))
+        XCTAssertEqual(decide(recorder.runs(at: at(30)), at: 20, now: 30), .newQuick)
+        snapshot.phase = .itemPlayback
+        XCTAssertTrue(PlayerRunRecorder.observation(of: snapshot).isPaused, "a real pause still parks")
+    }
+
+    func testAPausedItemStopsHoldingWhenPlayingResumes() {
+        var recorder = PlayerRunRecorder()
+        recorder.observe(playing(8_000, item: "one"), at: at(0))
+        recorder.observe(pausedOn("one", ms: 9_000), at: at(1))
         recorder.observe(playing(9_000, item: "one"), at: at(30)) // resumed
-        recorder.observe(pausedOn("two", ms: 0), at: at(100)) // another item, paused
-        let runs = recorder.runs(at: at(200))
-        func place(_ seconds: TimeInterval) -> LiveSessionFiling.Decision {
-            LiveSessionFiling.decide(
-                .init(marginId: "m\(seconds)", markedAt: at(seconds)), sessions: [], deletions: .init(), playerRuns: runs, now: at(200)
-            )
-        }
-        XCTAssertEqual(place(10), .playerItem(itemId: "one", positionMs: 9_000))
-        XCTAssertEqual(place(150), .playerItem(itemId: "two", positionMs: 0))
+        recorder.observe(playing(15_000, item: "one"), at: at(36))
+        let runs = recorder.runs(at: at(40))
+        XCTAssertEqual(decide(runs, at: 10, now: 40), .playerItem(itemId: "one", positionMs: 9_000))
+        XCTAssertEqual(decide(runs, at: 33, now: 40), .playerItem(itemId: "one", positionMs: 12_000))
     }
 
-    func testASeekWhilePausedKeepsTheOldPlaceOnlyUpToTheLastSighting() {
-        var recorder = PlayerRunRecorder()
-        recorder.observe(pausedOn("ep", ms: 1_000), at: at(0))
-        recorder.observe(pausedOn("ep", ms: 1_000), at: at(10))
-        recorder.observe(pausedOn("ep", ms: 90_000), at: at(50))
-        let runs = recorder.runs(at: at(60))
-        func position(_ seconds: TimeInterval) -> Int? {
-            runs.last { $0.startedAt <= at(seconds) && at(seconds) <= $0.endedAt }?.positionMs(at: at(seconds))
-        }
-        XCTAssertEqual(position(5), 1_000)
-        XCTAssertNil(position(30), "between the last sighting and the seek nothing is vouched for")
-        XCTAssertEqual(position(55), 90_000)
+    func testASeekOrAnotherItemWhilePausedEndsTheHoldAndDoesNotParkAgain() {
+        var seek = PlayerRunRecorder()
+        seek.observe(playing(8_000), at: at(0))
+        seek.observe(pausedOn("ep", ms: 9_000), at: at(1))
+        seek.observe(pausedOn("ep", ms: 9_000), at: at(10))
+        seek.observe(pausedOn("ep", ms: 90_000), at: at(50)) // the listener moved the place
+        seek.observe(pausedOn("ep", ms: 90_000), at: at(60))
+        XCTAssertEqual(decide(seek.runs(at: at(70)), at: 5, now: 70), .playerItem(itemId: "ep", positionMs: 9_000))
+        XCTAssertEqual(decide(seek.runs(at: at(70)), at: 30, now: 70), .newQuick, "nothing vouches for 10 to 50 s")
+        XCTAssertEqual(decide(seek.runs(at: at(70)), at: 65, now: 70), .newQuick, "the new place was not played to")
+
+        var other = PlayerRunRecorder()
+        other.observe(playing(8_000), at: at(0))
+        other.observe(pausedOn("ep", ms: 9_000), at: at(1))
+        other.observe(pausedOn("two", ms: 0), at: at(100)) // another item loaded, paused
+        XCTAssertEqual(decide(other.runs(at: at(200)), at: 150, now: 200), .newQuick)
     }
 
     func testASeekStartsANewRunAndKeepsTheOldOneUpToTheLastSteadyTick() throws {
