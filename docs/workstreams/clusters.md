@@ -79,7 +79,7 @@ The chief of staff checks that `main` is green for the start: the Linux SessionK
 
 ## Context budget
 
-Cluster leads and the chief of staff are automatic sessions. The hook blocks at 300k (owner overlay, "How to work"), but since 2026-11-05 cluster leads do not stop at 250k: they let auto-compact run and keep their hand-off current (owner, 2026-11-05). The director is owner-started (400k/500k), but it stays well under them by delegating.
+Cluster leads and the chief of staff are automatic sessions. The hook blocks at 300k (owner overlay, "How to work"), but since 2026-11-05 cluster leads do not stop at 250k: they let auto-compact run and keep their hand-off current (owner, 2026-11-05; the hook's 250k cue says the same to every automatic session since 2026-11-13, #4191). The director is owner-started (400k/500k), but it stays well under them by delegating.
 
 - Delegate every read of a big file, every diff review, every log, and every fix to a background agent. Ask for a summary of under 300 words, and full detail written to a file the lead reads only if needed.
 - Never paste issue bodies, diffs, CI logs or audit text into the lead's own context when an agent can summarize them.
