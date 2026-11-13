@@ -102,13 +102,17 @@ public enum SpeechTextNormalizer {
     /// `projectForSystemSpeech` of `source` from `sourceOffset` on: the spoken characters at or after that offset, each
     /// still mapped to its offset in the whole `source`, and `sourceLength` that of the whole `source`.
     ///
+    /// The tail is always the tail of the whole projection, never the projection of the remaining text on its own:
+    /// the projection rewrites some things as a unit (a table, a social card, a link's address), and the remaining
+    /// text alone starts in the middle of one and reads its leftovers, the pipes of a table row among them (#4189).
     /// A text the memo holds is projected once, whole, and a play from a saved offset (a resume, a rate change, a
     /// hand-over) takes the tail of that projection, so it does not project the remaining text again on the thread
-    /// that plays (#2256). The tail drops the space the cut leaves, so it reads as the projection of the remaining
-    /// text does. A text too short for the memo is cheap to project, and one too long for it is projected from the
-    /// offset, as before: a whole projection would cost more than the tail and nothing could keep it.
+    /// that plays (#2256). A text too short for the memo projects whole in a few milliseconds, kept or not. The tail
+    /// drops the space the cut leaves, so it reads as the projection of the remaining text does. Only a text too long
+    /// for the memo is projected from the offset: a whole projection would cost more than the tail and nothing could
+    /// keep it, so a table cut in two there still reads its leftover rows.
     public static func projectForSystemSpeech(_ source: String, fromSourceOffset sourceOffset: Int) -> NormalizedSpeechText {
-        guard SpeechProjectionMemo.holds(utf8Count: source.utf8.count) else {
+        guard source.utf8.count <= SpeechProjectionMemo.maximumBytes else {
             let characters = Array(source)
             let start = max(0, min(sourceOffset, characters.count))
             let tail = projectForSystemSpeech(String(characters[start...]))

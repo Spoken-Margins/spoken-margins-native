@@ -151,4 +151,74 @@ final class SpeechMarkdownTableTests: XCTestCase {
         let closed = SpeechTextNormalizer.normalize("```\n| a |\n| - |\n| 1 |\n```")
         XCTAssertFalse(closed.contains(notice), closed)
     }
+
+    // MARK: Speech that starts inside a table (#4189)
+
+    /// Jumping to a Margin anchored in a table row, or resuming from a saved place inside one, starts speech from an
+    /// offset in the middle of the table. The tail alone has no header row, so the table rule saw no table and the
+    /// voice read the pipes.
+    private func characterOffset(of needle: String, in text: String) throws -> Int {
+        text.distance(from: text.startIndex, to: try XCTUnwrap(text.range(of: needle), needle).lowerBound)
+    }
+
+    private func assertSpeechFromInsideATable(prefix: String, underTheMemoMinimum: Bool, file: StaticString = #filePath, line: UInt = #line) throws {
+        let table = "| Your wish | OPML 2.0 |\n| --- | --- |\n| Names a podcast | Yes |\n| Carries a note | No |"
+        let source = "\(prefix)Intro.\n\n\(table)\n\nOutro."
+        XCTAssertEqual(source.utf8.count < SpeechProjectionMemo.minimumBytes, underTheMemoMinimum, file: file, line: line)
+        let tableStart = try characterOffset(of: "| Your wish", in: source)
+        let tableEnd = tableStart + table.count
+        let outro = try characterOffset(of: "Outro.", in: source)
+        let named: [(String, Int)] = [
+            ("on the header", tableStart),
+            ("inside the header", tableStart + 4),
+            ("on the separator line", try characterOffset(of: "| --- |", in: source)),
+            ("inside a row", try characterOffset(of: "podcast", in: source)),
+            ("on the last row", try characterOffset(of: "| Carries", in: source)),
+            ("on the last cell", try characterOffset(of: "No |", in: source)),
+            ("on the table's final pipe", tableEnd - 1),
+            ("just after the table", tableEnd),
+            ("on the blank line after the table", tableEnd + 1),
+            ("on the outro", outro),
+        ]
+        for (name, offset) in named {
+            let spoken = SpeechTextNormalizer.projectForSystemSpeech(source, fromSourceOffset: offset)
+            XCTAssertFalse(spoken.text.contains("|"), "\(name) (offset \(offset)): \(spoken.text)", file: file, line: line)
+            XCTAssertFalse(spoken.text.contains("---"), "\(name) (offset \(offset)): \(spoken.text)", file: file, line: line)
+            XCTAssertFalse(spoken.text.contains("podcast"), "\(name) (offset \(offset)): \(spoken.text)", file: file, line: line)
+            // From the header on, the table is announced; from inside it, speech goes on to the text after it. Both
+            // are what a play from the start says at that point, so a short text reads like a long one.
+            XCTAssertEqual(spoken.text, offset == tableStart ? "\(notice) Outro." : "Outro.", "\(name) (offset \(offset))", file: file, line: line)
+            XCTAssertEqual(spoken.sourceLength, source.count, file: file, line: line)
+            XCTAssertTrue(spoken.sourceOffsets.allSatisfy { $0 >= offset }, "\(name)", file: file, line: line)
+        }
+        // Every offset in the table, not only the named ones.
+        for offset in tableStart..<tableEnd {
+            let spoken = SpeechTextNormalizer.projectForSystemSpeech(source, fromSourceOffset: offset)
+            XCTAssertFalse(spoken.text.contains("|"), "offset \(offset): \(spoken.text)", file: file, line: line)
+        }
+    }
+
+    func testSpeechFromInsideATableInAShortTextDoesNotReadThePipes() throws {
+        try assertSpeechFromInsideATable(prefix: "", underTheMemoMinimum: true)
+    }
+
+    func testSpeechFromInsideATableInATextOver20KBDoesNotReadThePipes() throws {
+        let prefix = String(repeating: "Plain words to pad the text out. ", count: 700) + "\n\n"
+        XCTAssertGreaterThan(prefix.utf8.count, SpeechProjectionMemo.minimumBytes)
+        try assertSpeechFromInsideATable(prefix: prefix, underTheMemoMinimum: false)
+    }
+
+    /// The same offset gives the same words whether the text is short or long.
+    func testASpeechStartInsideATableReadsTheSameInAShortAndALongText() throws {
+        let table = "| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |"
+        let short = "Intro.\n\n\(table)\n\nOutro."
+        let pad = String(repeating: "Plain words to pad the text out. ", count: 700) + "\n\n"
+        let long = pad + short
+        let shortStart = try characterOffset(of: "| a |", in: short)
+        for delta in 0..<table.count {
+            let fromShort = SpeechTextNormalizer.projectForSystemSpeech(short, fromSourceOffset: shortStart + delta)
+            let fromLong = SpeechTextNormalizer.projectForSystemSpeech(long, fromSourceOffset: pad.count + shortStart + delta)
+            XCTAssertEqual(fromShort.text, fromLong.text, "delta \(delta)")
+        }
+    }
 }

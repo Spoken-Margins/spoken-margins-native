@@ -127,16 +127,34 @@ final class SystemSpeechResumeProjectionTests: XCTestCase {
         }
     }
 
-    func testAShortTextIsProjectedFromTheOffsetAsBefore() {
+    /// #4189: a text too short for the memo is projected whole too, and from an offset it takes the tail of that, so
+    /// it reads as a long text does. Projecting only the remaining text read the leftovers of whatever the cut fell
+    /// inside: the tail of a link's address, or the pipes of a table row.
+    func testAShortTextTakesTheTailOfItsWholeProjection() {
         let text = "Intro 😀 read [the reference](https://example.com/path) and finish."
         XCTAssertLessThan(text.utf8.count, SpeechProjectionMemo.minimumBytes)
+        let whole = SpeechTextNormalizer.projectForSystemSpeech(text)
+        let pad = String(repeating: "Plain words to pad the text out. ", count: 700)
+        let long = pad + text
+        XCTAssertGreaterThan(long.utf8.count, SpeechProjectionMemo.minimumBytes)
         for offset in 0...text.count + 2 {
-            XCTAssertEqual(
-                SpeechTextNormalizer.projectForSystemSpeech(text, fromSourceOffset: offset),
-                projectedFromTheOffset(text, offset),
-                "offset \(offset)"
-            )
+            let tail = SpeechTextNormalizer.projectForSystemSpeech(text, fromSourceOffset: offset)
+            XCTAssertEqual(tail.sourceLength, text.count, "offset \(offset)")
+            XCTAssertEqual(tail.text.count, tail.sourceOffsets.count, "offset \(offset)")
+            XCTAssertFalse(tail.text.first?.isWhitespace ?? false, "offset \(offset)")
+            XCTAssertTrue(tail.sourceOffsets.allSatisfy { $0 >= max(0, offset) }, "offset \(offset)")
+            XCTAssertTrue(whole.text.hasSuffix(tail.text), "offset \(offset): \(tail.text)")
+            // The same words a long text says from the same place.
+            let fromLong = SpeechTextNormalizer.projectForSystemSpeech(long, fromSourceOffset: pad.count + offset)
+            XCTAssertEqual(tail.text, fromLong.text, "offset \(offset)")
         }
+    }
+
+    /// A resume from inside a short text's link address starts at the next spoken word, as a long text's does.
+    func testAShortTextResumedInsideALinkAddressSkipsToTheNextSpokenWord() {
+        let text = "Intro read [the reference](https://example.com/path) and finish."
+        let inside = text.distance(from: text.startIndex, to: text.range(of: "example.com")!.lowerBound)
+        XCTAssertEqual(SpeechTextNormalizer.projectForSystemSpeech(text, fromSourceOffset: inside).text, "and finish.")
     }
 
     func testAResumeAtTheEndOrPastItHasNothingToSay() {
