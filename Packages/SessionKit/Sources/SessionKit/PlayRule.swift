@@ -118,8 +118,10 @@ public enum PlayRule {
     /// is unknown on either side is not behind, so an article with a Margin ahead of the place, or with no usable
     /// position, plays in place with no question (#3059). A session at 100%, a finished one or none begins at 0, so
     /// nothing is behind it.
-    public static func marginsBehindSavedPlace(_ entries: [SharedMarginReview.Entry], sessions: [Session]) -> [SharedMarginReview.Entry] {
-        guard let session = resumedSession(in: sessions) else { return [] }
+    public static func marginsBehindSavedPlace(
+        _ entries: [SharedMarginReview.Entry], sessions: [Session], addedAgainAt: Date?
+    ) -> [SharedMarginReview.Entry] {
+        guard let session = resumedSession(in: ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions)) else { return [] }
         if let mediaTimeMs = session.position.mediaTimeMs {
             return entries.filter { $0.mediaTimeMs < mediaTimeMs }
         }
@@ -131,8 +133,8 @@ public enum PlayRule {
     /// The saved place is at the very end: the session Play resumes is at 99% or more, but not at 100%, where Play
     /// begins again (`SessionContinuation.continueResumes`). Resuming there plays the last seconds and finishes, so
     /// "without the Margins" is better said as starting over (#4125).
-    public static func savedPlaceIsAtEnd(sessions: [Session]) -> Bool {
-        (resumedSession(in: sessions)?.completionPercent ?? 0) >= 99
+    public static func savedPlaceIsAtEnd(sessions: [Session], addedAgainAt: Date?) -> Bool {
+        (resumedSession(in: ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions))?.completionPercent ?? 0) >= 99
     }
 
     private static func resumedSession(in sessions: [Session]) -> Session? {

@@ -327,7 +327,7 @@ final class PlayRuleTests: XCTestCase {
             ("no Margins", [session("a", percent: 40, mediaTimeMs: 720_000)], [], []),
         ]
         for (name, sessions, entries, expected) in table {
-            XCTAssertEqual(ids(PlayRule.marginsBehindSavedPlace(entries, sessions: sessions)), expected, name)
+            XCTAssertEqual(ids(PlayRule.marginsBehindSavedPlace(entries, sessions: sessions, addedAgainAt: nil)), expected, name)
         }
     }
 
@@ -337,10 +337,10 @@ final class PlayRuleTests: XCTestCase {
         let unplaced = entry("m2", mediaMs: 5_000, char: nil)
         let atPlace = entry("m3", mediaMs: 5_000, char: 1_000)
         let sessions = [textSession("t", charOffset: 1_000)]
-        let result = PlayRule.marginsBehindSavedPlace([behind, ahead, unplaced, atPlace], sessions: sessions)
+        let result = PlayRule.marginsBehindSavedPlace([behind, ahead, unplaced, atPlace], sessions: sessions, addedAgainAt: nil)
         XCTAssertEqual(result.map(\.marginId), [behind.marginId], "only the one before the offset; unplaced is not behind")
         XCTAssertEqual(
-            PlayRule.marginsBehindSavedPlace([behind], sessions: [textSession("t", charOffset: 0)]), [],
+            PlayRule.marginsBehindSavedPlace([behind], sessions: [textSession("t", charOffset: 0)], addedAgainAt: nil), [],
             "a text session at the start has nothing behind it")
     }
 
@@ -356,7 +356,7 @@ final class PlayRuleTests: XCTestCase {
              [session("a", percent: 40, mediaTimeMs: 720_000, updated: 1), session("b", percent: 99, mediaTimeMs: end, updated: 2)], true),
         ]
         for (name, sessions, expected) in table {
-            XCTAssertEqual(PlayRule.savedPlaceIsAtEnd(sessions: sessions), expected, name)
+            XCTAssertEqual(PlayRule.savedPlaceIsAtEnd(sessions: sessions, addedAgainAt: nil), expected, name)
         }
     }
 

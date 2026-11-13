@@ -62,7 +62,7 @@ extension Gate1AppModel {
         let outcome = PlayRule.decide(PlayRule.Context(
             itemId: itemId, surface: surface,
             nowPlaying: hasActiveSession ? snapshot.itemId.map { PlayRule.NowPlaying(itemId: $0, mediaTimeMs: snapshot.currentMediaTimeMs) } : nil,
-            openItem: PlayRule.OpenItem(id: selectedItem.id, sessions: selectedItem.sessions, addedAgainAt: selectedItem.addedAgainAt),
+            openItem: PlayRule.OpenItem(id: selectedItem.id, sessions: selectedItem.sessions, addedAgainAt: addedAgainAt(forItem: selectedItem.id)),
             libraryRow: libraryItems.first(where: { $0.id == itemId }),
             // Only the Library row asks about Margins, so the item screen skips the read.
             newMargins: surface == .libraryRow ? newSharedMargins(itemId: itemId) : [],

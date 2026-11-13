@@ -49,6 +49,13 @@ public enum ItemFinishedRule {
         }
     }
 
+    /// The later of two readings of one item's re-add stamp. A model holds the stamp in more than one place (the open
+    /// item and the Library row) and a re-add refreshes only the row, so the later one is the true one: the stamp only
+    /// moves forward (#4183).
+    public static func laterAddedAgainAt(_ first: Date?, _ second: Date?) -> Date? {
+        [first, second].compactMap { $0 }.max()
+    }
+
     private static func lastListening(of session: Session) -> Date? {
         session.completedAt ?? [session.updatedAt, session.createdAt].compactMap({ $0 }).max()
     }

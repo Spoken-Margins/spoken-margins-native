@@ -1613,9 +1613,7 @@ final class Gate1AppModel: ObservableObject {
         do {
             let store = try requireStore()
             // An item finished and then added again starts over: `PlayRule` leaves out its old finished sessions (#4183).
-            // The stamp comes from what the model holds, the open item or the Library row, so no extra read runs here.
-            let addedAgainAt = selectedItem.id == id ? selectedItem.addedAgainAt : libraryItems.first(where: { $0.id == id })?.addedAgainAt
-            switch PlayRule.startAction(sessions: try store.loadSessions(itemId: id), addedAgainAt: addedAgainAt) {
+            switch PlayRule.startAction(sessions: try store.loadSessions(itemId: id), addedAgainAt: addedAgainAt(forItem: id)) {
             case .resume(let continuation): resumeSession(continuation)
             case .startNew: startNewSession(id: id)
             }
@@ -2012,8 +2010,23 @@ final class Gate1AppModel: ObservableObject {
         SessionContinuation.preferredContinuationSession(in: sessions)
     }
 
+    /// When the listener last added the item again, from what the model holds, so no read runs: the open item and the
+    /// Library row. A re-add from Safari or a link refreshes only the row, and the open item keeps the stamp it loaded
+    /// with, so the later of the two is the true one (#4183).
+    func addedAgainAt(forItem id: String) -> Date? {
+        ItemFinishedRule.laterAddedAgainAt(
+            selectedItem.id == id ? selectedItem.addedAgainAt : nil,
+            libraryItems.first(where: { $0.id == id })?.addedAgainAt)
+    }
+
+    /// The open item's sessions that still decide its primary button and where Play starts (#4183). The history on the
+    /// screen, `selectedItem.sessions`, keeps every pass.
+    var selectedItemContinuationSessions: [Session] {
+        ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt(forItem: selectedItem.id), sessions: selectedItem.sessions)
+    }
+
     var selectedItemPreferredContinuationSession: Session? {
-        Self.preferredContinuationSession(in: selectedItem.continuationSessions)
+        Self.preferredContinuationSession(in: selectedItemContinuationSessions)
     }
 
     var selectedItemStartupAudioState: NativeTextStartupAudioState {
