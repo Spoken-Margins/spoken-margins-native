@@ -306,12 +306,12 @@ final class LiveSessionController: ObservableObject {
         let photo = session?.margins.first { $0.id == id }?.photo
         session?.margins.removeAll { $0.id == id }
         Task { [files] in await files.forgetMargin(id: id) } // a late copy from the Watch never brings it back
+        save()
         if let photo {
-            // Deleting a Margin deletes its photo file (#2708).
+            // Deleting a Margin deletes its photo file (#2708), after the session no longer names it.
             LiveSessionPhotoImages.forget(photo)
             Task { [files] in await files.removePhoto(photo) }
         }
-        save()
     }
 
     /// Lets go of a session that was saved as a Library item (`Gate1AppModel.saveLiveSession` marks it saved).

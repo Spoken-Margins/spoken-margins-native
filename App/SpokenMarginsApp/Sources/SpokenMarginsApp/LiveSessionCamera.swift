@@ -55,8 +55,8 @@ enum LiveSessionCamera {
 /// a picture reaches `onPicture` only when the listener chose it, and Cancel returns with nothing taken. The document
 /// scanner is not used: its auto-capture and several pages are slow for one quick picture of a page or a board.
 struct LiveSessionCameraPicker: UIViewControllerRepresentable {
-    /// The picture as JPEG data, as the camera made it.
-    let onPicture: (Data) -> Void
+    /// The picture as the camera made it. It is encoded off the main actor, by `LiveSessionPhotoIntake`.
+    let onPicture: (UIImage) -> Void
     let onCancel: () -> Void
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
@@ -74,10 +74,10 @@ struct LiveSessionCameraPicker: UIViewControllerRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        private let onPicture: (Data) -> Void
+        private let onPicture: (UIImage) -> Void
         private let onCancel: () -> Void
 
-        init(onPicture: @escaping (Data) -> Void, onCancel: @escaping () -> Void) {
+        init(onPicture: @escaping (UIImage) -> Void, onCancel: @escaping () -> Void) {
             self.onPicture = onPicture
             self.onCancel = onCancel
         }
@@ -85,11 +85,11 @@ struct LiveSessionCameraPicker: UIViewControllerRepresentable {
         func imagePickerController(
             _ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
         ) {
-            guard let image = info[.originalImage] as? UIImage, let data = image.jpegData(compressionQuality: 0.9) else {
+            guard let image = info[.originalImage] as? UIImage else {
                 onCancel()
                 return
             }
-            onPicture(data)
+            onPicture(image)
         }
 
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
@@ -109,6 +109,24 @@ enum LiveSessionPhotoIntake {
             guard let encoded = try? LiveSessionPhotoEncoder.encode(pictureData) else { return nil }
             return try? store.stage(data: encoded.data, widthPx: encoded.widthPx, heightPx: encoded.heightPx)
         }.value
+    }
+
+    /// The same, from the camera's own picture. The JPEG encoding of a full-size frame happens here, off the main actor,
+    /// not in the picker's delegate. The image is handed over once and not touched again by the caller.
+    static func stage(_ picture: UIImage, in store: LiveSessionPhotoStore) async -> LiveSessionPhotoStore.Staged? {
+        let box = PictureBox(image: picture)
+        return await Task.detached(priority: .userInitiated) { () -> LiveSessionPhotoStore.Staged? in
+            guard let data = box.image.jpegData(compressionQuality: 0.9),
+                  let encoded = try? LiveSessionPhotoEncoder.encode(data)
+            else { return nil }
+            return try? store.stage(data: encoded.data, widthPx: encoded.widthPx, heightPx: encoded.heightPx)
+        }.value
+    }
+
+    /// Carries the camera's picture into the detached task. The picker gives it up when it calls `onPicture`, and nothing
+    /// else holds it, so it is only ever read there.
+    private struct PictureBox: @unchecked Sendable {
+        let image: UIImage
     }
 
     /// The store the app's photos live in: Application Support, with staged files in the temporary folder.

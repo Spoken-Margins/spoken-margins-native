@@ -45,7 +45,7 @@ struct PlaybackMarginRowView: View {
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .accessibilityValue(thumbnail == nil ? "" : LiveSessionPhotoMargin.rowAccessibilityValue)
+            .modifier(OptionalAccessibilityValue(value: thumbnail == nil ? nil : LiveSessionPhotoMargin.rowAccessibilityValue))
             .accessibilityIdentifier(identifier)
             Button(action: play) {
                 Image(systemName: "play.fill")
@@ -60,6 +60,16 @@ struct PlaybackMarginRowView: View {
         .foregroundStyle(.white)
         .padding(.vertical, 10)
         .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.16)).frame(height: 1) }
+    }
+}
+
+/// Adds an accessibility value only when there is one, so a row without a photo is read exactly as before.
+private struct OptionalAccessibilityValue: ViewModifier {
+    let value: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let value { content.accessibilityValue(value) } else { content }
     }
 }
 

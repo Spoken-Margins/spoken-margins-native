@@ -24,7 +24,7 @@ enum LiveSessionPhotoImages {
     }
 
     /// Where a kept photo's file is (a path join; nothing is read). Nil when the reference breaks the rules.
-    static func fileURL(for photo: LiveSessionPhoto) -> URL? {
+    nonisolated static func fileURL(for photo: LiveSessionPhoto) -> URL? {
         LiveSessionFileWorker.shared.root.flatMap { LiveSessionPhotoStore(root: $0).fileURL(for: photo) }
     }
 

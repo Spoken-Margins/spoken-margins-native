@@ -364,7 +364,8 @@ struct LiveSessionView: View, Equatable {
             resume: { controller.resume() },
             record: beginRecording, write: { beginWriting() },
             photo: LiveSessionPhotoMargin.offers(session.kind) ? beginPhoto : nil,
-            addIsDisabled: feed.inputs.recordingNavigationIsLocked,
+            // While a photo waits for its words, Add Margin and Write wait too: the photo belongs to the next one.
+            addIsDisabled: feed.inputs.recordingNavigationIsLocked || writingPhoto != nil || isTakingPhoto,
             photoIsDisabled: !LiveSessionPhotoMargin.isEnabled(
                 isRunning: controller.isRunning, isRecording: controller.isRecordingSpoken,
                 isCapturingPhoto: isTakingPhoto, hasPhotoWaiting: writingPhoto != nil || capture.photo != nil))
@@ -431,7 +432,9 @@ struct LiveSessionView: View, Equatable {
 
     private func startRecordingIfIdle() {
         // A Margin being written is not interrupted by a Lock Screen link: its screen can't give way to a recording.
-        guard controller.isRunning, !controller.isRecordingSpoken, cover != .liveWriting else { return }
+        // A camera that is open, or a photo waiting for its words, keeps its screen: a link can't swap it away (#2708).
+        guard controller.isRunning, !controller.isRecordingSpoken, cover != .liveWriting, cover != .camera,
+              writingPhoto == nil else { return }
         dismissKeyboard()
         pauseSource()
         controller.startSpokenMargin()
@@ -512,7 +515,7 @@ struct LiveSessionView: View, Equatable {
 
     private var cameraScreen: some View {
         LiveSessionCameraPicker(
-            onPicture: { data in Task { await takePicture(data) } },
+            onPicture: { image in Task { await takePicture(image) } },
             onCancel: {
                 isTakingPhoto = false
                 cover = nil
@@ -523,13 +526,31 @@ struct LiveSessionView: View, Equatable {
 
     /// Fits the picture to what a Margin may keep, off the main actor, then opens the recorder with it above. When the
     /// picture can't be used nothing is saved, and the listener can try again or add a Margin without a photo.
+    private func takePicture(_ picture: UIImage) async {
+        guard let store = LiveSessionPhotoIntake.store else { return pictureFailed() }
+        guard let staged = await LiveSessionPhotoIntake.stage(picture, in: store) else { return pictureFailed() }
+        openRecorder(with: staged)
+    }
+
+    /// The fixture a test supplies where the camera would return a picture (DEBUG builds only).
     private func takePicture(_ data: Data) async {
-        guard let store = LiveSessionPhotoIntake.store, let staged = await LiveSessionPhotoIntake.stage(data, in: store) else {
-            isTakingPhoto = false
-            cover = nil
+        guard let store = LiveSessionPhotoIntake.store else { return pictureFailed() }
+        guard let staged = await LiveSessionPhotoIntake.stage(data, in: store) else { return pictureFailed() }
+        openRecorder(with: staged)
+    }
+
+    /// Nothing was saved: the camera closes, and once it has the listener is told and can try again. An alert raised while a
+    /// cover is still going away is dropped, so it waits for the cover to be gone.
+    private func pictureFailed() {
+        isTakingPhoto = false
+        cover = nil
+        Task {
+            try? await Task.sleep(for: .milliseconds(500))
             controller.errorMessage = LiveSessionPhotoMargin.couldNotUseLine
-            return
         }
+    }
+
+    private func openRecorder(with staged: LiveSessionPhotoStore.Staged) {
         isTakingPhoto = false
         // The session may have ended or started a recording while the camera was open.
         guard controller.isRunning, !controller.isRecordingSpoken else {
@@ -539,6 +560,14 @@ struct LiveSessionView: View, Equatable {
         }
         controller.startSpokenMargin(photo: staged, placedAt: photoTappedAt)
         cover = .liveRecording
+    }
+
+    /// Throws away a photo that was waiting for a written Margin that can no longer be opened.
+    private func dropWaitingPhoto() {
+        guard let photo = writingPhoto, cover != .liveWriting else { return }
+        controller.discardPhoto(photo)
+        writingPhoto = nil
+        writingNotice = nil
     }
 
     /// Opens the writing sheet for a photo whose recorder couldn't start, after any alert has been answered.
@@ -553,7 +582,10 @@ struct LiveSessionView: View, Equatable {
     private func beginWriting(startedAt: Date? = nil) {
         // A spoken Margin still recording keeps its screen; a Write link can't swap it for the writing sheet and
         // leave the microphone on.
-        guard controller.isRunning, !controller.isRecordingSpoken else { return }
+        guard controller.isRunning, !controller.isRecordingSpoken, cover != .camera else {
+            dropWaitingPhoto() // nothing will take it now, so it is not left to the next launch's sweep
+            return
+        }
         // A Margin already being written keeps its words and the moment it was begun: a second Write link must not
         // re-date it.
         guard cover != .liveWriting else { return }
