@@ -43,6 +43,8 @@ public struct LibraryItemRow: Identifiable, Hashable, Sendable {
     public var textCharacterCount: Int?  // a text item's length for its time estimate (#305); nil for recorded audio
     /// Margins other people shared on this item, and how many of them the listener hasn't heard (#1792).
     public var sharedMargins = SharedMarginTally.none
+    /// When a friend's Margins that count last arrived on this item (#4101); Recently Added reads it. Nil when none.
+    public var friendMarginsArrivedAt: Date?
     /// How many Margins the listener has made on this item (#2394), so a row can be cleared without opening it to look.
     public var marginCount = 0
 

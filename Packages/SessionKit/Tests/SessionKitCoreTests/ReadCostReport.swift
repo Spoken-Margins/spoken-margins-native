@@ -54,6 +54,7 @@ struct ReadCostReport {
             ("portableListeningMapProposalIds(mapped)", { _ = try store.portableListeningMapProposalIds(itemId: mapped) }),
             ("loadImportedCommentaryLayers()", { _ = try store.loadImportedCommentaryLayers() }),
             ("loadSharedMarginTallies()", { _ = try store.loadSharedMarginTallies() }),
+            ("loadFriendMarginsArrivals()", { _ = try store.loadFriendMarginsArrivals() }),
             ("loadPodcastDownloads()", { _ = try store.loadPodcastDownloads() }),
             ("loadPreparedAudioManifests()", { _ = try store.loadPreparedAudioManifests() }),
             ("loadPreparedAudioManifestSummaries()", { _ = try store.loadPreparedAudioManifestSummaries() }),
