@@ -2196,8 +2196,10 @@ public final class SessionEngine {
             session.currentTargetType = stored.targetType == .assistantTurn ? .assistantTurnTTS : .summaryTurnTTS
             session.currentTargetId = turn.id
             session.phase = stored.targetType == .assistantTurn ? .aiResponsePlayback : .summaryPlayback
+            // A place in a generated turn is not progress through the item: a reply or summary keeps the item's
+            // percent while it plays, as every other turn path does, so a Margin near a turn's end can't finish
+            // the item (#4205).
             session.position = Position(charOffset: stored.anchor.startChar, chapterId: nil)
-            session.completionPercent = percent(for: stored.anchor.startChar, text: text)
         }
         return InterjectionAnchorPlaybackPlan(originalSession: originalSession, session: session, item: playingItem, map: map)
     }
