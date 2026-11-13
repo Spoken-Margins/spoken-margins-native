@@ -123,7 +123,10 @@ public enum PlayRule {
     ) -> [SharedMarginReview.Entry] {
         guard let session = resumedSession(in: ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions)) else { return [] }
         if let mediaTimeMs = session.position.mediaTimeMs {
-            return entries.filter { $0.mediaTimeMs < mediaTimeMs }
+            // Play at the end of the episode has nothing left to cross, so the Margins that play after the others
+            // are behind it too, not skipped (#3789).
+            let atEnd = session.completionPercent >= ItemFinishedRule.listenedPercent
+            return entries.filter { atEnd && $0.playsAfterOthers ? true : SharedMarginReview.entriesBehind([$0], placeMs: mediaTimeMs).count == 1 }
         }
         let charOffset = session.position.charOffset
         guard charOffset > 0 else { return [] }

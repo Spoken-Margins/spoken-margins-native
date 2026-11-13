@@ -135,7 +135,8 @@ public enum SharedMarginReview {
     /// place would be skipped, and the review is the way to hear it. With no place given, all of them count.
     public static func entriesBehind(_ entries: [Entry], placeMs: Int?) -> [Entry] {
         guard let placeMs else { return entries } // the place isn't known, so none can be ruled out
-        return entries.filter { $0.mediaTimeMs < placeMs }
+        // A Margin that plays after the others waits at the end, so a place at the end is past it too (#3789).
+        return entries.filter { $0.playsAfterOthers ? $0.mediaTimeMs <= placeMs : $0.mediaTimeMs < placeMs }
     }
 
     /// The text of the offer shown before Continue: how many Margins and whose.

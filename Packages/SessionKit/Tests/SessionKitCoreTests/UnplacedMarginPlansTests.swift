@@ -154,6 +154,44 @@ final class UnplacedMarginPlansTests: XCTestCase {
         XCTAssertNil(SharedMarginPlacementWording.pinnedCardLine(for: .afterOthers))
     }
 
+    /// #3789: the open item's length decides "past the end", so a sender time beyond it plays after the others, and
+    /// a whole-episode Play left at the end offers those Margins instead of skipping them.
+    func testTheItemsLengthDecidesPastTheEndAndPlayAtTheEndOffersThoseMargins() {
+        let end = 1_800_000
+        let session = Session(
+            id: "s", itemId: "item", updatedAt: Date(timeIntervalSince1970: 1), status: "in_progress", phase: .itemPlayback,
+            currentTargetType: .itemTextTTS, currentTargetId: "item",
+            position: Position(charOffset: 0, mediaTimeMs: end - 5_000), completionPercent: 99, playbackRate: 1)
+        var midway = session
+        midway.position = Position(charOffset: 0, mediaTimeMs: 600_000)
+        midway.completionPercent = 33
+        let table: [(String, Int?, Int?, [Session], [String])] = [
+            ("sender time past the length, at the end", end + 60_000, end, [session], ["m"]),
+            ("sender time past the length, mid-way: waits at the end", end + 60_000, end, [midway], []),
+            ("sender time inside the length is placed in place, not after the others", 90_000, end, [session], ["m"]),
+            ("length unknown: the sender time is trusted", end + 60_000, nil, [midway], []),
+        ]
+        for (name, senderMs, duration, sessions, behind) in table {
+            let entries = SharedMarginReview.entries(
+                layers: [layer(finishedPass: true)], records: ["layer": [margin(evidence: .unresolved, sender: senderMs)]],
+                durationMs: duration)
+            XCTAssertEqual(entries.map(\.playsAfterOthers), [(senderMs ?? 0) > (duration ?? .max)], name)
+            XCTAssertEqual(PlayRule.marginsBehindSavedPlace(entries, sessions: sessions, addedAgainAt: nil).map(\.interjection.id), behind, name)
+        }
+    }
+
+    /// #3788: the "N Margins" pill gives way only while the friend's intro shows. The intro exists exactly when an
+    /// unheard friend Margin does, so a listener with their own Margins and none waiting keeps the count.
+    func testTheFriendIntroReplacesTheMarginCountOnlyWhileItShows() {
+        let waiting = SharedMarginReview.entries(layers: [layer(finishedPass: true)], records: ["layer": [margin(evidence: .unresolved, sender: 5_000)]])
+        var heard = margin(evidence: .unresolved, sender: 5_000)
+        heard.firstHeardAt = Date(timeIntervalSince1970: 1)
+        let afterHearing = SharedMarginReview.entries(layers: [layer(finishedPass: true)], records: ["layer": [heard]])
+        XCTAssertNotNil(FriendMarginsIntro(unheardFriendMargins: waiting.map(\.waitingMargin)), "a Margin waits: the intro counts")
+        XCTAssertNil(FriendMarginsIntro(unheardFriendMargins: afterHearing.map(\.waitingMargin)), "all heard: the pill returns")
+        XCTAssertNil(FriendMarginsIntro(unheardFriendMargins: []), "the listener's own Margins alone: the pill stays")
+    }
+
     private func layer(finishedPass: Bool, type: SharedItemType = .podcast) -> ImportedCommentaryLayer {
         var value = ImportedCommentaryLayer(id: "layer", itemId: "item", packageDigest: "d", packageId: "p",
                                             itemIdentity: SharedItemIdentity(itemType: type, title: "Episode"),
