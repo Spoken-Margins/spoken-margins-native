@@ -38,6 +38,11 @@ export interface Settings {
    * downloaded while it is not 'on'.
    */
   transcription: '' | 'on' | 'off';
+  /**
+   * The name the listener typed in the Share panel, for the packets they send. Optional and empty until typed; kept in
+   * this browser and written only into a shared file (#4107). A backup never carries it.
+   */
+  senderName: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = Object.freeze({
@@ -47,6 +52,7 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
   persistAsked: false,
   lastBackupAt: '',
   transcription: '',
+  senderName: '',
 });
 
 export interface Snapshot {

@@ -33,3 +33,23 @@ export function sendRefusedNextStep(offer: ReplyBackOffer | undefined): string {
   const whom = offer ? friendNames(offer.friendLabels) : undefined;
   return `This browser wouldn’t open its share sheet. Tap Save as a file, then send the file${whom ? ` to ${whom}` : ''} in a message.`;
 }
+
+/** The most characters of a sender's name a packet carries (`LIMITS.senderCharacters` in the writer, the app's own limit). */
+export const SENDER_NAME_LIMIT = 120;
+
+/**
+ * The name to put on a shared file, from what the listener typed in "Your name (optional)": trimmed, and nothing when it
+ * is blank, so a packet is signed only on purpose (#4107). The writer trims and cuts it to the same length again.
+ */
+export function senderForPacket(raw: string): string | undefined {
+  const name = raw.trim();
+  return name === '' ? undefined : name;
+}
+
+/**
+ * The line under "Your name (optional)": who it is for and where it is kept. It names the friends the way the rest of
+ * the Share panel does ("Cole", "Cole and Sam"), and "your friend" when there is no one to name yet.
+ */
+export function senderNameHint(friendLabels: readonly string[]): string {
+  return `So ${friendNames(friendLabels)} ${friendLabels.length > 1 ? 'know' : 'knows'} who these are from. Kept in this browser.`;
+}

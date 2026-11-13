@@ -13,7 +13,7 @@ import {
   allPicked, candidateLabel, pickAll, pickedMargins, preselected, nowCard, replyBackOffer, savedFileNextStep, selectAllLabel, whyNotShared,
 } from '../logic/reply-back.ts';
 import { plainError } from '../logic/messages.ts';
-import { sendFile, sendRefusedNextStep } from '../logic/share-send.ts';
+import { SENDER_NAME_LIMIT, senderForPacket, senderNameHint, sendFile, sendRefusedNextStep } from '../logic/share-send.ts';
 import { NotSavedError } from '../logic/storage.ts';
 import { shareNativePacket } from '../logic/native-packets.ts';
 import { SKIP_SECONDS, usePlayer } from '../player.tsx';
@@ -398,6 +398,14 @@ function canSendFiles(): boolean {
  */
 function ShareMargins({ episode, margins, show }: { episode: Episode; margins: Margin[]; show: Show | undefined }) {
   const { toast } = useUi();
+  const data = useData();
+  // "Your name (optional)": what the friend sees on the file (#4107). Typed once and kept in this browser; empty signs nothing.
+  const [typedName, setTypedName] = useState<string>();
+  const name = typedName ?? data.settings.senderName;
+  const keepName = async () => {
+    const kept = senderForPacket(name) ?? '';
+    if (kept !== data.settings.senderName) await data.setSetting('senderName', kept);
+  };
   const [busy, setBusy] = useState(false);
   const [sendable] = useState(canSendFiles);
   // Inside the Android app (#3009) one button writes the file and opens Android's share sheet, which can also save it.
@@ -422,7 +430,9 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const share = async (how: 'save' | 'send') => {
     setBusy(true);
     try {
-      const written = await services.packets.writePacket(episode, toWrite, show);
+      // The typed name goes on this file whether or not the browser could keep it; a failed save has already said so.
+      void keepName();
+      const written = await services.packets.writePacket(episode, toWrite, show, senderForPacket(name));
       if (bridge) {
         if ((await shareNativePacket(bridge, written.bytes, written.fileName, episode.title)) === 'cancelled') return;
         const count = written.included.length === 1 ? '1 Margin' : `${written.included.length} Margins`;
@@ -488,6 +498,20 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
           </ul>
         </fieldset>
       )}
+      <div className="share-name">
+        <label htmlFor="share-name">Your name (optional)</label>
+        <input
+          id="share-name"
+          type="text"
+          maxLength={SENDER_NAME_LIMIT}
+          autoComplete="nickname"
+          value={name}
+          aria-describedby="share-name-hint"
+          onChange={(event) => setTypedName(event.target.value)}
+          onBlur={() => void keepName()}
+        />
+        <p id="share-name-hint" className="muted">{senderNameHint(offer?.friendLabels ?? [])}</p>
+      </div>
       <p className="muted">Share them as a file. Your friend opens it in Spoken Margins and hears each one at its moment.</p>
       {/* The live region stays mounted and only its words change, so a screen reader announces them. */}
       <div role="status" id="share-why-not">

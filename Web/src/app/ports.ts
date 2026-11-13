@@ -77,8 +77,11 @@ export interface PacketWritten {
 export interface PacketPort {
   /** Opens a `.spokenmargins` file. Throws a `PacketError` with a plain message when it can't. */
   readPacket(bytes: Uint8Array, fileName?: string): Promise<PacketRead>;
-  /** Writes one episode's Margins as a `.spokenmargins` file the iPhone app imports. */
-  writePacket(episode: Episode, margins: readonly Margin[], show?: Show): Promise<PacketWritten>;
+  /**
+   * Writes one episode's Margins as a `.spokenmargins` file the iPhone app imports. `sender` is the name the friend
+   * sees on it; none leaves the file unsigned.
+   */
+  writePacket(episode: Episode, margins: readonly Margin[], show?: Show, sender?: string): Promise<PacketWritten>;
 }
 
 /**

@@ -6,6 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { devices, expect, test, type BrowserContext, type Page, type Request } from '@playwright/test';
+import { readPacket } from '../src/packet/read.ts';
 import { seconds, serveAudio, serveFixtures, shot } from './fixtures.ts';
 
 const STUB = 'http://127.0.0.1:4174';
@@ -184,6 +185,43 @@ test('the reply list has one Select all / Select none button, and none for a sin
   await expect(save).toBeEnabled();
   await reply.getByRole('checkbox', { name: /Second answer\./ }).uncheck();
   await expect(reply.getByRole('button', { name: 'Select all' })).toBeVisible();
+  await context.close();
+});
+
+test('the name typed in Share goes on the file, is kept for next time, and a blank one signs nothing (#4107)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  const openShare = async () => {
+    await page.goto(LINK);
+    await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+    return page.getByRole('dialog', { name: EPISODE });
+  };
+  const savedFile = async (playing: Page) => {
+    const downloading = page.waitForEvent('download');
+    await playing.getByRole('button', { name: 'Save as a file' }).click();
+    return readPacket(new Uint8Array(readFileSync((await (await downloading).path()) as string)));
+  };
+  let playing = await openShare();
+  await playing.getByRole('button', { name: 'Write a Margin' }).click();
+  await playing.getByLabel(/Your Margin at/).fill('My answer.');
+  await playing.getByRole('button', { name: 'Save Margin' }).click();
+  // The field is empty and says who it is for and where the name is kept.
+  const name = playing.getByLabel('Your name (optional)');
+  await expect(name).toHaveValue('');
+  await expect(playing.locator('#share-name-hint')).toHaveText('So Web fixture knows who these are from. Kept in this browser.');
+  await expect((await savedFile(playing)).sender).toBeUndefined();
+  // Typed once, it signs the file.
+  await name.fill('  Sam ');
+  expect((await savedFile(playing)).sender).toBe('Sam');
+  // And it is there the next time, in a fresh page of the same browser.
+  await page.reload();
+  playing = await openShare();
+  await expect(playing.getByLabel('Your name (optional)')).toHaveValue('Sam');
+  // Clearing it signs nothing again. A Margin from before this page opened starts unticked, so tick it.
+  await playing.getByRole('checkbox', { name: /My answer\./ }).check();
+  await playing.getByLabel('Your name (optional)').fill('');
+  await playing.getByLabel('Your name (optional)').blur();
+  expect((await savedFile(playing)).sender).toBeUndefined();
   await context.close();
 });
 

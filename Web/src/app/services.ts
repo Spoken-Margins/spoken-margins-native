@@ -49,8 +49,8 @@ const packets: PacketPort = {
       textMarginCount: read.textMargins.length,
     };
   },
-  async writePacket(episode, margins, show) {
-    const written = await writePacket(episode, margins, show ? { show } : {});
+  async writePacket(episode, margins, show, sender) {
+    const written = await writePacket(episode, margins, { ...(show && { show }), ...(sender && { sender }) });
     return {
       bytes: written.bytes,
       fileName: written.fileName,

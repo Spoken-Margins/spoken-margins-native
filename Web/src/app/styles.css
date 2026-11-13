@@ -1319,6 +1319,25 @@ button:disabled {
   min-height: 44px;
 }
 
+/* "Your name (optional)" above the file's buttons (#4107). */
+.share-name {
+  display: grid;
+  gap: 6px;
+}
+
+.share-name label {
+  font-weight: 600;
+}
+
+.share-name input {
+  min-height: 44px;
+  min-width: 0;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1.5px solid var(--field);
+  background: var(--surface);
+}
+
 .share-actions {
   display: flex;
   flex-wrap: wrap;
