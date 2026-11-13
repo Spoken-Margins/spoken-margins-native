@@ -11,6 +11,8 @@ public struct LibraryReadSnapshot: Sendable {
     public var structuredDocumentItemIds: Set<String> = []
     /// Margins other people shared, counted per item (#1792). Items with none are absent.
     public var sharedMarginsByItemId: [String: SharedMarginTally] = [:]
+    /// Per item, when a friend's Margins that count last arrived (#4101). Items with none are absent.
+    public var friendMarginsArrivedAtByItemId: [String: Date] = [:]
     /// The listener's own active Margins, counted per item (#2394). Items with none are absent.
     public var marginCountsByItemId: [String: Int] = [:]
 
@@ -26,8 +28,10 @@ public struct LibraryReadSnapshot: Sendable {
         downloads: [PodcastDownloadRecord],
         structuredDocumentItemIds: Set<String> = [],
         sharedMarginsByItemId: [String: SharedMarginTally] = [:],
-        marginCountsByItemId: [String: Int] = [:]
+        marginCountsByItemId: [String: Int] = [:],
+        friendMarginsArrivedAtByItemId: [String: Date] = [:]
     ) {
+        self.friendMarginsArrivedAtByItemId = friendMarginsArrivedAtByItemId
         self.items = items
         self.sessions = sessions
         self.manifests = manifests
@@ -46,11 +50,13 @@ public struct LibraryReadSnapshot: Sendable {
         downloads: [PodcastDownloadRecord],
         structuredDocumentItemIds: Set<String> = [],
         sharedMarginsByItemId: [String: SharedMarginTally] = [:],
-        marginCountsByItemId: [String: Int] = [:]
+        marginCountsByItemId: [String: Int] = [:],
+        friendMarginsArrivedAtByItemId: [String: Date] = [:]
     ) {
         self.init(
             items: items.map(LibraryItemSummary.init), sessions: sessions, manifests: manifests, jobs: jobs,
             downloads: downloads, structuredDocumentItemIds: structuredDocumentItemIds,
-            sharedMarginsByItemId: sharedMarginsByItemId, marginCountsByItemId: marginCountsByItemId)
+            sharedMarginsByItemId: sharedMarginsByItemId, marginCountsByItemId: marginCountsByItemId,
+            friendMarginsArrivedAtByItemId: friendMarginsArrivedAtByItemId)
     }
 }

@@ -27,11 +27,11 @@ final class SharedMarginTallyTests: XCTestCase {
         XCTAssertEqual(SharedMarginTally(total: -1, new: -1), .none)
     }
 
-    private func layer(_ id: String, item: String?, enabled: Bool = true, deleted: Bool = false) -> ImportedCommentaryLayer {
+    private func layer(_ id: String, item: String?, enabled: Bool = true, deleted: Bool = false, importedAt: Date? = nil) -> ImportedCommentaryLayer {
         ImportedCommentaryLayer(
             id: id, itemId: item, packageDigest: "digest-\(id)", packageId: "package-\(id)",
             itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode", durationMs: 1_800_000),
-            importedAt: imported, isEnabled: enabled, deletedAt: deleted ? imported : nil
+            importedAt: importedAt ?? imported, isEnabled: enabled, deletedAt: deleted ? imported : nil
         )
     }
 
@@ -129,6 +129,59 @@ final class SharedMarginTallyTests: XCTestCase {
         // The primary key is (kind, id); SQLite names its index sqlite_autoindex_records_1.
         XCTAssertTrue(layerSteps.contains { $0.hasPrefix("SEARCH layer") && $0.contains("(kind=? AND id=?)") }, "plan: \(plan)")
         XCTAssertFalse(layerSteps.contains { $0.hasPrefix("SCAN") }, "plan: \(plan)")
+    }
+
+    /// #4101: Recently Added brings an item forward by when a friend's Margins arrived. Real SQLite, one grouped read.
+    func testTheStoreReportsWhenTheNewestFriendMarginsArrivedPerItem() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "shared-arrival-\(UUID().uuidString).sqlite").path
+        defer { for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) } }
+        let store = try SQLiteSessionStore(path: path)
+        for id in ["a", "b", "c", "d", "e"] { try store.saveItem(item(id)) }
+        XCTAssertEqual(try store.loadFriendMarginsArrivals(), [:], "nothing shared yet")
+        let ben = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        func at(_ id: String, item: String?, seconds: TimeInterval, sender: String? = nil, deleted: Bool = false) -> ImportedCommentaryLayer {
+            var layer = self.layer(id, item: item, deleted: deleted, importedAt: imported.addingTimeInterval(seconds))
+            layer.senderId = sender
+            return layer
+        }
+        // a: two friends, the later one counts. b: only a deleted layer. c: Ben, who is later hidden. d: a layer with no Margins. e: no item.
+        _ = try store.importCommentaryLayer(at("ann", item: "a", seconds: 10), interjections: [margin("m1", layer: "ann")])
+        _ = try store.importCommentaryLayer(at("kim", item: "a", seconds: 500), interjections: [margin("m2", layer: "kim")])
+        _ = try store.importCommentaryLayer(at("gone", item: "b", seconds: 900, deleted: true), interjections: [margin("m3", layer: "gone")])
+        _ = try store.importCommentaryLayer(at("ben", item: "c", seconds: 700, sender: ben), interjections: [margin("m4", layer: "ben")])
+        _ = try store.importCommentaryLayer(at("empty", item: "d", seconds: 800), interjections: [])
+        _ = try store.importCommentaryLayer(at("lost", item: nil, seconds: 950), interjections: [margin("m5", layer: "lost")])
+
+        XCTAssertEqual(try store.loadFriendMarginsArrivals(), [
+            "a": imported.addingTimeInterval(500), "c": imported.addingTimeInterval(700)
+        ])
+        var hidden = HiddenSenders()
+        hidden.hide(ben)
+        XCTAssertEqual(try store.loadFriendMarginsArrivals(hiding: hidden), ["a": imported.addingTimeInterval(500)],
+                       "a hidden sender's arrival moves nothing")
+        hidden.hideMargin("m2")
+        XCTAssertEqual(try store.loadFriendMarginsArrivals(hiding: hidden), ["a": imported.addingTimeInterval(10)],
+                       "a layer whose Margin is hidden no longer counts; the earlier friend does")
+    }
+
+    func testAFinishedOldItemThatGetsAFriendsPacketComesFirstInTheDefaultLibrary() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "shared-arrival-lib-\(UUID().uuidString).sqlite").path
+        defer { for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) } }
+        let store = try SQLiteSessionStore(path: path)
+        var october = item("october"), fresh = item("fresh")
+        october.createdAt = imported.addingTimeInterval(-86_400 * 40)
+        october.sourceCompletedAt = imported.addingTimeInterval(-86_400 * 30)
+        fresh.createdAt = imported.addingTimeInterval(-3_600)
+        try store.saveItem(october)
+        try store.saveItem(fresh)
+        _ = try store.importCommentaryLayer(layer("sam", item: "october"), interjections: [margin("m1", layer: "sam")])
+
+        let snapshot = try LibraryReadSnapshot.read(store: store)
+        let rows = LibraryRowBuilder.rows(from: snapshot, context: StartupAudioContext(hasAcceptedCurrentTerms: false, hasSupertonicVoice: false))
+        XCTAssertEqual(rows.first { $0.id == "october" }?.friendMarginsArrivedAt, imported)
+        XCTAssertNil(rows.first { $0.id == "fresh" }?.friendMarginsArrivedAt)
+        let shown = LibraryQueryEngine.visibleLibraryItems(rows, query: LibraryQuery(listeningState: .unfinished, sort: .recentlyAdded))
+        XCTAssertEqual(shown.map(\.id), ["october", "fresh"], "finished, but unheard friend Margins keep it listed, and arriving puts it first")
     }
 
     func testTheRowBuilderPutsTheTallyOnTheItemsRow() {

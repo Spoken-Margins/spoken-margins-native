@@ -8,6 +8,7 @@ extension LibraryReadSnapshot {
                  manifests: store.loadPreparedAudioManifestSummaries(), jobs: store.loadAudioPreparationJobs(),
                  downloads: store.loadPodcastDownloads(), structuredDocumentItemIds: store.loadStructuredDocumentItemIds(),
                  sharedMarginsByItemId: store.loadSharedMarginTallies(hiding: hiddenSenders),
-                 marginCountsByItemId: store.loadActiveMarginCountsByItem())
+                 marginCountsByItemId: store.loadActiveMarginCountsByItem(),
+                 friendMarginsArrivedAtByItemId: store.loadFriendMarginsArrivals(hiding: hiddenSenders))
     }
 }
