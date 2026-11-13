@@ -730,7 +730,7 @@ struct LiveSessionView: View, Equatable {
 
     /// The ended session's choices, at the top of the Session pane. Resume is in the dock, where End was.
     private func finishCard(_ session: LiveSession) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(session.isQuick == true ? "Quick session" : "Session ended").font(.headline).accessibilityAddTraits(.isHeader)
             ForEach(Array(LiveSessionPlaceMap.conflicts(in: session).enumerated()), id: \.offset) { _, conflict in
                 Text(conflict.description()).font(.caption).foregroundStyle(AppColors.watchSecondary)
@@ -771,7 +771,7 @@ struct LiveSessionView: View, Equatable {
             .disabled(finish.isSaving)
             Button("Discard Session", role: .destructive) { confirmsDiscard = true }
         }
-        .padding(16)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(AppColors.watchControl, in: RoundedRectangle(cornerRadius: 14))
     }

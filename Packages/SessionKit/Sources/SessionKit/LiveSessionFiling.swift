@@ -269,15 +269,16 @@ public enum LiveSessionFiling {
             }
         }
         quick = quick.filter { session in
-            if session.margins.isEmpty { removed.append(session.id) }
-            return !session.margins.isEmpty
+            // A quick session the listener named is kept even when emptied, so the name is never lost (#4079).
+            if session.margins.isEmpty, !session.isRenamedQuick { removed.append(session.id); return false }
+            return true
         }
         for index in quick.indices { quick[index].fitQuickSpan() }
 
         // Overlapping quick sessions.
         var merged: [LiveSession] = []
         for session in quick {
-            if let last = merged.indices.last, session.startedAt <= (merged[last].endedAt ?? merged[last].startedAt) {
+            if let last = merged.indices.last, !session.isRenamedQuick, session.startedAt <= (merged[last].endedAt ?? merged[last].startedAt) {
                 for margin in session.margins where !merged[last].margins.contains(where: { $0.id == margin.id }) {
                     merged[last].add(margin)
                 }
@@ -301,6 +302,12 @@ extension LiveSession {
         margins.append(added)
         margins.sort { $0.markedAt < $1.markedAt }
         if isQuick == true { fitQuickSpan() }
+    }
+
+    /// A quick session whose title the listener changed from the default (#4079). Tidying never removes one.
+    var isRenamedQuick: Bool {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return isQuick == true && !trimmed.isEmpty && trimmed != "Quick session"
     }
 
     /// A quick session runs from its first Margin to its last.

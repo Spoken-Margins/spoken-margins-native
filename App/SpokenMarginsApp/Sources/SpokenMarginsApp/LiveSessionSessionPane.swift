@@ -2,7 +2,7 @@ import SessionKit
 import SwiftUI
 
 /// The Session pane of the live session screen (#3491): what the session is. Kind, name, a description, the time it
-/// started, and where the source is now. The kind and name change only while it runs; the description and the start
+/// started, and where the source is now. The kind changes only while it runs; the name, the description and the start
 /// time stay editable until the session is saved. While it runs, words are kept when the listener finishes with a
 /// field, not on every keystroke, so the Lock Screen card isn't rewritten as they type; after it ends, the
 /// description is kept on every change, so saving the session never misses it.
@@ -29,12 +29,16 @@ struct LiveSessionSessionPane<Header: View>: View {
     @State private var clockDraft = ""
     @State private var startedDraft = Date()
     @State private var loadedFor: String?
+    @State private var showsDetails = false
+
+    /// The name stays editable after the session ends, until it is saved as a Library item (#4079).
+    private var canEditTitle: Bool { session.savedItemId == nil }
 
     private var shownStart: Date { session.statedStartedAt ?? session.startedAt }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 10) {
                 header()
                 card {
                     Picker("Kind", selection: Binding(get: { session.kind }, set: setKind)) {
@@ -46,21 +50,32 @@ struct LiveSessionSessionPane<Header: View>: View {
                     AppTextField(session.kind == .meeting ? "Meeting name" : "Title", text: $titleDraft)
                         .textFieldStyle(.roundedBorder)
                         .focused($focus, equals: .title)
-                        .disabled(!isRunning)
+                        .disabled(!canEditTitle)
                         .onSubmit(commit)
                         .accessibilityIdentifier("liveSession.session.title")
-                    AppTextField("What is this about? (optional)", text: $descriptionDraft, axis: .vertical)
-                        .lineLimit(1...4)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($focus, equals: .description)
-                        .accessibilityIdentifier("liveSession.session.description")
-                    DatePicker(
-                        "Started at", selection: $startedDraft, in: ...startLimit,
-                        displayedComponents: [.date, .hourAndMinute]
-                    )
-                    .accessibilityIdentifier("liveSession.session.startedAt")
-                    Text("If you pressed Start late, say when it really began. The clock and your Margins' places don't change.")
-                        .font(.caption).foregroundStyle(AppColors.watchSecondary)
+                    // The optional description and the stated start fold into one row, open when a description exists, so the
+                    // tab fits an iPhone without scrolling (#4079).
+                    DisclosureGroup(isExpanded: $showsDetails) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            AppTextField("What is this about? (optional)", text: $descriptionDraft, axis: .vertical)
+                                .lineLimit(1...4)
+                                .textFieldStyle(.roundedBorder)
+                                .focused($focus, equals: .description)
+                                .accessibilityIdentifier("liveSession.session.description")
+                            DatePicker(
+                                "Started at", selection: $startedDraft, in: ...startLimit,
+                                displayedComponents: [.date, .hourAndMinute]
+                            )
+                            .accessibilityIdentifier("liveSession.session.startedAt")
+                            Text("If you pressed Start late, say when it really began. The clock and your Margins' places don't change.")
+                                .font(.caption).foregroundStyle(AppColors.watchSecondary)
+                        }
+                        .padding(.top, 6)
+                    } label: {
+                        Text("Description and start time").font(.subheadline)
+                    }
+                    .tint(.white)
+                    .accessibilityIdentifier("liveSession.session.details")
                 }
                 card {
                     if session.kind != .paper && isRunning {
@@ -100,7 +115,7 @@ struct LiveSessionSessionPane<Header: View>: View {
                 }
             }
             .padding(.horizontal, 22)
-            .padding(.vertical, 18)
+            .padding(.vertical, 10)
             .frame(maxWidth: 620)
             .frame(maxWidth: .infinity)
         }
@@ -114,6 +129,7 @@ struct LiveSessionSessionPane<Header: View>: View {
         // Once the session has ended, the Lock Screen has no card to rewrite and the buttons that save it (Save as
         // Notes, Line Up) are one tap away from a field still holding focus: a tap on a button doesn't end the
         // field's editing, so words are kept as they are typed. While it runs they wait for the field to be left (#3491).
+        .onChange(of: titleDraft) { _, text in if !isRunning && canEditTitle { setTitle(text) } }
         .onChange(of: descriptionDraft) { _, text in if !isRunning { setDescription(text) } }
         .onChange(of: isRunning) { _, running in if !running { commit() } }
         .onChange(of: startedDraft) { _, date in
@@ -128,8 +144,8 @@ struct LiveSessionSessionPane<Header: View>: View {
     private var startLimit: Date { min(session.endedAt ?? .distantFuture, Date()) }
 
     private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12, content: content)
-            .padding(16)
+        VStack(alignment: .leading, spacing: 8, content: content)
+            .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(AppColors.watchControl, in: RoundedRectangle(cornerRadius: 14))
     }
@@ -139,16 +155,15 @@ struct LiveSessionSessionPane<Header: View>: View {
         loadedFor = session.id
         titleDraft = session.title
         descriptionDraft = session.sessionDescription ?? ""
+        showsDetails = !descriptionDraft.isEmpty
         whereDraft = session.startWhere ?? ""
         startedDraft = shownStart
     }
 
     private func commit() {
         guard loadedFor == session.id else { return }
-        if isRunning {
-            setTitle(titleDraft)
-            setStartWhere(whereDraft)
-        }
+        if canEditTitle { setTitle(titleDraft) }
+        if isRunning { setStartWhere(whereDraft) }
         setDescription(descriptionDraft)
     }
 
