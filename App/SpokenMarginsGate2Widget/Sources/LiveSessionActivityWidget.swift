@@ -5,7 +5,8 @@ import WidgetKit
 
 /// The live session's Lock Screen and Dynamic Island (#2481): the session clock, the number of Marks, a Mark button
 /// that notes this moment without opening the app, and Write a Margin and Speak a Margin, which open the live
-/// session (#2833). Tapping anywhere else opens it too.
+/// session (#2833), and for a paper book or other session a Photo capsule that opens it on the camera (#2708).
+/// Tapping anywhere else opens it too.
 ///
 /// After End the same card stays for the Resume window as "Ended 14:05 · Resume" (#2883): the time it stopped, and a
 /// Resume button that reopens the session. When the window closes the system marks the card stale and the button goes.
@@ -45,7 +46,7 @@ struct LiveSessionActivityWidget: Widget {
                     } else {
                         VStack(spacing: 8) {
                             LiveSessionMarkButton()
-                            LiveSessionMarginLinks()
+                            LiveSessionMarginLinks(offersPhoto: context.state.offersPhoto)
                         }
                     }
                 }
@@ -143,7 +144,7 @@ struct LiveSessionActivityCard: View {
                 }
             }
             if !state.isRecordingNow, LiveSessionCardLayout.showsMarginLinks(at: chosenTextSize) {
-                LiveSessionMarginLinks()
+                LiveSessionMarginLinks(offersPhoto: state.offersPhoto)
             }
         }
     }
@@ -224,25 +225,26 @@ private struct LiveSessionFinishButton: View {
 }
 
 /// Write a Margin and Speak a Margin: each opens Spoken Margins on the live session, with the written field ready
-/// or the spoken Margin already recording (#2833).
+/// or the spoken Margin already recording (#2833). A session that takes Photo Margins adds Photo, which opens it on the
+/// camera, and the three share the row with short labels (`LiveSessionMarginLink`, #2708).
 ///
 /// At the larger text sizes the row is dropped (`LiveSessionCardLayout`). This check is the one the Dynamic Island
 /// relies on; the Lock Screen card makes the same check first, so its stack leaves no gap where the row was.
 private struct LiveSessionMarginLinks: View {
+    let offersPhoto: Bool?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         if LiveSessionCardLayout.showsMarginLinks(at: dynamicTypeSize) {
             HStack(spacing: 10) {
-                link("Write a Margin", systemImage: "square.and.pencil", action: .write)
-                link("Speak a Margin", systemImage: "mic.fill", action: .speak)
+                ForEach(LiveSessionMarginLink.links(offersPhoto: offersPhoto), id: \.action.rawValue) { link($0) }
             }
         }
     }
 
-    private func link(_ title: String, systemImage: String, action: LiveSessionDeepLink.Action) -> some View {
-        Link(destination: LiveSessionDeepLink.url(action)) {
-            Label(title, systemImage: systemImage)
+    private func link(_ item: LiveSessionMarginLink) -> some View {
+        Link(destination: LiveSessionDeepLink.url(item.action)) {
+            Label(item.title, systemImage: item.systemImage)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.white)
                 .lineLimit(1)
@@ -250,6 +252,7 @@ private struct LiveSessionMarginLinks: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(Color.white.opacity(0.16), in: Capsule())
         }
+        .accessibilityLabel(item.accessibilityLabel)
     }
 }
 
