@@ -4619,7 +4619,10 @@ public final class SessionEngine {
     }
 
     private func rawAudioTextOffset() -> Int? {
-        audio.currentPlaybackPosition()?.textStart ?? audio.currentCharOffset()
+        // A start refused for having nothing left to read leaves no speech running, so the client's offset is the
+        // previous speech's (the on-device voice keeps it after a stop): the place is the session's own (#4199).
+        if let session = currentSession, emptyTextStart?.matches(session) == true { return nil }
+        return audio.currentPlaybackPosition()?.textStart ?? audio.currentCharOffset()
     }
 
     private func playbackPosition(for session: Session) -> PlaybackPosition {

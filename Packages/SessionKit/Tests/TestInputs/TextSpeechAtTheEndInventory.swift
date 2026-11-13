@@ -33,7 +33,16 @@ public enum TextSpeechAtTheEndInventory {
     /// A client that starts nothing, with the real one's refusal: no speakable text from the offset on.
     public final class RefusingAtTheEndSpeech: AudioPlaybackClient {
         var source = ""
-        public init() {}
+        /// Whether the client still reports where its last speech started once it is stopped, as the on-device
+        /// (Supertonic) voice does; the system speech client reports nothing.
+        let keepsLastOffsetAfterStop: Bool
+        private var lastStart: Int?
+        /// With `keepsLastOffsetAfterStop`, an earlier speech (the article playing before the Margin was tapped) started at 5.
+        public init(keepsLastOffsetAfterStop: Bool = false) {
+            self.keepsLastOffsetAfterStop = keepsLastOffsetAfterStop
+            lastStart = keepsLastOffsetAfterStop ? 5 : nil
+        }
+        public func currentCharOffset() -> Int? { keepsLastOffsetAfterStop ? lastStart : nil }
         private(set) var starts: [Int] = []
         /// How often the speech was stopped: a refused start must not leave the old speech running.
         public private(set) var stops = 0
@@ -45,6 +54,7 @@ public enum TextSpeechAtTheEndInventory {
                 throw SessionKitError.invalidCommandForState("playback_text_empty")
             }
             starts.append(charOffset)
+            lastStart = charOffset
         }
         public func play(targetId: String, seekingTo charOffset: Int) throws { try play(targetId: targetId, from: charOffset) }
         public func pause() throws {}

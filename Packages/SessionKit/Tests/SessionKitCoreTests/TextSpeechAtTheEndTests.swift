@@ -21,6 +21,13 @@ final class TextSpeechAtTheEndTests: XCTestCase {
         try TextSpeechAtTheEndInventory.generatedTurnMarginAtTheEnd(audio: { TextSpeechAtTheEndInventory.RefusingAtTheEndSpeech() })
     }
 
+    /// The on-device voice keeps reporting where its last speech started after a stop: a turn's place must stay the end.
+    func testAGeneratedTurnKeepsItsEndPlaceWhenTheClientReportsAStaleOffset() throws {
+        try TextSpeechAtTheEndInventory.generatedTurnMarginAtTheEnd(
+            audio: { TextSpeechAtTheEndInventory.RefusingAtTheEndSpeech(keepsLastOffsetAfterStop: true) }
+        )
+    }
+
     func testARefusedStartStopsTheSpeechThatWasPlaying() throws {
         try TextSpeechAtTheEndInventory.refusedStartStopsTheOldSpeech()
     }
