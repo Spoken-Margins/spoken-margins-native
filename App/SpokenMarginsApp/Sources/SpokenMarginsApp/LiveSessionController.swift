@@ -155,7 +155,8 @@ final class LiveSessionController: ObservableObject {
 
     func setKind(_ kind: ElsewhereKind) { edit { LiveSessionEdit.setKind(kind, on: &$0) } }
 
-    func setTitle(_ title: String) { edit { LiveSessionEdit.setTitle(title, on: &$0) } }
+    /// The name, while it runs and after it ends, until the session is saved (#4079): a field that shows words must keep them.
+    func setTitle(_ title: String) { editUnsaved { LiveSessionEdit.setTitle(title, on: &$0) } }
 
     func setStartWhere(_ text: String) { edit { LiveSessionEdit.setStartWhere(text, on: &$0) } }
 
