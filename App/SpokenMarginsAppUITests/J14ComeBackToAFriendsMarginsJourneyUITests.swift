@@ -52,31 +52,42 @@ final class J14ComeBackToAFriendsMarginsJourneyUITests: XCTestCase {
         hearTheMarginThenFindTheEpisode(history: "J14 row 1", hearStep: 3, leaveStep: 5)
     }
 
-    /// Row 1 again, from the item screen: the episode's own screen offers the Margins whatever the listener's place.
+    /// Row 1 again, from the item screen: with the place at the very end and the Margin behind it, the screen's two
+    /// buttons are "Hear <friend>'s Margins first" and "Play from the start" (#4125, state D). The big one plays it.
     func testSavedPlaceAtTheEndOffersTheFriendsMarginsOnTheItemScreen() throws {
         seedThenFriendArrives(history: "J14 row 1b", placeSeconds: 1_490, completed: false)
-        openTheItemAndChooseTheMargins(history: "J14 row 1b")
+
+        XCTContext.runActivity(named: "J14 row 1b, step 2: Open the episode; the big button hears the friend's Margins first") { _ in
+            tap("library.row.\(itemId)")
+            XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
+            let primary = app.buttons["item.start.button"].firstMatch
+            XCTAssertTrue(primary.waitForExistence(timeout: 5), "The big button is missing")
+            XCTAssertTrue(primary.label.hasPrefix("Hear "), "The big button reads \(primary.label)")
+            XCTAssertTrue(primary.label.contains("first"), "The big button reads \(primary.label)")
+            let second = app.buttons["item.listenWithout.button"].firstMatch
+            XCTAssertTrue(second.waitForExistence(timeout: 5), "The second choice is missing")
+            XCTAssertEqual(second.label, "Play from the start", "At the end of the episode the second choice reads \(second.label)")
+            primary.tap()
+        }
         hearTheMarginThenFindTheEpisode(history: "J14 row 1b", hearStep: 3, leaveStep: 5)
     }
 
-    /// Row 1, from the item screen's "Play" (owner, 2026-11-12: he expects Play to play the Margins he hasn't heard).
-    /// Play must not drop the listener at the end past the friend's Margin: it plays the Margin or asks first. Fails on
-    /// `main` until #4125 is fixed (J14 step 2, "fails today"); on probation, so it can't turn an integration run red.
+    /// Row 1, from the item screen's big button (owner, 2026-11-12: he expects Play to play the Margins he hasn't
+    /// heard). It must not drop the listener at the end past the friend's Margin, and asks nothing: the Margin plays.
+    /// Failed on `main` until #4125 was fixed.
     func testItemScreenPlayDoesNotSkipAFriendsMarginsBehindTheSavedPlace() throws {
         seedThenFriendArrives(history: "J14 row 1c", placeSeconds: 1_490, completed: false)
 
-        XCTContext.runActivity(named: "J14 row 1c, step 2: Play on the item screen does not skip the friend's Margin (fails today, #4125)") { _ in
+        XCTContext.runActivity(named: "J14 row 1c, step 2: The big button on the item screen does not skip the friend's Margin") { _ in
             tap("library.row.\(itemId)")
             XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
             let play = app.buttons["item.start.button"].firstMatch
             XCTAssertTrue(play.waitForExistence(timeout: 5), "The big button is missing")
             play.tap()
-            waitUntil("Play went past the friend's Margin without playing it or asking; clock shows \(clockText())", timeout: 10) {
-                self.app.buttons["newMarginsOffer.review"].firstMatch.exists
-                    || self.app.buttons["Hear new Margins first"].firstMatch.exists
-                    || self.element("review.comingUp").exists
-                    || self.element("review.playing").exists
+            waitUntil("The big button went past the friend's Margin without playing it; clock shows \(clockText())", timeout: 10) {
+                self.element("review.comingUp").exists || self.element("review.playing").exists
             }
+            XCTAssertFalse(app.buttons["newMarginsOffer.review"].firstMatch.exists, "The item screen asked a question instead of playing the Margin")
         }
     }
 
