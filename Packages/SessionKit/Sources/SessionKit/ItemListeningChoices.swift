@@ -21,11 +21,16 @@ public struct ItemListeningChoices: Equatable, Sendable {
         public let audioDurationMs: Int?
         /// The words a written Margin is read from.
         public let transcript: String
+        /// The id of the listener's own Margin this one answers, nil unless it is a reply to them (#3889).
+        public let replyToYouParentId: String?
+        /// A reply to one of the listener's own Margins, as opposed to a new Margin from the friend.
+        public var isReplyToYou: Bool { replyToYouParentId != nil }
 
-        public init(senderName: String, audioDurationMs: Int?, transcript: String) {
+        public init(senderName: String, audioDurationMs: Int?, transcript: String, replyToYouParentId: String? = nil) {
             self.senderName = senderName
             self.audioDurationMs = audioDurationMs
             self.transcript = transcript
+            self.replyToYouParentId = replyToYouParentId
         }
     }
 
@@ -50,12 +55,17 @@ public struct ItemListeningChoices: Equatable, Sendable {
         if !unheardFriendMargins.isEmpty {
             // The same words whether or not the episode was heard, started or is still being prepared: the two
             // choices describe what will play, not where the listener is in the item.
-            let whose = Self.whoseMargins(unheardFriendMargins)
+            let mix = FriendReplyMix(unheardFriendMargins)
+            // Replies only: "Skip to Sam's replies" (the reply, when there is one), and the label counts replies
+            // to the listener's Margins (#3889). Anything else keeps "Skip to Sam's Margins" and counts new Margins.
+            let whose = mix.isAllReplies
+                ? Self.whose(unheardFriendMargins, noun: mix.replies == 1 ? "reply" : "replies")
+                : Self.whoseMargins(unheardFriendMargins)
             let minutes = Self.marginsOnlyMinutes(unheardFriendMargins)
-            let count = unheardFriendMargins.count
+            let counted = mix.hasReplies ? mix.spokenCount : "\(mix.total) new Margin\(mix.total == 1 ? "" : "s")"
             primaryTitle = Self.playTitle
             marginsOnlyTitle = "Skip to \(whose) · \(minutes) min"
-            marginsOnlyAccessibilityLabel = "Skip to \(whose), \(count) new Margin\(count == 1 ? "" : "s"), "
+            marginsOnlyAccessibilityLabel = "Skip to \(whose), \(counted), "
                 + "about \(minutes) minute\(minutes == 1 ? "" : "s")"
         } else {
             if isPreparingAudio {
@@ -72,9 +82,13 @@ public struct ItemListeningChoices: Equatable, Sendable {
 
     /// "Cole's Margins" when one named friend sent them all; "the Margins" for several friends or none named.
     static func whoseMargins(_ margins: [WaitingMargin]) -> String {
-        let names = Set(margins.map { $0.senderName.trimmingCharacters(in: .whitespacesAndNewlines) })
-        guard names.count == 1, let name = names.first, !name.isEmpty else { return "the Margins" }
-        return "\(name)'s Margins"
+        whose(margins, noun: "Margins")
+    }
+
+    /// "Cole's replies" when one named friend sent them all; "the replies" for several friends or none named.
+    static func whose(_ margins: [WaitingMargin], noun: String) -> String {
+        guard let name = FriendMarginsIntro.singleName(margins) else { return "the \(noun)" }
+        return "\(name)'s \(noun)"
     }
 
     /// How long "Skip to …" takes, in whole minutes and never under one: each Margin, written ones at the on-device
@@ -100,7 +114,8 @@ extension SharedMarginReview.Entry {
         ItemListeningChoices.WaitingMargin(
             senderName: layer.displayLabel ?? "",
             audioDurationMs: interjection.audioDurationMs,
-            transcript: interjection.approvedTranscript
+            transcript: interjection.approvedTranscript,
+            replyToYouParentId: replyContext?.yoursParentId
         )
     }
 }

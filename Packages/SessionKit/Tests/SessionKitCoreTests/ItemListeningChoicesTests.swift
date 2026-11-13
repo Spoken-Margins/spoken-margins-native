@@ -94,4 +94,68 @@ final class ItemListeningChoicesTests: XCTestCase {
             XCTAssertNil(result.marginsOnlyAccessibilityLabel)
         }
     }
+
+    // MARK: Replies coming back (#3889)
+
+    private func reply(_ seconds: Int = 30, from name: String = "Sam", to parent: String = "mine-1") -> ItemListeningChoices.WaitingMargin {
+        .init(senderName: name, audioDurationMs: seconds * 1_000, transcript: "", replyToYouParentId: parent)
+    }
+
+    /// The design's table (#3889): the Skip choice's title and what VoiceOver reads, row by row.
+    func testSkipNamesRepliesWhenEveryWaitingMarginIsOne() {
+        let table: [(String, [ItemListeningChoices.WaitingMargin], String, String)] = [
+            ("all replies", [reply(30), reply(30, to: "mine-2")],
+             "Skip to Sam's replies · 2 min", "Skip to Sam's replies, 2 replies to your Margins, about 2 minutes"),
+            ("one reply", [reply(30)],
+             "Skip to Sam's reply · 1 min", "Skip to Sam's reply, 1 reply to your Margin, about 1 minute"),
+            ("two replies to one Margin", [reply(30), reply(30)],
+             "Skip to Sam's replies · 2 min", "Skip to Sam's replies, 2 replies to your Margin, about 2 minutes"),
+            ("replies, no name", [reply(30, from: ""), reply(30, from: "", to: "mine-2")],
+             "Skip to the replies · 2 min", "Skip to the replies, 2 replies to your Margins, about 2 minutes"),
+            ("one reply, no name", [reply(30, from: "")],
+             "Skip to the reply · 1 min", "Skip to the reply, 1 reply to your Margin, about 1 minute"),
+            ("replies, several senders", [reply(30, from: "Sam"), reply(30, from: "Ana", to: "mine-2")],
+             "Skip to the replies · 2 min", "Skip to the replies, 2 replies to your Margins, about 2 minutes"),
+            ("mixed", [reply(30), spoken(30, from: "Sam")],
+             "Skip to Sam's Margins · 2 min", "Skip to Sam's Margins, 1 reply and 1 new Margin, about 2 minutes"),
+            ("mixed, no name", [reply(30, from: ""), spoken(30, from: "")],
+             "Skip to the Margins · 2 min", "Skip to the Margins, 1 reply and 1 new Margin, about 2 minutes"),
+            ("mixed, several senders", [reply(30, from: "Sam"), spoken(30, from: "Ana"), spoken(30, from: "Ana")],
+             "Skip to the Margins · 3 min", "Skip to the Margins, 1 reply and 2 new Margins, about 3 minutes"),
+            ("no replies to you", [spoken(30, from: "Sam"), spoken(30, from: "Sam")],
+             "Skip to Sam's Margins · 2 min", "Skip to Sam's Margins, 2 new Margins, about 2 minutes"),
+        ]
+        for (name, margins, title, label) in table {
+            let result = choices(margins)
+            XCTAssertEqual(result.primaryTitle, "Play", name)
+            XCTAssertEqual(result.marginsOnlyTitle, title, name)
+            XCTAssertEqual(result.marginsOnlyAccessibilityLabel, label, name)
+        }
+    }
+
+    /// The minutes are today's computation over the waiting Margins; a reply adds no time for its parent.
+    func testSkipMinutesDoNotChangeForReplies() {
+        let replies = [reply(100), reply(100, to: "mine-2")]
+        let plain = [spoken(100, from: "Sam"), spoken(100, from: "Sam")]
+        XCTAssertEqual(ItemListeningChoices.marginsOnlyMinutes(replies), ItemListeningChoices.marginsOnlyMinutes(plain))
+    }
+
+    func testAReplyIsOneWhoseParentIsTheListenersOwn() {
+        XCTAssertTrue(reply().isReplyToYou)
+        XCTAssertFalse(spoken(30).isReplyToYou)
+    }
+
+    /// The one rule (#3889): only a parent that is the listener's own Margin makes a reply to them. A reply to another
+    /// friend's Margin, or whose parent isn't in this Library, is a new Margin on this screen.
+    func testOnlyAParentThatIsTheListenersOwnCountsAsAReplyToThem() {
+        let table: [(SharedMarginReview.ReplyContext.Parent, String?)] = [
+            (.yours(interjectionId: "mine-1", mediaTimeMs: 105_000), "mine-1"),
+            (.yours(interjectionId: "mine-2", mediaTimeMs: nil), "mine-2"),
+            (.shared(marginId: "layer::m1", label: "Ana", mediaTimeMs: 105_000), nil),
+            (.missing, nil),
+        ]
+        for (parent, expected) in table {
+            XCTAssertEqual(SharedMarginReview.ReplyContext(parent: parent).yoursParentId, expected, "\(parent)")
+        }
+    }
 }

@@ -92,6 +92,13 @@ extension SharedMarginReview {
 
         public let parent: Parent
 
+        /// The id of the listener's own Margin this answers, when the parent is theirs: the one test for "a reply to
+        /// you", shared by the item screen's words (#3889) and anything else that counts replies.
+        public var yoursParentId: String? {
+            if case .yours(let id, _) = parent { return id }
+            return nil
+        }
+
         public var caption: String {
             switch parent {
             case .yours(_, let ms): return "Reply to your Margin" + Self.at(ms)

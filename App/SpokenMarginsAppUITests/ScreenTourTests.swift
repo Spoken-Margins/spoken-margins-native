@@ -276,9 +276,9 @@ final class ScreenTourTests: XCTestCase {
         XCTAssertFalse(element("build23.recipient.experience").exists, "Sam's reply opened the Import sheet")
         // The reply is the one Margin from Sam that hasn't been heard: the item says so (#3219).
         let replyCount = element("item.friendIntro.count")
-        XCTAssertTrue(replyCount.waitForExistence(timeout: 10), "The item doesn't say a new Margin from Sam is waiting")
-        XCTAssertTrue(replyCount.label.hasPrefix("1 Margin"), "Sam's reply is not the one new Margin: \(replyCount.label)")
-        capture("30-reply-arrival", "Sam's reply: the episode's screen as it opens (\"1 new Margin from Sam\")")
+        XCTAssertTrue(replyCount.waitForExistence(timeout: 10), "The item doesn't say a reply from Sam is waiting")
+        XCTAssertTrue(replyCount.label.hasPrefix("1 reply"), "Sam's reply is not the one new reply: \(replyCount.label)")
+        capture("30-reply-arrival", "Sam's reply: the episode's screen as it opens (\"Replies from Sam\", \"1 reply to your Margin\")")
         // The packet opened the item on its own, with no tab bar under it: back to the tabs first.
         tapButton("item.home.button")
         tapRoot("Margins")
