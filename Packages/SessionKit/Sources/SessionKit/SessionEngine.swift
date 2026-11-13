@@ -1118,7 +1118,8 @@ public final class SessionEngine {
     /// screen or in Now Playing. One whose session has finished is held too, until the next item, but shows nowhere,
     /// so sharing it again marks it added again; `keepHeldItemInStep` then gives the held copy the same stamp.
     private var itemIdsStillListening: Set<String> {
-        if let currentSession, currentSession.status == "finished" || currentSession.phase == .finished { return [] }
+        // The phase, not the status: Play from the beginning and Back reopen a finished session without changing it.
+        if currentSession?.phase == .finished { return [] }
         return Set([currentSession?.itemId, currentItem?.id].compactMap { $0 })
     }
 
@@ -1235,7 +1236,7 @@ public final class SessionEngine {
         case "playback_position":
             try importWatchPlaybackPosition(event, package: package)
         case "session_finished":
-            if var session = try repository.loadSession(id: event.sessionId) {
+            if var session = try repository.loadSession(id: event.sessionId).map(finishedNow) {
                 session.status = "finished"
                 session.phase = .finished
                 currentSession = session
@@ -4877,6 +4878,17 @@ public final class SessionEngine {
         audio.isPlaybackComplete(targetId: session.currentTargetId) || emptyTextStart?.matches(session) == true
     }
 
+    /// A session about to be marked finished. One reopened since it last finished (Play from the beginning, Back, a
+    /// scrub back) keeps its old `completedAt`, so it loses it here and the save dates this finish: listening counts
+    /// from when it ended, and an item added again since counts as heard again only for a finish after that (#4178).
+    /// One still finished (the held session closing, a recap Margin) keeps its date.
+    private func finishedNow(_ session: Session) -> Session {
+        guard session.phase != .finished else { return session }
+        var session = session
+        session.completedAt = nil
+        return session
+    }
+
     private func isFinishedAtEnd(_ session: Session) -> Bool {
         session.phase == .finished && session.completionPercent >= 100
             && session.currentTargetType != .summaryTurnTTS && session.currentTargetType != .assistantTurnTTS
@@ -5928,6 +5940,7 @@ public final class SessionEngine {
             updated.position.charOffset = text.count
             updated.position.chapterId = chapterId(for: text.count)
             updated.completionPercent = 100
+            updated = finishedNow(updated)
             updated.phase = .finished
             updated.status = "finished"
         case .transcriptBackedMedia, .browserOwnedMedia:
@@ -5947,6 +5960,7 @@ public final class SessionEngine {
                 updated.position.chapterId = timeline.chapters.last?.id ?? updated.position.chapterId
             }
             updated.completionPercent = 100
+            updated = finishedNow(updated)
             updated.phase = .finished
             updated.status = "finished"
         case .summaryTurnTTS:

@@ -124,6 +124,31 @@ final class AddedAgainLibraryTests: XCTestCase {
         XCTAssertNotNil(try store.loadItem(id: heard.id).addedAgainAt, "the held copy kept the stamp")
     }
 
+    /// Then Play from the beginning on that same held session, after the re-add. A share while it replays leaves it
+    /// alone (the listener is in it), and hearing it to the end finishes it again, though the session is the old one.
+    func testTheHeldSessionReplayedToTheEndAfterTheReAddFinishesTheArticleAgain() throws {
+        let heard = try essayHeardTenDaysAgo()
+        let audio = EndableSpeechClient()
+        let player = SessionEngine(profile: RuntimeCapabilityProfile(id: "test", displayName: "Test", capabilities: [
+            "sync": ["canonical_persistence", "browser_session_handoff"], "playback": ["realtime_tts"]]),
+            repository: store, audio: audio)
+        XCTAssertEqual(try player.inspectSession(sessionId: "heard").phase, .finished)
+        _ = try player.importBrowserTextInBackground(essay)
+        let addedAgainAt = try XCTUnwrap(try store.loadItem(id: heard.id).addedAgainAt)
+
+        _ = try player.playSourceFromBeginning()
+        _ = try player.importBrowserTextInBackground(essay)
+        XCTAssertEqual(try store.loadItem(id: heard.id).addedAgainAt, addedAgainAt, "a share while it plays leaves it as it is")
+        XCTAssertEqual(try visibleRows().first?.id, heard.id, "replaying is not finishing")
+
+        audio.ended = true
+        _ = try player.syncPlaybackProgress()
+
+        XCTAssertEqual(try store.loadSession(id: "heard")?.phase, .finished)
+        XCTAssertFalse(try visibleRows().contains { $0.id == heard.id }, "heard to the end again: finished")
+        XCTAssertNotNil(try store.loadItem(id: heard.id).sourceCompletedAt)
+    }
+
     /// Read-later and shared text name their own id: the import replaces the row saved under it, whose finished session
     /// is still filed there.
     func testAHandoffThatNamesItsIdAndWasHeardBeforeIsUnfinishedAgain() throws {
@@ -245,4 +270,14 @@ final class AddedAgainLibraryTests: XCTestCase {
         XCTAssertEqual(summary, LibraryItemSummary(try store.loadItem(id: heard.id)))
         XCTAssertNotNil(summary.addedAgainAt)
     }
+}
+
+/// A speech player the test ends.
+private final class EndableSpeechClient: AudioPlaybackClient {
+    var ended = false
+    func prepareSpeechText(_ text: String) throws -> String { text }
+    func play(targetId: String) throws { ended = false }
+    func play(targetId: String, from charOffset: Int) throws { ended = false }
+    func pause() throws {}
+    func isPlaybackComplete(targetId: String) -> Bool { ended }
 }
