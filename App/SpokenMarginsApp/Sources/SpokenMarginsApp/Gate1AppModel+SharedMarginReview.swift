@@ -28,7 +28,7 @@ extension Gate1AppModel {
         } else if selectedItem.id == itemId {
             entries = SharedMarginReview.entries(
                 layers: selectedItem.importedCommentaryLayers, records: selectedItem.importedCommentaryInterjections,
-                ownMargins: ownMargins(itemId: itemId)
+                ownMargins: ownMargins(itemId: itemId), durationMs: selectedItem.mediaDurationMs
             )
         } else if let store {
             // The listener's own Margins let a friend's reply say which of them it answers (#3221). They come from the

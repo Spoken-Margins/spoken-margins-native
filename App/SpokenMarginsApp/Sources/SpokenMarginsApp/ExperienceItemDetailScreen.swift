@@ -49,7 +49,7 @@ struct ExperienceItemDetailScreen: View {
                     downloadRecovery
                     ItemLastFailureCard(itemId: model.selectedItem.id)
                     if !sharingCoordinator.importedLayers.isEmpty {
-                        Build23ImportedMarginPresentation(coordinator: sharingCoordinator)
+                        Build23ImportedMarginPresentation(coordinator: sharingCoordinator, hidesHeading: friendIntro != nil)
                     }
                     reactionsEntry
                     SourceFollowSuggestionCard()
@@ -268,7 +268,8 @@ struct ExperienceItemDetailScreen: View {
                 systemImage: "map"
             )
         }
-        if !model.selectedItem.interjections.isEmpty {
+        // Only while a friend's intro shows does it count the Margins itself (#3788); otherwise the listener's count stays.
+        if !model.selectedItem.interjections.isEmpty, FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin)) == nil {
             let count = model.selectedItem.interjections.count
             metadataPill("\(count) Margin\(count == 1 ? "" : "s")", systemImage: "quote.bubble")
         }

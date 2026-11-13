@@ -66,19 +66,20 @@ final class SharedMarginReviewTests: XCTestCase {
         XCTAssertEqual(SharedMarginReview.entriesBehind(entries, placeMs: 1_800_000).count, 2)
     }
 
-    /// The sender's time is a stand-in only until a pass has run; after it, a Margin the pass couldn't place is not
-    /// played at a guess, and one it did place plays where it was placed.
-    func testAFinishedPassLeavesOutWhatItCouldNotPlaceAndKeepsWhatItPlaced() {
+    /// #3789: a Margin the pass couldn't place still plays at the sender's time; one whose passage is missing from
+    /// this copy plays after the others; one it did place plays where it was placed.
+    func testAFinishedPassStillOffersWhatItCouldNotPlace() {
         let records = [margin("lost", at: nil, evidence: .unresolved, senderMs: 134_000),
                        margin("absent", at: nil, evidence: .absentFromRecipientEdition, senderMs: 200_000),
                        margin("placed", at: 300_000, senderMs: 290_000)]
         let afterPass = SharedMarginReview.entries(layers: [layer("ana", passFinished: true)], records: ["ana": records])
-        XCTAssertEqual(ids(afterPass), ["placed"])
-        XCTAssertEqual(afterPass.map(\.mediaTimeMs), [300_000], "placed, not the sender's time")
-        XCTAssertEqual(afterPass.map(\.isApproximate), [false])
-        // Before the pass, the one it ruled out as absent from this edition is still left out.
+        XCTAssertEqual(ids(afterPass), ["lost", "placed", "absent"])
+        XCTAssertEqual(afterPass.map(\.mediaTimeMs), [134_000, 300_000, 300_000], "placed, not the sender's time; absent after the others")
+        XCTAssertEqual(afterPass.map(\.isApproximate), [true, false, true])
+        XCTAssertEqual(afterPass.map(\.playsAfterOthers), [false, false, true])
+        // Before the pass, the one missing from this edition is offered the same way.
         let beforePass = SharedMarginReview.entries(layers: [layer("ana")], records: ["ana": records])
-        XCTAssertEqual(ids(beforePass), ["lost", "placed"])
+        XCTAssertEqual(ids(beforePass), ["lost", "placed", "absent"])
     }
 
     func testOnlyMarginsTheListenerHasntHeardAreOffered() {
@@ -89,18 +90,20 @@ final class SharedMarginReviewTests: XCTestCase {
         XCTAssertEqual(ids(entries), ["new"])
     }
 
-    func testAMarginWithNoPlaceInThisCopyIsLeftOut() {
+    func testAMarginWithNoPlaceInThisCopyPlaysAfterTheOthers() {
         let records = [
             margin("ok", at: 10_000),
             margin("unresolved", at: nil, evidence: .unresolved),
             margin("absent", at: 40_000, evidence: .absentFromRecipientEdition),
             margin("textOnly", at: nil, evidence: .articleTextVerified)
         ]
-        XCTAssertEqual(ids(SharedMarginReview.entries(layers: [layer("ana")], records: ["ana": records])), ["ok"])
+        let entries = SharedMarginReview.entries(layers: [layer("ana")], records: ["ana": records])
+        XCTAssertEqual(ids(entries), ["ok", "absent", "textOnly", "unresolved"], "no sender time, so after the placed one")
+        XCTAssertEqual(entries.map(\.playsAfterOthers), [false, true, true, true])
     }
 
     /// #3365: a written Margin is in the review (its words are read aloud); a voice Margin with no words and no
-    /// recording is not, and neither is a written one with no place in this copy.
+    /// recording is not. A written one with no place in this copy plays after the others (#3789).
     func testAWrittenMarginIsOfferedAndAVoiceMarginWithoutItsRecordingIsNot() {
         let records = [
             margin("ok", at: 10_000),
@@ -110,8 +113,8 @@ final class SharedMarginReviewTests: XCTestCase {
             margin("placeholder", at: 50_000, voice: false, words: "Voice Margin at 12:34 in “Episode”, recorded 30 Oct 2026")
         ]
         let entries = SharedMarginReview.entries(layers: [layer("ana")], records: ["ana": records])
-        XCTAssertEqual(ids(entries), ["ok", "written"])
-        XCTAssertEqual(entries.map(\.anchor.isReadAloud), [false, true])
+        XCTAssertEqual(ids(entries), ["ok", "written", "written-nowhere"])
+        XCTAssertEqual(entries.map(\.anchor.isReadAloud), [false, true, true])
     }
 
     /// A note the voice can't read is not offered at all: a tone would promise a reading that then fails (#3365).
