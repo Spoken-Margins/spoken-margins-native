@@ -397,6 +397,44 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(shared.count, timeline, "the Margins tab should list what the Timeline shows")
     }
 
+    /// #4098: a Shared group's heading opens its item through `openItemFromTap`, the call the heading's button makes.
+    @MainActor
+    func testImportedPacketsSharedGroupHeadingOpensItsItem() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-import-shared-group-open")
+        let packageURL = root.appendingPathComponent("group.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-shared-group-open")
+        let model = Gate1AppModel(
+            sourceLinkResolver: FailingPackagePodcastLinkResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: root.appendingPathComponent("recipient.sqlite")
+        )
+        model.resetAndSeed()
+        await model.settleMarginRows()
+
+        model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+        await model.settleMarginRows()
+        let importedID = model.selectedItem.id
+
+        model.openLibrary()
+        XCTAssertNotEqual(model.screen, .item, "the listener is off the item before tapping the heading")
+
+        let entries = model.sharedMarginRows.map {
+            MarginCollection.SharedEntry(interjection: $0.interjection, layer: $0.layer, itemTitle: $0.itemTitle)
+        }
+        let groups = SharedMarginGroups.groups(from: entries, libraryItemIDs: Set(entries.compactMap(\.layer.itemId)))
+        let group = try XCTUnwrap(groups.first { $0.itemID == importedID }, "the packet's Margins form one group under their item")
+        XCTAssertTrue(group.inLibrary)
+        XCTAssertGreaterThan(group.count, 0)
+
+        model.openItemFromTap(id: try XCTUnwrap(group.itemID))
+        await model.settleItemOpen()
+        XCTAssertEqual(model.screen, .item)
+        XCTAssertEqual(model.selectedItem.id, importedID, "the heading opened the item the Margins belong to")
+    }
+
     @MainActor
     func testANamelessPacketImportGivesAnAFriendFollowingRow() async throws {
         let root = try temporaryDirectory(named: "spoken-margins-import-nameless-following")

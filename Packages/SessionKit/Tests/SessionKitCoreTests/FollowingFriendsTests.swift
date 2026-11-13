@@ -135,9 +135,56 @@ final class FollowingFriendsTests: XCTestCase {
         XCTAssertEqual(FollowingFriends.friends(from: [margin, margin]).first?.summary, "1 Margin on 1 episode")
     }
 
+    func testAFriendWithUnheardMarginsSortsAboveANewerFriendWhoseMarginsAreHeard() {
+        let friends = FollowingFriends.friends(from: [
+            entry("a", from: "Cole", item: "ep", seconds: 1),
+            entry("b", from: "Zoe", item: "ep", seconds: 99, heard: true),
+        ])
+        XCTAssertEqual(friends.map(\.name), ["Cole", "Zoe"], "unheard first, though Zoe's activity is newer")
+    }
+
+    func testFriendsWithAllMarginsHeardKeepNewestFirst() {
+        let friends = FollowingFriends.friends(from: [
+            entry("a", from: "Cole", item: "ep", seconds: 1, heard: true),
+            entry("b", from: "Zoe", item: "ep", seconds: 9, heard: true),
+        ])
+        XCTAssertEqual(friends.map(\.name), ["Zoe", "Cole"])
+    }
+
+    func testTwoFriendsBothUnheardSortNewestFirstAndTiesByName() {
+        let friends = FollowingFriends.friends(from: [
+            entry("a", from: "Cole", item: "ep", seconds: 1),
+            entry("b", from: "Zoe", item: "ep", seconds: 9),
+            entry("c", from: "Ann", item: "ep", seconds: 9),
+        ])
+        XCTAssertEqual(friends.map(\.name), ["Ann", "Zoe", "Cole"])
+    }
+
+    func testTheNamelessAFriendRowSortsByTheSameRule() {
+        let friends = FollowingFriends.friends(from: [
+            entry("a", from: nil, item: "ep", seconds: 50, heard: true),
+            entry("b", from: "Cole", item: "ep2", seconds: 1),
+        ])
+        XCTAssertEqual(friends.map(\.name), ["Cole", "A friend"], "heard stand-in row sinks below an unheard friend")
+        let flipped = FollowingFriends.friends(from: [
+            entry("a", from: nil, item: "ep", seconds: 1),
+            entry("b", from: "Cole", item: "ep2", seconds: 50, heard: true),
+        ])
+        XCTAssertEqual(flipped.map(\.name), ["A friend", "Cole"])
+    }
+
+    func testAFriendStillHasOneUnheardMarginAmongHeardOnesSortsAsUnheard() {
+        let friends = FollowingFriends.friends(from: [
+            entry("a", from: "Cole", item: "ep", seconds: 1, heard: true),
+            entry("b", from: "Cole", item: "ep2", seconds: 2),
+            entry("c", from: "Zoe", item: "ep", seconds: 9, heard: true),
+        ])
+        XCTAssertEqual(friends.map(\.name), ["Cole", "Zoe"])
+    }
+
     private func entry(
         _ id: String, from sender: String?, item itemId: String?, kind: SharedItemType = .podcast, seconds: Int = 0,
-        importedAfter: Double = 0
+        importedAfter: Double = 0, heard: Bool = false
     ) -> MarginCollection.SharedEntry {
         let layerId = "layer-\(sender ?? "none")-\(itemId ?? "none")"
         let layer = ImportedCommentaryLayer(
@@ -147,7 +194,8 @@ final class FollowingFriendsTests: XCTestCase {
         )
         let margin = ImportedCommentaryInterjection(
             id: id, layerId: layerId, packageScopedId: id, createdAt: clock.addingTimeInterval(Double(seconds)),
-            anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 1_000), approvedTranscript: "words"
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 1_000), approvedTranscript: "words",
+            firstHeardAt: heard ? clock : nil
         )
         return MarginCollection.SharedEntry(interjection: margin, layer: layer, itemTitle: "Title \(itemId ?? "")")
     }

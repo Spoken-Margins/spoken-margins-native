@@ -82,7 +82,12 @@ public enum FollowingFriends {
             groups[key] = group
         }
         return groups
-            .sorted { $0.value.newest != $1.value.newest ? $0.value.newest > $1.value.newest : $0.key < $1.key }
+            .sorted {
+                // A friend with Margins the listener hasn't heard comes first (#4104), then the newest activity.
+                let (a, b) = ($0.value.newIds.isEmpty, $1.value.newIds.isEmpty)
+                if a != b { return !a }
+                return $0.value.newest != $1.value.newest ? $0.value.newest > $1.value.newest : $0.key < $1.key
+            }
             .map { key, group in
                 let items = group.items
                     .sorted { $0.value.newest != $1.value.newest ? $0.value.newest > $1.value.newest : $0.key < $1.key }
