@@ -126,6 +126,8 @@ test('saving a Margin on a friend\u2019s item says what Share does with it, unti
   const skipBefore = await audioTime(page);
   await card.getByRole('button', { name: /^Skip to (just before )?Web fixture/ }).click();
   await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThan(skipBefore);
+  // Back near the start, so the friend's Margin at 0:30 does not fire early while the rest of this test runs.
+  await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 1; });
   // #3784: the Margin just written starts ticked, so Save is not greyed out with no reason, and saving says what to do next.
   const reply = playing.locator('.reply-back');
   await expect(reply.getByRole('checkbox', { name: /My answer\./ })).toBeChecked();
