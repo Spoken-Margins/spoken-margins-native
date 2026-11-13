@@ -805,12 +805,12 @@ private struct ExperienceLibraryCompactRow: View {
     }
 
     private var playActionTitle: String {
-        if (row.continuationProgressPercent ?? 0) >= 100 { return "Replay \(row.title)" }
+        if (row.continuationProgressPercent ?? 0) >= ItemFinishedRule.atEndPercent { return "Replay \(row.title)" }
         return row.hasContinuationSession ? "Continue \(row.title)" : "Start \(row.title)"
     }
 
     private var currentItemLabel: String {
-        if (row.continuationProgressPercent ?? 0) >= 100 { return "Finished" }
+        if (row.continuationProgressPercent ?? 0) >= ItemFinishedRule.atEndPercent { return "Finished" }
         return row.hasContinuationSession ? (dynamicTypeSize.isAccessibilitySize ? "Resume" : "Continue listening") : "Current"
     }
 

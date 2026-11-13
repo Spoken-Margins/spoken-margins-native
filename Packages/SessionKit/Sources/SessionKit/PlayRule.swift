@@ -134,7 +134,7 @@ public enum PlayRule {
     /// begins again (`SessionContinuation.continueResumes`). Resuming there plays the last seconds and finishes, so
     /// "without the Margins" is better said as starting over (#4125).
     public static func savedPlaceIsAtEnd(sessions: [Session], addedAgainAt: Date?) -> Bool {
-        (resumedSession(in: ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions))?.completionPercent ?? 0) >= 99
+        (resumedSession(in: ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions))?.completionPercent ?? 0) >= ItemFinishedRule.listenedPercent
     }
 
     private static func resumedSession(in sessions: [Session]) -> Session? {
