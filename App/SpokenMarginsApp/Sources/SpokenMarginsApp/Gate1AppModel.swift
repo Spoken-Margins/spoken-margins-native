@@ -1286,8 +1286,8 @@ final class Gate1AppModel: ObservableObject {
         try WelcomeSample.make(itemId: Self.welcomeSampleItemId)
     }
 
-    @discardableResult func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> String {
-        let item = try browserTextImportEngine().importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
+    @discardableResult func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil, listenerAdded: Bool = true) throws -> String { // listenerAdded: SessionEngine's (#4178)
+        let item = try browserTextImportEngine().importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument, listenerAdded: listenerAdded)
         return try finishBackgroundBrowserTextImport(item, handoff: handoff)
     }
 
@@ -2365,7 +2365,7 @@ final class Gate1AppModel: ObservableObject {
                     ))
                     let store = try requireStore()
                     let id = "read-later-" + ListeningEdition.digest(document.url + "\n" + handoff.text)
-                    if (try? store.loadItemSummary(id: id)) != nil {
+                    if let found = try? store.loadItemSummary(id: id), found.deletedAt == nil {
                         reportConfirmation("This article is already in your Library.")
                         return
                     }
@@ -2379,7 +2379,7 @@ final class Gate1AppModel: ObservableObject {
                     var handoff = try await readablePageExtractor.extract(url: url)
                     let id = "read-later-" + ListeningEdition.digest(document.url + "\n" + handoff.text)
                     let store = try requireStore()
-                    if (try? store.loadItemSummary(id: id)) != nil {
+                    if let found = try? store.loadItemSummary(id: id), found.deletedAt == nil {
                         reportConfirmation("This article is already in your Library."); return
                     }
                     handoff.itemId = id
@@ -2567,7 +2567,7 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             let item = try store.loadItem(id: itemId)
             let shouldSkipPreparation = PreparationChunkGate.itemAlreadyListened(
-                try store.loadSessions(itemId: itemId)
+                ItemFinishedRule.countedSessions(item, sessions: try store.loadSessions(itemId: itemId))
             )
             guard !shouldSkipPreparation else {
                 diagnostics["textAudioPrewarm:\(itemId)"] = "skipped_existing_progress"

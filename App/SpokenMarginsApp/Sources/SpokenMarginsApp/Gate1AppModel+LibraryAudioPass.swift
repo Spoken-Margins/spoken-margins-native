@@ -198,7 +198,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             var alreadyListened = item.sourceCompletedAt != nil
             if !alreadyListened { // the sessions are read here, as before, off the main actor (#2506)
                 let sessions = try await StoreReader(store).read { try $0.loadSessions(itemId: jobItemId) }
-                alreadyListened = PreparationChunkGate.itemAlreadyListened(sessions)
+                alreadyListened = ItemFinishedRule.isFinished(item, sessions: sessions)
             }
             let gate = try PreparationChunkGate.decide(policy: job.policy, thermal: atRender.thermal, isLowPowerModeEnabled: atRender.isLowPowerModeEnabled,
                                                        itemAlreadyListened: alreadyListened)

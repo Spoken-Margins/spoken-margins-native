@@ -842,7 +842,11 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertNil(try store.loadListeningMap(itemId: second.id))
         let reopened = try SQLiteSessionStore(path: path)
         let restored = SessionEngine(profile: profile, repository: reopened)
-        XCTAssertEqual(try resolve(firstURL, title: "Renamed episode", using: restored), first)
+        // Added again by the listener: the same item, stamped so the Library shows it as just added (#4178).
+        func unstamped(_ item: Item) -> Item { var item = item; item.addedAgainAt = nil; return item }
+        let again = try resolve(firstURL, title: "Renamed episode", using: restored)
+        XCTAssertEqual(unstamped(again), first)
+        XCTAssertNotNil(again.addedAgainAt)
         XCTAssertEqual(try reopened.loadListeningMap(itemId: first.id), map)
         XCTAssertEqual(try reopened.loadSession(id: session.id), session)
         XCTAssertEqual(try reopened.loadListeningMap(itemId: legacy.id), legacyMap)
@@ -851,7 +855,7 @@ final class SessionKitCoreTests: XCTestCase {
         let b = try resolve("https://audio.example/default.mp3?episode=B", title: longTitle + "B", using: restored)
         XCTAssertNotEqual(a.id, b.id)
         let followed = try resolve(firstURL, identity: "subscription:entry", using: restored)
-        XCTAssertEqual(try resolve("https://audio.example/new-signed-url.mp3", title: "Updated title", identity: "subscription:entry", using: restored), followed)
+        XCTAssertEqual(unstamped(try resolve("https://audio.example/new-signed-url.mp3", title: "Updated title", identity: "subscription:entry", using: restored)), unstamped(followed))
         XCTAssertNotEqual(try resolve(firstURL, identity: "subscription:other-entry", using: restored).id, followed.id)
     }
 

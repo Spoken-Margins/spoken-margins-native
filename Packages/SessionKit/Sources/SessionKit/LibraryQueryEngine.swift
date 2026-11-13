@@ -25,6 +25,9 @@ extension LibraryQueryRow {
     public var publishedAt: Date? { nil }
 }
 
+/// The Library's own rows. Declared here, not in the app, so host tests filter the same rows the screen does (#4178).
+extension LibraryItemRow: LibraryQueryRow {}
+
 /// Library query rules shared by the app and host tests.
 public enum LibraryQueryEngine {
     public static func visibleLibraryItems<Row: LibraryQueryRow>(_ libraryItems: [Row], query libraryQuery: LibraryQuery) -> [Row] {
@@ -77,6 +80,27 @@ public enum LibraryQueryEngine {
             }
             return ordered == .orderedSame ? lhs.id < rhs.id : ordered == .orderedAscending
         }
+    }
+
+    /// Where an item the app just said it added stands in the Library as the listener has it filtered (#4178): listed,
+    /// or the first reason the list leaves it out. "Added to Library" for an item the list doesn't show is the bug class
+    /// #4178 was; Diagnostics records this answer with every confirmation, so the next one names its cause.
+    public static func addedItemVisibility<Row: LibraryQueryRow>(
+        itemId: String, in libraryItems: [Row], query libraryQuery: LibraryQuery
+    ) -> String {
+        guard let row = libraryItems.first(where: { $0.id == itemId }) else { return "hidden:no_row" }
+        if visibleLibraryItems([row], query: libraryQuery).isEmpty {
+            var unfiltered = libraryQuery
+            unfiltered.query = ""
+            if !visibleLibraryItems([row], query: unfiltered).isEmpty { return "hidden:search" }
+            if row.isCompleted, libraryHidesCompleted(query: libraryQuery) { return "hidden:finished" }
+            if libraryQuery.contentType != .all { return "hidden:content_filter" }
+            if libraryQuery.offlineState != .all { return "hidden:offline_filter" }
+            if libraryQuery.sharedMargins != .all { return "hidden:shared_filter" }
+            return "hidden:listening_filter"
+        }
+        let position = visibleLibraryItems(libraryItems, query: libraryQuery).firstIndex { $0.id == itemId } ?? 0
+        return "visible:row_\(position + 1)"
     }
 
     public static func loadLibraryListeningFilter(defaults: UserDefaults) -> LibraryListeningStateFilter {

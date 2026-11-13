@@ -21,7 +21,7 @@ public enum LibraryAudioPreparationAdmission {
 
     /// Whether the listener has finished the item, marked it finished or played it to the end.
     public static func isFinished(_ item: some LibraryItemFields, sessions: [Session]) -> Bool {
-        item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(sessions)
+        ItemFinishedRule.isFinished(item, sessions: sessions)
     }
 
     /// Whether automatic preparation, which the listener didn't ask for, takes the item: text to narrate that is

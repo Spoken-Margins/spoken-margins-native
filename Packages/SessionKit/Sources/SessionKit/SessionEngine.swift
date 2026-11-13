@@ -258,7 +258,7 @@ public final class SessionEngine {
             return snapshot
         }
 
-        let item = try sourceImportItem(from: candidate, result: result, request: request)
+        let item = try sourceImportItem(from: candidate, result: result, request: request, listenerAdded: true)
         try saveItem(item)
         forgetFailure(unlessItemIs: item.id)
         currentItem = item
@@ -296,10 +296,14 @@ public final class SessionEngine {
     /// Persists a resolved source without replacing the item or session the user is
     /// currently listening to. Background share intake must use this path.
     @discardableResult
+    ///
+    /// `listenerAdded` is false only for an import the listener didn't ask for (Following's "Add every new item"); every
+    /// other import that lands on an episode already here marks it added again (#4178).
     public func importResolvedSourceLinkInBackground(
         _ request: LinkResolutionRequest,
         result: LinkResolutionResult,
-        sourceIdentity: String? = nil
+        sourceIdentity: String? = nil,
+        listenerAdded: Bool = true
     ) throws -> Item? {
         try require("importSourceLink", category: "sync", capabilities: ["canonical_persistence"])
         guard result.status == .playable,
@@ -308,7 +312,8 @@ public final class SessionEngine {
               !audioURL.isEmpty else {
             return nil
         }
-        let item = try sourceImportItem(from: candidate, result: result, request: request, sourceIdentity: sourceIdentity)
+        let item = try sourceImportItem(
+            from: candidate, result: result, request: request, sourceIdentity: sourceIdentity, listenerAdded: listenerAdded)
         try saveItem(item)
         if item.media?.url == candidate.audioURL,
            try repository.listeningMapId(itemId: item.id) == nil, // whether there is one, not the map (#2506)
@@ -1006,7 +1011,7 @@ public final class SessionEngine {
     /// `Item.text`, its headings the chapters, and it is stored beside the item so
     /// the speech path can apply I14.
     @discardableResult
-    public func importBrowserText(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> SessionSnapshot {
+    public func importBrowserText(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> SessionSnapshot { // the listener's own import (#4178)
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
         let (item, deterministicMap, document, persisted) = try browserTextImportRecords(handoff, structuredDocument: structuredDocument)
         if !persisted {
@@ -1036,15 +1041,23 @@ public final class SessionEngine {
 
     /// Persists a browser or file share without disturbing active playback state.
     @discardableResult
-    public func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> Item {
+    ///
+    /// `listenerAdded` is false only for an import the listener didn't ask for (Following's "Add every new item"): it
+    /// leaves an item already here as it was. Every other import that lands on an existing item marks it added again
+    /// (#4178), so the Library shows it as just added and not finished.
+    public func importBrowserTextInBackground(
+        _ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil, listenerAdded: Bool = true
+    ) throws -> Item {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
-        let (item, deterministicMap, document, persisted) = try browserTextImportRecords(handoff, structuredDocument: structuredDocument)
+        let (item, deterministicMap, document, persisted) = try browserTextImportRecords(
+            handoff, structuredDocument: structuredDocument, listenerAdded: listenerAdded)
         if !persisted {
             try saveItem(item)
             if let deterministicMap { try repository.saveListeningMap(deterministicMap) }
             try saveStructuredDocument(document, itemId: item.id)
         } else { forgetDocumentCaches(itemId: item.id) }
         browserTextImporter().saveSourceElements(for: handoff, item: item)
+        keepHeldItemInStep(with: item)
         return item
     }
 
@@ -1069,7 +1082,7 @@ public final class SessionEngine {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
         await enterImportGate()
         defer { leaveImportGate() }
-        let firstImporter = browserTextImporter()
+        let firstImporter = browserTextImporter(listenerAdded: true)
         var outcome = try await Task.detached(priority: .userInitiated) {
             try firstImporter.outcomeAndPersist(handoff, structuredDocument: structuredDocument, upgrade: .deferred)
         }.value
@@ -1080,14 +1093,15 @@ public final class SessionEngine {
                 return try? job.plan()
             }.value
             try afterStructuredUpgradePlannedForTesting?()
-            if case .success(let upgrade)? = planned, currentSession?.itemId != job.existing.id, currentItem?.id != job.existing.id {
+            if case .success(var upgrade)? = planned, currentSession?.itemId != job.existing.id, currentItem?.id != job.existing.id {
+                upgrade.item = ItemFinishedRule.addedAgain(upgrade.item) // a PDF shared again shows as just added (#4178)
                 do {
                     try job.apply(upgrade)
                     forgetDocumentCaches(itemId: upgrade.item.id)
                     return upgrade.item
                 } catch StructuredDocumentUpgradeError.changedSincePlanned {}
             }
-            let skipImporter = browserTextImporter()
+            let skipImporter = browserTextImporter(listenerAdded: true)
             outcome = try await Task.detached(priority: .userInitiated) {
                 try skipImporter.outcomeAndPersist(handoff, structuredDocument: structuredDocument, upgrade: .skip)
             }.value
@@ -1096,7 +1110,24 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
         forgetDocumentCaches(itemId: item.id)
+        keepHeldItemInStep(with: item)
         return item
+    }
+
+    /// What a re-add leaves as it is (#4178): the item the engine holds with its session still going, which is on
+    /// screen or in Now Playing. One whose session has finished is held too, until the next item, but shows nowhere,
+    /// so sharing it again marks it added again; `keepHeldItemInStep` then gives the held copy the same stamp.
+    private var itemIdsStillListening: Set<String> {
+        // The phase, not the status: Play from the beginning and Back reopen a finished session without changing it.
+        if currentSession?.phase == .finished { return [] }
+        return Set([currentSession?.itemId, currentItem?.id].compactMap { $0 })
+    }
+
+    /// The held copy of an item just marked added again takes the stamp, so no later save of it takes it back off.
+    private func keepHeldItemInStep(with item: Item) {
+        guard currentItem?.id == item.id else { return }
+        currentItem?.addedAgainAt = item.addedAgainAt
+        currentItem?.sourceCompletedAt = item.sourceCompletedAt
     }
 
     private var importGateBusy = false
@@ -1205,7 +1236,7 @@ public final class SessionEngine {
         case "playback_position":
             try importWatchPlaybackPosition(event, package: package)
         case "session_finished":
-            if var session = try repository.loadSession(id: event.sessionId) {
+            if var session = try repository.loadSession(id: event.sessionId).map(finishedNow) {
                 session.status = "finished"
                 session.phase = .finished
                 currentSession = session
@@ -4152,7 +4183,8 @@ public final class SessionEngine {
         from candidate: LinkResolutionCandidate,
         result: LinkResolutionResult,
         request: LinkResolutionRequest,
-        sourceIdentity: String? = nil
+        sourceIdentity: String? = nil,
+        listenerAdded: Bool
     ) throws -> Item {
         let id = resolvedSourceItemId(for: candidate, request: request, sourceIdentity: sourceIdentity)
         // Reimport is idempotent. Keep the accepted media edition, transcript,
@@ -4168,6 +4200,12 @@ public final class SessionEngine {
             if existing.episodeGUID == nil { existing.episodeGUID = Self.nonEmpty(candidate.episodeGUID) }
             if existing.showTitle == nil { existing.showTitle = Self.nonEmpty(candidate.showTitle) }
             if existing.publishedAt == nil { existing.publishedAt = Self.nonEmpty(candidate.publishedAt) }
+            // An episode the listener added again shows as just added and not finished, as an article does (#4178).
+            // One the engine holds with its session still going is left as it is.
+            if listenerAdded, !itemIdsStillListening.contains(id) {
+                existing = ItemFinishedRule.addedAgain(existing)
+                keepHeldItemInStep(with: existing)
+            }
             return existing
         } catch SessionKitError.missingFixture(let key) where key == "item:\(id)" || key == id {
             // A new identity gets a fresh record, never a legacy title-slug's
@@ -4748,20 +4786,25 @@ public final class SessionEngine {
 
     private func browserTextImportRecords(
         _ handoff: BrowserTextHandoff,
-        structuredDocument: StructuredDocument? = nil
+        structuredDocument: StructuredDocument? = nil,
+        listenerAdded: Bool = true
     ) throws -> (Item, ListeningMap?, StructuredDocument?, Bool) {
-        guard case .records(let item, let map, let document, let persisted) = try browserTextImporter().outcome(handoff, structuredDocument: structuredDocument, upgrade: .inline) else {
+        guard case .records(let item, let map, let document, let persisted) = try browserTextImporter(listenerAdded: listenerAdded).outcome(handoff, structuredDocument: structuredDocument, upgrade: .inline) else {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
         return (item, map, document, persisted)
     }
 
-    private func browserTextImporter() -> BrowserTextImporter {
+    /// `listenerAdded: false` is only for an import the listener didn't ask for; the source-elements save passes it
+    /// because it never reads the stamp.
+    private func browserTextImporter(listenerAdded: Bool = false) -> BrowserTextImporter {
         BrowserTextImporter(
             repository: repository,
             openItemIds: Set([currentSession?.itemId, currentItem?.id].compactMap { $0 }),
             isPlaybackActive: snapshot.status.isPlaybackActive,
-            publisherPlayback: publisherPlayback
+            publisherPlayback: publisherPlayback,
+            listenerAddedAt: listenerAdded ? Date() : nil,
+            stillListeningItemIds: itemIdsStillListening
         )
     }
 
@@ -4833,6 +4876,17 @@ public final class SessionEngine {
     /// The client's completion, or a start that found nothing left to read at this very place (#4067).
     private func playbackIsComplete(for session: Session) -> Bool {
         audio.isPlaybackComplete(targetId: session.currentTargetId) || emptyTextStart?.matches(session) == true
+    }
+
+    /// A session about to be marked finished. One reopened since it last finished (Play from the beginning, Back, a
+    /// scrub back) keeps its old `completedAt`, so it loses it here and the save dates this finish: listening counts
+    /// from when it ended, and an item added again since counts as heard again only for a finish after that (#4178).
+    /// One still finished (the held session closing, a recap Margin) keeps its date.
+    private func finishedNow(_ session: Session) -> Session {
+        guard session.phase != .finished else { return session }
+        var session = session
+        session.completedAt = nil
+        return session
     }
 
     private func isFinishedAtEnd(_ session: Session) -> Bool {
@@ -5886,6 +5940,7 @@ public final class SessionEngine {
             updated.position.charOffset = text.count
             updated.position.chapterId = chapterId(for: text.count)
             updated.completionPercent = 100
+            updated = finishedNow(updated)
             updated.phase = .finished
             updated.status = "finished"
         case .transcriptBackedMedia, .browserOwnedMedia:
@@ -5905,6 +5960,7 @@ public final class SessionEngine {
                 updated.position.chapterId = timeline.chapters.last?.id ?? updated.position.chapterId
             }
             updated.completionPercent = 100
+            updated = finishedNow(updated)
             updated.phase = .finished
             updated.status = "finished"
         case .summaryTurnTTS:
@@ -6325,7 +6381,9 @@ public final class SessionEngine {
         if stamped.completionPercent > 98,
            completionPercentIsMeasured(stamped),
            var item = try? repository.loadItem(id: stamped.itemId),
-           item.sourceCompletedAt == nil {
+           item.sourceCompletedAt == nil,
+           // A session finished before the item was added again, saved once more as it closes, isn't new listening.
+           !ItemFinishedRule.countedSessions(item, sessions: [stamped]).isEmpty {
             item.sourceCompletedAt = timestamp
             try saveItem(item)
             if currentItem?.id == item.id { currentItem = item }

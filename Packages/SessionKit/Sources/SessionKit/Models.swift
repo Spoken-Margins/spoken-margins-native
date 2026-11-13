@@ -688,6 +688,11 @@ public struct Item: Codable, Equatable, Sendable {
     /// then leave the device (#3449, `MapTextDisclosure`). Nil means no mark, which keeps that text on this phone.
     /// Optional and additive: Builds 32 and 34 decode an item that carries it and ignore it. Never packed into a packet.
     public var publicSourceMark: PublicSourceMark? = nil
+    /// When the listener last added this item again (a share, the Safari extension, a link) while it was already in
+    /// the Library or in Recently Deleted (#4178). Adding it again is asking to hear it: the Library shows it as just
+    /// added, and listening that ended before this moment no longer makes it finished (`ItemFinishedRule`).
+    /// Optional and additive: Builds 34 and 36 decode an item that carries it and ignore it. Never packed into a packet.
+    public var addedAgainAt: Date? = nil
 
     public init(
         id: String,

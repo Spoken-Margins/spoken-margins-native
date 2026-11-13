@@ -117,8 +117,8 @@ extension Gate1AppModel {
             let store = try requireStore()
             // A summary has everything these checks read; the item's text is not needed to decide (#2506).
             guard let item = try store.loadItemSummary(id: itemId),
-                  item.deletedAt == nil, item.sourceCompletedAt == nil,
-                  !PreparationChunkGate.itemAlreadyListened(try store.loadSessions(itemId: itemId)),
+                  item.deletedAt == nil,
+                  !ItemFinishedRule.isFinished(item, sessions: try store.loadSessions(itemId: itemId)),
                   LibraryRowBuilder.shouldPrewarmTextAudio(for: item),
                   item.hasListenableText else {
                 return
@@ -149,8 +149,7 @@ extension Gate1AppModel {
             // with its sessions (#2506): a book is megabytes, and launch queues one of these per unfinished item.
             let source: (item: Item, text: String)? = try await StoreReader(store).read { store in
                 let item = try store.loadItem(id: itemId)
-                guard item.sourceCompletedAt == nil,
-                      !PreparationChunkGate.itemAlreadyListened(try store.loadSessions(itemId: itemId)),
+                guard !ItemFinishedRule.isFinished(item, sessions: try store.loadSessions(itemId: itemId)),
                       let text = PreparedSpeechHooks.preparedText(of: item, in: store),
                       LibraryRowBuilder.shouldPrewarmTextAudio(for: item) else { return nil }
                 return (item, text)
