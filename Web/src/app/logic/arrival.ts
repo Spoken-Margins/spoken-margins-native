@@ -55,9 +55,9 @@ export function possessive(name: string): string {
   return `${name}’s`;
 }
 
-/** The first letter for the avatar circle. */
+/** The first letter for the avatar circle. A label that stands in for a missing name gets the dot, as `senderName` calls it "your friend" (#4107). */
 export function senderInitial(sender: string | undefined): string {
-  const first = Array.from(sender?.trim() ?? '')[0];
+  const first = Array.from(senderNameOrNone(sender) ?? '')[0];
   return first ? first.toUpperCase() : '•';
 }
 

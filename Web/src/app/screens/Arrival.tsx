@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PlayIcon } from '../icons.tsx';
 import { arrivalResumeAt, playHint, ARRIVAL_WORDS, GET_APP_LINK, arrivalFacts, possessive, type ArrivalFacts } from '../logic/arrival.ts';
-import { UNNAMED_SENDER, placeImport } from '../logic/import.ts';
+import { placeImport, unnamedAuthorFor } from '../logic/import.ts';
 import { plainError } from '../logic/messages.ts';
 import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkRef } from '../logic/share-link.ts';
 import { NotSavedError } from '../logic/storage.ts';
@@ -113,7 +113,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
    */
   const store = useCallback((read: PacketRead) => {
     const current = dataRef.current;
-    const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins, { unnamedAuthor: UNNAMED_SENDER });
+    const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins, { unnamedAuthor: unnamedAuthorFor('link') });
     const saved = (async () => {
       if (placed.show) await current.follow(placed.show, [placed.episode]);
       else if (placed.newEpisode) await current.updateEpisode(placed.episode);
