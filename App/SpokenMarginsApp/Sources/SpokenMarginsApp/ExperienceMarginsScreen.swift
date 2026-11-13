@@ -517,7 +517,7 @@ struct ExperienceMarginsScreen: View, Equatable {
     /// whose item is not in the Library has nothing to open, so it is plain words.
     @ViewBuilder
     private func sharedGroupHeading(_ group: SharedListGroup) -> some View {
-        let title = group.title ?? "An item from a friend"
+        let title = group.title ?? "From a friend"
         let line = group.inLibrary ? group.line : "Not in your Library"
         if let itemID = group.itemID {
             Button { model.openItemFromTap(id: itemID) } label: {
