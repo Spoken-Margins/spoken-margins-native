@@ -23,6 +23,8 @@ final class LiveSessionCardLayoutTests: XCTestCase {
     private func cards() -> [(name: String, state: LiveSessionActivityAttributes.ContentState)] {
         [
             ("running", LiveSessionActivityAttributes.ContentState(markCount: 12, clockTitle: "Quarterly planning meeting, with a long clock name", sessionId: "s")),
+            // A paper book or other session: three short capsules (#2708).
+            ("running-photo", LiveSessionActivityAttributes.ContentState(markCount: 12, clockTitle: "Quarterly planning meeting, with a long clock name", sessionId: "s", offersPhoto: true)),
             ("recording", LiveSessionActivityAttributes.ContentState(markCount: 12, clockTitle: "Quarterly planning meeting, with a long clock name", sessionId: "s", isRecordingMargin: true)),
             ("ended", LiveSessionActivityAttributes.ContentState(markCount: 12, sessionId: "s", endedAt: start, resumeUntil: start.addingTimeInterval(600))),
         ]
@@ -56,6 +58,18 @@ final class LiveSessionCardLayoutTests: XCTestCase {
         XCTAssertFalse(LiveSessionCardLayout.showsMarginLinks(at: .xxxLarge))
         for size in Self.sizes where size.isAccessibilitySize {
             XCTAssertFalse(LiveSessionCardLayout.showsMarginLinks(at: size), "\(size)")
+        }
+    }
+
+    /// Photo adds a capsule, not a row: the card is as tall as the plain one, and the third capsule is as wide as the
+    /// others share out, so it neither pushes the card past 160 pt nor changes when the row drops (#2708).
+    func testThePhotoCardIsNoTallerThanThePlainOneAndDropsItsRowWithIt() throws {
+        let plain = try XCTUnwrap(cards().first { $0.name == "running" }).state
+        let photo = try XCTUnwrap(cards().first { $0.name == "running-photo" }).state
+        for size in Self.sizes {
+            let a = try render(plain, name: "running", size: size)
+            let b = try render(photo, name: "running-photo", size: size)
+            XCTAssertEqual(a.height, b.height, accuracy: 0.5, "\(size)")
         }
     }
 

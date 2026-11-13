@@ -71,6 +71,8 @@ struct LiveSessionView: View, Equatable {
     @State private var openMargin: MarginTarget?
     /// Set by a Live Activity tap once the screen has presented; the change handler opens the writing sheet.
     @State private var wantsWrite = false
+    /// Set by a Live Activity Photo tap once the screen has presented; the change handler opens the camera (#2708).
+    @State private var wantsPhoto = false
     // Photo Margins (#2708)
     /// Photo was tapped and the camera, or the fitting of its picture, is not done yet: a second tap does nothing.
     @State private var isTakingPhoto = false
@@ -161,6 +163,11 @@ struct LiveSessionView: View, Equatable {
             wantsWrite = false
             beginWriting()
         }
+        .onChange(of: wantsPhoto) { _, wanted in
+            guard wanted else { return }
+            wantsPhoto = false
+            beginPhoto()
+        }
         .onChange(of: wantsWritePhoto) { _, wanted in
             guard wanted else { return }
             wantsWritePhoto = false
@@ -248,8 +255,8 @@ struct LiveSessionView: View, Equatable {
         model.openSavedLiveSession(saved)
     }
 
-    /// A tap on the Live Activity's Write a Margin or Speak a Margin (#2833): the writing sheet opens, or the spoken
-    /// Margin is already recording. Needs a running session; otherwise the screen just opens.
+    /// A tap on the Live Activity's Write a Margin, Speak a Margin or Photo (#2833, #2708): the writing sheet opens, the
+    /// spoken Margin is already recording, or the camera opens. Needs a running session; otherwise the screen just opens.
     private func applyLink() {
         guard controller.didLoad else { return }
         // Only a screen showing the running session takes a link; one open on an ended session leaves it waiting.
@@ -272,6 +279,13 @@ struct LiveSessionView: View, Equatable {
         case .speak:
             startRecordingIfIdle()
             showRecordingAfterPresenting()
+        case .photo:
+            // The camera can't open while this screen is still presenting. Photo's own guard ignores the link when a
+            // Margin is recording, the camera is already open, or this session doesn't take Photo Margins (#2708).
+            Task {
+                try? await Task.sleep(for: .milliseconds(400))
+                wantsPhoto = true
+            }
         }
     }
 

@@ -25,11 +25,15 @@ public struct LiveSessionActivityAttributes: ActivityAttributes {
         /// True while a spoken Margin records on the phone (#3499): the card then says so and offers Finish. Optional,
         /// like the fields above, so a card started by an earlier build still decodes and reads as not recording.
         public var isRecordingMargin: Bool?
+        /// True when this session takes Photo Margins (a paper book or something else, #2708): the card then shows a
+        /// Photo capsule beside Speak and Write. Optional, like the fields above, so a card started by an earlier build
+        /// still decodes and reads as not offering Photo.
+        public var offersPhoto: Bool?
 
         public init(
             markCount: Int, lastMarkAt: Date? = nil, clockOrigin: Date? = nil, clockTitle: String? = nil,
             sessionId: String? = nil, endedAt: Date? = nil, resumeUntil: Date? = nil,
-            isRecordingMargin: Bool? = nil
+            isRecordingMargin: Bool? = nil, offersPhoto: Bool? = nil
         ) {
             self.markCount = markCount
             self.lastMarkAt = lastMarkAt
@@ -39,6 +43,7 @@ public struct LiveSessionActivityAttributes: ActivityAttributes {
             self.endedAt = endedAt
             self.resumeUntil = resumeUntil
             self.isRecordingMargin = isRecordingMargin
+            self.offersPhoto = offersPhoto
         }
 
         /// True while the card says a spoken Margin records. An ended card never does.
