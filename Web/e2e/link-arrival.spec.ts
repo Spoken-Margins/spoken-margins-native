@@ -355,6 +355,21 @@ test('Record stops the friend’s clip so the microphone does not hear it, names
   await context.close();
 });
 
+test('Play or Pause while the friend’s clip is playing drops the clip and its card, so it stops answering that Margin (#4107, B4)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  await page.goto(LINK);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 124; });
+  const arrived = playing.getByTestId('arrived-margin');
+  await expect(arrived).toContainText('Web fixture is speaking', { timeout: 30_000 });
+  await playing.getByRole('button', { name: 'Play', exact: true }).or(playing.getByRole('button', { name: 'Pause', exact: true })).click();
+  // The clip is cut and the card goes with it; nothing is left that a later Margin could be taken to answer.
+  await expect(arrived).toHaveCount(0);
+  await context.close();
+});
+
 test('a browser that refuses the share sheet: Send goes, Save as a file stays, and the listener reads the next step, not "Permission denied" (#4095)', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   // Chrome on Android refuses a share that runs after the tap has gone stale; stand in for it.

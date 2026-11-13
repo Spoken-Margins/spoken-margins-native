@@ -446,9 +446,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const toggle = useCallback(() => {
     const audio = audioRef.current;
     if (!audio || !audio.src) return;
-    // A tap on Play while a Margin's clip is playing (or was blocked) goes to the episode: the clip is dropped.
+    // A tap on Play while a Margin's clip is playing (or was blocked) goes to the episode: the clip is dropped, and its
+    // card with it, so the reply memory sees the end (a card left up would keep answering that Margin for good, #4107).
+    const cutClip = clip.current !== null;
     stopClip();
-    setArrived((a) => (a?.blocked || failedRef.current ? undefined : a));
+    setArrived((a) => (a?.blocked || failedRef.current || cutClip ? undefined : a));
     // A tap on Play after the episode failed is a retry.
     if (failedRef.current) {
       retry(audio);
