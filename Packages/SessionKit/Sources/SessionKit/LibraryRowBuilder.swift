@@ -75,7 +75,7 @@ public enum LibraryRowBuilder {
         return items.enumerated().map { storageRank, item in
             let sessions = sessionsByItemId[item.id] ?? []
             let continuation = SessionContinuation.preferredContinuationSession(in: sessions)
-            let isCompleted = item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(sessions)
+            let isCompleted = ItemFinishedRule.isFinished(item, sessions: sessions) // an item added again starts over (#4178)
             let compatibleManifests = manifestsByItemId[item.id]?.filter { manifest in
                 context.renderSignature.map { manifest.signature == $0 } ?? true
             }
@@ -117,7 +117,7 @@ public enum LibraryRowBuilder {
                 startupAudioState: startupAudio.state,
                 startupAudioCompletedChunkCount: startupAudio.completed,
                 startupAudioTargetChunkCount: startupAudio.target,
-                addedAt: item.createdAt,
+                addedAt: ItemFinishedRule.addedAt(item),
                 lastListenedAt: sessions.compactMap { $0.updatedAt ?? $0.createdAt }.max(),
                 storageRecencyRank: storageRank
             )
@@ -125,7 +125,8 @@ public enum LibraryRowBuilder {
             row.usesNewReader = data.structuredDocumentItemIds.contains(item.id)
             row.sharedMargins = data.sharedMarginsByItemId[item.id] ?? .none
             row.marginCount = max(0, data.marginCountsByItemId[item.id] ?? 0)
-            row.canMarkUnfinished = item.sourceCompletedAt != nil && !PreparationChunkGate.itemAlreadyListened(sessions)
+            row.canMarkUnfinished = item.sourceCompletedAt != nil
+                && !PreparationChunkGate.itemAlreadyListened(ItemFinishedRule.countedSessions(item, sessions: sessions))
             row.textCharacterCount = row.hasNativeAudio ? nil : item.textCharacterCount
             return row
         }

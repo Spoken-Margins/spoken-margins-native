@@ -116,18 +116,22 @@ final class BrowserTextTitleTests: XCTestCase {
                 var expected = original
                 expected.title = "Séb Krier on X"
 
-                XCTAssertEqual(try engine.importBrowserTextInBackground(capture), expected, "\(format): returned item")
-                XCTAssertEqual(try store.loadItem(id: id), expected, "\(format): stored item")
+                // A re-import the listener asked for also marks the item added again (#4178); the rest is unchanged.
+                func unstamped(_ item: Item) -> Item { var item = item; item.addedAgainAt = nil; return item }
+                let returned = try engine.importBrowserTextInBackground(capture)
+                XCTAssertNotNil(returned.addedAgainAt, "\(format): marked added again")
+                XCTAssertEqual(unstamped(returned), expected, "\(format): returned item")
+                XCTAssertEqual(unstamped(try store.loadItem(id: id)), expected, "\(format): stored item")
                 XCTAssertEqual(try store.loadSession(id: session.id), session, "saved listening position")
                 XCTAssertEqual(try store.listItems(includeDeleted: true).count, 1, "no duplicate")
-                XCTAssertEqual(try engine.importBrowserTextInBackground(capture), expected, "second re-import")
+                XCTAssertEqual(unstamped(try engine.importBrowserTextInBackground(capture)), expected, "second re-import")
                 XCTAssertEqual(try store.listItems(includeDeleted: true).count, 1)
 
                 var renamed = expected
                 renamed.title = "My AI reading notes"
                 try store.saveItem(renamed)
-                XCTAssertEqual(try engine.importBrowserTextInBackground(capture), renamed, "custom title survives")
-                XCTAssertEqual(try store.loadItem(id: id), renamed)
+                XCTAssertEqual(unstamped(try engine.importBrowserTextInBackground(capture)), unstamped(renamed), "custom title survives")
+                XCTAssertEqual(unstamped(try store.loadItem(id: id)), unstamped(renamed))
             }
         }
     }

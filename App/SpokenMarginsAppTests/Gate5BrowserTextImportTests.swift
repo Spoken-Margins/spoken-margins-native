@@ -320,6 +320,52 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertThrowsError(try browserStore.handoff(payloadID: payloadID))
     }
 
+    /// #4178, found on the owner's phone: an article heard before, then shared again from Safari while something played,
+    /// said "Added to Library" and was nowhere in it. The share brought back the old finished copy, which the Library's
+    /// default "Unfinished" view hides. Drives the extension's own route and reads the list the Library screen shows.
+    func testAnArticleHeardBeforeAndSharedAgainIsTheLibrarysFirstRow() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("spoken-margins-shared-again-\(UUID().uuidString)", isDirectory: true)
+        temporaryDirectories.append(directory)
+        let browserStore = Gate5BrowserTextHandoffStore(baseDirectory: directory)
+        let essay = BrowserTextHandoff(
+            captureMode: .readablePage,
+            source: BrowserTextSource(url: "https://example.com/essays/heard-before/", title: "Essay Heard Before"),
+            text: "# Essay Heard Before\n\nWords worth hearing twice.",
+            contentFormat: .markdown
+        )
+        let model = Gate1AppModel(
+            sourceLinkHandoffStore: SourceLinkHandoffStore(baseDirectory: directory),
+            browserTextHandoffStore: browserStore,
+            audioPlaybackClient: NoopAudioPlaybackClient()
+        )
+        model.resetAndSeed()
+        let store = try XCTUnwrap(model.store)
+        let itemId = try model.importBrowserTextInBackground(essay)
+        var heard = try store.loadItem(id: itemId)
+        let tenDaysAgo = Date(timeIntervalSinceNow: -86_400 * 10)
+        heard.createdAt = tenDaysAgo
+        try store.saveItem(heard)
+        try store.saveSession(Session(
+            id: "session-heard-before", itemId: itemId, createdAt: tenDaysAgo, updatedAt: tenDaysAgo, completedAt: tenDaysAgo,
+            status: "finished", phase: .finished, currentTargetType: .itemTextTTS, currentTargetId: itemId,
+            position: Position(charOffset: 20), completionPercent: 100, playbackRate: 1))
+        try store.moveItemToTrash(id: itemId)
+        try model.refreshLibraryRows(store: store)
+        XCTAssertFalse(model.visibleLibraryItems.contains { $0.id == itemId })
+        let playing = try XCTUnwrap(model.libraryItems.first { $0.id != itemId }?.id)
+        model.startItem(id: playing)
+
+        let payloadID = "payload-shared-again"
+        try browserStore.save(essay, payloadID: payloadID)
+        model.handleIncomingURL(Gate5BrowserTextHandoffURL.url(forPayloadID: payloadID))
+        try await waitFor("the shared-again import") { model.diagnostics["addedToLibraryVisibility"] != nil }
+
+        XCTAssertEqual(model.diagnostics["addedToLibraryVisibility"], "visible:row_1")
+        XCTAssertEqual(model.visibleLibraryItems.first?.id, itemId, "the Library lists what it just said it added, first")
+        XCTAssertEqual(model.snapshot.itemId, playing, "the share starts and stops nothing")
+    }
+
     /// Drives the app's own route for a shared payload (#1049, LNK-04): the model, not the test, deletes the
     /// payload once the import succeeds, so the launch sweep can't import it again.
     func testPayloadIsDeletedAfterSuccessfulImport() async throws {
