@@ -75,10 +75,12 @@ struct LiveSessionView: View, Equatable {
     @State private var showsEndCard = false
     @State private var showsLineUp = false
     @State private var confirmsDiscard = false
-    @State private var isSaving = false
     @State private var isRegisteredRunning = false
+    /// Saving or discarding closes the screen without the setup card, and a saved session's item opens once it has
+    /// gone (#4168).
+    @StateObject private var finish = LiveSessionFinish()
 
-    private var isRunningScreen: Bool { controller.session != nil }
+    private var isRunningScreen: Bool { controller.session != nil || !finish.showsSetup }
 
     var body: some View {
         #if DEBUG
@@ -88,8 +90,10 @@ struct LiveSessionView: View, Equatable {
             Group {
                 if let session = controller.session {
                     LiveSessionStage(pane: paneContent(session), pill: pill, dock: dock(session))
-                } else {
+                } else if finish.showsSetup {
                     setupScreen
+                } else {
+                    Color.clear
                 }
             }
             .background(isRunningScreen ? AppColors.listeningBackground : AppColors.bone)
@@ -119,10 +123,14 @@ struct LiveSessionView: View, Equatable {
             }
         }
         .environment(\.miniPlayerClearance, 0)
-        .onAppear { controller.load() }
+        .onAppear {
+            finish.screenAppeared()
+            controller.load()
+        }
         .onDisappear {
             unregisterRunningScreen()
             controller.stopPolling()
+            finish.screenGone(open: openSavedItem)
         }
         .onChange(of: links.pendingAction) { _, _ in applyLink() }
         .onChange(of: controller.didLoad) { _, _ in applyLink() }
@@ -154,10 +162,9 @@ struct LiveSessionView: View, Equatable {
         }
         .sheet(isPresented: $showsLineUp) {
             if let session = controller.session {
-                LiveSessionLineUpView(session: session) {
-                    controller.close()
+                LiveSessionLineUpView(session: session) { saved in
                     showsLineUp = false
-                    dismiss()
+                    finish.saved(saved, dismiss: { dismiss() }, open: openSavedItem)
                 }
                 .environmentObject(model)
             }
@@ -174,6 +181,7 @@ struct LiveSessionView: View, Equatable {
         .confirmationDialog("Discard this session and its Margins?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
             Button("Discard Session", role: .destructive) {
                 controller.discard()
+                finish.discarded()
                 dismiss()
             }
         }
@@ -187,6 +195,12 @@ struct LiveSessionView: View, Equatable {
         dismissKeyboard() // a field the listener was still typing in is kept first
         controller.stopSpokenMargin()
         dismiss()
+    }
+
+    /// The screen has gone: let go of the saved session and open the item it became (#4168).
+    private func openSavedItem(_ saved: Gate1AppModel.SavedLiveSession) {
+        controller.close()
+        Task { await model.openSavedLiveSession(saved) }
     }
 
     /// A tap on the Live Activity's Write a Margin or Speak a Margin (#2833): the writing sheet opens, or the spoken
@@ -530,26 +544,25 @@ struct LiveSessionView: View, Equatable {
             }
             .filledActionButton()
             Button {
-                isSaving = true
+                guard finish.beginSaving() else { return }
                 Task {
                     do {
                         // The session as it is when saved, not as this card was drawn: words typed a moment ago are in it.
-                        try await model.saveLiveSession(controller.session ?? session, transcript: nil, placed: [], recordingURL: nil)
+                        let saved = try await model.saveLiveSession(controller.session ?? session, transcript: nil, placed: [], recordingURL: nil)
                         model.hangTelemetry.labels.scoped("liveSessionSavedAsNotes") {
-                            controller.close()
-                            dismiss()
+                            finish.saved(saved, dismiss: { dismiss() }, open: openSavedItem)
                         }
                     } catch {
                         controller.errorMessage = ListenerErrorText.line(prefix: "Couldn't save:", error: error)
+                        finish.saveFailed()
                     }
-                    isSaving = false
                 }
             } label: {
-                Label(isSaving ? "Saving…" : "Save as Notes", systemImage: "tray.and.arrow.down").frame(maxWidth: .infinity, minHeight: 44)
+                Label(finish.isSaving ? "Saving…" : "Save as Notes", systemImage: "tray.and.arrow.down").frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.bordered)
             .tint(.white)
-            .disabled(isSaving)
+            .disabled(finish.isSaving)
             Button("Discard Session", role: .destructive) { confirmsDiscard = true }
         }
         .padding(16)

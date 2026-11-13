@@ -362,7 +362,8 @@ final class BackgroundRefreshGateTests: XCTestCase {
         held.releaseAll()
         let session = LiveSession(id: "live-\(UUID().uuidString)", kind: .meeting, title: "Standup", startedAt: Date(), endedAt: Date())
 
-        try await model.saveLiveSession(session, transcript: nil, placed: [], recordingURL: nil)
+        let saved = try await model.saveLiveSession(session, transcript: nil, placed: [], recordingURL: nil)
+        await model.openSavedLiveSession(saved)
 
         XCTAssertGreaterThanOrEqual(held.count, 1, "the Library is read through the off-main read")
         XCTAssertEqual(model.screen, .item)
