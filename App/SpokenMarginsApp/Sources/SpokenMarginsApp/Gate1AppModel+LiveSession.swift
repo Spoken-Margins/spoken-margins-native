@@ -15,9 +15,20 @@ extension Gate1AppModel {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
     }
 
+    /// What a saved session became, for `openSavedLiveSession` once the live session screen has gone.
+    struct SavedLiveSession: Equatable {
+        let itemId: String
+        let title: String
+        let marginCount: Int
+    }
+
+    /// Writes the session as a Library item. It doesn't open the item: the live session screen is a cover over the
+    /// screen this would replace, and replacing it under the cover left the cover up on its setup card (#4168). The
+    /// screen calls `openSavedLiveSession` once it has gone.
+    @discardableResult
     func saveLiveSession(
         _ session: LiveSession, transcript: ImportedTranscript?, placed: [LiveSessionAlignment.Placed], recordingURL: URL?
-    ) async throws {
+    ) async throws -> SavedLiveSession {
         let store = try requireStore()
         let title = session.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? transcript?.title ?? "\(session.kind.label) session"
@@ -69,10 +80,34 @@ extension Gate1AppModel {
         // Nothing below reads the rows back, so the Library and the item are read off the main thread (#2505).
         try await reloadLibraryRowsOffMain(store: store)
         refreshMarginRowsInBackground(forItem: itemId)
-        selectedItem = try await loadItemDetailOffMain(id: itemId, store: store)
-        activeItemId = itemId
-        screen = .item
-        reportConfirmation("Saved \(title) with \(placed.count) Margin\(placed.count == 1 ? "" : "s").")
+        return SavedLiveSession(itemId: itemId, title: title, marginCount: linked.count)
+    }
+
+    /// Opens the item a session was saved as, on its detail screen, and says it was saved. The save has already
+    /// happened, so a failure here reports that it couldn't open, not that it couldn't save. Tests await the task.
+    @discardableResult
+    func openSavedLiveSession(_ saved: SavedLiveSession) -> Task<Void, Never> {
+        let store: SQLiteSessionStore
+        do {
+            store = try requireStore()
+        } catch {
+            reportFailure(error, context: "Saved \(saved.title), but couldn't open it")
+            return Task {}
+        }
+        return Task { [weak self] in
+            guard let self else { return }
+            do {
+                let detail = try await loadItemDetailOffMain(id: saved.itemId, store: store)
+                hangTelemetry.labels.scoped("liveSessionSavedItemOpened") {
+                    selectedItem = detail
+                    activeItemId = saved.itemId
+                    screen = .item
+                    reportConfirmation("Saved \(saved.title) with \(saved.marginCount) Margin\(saved.marginCount == 1 ? "" : "s").")
+                }
+            } catch {
+                reportFailure(error, context: "Saved \(saved.title), but couldn't open it")
+            }
+        }
     }
 
     /// Removes a purged item's session record, which holds the meeting's transcript.

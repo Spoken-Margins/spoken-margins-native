@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 /// Shows each Margin's evidence (transcript match, the listener's setting, the estimate) before saving.
 struct LiveSessionLineUpView: View {
     let session: LiveSession
-    let onSaved: () -> Void
+    let onSaved: (Gate1AppModel.SavedLiveSession) -> Void
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
 
@@ -185,10 +185,10 @@ struct LiveSessionLineUpView: View {
         player?.pause()
         Task {
             do {
-                try await model.saveLiveSession(session, transcript: transcript, placed: result.placed, recordingURL: recordingURL)
+                let saved = try await model.saveLiveSession(session, transcript: transcript, placed: result.placed, recordingURL: recordingURL)
                 model.hangTelemetry.labels.scoped("liveSessionLineUpSaved") {
                     stopAccess()
-                    onSaved()
+                    onSaved(saved)
                 }
             } catch {
                 errorMessage = ListenerErrorText.line(prefix: "Couldn't save:", error: error)
