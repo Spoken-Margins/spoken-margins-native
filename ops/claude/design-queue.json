@@ -1,0 +1,23 @@
+{
+  "about": "The design pass's starting queue (#3866), read by scripts/design_queue.py. Batches run in this order, each cut to the issues still waiting; after the last, the pass takes the rest of `needs-design` by priority, then age. `hold` lists issues a person is designing by hand, with why; remove an entry when that work is posted. Order set by the director on #4187, 2026-11-12.",
+  "hold": {
+    "3782": "a friend's arrival, designed by hand in the 2026-11-12 run (#4187)",
+    "3788": "a friend's arrival, designed by hand in the 2026-11-12 run (#4187)",
+    "3789": "a friend's arrival, designed by hand in the 2026-11-12 run (#4187)",
+    "3790": "a friend's arrival, designed by hand in the 2026-11-12 run (#4187)",
+    "3794": "a friend's arrival, designed by hand in the 2026-11-12 run (#4187)",
+    "3800": "a friend's arrival, designed by hand in the 2026-11-12 run (#4187)",
+    "3801": "a friend's arrival, designed by hand in the 2026-11-12 run (#4187)",
+    "3889": "a friend's arrival, designed by hand in the 2026-11-12 run (#4187)",
+    "3890": "a friend's arrival, designed by hand in the 2026-11-12 run (#4187)"
+  },
+  "batches": [
+    {"name": "Finding a friend's Margins afterwards", "issues": [4101, 4103, 4104, 4105, 4125, 4174, 4098, 4062]},
+    {"name": "Web reply loop", "issues": [3902, 4092, 4093, 4094, 4107, 4172, 4170, 3576]},
+    {"name": "Contrast and colour", "issues": [3731, 3733, 3734, 3735, 3736]},
+    {"name": "The sender's share review", "issues": [3839, 3853, 3854, 3855, 3905, 3906, 4171, 4134]},
+    {"name": "Playback screen parity", "issues": [3862, 3865, 3914, 3986, 3961, 3864, 3777, 3940]},
+    {"name": "Small polish", "issues": [4018, 4019, 4020, 3856, 4183, 4176, 3863]},
+    {"name": "Folder import", "issues": [3769, 3770]}
+  ]
+}

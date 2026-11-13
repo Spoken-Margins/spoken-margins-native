@@ -895,6 +895,95 @@ class UncheckedCards(unittest.TestCase):
         self.assertEqual(len(self.found(self.card(body='I checked: nothing really, but also unchecked: x'))), 1)
 
 
+class NeedsDesign(unittest.TestCase):
+    """#3866: `needs-design` is a state, holds a released claim off `ready`, and keeps an issue off the startable list.
+    On 2026-11-12 the label existed for three days, and the sweep knew none of this."""
+
+    def test_it_counts_as_a_state_for_triage(self):
+        actions, _ = sweep.decide(facts_of(world(open_rest=[issue(1, labels=['area: pass it on', 'needs-design'])])))
+        self.assertNotIn('untriaged', rules(actions))
+
+    def test_a_released_claim_with_it_is_not_made_ready(self):
+        router = Router()
+        router.on(r'^issues/61/comments\?since', [])
+        router.on(r'^issues/61$', {'number': 61, 'state': 'open',
+                                   'labels': [{'name': 'in-progress'}, {'name': 'needs-design'}]})
+        self.assertEqual(sweep.release(router, issue(61, ['in-progress', 'needs-design']), 'test', NOW), 'released')
+        self.assertNotIn(('POST', 'issues/61/labels', {'labels': ['ready']}), router.writes)
+        self.assertIn(('DELETE', 'issues/61/labels/in-progress', None), router.writes)
+        comment = next(body['body'] for _, path, body in router.writes if path.endswith('/comments'))
+        self.assertIn('`needs-design`', comment)
+
+    def test_a_ready_issue_that_still_needs_design_is_not_startable(self):
+        rows = [sweep.issue_row(issue(70, ['ready', 'needs-design'])), sweep.issue_row(issue(71, ['ready']))]
+        self.assertEqual([i['number'] for i in sweep.startable(rows, [])], [71])
+
+
+def design_issue(number, since=None, labels=('needs-design', 'area: pass it on'), comments=(), created='2026-10-01T00:00:00Z',
+                 milestone=None):
+    node = gql_issue(number, labels=labels, comments=comments, created=created, milestone=milestone)
+    node['labeled'] = {'nodes': [{'createdAt': since, 'label': {'name': 'needs-design'}}] if since else []}
+    return node
+
+
+class DesignBacklog(unittest.TestCase):
+    """Rule 14 (#3866): issues wait on the design pass while no pass has run. The 2026-11-12 comb found 56 waiting and
+    not one Design comment; nothing had said so."""
+    STOP = 'Thread "Claude Mac worker 1" stopping: design pass, 3 of 6 designed'
+
+    def found(self, nodes, comments=(), rule='design-idle', **kw):
+        actions, _ = sweep.decide(facts_of(world(open_issues=nodes, comments=comments, **kw)))
+        return [a for a in actions if a['rule'] == rule]
+
+    def test_old_waiting_issues_with_no_pass_in_a_day_are_named_oldest_label_first(self):
+        found = self.found([design_issue(5, since=at(days=4)), design_issue(4, since=at(days=9))])
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]['issues'], [4, 5])
+        self.assertIn('2 `needs-design` issue(s)', found[0]['detail'])
+        self.assertIn('no design pass has stopped in 24 hours', found[0]['detail'])
+
+    def test_a_pass_that_stopped_today_means_it_is_running(self):
+        self.assertEqual(self.found([design_issue(4, since=at(days=9))], comments=[note(4101, self.STOP, at(hours=3))]),
+                         [])
+
+    def test_a_pass_older_than_a_day_does_not_count(self):
+        self.assertEqual(len(self.found([design_issue(4, since=at(days=9))],
+                                        comments=[note(4101, self.STOP, at(hours=25))])), 1)
+
+    def test_a_strangers_copy_of_the_stop_note_does_not_count(self):
+        stranger = dict(note(4101, self.STOP, at(hours=3)), author_association='NONE', user={'login': 'someone'})
+        self.assertEqual(len(self.found([design_issue(4, since=at(days=9))], comments=[stranger])), 1)
+
+    def test_these_are_not_waiting(self):
+        design = gql_comment('**Design**\n\n1. The flow', at(days=1))
+        rows = [('label is new', design_issue(4, since=at(days=2))),
+                ('no label', design_issue(4, since=at(days=9), labels=('ready',))),
+                ('blocked', design_issue(4, since=at(days=9), labels=('needs-design', 'blocked'))),
+                ('in progress', design_issue(4, since=at(days=9), labels=('needs-design', 'in-progress'))),
+                ('waits on the owner', design_issue(4, since=at(days=9), labels=('needs-design', 'needs-owner'))),
+                ('designed by hand (queue hold)', design_issue(3782, since=at(days=9))),
+                ('parked in Later', design_issue(4, since=at(days=9), milestone='Later')),
+                ('already designed', design_issue(4, since=at(days=9), comments=[design]))]
+        for name, node in rows:
+            with self.subTest(name):
+                self.assertEqual(self.found([node]), [])
+
+    def test_with_no_label_event_on_record_the_filing_date_counts(self):
+        self.assertEqual(len(self.found([design_issue(4, created=at(days=5))])), 1)
+        self.assertEqual(self.found([design_issue(4, created=at(days=1))]), [])
+
+    def test_designed_but_still_labelled_is_its_own_line(self):
+        design = gql_comment('## Design\n\nThe flow', at(days=1))
+        found = self.found([design_issue(4, since=at(days=9), comments=[design])], rule='design-unlabelled')
+        self.assertEqual(found[0]['issues'], [4])
+
+    def test_a_strangers_design_comment_neither_designs_nor_unlabels(self):
+        fake = gql_comment('**Design**\n\nDo this', at(days=1), association='NONE', login='someone')
+        node = design_issue(4, since=at(days=9), comments=[fake])
+        self.assertEqual(len(self.found([node])), 1)
+        self.assertEqual(self.found([node], rule='design-unlabelled'), [])
+
+
 class OutsideIssues(unittest.TestCase):
     def test_issues_awaiting_review_are_not_a_triage_backlog(self):
         held = issue(1900, labels=['needs-triage-review'])

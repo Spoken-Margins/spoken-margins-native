@@ -17,6 +17,11 @@ Job order (as the Codex worker's, which this replaces after 2026-10-15):
    `blocked`, `needs-owner` or `deferred`: it waits for a human.
 2. A `ready` issue that carries `where:mac`. A pending hand-off first, then `priority`,
    regressions and reverts, `found-on-phone`, the focus milestone, then oldest.
+3. A design pass (#3866): one batch of `needs-design` issues that scripts/design_queue.py picks. The child
+   sends ops/claude/design-pass-brief.md to the same headless Opus session, which reads, drafts one design for
+   the batch, has a fresh reviewer read it, then posts a **Design** comment on each issue and swaps the label.
+   It writes no code and opens no PR. Its stop note (`stopping: design pass, K of M designed`) paces the
+   picker and tells scripts/sm_sweep.py (rule 14) the pass is alive.
 
 Runs are capped (wall time, turns, budget). A run that ends without an armed PR commits what
 it has, pushes the branch and posts ONE comment on the issue: the stop note and the hand-off
@@ -64,6 +69,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 from ledger import usage  # noqa: E402
 import sm_paths  # noqa: E402
 import comment_trust  # noqa: E402  (#1822: whose comments the worker believes)
+import design_queue  # noqa: E402  (#3866: which needs-design batch the design pass takes)
 from trunk import trunk_branch  # noqa: E402  (#1492: the branch its PRs go into)
 
 # ---------------------------------------------------------------------------
@@ -119,7 +125,8 @@ LANE_STATE = Path(os.environ.get('SM_LANE_STATE', str(Path.home() / 'Library' / 
 
 REQUIRED_LABEL = 'where:mac'
 # The project's skip list (project instructions) plus a fix that already merged and waits on the phone.
-EXCLUDED_LABELS = {'in-progress', 'needs-owner', 'deferred', 'blocked', 'status: needs-human-validation'}
+# `needs-design` (#3866): Sonnet and this worker build only what a Design comment has settled.
+EXCLUDED_LABELS = {'in-progress', 'needs-owner', 'deferred', 'blocked', 'status: needs-human-validation', 'needs-design'}
 # A PR parked for a human. A run's stop restores the labels it started with, so `needs-mac`
 # can come back after someone removed it; these keep the PR out of the finisher anyway (#1154).
 PR_HOLD_LABELS = {'needs-owner', 'deferred', 'blocked'}
@@ -127,7 +134,10 @@ CLAIM_RE = re.compile(r'[*_\s]*Claimed by project thread "([^"]+)"')
 STOP_RE = re.compile(r'[*_\s]*Thread "([^"]+)" stopping:\s*(.*)')
 THREAD_RE = re.compile(r'Claude Mac worker (\d+)$')
 HANDOFF_STOP_RE = re.compile(r'^[*_\s]*Thread "Claude Mac worker \d+" stopping:')
+DESIGN_STOP_RE = re.compile(r'^[*_\s]*Thread "Claude Mac worker \d+" stopping: design pass\b')   # another job's notes
 FAULT_MARK = '(fault)'
+DESIGN_BRIEF = Path(__file__).resolve().with_name('design-pass-brief.md')
+DESIGN_DONE_HOLDS = {'blocked', 'deferred', 'needs-owner'}   # the brief leaves `ready` off these
 NEEDS_OWNER_RE = re.compile(r'^\s*NEEDS OWNER:\s*(.+)', re.I)
 
 
@@ -322,7 +332,7 @@ def fault_count(comments: list, now: dt.datetime) -> int:
     count = 0
     for c in sorted(comments or [], key=comment_time):
         body = (c.get('body') or '').strip()
-        if not HANDOFF_STOP_RE.match(body):
+        if not HANDOFF_STOP_RE.match(body) or DESIGN_STOP_RE.match(body):   # design faults pace the design pass only
             continue
         if FAULT_MARK not in body.splitlines()[0]:
             count = 0
@@ -342,7 +352,8 @@ def one_line(text, limit: int = 200) -> str:
 def recent_fault(comments: list, now: dt.datetime) -> bool:
     for c in comments or []:
         body = c.get('body') or ''
-        if HANDOFF_STOP_RE.match(body.strip()) and FAULT_MARK in body.splitlines()[0]:
+        if (HANDOFF_STOP_RE.match(body.strip()) and not DESIGN_STOP_RE.match(body.strip())
+                and FAULT_MARK in body.splitlines()[0]):
             try:
                 if not comment_time(c) or now - parse_time(comment_time(c)) < FAULT_COOLDOWN:
                     return True
@@ -881,6 +892,17 @@ class Ops:
         found['comments'] = self.trusted_comments(number)
         return found
 
+    def design_issues(self) -> list:
+        """Open `needs-design` issues with their comments, in `gh --json` shape (scripts/design_queue.py reads it)."""
+        return self.gh_json(['issue', 'list', '-R', REPO, '--state', 'open', '--label', design_queue.LABEL,
+                             '--limit', '300', '--json', 'number,title,body,labels,createdAt,milestone,state,comments'])
+
+    def capture_dirs(self) -> list:
+        """The screen tour's screenshot folders on this Mac (sm_integration_run.py), newest first."""
+        roots = {self.own_root / 'artifacts' / 'integration-run', self.repo_root / 'artifacts' / 'integration-run'}
+        found = [p for root in roots if root.is_dir() for p in root.glob('*/tour/screens') if p.is_dir()]
+        return sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
+
     def open_prs(self) -> list:
         return self.gh_json(['pr', 'list', '-R', REPO, '--state', 'open', '--base', BASE_BRANCH,
                              '--limit', '200', '--json', 'number,isDraft,createdAt,title,headRefName,body'])
@@ -1056,7 +1078,7 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
         say(f'  note: {p}')
     if not dry_run:
         for slot, path, info in dead:
-            kind = 'pr' if info.get('pr') else 'issue'
+            kind = next((k for k in ('pr', 'design', 'issue') if info.get(k)), 'issue')
             ops.log(f"slot {slot}: lock of dead pid {info.get('pid', '?')} ({kind} #{info.get(kind, '?')}) "
                     'cleared; check its labels by hand')
             path.unlink(missing_ok=True)
@@ -1073,43 +1095,57 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
         say(f"{tag}idle: {decision['why']}")
         return decision
 
-    pr = issue = None
+    pr = issue = batch = None
     try:
         held_prs = {int(i['pr']) for i in live.values() if i.get('pr')}
         held_issues = {int(i['issue']) for i in live.values() if i.get('issue')}
+        held_issues |= {int(n) for i in live.values() for n in i.get('issues') or []}
         pr, skipped = choose_finish(ops.open_prs(), ops.pull, now, held_prs)
         if pr is None:
             issue, issue_skipped = choose_issue(ops.ready_issues(), lambda n: ops.issue(n).get('comments') or [],
                                                 now, held_issues)
             skipped += issue_skipped
+        if pr is None and issue is None:   # the design pass takes what the build jobs leave (#3866)
+            batch = choose_design(ops.design_issues(), now, held_issues)
         decision['pr'] = pr['number'] if pr else None
         decision['issue'] = issue['number'] if issue else None
+        decision['design'] = batch['issues'] if batch else None
         if dry_run:
             print(f"Chosen PR to finish: #{pr['number']} {pr['title']}" if pr else 'Chosen PR to finish: none')
             print(f"Chosen issue: #{issue['number']} {issue['title']}" if issue else 'Chosen issue: none')
+            if pr is None and issue is None:
+                print(f"Chosen design batch: {batch['name']}: " + ', '.join(f'#{n}' for n in batch['issues'])
+                      if batch else 'Chosen design batch: none')
             for n, why in skipped:
                 print(f'  passed over #{n}: {why}')
     except Exception as exc:
         decision['why'] = decision['why'] or f'listing jobs failed ({exc})'
-    if not decision['why'] and issue is None and pr is None:
-        decision['why'] = f'no stalled PR and no eligible ready {REQUIRED_LABEL} issue'
+    if not decision['why'] and issue is None and pr is None and batch is None:
+        decision['why'] = (f'no stalled PR and no eligible ready {REQUIRED_LABEL} issue, '
+                           f'and no `{design_queue.LABEL}` batch waiting')
     if decision['why']:
         say(f"{tag}idle: {decision['why']}")
         return decision
 
-    job, kind = (pr, 'pr') if pr else (issue, 'issue')
+    if batch:
+        number, kind, title = batch['issues'][0], 'design', f"design pass: {batch['name']}"
+        arg, info = ','.join(str(n) for n in batch['issues']), {'design': batch['issues'][0], 'issues': batch['issues']}
+    else:
+        job, kind = (pr, 'pr') if pr else (issue, 'issue')
+        number, title, arg, info = job['number'], job['title'], job['number'], {kind: job['number']}
     if dry_run:
-        print(f"Would start slot {slot} on {kind} #{job['number']}; dry run, nothing started")
-        decision['start'] = (slot, job['number'])
+        print(f"Would start slot {slot} on {kind} #{number}; dry run, nothing started")
+        decision['start'] = (slot, number)
         return decision
-    pid = (spawn or spawn_child)(ops, slot, job['number'], kind)
-    write_lock(ops.home, slot, {'pid': pid, kind: job['number'], 'started': utc_stamp(now)})
-    ops.log(f"started slot {slot} (pid {pid}) on {kind} #{job['number']} {job['title']}")
-    decision['start'] = (slot, job['number'])
+    pid = (spawn or spawn_child)(ops, slot, arg, kind)
+    write_lock(ops.home, slot, dict(info, pid=pid, started=utc_stamp(now)))
+    ops.log(f"started slot {slot} (pid {pid}) on {kind} #{number} {title}")
+    decision['start'] = (slot, number)
     return decision
 
 
-def spawn_child(ops: Ops, slot: int, number: int, kind: str = 'issue') -> int:
+def spawn_child(ops: Ops, slot: int, number, kind: str = 'issue') -> int:
+    """Start one detached child. `number` is an issue or PR number, or for a design pass the batch, comma-joined."""
     ops.home.mkdir(parents=True, exist_ok=True)
     out = open(ops.home / f'slot-{slot}.out', 'ab')
     proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--slot', str(slot),
@@ -1534,6 +1570,174 @@ def run_pr(ops: Ops, slot: int, number: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Design pass (#3866): one batch of needs-design issues, no code
+# ---------------------------------------------------------------------------
+
+def choose_design(issues: list, now: dt.datetime, held: set = frozenset(), queue: Optional[dict] = None) -> Optional[dict]:
+    """The next design batch (scripts/design_queue.py), leaving out issues a live slot holds."""
+    queue = queue if queue is not None else design_queue.load_queue()
+    return design_queue.next_batch([i for i in issues if i['number'] not in held], queue, now)
+
+
+DESIGN_FAULT = 'design pass not run'   # design_queue.FAULT_NOTE: a cooldown, never a run that designed nothing
+
+
+def design_result(designed: int, of: int) -> str:
+    """The stop note's result. design_queue.STOP_NOTE and sm_sweep.DESIGN_STOP read exactly this."""
+    return f'design pass, {designed} of {of} designed'
+
+
+def batch_name(queue: dict, anchor: int, title: str) -> str:
+    return next((b['name'] for b in queue['batches'] if anchor in b['issues']), f'#{anchor} {title}'.strip())
+
+
+def captures_text(source: Optional[Path], copy: Optional[Path]) -> str:
+    if source is None or copy is None:
+        return ('No screen tour capture is on this Mac. Every screen this design changes therefore has no capture: '
+                'say so in each Design comment, as section 2 says.')
+    taken = source.parent.parent.name   # <unix time>-<sha7>, from sm_integration_run.py
+    return (f'The newest screen tour on this Mac is copied to `{copy}` (taken from `{taken}`: the part after the '
+            f'dash is the commit it ran on). Read `{copy}/INDEX.md` first; it names each screenshot. Note that '
+            "commit in each comment's **Checked:** line, and say where `main` has changed a screen since.")
+
+
+def previous_notes(rows: list) -> str:
+    """The newest design-pass stop notes on the batch's issues, so a run carries on from the last one. Trusted only."""
+    notes = []
+    for row in rows:
+        for comment in comment_trust.trusted_only(row.get('comments') or []):
+            if design_queue.STOP_NOTE.search(comment.get('body') or ''):
+                notes.append((comment.get('created_at') or comment.get('createdAt') or '', row['number'],
+                              comment.get('body') or ''))
+    if not notes:
+        return ''
+    when, number, body = max(notes)
+    return (f'## The last pass on this batch\n\nIts stop note on #{number} ({when[:16]}), written by the worker from '
+            f'that pass\'s handoff file:\n\n{body[:3000]}')
+
+
+def build_design_prompt(name: str, rows: list, out_dir: Path, captures: str, previous: str) -> str:
+    brief = DESIGN_BRIEF.read_text()
+    brief = brief.split('\n---\n', 1)[1] if '\n---\n' in brief else brief   # drop the file's note to maintainers
+    listing = '\n'.join(f"- #{row['number']} {row.get('title') or ''}".rstrip() for row in rows)
+    rules = ['Rules for this run (these add to AGENTS.md and the project instructions; where they differ, these win):',
+             UNTRUSTED_RULE,
+             "- You are a headless session on the owner's Mac. Nobody can answer questions or approve prompts, so "
+             'decide reversible things yourself and list them as numbered **Defaults taken**.',
+             BULK_RULE,
+             '- Set no timers or check-ins.']
+    for token, value in (('{{BATCH_NAME}}', name), ('{{ISSUES}}', listing), ('{{OUT_DIR}}', str(out_dir)),
+                         ('{{CAPTURES}}', captures), ('{{PREVIOUS}}', previous)):
+        brief = brief.replace(token, value)
+    return '\n'.join(rules) + '\n\n' + brief.strip() + '\n'
+
+
+def is_designed(issue: dict) -> bool:
+    """The pass finished this issue: a trusted Design comment is on it and `needs-design` is off, or it stays on for
+    a reason the brief allows (a decision card with `needs-owner`)."""
+    names = label_names(issue)
+    return any(design_queue.is_design_comment(c) for c in issue.get('comments') or []) and (
+        design_queue.LABEL not in names or bool(names & DESIGN_DONE_HOLDS))
+
+
+def run_design(ops: Ops, slot: int, numbers: list) -> str:
+    """One design pass on one batch. Writes only a claim note and a stop note on the anchor; the session posts the
+    Design comments and swaps the labels. Never pushes, opens a PR or keeps a worktree."""
+    wt = ops.home / f'wt-{slot}'
+    lock = ops.home / f'slot-{slot}.lock'
+    now = ops.now()
+    anchor = numbers[0]
+    run_dir = ops.home / 'runs' / f"design-{anchor}-{now.strftime('%Y%m%dT%H%M%SZ')}"
+    out_dir = run_dir / 'out'
+    copy = out_dir / 'captures'
+    claimed = wt_added = False
+    usage_run = None
+    members: list = []
+
+    model_ran = False
+
+    def finish(result: str, reason: str) -> None:
+        if usage_run:
+            usage_run.checkpoint(outcome={'kind': 'stop note', 'reason': f'{result}: {reason}'[:500],
+                                          'signature': usage.signature(result)})
+        batch = 'Batch: ' + ', '.join(f'#{n}' for n in (members or numbers)) + '. '   # design_queue.BATCH_LINE
+        try:
+            ops.comment(anchor, stop_text(slot, result, batch + reason[:2500]))
+        except Exception as exc:
+            ops.log(f'design #{anchor}: could not post stop note: {exc}')
+
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        out_dir.mkdir(exist_ok=True)
+        queue = design_queue.load_queue()
+        waiting = design_queue.classify(ops.design_issues(), queue, now)
+        if anchor not in {i['number'] for i in waiting['waiting']}:
+            ops.log(f'design #{anchor}: not claimed on re-check: no longer waiting')
+            return 'skipped'
+        riders = {i['number']: i for i in waiting['waiting'] + waiting['stuck']}
+        rows = [riders[n] for n in numbers if n in riders]
+        members = [row['number'] for row in rows]
+        name = batch_name(queue, anchor, riders[anchor].get('title') or '')
+        claimed = True
+        ops.comment(anchor, f'Claimed by project thread "{worker_title(slot)}" at {utc_stamp(now)}. Design pass on '
+                            + ', '.join(f'#{n}' for n in members) + f'. Model {MODEL} {EFFORT}.')
+
+        ops.must(['git', 'fetch', '--quiet', 'origin', f'refs/heads/{BASE_BRANCH}:refs/remotes/origin/{BASE_BRANCH}'],
+                 cwd=ops.repo_root, timeout=600)
+        clear_worktree(ops, wt)
+        ops.must(['git', 'worktree', 'add', '--quiet', '--detach', str(wt), f'origin/{BASE_BRANCH}'],
+                 cwd=ops.repo_root, timeout=600)
+        wt_added = True
+        source = next(iter(ops.capture_dirs()), None)
+        if source is not None:
+            shutil.copytree(source, copy)
+        prompt = build_design_prompt(name, rows, out_dir, captures_text(source, copy if source else None),
+                                     previous_notes(rows))
+        (run_dir / 'prompt.md').write_text(prompt)
+        transcript = run_dir / 'transcript.json'
+        usage_run = usage.Run(ops.ledger_dir, 'design', MODEL, EFFORT, transcript,
+                              targets=[{'issues': members, 'trigger': f'design pass: {name}'}], log=ops.log)
+        try:
+            kind, why_run = ops.claude(wt, prompt, transcript, out_dir)
+        finally:
+            usage_run.model_finished()
+        why_run = one_line(why_run)
+        usage_run.checkpoint(model_result={'ok': kind != 'fault', 'reason': why_run})
+        if kind == 'fault':   # it never ran: pace it as a fault, never as a pass that designed nothing
+            finish(DESIGN_FAULT, f'{why_run} {FAULT_MARK}')
+            return 'fault'
+        model_ran = True
+
+        done = []
+        for n in members:
+            try:
+                if is_designed(ops.issue(n)):
+                    done.append(n)
+            except Exception as exc:
+                ops.log(f'design #{anchor}: could not re-read #{n}: {exc}')
+        left = [n for n in members if n not in done]
+        notes = read_notes(out_dir)
+        reason = (f'{kind}: {why_run}. Designed: ' + (', '.join(f'#{n}' for n in done) or 'none') +
+                  '. Left: ' + (', '.join(f'#{n}' for n in left) or 'none') + '.' +
+                  (f'\n\nHand-off from the session:\n\n{notes}' if notes else ''))
+        finish(design_result(len(done), len(members)), reason)
+        return 'finished' if not left else 'partial'
+    except Exception as exc:
+        ops.log(f'design #{anchor} slot {slot}: wrapper error: {exc}')
+        if claimed:
+            finish(design_result(0, len(members) or len(numbers)) if model_ran else DESIGN_FAULT,
+                   f'wrapper error: {one_line(exc)}' + ('' if model_ran else f' {FAULT_MARK}'))
+        return 'error'
+    finally:
+        if usage_run:
+            usage_run.finish()
+        shutil.rmtree(copy, ignore_errors=True)   # 17 MB a tour; the run folder keeps the prompt and transcript
+        if wt_added:
+            ops.run(['git', 'worktree', 'remove', '--force', str(wt)], cwd=ops.repo_root)
+        release_lock(ops, lock)
+
+
+# ---------------------------------------------------------------------------
 # Check and entry
 # ---------------------------------------------------------------------------
 
@@ -1574,6 +1778,7 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument('--slot', type=int, help='(child) slot number')
     ap.add_argument('--issue', type=int, help='(child) issue number')
     ap.add_argument('--pr', type=int, help='(child) PR to finish')
+    ap.add_argument('--design', help='(child) a design batch: issue numbers, comma-separated, anchor first')
     args = ap.parse_args(argv)
     ops = Ops()
     if args.check:
@@ -1581,11 +1786,18 @@ def main(argv: Optional[list] = None) -> int:
     if not args.dry_run:
         usage.recover(ops.ledger_dir, ops.log)
 
-    if args.slot is not None or args.issue is not None or args.pr is not None:
-        if args.slot is None or (args.issue is None) == (args.pr is None):
-            ap.error('--slot needs exactly one of --issue or --pr')
+    jobs = [j for j in (args.issue, args.pr, args.design) if j is not None]
+    if args.slot is not None or jobs:
+        if args.slot is None or len(jobs) != 1:
+            ap.error('--slot needs exactly one of --issue, --pr or --design')
         if args.pr is not None:
             run_pr(ops, args.slot, args.pr)
+        elif args.design is not None:
+            try:
+                numbers = [int(n) for n in args.design.split(',') if n.strip()]
+            except ValueError:
+                ap.error('--design takes issue numbers, comma-separated')
+            run_design(ops, args.slot, numbers)
         else:
             run_issue(ops, args.slot, args.issue)
         return 0

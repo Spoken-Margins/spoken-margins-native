@@ -11,7 +11,7 @@ act on what it prints, then reply:
   scripts/sm_sweep.py --json           the same facts for scripts
   scripts/sm_sweep.py --status-json F  use a saved `scripts/sm_status.py --json` output (F or - for stdin)
 
-It looks for thirteen things:
+It looks for fourteen things:
   1. free Claude slots against the Dial (#589): its Threads box less the Claude threads active from their claim
      and stop notes (ops/dial/dial_gate.py's own reading), with the ready issues to start; Codex workers are
      counted against Codex's box and never against Claude's
@@ -39,6 +39,9 @@ It looks for thirteen things:
      sat unseen for 39 hours); triage gives it a state, and only a person picks `ready`
   13. a `needs-owner` issue filed by a person or agent since 2026-11-10 with no `Checked:` line in its body or newest
      comments (#3872: on 2026-11-08 a stale record became a phone test the owner had already done)
+  14. `needs-design` issues whose label is over 3 days old with no Design comment, while no design pass has posted
+     its stop note in 24 hours (#3866: on 2026-11-12, 56 waited and none had ever been designed), and issues that
+     have a Design comment but still carry the label
   Silent `in-progress` claims (#3247, #1507) are rule 3.
 
 --apply also closes those (rule 8), commenting once and removing only `ready` and `in-progress`. Every other label,
@@ -47,7 +50,7 @@ closed issue, and a failed validation reopens it with `regression` (owner, 2026-
 must therefore read closed issues too (#2448).
 
 --apply releases a stale claim by removing `in-progress`, adding `ready` (unless the issue is `blocked`,
-`needs-owner`, `deferred`, `validate-by-use`, `agent-verify` or `status: needs-human-validation`) and commenting why. It re-reads the issue's comments just before writing and does
+`needs-owner`, `deferred`, `validate-by-use`, `agent-verify`, `status: needs-human-validation` or `needs-design`, #3866) and commenting why. It re-reads the issue's comments just before writing and does
 nothing if any arrived. Every other finding is printed for the coordinator to dispatch; nothing else is written.
 
 Limits, stated so the output isn't over-trusted: the sweep reads GitHub, not sessions. A Test Desk or thread that has
@@ -57,7 +60,7 @@ Anything it can't read is reported as unreadable and never turned into a release
 
 Exit codes: 0 the sweep ran (actions or none), 2 GitHub unreachable or unreadable (nothing partial is printed as
 "nothing to do"). Needs GH_TOKEN or GITHUB_TOKEN (or `gh auth token`); --apply needs write access to issues.
-About 40 to 85 GitHub calls a run, none of them model tokens. Rules 9 to 13 add about 6: GraphQL pages of the open
+About 40 to 85 GitHub calls a run, none of them model tokens. Rules 9 to 14 add about 6: GraphQL pages of the open
 issues with their last three comments (100 a page), one page of PRs merged into `next`, one GraphQL lookup of the PRs
 a hold names, and at most DRIFT_READ_CAP issue-comment reads for reverts; what the cap leaves out is printed.
 """
@@ -91,13 +94,14 @@ FINISHER_BUSY = 30                           # minutes: a finisher active more r
 COMMENT_WINDOW = dt.timedelta(hours=24)      # the Dial gate's own window for claim and stop notes
 CARD_RULE_FROM = '2026-11-10T00:00:00Z'    # rule 13 starts here; older cards were written before it existed
 CHECKED_LINE = re.compile(r'^\W*checked:', re.I | re.M)
-SKIP_LABELS = {'in-progress', 'needs-owner', 'deferred', 'blocked'}
+NEEDS_DESIGN = 'needs-design'                 # #3866: waits for an Opus Design comment; never `ready` until then
+SKIP_LABELS = {'in-progress', 'needs-owner', 'deferred', 'blocked', NEEDS_DESIGN}
 OUTSIDE_LABEL = 'needs-triage-review'          # an issue by an untrusted author; only a collaborator can make it `ready`
 HOLD_LABELS = {'blocked', 'needs-owner', 'deferred', 'validate-by-use', 'agent-verify',
-               'status: needs-human-validation'}   # a released claim isn't made `ready` with one of these
+               'status: needs-human-validation', NEEDS_DESIGN}   # a released claim isn't made `ready` with one of these
 STATE_LABELS = {'ready', 'in-progress', 'needs-owner', 'deferred', 'blocked', 'parked', 'later', 'tracker',
                 'validate-by-use', 'agent-verify', 'needs-human-validation', 'status: needs-human-validation',
-                'type: research', OUTSIDE_LABEL}   # rule 7: any of these says what happens to the issue next
+                'type: research', OUTSIDE_LABEL, NEEDS_DESIGN}   # rule 7: any of these says what happens to the issue next
 PARKED_MILESTONE = 'Later'                     # rule 7: the milestone itself is the state
 AREA_PREFIX = 'area: '                         # rule 7: exactly one of these (docs/areas.md); none or two is untriaged
 DEAD = ('mac-tick-stale',)
@@ -106,6 +110,10 @@ FROZEN_BASE = 'next'                           # frozen since 2026-10-20 (#1492)
 NEXT_PR_PAGES = 1                              # nothing new merges into it, so its newest 100 closed PRs are enough
 OPEN_ISSUE_PAGES = 5                           # GraphQL pages of 100 open issues (about 270 on 2026-11-04)
 REVERT_WINDOW = dt.timedelta(days=14)
+DESIGN_WAIT = dt.timedelta(days=3)             # rule 14: a `needs-design` label this old counts as waiting on the pass
+DESIGN_QUIET = dt.timedelta(hours=24)          # rule 14: no design-pass stop note this long while issues wait = stopped
+DESIGN_HELD = {'blocked', 'deferred', 'in-progress', 'needs-owner', 'parked', 'tracker'}   # as design_queue.py
+DESIGN_STOP = re.compile(r'Thread "Claude Mac worker \d+" stopping: design pass, \d+ of \d+ designed')
 DRIFT_READ_CAP = 10                            # REST comment reads for rule 10; past it a revert is listed as unchecked
 LOOKUP_CAP = 100                               # PR numbers one GraphQL lookup may ask about
 REVERT = re.compile(r'\breverts?\s+(?:PR\s+)?(?:[\w.-]+/[\w.-]+)?#(\d+)', re.I)
@@ -324,6 +332,7 @@ OPEN_ISSUES = """query($owner: String!, $name: String!, $after: String) {
         milestone { title }
         labels(first: 30) { nodes { name } }
         timelineItems(last: 1, itemTypes: [REOPENED_EVENT]) { nodes { ... on ReopenedEvent { createdAt } } }
+        labeled: timelineItems(last: 20, itemTypes: [LABELED_EVENT]) { nodes { ... on LabeledEvent { createdAt label { name } } } }
         comments(last: 3) { nodes { createdAt body authorAssociation author { __typename login } } }
       }
     }
@@ -348,6 +357,9 @@ def open_issues(api):
                          'labels': sorted(l['name'] for l in node['labels']['nodes']),
                          'milestone': (node.get('milestone') or {}).get('title'),
                          'reopened_at': max(reopened) if reopened else None,
+                         'design_since': max((n.get('createdAt') for n in (node.get('labeled') or {}).get('nodes') or []
+                                              if (n.get('label') or {}).get('name') == NEEDS_DESIGN and n.get('createdAt')),
+                                             default=None),
                          'comments': sorted(node['comments']['nodes'], key=lambda c: c['createdAt'])})
         if not page['pageInfo']['hasNextPage']:
             return rows
@@ -491,10 +503,40 @@ def unchecked_cards(issues):
             and row['created_at'] >= CARD_RULE_FROM and not checked(row)]
 
 
-def drift(api, now, pulls, skip=()):
-    """Rules 9 to 13. Each part is None when its read failed, so a failure reads as unreadable, never as clean."""
+def design_backlog(issues, recent, now, wait=DESIGN_WAIT, quiet=DESIGN_QUIET):
+    """Rule 14 (#3866): {'waiting': rows whose `needs-design` label is older than `wait` with no Design comment among
+    the newest three, oldest label first; 'designed': rows that have a Design comment but still carry the label;
+    'quiet': True when no design pass stopped within `quiet` (None when the repo-wide comment read was incomplete)}.
+    A row with no labelled event on record counts from its filing date."""
+    import design_queue   # noqa: E402  (scripts/: the same Design-comment test the pass and its picker use)
+    waiting, designed = [], []
+    try:
+        by_hand = set(design_queue.load_queue()['hold'])   # issues a person is designing; the pass leaves them alone
+    except (OSError, ValueError, KeyError):
+        by_hand = set()
+    for row in issues:
+        if NEEDS_DESIGN not in row['labels'] or row['number'] in by_hand:
+            continue
+        if any(design_queue.is_design_comment(c) for c in row['comments']):
+            designed.append(row)
+            continue
+        since = row.get('design_since') or row['created_at']
+        if (not set(row['labels']) & DESIGN_HELD and row['milestone'] != PARKED_MILESTONE and since
+                and now - when(since) >= wait):
+            waiting.append(dict(row, design_since=since))
+    waiting.sort(key=lambda row: (row['design_since'], row['number']))
+    quiet_now = None
+    if recent is not None:
+        quiet_now = not any(DESIGN_STOP.search(c.get('body') or '') and now - when(c['created_at']) < quiet
+                            for c in recent)
+    return {'waiting': waiting, 'designed': designed, 'quiet': quiet_now}
+
+
+def drift(api, now, pulls, skip=(), recent=None):
+    """Rules 9 to 14. Each part is None when its read failed, so a failure reads as unreadable, never as clean.
+    `recent` is the last day's trusted repo comments (None when that read was incomplete), for rule 14."""
     out = {'merged_open': None, 'reverts': None, 'reverts_unchecked': [], 'holds': None,
-           'unchecked_cards': None, 'errors': []}
+           'unchecked_cards': None, 'design': None, 'errors': []}
     try:
         issues = open_issues(api)
     except (sm_status.GitHubError, KeyError, TypeError) as error:
@@ -502,6 +544,7 @@ def drift(api, now, pulls, skip=()):
         out['errors'].append(f'open issues: {error}')
     if issues is not None:
         out['unchecked_cards'] = unchecked_cards(issues)
+        out['design'] = design_backlog(issues, recent, now)
     if issues is not None and pulls is not None:
         out['merged_open'] = merged_but_open(pulls, issues, skip)
     if pulls is not None:
@@ -607,7 +650,8 @@ def collect(api, now, snapshot=None):
     except sm_status.GitHubError:
         pass    # trunk_pulls stays as read; pulls stays None, so rules 9 and 10 report unreadable
     merged = merged_fixes(trunk_pulls, ready, ctx)
-    drifted = drift(api, now, pulls, skip={row['number'] for row in merged or []})
+    drifted = drift(api, now, pulls, skip={row['number'] for row in merged or []},
+                    recent=comments if comments_complete else None)
     claims = []
     for issue in in_progress:
         evidence = gather_claim(api, issue['number'], now, ctx)
@@ -723,8 +767,22 @@ def decide(facts, window=STALE_AFTER):
         act('unchecked-card', LOOK, f'{len(cards)} `needs-owner` issue(s) have no `Checked:` line (oldest #{cards[0]["number"]} '
             f'{cards[0]["title"][:60]}): check each fact (scripts/sm_live.py, docs/decisions.md), then add where it came from, '
             'or drop the ask if he has already answered (#3872)', issues=[row['number'] for row in cards[:10]])
+    design = gone.get('design') or {}
+    if design.get('waiting') and design.get('quiet') is not False:
+        first = design['waiting'][0]
+        quiet = ('no design pass has stopped in 24 hours' if design.get('quiet')
+                 else 'the comment read was incomplete, so whether a pass ran is unknown')
+        act('design-idle', LOOK, f'{len(design["waiting"])} `needs-design` issue(s) have waited over '
+            f'{DESIGN_WAIT.days} days for a Design comment (oldest #{first["number"]}, labelled '
+            f'{first["design_since"][:10]}) and {quiet}: the Claude Mac worker\'s design pass is not running. Read '
+            '`scripts/design_queue.py` and the worker log (ops/claude/README.md) (#3866).',
+            issues=[row['number'] for row in design['waiting'][:10]])
+    if design.get('designed'):
+        act('design-unlabelled', LOOK, f'{len(design["designed"])} issue(s) have a Design comment but still carry '
+            '`needs-design`: swap it for `ready` unless something else holds it (#3866).',
+            issues=[row['number'] for row in design['designed'][:10]])
     if gone.get('errors'):
-        act('drift-unreadable', LOOK, 'rules 9 to 11 and 13 could not read everything, so missing findings are not a clean '
+        act('drift-unreadable', LOOK, 'rules 9 to 11, 13 and 14 could not read everything, so missing findings are not a clean '
             'bill: ' + '; '.join(gone['errors']))
 
     for claim in claims:
