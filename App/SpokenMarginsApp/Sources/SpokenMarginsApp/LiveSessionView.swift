@@ -200,7 +200,7 @@ struct LiveSessionView: View, Equatable {
     /// The screen has gone: let go of the saved session and open the item it became (#4168).
     private func openSavedItem(_ saved: Gate1AppModel.SavedLiveSession) {
         controller.close()
-        Task { await model.openSavedLiveSession(saved) }
+        model.openSavedLiveSession(saved)
     }
 
     /// A tap on the Live Activity's Write a Margin or Speak a Margin (#2833): the writing sheet opens, or the spoken

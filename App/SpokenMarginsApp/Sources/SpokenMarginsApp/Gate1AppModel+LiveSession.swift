@@ -84,16 +84,29 @@ extension Gate1AppModel {
     }
 
     /// Opens the item a session was saved as, on its detail screen, and says it was saved. The save has already
-    /// happened, so a failure here reports that it couldn't open, not that it couldn't save.
-    func openSavedLiveSession(_ saved: SavedLiveSession) async {
+    /// happened, so a failure here reports that it couldn't open, not that it couldn't save. Tests await the task.
+    @discardableResult
+    func openSavedLiveSession(_ saved: SavedLiveSession) -> Task<Void, Never> {
+        let store: SQLiteSessionStore
         do {
-            let store = try requireStore()
-            selectedItem = try await loadItemDetailOffMain(id: saved.itemId, store: store)
-            activeItemId = saved.itemId
-            screen = .item
-            reportConfirmation("Saved \(saved.title) with \(saved.marginCount) Margin\(saved.marginCount == 1 ? "" : "s").")
+            store = try requireStore()
         } catch {
             reportFailure(error, context: "Saved \(saved.title), but couldn't open it")
+            return Task {}
+        }
+        return Task { [weak self] in
+            guard let self else { return }
+            do {
+                let detail = try await loadItemDetailOffMain(id: saved.itemId, store: store)
+                hangTelemetry.labels.scoped("liveSessionSavedItemOpened") {
+                    selectedItem = detail
+                    activeItemId = saved.itemId
+                    screen = .item
+                    reportConfirmation("Saved \(saved.title) with \(saved.marginCount) Margin\(saved.marginCount == 1 ? "" : "s").")
+                }
+            } catch {
+                reportFailure(error, context: "Saved \(saved.title), but couldn't open it")
+            }
         }
     }
 

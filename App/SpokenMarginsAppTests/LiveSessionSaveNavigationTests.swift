@@ -24,7 +24,7 @@ final class LiveSessionSaveNavigationTests: XCTestCase {
         let model = makeModel()
         let saved = try await model.saveLiveSession(makeSession(title: "Shanti call"), transcript: nil, placed: [], recordingURL: nil)
 
-        await model.openSavedLiveSession(saved)
+        await model.openSavedLiveSession(saved).value
 
         XCTAssertEqual(model.screen, .item)
         XCTAssertEqual(model.selectedItem.id, saved.itemId)
