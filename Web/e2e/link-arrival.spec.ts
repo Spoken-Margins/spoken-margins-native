@@ -118,11 +118,16 @@ test('saving a Margin on a friend\u2019s item says what Share does with it, unti
   await playing.getByRole('button', { name: 'Write a Margin' }).click();
   await playing.getByLabel(/Your Margin at/).fill('My answer.');
   await playing.getByRole('button', { name: 'Save Margin' }).click();
-  // The card replaces the countdown, in the same place; it has no button of its own.
+  // The sentence sits on top of the countdown, so Skip stays after the listener's own Margin (#4092).
   const card = playing.getByTestId('margin-cue');
   await expect(card).toContainText('Your Margin is saved. Share sends it to Web fixture. You pick which of your Margins go.');
-  await expect(card.getByRole('button')).toHaveCount(0);
-  await expect(card.getByTestId('margin-cue-clock')).toHaveCount(0);
+  await expect(card.getByTestId('margin-cue-clock')).toHaveText(/^0:\d\d$/);
+  await expect(card).toContainText('Web fixture\u2019s first Margin in');
+  const skipBefore = await audioTime(page);
+  await card.getByRole('button', { name: /^Skip to (just before )?Web fixture/ }).click();
+  await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThan(skipBefore);
+  // Back near the start, so the friend's Margin at 0:30 does not fire early while the rest of this test runs.
+  await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 1; });
   // #3784: the Margin just written starts ticked, so Save is not greyed out with no reason, and saving says what to do next.
   const reply = playing.locator('.reply-back');
   await expect(reply.getByRole('checkbox', { name: /My answer\./ })).toBeChecked();

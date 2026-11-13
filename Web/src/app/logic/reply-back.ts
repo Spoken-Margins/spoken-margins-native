@@ -154,7 +154,7 @@ export function pickedMargins(offer: ReplyBackOffer, picked: ReadonlySet<string>
  * The card after the listener saves a Margin on an item a friend sent: what Share will do with it. The owner approved
  * the words on 2026-11-06: "Your Margin is saved. Share sends it to {sender}. You pick which of your Margins go."
  * It shows only where there is a reply-back offer (a friend's Margins and one of the listener's), so an item of the
- * listener's own gets nothing. It takes the place of the countdown and of the "That was X's last Margin" card, until
+ * listener's own gets nothing. It replaces the "That was X's last Margin" card but never the countdown (`nowCard`), until
  * a friend's Margin plays (the screen clears it then); an episode that can't play keeps its own card. No button: Share is on the screen.
  */
 export function savedMarginCard(margins: readonly Margin[], cue: MarginCue | undefined): { sentence: string } | undefined {
@@ -162,4 +162,19 @@ export function savedMarginCard(margins: readonly Margin[], cue: MarginCue | und
   const offer = replyBackOffer(margins);
   if (!offer) return undefined;
   return { sentence: `Your Margin is saved. Share sends it to ${friendNames(offer.friendLabels)}. You pick which of your Margins go.` };
+}
+
+/**
+ * What the Now Playing card shows (#4092). After a save, the saved sentence sits on top of the countdown instead of
+ * replacing it, so Skip does not go missing until a friend's Margin plays: the web has no transport Next button, the
+ * card's Skip is its only jump. The sentence still replaces "That was X's last Margin" (nothing is left to skip to), and
+ * an episode that can't play keeps its own card alone.
+ */
+export function nowCard(
+  margins: readonly Margin[], cue: MarginCue | undefined, saved: boolean,
+): { saved?: string; cue?: MarginCue } {
+  const sentence = saved ? savedMarginCard(margins, cue)?.sentence : undefined;
+  if (sentence === undefined) return { cue };
+  if (cue?.kind === 'countdown') return { saved: sentence, cue };
+  return { saved: sentence };
 }

@@ -10,7 +10,7 @@ import { cueFor, friendMargins, leading, possessive, readsAloud, senderName, spe
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
 import {
-  candidateLabel, nothingPickedReason, pickedMargins, preselected, replyBackOffer, savedFileNextStep, savedMarginCard,
+  candidateLabel, nothingPickedReason, pickedMargins, preselected, nowCard, replyBackOffer, savedFileNextStep,
 } from '../logic/reply-back.ts';
 import { plainError } from '../logic/messages.ts';
 import { sendFile, sendRefusedNextStep } from '../logic/share-send.ts';
@@ -117,14 +117,14 @@ function MarginCue({ margins, saved }: { margins: readonly Margin[]; /** The lis
   // A layout effect: the card and the player's notice are settled before the screen paints, so never both.
   useLayoutEffect(() => (sayingFailure ? registerFailureCard() : undefined), [sayingFailure, registerFailureCard]);
   if (player.arrived) return null;
-  // After a save on a friend's item: what Share does with it, in place of the countdown or "That was X's last Margin"
-  // until a friend's Margin plays (2026-11-06).
-  const card = saved ? savedMarginCard(margins, cue) : undefined;
-  if (card) {
+  // After a save on a friend's item: what Share does with it, above the countdown (so Skip stays, #4092) and in place
+  // of "That was X's last Margin", until a friend's Margin plays (2026-11-06).
+  const shown = nowCard(margins, cue, saved);
+  if (shown.saved !== undefined && shown.cue === undefined) {
     return (
       <section className="margin-cue" aria-label="Your Margin is saved" data-testid="margin-cue">
         <p className="margin-cue-line">
-          <strong>{card.sentence}</strong>
+          <strong>{shown.saved}</strong>
         </p>
       </section>
     );
@@ -158,6 +158,11 @@ function MarginCue({ margins, saved }: { margins: readonly Margin[]; /** The lis
   }
   return (
     <section className={`margin-cue${cue.leadIn ? ' margin-cue-lead-in' : ''}`} aria-label={`Next Margin from ${senderName(sender)}`} data-testid="margin-cue">
+      {shown.saved !== undefined && (
+        <p className="margin-cue-line">
+          <strong>{shown.saved}</strong>
+        </p>
+      )}
       <p className="margin-cue-line">
         <span aria-hidden="true">{cue.label}</span>
         <span className="margin-cue-clock" aria-hidden="true" data-testid="margin-cue-clock">
