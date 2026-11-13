@@ -248,6 +248,8 @@ test('a Margin written while a friend’s shows answers it: the row says so, the
   await expect(playing.locator('.reply-row')).toHaveCount(0);
   await playing.getByRole('button', { name: 'Cancel' }).click();
   // The friend's written Margin (0:30) comes up. Write a Margin while it shows.
+  // The episode is playing and the countdown is up before the clock is moved, so the seek is not overwritten by the page's own resume.
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
   await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 28; });
   await expect(playing.getByTestId('arrived-margin')).toContainText('Web fixture wrote this', { timeout: 30_000 });
   await playing.getByRole('button', { name: 'Write a Margin' }).click();
@@ -284,6 +286,8 @@ test('× before saving: the Margin is the listener’s own, the file has no repl
   await page.goto(LINK);
   await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
   const playing = page.getByRole('dialog', { name: EPISODE });
+  // The episode is playing and the countdown is up before the clock is moved, so the seek is not overwritten by the page's own resume.
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
   await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 28; });
   await expect(playing.getByTestId('arrived-margin')).toContainText('Web fixture wrote this', { timeout: 30_000 });
   await playing.getByRole('button', { name: 'Write a Margin' }).click();
@@ -326,6 +330,8 @@ test('Record stops the friend’s clip so the microphone does not hear it, names
   await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
   const playing = page.getByRole('dialog', { name: EPISODE });
   // The friend's spoken Margin (2:05) is playing: the card says so, and the episode waits for the clip.
+  // The episode is playing and the countdown is up before the clock is moved, so the seek is not overwritten by the page's own resume.
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
   await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 124; });
   const arrived = playing.getByTestId('arrived-margin');
   await expect(arrived).toContainText('Web fixture is speaking', { timeout: 30_000 });
@@ -361,6 +367,8 @@ test('Play or Pause while the friend’s clip is playing drops the clip and its 
   await page.goto(LINK);
   await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
   const playing = page.getByRole('dialog', { name: EPISODE });
+  // The episode is playing and the countdown is up before the clock is moved, so the seek is not overwritten by the page's own resume.
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
   await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 124; });
   const arrived = playing.getByTestId('arrived-margin');
   await expect(arrived).toContainText('Web fixture is speaking', { timeout: 30_000 });
