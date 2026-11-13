@@ -175,6 +175,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         model.refreshSkimAvailabilityForTesting()
         await model.settleSkimResources()
         XCTAssertEqual(model.gate2CompactSnapshot?.skimBackwardDestinationMs, 5_000)
+        await settleOfflineServices(model) // before the owned file is moved and later changed (#4159)
         // Reproduce a device update: the durable item URL points at a former
         // container, while the owned asset remains under the current support root.
         let relocatedPath = "Audiobooks/relocated-\(UUID().uuidString).caf"
@@ -186,6 +187,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let resumedPlayer = AVPlayerStreamPlaybackClient()
         let reconstructed = Gate1AppModel(audioPlaybackClient: RoutedAudioPlaybackClient(speech: NoopAudioPlaybackClient(), media: resumedPlayer), databaseURLOverride: db)
         reconstructed.bootstrapLibraryIfNeeded()
+        await settleOfflineServices(reconstructed)
         reconstructed.openItem(id: item.id)
         XCTAssertEqual(reconstructed.selectedItem.listeningMapScenes.count, 2)
         reconstructed.startItem(id: item.id)
@@ -316,6 +318,15 @@ final class LocalAudioListeningPackageTests: XCTestCase {
                        "The shared map has no audio to match near scene 1 (Opening).", "The reason survives a restart")
         XCTAssertNil(try fixture.store.loadResolvedListeningMapProjection(itemId: fixture.itemId)?.proposalId,
                      "A refused map is never activated")
+    }
+
+    /// Waits for the model's offline-services startup to finish. It reconciles the offline ledger against the disk, and
+    /// a row whose file changed size loses its checksum (`OfflineLedgerReconciliation`), so the owned audiobook stops
+    /// naming an exact edition. A test that overwrites an owned file and then stages a packet must not let that
+    /// reconcile land on either side of the overwrite: on a loaded runner it ran after it, the packet matched no item,
+    /// and the import said "This package does not include the source" instead of "These Margins don't match" (#4159).
+    private func settleOfflineServices(_ model: Gate1AppModel) async {
+        for task in model.offlineServicesStartupTasks { await task.value }
     }
 
     /// The import runs until its flag clears. A fixed 5 s wait ended while the import was still going on a slow hosted
