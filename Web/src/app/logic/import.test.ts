@@ -5,7 +5,7 @@ import type { PacketRead } from '../ports.ts';
 import { episode as fixtureEpisode, voiceMargins } from '../../packet/fixtures.ts';
 import { readPacket } from '../../packet/read.ts';
 import { writePacket } from '../../packet/write.ts';
-import { UNNAMED_SENDER, findEpisode, importSummary, landingOffer, placeImport, sharedShowFor } from './import.ts';
+import { UNNAMED_SENDER, findEpisode, importSummary, landingOffer, placeImport, sharedShowFor, unnamedAuthorFor } from './import.ts';
 
 const show: Show = { id: 'feed:https://feeds.test/show.rss', kind: 'podcast', title: 'Show', feedUrl: 'https://feeds.test/show.rss', followedAt: 'T0' };
 const mine: Episode = {
@@ -141,4 +141,27 @@ test('opened from a link, a Margin with no sender name is still a friend’s: it
   assert.deepEqual(named.margins.map((m) => m.author), [' Ada ']);
   // A restored backup or an opened file keeps its own Margins as the listener's own.
   assert.deepEqual(placeImport(read({ title: 'T', guid: 'g-1' }), [show], [mine]).margins.map((m) => m.author), [undefined, undefined]);
+});
+
+test('a sender-less packet opened as a file is a friend’s; one out of a backup zip stays unsigned (#4226)', () => {
+  assert.equal(unnamedAuthorFor('file'), 'Your friend');
+  assert.equal(unnamedAuthorFor('link'), 'Your friend');
+  assert.equal(unnamedAuthorFor('backup'), undefined);
+  const authors = (arrival: 'backup' | 'file' | 'link') =>
+    placeImport(read({ title: 'T', guid: 'g-1' }), [show], [mine], undefined, [], { unnamedAuthor: unnamedAuthorFor(arrival) }).margins.map((m) => m.author);
+  assert.deepEqual(authors('file'), ['Your friend', 'Your friend']);
+  assert.deepEqual(authors('backup'), [undefined, undefined]);
+  // A Margin that already has an author keeps it, however the file arrived.
+  const named = read({ title: 'T', guid: 'g-1' }, { margins: [{ ...margin('a', 1), author: 'Ada' }] });
+  assert.deepEqual(placeImport(named, [show], [mine], undefined, [], { unnamedAuthor: unnamedAuthorFor('file') }).margins.map((m) => m.author), ['Ada']);
+});
+
+test('opening your own earlier "Save as a file" again adds no friend copies (#4226)', () => {
+  const here: Margin[] = [
+    { id: 'own-a', episodeId: mine.id, atSeconds: 12.5, createdAt: 'T', text: 'a' },
+    { id: 'own-b', episodeId: mine.id, atSeconds: 40, createdAt: 'T', text: 'b' },
+  ];
+  const again = placeImport(read({ title: 'Ep', guid: 'g-1' }), [show], [mine], 'NOW', here, { unnamedAuthor: unnamedAuthorFor('file') });
+  assert.deepEqual(again.margins, []);
+  assert.equal(again.duplicates, 2);
 });
