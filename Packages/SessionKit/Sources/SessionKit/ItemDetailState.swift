@@ -47,6 +47,13 @@ public struct ItemDetailState: Equatable, Sendable {
     public var timelineSource = TimelineSourceContent(text: "")
     public var documentStructure: PDFDocumentStructure?
     public var sessions: [Session] = []
+    /// When the listener last added the item again (`Item.addedAgainAt`, #4178), read with the item when the detail loads.
+    public var addedAgainAt: Date?
+    /// The sessions that still decide the primary button and where Play starts (#4183): all of them, except those
+    /// finished before the item was added again. `sessions` stays the whole history, listed on the screen with its Margins.
+    public var continuationSessions: [Session] {
+        ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions)
+    }
     public var sessionRows: [SessionPresentation] = []
     public var interjections: [Interjection] = []
     public var importedCommentaryLayers: [ImportedCommentaryLayer] = []
@@ -85,6 +92,7 @@ public struct ItemDetailState: Equatable, Sendable {
         timelineSource: TimelineSourceContent = TimelineSourceContent(text: ""),
         documentStructure: PDFDocumentStructure? = nil,
         sessions: [Session] = [],
+        addedAgainAt: Date? = nil,
         sessionRows: [SessionPresentation] = [],
         interjections: [Interjection] = [],
         importedCommentaryLayers: [ImportedCommentaryLayer] = [],
@@ -115,6 +123,7 @@ public struct ItemDetailState: Equatable, Sendable {
         self.timelineSource = timelineSource
         self.documentStructure = documentStructure
         self.sessions = sessions
+        self.addedAgainAt = addedAgainAt
         self.sessionRows = sessionRows
         self.interjections = interjections
         self.importedCommentaryLayers = importedCommentaryLayers

@@ -35,10 +35,15 @@ public enum PlayRule {
     /// The item the app holds open, with its sessions. Opening an item loads them; the Library holds only a row.
     public struct OpenItem: Equatable, Sendable {
         public let id: String
+        /// The item's sessions as stored, every old one. `PlayRule` filters them itself with `addedAgainAt`, so a surface
+        /// can't pass the listening that ended before the listener added the item again (#4183).
         public let sessions: [Session]
-        public init(id: String, sessions: [Session]) {
+        /// When the listener last added the item again, nil for an item never added again.
+        public let addedAgainAt: Date?
+        public init(id: String, sessions: [Session], addedAgainAt: Date?) {
             self.id = id
             self.sessions = sessions
+            self.addedAgainAt = addedAgainAt
         }
     }
 
@@ -142,7 +147,10 @@ public enum PlayRule {
         case startNew
     }
 
-    public static func startAction(sessions: [Session]) -> StartAction {
+    /// `addedAgainAt` is required: an item finished and then added again starts over, so its old finished sessions
+    /// (including one at 99%, which would resume near its end) never decide the start (#4183).
+    public static func startAction(sessions: [Session], addedAgainAt: Date?) -> StartAction {
+        let sessions = ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions)
         if let session = SessionContinuation.preferredContinuationSession(in: sessions), SessionContinuation.continueResumes(session) {
             return .resume(session)
         }
@@ -152,9 +160,11 @@ public enum PlayRule {
     static func start(for context: Context) -> Start {
         if let now = context.nowPlaying, now.itemId == context.itemId { return .savedPlace(mediaTimeMs: now.mediaTimeMs ?? 0) }
         if let open = context.openItem, open.id == context.itemId {
-            switch startAction(sessions: open.sessions) {
+            switch startAction(sessions: open.sessions, addedAgainAt: open.addedAgainAt) {
             case .startNew: return .beginning
-            case .resume: return .savedPlace(mediaTimeMs: SessionContinuation.continuePlaceMs(sessions: open.sessions))
+            case .resume:
+                let counted = ItemFinishedRule.continuationSessions(addedAgainAt: open.addedAgainAt, sessions: open.sessions)
+                return .savedPlace(mediaTimeMs: SessionContinuation.continuePlaceMs(sessions: counted))
             }
         }
         guard let row = context.libraryRow else { return .beginning }

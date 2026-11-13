@@ -75,7 +75,7 @@ final class PlayRuleTests: XCTestCase {
     ) -> PlayRule.Context {
         PlayRule.Context(
             itemId: "item", surface: surface, nowPlaying: nowPlaying,
-            openItem: sessions.map { PlayRule.OpenItem(id: "item", sessions: $0) }, libraryRow: row,
+            openItem: sessions.map { PlayRule.OpenItem(id: "item", sessions: $0, addedAgainAt: nil) }, libraryRow: row,
             newMargins: newMargins ?? margins(), declined: declined)
     }
 
@@ -165,7 +165,7 @@ final class PlayRuleTests: XCTestCase {
         assertDecision(context(row: try row(sessions)), ask([0, 1, 2]),
                        "not open: the row holds only a percentage, so every new Margin is asked about, ahead ones too (today's behaviour)")
         let otherItemOpen = PlayRule.Context(
-            itemId: "item", surface: .libraryRow, openItem: PlayRule.OpenItem(id: "other", sessions: sessions), libraryRow: try row(sessions),
+            itemId: "item", surface: .libraryRow, openItem: PlayRule.OpenItem(id: "other", sessions: sessions, addedAgainAt: nil), libraryRow: try row(sessions),
             newMargins: margins())
         assertDecision(otherItemOpen, ask([0, 1, 2]), "another item open: its sessions are not this item's")
     }
@@ -184,7 +184,7 @@ final class PlayRuleTests: XCTestCase {
         let relaunched = try SQLiteSessionStore(path: path)
         let sessions = try relaunched.loadSessions(itemId: "item")
         XCTAssertEqual(sessions.map(\.id), ["saved"])
-        XCTAssertEqual(PlayRule.startAction(sessions: sessions), .resume(sessions[0]))
+        XCTAssertEqual(PlayRule.startAction(sessions: sessions, addedAgainAt: nil), .resume(sessions[0]))
         assertDecision(context(open: sessions), ask([0, 1]), "open item, session read back")
         let snapshot = LibraryReadSnapshot(items: [item], sessions: sessions, manifests: [], jobs: [], downloads: [])
         let startup = StartupAudioContext(
@@ -239,6 +239,33 @@ final class PlayRuleTests: XCTestCase {
         assertDecision(context(surface: .itemScreen, row: try row(sessions)), .play(.savedPlace(mediaTimeMs: nil)), "row only")
     }
 
+    // MARK: An item added again (#4183)
+
+    /// `already-heard`: a session left at 99% and the item added again. Before the re-add, Continue resumes near the end
+    /// and asks about the friend's Margins it would skip. After it, Continue starts at 0 and they play in place.
+    func testAnItemAddedAgainStartsAtZeroSoNothingIsAskedAbout() {
+        let nearEnd = session("b", percent: 99, mediaTimeMs: end, updated: 1)
+        func decide(addedAgainAt: Date?) -> PlayRule.Outcome {
+            PlayRule.decide(PlayRule.Context(
+                itemId: "item", surface: .libraryRow,
+                openItem: PlayRule.OpenItem(id: "item", sessions: [nearEnd], addedAgainAt: addedAgainAt),
+                newMargins: margins()))
+        }
+        XCTAssertTrue(decide(addedAgainAt: nil).isAsk, "control: never added again, the saved place is at the end")
+        XCTAssertEqual(decide(addedAgainAt: Date(timeIntervalSince1970: 2)), .play(.beginning))
+        XCTAssertEqual(PlayRule.startAction(sessions: [nearEnd], addedAgainAt: Date(timeIntervalSince1970: 2)), .startNew)
+        XCTAssertEqual(PlayRule.startAction(sessions: [nearEnd], addedAgainAt: nil), .resume(nearEnd))
+    }
+
+    func testAnItemAddedAgainWhilePartWayKeepsItsPlace() {
+        let partWay = session("a", percent: 40, mediaTimeMs: 720_000, updated: 1)
+        let outcome = PlayRule.decide(PlayRule.Context(
+            itemId: "item", surface: .libraryRow,
+            openItem: PlayRule.OpenItem(id: "item", sessions: [partWay], addedAgainAt: Date(timeIntervalSince1970: 2)),
+            newMargins: margins()))
+        XCTAssertEqual(outcome, ask([0, 1]), "the saved place at 12:00 is read, as for an item never added again")
+    }
+
     // MARK: What startItem does with the saved sessions
 
     func testStartResumesTheSessionPlayResumesAndOtherwiseBeginsANewOne() {
@@ -254,7 +281,7 @@ final class PlayRuleTests: XCTestCase {
             ("newer finished, older in progress", [session("a", percent: 40, mediaTimeMs: 720_000, updated: 1), finished(updated: 2)], .startNew),
         ]
         for (name, sessions, expected) in table {
-            XCTAssertEqual(PlayRule.startAction(sessions: sessions), expected, name)
+            XCTAssertEqual(PlayRule.startAction(sessions: sessions, addedAgainAt: nil), expected, name)
         }
     }
 

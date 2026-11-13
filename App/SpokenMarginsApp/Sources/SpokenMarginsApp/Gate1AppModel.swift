@@ -1612,7 +1612,10 @@ final class Gate1AppModel: ObservableObject {
         }
         do {
             let store = try requireStore()
-            switch PlayRule.startAction(sessions: try store.loadSessions(itemId: id)) {
+            // An item finished and then added again starts over: `PlayRule` leaves out its old finished sessions (#4183).
+            // The stamp comes from what the model holds, the open item or the Library row, so no extra read runs here.
+            let addedAgainAt = selectedItem.id == id ? selectedItem.addedAgainAt : libraryItems.first(where: { $0.id == id })?.addedAgainAt
+            switch PlayRule.startAction(sessions: try store.loadSessions(itemId: id), addedAgainAt: addedAgainAt) {
             case .resume(let continuation): resumeSession(continuation)
             case .startNew: startNewSession(id: id)
             }
@@ -2010,7 +2013,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var selectedItemPreferredContinuationSession: Session? {
-        Self.preferredContinuationSession(in: selectedItem.sessions)
+        Self.preferredContinuationSession(in: selectedItem.continuationSessions)
     }
 
     var selectedItemStartupAudioState: NativeTextStartupAudioState {

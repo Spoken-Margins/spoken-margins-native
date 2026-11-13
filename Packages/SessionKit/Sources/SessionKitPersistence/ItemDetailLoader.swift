@@ -140,6 +140,7 @@ public struct ItemDetailLoader {
             isNativeAudio: isNativeAudio,
             documentStructure: item.documentStructure,
             sessions: sessions,
+            addedAgainAt: item.addedAgainAt,
             sessionRows: sessionRows,
             interjections: interjections,
             importedCommentaryLayers: importedLayers,
