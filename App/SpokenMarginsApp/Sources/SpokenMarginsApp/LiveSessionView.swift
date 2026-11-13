@@ -167,7 +167,9 @@ struct LiveSessionView: View, Equatable {
             if message == nil && controller.isRecordingSpoken && cover == nil { showRecordingAfterPresenting() }
             if message == nil && wantsWriteAfterAlert {
                 wantsWriteAfterAlert = false
-                beginWriting(startedAt: writingStartedAt)
+                // The alert is still going away: a cover set now would be dropped and leave the photo waiting with no
+                // sheet. `present` waits for the alert to be gone and gives the photo up if the sheet can't open.
+                present(.liveWriting)
             }
         }
         // The microphone couldn't start while a photo waited: the picture is kept and the Margin is written instead.
@@ -475,7 +477,13 @@ struct LiveSessionView: View, Equatable {
         Task {
             try? await Task.sleep(for: .milliseconds(400))
             // A camera that never opens leaves Photo live again, not waiting for a picture that isn't coming.
-            func gaveUp() { if wanted == .camera { isTakingPhoto = false } }
+            func gaveUp() {
+                switch wanted {
+                case .camera: isTakingPhoto = false
+                case .liveWriting: dropWaitingPhoto() // a photo with no sheet to take it would lock Add Margin and Write
+                case .liveRecording: break
+                }
+            }
             guard stillWanted(), cover == nil else { return gaveUp() }
             if closeSheets() { try? await Task.sleep(for: .milliseconds(400)) } // after the sheet has gone
             guard stillWanted(), cover == nil, controller.errorMessage == nil else { return gaveUp() }
