@@ -5,8 +5,9 @@ import Foundation
 ///
 /// The name is the packet's sender label (`ImportedCommentaryLayer.displayLabel`), which comes from the sender's app
 /// and isn't proven, so rows group on what a listener would read as the same name: spaces at the ends and doubled
-/// inside don't count, nor do letter case or how an accent was typed. A packet with no name has no row; its Margins
-/// still show on their item. Only Margins on items in the Library count, so each row has something to open.
+/// inside don't count, nor do letter case or how an accent was typed. A packet with no name has no row unless the
+/// caller asks for one (`includeUnnamed`, #4104): then every nameless packet, and every one carrying a stand-in
+/// ("Unsigned sender", "Someone", "Your friend"), forms one "A friend" row, never merged with a real name. Only Margins on items in the Library count, so each row has something to open.
 public enum FollowingFriends {
     public struct Friend: Identifiable, Hashable, Sendable {
         /// The grouping key, stable while the name reads the same.
@@ -23,6 +24,8 @@ public enum FollowingFriends {
         public let items: [Item]
         /// "3 Margins on 1 episode".
         public let summary: String
+        /// "2 new" when any of their Margins are unheard; nil otherwise. Words carry it, never a colour alone.
+        public var newLabel: String? { newCount > 0 ? "\(newCount) new" : nil }
 
         public struct Item: Identifiable, Hashable, Sendable {
             public let id: String
@@ -39,7 +42,12 @@ public enum FollowingFriends {
         }
     }
 
-    public static func friends(from entries: [MarginCollection.SharedEntry]) -> [Friend] {
+    /// What the row for packets that carry no usable sender name is called.
+    public static let unnamedFriendName = "A friend"
+    /// The grouping key of that row: empty, which no real name produces, so a sender literally named "A friend" stays apart.
+    static let unnamedKey = ""
+
+    public static func friends(from entries: [MarginCollection.SharedEntry], includeUnnamed: Bool = false) -> [Friend] {
         struct Group {
             var name: String
             var newest: Date
@@ -49,8 +57,21 @@ public enum FollowingFriends {
         }
         var groups: [String: Group] = [:]
         for entry in entries {
-            guard let itemId = entry.layer.itemId, let name = displayName(entry.layer.displayLabel) else { continue }
-            let key = groupingKey(name)
+            guard let itemId = entry.layer.itemId else { continue }
+            let name: String
+            let key: String
+            if includeUnnamed {
+                if let usable = FriendName.usable(entry.layer.displayLabel).flatMap(displayName) {
+                    name = usable
+                    key = groupingKey(usable)
+                } else {
+                    name = unnamedFriendName
+                    key = unnamedKey
+                }
+            } else if let shown = displayName(entry.layer.displayLabel) {
+                name = shown
+                key = groupingKey(shown)
+            } else { continue }
             let date = activityDate(entry)
             var group = groups[key] ?? Group(name: name, newest: date)
             if date > group.newest { group.newest = date; group.name = name }
