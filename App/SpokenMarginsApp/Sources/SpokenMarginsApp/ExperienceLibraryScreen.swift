@@ -79,7 +79,7 @@ struct ExperienceLibraryScreen: View {
                     // (#3215), and gone once nothing is, however much finished recently (#3764). It sits in this
                     // always-present row, so it comes and goes without a new row shifting the items.
                     if let line = AudioPreparationQueueProjection.libraryStatusLine(queue: model.audioPreparationQueue) {
-                        preparationLine(line)
+                        LibraryPreparationLine(line: line) { isAudioPreparationQueuePresented = true }
                     }
                 }
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
@@ -160,29 +160,6 @@ struct ExperienceLibraryScreen: View {
             .accessibilityLabel("Add to Library")
             .accessibilityIdentifier("home.addSource.button")
         }
-    }
-
-    /// One line, in the style of the links-waiting line above it, that opens Preparing Audio (#3764).
-    private func preparationLine(_ line: String) -> some View {
-        Button {
-            isAudioPreparationQueuePresented = true
-        } label: {
-            HStack(spacing: 8) {
-                Label(line, systemImage: "waveform.badge.magnifyingglass")
-                    .font(.subheadline)
-                    .foregroundStyle(AppColors.secondaryText)
-                    .multilineTextAlignment(.leading)
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
-                    .accessibilityHidden(true)
-            }
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("library.offlineRendering.button")
     }
 
     private var onboardingIcon: some View {

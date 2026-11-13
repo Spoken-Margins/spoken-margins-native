@@ -785,7 +785,9 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4), "The writing sheet opened with the keyboard down")
         editor.tap()
         editor.typeText("Johnny moved on to the budget.")
-        let save = app.buttons["writtenMargin.save.keyboard.button"]
+        // The nav-bar Save stays on screen while typing. The keyboard-bar Save (writtenMargin.save.keyboard.button)
+        // never appears in the simulator's tree with the predictive bar up: it was absent at all 6 cuts (#4225).
+        let save = app.buttons["writtenMargin.save.button"]
         XCTAssertTrue(save.waitForExistence(timeout: 4) && save.isHittable, "Save is not reachable with the keyboard up")
         save.tap()
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'liveSession.margin.row.'")).firstMatch
@@ -802,7 +804,7 @@ final class Gate1FlowUITests: XCTestCase {
             XCTAssertTrue(editor.waitForExistence(timeout: 6))
             editor.tap()
             editor.typeText("Margin number \(index) with enough words to fill about two lines of the row on a phone.")
-            app.buttons["writtenMargin.save.keyboard.button"].tap()
+            app.buttons["writtenMargin.save.button"].tap()
             XCTAssertTrue(waitForDisappearance(element("writtenMargin.screen"), timeout: 4))
         }
         let end = app.buttons["liveSession.endSession"]
@@ -1106,6 +1108,14 @@ final class Gate1FlowUITests: XCTestCase {
         let close = app.buttons["Close"].firstMatch
         if close.waitForExistence(timeout: 2) {
             close.tap()
+            return
+        }
+
+        // The iPhone share sheet is a popover with no Close button and no `sheets` entry; a tap on the dimmed
+        // region above it dismisses it (#4225: the 4 cuts since bebdcb0 failed on the empty `sheets` count here).
+        let popoverDismiss = app.otherElements["PopoverDismissRegion"].firstMatch
+        if popoverDismiss.exists {
+            popoverDismiss.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
             return
         }
 
