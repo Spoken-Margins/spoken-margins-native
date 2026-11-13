@@ -5,7 +5,7 @@ import { capacitorBridge } from '../../sources/native-http.ts';
 import { useData } from '../data.tsx';
 import { downloadFile } from '../download.ts';
 import { useRestoreFocus } from '../focus.ts';
-import { BackIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenIcon, PlayIcon, ShareIcon, SkipIcon, StopIcon } from '../icons.tsx';
+import { BackIcon, CloseIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenIcon, PlayIcon, ShareIcon, SkipIcon, StopIcon } from '../icons.tsx';
 import { cueFor, friendMargins, leading, possessive, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
@@ -13,6 +13,7 @@ import {
   allPicked, candidateLabel, pickAll, pickedMargins, preselected, nowCard, replyBackOffer, savedFileNextStep, selectAllLabel, whyNotShared,
 } from '../logic/reply-back.ts';
 import { plainError } from '../logic/messages.ts';
+import { choiceFor, replyIdFor, replyRow, toggleReplying, withReplyId, type ReplyChoice } from '../logic/reply-choice.ts';
 import { SENDER_NAME_LIMIT, senderForPacket, senderNameHint, sendFile, sendRefusedNextStep } from '../logic/share-send.ts';
 import { NotSavedError } from '../logic/storage.ts';
 import { shareNativePacket } from '../logic/native-packets.ts';
@@ -193,7 +194,9 @@ function MarginCue({ margins, saved }: { margins: readonly Margin[]; /** The lis
 export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?: Landing }) {
   const player = usePlayer();
   const data = useData();
-  const [composer, setComposer] = useState<{ kind: 'write' | 'record'; at: number } | null>(null);
+  // `reply`: the friend's Margin this Margin answers, and whether it still does (#4107). It lives here so it carries from
+  // Record to "Write instead". `resume`: a friend's clip was stopped to record, so the episode carries on afterwards.
+  const [composer, setComposer] = useState<{ kind: 'write' | 'record'; at: number; reply?: ReplyChoice; resume?: boolean } | null>(null);
   // Which composer just closed, so focus goes back to the button that opened it.
   const [closedKind, setClosedKind] = useState<'write' | 'record'>();
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -238,6 +241,8 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
   useEffect(() => {
     if (arrivedNow) setSavedCard(false);
   }, [arrivedNow]);
+  // One control makes the Margin independent and back; each tap flips the state the last left, so a double tap ends where it began.
+  const toggleReply = () => setComposer((c) => (c ? { ...c, reply: toggleReplying(c.reply) } : c));
   const closeComposer = (kind: 'write' | 'record') => () => {
     setComposer(null);
     setClosedKind(kind);
@@ -255,6 +260,13 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
   const margins = data.margins.filter((m) => m.episodeId === episode.id).sort((a, b) => a.atSeconds - b.atSeconds);
   const duration = player.duration;
   const remaining = duration ? Math.max(0, duration - player.time) : undefined;
+  // A Margin begun while a friend's plays or shows, or within 20 seconds after, answers it (owner 2026-10-25, #473).
+  // Record stops a playing friend clip first, so the microphone does not record it; Write lets it play on.
+  const startComposer = (kind: 'write' | 'record') => {
+    const reply = choiceFor(player.replyParent(episode.id, friendMargins(margins)));
+    const resume = kind === 'record' && player.interruptForRecording().resume;
+    setComposer({ kind, at: player.now(), ...(reply && { reply }), ...(resume && { resume }) });
+  };
 
   return (
     <div className="now-playing" role="dialog" aria-modal="true" aria-labelledby="np-title">
@@ -336,22 +348,25 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
 
         {composer ? (
           composer.kind === 'write' ? (
-            <WriteMargin at={composer.at} episodeId={episode.id} onDone={closeComposer('write')} />
+            <WriteMargin at={composer.at} episodeId={episode.id} reply={composer.reply} onToggleReply={toggleReply} onDone={closeComposer('write')} />
           ) : (
             <RecordMargin
               at={composer.at}
               episodeId={episode.id}
+              reply={composer.reply}
+              onToggleReply={toggleReply}
+              resumeAfterInterrupt={composer.resume === true}
               onDone={closeComposer('record')}
-              onWriteInstead={() => setComposer({ kind: 'write', at: composer.at })}
+              onWriteInstead={() => setComposer({ kind: 'write', at: composer.at, ...(composer.reply && { reply: composer.reply }) })}
             />
           )
         ) : (
           <div className="margin-actions">
-            <button ref={writeRef} type="button" className="button button-margin" onClick={() => setComposer({ kind: 'write', at: player.now() })}>
+            <button ref={writeRef} type="button" className="button button-margin" onClick={() => startComposer('write')}>
               <PenIcon />
               Write a Margin
             </button>
-            <button ref={recordRef} type="button" className="button button-margin" onClick={() => setComposer({ kind: 'record', at: player.now() })}>
+            <button ref={recordRef} type="button" className="button button-margin" onClick={() => startComposer('record')}>
               <MicIcon />
               Record a Margin
             </button>
@@ -418,6 +433,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const starting = offer ? preselected(offer, PAGE_OPENED_AT) : new Set<string>();
   const picked = new Set([...(offer?.candidates ?? [])].map((m) => m.id).filter((id) => changed[id] ?? starting.has(id)));
   const toWrite = offer ? pickedMargins(offer, picked) : margins;
+  const replyIds = new Set((offer?.replies ?? []).map((m) => m.id));
   // Greyed buttons say why (#3784), and point at the sentence so a screen reader reads it too.
   const whyNot = whyNotShared(offer, toWrite.length);
   // Nothing ticked, or more ticked than the writer takes (#4093): the buttons are greyed, and the sentence says why.
@@ -491,6 +507,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
                     onChange={(event) => setChanged({ ...changed, [margin.id]: event.target.checked })}
                   />
                   <span className="margin-time">{formatClock(margin.atSeconds)}</span>
+                  {replyIds.has(margin.id) && <span className="tag tag-quiet">Reply</span>}
                   <span className="margin-text">{candidateLabel(margin, formatClock)}</span>
                 </label>
               </li>
@@ -540,7 +557,52 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   );
 }
 
-function WriteMargin({ at, episodeId, onDone }: { at: number; episodeId: string; onDone: () => void }) {
+/**
+ * The first line of a composer that answers a friend's Margin (#4107): whom it answers, with a × to make it independent;
+ * after the ×, "Not a reply" and the button that puts it back. The words carry the state, so the arrow is decoration.
+ * No row when the Margin answers nothing.
+ */
+function ReplyRow({ choice, onToggle }: { choice: ReplyChoice | undefined; onToggle: () => void }) {
+  if (!choice) return null;
+  const row = replyRow(choice);
+  return (
+    <div className="reply-row">
+      <p className="reply-row-line" role="status">
+        {row.replying ? (
+          <>
+            <span aria-hidden="true">↩ </span>
+            {row.caption}
+          </>
+        ) : (
+          row.line
+        )}
+      </p>
+      {row.replying ? (
+        <button type="button" className="icon-button" aria-label={row.stop} onClick={onToggle}>
+          <CloseIcon />
+        </button>
+      ) : (
+        <button type="button" className="button reply-row-resume" onClick={onToggle}>
+          {row.resume}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function WriteMargin({
+  at,
+  episodeId,
+  reply,
+  onToggleReply,
+  onDone,
+}: {
+  at: number;
+  episodeId: string;
+  reply: ReplyChoice | undefined;
+  onToggleReply: () => void;
+  onDone: () => void;
+}) {
   const data = useData();
   const { toast } = useUi();
   const [text, setText] = useState('');
@@ -550,7 +612,7 @@ function WriteMargin({ at, episodeId, onDone }: { at: number; episodeId: string;
   const save = async () => {
     const value = text.trim();
     if (!value) return;
-    const margin: Margin = { id: newId(), episodeId, atSeconds: at, createdAt: new Date().toISOString(), text: value };
+    const margin = withReplyId({ id: newId(), episodeId, atSeconds: at, createdAt: new Date().toISOString(), text: value }, replyIdFor(reply));
     try {
       await data.addMargin(margin);
       toast(`Margin saved at ${formatClock(at)}.`);
@@ -569,6 +631,7 @@ function WriteMargin({ at, episodeId, onDone }: { at: number; episodeId: string;
         void save();
       }}
     >
+      <ReplyRow choice={reply} onToggle={onToggleReply} />
       <label htmlFor="margin-text">Your Margin at {formatClock(at)}</label>
       <textarea
         id="margin-text"
@@ -596,11 +659,19 @@ function WriteMargin({ at, episodeId, onDone }: { at: number; episodeId: string;
 function RecordMargin({
   at,
   episodeId,
+  reply,
+  onToggleReply,
+  resumeAfterInterrupt,
   onDone,
   onWriteInstead,
 }: {
   at: number;
   episodeId: string;
+  /** The friend's Margin this one answers, and whether it still does (#4107). Changing it after Stop updates the saved Margin. */
+  reply: ReplyChoice | undefined;
+  onToggleReply: () => void;
+  /** A friend's clip was stopped to record: the episode was paused by it, and carries on after the composer closes. */
+  resumeAfterInterrupt: boolean;
   onDone: () => void;
   /** When the microphone fails, the same moment can still get a written Margin. */
   onWriteInstead: () => void;
@@ -657,6 +728,27 @@ function RecordMargin({
   const storeWordsRef = useRef(storeWords);
   storeWordsRef.current = storeWords;
 
+  // The × and "Reply to Cole" (#4107). Until Stop there is no Margin to change; after it, a change goes on the saved
+  // Margin through the same queue as its words, so it lands after the save it follows.
+  const replyId = replyIdFor(reply);
+  const replyIdRef = useRef(replyId);
+  replyIdRef.current = replyId;
+  useEffect(() => {
+    writes.current = writes.current.then(async () => {
+      const current = saved.current;
+      if (!current || current.replyToId === replyId) return;
+      const next = withReplyId(current, replyId);
+      saved.current = next;
+      try {
+        await data.addMargin(next);
+      } catch (error) {
+        saved.current = current;
+        if (!(error instanceof NotSavedError)) toast(`The reply wasn’t updated: ${plainError(error)}`, 'problem');
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replyId]);
+
   const transcription = useTranscription(recorded?.blob, (transcript) => {
     const result = prefillOverPlaceholder(wordsRef.current, edited.current, transcript, placeholderRef.current);
     if (result.words !== wordsRef.current) {
@@ -675,7 +767,7 @@ function RecordMargin({
     if (started.current) return;
     started.current = true;
     // The episode pauses while you speak, so the Margin records your voice, not the show.
-    resumeAfter.current = player.playing;
+    resumeAfter.current = player.playing || resumeAfterInterrupt;
     if (player.playing) player.toggle();
     services.recorder
       .start()
@@ -688,7 +780,7 @@ function RecordMargin({
         setRecording(r);
       })
       .catch((error: unknown) => setProblem(`Recording didn’t start. ${plainError(error, 'microphone')}`));
-  }, [player]);
+  }, [player, resumeAfterInterrupt]);
 
   // Leaving Now Playing mid-recording throws the recording away and frees the microphone. Leaving after Stop keeps
   // the saved Margin, with whatever was typed in the words box.
@@ -729,7 +821,7 @@ function RecordMargin({
   const saveNew = (voice: RecordedVoice, stoppedAt: Date) => {
     setSaving('saving');
     writes.current = writes.current.then(async () => {
-      const bare = voiceMarginOnStop({ id: marginId.current, episodeId, atSeconds: at, recordedAt: stoppedAt, voice });
+      const bare = withReplyId(voiceMarginOnStop({ id: marginId.current, episodeId, atSeconds: at, recordedAt: stoppedAt, voice }), replyIdRef.current);
       const margin = withWords(bare, wordsRef.current, placeholderRef.current) ?? bare;
       try {
         await data.addMargin(margin);
@@ -805,6 +897,7 @@ function RecordMargin({
   if (problem) {
     return (
       <div className="composer composer-recording" aria-live="polite">
+        <ReplyRow choice={reply} onToggle={onToggleReply} />
         <p className="problem" role="alert">
           <span className="toast-mark" aria-hidden="true">!</span>
           {problem}
@@ -841,6 +934,7 @@ function RecordMargin({
           else void done();
         }}
       >
+        <ReplyRow choice={reply} onToggle={onToggleReply} />
         <p className="saved-line" role="status" data-testid="voice-saved">
           {saving === 'saved' && (
             <>
@@ -916,6 +1010,7 @@ function RecordMargin({
     <div className="composer composer-recording">
       {/* Announced once when recording starts; the running clock is not a live region, so a screen
           reader isn't interrupted every second. */}
+      <ReplyRow choice={reply} onToggle={onToggleReply} />
       <p className="recording-line" role="status">
         <span className="rec-dot" aria-hidden="true" />
         {recording ? 'Recording' : 'Starting the microphone…'}
