@@ -356,19 +356,24 @@ struct LiveSessionView: View, Equatable {
     }
 
     private func dock(_ session: LiveSession) -> LiveSessionDock {
-        LiveSessionDock(
+        // Each piece is typed on its own line: one big call expression made the compiler give up (CI, #4179).
+        let photoAction: (() -> Void)? = LiveSessionPhotoMargin.offers(session.kind) ? { beginPhoto() } : nil
+        let photoIsWaiting: Bool = writingPhoto != nil || capture.photo != nil
+        // While a photo waits for its words, Add Margin and Write wait too: the photo belongs to the next one.
+        let addIsDisabled: Bool = feed.inputs.recordingNavigationIsLocked || writingPhoto != nil || isTakingPhoto
+        let photoIsDisabled: Bool = !LiveSessionPhotoMargin.isEnabled(
+            isRunning: controller.isRunning, isRecording: controller.isRecordingSpoken,
+            isCapturingPhoto: isTakingPhoto, hasPhotoWaiting: photoIsWaiting)
+        return LiveSessionDock(
             pane: $pane, marginCount: session.margins.count, isRunning: controller.isRunning,
             resumeUntil: controller.resumeUntil,
             clock: { dockClock($0, session: session) },
             end: { dismissKeyboard(); showsEndCard = true },
             resume: { controller.resume() },
             record: beginRecording, write: { beginWriting() },
-            photo: LiveSessionPhotoMargin.offers(session.kind) ? beginPhoto : nil,
-            // While a photo waits for its words, Add Margin and Write wait too: the photo belongs to the next one.
-            addIsDisabled: feed.inputs.recordingNavigationIsLocked || writingPhoto != nil || isTakingPhoto,
-            photoIsDisabled: !LiveSessionPhotoMargin.isEnabled(
-                isRunning: controller.isRunning, isRecording: controller.isRecordingSpoken,
-                isCapturingPhoto: isTakingPhoto, hasPhotoWaiting: writingPhoto != nil || capture.photo != nil))
+            photo: photoAction,
+            addIsDisabled: addIsDisabled,
+            photoIsDisabled: photoIsDisabled)
     }
 
     /// The existing mini player above the dock while an item is playing. Its mic files on the item (this screen closes
