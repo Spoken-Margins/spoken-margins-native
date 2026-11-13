@@ -1,3 +1,4 @@
+import SessionKit
 import SwiftUI
 
 /// The two panes of the live session screen (#3491). Presentation only: choosing one never changes the session.
