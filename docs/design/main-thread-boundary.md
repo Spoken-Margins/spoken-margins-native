@@ -1,6 +1,6 @@
 # The main-thread boundary for the store (#2507, #2509, #2256)
 
-A design note, 2026-11-12, for run #4187. It changes no code. It settles where store work may run, how the prepared-audio transaction persists, how progress writes are coalesced, and whether a play with no open before it should wait or freeze. It ends with the mechanical pieces that finish the work, one Sonnet PR each. They are listed here and on #4187, and are not filed until the director says so: the owner moved #2507 and #2509 to Later on 2026-11-02 until the sharing loop (#3216) is done.
+A design note, 2026-11-12, for run #4187. It changes no code. It settles where store work may run, how the prepared-audio transaction persists, how progress writes are coalesced, and whether a play with no open before it should wait or freeze. It ends with the mechanical pieces that finish the work, one Sonnet PR each. They are listed here and were filed on 2026-11-13 as #4219 to #4223: the owner moved #2507 and #2509 to Later on 2026-11-02 until the sharing loop (#3216) is done.
 
 Every count below was taken on `main` at `7aec51722` (2026-11-12). Line numbers drift; check the code before relying on one.
 
@@ -180,7 +180,7 @@ A wait would have needed a cancel at every place a play can be ended or replaced
 
 ## 5. The follow-on pieces
 
-Each piece is one Sonnet PR. Every piece edits `scripts/main_thread_reads_baseline.json` (it removes or rewrites its own row), so they run one at a time, in this order. Nothing is filed until the director says so (#4187).
+Each piece is one Sonnet PR. Every piece edits `scripts/main_thread_reads_baseline.json` (it removes or rewrites its own row), so they run one at a time, in this order. Filed 2026-11-13 on the owner's yes: piece 1 is #4219, 2 is #4220, 3 is #4221, 4 is #4222, 5 is #4223. Pieces 3 and 5 are `ready` (no app code); 1, 2 and 4 carry `later` until the sharing loop #3216 settles (owner, 2026-11-02).
 
 1. **Read the episode-map job off main.** `EpisodeMapPreparer.prepare` (:119) reads `loadEpisodeMapPreparationJobs` through `StoreReader`. A pending flag is set before the await, so a second `prepare` during the read does not start a second run (today `guard task == nil` at :106 would let it through).
    - Files: `EpisodeMapPreparer.swift`, the baseline.
