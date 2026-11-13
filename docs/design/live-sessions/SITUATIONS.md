@@ -433,6 +433,7 @@ Each platform claim this design leans on, how sure it is, and the check that set
 2. **A spoken Margin can carry other voices behind it:** a call on the speaker, laptop speakers, a lecturer. It is a short clip of the listener talking, not a recording of the meeting, and the app never transcribes the background on purpose. It is still a recording that can hold other people's words. Illinois requires every party's consent to record a private conversation.
 3. **What this design does:** in a Meeting session, the first spoken Margin shows one line, once per listener: "Your Margin records your voice. If the meeting is on a speaker, other voices may be in the background. Headphones keep them out." This is Default taken 12 in [DESIGN.md](DESIGN.md).
 4. **What it doesn't do:** record the meeting, the lecture or the room. Continuous recording is the Watch design's question, and it needs the owner's consent call.
+5. **The owner values this (2026-11-12, [decisions.md](../../decisions.md)).** After a live session on a call he noted that the app kept only his Margins, no transcript of the call. His call was on headphones, so his spoken Margins held only his voice; on a speaker they could still hold the other person's words (item 2), so the headphones line in item 3 matters.
 
 ---
 
