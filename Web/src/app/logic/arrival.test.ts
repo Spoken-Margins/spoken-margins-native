@@ -41,6 +41,8 @@ test('the sender leads; no name reads "your friend"; the initial is a letter, ne
   assert.equal(senderInitial('École'), 'É');
   assert.equal(senderInitial('😀 Cole'), '😀');
   assert.equal(senderInitial(undefined), '•');
+  // A label that only stands in for a missing name is no name: the circle must not say "S" beside "your friend" (#4107).
+  for (const label of ['Someone', '  SOMEONE ', 'Your friend', 'Unsigned sender', 'Imported collection', '']) assert.equal(senderInitial(label), '•', label);
   // A name is data: it passes through untouched, for React to draw as text.
   assert.equal(senderName('<img src=x onerror=alert(1)>'), '<img src=x onerror=alert(1)>');
 });
