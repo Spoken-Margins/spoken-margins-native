@@ -6,7 +6,7 @@
 import { useCallback, useRef, type ReactNode } from 'react';
 import { useData } from './data.tsx';
 import { packetsToOpen } from './logic/backup.ts';
-import { UNNAMED_SENDER, importSummary, placeImport, type Landing } from './logic/import.ts';
+import { importSummary, placeImport, unnamedAuthorFor, type Arrival, type Landing } from './logic/import.ts';
 import { packetPickerAccept, packetRoute } from './logic/native-packets.ts';
 import { plainError } from './logic/messages.ts';
 import { NotSavedError } from './logic/storage.ts';
@@ -15,11 +15,12 @@ import { usePlayer } from './player.tsx';
 import { services } from './services.ts';
 import { useUi } from './ui.tsx';
 
-export type OpenMarginFile = (bytes: Uint8Array, fileName: string | undefined) => Promise<void>;
+/** `fromBackup`: the packet came out of a Settings backup `.zip`, so its Margins are the listener's own. */
+export type OpenMarginFile = (bytes: Uint8Array, fileName: string | undefined, fromBackup?: boolean) => Promise<void>;
 export type OpenShareLink = (parsed: ParsedLink) => Promise<void>;
 
 /** Reads a packet, stores its Margins (and its episode, when new) and opens Now Playing at the first one. */
-function useLandPacket(onLanded: (landing: Landing) => void): (bytes: Uint8Array, fileName: string | undefined, fromLink?: boolean) => Promise<void> {
+function useLandPacket(onLanded: (landing: Landing) => void): (bytes: Uint8Array, fileName: string | undefined, arrival: Arrival) => Promise<void> {
   const data = useData();
   const player = usePlayer();
   const { toast } = useUi();
@@ -27,10 +28,10 @@ function useLandPacket(onLanded: (landing: Landing) => void): (bytes: Uint8Array
   dataRef.current = data;
 
   return useCallback(
-    async (bytes, fileName, fromLink = false) => {
+    async (bytes, fileName, arrival) => {
       const read = await services.packets.readPacket(bytes, fileName);
       const current = dataRef.current;
-      const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins, fromLink ? { unnamedAuthor: UNNAMED_SENDER } : {});
+      const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins, { unnamedAuthor: unnamedAuthorFor(arrival) });
       if (placed.show) await current.follow(placed.show, [placed.episode]);
       else if (placed.newEpisode) await current.updateEpisode(placed.episode);
       for (const margin of placed.margins) await current.addMargin(margin);
@@ -48,9 +49,9 @@ export function useOpenMarginFile(onLanded: (landing: Landing) => void): OpenMar
   const land = useLandPacket(onLanded);
   const { toast } = useUi();
   return useCallback(
-    async (bytes, fileName) => {
+    async (bytes, fileName, fromBackup = false) => {
       try {
-        await land(bytes, fileName);
+        await land(bytes, fileName, fromBackup ? 'backup' : 'file');
       } catch (error) {
         // A write that failed has already said what wasn't saved.
         if (!(error instanceof NotSavedError)) toast(`Couldn’t open ${fileName ?? 'the file'}. ${plainError(error)}`, 'problem');
@@ -82,7 +83,7 @@ export function useOpenShareLink(onLanded: (landing: Landing) => void): OpenShar
         return;
       }
       try {
-        await land(bytes, 'shared.spokenmargins', true);
+        await land(bytes, 'shared.spokenmargins', 'link');
       } catch (error) {
         // A write that failed has already said what wasn't saved. Otherwise it opened under the key but isn't a
         // packet this app can read.
@@ -98,7 +99,7 @@ export function useOpenShareLink(onLanded: (landing: Landing) => void): OpenShar
  * else goes to the packet reader as it is, which says plainly when it isn't a Margin file.
  */
 export async function openFileBytes(bytes: Uint8Array, fileName: string | undefined, open: OpenMarginFile): Promise<void> {
-  for (const packet of await packetsToOpen(bytes, fileName)) await open(packet.bytes, packet.name);
+  for (const packet of await packetsToOpen(bytes, fileName)) await open(packet.bytes, packet.name, packet.fromBackup);
 }
 
 /** Files from a drop or a picker, one at a time. */

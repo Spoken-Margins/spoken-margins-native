@@ -32,16 +32,20 @@ const voiceOnly = (id: string, episodeId: string, at: number): Margin => ({
 });
 const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-test('one episode backs up as the very packet the iPhone app’s import test reads', async () => {
-  const result = await buildBackup({ episodes: [episode], shows: [show], margins: writtenMargins() }, write);
-  assert.equal(result.file?.name, 'Episode-1-example-episode.spokenmargins');
-  assert.equal(result.file?.mimeType, 'application/vnd.spokenmargins.package+zip');
+test('one episode backs up as a .zip holding the very packet the iPhone app’s import test reads (#4226)', async () => {
+  const result = await buildBackup({ episodes: [episode], shows: [show], margins: writtenMargins() }, write, new Date(2026, 9, 30));
+  assert.equal(result.file?.name, 'Spoken-Margins-backup-2026-10-30.zip');
+  assert.equal(result.file?.mimeType, 'application/zip');
+  assert.deepEqual(listZip(result.file!.bytes).map((e) => e.path), ['Episode-1-example-episode.spokenmargins']);
+  // packetsToOpen marks what comes out of it as the listener's own.
+  const opened = await packetsToOpen(result.file!.bytes, result.file!.name);
+  assert.deepEqual(opened.map((p) => [p.name, p.fromBackup]), [['Episode-1-example-episode.spokenmargins', true]]);
   // web-written.spokenmargins is what SessionKit's WebPacketImportTests opens through the app's reader, the
   // check that Builds 32 and 34 import web packets. Same content digest: the same packet.
   const committed = await readPacket(new Uint8Array(readFileSync(new URL('web-written.spokenmargins', fixtures))));
-  const backedUp = await readPacket(result.file!.bytes);
+  const backedUp = await readPacket(opened[0]!.bytes);
   assert.equal(backedUp.contentDigest, committed.contentDigest);
-  assert.deepEqual(backupSummary(result, describe), { text: 'Backed up 2 Margins from 1 episode as Episode-1-example-episode.spokenmargins.', problem: false });
+  assert.deepEqual(backupSummary(result, describe), { text: 'Backed up 2 Margins from 1 episode as Spoken-Margins-backup-2026-10-30.zip.', problem: false });
 });
 
 test('several episodes, a voice Margin with no words and a long episode go in one zip, nothing dropped', async () => {
@@ -107,14 +111,14 @@ test('nothing to back up says so; voice Margins without words back up as a packe
   const none = await buildBackup({ episodes: [episode], shows: [show], margins: [] }, write);
   assert.equal(none.file, undefined);
   assert.deepEqual(backupSummary(none, describe), { text: 'Nothing was backed up.', problem: true });
-  const voices = await buildBackup({ episodes: [episode], shows: [], margins: [voiceOnly('a', episode.id, 3), voiceOnly('b', episode.id, 3)] }, write);
-  assert.equal(voices.file?.name, 'Episode-1-example-episode.spokenmargins');
+  const voices = await buildBackup({ episodes: [episode], shows: [], margins: [voiceOnly('a', episode.id, 3), voiceOnly('b', episode.id, 3)] }, write, new Date(2026, 9, 30));
+  assert.equal(voices.file?.name, 'Spoken-Margins-backup-2026-10-30.zip');
   assert.equal(voices.inPackets, 2);
   assert.deepEqual(voices.failed, []);
-  const read = await readPacket(voices.file!.bytes);
+  const read = await readPacket((await packetsInBackup(voices.file!.bytes))[0]!.bytes);
   assert.equal(read.margins.length, 2);
   assert.ok(read.margins.every((m) => m.voice && m.text?.startsWith('Voice Margin at 0:03 in “Episode 1 (example episode)”, recorded ')));
-  assert.deepEqual(backupSummary(voices, describe), { text: 'Backed up 2 Margins from 1 episode as Episode-1-example-episode.spokenmargins.', problem: false });
+  assert.deepEqual(backupSummary(voices, describe), { text: 'Backed up 2 Margins from 1 episode as Spoken-Margins-backup-2026-10-30.zip.', problem: false });
 });
 
 test('an older backup’s loose voice audio is skipped when reading it', async () => {
@@ -148,16 +152,18 @@ test('a backup opens as its packets from every way in, named or not; a packet or
   // Opened with the Android app through an opaque content address: no name, so its contents say so.
   assert.deepEqual((await packetsToOpen(zip, undefined)).map((p) => p.name), names);
 
-  const single = await buildBackup({ episodes: [episode], shows: [show], margins: writtenMargins() }, write);
+  assert.ok((await packetsToOpen(zip, undefined)).every((p) => p.fromBackup));
+  const bare = (await write(episode, writtenMargins(), show)).bytes;
   for (const name of ['Episode-1.spokenmargins', undefined]) {
-    const opened = await packetsToOpen(single.file!.bytes, name);
+    const opened = await packetsToOpen(bare, name);
     assert.equal(opened.length, 1, 'a packet is not a backup, though both are zips');
-    assert.equal(opened[0]!.bytes, single.file!.bytes);
+    assert.equal(opened[0]!.bytes, bare);
     assert.equal(opened[0]!.name, name);
+    assert.equal(opened[0]!.fromBackup, false, 'a packet opened on its own is a friend’s');
   }
   const junk = new Uint8Array([1, 2, 3]);
-  assert.deepEqual(await packetsToOpen(junk, 'x.zip'), [{ name: 'x.zip', bytes: junk }]);
-  assert.deepEqual(await packetsToOpen(junk, undefined), [{ name: undefined, bytes: junk }]);
+  assert.deepEqual(await packetsToOpen(junk, 'x.zip'), [{ name: 'x.zip', bytes: junk, fromBackup: false }]);
+  assert.deepEqual(await packetsToOpen(junk, undefined), [{ name: undefined, bytes: junk, fromBackup: false }]);
 });
 
 test('a backup never carries the name typed for sharing: it is written with the three arguments, no sender (#4107)', async () => {
@@ -171,7 +177,7 @@ test('a backup never carries the name typed for sharing: it is written with the 
   };
   const result = await buildBackup({ episodes: [episode], shows: [show], margins: writtenMargins() }, wired as WritePacket);
   assert.deepEqual(argumentCounts, [3]);
-  assert.equal((await readPacket(result.file!.bytes)).sender, undefined);
+  assert.equal((await readPacket((await packetsInBackup(result.file!.bytes))[0]!.bytes)).sender, undefined);
 });
 
 test('a backup writes every Margin, starred or not, and carries no star: a restored Margin comes back unstarred (#4172)', async () => {
@@ -180,7 +186,7 @@ test('a backup writes every Margin, starred or not, and carries no star: a resto
   assert.equal(result.inPackets, margins.length);
   const plain = await buildBackup({ episodes: [episode], shows: [show], margins: writtenMargins() }, write);
   assert.deepEqual(result.file!.bytes, plain.file!.bytes, 'the same bytes with and without the star');
-  const restored = await readPacket(result.file!.bytes);
+  const restored = await readPacket((await packetsInBackup(result.file!.bytes))[0]!.bytes);
   assert.equal(restored.margins.length, margins.length);
   for (const m of restored.margins) assert.equal('starred' in m, false);
 });
