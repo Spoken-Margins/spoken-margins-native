@@ -325,7 +325,9 @@ final class AppColorContrastCoverageTests: XCTestCase {
     /// surface, so only the `Playback*` files may use them.
     /// The running live session is drawn on the playback screen's dark surface, by the owner's choice (#3491).
     private static let liveSessionDarkSurface: Set<String> = [
-        "LiveSessionDock.swift", "LiveSessionMarginsPane.swift", "LiveSessionSessionPane.swift", "LiveSessionView.swift"
+        "LiveSessionDock.swift", "LiveSessionMarginsPane.swift", "LiveSessionSessionPane.swift", "LiveSessionView.swift",
+        // The photo thumbnail beside a row and above the recorder; the Margin screen's photo is in LiveSessionPhotoViews.
+        "LiveSessionPhotoThumbnail.swift"
     ]
 
     func testWatchColoursStayOnTheAlwaysDarkPlaybackSurface() throws {
