@@ -33,6 +33,12 @@ final class SpokenMarginsAppDelegate: NSObject, UIApplicationDelegate {
         ContinuedAudioPreparationController.shared.register()
         #endif
         WatchMarginReceiver.shared.activate() // Watch Margins (#2487), including a transfer that woke the app
+        // A live session photo no Margin names (a crash between its move and the Margin's save) is removed once per launch,
+        // before any live-session screen opens (#2708). It runs on the file worker, so it is off the main thread and
+        // serialized with every filing; a screen can't open in the milliseconds before it. Unit tests have no launch to clean up after.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+            Task.detached(priority: .utility) { await LiveSessionFileWorker.shared.sweepPhotos() }
+        }
         return true
     }
 

@@ -70,6 +70,8 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Spoken Margins uses the camera only when you tap Photo, to take a picture of the page or board for your Margin. The picture stays on this device and is never sent with a shared Margin.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Spoken Margins records your spoken Margins while you listen. Recordings stay on your phone unless you choose to share them.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

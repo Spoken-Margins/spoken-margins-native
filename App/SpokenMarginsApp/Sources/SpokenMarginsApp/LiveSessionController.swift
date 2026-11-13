@@ -225,6 +225,42 @@ final class LiveSessionController: ObservableObject {
     func addMargin(text: String, whereNote: String?, adjustmentMs: Int, markedAt: Date = Date()) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isRunning, let current = session, !trimmed.isEmpty else { return }
+        let margin = writtenMargin(trimmed, whereNote: whereNote, adjustmentMs: adjustmentMs, markedAt: markedAt, in: current)
+        session?.margins.append(margin)
+        session?.margins.sort { $0.markedAt < $1.markedAt }
+        save()
+    }
+
+    /// Adds a written Margin that was taken with a photo (#2708). The photo's file is moved into place first and the Margin
+    /// that names it is saved after, so a crash never leaves a Margin naming a file that was never kept. When the file
+    /// can't be kept the Margin is saved without it and the listener is told: they never lose their words to the picture.
+    func addMargin(
+        text: String, whereNote: String?, adjustmentMs: Int, markedAt: Date, photo staged: LiveSessionPhotoStore.Staged
+    ) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isRunning, let current = session, !trimmed.isEmpty else {
+            await files.discardStaged(staged)
+            return
+        }
+        var margin = writtenMargin(trimmed, whereNote: whereNote, adjustmentMs: adjustmentMs, markedAt: markedAt, in: current)
+        if let photo = await files.commitPhoto(staged, sessionId: current.id, marginId: margin.id) {
+            margin.photo = photo
+        } else {
+            errorMessage = LiveSessionPhotoMargin.couldNotKeepLine
+        }
+        // The session may have ended its screen, or been discarded, while the file moved.
+        guard session?.id == current.id else {
+            if let photo = margin.photo { await files.removePhoto(photo) }
+            return
+        }
+        session?.margins.append(margin)
+        session?.margins.sort { $0.markedAt < $1.markedAt }
+        save()
+    }
+
+    private func writtenMargin(
+        _ trimmed: String, whereNote: String?, adjustmentMs: Int, markedAt: Date, in current: LiveSession
+    ) -> LiveSessionMargin {
         var margin = current.margin(id: UUID().uuidString.lowercased(), text: trimmed, markedAt: markedAt, whereNote: whereNote)
         // "page 118" typed with the Margin is the listener's own place, in their unit (#2707).
         if let whereNote {
@@ -233,9 +269,12 @@ final class LiveSessionController: ObservableObject {
         if adjustmentMs != 0, let estimate = LiveSessionPositionMap.position(at: markedAt, in: current) {
             margin.listenerPositionMs = max(0, estimate.ms + adjustmentMs)
         }
-        session?.margins.append(margin)
-        session?.margins.sort { $0.markedAt < $1.markedAt }
-        save()
+        return margin
+    }
+
+    /// Throws away a photo that never became part of a Margin (Cancel on the recording or the writing screen).
+    func discardPhoto(_ staged: LiveSessionPhotoStore.Staged) {
+        Task { [files] in await files.discardStaged(staged) }
     }
 
     /// Keeps the page, percent or chapter heard in a Margin's words as that Margin's checkpoint (#2707).
@@ -264,9 +303,15 @@ final class LiveSessionController: ObservableObject {
     }
 
     func removeMargin(id: String) {
+        let photo = session?.margins.first { $0.id == id }?.photo
         session?.margins.removeAll { $0.id == id }
         Task { [files] in await files.forgetMargin(id: id) } // a late copy from the Watch never brings it back
         save()
+        if let photo {
+            // Deleting a Margin deletes its photo file (#2708), after the session no longer names it.
+            LiveSessionPhotoImages.forget(photo)
+            Task { [files] in await files.removePhoto(photo) }
+        }
     }
 
     /// Lets go of a session that was saved as a Library item (`Gate1AppModel.saveLiveSession` marks it saved).
@@ -302,9 +347,12 @@ final class LiveSessionController: ObservableObject {
 
     /// Starts a spoken Margin on the phone. During a call it says to use the Watch instead: the call holds the
     /// phone's microphone, so nothing would be recorded.
-    func startSpokenMargin() {
-        guard isRunning, let id = session?.id, !isRecordingSpoken else { return }
-        spokenCapture.start(sessionId: id)
+    func startSpokenMargin(photo staged: LiveSessionPhotoStore.Staged? = nil, placedAt: Date? = nil) {
+        guard isRunning, let id = session?.id, !isRecordingSpoken else {
+            if let staged { discardPhoto(staged) } // a photo with no recording to join is not kept (#2708)
+            return
+        }
+        spokenCapture.start(sessionId: id, photo: staged, placedAt: placedAt)
     }
 
     /// Stops the spoken Margin and files it at the moment it was started; it is transcribed on the device. The

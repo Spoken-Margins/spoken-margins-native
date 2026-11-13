@@ -1,3 +1,4 @@
+import SessionKit
 import SwiftUI
 
 /// The recording screen for a spoken Margin in a live session: the same screen playback shows, driven by the phone's
@@ -12,6 +13,13 @@ struct LiveSessionRecordingView: View {
     /// moment the recording began: the written Margin belongs to the place the listener was when they tapped Add a
     /// Margin, not to the moment they changed their mind.
     let onWriteInstead: (Date?) -> Void
+    /// Given the photo that was waiting for this recording when the listener chose to write instead (#2708), just before
+    /// `onWriteInstead`, so the written Margin keeps the picture. Not called when there was no photo.
+    var onKeepPhoto: (LiveSessionPhotoStore.Staged) -> Void = { _ in }
+    /// The kind of session, which words the hint under a photo.
+    var kind: ElsewhereKind = .meeting
+    /// Called after the recording was thrown away (Cancel, confirmed), so the screen that owns the cover closes it.
+    var onCancelled: () -> Void = {}
 
     var state: MarginRecordingScreenState {
         let subtitle = anchorSubtitle()
@@ -35,10 +43,16 @@ struct LiveSessionRecordingView: View {
     var actions: MarginRecordingScreenActions {
         MarginRecordingScreenActions(
             finish: { capture.stopAndFile() },
-            cancel: { capture.cancel(sessionId: sessionId) },
-            writeInstead: { _ in
-                let began = capture.recordingStartedAt // cancel clears it
+            // A photo waiting for this recording goes with it: Cancel means "I don't want this" (#2708).
+            cancel: {
                 capture.cancel(sessionId: sessionId)
+                onCancelled()
+            },
+            writeInstead: { _ in
+                // A Margin taken with a photo is placed where the listener tapped Photo; cancel clears both.
+                let began = capture.photoPlacedAt ?? capture.recordingStartedAt
+                // The picture is kept: the written Margin takes it.
+                if let photo = capture.cancel(sessionId: sessionId, keepingPhoto: true) { onKeepPhoto(photo) }
                 onWriteInstead(began)
             },
             continuePrimer: {},
@@ -49,6 +63,12 @@ struct LiveSessionRecordingView: View {
     }
 
     var body: some View {
-        MarginRecordingScreen(state: state, actions: actions)
+        MarginRecordingScreen(state: state, actions: actions, lead: lead)
+    }
+
+    /// The photo just taken, above the recorder, with the line that helps the listener say where it is from.
+    private var lead: AnyView? {
+        guard let photo = capture.photo else { return nil }
+        return AnyView(LiveSessionPhotoLead(url: photo.url, hint: LiveSessionPhotoMargin.hint(for: kind)).foregroundStyle(.white))
     }
 }

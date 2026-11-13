@@ -145,6 +145,20 @@ final class LiveSessionSpokenCapture: ObservableObject {
     /// Something the listener should hear about a recording that no screen was showing when it happened. The open
     /// live session screen shows it once.
     @Published var notice: String?
+    /// The photo waiting for this recording (#2708), in the temporary folder until the Margin is filed. It travels with
+    /// the recording, not with a screen, so it is kept or thrown away exactly as the recording is.
+    @Published private(set) var photo: LiveSessionPhotoStore.Staged?
+    /// When the listener tapped Photo, for a Margin taken with one: its place is fixed at that tap, not when the recorder
+    /// started after the camera closed (#2708). Nil for an ordinary spoken Margin.
+    private(set) var photoPlacedAt: Date?
+    /// Set when the recorder could not start while a photo waited: the photo is handed back, with the moment the
+    /// listener began, so the Margin can be written instead and the picture isn't lost. The screen takes it once.
+    @Published var returnedPhoto: ReturnedPhoto?
+
+    struct ReturnedPhoto: Equatable {
+        let staged: LiveSessionPhotoStore.Staged
+        let startedAt: Date
+    }
 
     private let recorder = LiveSessionPhoneRecorder()
     private let files: LiveSessionFileWorker
@@ -167,9 +181,14 @@ final class LiveSessionSpokenCapture: ObservableObject {
 
     /// Starts recording a spoken Margin for `id`. During a call it says to use the Watch instead: the call holds the
     /// phone's microphone, so nothing would be recorded.
-    func start(sessionId id: String) {
-        guard sessionId == nil else { return }
+    func start(sessionId id: String, photo staged: LiveSessionPhotoStore.Staged? = nil, placedAt: Date? = nil) {
+        guard sessionId == nil else {
+            if let staged { discard(staged) } // nothing waits for a photo that has no recording to join
+            return
+        }
         sessionId = id
+        photo = staged
+        photoPlacedAt = staged == nil ? nil : placedAt
         recordingStartedAt = Date()
         isStarting = true
         starting = Task { [weak self, recorder] in
@@ -180,10 +199,16 @@ final class LiveSessionSpokenCapture: ObservableObject {
                 self?.watchRecorder(for: id)
                 self?.syncCard(for: id)
             } catch {
-                if self?.sessionId == id {
-                    self?.sessionId = nil
-                    self?.recordingStartedAt = nil
-                    self?.isStarting = false
+                if let self, sessionId == id {
+                    // The microphone is off or a call holds it: the picture is not lost, the Margin is written instead.
+                    if let waiting = photo {
+                        returnedPhoto = ReturnedPhoto(staged: waiting, startedAt: photoPlacedAt ?? recordingStartedAt ?? Date())
+                    }
+                    photo = nil
+                    photoPlacedAt = nil
+                    sessionId = nil
+                    recordingStartedAt = nil
+                    isStarting = false
                 }
                 self?.notice = ListenerErrorText.message(for: error)
             }
@@ -201,30 +226,53 @@ final class LiveSessionSpokenCapture: ObservableObject {
         watcher?.cancel()
         watcher = nil
         let started = starting
+        let staged = photo
+        let placedAt = photoPlacedAt
+        photo = nil
+        photoPlacedAt = nil
         return Task { [weak self, recorder, files] in
             await started?.value // a stop tapped while the start was still opening the microphone waits for it
             self?.syncCard(for: id)
             do {
-                guard let recording = try await recorder.stop() else { return }
-                await Self.file(recording, into: id, files: files)
+                guard let recording = try await recorder.stop() else {
+                    if let staged { await files.discardStaged(staged) }
+                    return
+                }
+                await Self.file(recording, into: id, photo: staged, placedAt: placedAt, files: files) { [weak self] in
+                    self?.notice = LiveSessionPhotoMargin.couldNotKeepLine
+                }
             } catch {
+                if let staged { await files.discardStaged(staged) }
                 self?.notice = ListenerErrorText.line(prefix: "Couldn't save the spoken Margin:", error: error)
             }
         }
     }
 
-    /// Throws the recording away. For a listener who confirmed a discard, or a session being discarded.
-    func cancel(sessionId id: String) {
-        guard sessionId == id else { return }
+    /// Deletes a staged photo's temporary file, on the file worker (never on the main thread).
+    private func discard(_ staged: LiveSessionPhotoStore.Staged) {
+        Task { [files] in await files.discardStaged(staged) }
+    }
+
+    /// Throws the recording away. For a listener who confirmed a discard, or a session being discarded. A photo waiting
+    /// for it goes too, unless the listener is writing the Margin instead (`keepingPhoto`): then it is handed back so the
+    /// written Margin keeps the picture.
+    @discardableResult
+    func cancel(sessionId id: String, keepingPhoto: Bool = false) -> LiveSessionPhotoStore.Staged? {
+        guard sessionId == id else { return nil }
         sessionId = nil
         recordingStartedAt = nil
         isStarting = false
         watcher?.cancel()
         watcher = nil
+        let staged = photo
+        photo = nil
+        photoPlacedAt = nil
+        if let staged, !keepingPhoto { discard(staged) }
         Task { [recorder, starting] in
             await starting?.value
             await recorder.cancel()
         }
+        return keepingPhoto ? staged : nil
     }
 
     /// The Lock Screen card says a spoken Margin records, with Finish, or goes back to Mark (#3499). One update at a
@@ -254,12 +302,27 @@ final class LiveSessionSpokenCapture: ObservableObject {
         }
     }
 
-    private static func file(_ recording: LiveSessionPhoneRecorder.Recording, into sessionId: String, files: LiveSessionFileWorker) async {
+    private static func file(
+        _ recording: LiveSessionPhoneRecorder.Recording, into sessionId: String, photo staged: LiveSessionPhotoStore.Staged? = nil,
+        placedAt: Date? = nil, files: LiveSessionFileWorker, photoCouldNotBeKept: @MainActor () -> Void = {}
+    ) async {
         let marginId = "phone-\(UUID().uuidString.lowercased())"
-        let filed = await files.attachSpokenMargin(
-            sessionId: sessionId, marginId: marginId, audioPath: recording.audioPath, markedAt: recording.startedAt,
-            durationMs: recording.durationMs, spokenOn: "phone"
-        )
+        let filed: LiveSession?
+        if let staged {
+            // The picture is moved into place first and the Margin that names it is saved after (#2708); a picture that
+            // can't be kept never costs the listener their words.
+            let result = await files.attachSpokenMargin(
+                sessionId: sessionId, marginId: marginId, audioPath: recording.audioPath, markedAt: placedAt ?? recording.startedAt,
+                durationMs: recording.durationMs, spokenOn: "phone", staged: staged
+            )
+            filed = result.session
+            if result.session != nil, result.photoFailed { photoCouldNotBeKept() }
+        } else {
+            filed = await files.attachSpokenMargin(
+                sessionId: sessionId, marginId: marginId, audioPath: recording.audioPath, markedAt: placedAt ?? recording.startedAt,
+                durationMs: recording.durationMs, spokenOn: "phone"
+            )
+        }
         guard filed != nil else { return }
         NotificationCenter.default.post(name: LiveSessionSpokenMargins.changedOnDisk, object: nil)
         guard let text = await LiveSessionSpokenMargins.transcribe(audioPath: recording.audioPath) else { return }

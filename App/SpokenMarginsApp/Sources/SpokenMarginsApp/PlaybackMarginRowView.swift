@@ -11,35 +11,41 @@ struct PlaybackMarginRowView: View {
     var canPlay = true
     var playLabel = "Play this moment"
     var playHint: String? = nil
+    /// A live session's photo beside the words (#2708); its Margin's row also reads "with a photo".
+    var thumbnail: AnyView? = nil
     let showDetails: () -> Void
     let play: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             Button(action: showDetails) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(isShared ? "Shared Margin" : "My Margin", systemImage: isShared ? "person.2" : "quote.bubble")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppColors.watchSecondary)
-                    Text(title)
-                        .font(.system(.body, design: .serif))
-                        .foregroundStyle(.white)
-                        .lineLimit(3)
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(AppColors.watchSecondary)
-                    if let countdown {
-                        Text(countdown)
-                            .font(.caption.monospacedDigit().weight(.semibold))
-                            .foregroundStyle(AppColors.listeningAccent)
-                            .numericTextTransition()
-                            .accessibilityIdentifier("\(identifier).countdown")
+                HStack(alignment: .top, spacing: 10) {
+                    if let thumbnail { thumbnail }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(isShared ? "Shared Margin" : "My Margin", systemImage: isShared ? "person.2" : "quote.bubble")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AppColors.watchSecondary)
+                        Text(title)
+                            .font(.system(.body, design: .serif))
+                            .foregroundStyle(.white)
+                            .lineLimit(3)
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.watchSecondary)
+                        if let countdown {
+                            Text(countdown)
+                                .font(.caption.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(AppColors.listeningAccent)
+                                .numericTextTransition()
+                                .accessibilityIdentifier("\(identifier).countdown")
+                        }
                     }
                 }
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
             }
+            .modifier(OptionalAccessibilityValue(value: thumbnail == nil ? nil : LiveSessionPhotoMargin.rowAccessibilityValue))
             .accessibilityIdentifier(identifier)
             Button(action: play) {
                 Image(systemName: "play.fill")
@@ -54,6 +60,16 @@ struct PlaybackMarginRowView: View {
         .foregroundStyle(.white)
         .padding(.vertical, 10)
         .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.16)).frame(height: 1) }
+    }
+}
+
+/// Adds an accessibility value only when there is one, so a row without a photo is read exactly as before.
+private struct OptionalAccessibilityValue: ViewModifier {
+    let value: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let value { content.accessibilityValue(value) } else { content }
     }
 }
 

@@ -60,6 +60,8 @@ struct MarginRecordingScreenActions {
 struct MarginRecordingScreen: View {
     let state: MarginRecordingScreenState
     let actions: MarginRecordingScreenActions
+    /// What only one caller has, shown under the status line: a live session's photo and its hint (#2708).
+    var lead: AnyView?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.feedbackDeliveryEffects) private var feedbackEffects
     @State private var isDiscardConfirmationPresented = false
@@ -80,6 +82,7 @@ struct MarginRecordingScreen: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     status
+                    if let lead, !showsMicrophonePrimer { lead }
                     replyCaption
                     recordingTime
                     if !showsMicrophonePrimer { anchor }

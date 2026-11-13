@@ -19,6 +19,8 @@ struct MarginWritingSheet<Accessory: View>: View {
     let onSave: () -> Void
     /// Runs when the listener cancels with nothing typed, or confirms the discard.
     let onCancel: () -> Void
+    /// What only one caller has, above the editor: a live session's photo and its hint (#2708).
+    var lead: AnyView?
     @ViewBuilder let accessory: () -> Accessory
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -51,6 +53,8 @@ struct MarginWritingSheet<Accessory: View>: View {
                         )
                     }
                 }
+
+                if let lead { lead }
 
                 TextEditor(text: $text)
                     .font(.body)

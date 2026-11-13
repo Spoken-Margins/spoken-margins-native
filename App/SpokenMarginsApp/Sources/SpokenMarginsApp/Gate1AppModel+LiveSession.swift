@@ -114,7 +114,13 @@ extension Gate1AppModel {
     func removeLiveSessionRecord(itemId: String) {
         guard let directory = Self.liveSessionDirectory else { return }
         // The record's folder walk and unlink go off the main actor (#2510).
-        Task.detached(priority: .utility) { LiveSessionRecord.remove(itemId: itemId, from: directory) }
+        Task.detached(priority: .utility) {
+            // The session's photos go with it (#2708): the record names the session whose folder holds them.
+            if let record = LiveSessionRecord.load(itemId: itemId, from: directory) {
+                LiveSessionPhotoStore(root: directory).removeFolder(sessionId: record.session.id)
+            }
+            LiveSessionRecord.remove(itemId: itemId, from: directory)
+        }
     }
 
     private static func timeline(for transcript: ImportedTranscript) -> TranscriptTimeline {
