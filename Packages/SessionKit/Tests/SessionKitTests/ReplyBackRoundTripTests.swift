@@ -123,10 +123,18 @@ final class ReplyBackRoundTripTests: XCTestCase {
         XCTAssertNil(entries[0].writtenReading)
         XCTAssertTrue(SharedMarginReview.offerMessage(for: entries).hasPrefix("2 new Margins from Ben."))
 
-        // The item screen counts both, and says "note" rather than "voice note" because one is written.
+        // The item screen says these are replies to A's Margin, from Ben, and does not explain what a Margin is to the
+        // person who made it (#3889). Worked out from the saved links, so it holds after a relaunch.
+        XCTAssertEqual(entries.map { $0.waitingMargin.replyToYouParentId }, ["a-1", "a-1"])
         let intro = try XCTUnwrap(FriendMarginsIntro(unheardFriendMargins: entries.map(\.waitingMargin)))
-        XCTAssertTrue(intro.countLine.hasPrefix("2 Margins"))
-        XCTAssertTrue(intro.explanation.hasPrefix("A Margin is a note Ben left"), intro.explanation)
+        XCTAssertEqual(intro.senderLine, "Replies from Ben")
+        XCTAssertEqual(intro.countLine.prefix(30), "2 replies to your Margin · abo")
+        XCTAssertNil(intro.explanation)
+        let skip = ItemListeningChoices(
+            unheardFriendMargins: entries.map(\.waitingMargin), hasFinishedSession: false,
+            hasContinuationSession: false, isPreparingAudio: false
+        )
+        XCTAssertTrue(skip.marginsOnlyTitle?.hasPrefix("Skip to Ben's replies · ") == true, skip.marginsOnlyTitle ?? "nil")
 
         // One tap: lead-in and tone, A's own Margin, the voice reply, then the written reply, which is announced by the
         // same tone any Margin not preceded by its parent gets.
@@ -156,6 +164,11 @@ final class ReplyBackRoundTripTests: XCTestCase {
         XCTAssertNotNil(entries[0].replyContext)
         XCTAssertNil(entries[1].replyContext)
         XCTAssertEqual(SharedMarginReview.playlist(for: entries, ownMargins: own).count, 3)
+        // One reply and one new Margin: "From Ben", both counted, still no explanation (#3889).
+        let intro = try XCTUnwrap(FriendMarginsIntro(unheardFriendMargins: entries.map(\.waitingMargin)))
+        XCTAssertEqual(intro.senderLine, "From Ben")
+        XCTAssertTrue(intro.countLine.hasPrefix("1 reply and 1 new Margin · about"), intro.countLine)
+        XCTAssertNil(intro.explanation)
     }
 
     func testTwoPacketsFromTheSameFriendNameThemOnceAndOfferTheReplyToTheSecond() throws {

@@ -13,7 +13,7 @@ struct FriendMarginsSenderLine: View {
     }
 }
 
-/// "3 Margins · about 2 min" and what a Margin is, under the item's title while a friend's Margins wait (#3219).
+/// "3 Margins · about 2 min" and what a Margin is (not for replies), under the item's title while a friend's Margins wait (#3219).
 struct FriendMarginsSummary: View {
     let intro: FriendMarginsIntro
 
@@ -23,14 +23,17 @@ struct FriendMarginsSummary: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(AppColors.text)
                 .accessibilityIdentifier("item.friendIntro.count")
-            Text(intro.explanation)
-                .font(.body)
-                .foregroundStyle(AppColors.text)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .accessibilityIdentifier("item.friendIntro.explanation")
+            // Replies come back to the person who made the Margins, who needs no explanation of them (#3889).
+            if let explanation = intro.explanation {
+                Text(explanation)
+                    .font(.body)
+                    .foregroundStyle(AppColors.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .accessibilityIdentifier("item.friendIntro.explanation")
+            }
             // What the old Import sheet said honestly, one tap away (#3291).
             DisclosureGroup(SharedPacketArrival.aboutTitle) {
                 VStack(alignment: .leading, spacing: 8) {
