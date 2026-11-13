@@ -51,6 +51,12 @@ struct BrowserTextImporter: Sendable {
     let isPlaybackActive: Bool
     /// The publisher recordings the engine holds, so a saved item never keeps one as its audio.
     let publisherPlayback: [String: PublisherAudioPlayback]
+    /// When the listener asked for this import (a share, the Safari extension, a link, a tap), or nil for one they
+    /// didn't (Following's "Add every new item"). An import the listener asked for that lands on an item already in the
+    /// Library or in Recently Deleted marks it added again (#4178), so it shows as just added and not finished.
+    var listenerAddedAt: Date? = nil
+    /// The items a re-add leaves as they are: held by the engine with a session still going (`itemIdsStillListening`).
+    var stillListeningItemIds: Set<String> = []
 
     func outcome(
         _ handoff: BrowserTextHandoff,
@@ -117,7 +123,8 @@ struct BrowserTextImporter: Sendable {
                    let store = repository as? any (SessionRepository & StructuredDocumentRepository) {
                     let job = StructuredUpgradeJob(repository: store, existing: existing, document: document)
                     if mode == .deferred { return .upgradeCandidate(job) }
-                    if case .success(let upgrade)? = try? job.plan() {
+                    if case .success(var upgrade)? = try? job.plan() {
+                        if let listenerAddedAt { upgrade.item = ItemFinishedRule.addedAgain(upgrade.item, at: listenerAddedAt) } // #4178
                         do {
                             try job.apply(upgrade)
                             return .records(upgrade.item, upgrade.listeningMap, document, persisted: true)
@@ -141,6 +148,12 @@ struct BrowserTextImporter: Sendable {
                     existing.title = postTitle
                 }
                 existing.deletedAt = nil
+                // Asked for again: without this an article heard before came back finished, and the Library's default
+                // view hid it while the app said "Added to Library" (#4178).
+                // One the listener is still in is left as it is; it is on screen or in Now Playing already.
+                if let listenerAddedAt, !stillListeningItemIds.contains(existing.id) {
+                    existing = ItemFinishedRule.addedAgain(existing, at: listenerAddedAt)
+                }
                 return .records(existing, try repository.loadListeningMap(itemId: itemId), document)
             }
         }
@@ -162,6 +175,11 @@ struct BrowserTextImporter: Sendable {
             createdAt: Date(),
             documentStructure: handoff.documentStructure
         )
+        // A row already saved under this id (a handoff naming its own id, a file or selection, an edition taken before)
+        // is replaced, and its sessions are still filed under the id: asked for again, they no longer make it finished.
+        if let listenerAddedAt, !stillListeningItemIds.contains(itemId), try existingItem(id: itemId) != nil {
+            return .records(ItemFinishedRule.addedAgain(item, at: listenerAddedAt), deterministicMap, document) // #4178
+        }
         return .records(item, deterministicMap, document)
     }
 

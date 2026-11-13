@@ -475,7 +475,7 @@ extension Gate1AppModel {
                         inputURL: importURL,
                         sourceSurface: "followed_source",
                         startSession: false
-                    ), feedEntry: entry, subscription: subscription, declaredAudio: declaredAudio)
+                    ), feedEntry: entry, subscription: subscription, declaredAudio: declaredAudio, listenerAdded: startedByListener) // #4178
                     let stillWanted = intent.map { self.followedPlayIntent.finish($0) } ?? false
                     imported = importedItemId != nil
                     landedItemId = importedItemId
@@ -492,7 +492,8 @@ extension Gate1AppModel {
                         imported = itemId != nil
                         landedItemId = itemId
                     } else {
-                        let itemId = self.listeningSignals.followedArticleImported(try self.importBrowserTextInBackground(handoff), for: entry)
+                        let itemId = self.listeningSignals.followedArticleImported(
+                            try self.importBrowserTextInBackground(handoff, listenerAdded: startedByListener), for: entry) // #4178
                         // The earlier record's text map is kept and the save runs off the main actor (#2509), as for a shared link.
                         var audio: PublisherAudio?
                         if let found = try PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId) {

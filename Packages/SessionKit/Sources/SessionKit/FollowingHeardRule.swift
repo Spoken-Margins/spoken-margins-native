@@ -16,7 +16,8 @@ public enum FollowingHeardRule {
     static let lastStretchStartsAtPercent = 50
 
     public static func isHeard(item: LibraryItemSummary, sessions: [Session], entryDurationMs: Int? = nil) -> Bool {
-        if item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(sessions) { return true }
+        let sessions = ItemFinishedRule.countedSessions(item, sessions: sessions) // an episode added again starts over (#4178)
+        if ItemFinishedRule.isFinished(item, sessions: sessions) { return true }
         // Either duration may be 0 or missing; the item's own comes first, the feed's is the fallback.
         let durationMs = [item.media?.durationMs, entryDurationMs].compactMap { $0 }.first { $0 > 0 }
         return sessions.contains { session in

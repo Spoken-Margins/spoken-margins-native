@@ -48,7 +48,8 @@ extension Gate1AppModel {
     }
 
     @discardableResult
-    func importSourceLinkInBackground(_ handoff: SourceLinkHandoff, feedEntry: FeedEntry? = nil, subscription: FeedSubscription? = nil, declaredAudio: Bool = false) async throws -> String? {
+    /// `listenerAdded: false` only for Following's "Add every new item" (#4178, `SessionEngine.importResolvedSourceLinkInBackground`).
+    func importSourceLinkInBackground(_ handoff: SourceLinkHandoff, feedEntry: FeedEntry? = nil, subscription: FeedSubscription? = nil, declaredAudio: Bool = false, listenerAdded: Bool = true) async throws -> String? {
         let trimmed = handoff.inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if handoff.sourceSurface == "share_sheet_pdf_file",
            let fileURL = URL(string: trimmed),
@@ -84,7 +85,7 @@ extension Gate1AppModel {
         )
         guard case .podcast(let result) = resolution else {
             if case .article(let article) = resolution {
-                let itemId = try importBrowserTextInBackground(article)
+                let itemId = try importBrowserTextInBackground(article, listenerAdded: listenerAdded)
                 rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: fetched)
                 return itemId
             }
@@ -110,7 +111,8 @@ extension Gate1AppModel {
               let item = try engine.importResolvedSourceLinkInBackground(
                 request,
                 result: result,
-                sourceIdentity: feedEntry.map { "\($0.subscriptionId):\($0.id)" }
+                sourceIdentity: feedEntry.map { "\($0.subscriptionId):\($0.id)" },
+                listenerAdded: listenerAdded
               ) else {
             throw SessionKitError.persistenceFailed("The shared podcast did not expose playable audio.")
         }
