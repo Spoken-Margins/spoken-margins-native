@@ -1,6 +1,7 @@
 import Combine
 import SessionKit
 import SwiftUI
+import UIKit
 
 /// The play queue (#1990): what plays next, in order. Tap a row to play it now, drag to reorder (Edit), swipe to remove,
 /// Clear to empty it. It opens from the Library's "Play queue" row, which only shows while something is queued.
@@ -12,7 +13,8 @@ import SwiftUI
 /// Library redraws this screen. A hosted run showed the sheet drawn once per publish with SwiftUI never asking its `==`
 /// (#4033), so the first guard is that nothing here is invalidated by a model publish at all.
 ///
-/// The Library presents it with `playQueueSheet(isPresented:model:)`, never a plain `.sheet`: see `PlayQueueSheetHost`.
+/// The Library presents it with `playQueueSheet(isPresented:model:)`, never a plain `.sheet`: see `PlayQueueSheetHost`,
+/// which hands it to UIKit so the Library's redraws and environment cannot reach it.
 struct ExperiencePlayQueueScreen: View {
     let model: Gate1AppModel
     @StateObject private var feed: PlayQueueRowsFeed
@@ -41,6 +43,36 @@ struct ExperiencePlayQueueScreen: View {
             )
         )
         .equatable()
+        .onAppear { PlayQueueSheetTally.opened() }
+        .onDisappear { model.recordDeveloperDiagnostic("playQueue.closed", PlayQueueSheetTally.closedRecord()) }
+    }
+}
+
+/// What the queue sheet did while it was open, recorded to diagnostics when it closes (#3891). A phone check that
+/// still shows the rows hopping can then say whether the sheet itself was redrawing (draws far above row changes) or
+/// stayed still while the list reset under it, which is the question two simulator-only fixes could not answer.
+@MainActor
+enum PlayQueueSheetTally {
+    static var sheetDraws = 0
+    static var rowChanges = 0
+    static var editEntries = 0
+    private static var openedAt = Date()
+
+    static func opened() {
+        sheetDraws = 0
+        rowChanges = 0
+        editEntries = 0
+        openedAt = Date()
+    }
+
+    static func closedRecord() -> [String: String] {
+        [
+            "sheetDraws": String(sheetDraws),
+            "rowChanges": String(rowChanges),
+            "editEntries": String(editEntries),
+            "openMs": String(Int(Date().timeIntervalSince(openedAt) * 1000)),
+            "presenter": "uikit",
+        ]
     }
 }
 
@@ -53,11 +85,16 @@ extension View {
     }
 }
 
-/// Holds the queue sheet's presentation in a view the presenter's redraws do not reach (#3891, reopened). With `.sheet`
-/// on the Library itself, every model publish may re-run the presentation while the sheet and its rows do not redraw,
-/// which is the theory for the remove icons and handles fading that the owner filmed (not yet shown on a device; the
-/// control test counts the re-runs). This view is equal to its last copy unless the flag changes, so SwiftUI skips it
-/// and the presentation is left alone.
+/// Presents the queue sheet through UIKit, so nothing in the Library can reach it once it is up (#3891, third report).
+///
+/// Two earlier fixes kept SwiftUI's `.sheet` and blocked one path each: the sheet stopped watching the model (#3976,
+/// #4033), then the presentation moved into a host the Library's redraws skip (#4036). Both passed in a test simulator
+/// and the owner's phone (build 37, audio playing at 1.5x) still showed the rows leaving Edit mode at once and fading
+/// back in about every 0.54 s, with the Edit button holding its active checkmark. So SwiftUI's Edit mode stayed on while
+/// the list itself kept resetting. A `.sheet` also hands its content the presenter's environment, which `.equatable()`
+/// does not stop, and the hosted tests never changed it. Rather than guess which path is left, the sheet is now a
+/// `UIHostingController` presented by UIKit: its root view is set once, it has its own environment, and the Library's
+/// redraws, environment and presentation updates have no way in. Only the rows feed and the sheet's own state redraw it.
 private struct PlayQueueSheetHost: View, Equatable {
     let model: Gate1AppModel
     @Binding var isPresented: Bool
@@ -70,11 +107,88 @@ private struct PlayQueueSheetHost: View, Equatable {
         #if DEBUG
         let _ = PlayQueueSheetProbe.hostRuns += 1
         #endif
-        Color.clear
-            .sheet(isPresented: $isPresented) {
-                // The binding writes the presenter's own flag, so an older copy of this closure still closes the sheet.
-                ExperiencePlayQueueScreen(model: model, close: { isPresented = false })
+        PlayQueueUIKitPresenter(model: model, isPresented: $isPresented)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct PlayQueueUIKitPresenter: UIViewControllerRepresentable {
+    let model: Gate1AppModel
+    @Binding var isPresented: Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIViewController(context: Context) -> UIViewController {
+        let anchor = UIViewController()
+        anchor.view.isUserInteractionEnabled = false
+        return anchor
+    }
+
+    func updateUIViewController(_ anchor: UIViewController, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.anchor = anchor
+        // The binding writes the presenter's own flag, so an older copy of it still closes the sheet.
+        let flag = $isPresented
+        coordinator.setPresented = { flag.wrappedValue = $0 }
+        coordinator.model = model
+        coordinator.sync(wantsSheet: isPresented)
+    }
+
+    static func dismantleUIViewController(_ anchor: UIViewController, coordinator: Coordinator) {
+        coordinator.sheet?.dismiss(animated: false)
+        coordinator.sheet = nil
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UIAdaptivePresentationControllerDelegate {
+        weak var anchor: UIViewController?
+        weak var model: Gate1AppModel?
+        var setPresented: (Bool) -> Void = { _ in }
+        var sheet: UIViewController?
+        private var wantsSheet = false
+        private var retryScheduled = false
+
+        func sync(wantsSheet: Bool) {
+            self.wantsSheet = wantsSheet
+            if wantsSheet, sheet == nil {
+                present()
+            } else if !wantsSheet, let sheet {
+                self.sheet = nil
+                sheet.dismiss(animated: true)
             }
+        }
+
+        private func present() {
+            guard let anchor, let model else { return }
+            guard anchor.view.window != nil, !anchor.isBeingPresented else {
+                // Not in a window yet (the first update can come before the view is attached): try again next turn.
+                guard !retryScheduled else { return }
+                retryScheduled = true
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.retryScheduled = false
+                    if self.wantsSheet, self.sheet == nil { self.present() }
+                }
+                return
+            }
+            var presenter: UIViewController = anchor
+            while let next = presenter.presentedViewController, !next.isBeingDismissed { presenter = next }
+            let close: () -> Void = { [weak self] in self?.setPresented(false) }
+            let hosting = UIHostingController(rootView: ExperiencePlayQueueScreen(model: model, close: close)
+                .tint(AppColors.evergreen))
+            hosting.modalPresentationStyle = .pageSheet
+            hosting.presentationController?.delegate = self
+            sheet = hosting
+            presenter.present(hosting, animated: true)
+        }
+
+        /// A swipe down closed it: tell the presenter, whose flag would otherwise still say open.
+        func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+            sheet = nil
+            wantsSheet = false
+            setPresented(false)
+        }
     }
 }
 
@@ -92,7 +206,10 @@ final class PlayQueueRowsFeed: ObservableObject {
         subscription = state.$itemIds.combineLatest(model.$libraryItems)
             .map { ids, items in PlayQueueRows.rows(for: PlayQueue(itemIds: ids), items: items) }
             .removeDuplicates()
-            .sink { [weak self] rows in self?.rows = rows }
+            .sink { [weak self] rows in
+                PlayQueueSheetTally.rowChanges += 1
+                self?.rows = rows
+            }
     }
 }
 
@@ -147,6 +264,7 @@ struct PlayQueueSheet: View, Equatable {
         #if DEBUG
         let _ = PlayQueueSheetProbe.bodyRuns += 1
         #endif
+        let _ = PlayQueueSheetTally.sheetDraws += 1
         NavigationStack {
             List {
                 if rows.isEmpty {
@@ -210,6 +328,7 @@ struct PlayQueueSheet: View, Equatable {
                 #endif
             }
             .onChange(of: editMode) { _, mode in
+                if mode == .active { PlayQueueSheetTally.editEntries += 1 }
                 #if DEBUG
                 PlayQueueSheetProbe.editMode = mode
                 #endif
