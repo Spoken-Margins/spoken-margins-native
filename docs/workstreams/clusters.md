@@ -87,7 +87,7 @@ Cluster leads and the chief of staff are automatic sessions. The hook blocks at 
 - At **250k**, carry on and let auto-compact run. After a compaction, re-read your status comment, the tracking issue body and this page.
 - At the hook's **300k** block, write the hand-off and tell the chief of staff, which tells the run's lead session to start a fresh lead from the status comment.
 - A helper waits for a test plan or build with a blocking command and never ends its turn while one runs. Ending the turn there leaves it idle until someone messages it; on 2026-11-06 two helpers each lost 30 minutes or more that way.
-- Helpers use Sonnet. Use Opus helpers only for careful review or design. No Haiku.
+- Helpers run on Sonnet. Haiku 5.5 at low effort may sort or label text handed to it (at most 3 issues or about 4,000 words a batch); it never makes a claim about code or GitHub state, and its output is checked before anyone acts on it. Never Haiku 4.5. Use Opus helpers only for careful review or design (2026-11-12, replacing "No Haiku").
 
 ## Wind-down
 

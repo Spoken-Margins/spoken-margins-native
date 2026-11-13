@@ -46,4 +46,4 @@ Say for each item whether it is built (on origin/main), merged elsewhere, open i
 
 - Ask for the answer and its sources, not the files' contents (AGENTS.md, "Keep bulk out of your context").
 - One question per helper. A helper asked "what's the state of everything" returns comments.
-- Helpers run on Sonnet, never Haiku (2026-10-20).
+- Helpers run on Sonnet. Haiku 5.5 at low effort may sort or label text handed to it (at most 3 issues or about 4,000 words a batch); it never makes a claim about code or GitHub state, and its output is checked before anyone acts on it. Never Haiku 4.5. (2026-11-12, replacing the 2026-10-20 "never Haiku".)
