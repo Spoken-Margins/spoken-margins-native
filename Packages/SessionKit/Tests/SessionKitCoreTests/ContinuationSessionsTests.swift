@@ -143,3 +143,16 @@ final class ContinuationSessionsTests: XCTestCase {
         }
     }
 }
+
+/// #4183: a re-add from Safari or a link refreshes the Library row but not the item screen's loaded detail, so a reader
+/// that trusted the open item alone read a stale stamp and resumed a 99% session near its end.
+final class LaterAddedAgainAtTests: XCTestCase {
+    func testTheLaterStampWinsWhicheverSourceHoldsIt() {
+        let early = Date(timeIntervalSince1970: 10), late = Date(timeIntervalSince1970: 20)
+        XCTAssertEqual(ItemFinishedRule.laterAddedAgainAt(early, late), late)
+        XCTAssertEqual(ItemFinishedRule.laterAddedAgainAt(late, early), late)
+        XCTAssertEqual(ItemFinishedRule.laterAddedAgainAt(nil, late), late, "the open item loaded before the re-add holds none")
+        XCTAssertEqual(ItemFinishedRule.laterAddedAgainAt(early, nil), early)
+        XCTAssertNil(ItemFinishedRule.laterAddedAgainAt(nil, nil))
+    }
+}

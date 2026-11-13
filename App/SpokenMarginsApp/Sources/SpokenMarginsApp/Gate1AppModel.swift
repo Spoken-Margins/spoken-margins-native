@@ -1612,7 +1612,7 @@ final class Gate1AppModel: ObservableObject {
         }
         do {
             let store = try requireStore()
-            switch PlayRule.startAction(sessions: try store.loadSessions(itemId: id)) {
+            switch PlayRule.startAction(sessions: try store.loadSessions(itemId: id), addedAgainAt: addedAgainAt(forItem: id)) {
             case .resume(let continuation): resumeSession(continuation)
             case .startNew: startNewSession(id: id)
             }
@@ -2010,7 +2010,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var selectedItemPreferredContinuationSession: Session? {
-        Self.preferredContinuationSession(in: selectedItem.sessions)
+        Self.preferredContinuationSession(in: selectedItemContinuationSessions)
     }
 
     var selectedItemStartupAudioState: NativeTextStartupAudioState {

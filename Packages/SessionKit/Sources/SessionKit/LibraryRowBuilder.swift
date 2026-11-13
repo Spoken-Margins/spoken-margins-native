@@ -74,7 +74,9 @@ public enum LibraryRowBuilder {
         }
         return items.enumerated().map { storageRank, item in
             let sessions = sessionsByItemId[item.id] ?? []
-            let continuation = SessionContinuation.preferredContinuationSession(in: sessions)
+            // An item finished and then added again reads as a fresh add: its old finished listening gives no percentage and no Continue (#4183).
+            let continuation = SessionContinuation.preferredContinuationSession(
+                in: ItemFinishedRule.continuationSessions(item, sessions: sessions))
             let isCompleted = ItemFinishedRule.isFinished(item, sessions: sessions) // an item added again starts over (#4178)
             let compatibleManifests = manifestsByItemId[item.id]?.filter { manifest in
                 context.renderSignature.map { manifest.signature == $0 } ?? true
@@ -122,6 +124,7 @@ public enum LibraryRowBuilder {
                 storageRecencyRank: storageRank
             )
             row.publishedAt = ItemMetadata.publishedDate(item.publishedAt)
+            row.addedAgainAt = item.addedAgainAt
             row.usesNewReader = data.structuredDocumentItemIds.contains(item.id)
             row.sharedMargins = data.sharedMarginsByItemId[item.id] ?? .none
             row.marginCount = max(0, data.marginCountsByItemId[item.id] ?? 0)

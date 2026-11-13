@@ -33,6 +33,9 @@ public struct LibraryItemRow: Identifiable, Hashable, Sendable {
     public var publishedAt: Date?
     public let lastListenedAt: Date?
     public let storageRecencyRank: Int
+    /// When the listener last added the item again (`Item.addedAgainAt`, #4178); nil for an item never added again.
+    /// `PlayRule` filters an item's sessions with it, so Play from the row starts where the row says it does (#4183).
+    public var addedAgainAt: Date?
     /// A PDF read through the structured-document reader (#359).
     public var usesNewReader = false
     /// Marked complete by hand, not finished by listening, so Mark Unfinished can clear it (#273).
