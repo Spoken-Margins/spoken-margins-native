@@ -18,6 +18,7 @@ import type { Margin } from '../../shared/model.ts';
 import { LIMITS } from '../../packet/format.ts';
 import { TOO_MANY_MARGINS } from '../../packet/write.ts';
 import { senderName, type MarginCue } from './arrival.ts';
+import { canStar, isStarred } from './star.ts';
 
 export interface ReplyBackOffer {
   /** The listener's replies to a friend's Margins. */
@@ -58,7 +59,7 @@ export function friendNames(labels: readonly string[]): string {
 }
 
 /** The friend's Margins fire by themselves and carry an author; the listener's own never do (arrival.ts friendMargins). */
-const isFriends = (margin: Margin): boolean => margin.author !== undefined && margin.author !== '';
+const isFriends = (margin: Margin): boolean => !canStar(margin);
 
 /**
  * The offer for an episode's Margins, or undefined when the listener has made no Margin since the friend's (Swift
@@ -116,17 +117,46 @@ export function replyBackOffer(margins: readonly Margin[]): ReplyBackOffer | und
  * the moment this page was opened, start picked: Margins made before replies carried a link, or with no friend's Margin
  * just heard, were made while listening to the friend's, and with replies only every box started unticked and Send was
  * greyed out with no reason (#3784). An older note, which `others` can hold because the web stores no moment of opening,
- * stays unpicked, so a private note is never ticked for the listener.
+ * stays unpicked, so a private note is never ticked for the listener. Stars (#4172) follow the app's rule: replies decide
+ * when there are any; with none, any starred Margin in the list means only the starred ones start picked.
  */
 export function preselected(offer: ReplyBackOffer, since: number = Number.POSITIVE_INFINITY): Set<string> {
   const picked = new Set(offer.replies.map((m) => m.id));
   if (picked.size > 0) return picked;
+  // The app's rule (#4172): with no reply in the list, any starred Margin means "only the starred ones".
+  const starred = offer.others.filter(isStarred);
+  if (starred.length > 0) return new Set(starred.map((m) => m.id));
   for (const margin of offer.others) if (time(margin) >= since) picked.add(margin.id);
   return picked;
 }
 
+/**
+ * The list Share shows when there is no reply offer but the listener has starred a Margin of their own on this episode
+ * (#4172): all their own Margins, oldest first, the starred ones starting ticked (`starredPicks`). With nothing starred it is
+ * undefined and Share is as before, no list. With an offer it is undefined too: the offer's list decides (`preselected`).
+ * The friend's Margins are never in it, so they are never written.
+ */
+export function starredShareList(margins: readonly Margin[]): Margin[] | undefined {
+  if (replyBackOffer(margins)) return undefined;
+  const own = margins.filter(canStar);
+  return own.some(isStarred) ? [...own].sort(madeBefore) : undefined;
+}
+
+/** The ticks `starredShareList` starts with: the starred Margins only. */
+export function starredPicks(list: readonly Margin[]): Set<string> {
+  return new Set(list.filter(isStarred).map((m) => m.id));
+}
+
+/** The Margins of a `starredShareList` to write for the picked ids, in the order the list shows them. */
+export function pickedFromList(list: readonly Margin[], picked: ReadonlySet<string>): Margin[] {
+  return list.filter((m) => picked.has(m.id));
+}
+
+/** A list Share shows with a tick on each row: the reply offer's, or the starred Margins' (#4172). With none, Share writes every Margin. */
+export type SharedList = ReplyBackOffer | readonly Margin[];
+
 /** Why Send and Save are greyed, in words. Undefined when something is picked. */
-export function nothingPickedReason(offer: ReplyBackOffer | undefined, toWriteCount: number): string | undefined {
+export function nothingPickedReason(offer: SharedList | undefined, toWriteCount: number): string | undefined {
   if (toWriteCount > 0) return undefined;
   return offer ? 'Tick at least one Margin above to send it.' : 'There is nothing to share yet.';
 }
@@ -161,7 +191,7 @@ export function tooManyReason(pickedCount: number): string | undefined {
  * Why Send and Save are greyed, in words: nothing ticked, or too many ticked. The too-many sentence is said only where
  * a list lets the listener untick (an offer); with no list the writer's own error toast stays the only notice.
  */
-export function whyNotShared(offer: ReplyBackOffer | undefined, toWriteCount: number): string | undefined {
+export function whyNotShared(offer: SharedList | undefined, toWriteCount: number): string | undefined {
   return nothingPickedReason(offer, toWriteCount) ?? (offer ? tooManyReason(toWriteCount) : undefined);
 }
 

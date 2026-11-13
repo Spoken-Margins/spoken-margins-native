@@ -160,3 +160,13 @@ test('more than 50 Margins is refused', async () => {
   const many = Array.from({ length: 51 }, (_, i) => ({ ...writtenMargins()[0], id: `m${i}`, atSeconds: i }));
   await assert.rejects(writePacket(episode, many), (error: unknown) => error instanceof PacketError && error.outcome === 'cannotShare');
 });
+
+test('a starred Margin writes the very bytes an unstarred one does: a star never enters a packet (#4172)', async () => {
+  const pinned = { packageId: 'package-star-check', createdAt: new Date('2026-11-13T12:00:00.000Z') };
+  const plain = writtenMargins();
+  const starred = plain.map((m) => ({ ...m, starred: true as const }));
+  const a = await writePacket(episode, plain, pinned);
+  const b = await writePacket(episode, starred, pinned);
+  assert.deepEqual(b.bytes, a.bytes);
+  assert.equal(b.contentDigest, a.contentDigest);
+});

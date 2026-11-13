@@ -3,13 +3,14 @@ import { test } from 'node:test';
 
 import { episode } from '../../packet/fixtures.ts';
 import { packetMarginId, readPacket } from '../../packet/read.ts';
-import { writePacket } from '../../packet/write.ts';
+import { TOO_MANY_MARGINS, writePacket } from '../../packet/write.ts';
 import type { Margin } from '../../shared/model.ts';
 import { cueFor } from './arrival.ts';
 import {
-  allPicked, candidateLabel, friendNames, nothingPickedReason, pickAll, pickedMargins, preselected, replyBackOffer, nowCard, savedFileNextStep,
-  savedMarginCard, selectAllLabel, tooManyReason, whyNotShared,
+  allPicked, candidateLabel, friendNames, nothingPickedReason, pickAll, pickedFromList, pickedMargins, preselected, replyBackOffer, nowCard,
+  savedFileNextStep, savedMarginCard, selectAllLabel, starredPicks, starredShareList, tooManyReason, whyNotShared,
 } from './reply-back.ts';
+import { toggleStar, withStar } from './star.ts';
 
 const D1 = 'a'.repeat(64);
 const D2 = 'b'.repeat(64);
@@ -318,4 +319,96 @@ test('#4093 the writer refuses 51 Margins with the very sentence the panel shows
     assert.equal(error.message, tooManyReason(51));
     return true;
   });
+});
+
+// Stars (#4172): the app's rules, on the web's list. Replies decide when there are any; with none, any starred Margin means
+// "only the starred ones"; with no offer at all, starring turns Share into a list of the listener's own Margins.
+const star = (m: Margin): Margin => withStar(m, true);
+const at = (n: number) => `2026-11-02T0${n}:00:00Z`;
+
+test('#4172 first-run: nothing starred, every rule is today\'s', () => {
+  const offer = replyBackOffer([friend(1), own('a', at(1)), own('b', at(2))]);
+  assert.ok(offer);
+  assert.deepEqual([...preselected(offer)], [], 'no page time: nothing ticked');
+  assert.deepEqual([...preselected(offer, Date.parse(at(2)))], ['b'], 'the Margin made since the page opened stays ticked (#3784)');
+  assert.equal(starredShareList([own('a', at(1)), own('b', at(2))]), undefined, 'no offer and no star: no list, every Margin is written');
+});
+
+test('#4172 a reply in the list: the replies decide, and a starred older note stays unticked (the reply-back default)', () => {
+  const reply = own('r', at(3), { replyToId: friend(1).id });
+  const offer = replyBackOffer([friend(1), star(own('old', at(1))), reply]);
+  assert.ok(offer);
+  assert.deepEqual(ids(offer.candidates), ['old', 'r']);
+  assert.deepEqual([...preselected(offer, Date.parse(at(0)))], ['r']);
+});
+
+test('#4172 an offer with no reply: the starred rows start ticked and only those, whatever the page time', () => {
+  const offer = replyBackOffer([friend(1), star(own('a', at(1))), own('b', at(2)), star(own('c', at(3))), own('d', at(4))]);
+  assert.ok(offer);
+  assert.deepEqual([...preselected(offer)].sort(), ['a', 'c']);
+  assert.deepEqual([...preselected(offer, Date.parse(at(0)))].sort(), ['a', 'c'], 'made since the page opened, but not starred: unticked');
+  assert.deepEqual(ids(pickedMargins(offer, preselected(offer))), ['a', 'c'], 'and only those are written');
+});
+
+test('#4172 no offer, a friend\'s episode: the list is the listener\'s own Margins, the starred one ticked, the friend\'s never listed', () => {
+  // Made before the friend's first Margin, so the offer is empty.
+  const older = (id: string, extra: Partial<Margin> = {}) => own(id, '2026-10-01T10:00:00Z', extra);
+  const margins = [friend(1), friend(2), star(older('a')), older('b')];
+  assert.equal(replyBackOffer(margins), undefined);
+  const list = starredShareList(margins);
+  assert.ok(list);
+  assert.deepEqual(ids(list), ['a', 'b']);
+  assert.deepEqual([...starredPicks(list)], ['a']);
+  assert.deepEqual(ids(pickedFromList(list, new Set(['a', friend(1).id]))), ['a'], 'a friend\'s Margin never goes, whatever ids are passed');
+});
+
+test('#4172 no offer, the listener\'s own episode: two of four starred, so the list holds four and two start ticked', () => {
+  const margins = [own('a', at(1)), star(own('b', at(2))), own('c', at(3)), star(own('d', at(4)))];
+  const list = starredShareList(margins);
+  assert.ok(list);
+  assert.deepEqual(ids(list), ['a', 'b', 'c', 'd']);
+  assert.deepEqual([...starredPicks(list)], ['b', 'd']);
+});
+
+test('#4172 the list is oldest first by when it was made, not where it sits in the audio', () => {
+  const list = starredShareList([own('late', at(5), { atSeconds: 10 }), star(own('early', at(1), { atSeconds: 900 }))]);
+  assert.deepEqual(ids(list ?? []), ['early', 'late']);
+});
+
+test('#4172 with an offer there is no second list: the offer decides', () => {
+  assert.equal(starredShareList([friend(1), star(own('a', at(1)))]), undefined);
+});
+
+test('#4172 the greyed-out sentence is the same for a starred list as for a reply list', () => {
+  const list = starredShareList([star(own('a', at(1))), own('b', at(2))]);
+  assert.ok(list);
+  assert.equal(whyNotShared(list, 0), 'Tick at least one Margin above to send it.');
+  assert.equal(whyNotShared(list, 1), undefined);
+  assert.equal(whyNotShared(undefined, 0), 'There is nothing to share yet.');
+});
+
+test('#4172 burst: a double tap on a star ends where it began', () => {
+  let shown = false;
+  for (let tap = 0; tap < 2; tap += 1) shown = toggleStar(shown);
+  assert.equal(shown, false);
+  assert.equal(toggleStar(toggleStar(true)), true);
+});
+
+test('#4172 long-source: more than 50 starred all start ticked, and the limit sentence greys Send', () => {
+  const many = Array.from({ length: 51 }, (_, i) => star(own(`m${i}`, `2026-11-02T10:${String(i).padStart(2, '0')}:00Z`, { atSeconds: i })));
+  const list = starredShareList(many);
+  assert.ok(list);
+  assert.equal(starredPicks(list).size, 51);
+  assert.equal(whyNotShared(list, starredPicks(list).size), TOO_MANY_MARGINS);
+});
+
+test('#4172 star two of four, share, and only those two are written: unstarred and a friend\'s are not', async () => {
+  const margins = [friend(1), friend(2), own('a', '2026-10-01T01:00:00Z', { atSeconds: 5 }), star(own('b', '2026-10-01T02:00:00Z', { atSeconds: 6 })),
+    own('c', '2026-10-01T03:00:00Z', { atSeconds: 7 }), star(own('d', '2026-10-01T04:00:00Z', { atSeconds: 8 }))];
+  const list = starredShareList(margins);
+  assert.ok(list);
+  const written = await writePacket(episode, pickedFromList(list, starredPicks(list)), {});
+  assert.deepEqual(written.included.length, 2);
+  const read = await readPacket(written.bytes);
+  assert.deepEqual(read.margins.map((m) => m.text).sort(), ['b', 'd']);
 });

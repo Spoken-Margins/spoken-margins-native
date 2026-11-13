@@ -51,3 +51,12 @@ test('a voice row with neither bytes nor a Blob is kept as it is, not dropped', 
   const odd = { ...written, voice: { mimeType: 'audio/mp4', durationSeconds: 1 } };
   assert.equal(fromRow(odd), odd as unknown as Margin);
 });
+
+test('a star is kept by the stored row, for a written and a voice Margin, and a Margin never starred has no key (#4172)', async () => {
+  for (const margin of [written, voice]) {
+    const starred: Margin = { ...margin, starred: true };
+    const back = fromRow(await toRow(starred));
+    assert.equal(back.starred, true);
+    assert.equal('starred' in fromRow(await toRow(margin)), false);
+  }
+});

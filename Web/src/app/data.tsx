@@ -10,6 +10,7 @@ import { formatClock } from '../shared/clock.ts';
 import type { Episode, Margin, PlaybackPosition, Show } from '../shared/model.ts';
 import { browserStorage, forgetMirrored, mergeMirror, pruneMirror, readMirror } from './logic/position-mirror.ts';
 import { mergeRefresh } from './logic/refresh.ts';
+import { keepingStar, withStar } from './logic/star.ts';
 import { FailureGate, NotSavedError, notSavedMessage, shouldAskToPersist, type PersistState, type WriteKind } from './logic/storage.ts';
 import type { FeedRead } from './ports.ts';
 import { DEFAULT_SETTINGS, loadAll, putMany, putMargin, putSetting, putShowWithEpisodes, remove, removeShow, type Settings, type Snapshot } from './store/db.ts';
@@ -28,6 +29,8 @@ export interface DataApi extends Snapshot {
   applyRefresh(showId: string, read: FeedRead): Promise<number>;
   updateEpisode(episode: Episode): Promise<void>;
   addMargin(margin: Margin): Promise<void>;
+  /** Stars or unstars the listener's own Margin for sharing (#4172). Throws a `NotSavedError` when it isn't kept. */
+  setStarred(marginId: string, on: boolean): Promise<void>;
   deleteMargin(id: string): Promise<void>;
   savePosition(position: PlaybackPosition): Promise<void>;
   setSetting<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void>;
@@ -184,7 +187,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [run],
   );
 
-  const addMargin = useCallback(
+  /** Writes the Margin exactly as given. */
+  const saveMargin = useCallback(
     async (margin: Margin) => {
       const what = margin.voice ? 'voice Margin' : 'Margin';
       const lead = margin.author ? `A ${what} at ${formatClock(margin.atSeconds)} wasn’t saved.` : `Your ${what} at ${formatClock(margin.atSeconds)} wasn’t saved.`;
@@ -195,6 +199,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
       void askToPersist();
     },
     [run, askToPersist],
+  );
+
+  // A rewrite of a Margin (its words, its reply link) is built from a copy that may be older than the star the listener
+  // has since put on it, so the stored star is kept unless `setStarred` itself changes it (#4172).
+  const addMargin = useCallback(
+    (margin: Margin) => saveMargin(keepingStar(margin, dataRef.current.margins.find((m) => m.id === margin.id))),
+    [saveMargin],
+  );
+
+  const setStarred = useCallback(
+    async (marginId: string, on: boolean) => {
+      // Built from the Margin as stored now, so a star never undoes a reply change made a moment before.
+      const stored = dataRef.current.margins.find((m) => m.id === marginId);
+      // Always written, even when the stored star already agrees: a quick second tap reaches here before the first write lands.
+      if (!stored) return;
+      await saveMargin(withStar(stored, on));
+    },
+    [saveMargin],
   );
 
   const deleteMargin = useCallback(
@@ -217,8 +239,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
   );
 
   const api = useMemo<DataApi>(
-    () => ({ ...data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, deleteMargin, savePosition, setSetting }),
-    [data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, deleteMargin, savePosition, setSetting],
+    () => ({ ...data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, setStarred, deleteMargin, savePosition, setSetting }),
+    [data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, setStarred, deleteMargin, savePosition, setSetting],
   );
   return <DataContext.Provider value={api}>{children}</DataContext.Provider>;
 }

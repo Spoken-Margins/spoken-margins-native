@@ -108,6 +108,16 @@ export const DownIcon = () => (
     <path d="M5 9l7 7 7-7" />
   </Icon>
 );
+/** The star on a Margin to share (#4172). Outline when off, filled when on: the shape, not a colour, says which. */
+export const StarIcon = ({ filled }: { filled: boolean }) => (
+  <Icon>
+    <path
+      d="M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.9l-5.25 2.7 1-5.8L3.5 9.7l5.9-.9z"
+      {...(filled ? { fill: 'currentColor' } : { fill: 'none' })}
+      strokeWidth="2"
+    />
+  </Icon>
+);
 export const CloseIcon = () => (
   <Icon>
     <path d="M6 6l12 12M18 6L6 18" />
