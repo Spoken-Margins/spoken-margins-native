@@ -191,7 +191,7 @@ extension Gate1AppModel {
             }
             if !startSession {
                 guard let item = try persistResolvedSourceLinkInBackground(
-                    request: request, result: result, readsLibraryOffMain: true) else {
+                    request: request, result: result, listenerAdded: true, readsLibraryOffMain: true) else {
                     reportFailure(SourceLinkFailureMessage.text(
                         status: result.status.rawValue,
                         reason: result.failureReason,
