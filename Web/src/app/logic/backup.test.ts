@@ -173,3 +173,14 @@ test('a backup never carries the name typed for sharing: it is written with the 
   assert.deepEqual(argumentCounts, [3]);
   assert.equal((await readPacket(result.file!.bytes)).sender, undefined);
 });
+
+test('a backup writes every Margin, starred or not, and carries no star: a restored Margin comes back unstarred (#4172)', async () => {
+  const margins = writtenMargins().map((m, i) => (i === 0 ? { ...m, starred: true as const } : m));
+  const result = await buildBackup({ episodes: [episode], shows: [show], margins }, write);
+  assert.equal(result.inPackets, margins.length);
+  const plain = await buildBackup({ episodes: [episode], shows: [show], margins: writtenMargins() }, write);
+  assert.deepEqual(result.file!.bytes, plain.file!.bytes, 'the same bytes with and without the star');
+  const restored = await readPacket(result.file!.bytes);
+  assert.equal(restored.margins.length, margins.length);
+  for (const m of restored.margins) assert.equal('starred' in m, false);
+});

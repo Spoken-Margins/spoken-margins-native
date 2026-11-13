@@ -657,3 +657,51 @@ test('when the episode can’t load and the browser refuses a clip that starts l
   await expect(playing.getByTestId('margin-cue')).toContainText('That was Web fixture’s last Margin', { timeout: 30_000 });
   await context.close();
 });
+
+test('star two of four Margins and Share starts only those ticked and writes only those; the stars stay after a reload (#4172)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  await page.goto(LINK);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture’s first Margin in');
+  // Four Margins before the friend's first one at 0:30, so none answers it: the list is "others", and stars decide.
+  for (const words of ['First note.', 'Second note.', 'Third note.', 'Fourth note.']) {
+    await playing.getByRole('button', { name: 'Write a Margin' }).click();
+    await playing.getByLabel(/Your Margin at/).fill(words);
+    await playing.getByRole('button', { name: 'Save Margin' }).click();
+    await expect(playing.locator('li.margin').filter({ hasText: words })).toBeVisible();
+  }
+  await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 1; });
+  const row = (words: string) => playing.locator('li.margin').filter({ hasText: words });
+  // The friend's own Margin has no star; every Margin of the listener's has one, the last control on the row.
+  await expect(playing.getByRole('button', { name: 'Star for sharing' })).toHaveCount(4);
+  const star = row('Second note.').getByRole('button', { name: 'Star for sharing' });
+  expect((await star.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  await expect(star).toHaveAttribute('aria-pressed', 'false');
+  await star.click();
+  await expect(star).toHaveAttribute('aria-pressed', 'true');
+  await row('Fourth note.').getByRole('button', { name: 'Star for sharing' }).click();
+  await expect(row('Second note.').getByRole('button', { name: /^Play from/ })).toHaveAccessibleName(/Starred/);
+  // The reply list starts with the starred two ticked and the others not.
+  const list = playing.locator('.reply-back');
+  await expect(list.getByRole('checkbox', { checked: true })).toHaveCount(2);
+  await expect(list.getByRole('checkbox', { name: /Second note\./ })).toBeChecked();
+  await expect(list.getByRole('checkbox', { name: /Fourth note\./ })).toBeChecked();
+  await expect(list.getByRole('checkbox', { name: /First note\./ })).not.toBeChecked();
+  await expect(list.getByRole('checkbox', { name: /Third note\./ })).not.toBeChecked();
+  const sent = await savedPacket(page, playing);
+  expect(sent.read.margins.map((m) => m.text)).toEqual(['Second note.', 'Fourth note.']);
+  // A star is not in the file at all.
+  expect(JSON.stringify(sent.paths)).not.toContain('star');
+  // Stars are kept with the Margin: a fresh page of the same browser still has them, and a tap clears one.
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
+  const inTab = page.locator('li.margin').filter({ hasText: 'Second note.' });
+  await expect(inTab.getByRole('button', { name: 'Star for sharing' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(inTab).toContainText('Starred');
+  await inTab.getByRole('button', { name: 'Star for sharing' }).click();
+  await expect(inTab.getByRole('button', { name: 'Star for sharing' })).toHaveAttribute('aria-pressed', 'false');
+  await expect(inTab).not.toContainText('Starred');
+  await context.close();
+});

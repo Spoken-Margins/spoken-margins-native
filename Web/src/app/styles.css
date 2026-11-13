@@ -611,6 +611,13 @@ button:disabled {
   font-size: 0.9375rem;
 }
 
+/* The star on the listener's own Margin (#4172): the row's last control, in the row's text colour. The outline or filled
+   shape says on or off, so no colour carries it. */
+.margin-star {
+  margin-right: 6px;
+  color: var(--ink);
+}
+
 .voice-button {
   display: inline-flex;
   align-items: center;

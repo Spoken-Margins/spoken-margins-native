@@ -10,10 +10,12 @@ import { cueFor, friendMargins, leading, possessive, readsAloud, senderName, spe
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
 import {
-  allPicked, candidateLabel, pickAll, pickedMargins, preselected, nowCard, replyBackOffer, savedFileNextStep, selectAllLabel, whyNotShared,
+  allPicked, candidateLabel, pickAll, pickedFromList, pickedMargins, preselected, nowCard, replyBackOffer, savedFileNextStep, selectAllLabel,
+  starredPicks, starredShareList, whyNotShared,
 } from '../logic/reply-back.ts';
 import { plainError } from '../logic/messages.ts';
 import { choiceFor, hasReplyChoice, parentOf, replyRow, toggleReplying, withReplyChoice, type ReplyChoice } from '../logic/reply-choice.ts';
+import { isStarred } from '../logic/star.ts';
 import { SENDER_NAME_LIMIT, senderForPacket, senderNameHint, sendFile, sendRefusedNextStep } from '../logic/share-send.ts';
 import { NotSavedError } from '../logic/storage.ts';
 import { shareNativePacket } from '../logic/native-packets.ts';
@@ -437,14 +439,18 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   // After a friend's Margins, Share offers "Send replies to <friend>" (#2168, as the app's #3221): the replies and the
   // Margins made since this page opened picked, older notes unpicked, the friend's own never listed. With no offer Share is as before.
   const offer = replyBackOffer(margins);
+  // With no offer, a starred Margin of the listener's own turns Share into a list of their Margins, the starred ones picked (#4172).
+  const starredList = starredShareList(margins);
+  // The one list with a tick on each row, whichever of the two it is; none leaves Share as it was, every Margin written.
+  const listed = offer ? offer.candidates : starredList;
   // The listener's own changes sit over the starting picks, so a reply made while this is open starts picked too.
   const [changed, setChanged] = useState<Readonly<Record<string, boolean>>>({});
-  const starting = offer ? preselected(offer, PAGE_OPENED_AT) : new Set<string>();
-  const picked = new Set([...(offer?.candidates ?? [])].map((m) => m.id).filter((id) => changed[id] ?? starting.has(id)));
-  const toWrite = offer ? pickedMargins(offer, picked) : margins;
+  const starting = offer ? preselected(offer, PAGE_OPENED_AT) : starredList ? starredPicks(starredList) : new Set<string>();
+  const picked = new Set((listed ?? []).map((m) => m.id).filter((id) => changed[id] ?? starting.has(id)));
+  const toWrite = offer ? pickedMargins(offer, picked) : starredList ? pickedFromList(starredList, picked) : margins;
   const replyIds = new Set((offer?.replies ?? []).map((m) => m.id));
   // Greyed buttons say why (#3784), and point at the sentence so a screen reader reads it too.
-  const whyNot = whyNotShared(offer, toWrite.length);
+  const whyNot = whyNotShared(listed, toWrite.length);
   // Nothing ticked, or more ticked than the writer takes (#4093): the buttons are greyed, and the sentence says why.
   const blocked = whyNot !== undefined;
   // What to do with a saved file, kept on the panel: a toast is gone in six seconds.
@@ -492,22 +498,22 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
 
   return (
     <div className="share-margins">
-      {offer && (
+      {listed && (
         <fieldset className="reply-back">
-          <legend>{offer.title}</legend>
+          <legend>{offer ? offer.title : 'Share Margins'}</legend>
           {/* One row needs no "all". The label says what the next tap does, so a double tap ends where it began (#4093). */}
-          {offer.candidates.length > 1 && (
+          {listed.length > 1 && (
             <button
               type="button"
               className="button reply-back-all"
               disabled={busy}
-              onClick={() => setChanged({ ...changed, ...pickAll(offer.candidates, !allPicked(offer.candidates, picked)) })}
+              onClick={() => setChanged({ ...changed, ...pickAll(listed, !allPicked(listed, picked)) })}
             >
-              {selectAllLabel(allPicked(offer.candidates, picked))}
+              {selectAllLabel(allPicked(listed, picked))}
             </button>
           )}
           <ul className="reply-back-list">
-            {offer.candidates.map((margin) => (
+            {listed.map((margin) => (
               <li key={margin.id}>
                 <label>
                   <input
@@ -517,6 +523,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
                   />
                   <span className="margin-time">{formatClock(margin.atSeconds)}</span>
                   {replyIds.has(margin.id) && <span className="tag tag-quiet">Reply</span>}
+                  {isStarred(margin) && <span className="tag tag-quiet">Starred</span>}
                   <span className="margin-text">{candidateLabel(margin, formatClock)}</span>
                 </label>
               </li>

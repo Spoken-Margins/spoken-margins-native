@@ -10,6 +10,7 @@ import { formatClock } from '../shared/clock.ts';
 import type { Episode, Margin, PlaybackPosition, Show } from '../shared/model.ts';
 import { browserStorage, forgetMirrored, mergeMirror, pruneMirror, readMirror } from './logic/position-mirror.ts';
 import { mergeRefresh } from './logic/refresh.ts';
+import { withStar } from './logic/star.ts';
 import { FailureGate, NotSavedError, notSavedMessage, shouldAskToPersist, type PersistState, type WriteKind } from './logic/storage.ts';
 import type { FeedRead } from './ports.ts';
 import { DEFAULT_SETTINGS, loadAll, putMany, putMargin, putSetting, putShowWithEpisodes, remove, removeShow, type Settings, type Snapshot } from './store/db.ts';
@@ -28,6 +29,8 @@ export interface DataApi extends Snapshot {
   applyRefresh(showId: string, read: FeedRead): Promise<number>;
   updateEpisode(episode: Episode): Promise<void>;
   addMargin(margin: Margin): Promise<void>;
+  /** Stars or unstars the listener's own Margin for sharing (#4172). Throws a `NotSavedError` when it isn't kept. */
+  setStarred(marginId: string, on: boolean): Promise<void>;
   deleteMargin(id: string): Promise<void>;
   savePosition(position: PlaybackPosition): Promise<void>;
   setSetting<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void>;
@@ -197,6 +200,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [run, askToPersist],
   );
 
+  const setStarred = useCallback(
+    async (marginId: string, on: boolean) => {
+      // Built from the Margin as stored now, so a star never undoes a reply change made a moment before.
+      const stored = dataRef.current.margins.find((m) => m.id === marginId);
+      // Always written, even when the stored star already agrees: a quick second tap reaches here before the first write lands.
+      if (!stored) return;
+      await addMargin(withStar(stored, on));
+    },
+    [addMargin],
+  );
+
   const deleteMargin = useCallback(
     async (id: string) => {
       const failed = await run('delete-margin', 'That Margin wasn’t deleted.', () => remove('margins', id));
@@ -217,8 +231,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
   );
 
   const api = useMemo<DataApi>(
-    () => ({ ...data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, deleteMargin, savePosition, setSetting }),
-    [data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, deleteMargin, savePosition, setSetting],
+    () => ({ ...data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, setStarred, deleteMargin, savePosition, setSetting }),
+    [data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, setStarred, deleteMargin, savePosition, setSetting],
   );
   return <DataContext.Provider value={api}>{children}</DataContext.Provider>;
 }

@@ -67,6 +67,12 @@ export interface Margin {
    * doesn't read it, though its words still show. Only ever `false`; absent means read aloud.
    */
   readAloud?: false;
+  /**
+   * The listener starred their own Margin to share (#4172): Share starts only the starred ones ticked, as the iPhone app's
+   * does. Kept in this browser only. It is never written to a packet or a backup, so a restored Margin comes back unstarred.
+   * Only ever `true`; absent means not starred.
+   */
+  starred?: true;
 }
 
 /** Where the listener left off in an episode. */
