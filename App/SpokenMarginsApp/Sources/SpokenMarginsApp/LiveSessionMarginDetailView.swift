@@ -13,6 +13,8 @@ struct LiveSessionMarginDetailView: View {
     @State private var isEditing = false
     @State private var draft = ""
     @State private var asksToDelete = false
+    /// 40% of this screen, for the photo's height (#2708); measured, not read from the device's screen.
+    @State private var photoMaxHeight: CGFloat = 320
 
     let margin: LiveSessionMargin
     let sessionTitle: String
@@ -48,6 +50,9 @@ struct LiveSessionMarginDetailView: View {
         NavigationStack {
             List {
                 Section {
+                    if let photo = margin.validPhoto, let altText = margin.photoAltText {
+                        LiveSessionPhotoDetail(photo: photo, altText: altText, maxHeight: photoMaxHeight)
+                    }
                     Text(words)
                         .font(.system(.title3, design: .serif))
                         .textSelection(.enabled)
@@ -111,6 +116,7 @@ struct LiveSessionMarginDetailView: View {
                 }
             }
             .buttonStyle(MarginDetailActionButtonStyle())
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { photoMaxHeight = max(160, $0 * 0.4) }
             .confirmationDialog("Delete this Margin?", isPresented: $asksToDelete, titleVisibility: .visible) {
                 Button("Delete Margin", role: .destructive) {
                     audio.stop()

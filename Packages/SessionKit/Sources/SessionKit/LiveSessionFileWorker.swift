@@ -289,6 +289,7 @@ public actor LiveSessionFileWorker {
         all[sessionId] = nil
         cache = all
         collection.remove(id: sessionId)
+        photoStore?.removeFolder(sessionId: sessionId) // a discarded session's photos go with it (#2708)
         unseenMargins[sessionId] = nil
         unseenTranscripts[sessionId] = nil
         try? collection.writeLegacyMirror(Array(all.values))
@@ -334,7 +335,8 @@ public actor LiveSessionFileWorker {
     /// already there or the save failed.
     @discardableResult
     public func attachSpokenMargin(
-        sessionId: String, marginId: String, audioPath: String, markedAt: Date, durationMs: Int?, spokenOn: String
+        sessionId: String, marginId: String, audioPath: String, markedAt: Date, durationMs: Int?, spokenOn: String,
+        photo: LiveSessionPhoto? = nil
     ) -> LiveSession? {
         let stored = sessions() // loads the deletions too
         guard !deletions.deletedSession(sessionId), !deletions.marginIds.contains(marginId),
@@ -343,6 +345,10 @@ public actor LiveSessionFileWorker {
         guard session.attachSpokenMargin(
             id: marginId, audioPath: audioPath, markedAt: markedAt, durationMs: durationMs, spokenOn: spokenOn
         ) else { return nil }
+        // The photo's file is already in place (#2708), so the one save writes the Margin and the reference together.
+        if let photo, let index = session.margins.firstIndex(where: { $0.id == marginId }) {
+            session.margins[index].photo = photo
+        }
         noteUnseen(from: before, to: session)
         do {
             try persist([session])
@@ -350,6 +356,68 @@ public actor LiveSessionFileWorker {
             return nil
         }
         return session
+    }
+
+    // MARK: Photos (#2708)
+
+    /// The result of filing a spoken Margin that came with a photo.
+    public struct PhotoFiling: Equatable, Sendable {
+        /// The saved session, nil when the session was discarded, the Margin is already there or the save failed.
+        public var session: LiveSession?
+        /// True when the picture could not be kept (the file could not be moved), so the Margin was saved without it. The
+        /// listener never loses their words because of the picture.
+        public var photoFailed: Bool
+    }
+
+    /// Where photos live: under the same root as the sessions. Nil with no root (a worker with nothing on disk).
+    nonisolated var photoStore: LiveSessionPhotoStore? {
+        root.map { LiveSessionPhotoStore(root: $0) }
+    }
+
+    /// Moves a staged photo to `live-photos/<session>/<margin>.jpg` and returns the reference to save with the Margin.
+    /// Nil when it could not be moved; the staged file is discarded then, because the Margin is saved without it.
+    public func commitPhoto(_ staged: LiveSessionPhotoStore.Staged, sessionId: String, marginId: String) -> LiveSessionPhoto? {
+        guard let store = photoStore else { return nil }
+        do {
+            return try store.commit(staged, sessionId: sessionId, marginId: marginId)
+        } catch {
+            store.discard(staged)
+            return nil
+        }
+    }
+
+    /// Files a spoken Margin that was taken with a photo: the file is moved into place first, then the Margin that
+    /// names it is saved. When the Margin can't be saved the file is removed again, so nothing is left that no Margin names.
+    public func attachSpokenMargin(
+        sessionId: String, marginId: String, audioPath: String, markedAt: Date, durationMs: Int?, spokenOn: String,
+        staged: LiveSessionPhotoStore.Staged
+    ) -> PhotoFiling {
+        let photo = commitPhoto(staged, sessionId: sessionId, marginId: marginId)
+        let saved = attachSpokenMargin(
+            sessionId: sessionId, marginId: marginId, audioPath: audioPath, markedAt: markedAt, durationMs: durationMs,
+            spokenOn: spokenOn, photo: photo
+        )
+        if saved == nil, let photo { photoStore?.remove(photo) }
+        return PhotoFiling(session: saved, photoFailed: photo == nil)
+    }
+
+    /// Deleting a Margin deletes its photo file (and the session's folder when it was the last one).
+    public func removePhoto(_ photo: LiveSessionPhoto) {
+        photoStore?.remove(photo)
+    }
+
+    /// Cancel: a staged photo that was never saved is deleted.
+    public func discardStaged(_ staged: LiveSessionPhotoStore.Staged) {
+        photoStore?.discard(staged)
+    }
+
+    /// The launch sweep: removes the files under `live-photos/` that no Margin names. Run it once at launch, before any
+    /// live-session screen opens. Nil when there is no store on disk.
+    @discardableResult
+    public func sweepPhotos() -> LiveSessionPhotoStore.SweepResult? {
+        guard let store = photoStore, let collection else { return nil }
+        let readable = Array(sessions().values) // reading also upgrades the store the way every first read does
+        return store.sweep(readable: readable, in: collection)
     }
 
     /// Files a written Margin (dictated to Siri, #3880) into the running named session at `markedAt`, whatever screen is

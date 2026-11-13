@@ -45,8 +45,12 @@ struct LiveSessionDock: View {
     let resume: () -> Void
     let record: () -> Void
     let write: () -> Void
+    /// Add a Margin with a photo (#2708). Nil where Photo isn't offered (a meeting, an audiobook).
+    var photo: (() -> Void)?
     /// A recording or a written Margin is already open elsewhere (the item's, from the mini player).
     var addIsDisabled = false
+    /// Photo is off while the camera is open, a photo waits for its words, or a Margin is recording or being filed.
+    var photoIsDisabled = false
 
     var body: some View {
         VStack(spacing: PaneDockSpacing.row) {
@@ -63,11 +67,7 @@ struct LiveSessionDock: View {
                 groupLabel: "Live session view",
                 groupIdentifier: "liveSession.viewSwitch")
             clockRow
-            MarginAddButtons(
-                record: record, write: write,
-                recordIdentifier: "liveSession.addMargin.button",
-                writeIdentifier: "liveSession.write.button",
-                isDisabled: !isRunning || addIsDisabled)
+            addButtons
         }
         .padding(.horizontal, 22)
         .padding(.top, 6)
@@ -79,6 +79,46 @@ struct LiveSessionDock: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("liveSession.dock")
         .boundedScrollDock(dynamicTypeSize.isAccessibilitySize)
+    }
+
+    /// Add Margin and Write, and Photo beside them where it is offered. At the accessibility sizes the dock scrolls, so
+    /// Photo takes its own row there and stays reachable, as the other two do.
+    @ViewBuilder
+    private var addButtons: some View {
+        let buttons = MarginAddButtons(
+            record: record, write: write,
+            recordIdentifier: "liveSession.addMargin.button",
+            writeIdentifier: "liveSession.write.button",
+            isDisabled: !isRunning || addIsDisabled)
+        if let photo {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 8) {
+                    buttons
+                    photoButton(photo)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    buttons
+                    photoButton(photo)
+                }
+            }
+        } else {
+            buttons
+        }
+    }
+
+    private func photoButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(LiveSessionPhotoMargin.buttonTitle, systemImage: "camera.fill")
+                .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil)
+                .padding(.horizontal, 6)
+        }
+        .buttonStyle(InterjectButtonStyle())
+        .disabled(!isRunning || addIsDisabled || photoIsDisabled)
+        .accessibilityLabel(LiveSessionPhotoMargin.buttonAccessibilityLabel)
+        .accessibilityIdentifier("liveSession.photo.button")
+        // The row fits Add Margin, Write and Photo at an ordinary width: Add Margin gives way first.
+        .layoutPriority(1)
     }
 
     private var clockRow: some View {

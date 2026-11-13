@@ -13,9 +13,26 @@ struct LiveSessionWriteSheet: View {
     let predictedPosition: (_ now: Date, _ adjustmentMs: Int) -> LiveSessionPositionMap.Position?
     let onSave: (_ text: String, _ whereNote: String?, _ adjustmentMs: Int) -> Void
     let onCancel: () -> Void
+    /// A photo taken for this Margin and waiting for its words (#2708): shown above the field.
+    var photo: LiveSessionPhotoStore.Staged?
+    /// A line above the photo, like the microphone being off when the photo was taken to be spoken about.
+    var notice: String?
     @State private var text = ""
     @State private var whereNote = ""
     @State private var adjustmentMs = 0
+
+    private var lead: AnyView? {
+        guard photo != nil || notice != nil else { return nil }
+        return AnyView(
+            VStack(alignment: .leading, spacing: 8) {
+                if let notice {
+                    Text(notice).font(.subheadline).foregroundStyle(AppColors.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("liveSession.photo.notice")
+                }
+                if let photo { LiveSessionPhotoLead(url: photo.url, hint: nil) }
+            })
+    }
 
     var body: some View {
         MarginWritingSheet(
@@ -30,7 +47,8 @@ struct LiveSessionWriteSheet: View {
             onSave: {
                 onSave(text, whereNote.isEmpty ? nil : whereNote, adjustmentMs)
             },
-            onCancel: onCancel
+            onCancel: onCancel,
+            lead: lead
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 if kind != .meeting {

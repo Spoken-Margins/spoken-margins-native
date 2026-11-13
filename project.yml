@@ -198,6 +198,7 @@ targets:
         LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
+        NSCameraUsageDescription: Spoken Margins uses the camera only when you tap Photo, to take a picture of the page or board for your Margin. The picture stays on this device and is never sent with a shared Margin.
         NSMicrophoneUsageDescription: Spoken Margins records your spoken Margins while you listen. Recordings stay on your phone unless you choose to share them.
         NSSpeechRecognitionUsageDescription: Spoken Margins turns your spoken Margins into text so you can search and copy them.
         NSSupportsLiveActivities: true

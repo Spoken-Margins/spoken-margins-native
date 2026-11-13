@@ -54,6 +54,8 @@ struct LiveSessionMarginsPane: View {
             canPlay: margin.isSpoken,
             playLabel: audio.playingId == margin.id ? "Stop playing" : "Hear my recording",
             playHint: margin.isSpoken ? "Plays your recording of this Margin" : "Only a spoken Margin has a recording. Open it to read or edit it.",
+            // 48 pt, made from the kept file off the main actor; a camera glyph when the file is gone (#2708).
+            thumbnail: margin.validPhoto.map { AnyView(LiveSessionPhotoThumbnail(source: .kept($0))) },
             // The Margin screen has its own player, so this pane's stops first: two recordings never play together.
             showDetails: {
                 audio.stop()
