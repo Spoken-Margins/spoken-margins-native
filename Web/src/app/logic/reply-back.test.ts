@@ -7,7 +7,8 @@ import { writePacket } from '../../packet/write.ts';
 import type { Margin } from '../../shared/model.ts';
 import { cueFor } from './arrival.ts';
 import {
-  candidateLabel, friendNames, nothingPickedReason, pickedMargins, preselected, replyBackOffer, nowCard, savedFileNextStep, savedMarginCard,
+  allPicked, candidateLabel, friendNames, nothingPickedReason, pickAll, pickedMargins, preselected, replyBackOffer, nowCard, savedFileNextStep,
+  savedMarginCard, selectAllLabel, tooManyReason, whyNotShared,
 } from './reply-back.ts';
 
 const D1 = 'a'.repeat(64);
@@ -226,4 +227,81 @@ test('#3784: a voice Margin row never reads "0:00"', () => {
   assert.equal(candidateLabel(voice(undefined), clock), 'Voice Margin');
   assert.equal(candidateLabel(voice(75), clock), 'Voice Margin, 1:15');
   assert.equal(candidateLabel(own('t', '2026-11-02T10:00:00Z', { text: 'my words' }), clock), 'my words');
+});
+
+// #4093: one button ticks every listed Margin, and unticks them when all are ticked. The panel merges `pickAll` over its
+// starting picks (`changed` over `preselected`), so these tests do the same.
+const ticks = (offer: NonNullable<ReturnType<typeof replyBackOffer>>, changed: Record<string, boolean>): Set<string> => {
+  const starting = preselected(offer);
+  return new Set(offer.candidates.map((m) => m.id).filter((id) => changed[id] ?? starting.has(id)));
+};
+const manyOwn = (count: number, replies: number): Margin[] =>
+  Array.from({ length: count }, (_, i) => own(`m${i}`, '2026-11-02T10:00:00Z', i < replies ? { replyToId: friend(1).id } : {}));
+
+test('#4093 select all: all, then untick one, then the label reads right, then all again', () => {
+  const offer = replyBackOffer([friend(1), ...manyOwn(4, 2)]); // two replies ticked, two older notes unticked
+  assert.ok(offer);
+  assert.equal(offer.candidates.length, 4);
+  let changed: Record<string, boolean> = {};
+  assert.equal(allPicked(offer.candidates, ticks(offer, changed)), false);
+  assert.equal(selectAllLabel(allPicked(offer.candidates, ticks(offer, changed))), 'Select all', 'older notes are unticked by default');
+  // Select all ticks the older notes too, as the listener's own act.
+  changed = { ...changed, ...pickAll(offer.candidates, !allPicked(offer.candidates, ticks(offer, changed))) };
+  assert.deepEqual(ids(pickedMargins(offer, ticks(offer, changed))), ids(offer.candidates));
+  assert.equal(selectAllLabel(allPicked(offer.candidates, ticks(offer, changed))), 'Select none');
+  // Untick one: the next tap is "Select all" again.
+  changed = { ...changed, m3: false };
+  assert.equal(selectAllLabel(allPicked(offer.candidates, ticks(offer, changed))), 'Select all');
+  assert.equal(pickedMargins(offer, ticks(offer, changed)).length, 3);
+  // Select all again ticks the one back; Select none then clears the list.
+  changed = { ...changed, ...pickAll(offer.candidates, !allPicked(offer.candidates, ticks(offer, changed))) };
+  assert.equal(allPicked(offer.candidates, ticks(offer, changed)), true);
+  changed = { ...changed, ...pickAll(offer.candidates, !allPicked(offer.candidates, ticks(offer, changed))) };
+  assert.equal(pickedMargins(offer, ticks(offer, changed)).length, 0);
+  assert.equal(whyNotShared(offer, 0), nothingPickedReason(offer, 0));
+});
+
+test('#4093 select all: first-run reads "Select none"; a double tap ends where it began (burst)', () => {
+  const offer = replyBackOffer([friend(1), ...manyOwn(3, 3)]); // three replies, all ticked by default
+  assert.ok(offer);
+  const start = ticks(offer, {});
+  assert.equal(selectAllLabel(allPicked(offer.candidates, start)), 'Select none');
+  const tap = (changed: Record<string, boolean>) => ({ ...changed, ...pickAll(offer.candidates, !allPicked(offer.candidates, ticks(offer, changed))) });
+  const twice = tap(tap({}));
+  assert.deepEqual([...ticks(offer, twice)].sort(), [...start].sort());
+});
+
+test('#4093 select all: never ticks the friend\'s Margins, and an empty list is never "all picked"', () => {
+  const offer = replyBackOffer([friend(1), friend(2), ...manyOwn(2, 1)]);
+  assert.ok(offer);
+  const all = pickAll(offer.candidates, true);
+  assert.deepEqual(Object.keys(all).sort(), ids(offer.candidates).sort());
+  assert.ok(!(friend(1).id in all) && !(friend(2).id in all));
+  assert.deepEqual(ids(pickedMargins(offer, new Set(Object.keys(all)))), ids(offer.candidates));
+  assert.equal(allPicked([], new Set()), false);
+  assert.deepEqual(pickAll([], true), {});
+});
+
+test('#4093 more than 50 ticked: the writer\'s sentence is said before the tap; with no list nothing greys', () => {
+  const offer = replyBackOffer([friend(1), ...manyOwn(51, 51)]);
+  assert.ok(offer);
+  assert.equal(offer.candidates.length, 51);
+  const sentence = 'Spoken Margins shares up to 50 Margins at a time. Pick fewer, then share again.';
+  assert.equal(tooManyReason(51), sentence);
+  assert.equal(tooManyReason(50), undefined);
+  assert.equal(tooManyReason(0), undefined);
+  assert.equal(whyNotShared(offer, 51), sentence, 'select all on 51 candidates');
+  assert.equal(whyNotShared(offer, 50), undefined);
+  assert.equal(whyNotShared(offer, 0), 'Tick at least one Margin above to send it.', 'nothing ticked keeps its sentence');
+  // No offer (nothing to untick): the writer's error toast stays the only notice.
+  assert.equal(whyNotShared(undefined, 51), undefined);
+  assert.equal(whyNotShared(undefined, 0), 'There is nothing to share yet.');
+});
+
+test('#4093 the writer refuses 51 Margins with the very sentence the panel shows', async () => {
+  const margins = Array.from({ length: 51 }, (_, i) => ({ id: `w${i}`, episodeId: ep, atSeconds: i, createdAt: '2026-11-02T10:00:00Z', text: `w${i}` }));
+  await assert.rejects(writePacket(episode, margins), (error: Error) => {
+    assert.equal(error.message, tooManyReason(51));
+    return true;
+  });
 });
