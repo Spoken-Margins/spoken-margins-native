@@ -13,7 +13,8 @@ export const PLACEHOLDER_TITLE_CHARACTERS = 80;
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-function graphemes(text: string): string[] {
+/** The text's user-perceived characters (a family emoji or a letter with its accents is one). */
+export function graphemes(text: string): string[] {
   if (typeof Intl !== 'undefined' && 'Segmenter' in Intl) {
     return [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)].map((s) => s.segment);
   }
@@ -41,4 +42,17 @@ export function voicePlaceholder(margin: { atSeconds: number; title?: string; re
   const title = placeholderTitle(margin.title);
   const when = Number.isNaN(margin.recordedAt.getTime()) ? '' : `, recorded ${placeholderDate(margin.recordedAt)}`;
   return `Voice Margin at ${formatClock(margin.atSeconds)}${title ? ` in “${title}”` : ''}${when}`;
+}
+
+// The shape `voicePlaceholder` writes and the iPhone app's `SharedMarginPlaceholder.words` writes: every part after
+// "Voice Margin" is optional, and the whole text must match, so a note that merely begins that way is still a note
+// (SharedMarginPlaceholderWords, WrittenMargin.swift:13-22).
+const PLACEHOLDER_SHAPE = new RegExp(
+  `^Voice Margin(?: at \\d+:\\d{2}(?::\\d{2})?)?(?: in “[^\\n]*”)?(?:, recorded \\d{1,2} (?:${MONTHS.join('|')}) \\d{4})?$`,
+  'u',
+);
+
+/** Whether these words are a voice Margin's stand-in, not words the sender wrote. Spaces at the ends and the composed or decomposed form of a title's letters make no difference. */
+export function isVoicePlaceholder(words: string): boolean {
+  return PLACEHOLDER_SHAPE.test(words.trim().normalize('NFC'));
 }

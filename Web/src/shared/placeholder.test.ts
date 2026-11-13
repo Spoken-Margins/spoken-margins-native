@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PLACEHOLDER_TITLE_CHARACTERS, placeholderDate, placeholderTitle, voicePlaceholder } from './placeholder.ts';
+import { PLACEHOLDER_TITLE_CHARACTERS, isVoicePlaceholder, placeholderDate, placeholderTitle, voicePlaceholder } from './placeholder.ts';
 
 // Built from local parts, so the expected calendar day holds in any time zone the tests run in.
 const day = new Date(2026, 9, 30, 14, 5);
@@ -52,4 +52,29 @@ test('Unicode titles: line breaks fold, emoji and accents are never split', () =
   const cut = placeholderTitle(family.repeat(100), 10);
   assert.equal(cut, `${family.repeat(9)}…`);
   assert.equal(voicePlaceholder({ atSeconds: 61, title: '日本語のポッドキャスト', recordedAt: day }), 'Voice Margin at 1:01 in “日本語のポッドキャスト”, recorded 30 Oct 2026');
+});
+
+// #4107: the shape every sender writes, with and without each part (the app's SharedMarginPlaceholderWords test rows).
+test('isVoicePlaceholder: accepts every part combination and nothing else', () => {
+  const accepted = [
+    'Voice Margin', 'Voice Margin at 1:45', 'Voice Margin at 12:34', 'Voice Margin at 105:09', 'Voice Margin at 1:02:05',
+    'Voice Margin in “Title”', 'Voice Margin, recorded 9 Nov 2026', 'Voice Margin at 1:45, recorded 30 Oct 2026',
+    'Voice Margin at 1:45 in “Title”', 'Voice Margin at 1:45 in “A “quoted” title”, recorded 9 Nov 2026',
+    'Voice Margin at 1:45 in “”, recorded 9 Nov 2026', '  Voice Margin at 1:45 \n',
+  ];
+  for (const text of accepted) assert.equal(isVoicePlaceholder(text), true, text);
+  const rejected = [
+    '', 'Voice', 'voice margin at 1:45', 'Voice Margins at 1:45', 'Voice Margin at 1:4', 'Voice Margin at :45',
+    'Voice Margin at 1:45 in Title', 'Voice Margin at 1:45 in "Title"', 'Voice Margin at 1:45, recorded 9 November 2026',
+    'Voice Margin at 1:45, recorded 9 Nov', 'Voice Margin recorded 9 Nov 2026', 'Voice Margin at 1:45!',
+    'My Voice Margin at 1:45', 'Voice Margin at 1:45\nand a second line', 'Voice Margin at 1:45 is the part I mean',
+  ];
+  for (const text of rejected) assert.equal(isVoicePlaceholder(text), false, text);
+});
+
+test('isVoicePlaceholder: what voicePlaceholder writes is always recognised, whatever the title', () => {
+  for (const title of [undefined, 'Café', 'Cafe\u0301', 'He said “no”', 'x'.repeat(200), '日本語のタイトル', '😀 party']) {
+    assert.equal(isVoicePlaceholder(voicePlaceholder({ atSeconds: 3725, title, recordedAt: day })), true, String(title));
+  }
+  assert.equal(isVoicePlaceholder(voicePlaceholder({ atSeconds: 5, recordedAt: new Date('nope') })), true);
 });

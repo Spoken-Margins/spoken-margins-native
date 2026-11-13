@@ -7,6 +7,7 @@ import type { Episode, Margin, PlaybackPosition } from '../../shared/model.ts';
 import type { PacketRead } from '../ports.ts';
 import { findEpisode } from './import.ts';
 import { listenState } from './library.ts';
+import { senderNameOrNone } from './reply-words.ts';
 import { firesByItself } from './margin-autoplay.ts';
 
 /** How far before a Margin the first Skip lands, so the friend hears the episode's own lead-in (2026-10-31 call). */
@@ -30,11 +31,13 @@ export function stopsPlayback(margin: Margin): boolean {
   return margin.voice !== undefined || readsAloud(margin);
 }
 
-/** The sender's name as the friend sees it. The packet's name is the sender's own claim, so it is only ever text. */
+/**
+ * The sender's name as the friend sees it. The packet's name is the sender's own claim, so it is only ever text. A label
+ * that stands in for a missing name ("Your friend", "Someone", "Unsigned sender", "Imported collection", in any case) is
+ * "your friend", so the countdown, the Share title and the reply row never name a sender two ways (reply-words.ts).
+ */
 export function senderName(sender: string | undefined): string {
-  const name = sender?.trim();
-  // "Your friend" is what import stores when the sender gave no name; mid-sentence it reads in lower case.
-  return name && name.toLowerCase() !== 'your friend' ? name : 'your friend';
+  return senderNameOrNone(sender) ?? 'your friend';
 }
 
 /** A name at the start of a sentence: "your friend" becomes "Your friend"; a name is left as the sender wrote it. */

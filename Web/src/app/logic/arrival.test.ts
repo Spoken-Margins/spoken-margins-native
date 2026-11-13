@@ -135,6 +135,11 @@ test('while a Margin is heard the card names who, which, and how many', () => {
   assert.equal(writtenIntro(undefined), 'Your friend wrote:');
   // An import with no sender name stores "Your friend"; it reads the same in the middle of a sentence.
   assert.equal(senderName('Your friend'), 'your friend');
+  // #4107: every stand-in for a missing name reads the same, in any case, spacing or accents.
+  for (const label of ['Someone', ' someone ', 'SOMEONE', 'Unsigned sender', 'unsigned  sender', 'Imported collection', 'Your  Friend', 'Yoür friend']) {
+    assert.equal(senderName(label), 'your friend', label);
+  }
+  assert.equal(senderName('Someone Else'), 'Someone Else', 'a name that starts with a stand-in is a name');
   assert.deepEqual(speakingLine({ ...m[1], author: 'Your friend' }, m, undefined), { title: 'Your friend wrote this', position: '2 of 3' });
   const unnamed = cueFor([margin('a', 760, { author: 'Your friend' })], 0, 'Your friend');
   assert.ok(unnamed?.kind === 'countdown' && unnamed.label === 'Your friend’s Margin in' && unnamed.skip.label === 'Skip to just before your friend');
