@@ -7,27 +7,57 @@ import Foundation
 actor LiveSessionMarginAudioPlayer {
     static let shared = LiveSessionMarginAudioPlayer()
 
+    /// Hands the session back to other apps. Fails harmlessly while something else of ours is still using it.
+    private let deactivate: @Sendable () -> Void
+    /// The player this actor started and has not yet stopped, with the model's generation it was asked for. The actor
+    /// stops it itself, in `end`, so the hand-back can never run while it is still playing (#3649).
+    private var current: (player: AVAudioPlayer, generation: Int)?
+
+    init(deactivate: @escaping @Sendable () -> Void = {
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }) {
+        self.deactivate = deactivate
+    }
+
     /// A player that has begun playing. The model reads only its state afterwards.
     struct Started: @unchecked Sendable {
         let player: AVAudioPlayer
     }
 
-    func start(audioPath: String) throws -> Started {
+    func start(audioPath: String, generation: Int = 0) throws -> Started {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         guard let url = Gate1AppModel.resolvedInterjectionAudioURL(for: audioPath, applicationSupportDirectory: support) else {
             throw CocoaError(.fileNoSuchFile)
         }
+        return try start(url: url, generation: generation)
+    }
+
+    func start(url: URL, generation: Int = 0) throws -> Started {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback, mode: .spokenAudio)
         try session.setActive(true)
+        current?.player.stop()
+        current = nil
         let player = try AVAudioPlayer(contentsOf: url)
         guard player.prepareToPlay(), player.play() else { throw CocoaError(.fileReadUnknown) }
+        current = (player, generation)
         return Started(player: player)
     }
 
-    /// Hands the session back to other apps. Fails harmlessly while something else of ours is still using it.
-    func end() {
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    /// Stops the player, then hands the session back. The actor is serial, so a start still in flight finishes first
+    /// and its player is stopped here too. Deactivating while a player runs fails, and the session would stay active
+    /// as `.playback` with other apps' audio unable to resume.
+    ///
+    /// `generation` is the model's generation at the stop. A player started for that generation or a later one belongs
+    /// to a Margin the listener tapped after this stop, and a stop whose task reached the actor late must not kill it,
+    /// so it is left playing and the session stays with it.
+    func end(generation: Int = .max) {
+        if let current {
+            guard current.generation < generation else { return }
+            current.player.stop()
+        }
+        current = nil
+        deactivate()
     }
 }
 
@@ -65,7 +95,7 @@ final class LiveSessionMarginAudioModel: ObservableObject {
         playingId = id // shows at once; the audio follows
         starting = Task { [weak self] in
             do {
-                let started = try await LiveSessionMarginAudioPlayer.shared.start(audioPath: audioPath)
+                let started = try await LiveSessionMarginAudioPlayer.shared.start(audioPath: audioPath, generation: mine)
                 self?.begin(started.player, generation: mine)
             } catch {
                 self?.failed(generation: mine)
@@ -74,11 +104,11 @@ final class LiveSessionMarginAudioModel: ObservableObject {
     }
 
     func stop() {
-        if tearDown() { Task { await LiveSessionMarginAudioPlayer.shared.end() } }
+        if let stopped = tearDown() { Task { await LiveSessionMarginAudioPlayer.shared.end(generation: stopped) } }
     }
 
-    /// Everything that is ours to stop on the main thread. Returns whether the audio session must be handed back.
-    private func tearDown() -> Bool {
+    /// Everything that is ours to stop on the main thread. Returns the new generation when the audio session must be handed back.
+    private func tearDown() -> Int? {
         generation += 1
         starting?.cancel()
         starting = nil
@@ -92,7 +122,7 @@ final class LiveSessionMarginAudioModel: ObservableObject {
             self.interruptionObserver = nil
         }
         defer { holdsSession = false }
-        return holdsSession
+        return holdsSession ? generation : nil
     }
 
     private func begin(_ player: AVAudioPlayer, generation started: Int) {
