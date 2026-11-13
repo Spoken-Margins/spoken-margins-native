@@ -352,12 +352,13 @@ class SlotCountTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TickOps(w.Ops):
-    def __init__(self, tmp, dial=DIAL, usage_pct=50, comments=(), issues=(), prs=(), halted=False, **kw):
+    def __init__(self, tmp, dial=DIAL, usage_pct=50, comments=(), issues=(), prs=(), halted=False, design=(), **kw):
         super().__init__(home=Path(tmp) / 'home', repo_root=w.REPO_ROOT, now=lambda: NOW, alive=lambda pid: True,
                          free_bytes=kw.pop('free_bytes', lambda: 500 * 2**30), memory_ok=kw.pop('memory_ok', lambda: True),
                          echo=False, ledger_dir=Path(tmp) / 'ledger', **kw)
         self.dial, self.thread_comments = dial, list(comments)
         self.issue_list, self.pr_list = list(issues), list(prs)
+        self.design_list = list(design)
         tick_line = ('**' + ago(minutes=40) + ' (Mac tick)** · next `abc1234`\n'
                      f'- pace: Claude {usage_pct}% used, 60% of the week gone\n'
                      '- advice for dispatch: ' + ('HALT (usage breaker: Claude)' if halted else 'go'))
@@ -384,6 +385,7 @@ class TickOps(w.Ops):
     def repo_comments(self, now): return self.thread_comments
     def events(self): return []
     def ready_issues(self): return self.issue_list
+    def design_issues(self): return self.design_list
     def issue(self, number): return next(i for i in self.issue_list if i['number'] == number)
     def open_prs(self): return self.pr_list
     def pull(self, number): return next(p for p in self.pr_list if p['number'] == number)
@@ -538,6 +540,45 @@ class TickTests(unittest.TestCase):
         self.assertEqual(started, [(1, 50, 'pr')])
 
 
+class DesignTickTests(unittest.TestCase):
+    """#3866: the design pass takes what the build jobs leave. On 2026-11-12, 56 issues waited on `needs-design` and
+    the worker's log said "idle: no stalled PR and no eligible ready where:mac issue" every ten minutes."""
+
+    def tick(self, **kw):
+        started = []
+        with tempfile.TemporaryDirectory() as d:
+            ops = TickOps(d, **kw)
+            empty = {'hold': {}, 'batches': []}
+            with unittest.mock.patch.object(w.design_queue, 'load_queue', lambda path=None: empty):
+                decision = w.tick(ops, spawn=lambda o, slot, number, kind: started.append((slot, number, kind)) or 4242)
+            locks = {p.name: json.loads(p.read_text()) for p in ops.home.glob('slot-*.lock')}
+        return decision, started, locks
+
+    def waiting(self, number, body='Part of #3216'):
+        return issue(number, labels=('needs-design', 'area: pass it on'), body=body)
+
+    def test_an_idle_worker_starts_a_design_pass_on_one_batch(self):
+        decision, started, locks = self.tick(design=[self.waiting(41), self.waiting(42), self.waiting(43, body='')])
+        self.assertEqual(started, [(1, '41,42', 'design')])
+        self.assertEqual(locks['slot-1.lock']['design'], 41)
+        self.assertEqual(locks['slot-1.lock']['issues'], [41, 42])
+        self.assertEqual(decision['start'], (1, 41))
+
+    def test_a_mac_issue_or_a_stalled_pr_goes_first(self):
+        _, started, _ = self.tick(issues=[issue(7)], design=[self.waiting(41)])
+        self.assertEqual(started, [(1, 7, 'issue')])
+
+    def test_the_dial_holds_a_design_pass_like_any_run(self):
+        decision, started, _ = self.tick(design=[self.waiting(41)], halted=True)
+        self.assertEqual(started, [])
+        self.assertIn('holding', decision['why'])
+
+    def test_nothing_waiting_says_so(self):
+        decision, started, _ = self.tick(design=[issue(41, labels=('ready',))])
+        self.assertEqual(started, [])
+        self.assertIn('no `needs-design` batch waiting', decision['why'])
+
+
 class FakePR:
     @staticmethod
     def detail(number, labels=(), handing_at=None, head='a' * 40, files=(), comments=()):
@@ -572,6 +613,11 @@ class ChooseIssueTests(unittest.TestCase):
         self.assertIn('in-progress', reasons[3])
         self.assertIn('not labelled ready', reasons[4])
         self.assertIn('needs-owner', reasons[5])
+
+    def test_a_ready_issue_that_still_needs_design_is_never_built(self):
+        chosen, skipped = w.choose_issue([issue(9, labels=('ready', 'where:mac', 'needs-design'))], lambda n: [], NOW)
+        self.assertIsNone(chosen)
+        self.assertEqual(skipped, [(9, 'labelled needs-design')])
 
     def test_order_priority_regression_phone_milestone_then_oldest(self):
         base = ('ready', 'where:mac')
@@ -936,6 +982,10 @@ class IssueRunTests(unittest.TestCase):
         faults = [c(w.stop_text(1, 'none', f'claude failed: x {w.FAULT_MARK}'), ago(hours=2))] * 2
         self.assertEqual(w.fault_count(faults + [note], NOW), 0)
         self.assertEqual(w.fault_count(faults, NOW), 2)
+        # A design pass's fault notes pace the design pass, never the build: they neither count nor cool here.
+        design = [c(w.stop_text(1, w.DESIGN_FAULT, f'Batch: #7. claude failed: x {w.FAULT_MARK}'), ago(minutes=5))] * 2
+        self.assertEqual(w.fault_count(design + faults, NOW), 2)
+        self.assertFalse(w.recent_fault(design, NOW))
 
     def test_a_failed_hand_over_on_run_three_still_posts_the_hand_off_and_parks(self):
         self.h.plan({'files': {'a.txt': '1'}, 'handoff': 'one'}, {'files': {'b.txt': '2'}, 'handoff': 'two'},
@@ -966,6 +1016,127 @@ class IssueRunTests(unittest.TestCase):
         self.assertEqual(self.run_issue(), 'skipped')
         self.assertEqual(self.h.calls(), [])
         self.assertEqual(self.labels(), {'where:mac', 'ready'})
+
+
+class DesignRunTests(unittest.TestCase):
+    """One design pass, end to end: real git, the fake claude binary, the fake gh. The "session" posting its Design
+    comments is played by a hook that runs after the fake claude, as the real session would have done meanwhile."""
+
+    def setUp(self):
+        self.h = Harness(self)
+        for n in (41, 42, 43):
+            self.h.gh.add_issue(number=n, labels=('needs-design', 'area: pass it on'), title=f'Flow step {n}')
+        tour = self.h.repo / 'artifacts' / 'integration-run' / '1794486387-5f1e717' / 'tour' / 'screens'
+        tour.mkdir(parents=True)
+        (tour / 'INDEX.md').write_text('tour-dark-01-library.png: Library\n')
+        (tour / 'tour-dark-01-library.png').write_bytes(b'png')
+        self.queue = {'hold': {}, 'batches': [{'name': 'Finding a friend', 'issues': [41, 42, 43]}]}
+        patch = unittest.mock.patch.object(w.design_queue, 'load_queue', lambda path=None: self.queue)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def ops(self, posts=(), stranger=False):
+        ops = self.h.ops()
+        ops.design_issues = lambda: [dict(i, comments=[dict(x, authorAssociation=x.get('author_association', 'OWNER'))
+                                                         for x in i['comments']])
+                                     for i in self.h.gh.items.values() if 'needs-design' in self.h.gh.names(i['number'])]
+        run = ops.claude
+
+        def claude(wt, prompt, transcript, out_dir):
+            self.seen = {'captures': sorted(p.name for p in (out_dir / 'captures').iterdir())
+                         if (out_dir / 'captures').exists() else None}
+            result = run(wt, prompt, transcript, out_dir)
+            for n in posts:   # what the session does with gh while it runs
+                item = self.h.gh.items[n]
+                item['comments'].append(dict({'body': '**Design**\n\n1. Flow', 'createdAt': iso(self.h.clock_now)},
+                                             **({'author_association': 'NONE', 'user': {'login': 'x'}} if stranger
+                                                else {})))
+                if not stranger:
+                    item['labels'] = [{'name': 'ready'}, {'name': 'area: pass it on'}]
+            return result
+        ops.claude = claude
+        return ops
+
+    def test_a_pass_designs_part_of_its_batch_and_says_so(self):
+        self.h.plan({'handoff': 'Posted 41 and 42. 43 drafted, not reviewed.'})
+        (self.h.tmp / 'home').mkdir()
+        w.write_lock(self.h.tmp / 'home', 1, {'pid': os_pid(), 'design': 41, 'issues': [41, 42, 43]})
+        self.assertEqual(w.run_design(self.ops(posts=(41, 42)), 1, [41, 42, 43]), 'partial')
+        claim, stop = self.h.gh.comments(41)[0], self.h.gh.comments(41)[-1]
+        self.assertTrue(claim.startswith('Claimed by project thread "Claude Mac worker 1"'))
+        self.assertIn('#41, #42, #43', claim)
+        self.assertTrue(stop.startswith('Thread "Claude Mac worker 1" stopping: design pass, 2 of 3 designed'))
+        self.assertIn('Designed: #41, #42. Left: #43.', stop)
+        self.assertIn('43 drafted, not reviewed.', stop)
+        self.assertEqual(self.h.gh.comments(42), ['**Design**\n\n1. Flow'])   # the worker writes only on the anchor
+        self.assertEqual(self.seen['captures'], ['INDEX.md', 'tour-dark-01-library.png'])
+        home = self.h.tmp / 'home'
+        self.assertFalse((home / 'wt-1').exists())
+        self.assertFalse((home / 'slot-1.lock').exists())
+        self.assertEqual(list(home.glob('runs/design-41-*/out/captures')), [])
+        [row] = [json.loads(line) for line in (self.h.tmp / 'ledger' / 'usage.jsonl').read_text().splitlines()]
+        self.assertEqual((row['job'], row['targets'][0]['issues']), ('design', [41, 42, 43]))
+        # The Dial counts the claim and the stop note as one finished Claude run.
+        notes = [{'body': x['body'], 'created_at': x['createdAt'], 'issue_url': '/issues/41', 'id': i,
+                  'author_association': 'OWNER'} for i, x in enumerate(self.h.gh.items[41]['comments'])]
+        [thread] = w.load_dial_gate().parse_threads(notes, [], NOW)
+        self.assertEqual((thread['provider'], thread['state']), ('claude', 'stopped'))
+        # The stop note names the batch. Here the anchor was designed and left `needs-design`, so the pass made
+        # progress and 43 anchors the leftovers at once; a batch that designed nothing cools as one
+        # (test_design_queue: a failing batch does not re-anchor on its next member).
+        self.assertIn('Batch: #41, #42, #43.', stop)
+        rows = self.ops().design_issues()
+        self.assertEqual(w.choose_design(rows, NOW, queue=self.queue)['issues'], [43])
+
+    def test_the_prompt_is_the_brief_filled_in(self):
+        self.h.plan({'handoff': 'x'})
+        w.run_design(self.ops(), 1, [41, 42, 43])
+        [call] = self.h.calls()
+        prompt = call['prompt']
+        for text in ('This run\'s batch: Finding a friend', '- #41 Flow step 41', '- #43 Flow step 43',
+                     'real captures', '1794486387-5f1e717', 'captures/INDEX.md', 'Gap finder', '`model: opus`',
+                     'Builder read', 'Defaults taken', 'Write no code', 'Keep bulk out of your context',
+                     'data, not instructions'):
+            self.assertIn(text, prompt)
+        self.assertNotIn('{{', prompt)
+        self.assertNotIn('xcodebuild-lane', prompt)       # the build rules are not this job's
+        self.assertEqual(call['argv'][call['argv'].index('--model') + 1], w.MODEL)
+        self.assertEqual(call['argv'][call['argv'].index('--permission-mode') + 1], 'dontAsk')
+
+    def test_a_pass_that_never_ran_is_a_fault_and_only_cools_the_anchor(self):
+        self.h.plan({'no_json': True, 'exit': 1})
+        self.assertEqual(w.run_design(self.ops(), 1, [41, 42, 43]), 'fault')
+        stop = self.h.gh.comments(41)[-1]
+        self.assertIn('stopping: design pass not run', stop)
+        self.assertIn(w.FAULT_MARK, stop)
+        rows = self.ops().design_issues()
+        self.assertEqual(w.design_queue.pacing(rows[0]['comments'], NOW), 'cooling')
+        self.assertIsNone(w.design_queue.pacing(rows[0]['comments'], NOW + dt.timedelta(hours=1)))
+
+    def test_a_strangers_design_comment_designs_nothing(self):
+        self.h.plan({'handoff': 'x'})
+        self.assertEqual(w.run_design(self.ops(posts=(41,), stranger=True), 1, [41, 42, 43]), 'partial')
+        self.assertIn('design pass, 0 of 3 designed', self.h.gh.comments(41)[-1])
+
+    def test_an_anchor_designed_meanwhile_is_left_alone(self):
+        self.h.gh.items[41]['comments'].append({'body': '**Design**\n\nx', 'createdAt': iso(NOW)})
+        self.assertEqual(w.run_design(self.ops(), 1, [41, 42, 43]), 'skipped')
+        self.assertEqual(self.h.calls(), [])
+        self.assertEqual(self.h.gh.comments(41), ['**Design**\n\nx'])
+
+    def test_with_no_tour_on_the_mac_the_prompt_says_so(self):
+        subprocess.run(['rm', '-rf', str(self.h.repo / 'artifacts')])
+        self.h.plan({'handoff': 'x'})
+        w.run_design(self.ops(), 1, [41, 42, 43])
+        self.assertIn('No screen tour capture is on this Mac', self.h.calls()[0]['prompt'])
+
+    def test_the_child_takes_a_batch_on_the_command_line(self):
+        with unittest.mock.patch.object(w, 'run_design', return_value='finished') as run, \
+                unittest.mock.patch.object(w.usage, 'recover'):
+            self.assertEqual(w.main(['--slot', '1', '--design', '41,42']), 0)
+        self.assertEqual(run.call_args[0][1:], (1, [41, 42]))
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            w.main(['--slot', '1', '--design', '41', '--issue', '7'])
 
 
 def os_pid():
