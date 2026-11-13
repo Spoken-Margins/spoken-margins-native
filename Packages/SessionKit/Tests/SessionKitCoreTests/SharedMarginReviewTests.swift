@@ -358,7 +358,7 @@ final class SharedMarginReviewTests: XCTestCase {
                 layers: detail.importedCommentaryLayers, records: detail.importedCommentaryInterjections, ownMargins: ownMargins
             ).first?.replyContext?.caption
         }
-        XCTAssertEqual(caption(ownMargins: detail.interjections), "Reply to a Margin you don't have yet", "what the item screen alone gave")
+        XCTAssertEqual(caption(ownMargins: detail.interjections), "Reply to a Margin that isn't on this phone", "what the item screen alone gave")
         let own = SharedMarginReview.ownMargins(itemId: "item", openItem: detail.interjections, rows: rows)
         XCTAssertEqual(caption(ownMargins: own), "Reply to your Margin at 12:34")
     }

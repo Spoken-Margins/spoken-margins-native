@@ -31,11 +31,15 @@ public struct ItemListeningChoices: Equatable, Sendable {
         /// A reply to one of the listener's own Margins, as opposed to a new Margin from the friend.
         public var isReplyToYou: Bool { replyToYouParentId != nil }
 
-        public init(senderName: String, audioDurationMs: Int?, transcript: String, replyToYouParentId: String? = nil) {
+        /// A reply whose parent Margin is not in this Library (#4174): replies never carry the Margin they answer.
+        public let parentMissing: Bool
+
+        public init(senderName: String, audioDurationMs: Int?, transcript: String, replyToYouParentId: String? = nil, parentMissing: Bool = false) {
             self.senderName = senderName
             self.audioDurationMs = audioDurationMs
             self.transcript = transcript
             self.replyToYouParentId = replyToYouParentId
+            self.parentMissing = parentMissing
         }
     }
 
@@ -186,7 +190,8 @@ extension SharedMarginReview.Entry {
             senderName: layer.displayLabel ?? "",
             audioDurationMs: interjection.audioDurationMs,
             transcript: interjection.approvedTranscript,
-            replyToYouParentId: replyContext?.yoursParentId
+            replyToYouParentId: replyContext?.yoursParentId,
+            parentMissing: replyContext?.parent == .missing
         )
     }
 }

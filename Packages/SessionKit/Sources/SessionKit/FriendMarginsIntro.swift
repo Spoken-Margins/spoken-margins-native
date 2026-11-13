@@ -21,6 +21,10 @@ public struct FriendMarginsIntro: Equatable, Sendable {
     /// What a Margin is, once, in the version that fits these Margins. Nil for replies and for a mix with replies in it:
     /// the listener made the Margins being answered.
     public let explanation: String?
+    /// Under the count line when some waiting reply answers a Margin that isn't on this phone (#4174): a reply packet
+    /// never carries the Margin it answers, so a fresh install or a deleted Margin can't show it. Nil when every parent
+    /// resolves.
+    public let missingParentLine: String?
 
     /// Nil when no friend Margins wait, so the screen shows nothing new.
     public init?(unheardFriendMargins margins: [ItemListeningChoices.WaitingMargin]) {
@@ -42,6 +46,11 @@ public struct FriendMarginsIntro: Equatable, Sendable {
         let minutes = max(1, Int((Double(totalMs) / 60_000).rounded()))
         let counted = mix.hasReplies ? mix.spokenCount : "\(margins.count) Margin\(margins.count == 1 ? "" : "s")"
         countLine = "\(counted) · about \(minutes) min"
+
+        let orphans = margins.filter(\.parentMissing).count
+        missingParentLine = orphans == 0 ? nil : orphans == 1
+            ? "1 answers a Margin that isn't on this phone. Replies don't carry the Margin they answer."
+            : "\(orphans) answer Margins that aren't on this phone. Replies don't carry the Margins they answer."
 
         let who = name ?? "your friend"
         let anyWritten = margins.contains { $0.audioDurationMs == nil }
