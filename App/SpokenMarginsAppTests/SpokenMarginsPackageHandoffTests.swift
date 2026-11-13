@@ -398,6 +398,28 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     }
 
     @MainActor
+    func testANamelessPacketImportGivesAnAFriendFollowingRow() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-import-nameless-following")
+        let packageURL = root.appendingPathComponent("nameless.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-nameless-following", sender: "Someone")
+        let model = Gate1AppModel(
+            sourceLinkResolver: FailingPackagePodcastLinkResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: root.appendingPathComponent("recipient.sqlite")
+        )
+        model.resetAndSeed()
+        await model.settleMarginRows()
+
+        model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+        await model.settleMarginRows()
+
+        XCTAssertEqual(model.followingFriends.first?.name, "A friend", "a packet with no usable sender name still has a Following row, first")
+    }
+
+    @MainActor
     func testPodcastPackageUsesItsOwnEnclosureWhenThePageLookupFindsNoAudio() async throws {
         // Omny-style: the page resolves, but only to a title with no audio (#157).
         let (model, store, manifest) = try await makePackageImport(
