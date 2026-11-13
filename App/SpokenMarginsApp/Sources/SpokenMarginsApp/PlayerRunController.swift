@@ -46,7 +46,7 @@ enum PlayerRunController {
     static func observation(of snapshot: SessionSnapshot) -> PlayerRunRecorder.Observation {
         .init(
             itemId: snapshot.itemId, mediaTimeMs: snapshot.currentMediaTimeMs, rate: snapshot.playbackRate,
-            isPlaying: snapshot.status == .playing
+            isPlaying: snapshot.status == .playing, isPaused: snapshot.status == .paused
         )
     }
 
