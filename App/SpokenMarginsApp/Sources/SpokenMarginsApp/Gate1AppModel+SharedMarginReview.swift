@@ -52,6 +52,21 @@ extension Gate1AppModel {
         )
     }
 
+    /// When the listener last added the item again, from what the model holds, so no read runs: the open item and the
+    /// Library row. A re-add from Safari or a link refreshes only the row, and the open item keeps the stamp it loaded
+    /// with, so the later of the two is the true one (#4183).
+    func addedAgainAt(forItem id: String) -> Date? {
+        ItemFinishedRule.laterAddedAgainAt(
+            selectedItem.id == id ? selectedItem.addedAgainAt : nil,
+            libraryItems.first(where: { $0.id == id })?.addedAgainAt)
+    }
+
+    /// The open item's sessions that still decide its primary button and where Play starts (#4183). The history on the
+    /// screen, `selectedItem.sessions`, keeps every pass.
+    var selectedItemContinuationSessions: [Session] {
+        ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt(forItem: selectedItem.id), sessions: selectedItem.sessions)
+    }
+
     /// Play or Continue for an item. What it does, and whether it asks first, is `PlayRule` (SessionKit, #4099): a
     /// friend's Margins play in place as the episode reaches them (owner's call on #3059: no question first), and the
     /// one case it asks is the one the episode would skip: new Margins behind the listener's place, after an import
