@@ -105,7 +105,7 @@ extension SharedMarginReview {
             case .shared(_, let label, let ms):
                 let whose = SharedPacketArrival.senderName(label).map { "\($0)'s" } ?? "a friend's"
                 return "Reply to \(whose) Margin" + Self.at(ms)
-            case .missing: return "Reply to a Margin you don't have yet"
+            case .missing: return "Reply to a Margin that isn't on this phone"
             }
         }
 

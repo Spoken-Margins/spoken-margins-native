@@ -198,7 +198,7 @@ final class ReplyBackTests: XCTestCase {
             layers: [layer("ben")], records: ["ben": [friendMargin("reply", in: "ben", replyingTo: mine)]]
         )
         XCTAssertEqual(entries.first?.replyContext?.parent, .missing)
-        XCTAssertEqual(entries.first?.replyContext?.caption, "Reply to a Margin you don't have yet")
+        XCTAssertEqual(entries.first?.replyContext?.caption, "Reply to a Margin that isn't on this phone")
     }
 
     func testAMarginThatIsNotAReplyHasNoContextAndTheOldCallStillWorks() {
