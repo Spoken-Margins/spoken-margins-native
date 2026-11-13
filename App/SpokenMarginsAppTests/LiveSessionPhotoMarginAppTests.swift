@@ -44,12 +44,15 @@ final class LiveSessionPhotoMarginAppTests: XCTestCase {
         return try XCTUnwrap(staged)
     }
 
-    private func waitUntil(_ what: String, _ condition: () async -> Bool) async throws {
-        for _ in 0..<100 {
-            if await condition() { return }
+    private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ condition: () async -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while await !condition() {
+            guard Date() < deadline else {
+                XCTFail("Timed out waiting for \(what)")
+                return
+            }
             try await Task.sleep(for: .milliseconds(50))
         }
-        XCTFail("Timed out waiting for \(what)")
     }
 
     private func openScreen(_ files: LiveSessionFileWorker) async throws -> LiveSessionController {
