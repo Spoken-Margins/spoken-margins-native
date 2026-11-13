@@ -127,8 +127,8 @@ final class ContinuationSessionsTests: XCTestCase {
                        ids(ItemFinishedRule.continuationSessions(addedAgainAt: addedAgain, sessions: sessions)))
     }
 
-    /// The row's "finished" test counts these four the same way as `continuationSessions`: a session `itemAlreadyListened`
-    /// calls finished is the one the rule leaves out when it ended before the re-add.
+    /// The row's "finished" test counts these the same way as `continuationSessions`: a session `itemAlreadyListened`
+    /// calls listened is the one the rule leaves out when it ended before the re-add.
     func testTheRuleLeavesOutExactlyWhatPreparationCallsListened() {
         let candidates = [
             session("a", percent: 100, status: "finished", phase: .finished, createdAt: before, updatedAt: before, completedAt: before),
