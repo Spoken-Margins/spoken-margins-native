@@ -702,7 +702,7 @@ struct MarginParentContextView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(context.senderLabel)
+            Text(MarginReplyWords.heading(context.senderLabel))
                 .font(.subheadline.weight(.semibold))
             if !context.text.isEmpty {
                 Text(context.text)

@@ -161,7 +161,6 @@ RAW_SHOWN_ALLOWED = {
     # These print a MarginLayerSynthesis label, not a snapshot label: MarginLayerSynthesis.label turns a blank label
     # into "Someone", and the app never writes a stand-in into a layer's displayLabel. The label also feeds the stored
     # summary's input and digest, so it must not change here. MarginLayerSummary.swift builds the model prompt.
-    'App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceMarginsScreen.swift',
     'App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceReactionsScreen.swift',
     'Packages/SessionKit/Sources/SessionKit/MarginLayerSummary.swift',
 }

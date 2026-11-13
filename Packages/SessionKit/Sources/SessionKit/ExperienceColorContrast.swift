@@ -331,6 +331,8 @@ public enum AppColorContrastAudit {
         .init(name: "listening secondary on watch background", foreground: AppSemanticColorRGB.listeningSecondary, background: AppSemanticColorRGB.watchBackground, minimumRatio: 4.5),
         .init(name: "danger label on watch control", foreground: AppSemanticColorRGB.watchDanger, background: AppSemanticColorRGB.watchControl, minimumRatio: 4.5),
         .init(name: "danger label on watch background", foreground: AppSemanticColorRGB.watchDanger, background: AppSemanticColorRGB.watchBackground, minimumRatio: 4.5),
+        // The reply row's "Stop replying" and "Reply to …" buttons on the Margin writing sheet, which is bone (#3890).
+        .init(name: "evergreen text on bone", foreground: AppSemanticColorRGB.evergreen, background: AppSemanticColorRGB.bone, minimumRatio: 4.5),
         // The follow-a-source card's two quiet buttons and its caption sit on a panel (#3732).
         .init(name: "evergreen text on panel", foreground: AppSemanticColorRGB.evergreen, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
         .init(name: "danger text on panel", foreground: AppSemanticColorRGB.dangerText, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
