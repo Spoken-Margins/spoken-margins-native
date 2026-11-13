@@ -58,9 +58,36 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(ids(rows, .init(listeningState: .all)).count, 4)
         XCTAssertEqual(ids(rows, .init(listeningState: .all, sharedMargins: .fromOthers)), ["done-new", "heard", "new"])
         XCTAssertEqual(ids(rows, .init(listeningState: .all, sharedMargins: .newToMe)), ["done-new", "new"])
-        XCTAssertEqual(ids(rows, .init(listeningState: .unfinished, sharedMargins: .newToMe)), ["new"], "combines with the other filters")
+        XCTAssertEqual(ids(rows, .init(listeningState: .unfinished, sharedMargins: .newToMe)), ["done-new", "new"],
+                       "a finished item with Margins new to the listener stays in the default view (#4103)")
+        XCTAssertEqual(ids(rows, .init(listeningState: .unplayed, sharedMargins: .newToMe)), ["new"], "combines with the other filters")
         XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(listeningState: .all, sharedMargins: .newToMe)), "New shared Margins")
         XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(listeningState: .all)), "Everything")
+    }
+
+    /// #4103: the owner imported a friend's reply into a finished podcast episode and could not find the item again.
+    func testFinishedItemWithNewSharedMarginsStaysInUnfinishedUntilHeard() {
+        let rows = [
+            Row(id: "done-none", isCompleted: true),
+            Row(id: "done-heard", isCompleted: true, sharedMargins: SharedMarginTally(total: 2, new: 0)),
+            Row(id: "done-new", isCompleted: true, continuationProgressPercent: 100, sharedMargins: SharedMarginTally(total: 2, new: 1)),
+            Row(id: "open")
+        ]
+        XCTAssertEqual(ids(rows, .init(listeningState: .unfinished)), ["done-new", "open"])
+        XCTAssertEqual(ids(rows, .init(listeningState: .unplayed)), ["open"], "Unplayed is about the listener's own listening")
+        XCTAssertEqual(ids(rows, .init(listeningState: .inProgress)), [])
+        XCTAssertEqual(ids(rows, .init(listeningState: .completed)), ["done-heard", "done-new", "done-none"])
+        XCTAssertEqual(LibraryQueryEngine.addedItemVisibility(itemId: "done-new", in: rows, query: .init(listeningState: .unfinished)), "visible:row_1")
+        XCTAssertEqual(LibraryQueryEngine.addedItemVisibility(itemId: "done-heard", in: rows, query: .init(listeningState: .unfinished)), "hidden:finished")
+        XCTAssertEqual(LibraryQueryEngine.addedItemVisibility(itemId: "done-new", in: rows, query: .init(contentType: .pdf, listeningState: .unfinished)),
+                       "hidden:content_filter", "a finished item with new Margins is hidden by the filter that hides it, not by being finished")
+    }
+
+    func testAFinishedItemWithNewSharedMarginsIsNotCaughtUp() {
+        let new = Row(id: "done-new", isCompleted: true, sharedMargins: SharedMarginTally(total: 1, new: 1))
+        let heard = Row(id: "done-heard", isCompleted: true, sharedMargins: SharedMarginTally(total: 1, new: 0))
+        XCTAssertFalse(LibraryQueryEngine.libraryIsCaughtUp([new], query: .init()))
+        XCTAssertTrue(LibraryQueryEngine.libraryIsCaughtUp([heard], query: .init()))
     }
 
     func testAFilteredLibraryIsNotCaughtUp() {

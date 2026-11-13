@@ -23,6 +23,12 @@ extension LibraryQueryRow {
     /// Rows that don't track shared Margins have none.
     public var sharedMargins: SharedMarginTally { .none }
     public var publishedAt: Date? { nil }
+
+    /// Whether the default "Unfinished" view lists the row: it isn't finished, or it is but a friend's Margins on it
+    /// are still new to the listener (#4103). Without this, a friend's reply packet imported into an episode the
+    /// listener had already finished left the item out of the default view, with nothing saying where it went.
+    /// Unplayed and In Progress mean what they say about the listener's own listening and keep ignoring friends' Margins.
+    var staysInUnfinished: Bool { !isCompleted || sharedMargins.new > 0 }
 }
 
 /// The Library's own rows. Declared here, not in the app, so host tests filter the same rows the screen does (#4178).
@@ -47,7 +53,7 @@ public enum LibraryQueryEngine {
             let listeningMatch: Bool
             switch libraryQuery.listeningState {
             case .all: listeningMatch = true
-            case .unfinished: listeningMatch = !row.isCompleted
+            case .unfinished: listeningMatch = row.staysInUnfinished
             case .unplayed: listeningMatch = !row.isCompleted && (row.continuationProgressPercent ?? 0) == 0
             case .inProgress: listeningMatch = !row.isCompleted && (row.continuationProgressPercent ?? 0) > 0
             case .completed: listeningMatch = row.isCompleted
@@ -93,7 +99,8 @@ public enum LibraryQueryEngine {
             var unfiltered = libraryQuery
             unfiltered.query = ""
             if !visibleLibraryItems([row], query: unfiltered).isEmpty { return "hidden:search" }
-            if row.isCompleted, libraryHidesCompleted(query: libraryQuery) { return "hidden:finished" }
+            let listedDespiteFinished = libraryQuery.listeningState == .unfinished && row.staysInUnfinished
+            if row.isCompleted, libraryHidesCompleted(query: libraryQuery), !listedDespiteFinished { return "hidden:finished" }
             if libraryQuery.contentType != .all { return "hidden:content_filter" }
             if libraryQuery.offlineState != .all { return "hidden:offline_filter" }
             if libraryQuery.sharedMargins != .all { return "hidden:shared_filter" }
@@ -116,7 +123,7 @@ public enum LibraryQueryEngine {
     }
 
     public static func libraryIsCaughtUp<Row: LibraryQueryRow>(_ libraryItems: [Row], query libraryQuery: LibraryQuery) -> Bool {
-        !libraryItems.isEmpty && libraryItems.allSatisfy(\.isCompleted)
+        !libraryItems.isEmpty && libraryItems.allSatisfy { !$0.staysInUnfinished }
             && libraryQuery.listeningState == .unfinished
             && libraryQuery.contentType == .all && libraryQuery.offlineState == .all
             && libraryQuery.sharedMargins == .all
