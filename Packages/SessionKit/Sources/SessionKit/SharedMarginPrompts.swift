@@ -15,6 +15,19 @@ public struct ImportedCommentaryPrompt: Identifiable {
     public var senderLabel: String { SharedPacketArrival.snapshotSenderLabel(layer.displayLabel) }
 }
 
+/// How a shared Margin plays in the listener's copy (#3789). The words for each case are
+/// `SharedMarginPlacementWording.podcastLine(for:)`.
+public enum SharedMarginPlacementPlan: Equatable, Sendable {
+    /// Placed by the pass. `mediaTimeMs` is nil for a Margin placed in text only.
+    case placed(mediaTimeMs: Int?)
+    /// Plays at a best-guess time: the sender's own time, or a pass that placed it by map or clock.
+    case roughly(mediaTimeMs: Int?)
+    /// No usable time: plays after the others, and when tapped.
+    case afterOthers
+    /// Not offered (another item's layer, or an unplaced Margin outside a podcast).
+    case notPlayable
+}
+
 public enum SharedMarginPrompts {
     public static func isLayerPlaybackEligible(
         _ layer: ImportedCommentaryLayer,
@@ -39,32 +52,45 @@ public enum SharedMarginPrompts {
         SharedMarginPlacementStatus.isPlaced(resolution)
     }
 
-    /// Placed, or still waiting for the episode's placement pass with a time from the sender. A friend who presses
-    /// play before the episode has downloaded hears each Margin at the sender's time instead of not at all (#3059).
+    /// Something to play, and somewhere to play it (`plan`). A podcast Margin the placement pass couldn't place still
+    /// plays: at the sender's time, or after the others when it has no usable time (#3059, #3789).
     public static func isPlayable(_ interjection: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer) -> Bool {
         // Something to play: a recording, or a note the phone's voice can read (#3365). A note it can't is not offered.
-        SharedMarginAudio.canOffer(interjection)
-            && (isPlayable(interjection.resolution) || senderTimeAwaitingPlacement(interjection, in: layer) != nil)
+        SharedMarginAudio.canOffer(interjection) && plan(interjection, in: layer, durationMs: nil) != .notPlayable
     }
 
-    /// Where the Margin plays in the episode: its placement in the listener's copy, else the sender's time while
-    /// the layer still waits for its pass. Once a pass has run, a Margin it couldn't find or found twice stays
-    /// silent rather than playing at a guessed time.
-    public static func mediaTimeMs(_ interjection: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer?) -> Int? {
-        if let local = interjection.resolution.localMediaTimeMs { return local }
-        guard let layer else { return nil }
-        return senderTimeAwaitingPlacement(interjection, in: layer)
-    }
-
-    private static func senderTimeAwaitingPlacement(
-        _ interjection: ImportedCommentaryInterjection,
-        in layer: ImportedCommentaryLayer
+    /// Where the Margin plays in the episode: its placement in the listener's copy, else the sender's time. Nil for a
+    /// Margin placed in text only, and for one that plays after the others.
+    public static func mediaTimeMs(
+        _ interjection: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer?, durationMs: Int? = nil
     ) -> Int? {
+        guard let layer else { return interjection.resolution.localMediaTimeMs }
+        switch plan(interjection, in: layer, durationMs: durationMs) {
+        case .placed(let ms?), .roughly(let ms?): return ms
+        case .placed(nil), .roughly(nil), .afterOthers, .notPlayable: return nil
+        }
+    }
+
+    /// How one Margin plays in this layer (#3789). Placed Margins play where the pass put them. On a podcast layer
+    /// from the same episode, any other Margin plays at the sender's own time, before the pass has run and after it
+    /// couldn't find the Margin or found it twice; one with no usable time (none sent, past the end of a copy whose
+    /// length is known, or a passage missing from this copy) plays after the others. Other layers keep their rule:
+    /// unplaced means not offered.
+    public static func plan(
+        _ interjection: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer, durationMs: Int?
+    ) -> SharedMarginPlacementPlan {
         let resolution = interjection.resolution
-        guard layer.awaitsPlacementPass, resolution.localMediaTimeMs == nil, !resolution.isAmbiguous,
-              resolution.evidenceClass != .ambiguous, resolution.evidenceClass != .absentFromRecipientEdition,
-              let sender = interjection.anchorEvidence.mediaTimeMs, sender >= 0 else { return nil }
-        return sender
+        if SharedMarginPlacementStatus.isPlaced(resolution) {
+            let approximate = resolution.evidenceClass == .mapInterpolated || resolution.evidenceClass == .timestampFallback
+            return approximate
+                ? .roughly(mediaTimeMs: resolution.localMediaTimeMs)
+                : .placed(mediaTimeMs: resolution.localMediaTimeMs)
+        }
+        guard layer.itemIdentity.itemType == .podcast, layer.sourceResolutionStatus != .wrongSource else { return .notPlayable }
+        guard resolution.evidenceClass != .absentFromRecipientEdition,
+              let sender = interjection.anchorEvidence.mediaTimeMs, sender >= 0,
+              durationMs.map({ sender <= $0 }) ?? true else { return .afterOthers }
+        return .roughly(mediaTimeMs: sender)
     }
 
     public static func prompts(

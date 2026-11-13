@@ -60,12 +60,20 @@ struct PinnedMarginCardView: View {
         }
         guard let moment, model.playingImportedCommentary == nil, model.pendingImportedCommentary == nil else { return card.detail }
         let current = moment.playing ?? moment.target
-        if let placing = model.sharedMarginRows.first(where: { $0.id == current.marginId })?.placementStatus.positionDescription {
-            return placing
+        // A podcast Margin that isn't playing yet says where it will play, in the same words as its row (#3789).
+        if let row = model.sharedMarginRows.first(where: { $0.id == current.marginId }) {
+            if row.layer.itemIdentity.itemType == .podcast {
+                if let note = SharedMarginPlacementWording.pinnedCardLine(for: row.placementPlan), current.caption == nil,
+                   !moment.isPlayingMargin {
+                    return note
+                }
+            } else if let placing = row.placementStatus.positionDescription {
+                return placing
+            }
         }
         if let caption = current.caption { return caption }
         if !moment.isPlayingMargin, current.isApproximate || model.marginMomentPositionIsApproximate {
-            return "Approximate position: ads can differ between copies."
+            return SharedMarginPlacementWording.approximatePositionNote
         }
         return card.detail
     }

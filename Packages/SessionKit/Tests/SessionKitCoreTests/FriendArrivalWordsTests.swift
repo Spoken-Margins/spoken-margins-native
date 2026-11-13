@@ -37,15 +37,14 @@ final class FriendArrivalWordsTests: XCTestCase {
         XCTAssertEqual(FriendArrivalWords.aboutNote, "Unchanged since it was sent. The name on it comes from the sender's app and isn't proven.")
     }
 
-    func testAPassingPlacementSaysNothingAndAProblemSaysOneLine() throws {
+    func testAPassingPlacementSaysNothingAndOnlyADifferentEpisodeSaysOneLine() throws {
         XCTAssertNil(FriendArrivalWords.placementProblem(.resolved))
-        XCTAssertEqual(FriendArrivalWords.placementProblem(.pending), "Matching positions in your episode")
-        for status in [ImportedSourceResolutionStatus.contextOnly, .ambiguous, .wrongSource, .unavailable, .pending] {
-            let line = try XCTUnwrap(FriendArrivalWords.placementProblem(status), "\(status)")
-            XCTAssertTrue(line.split(separator: " ").count >= 5 && line.hasSuffix(".") || status == .pending,
-                          "a problem is one plain sentence, not a one-word label: \(line)")
-            XCTAssertFalse(line.lowercased().contains("source"), "\"source\" never reaches a friend: \(line)")
+        for status in [ImportedSourceResolutionStatus.pending, .contextOnly, .ambiguous, .unavailable] {
+            XCTAssertNil(FriendArrivalWords.placementProblem(status), "\(status): each Margin's own row says where it plays (#3789)")
         }
+        let line = try XCTUnwrap(FriendArrivalWords.placementProblem(.wrongSource))
+        XCTAssertTrue(line.hasSuffix("."), "one plain sentence: \(line)")
+        XCTAssertFalse(line.lowercased().contains("source"), "\"source\" never reaches a friend: \(line)")
     }
 
     func testPlayModesUseTheReviewedAutoPlayWords() {
