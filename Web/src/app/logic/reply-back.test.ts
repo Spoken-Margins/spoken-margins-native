@@ -42,6 +42,20 @@ test('replies are picked, other new Margins are offered unpicked unless made sin
   assert.equal(offer.title, 'Send replies to Ana');
 });
 
+test('#4107: with a reply in the list only the replies start ticked; with none, the Margins made since the page opened do', () => {
+  const opened = Date.parse('2026-11-03T09:00:00Z');
+  const reply = own('r', '2026-11-03T09:10:00Z', { replyToId: friend(1).id });
+  const independent = own('i', '2026-11-03T09:20:00Z'); // made since the page opened, but not an answer
+  const withReply = replyBackOffer([friend(1), reply, independent]);
+  assert.ok(withReply);
+  assert.deepEqual([...preselected(withReply, opened)], ['r'], 'the app\'s rule: a note that is not a reply is offered unticked');
+  assert.deepEqual(ids(pickedMargins(withReply, preselected(withReply, opened))), ['r']);
+  const without = replyBackOffer([friend(1), independent]);
+  assert.ok(without);
+  assert.deepEqual([...preselected(without, opened)], ['i'], 'no reply: the Margin made since the page opened stays ticked (#3784)');
+  assert.deepEqual([...preselected(without)], [], 'and with no page time, nothing');
+});
+
 test('the friend\'s own Margins are never offered', () => {
   const offer = replyBackOffer([friend(1), friend(2), own('r', '2026-11-02T10:00:00Z', { replyToId: friend(2).id })]);
   assert.ok(offer);

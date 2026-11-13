@@ -14,6 +14,7 @@ import { NotSavedError } from './logic/storage.ts';
 import { FINISHED_WITHIN_SECONDS } from './logic/library.ts';
 import { services } from './services.ts';
 import { PaidPostNoVoice } from '../sources/read.ts';
+import { ended, NOTHING_HEARD, replyForComposer, started, type ReplyMemory } from './logic/reply-memory.ts';
 import { readWrittenMargin, type Reading } from './speech.ts';
 import { useRelay, useUi } from './ui.tsx';
 
@@ -54,6 +55,17 @@ export interface PlayerApi {
   arrived: Arrived | undefined;
   /** Plays the arrived Margin's clip from a tap (when the browser blocked it), then the episode carries on. */
   playArrived(): void;
+  /**
+   * The friend's Margin that a Margin begun now on `episodeId` answers (#4107): the one playing or showing, or one that
+   * ended under 20 seconds ago. Undefined when there is none, or it is not among `friends`.
+   */
+  replyParent(episodeId: string, friends: readonly Margin[]): Margin | undefined;
+  /**
+   * Recording must not capture a friend's clip: stops the one that is playing (or the voice reading a written one),
+   * clears its card and drops the Margins queued behind it, which stay on the list and count as heard. Says whether the
+   * episode should carry on once the composer closes. Does nothing, and says no, when nothing of a friend's is sounding.
+   */
+  interruptForRecording(): { resume: boolean };
   /** The episode failed to load (#3356): its address answered nothing playable, or the connection broke. One state. */
   failed: boolean;
   /** Plays the friend's Margins on their own, in order, while the episode can't play. `done`: all heard. */
@@ -99,6 +111,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Margins that have come up since the last seek. A browser may resume the episode a hair before the moment it paused
   // at, which would cross the same Margin again; a seek (the listener rewinding over it) lets it fire again.
   const comeUp = useRef(new Set<string>());
+  // The last friend's Margin heard, so a Margin begun while it sounds or just after answers it (#4107; reply-memory.ts).
+  const replyMemory = useRef<ReplyMemory>(NOTHING_HEARD);
   const shownTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const dataRef = useRef(data);
   dataRef.current = data;
@@ -320,6 +334,33 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     step(0);
   }, [stopClip, playClip]);
 
+  // One effect on `arrived` tells the memory every start and end, whichever path set or cleared it: a clip ending, a
+  // written card's timer, the voice finishing, another Margin, a seek away or a new episode. A clip the browser blocked
+  // has not started (`blocked`) until the listener plays it.
+  const sounding = arrived && !arrived.blocked ? arrived.margin : undefined;
+  const soundingId = sounding?.id;
+  const soundingEpisode = sounding?.episodeId;
+  useEffect(() => {
+    replyMemory.current = soundingId === undefined || soundingEpisode === undefined
+      ? ended(replyMemory.current, Date.now())
+      : started(replyMemory.current, soundingId, soundingEpisode);
+  }, [soundingId, soundingEpisode]);
+
+  const replyParent = useCallback(
+    (id: string, friends: readonly Margin[]) => replyForComposer(replyMemory.current, id, Date.now(), friends),
+    [],
+  );
+
+  const interruptForRecording = useCallback((): { resume: boolean } => {
+    if (!arrived || arrived.blocked || (!clip.current && !reading.current)) return { resume: false };
+    // Read before `stopClip`, which ends the run of Margins without the episode: that run has no episode to resume.
+    const resume = withoutEpisode !== 'playing';
+    stopClip();
+    clearTimeout(shownTimer.current);
+    setArrived(undefined);
+    return { resume };
+  }, [arrived, withoutEpisode, stopClip]);
+
   const playArrived = useCallback(() => {
     const margin = arrived?.margin;
     const done = blockedDone.current;
@@ -488,8 +529,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [episode, playing, duration, rate, time]);
 
   const api = useMemo<PlayerApi>(
-    () => ({ episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, skip, seek, setRate, now, arrived, playArrived, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
-    [episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, skip, seek, setRate, now, arrived, playArrived, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
+    () => ({ episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, skip, seek, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
+    [episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, skip, seek, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
   );
 
   return (

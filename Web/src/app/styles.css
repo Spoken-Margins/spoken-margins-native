@@ -1160,6 +1160,26 @@ button:disabled {
   }
 }
 
+/* The first line of a composer that answers a friend's Margin (#4107): whom it answers, and the way to make it independent. */
+.reply-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.reply-row-line {
+  margin: 0;
+  min-width: 0;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.reply-row-resume {
+  flex: none;
+}
+
 /* After Stop: the Margin is already kept (#3038). The word "Saved" carries it, not a colour. */
 .saved-line {
   display: flex;

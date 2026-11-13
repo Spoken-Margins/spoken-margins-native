@@ -2,8 +2,8 @@
 // Packages/SessionKit/Sources/SessionKit/ReplyBack.swift (`ReplyBackOffer`): Share on an episode that holds a friend's
 // Margins offers "Send replies to <friend>", the listener's replies pre-picked and their other new Margins offered
 // unpicked, and nothing the friend sent goes back. Plain TypeScript with no DOM, so `npm run test:web` covers it.
-// One more difference (#3784): the web records no reply link, so it also starts the listener's Margins made since the
-// page opened picked (`preselected`).
+// One more difference (#3784): with no reply in the list, it starts the listener's Margins made since the page opened
+// picked, because every Margin made before replies were recorded carries no link (`preselected`).
 //
 // What the web does differently from the app, because its store is smaller:
 // - The app compares a Margin's `createdAt` with the layer's `importedAt` ("since you opened your friend's", Swift
@@ -109,15 +109,18 @@ export function replyBackOffer(margins: readonly Margin[]): ReplyBackOffer | und
 }
 
 /**
- * The Margins the listener starts with picked: the replies (Swift :19 `isPreselected`), and the other new Margins made
- * at or after `since`, the moment this page was opened. The app knows which friend's Margin each Margin answers; the web
- * never records that (no Margin it makes carries `replyToId`), so with replies only every box started unticked and Send
- * was greyed out with no reason (#3784). A Margin made since the page opened was made while listening to the friend's, so
- * it starts picked. An older note, which `others` can hold because the web stores no moment of opening, stays unpicked,
- * so a private note is never ticked for the listener.
+ * The Margins the listener starts with picked, by the app's rule (Swift :19 `isPreselected`, #4107): when the offer holds
+ * at least one reply, only the replies. The composers now record the link, so a Margin made while listening that
+ * answers the friend's is a reply, and one that does not (the listener made it independent, or began it long after) is
+ * the listener's own note and starts unpicked, as in the app. With no reply at all, the Margins made at or after `since`,
+ * the moment this page was opened, start picked: Margins made before replies carried a link, or with no friend's Margin
+ * just heard, were made while listening to the friend's, and with replies only every box started unticked and Send was
+ * greyed out with no reason (#3784). An older note, which `others` can hold because the web stores no moment of opening,
+ * stays unpicked, so a private note is never ticked for the listener.
  */
 export function preselected(offer: ReplyBackOffer, since: number = Number.POSITIVE_INFINITY): Set<string> {
   const picked = new Set(offer.replies.map((m) => m.id));
+  if (picked.size > 0) return picked;
   for (const margin of offer.others) if (time(margin) >= since) picked.add(margin.id);
   return picked;
 }
