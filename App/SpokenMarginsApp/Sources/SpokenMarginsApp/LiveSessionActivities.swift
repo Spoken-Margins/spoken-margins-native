@@ -27,7 +27,8 @@ enum LiveSessionActivities {
         State(
             markCount: markCount, lastMarkAt: lastMarkAt,
             clockOrigin: LiveSessionClock.origin(of: session, now: now), clockTitle: LiveSessionClock.title(for: session.kind),
-            sessionId: session.id
+            sessionId: session.id,
+            offersPhoto: LiveSessionPhotoMargin.offers(session.kind) ? true : nil // absent reads as no Photo (#2708)
         )
     }
 
