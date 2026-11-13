@@ -60,6 +60,11 @@ final class PDFSmallRunClassifierTests: XCTestCase {
             row("index after a bracket around math", before: "grows as (1+r)", "n", .mathIndex),
             row("exponent after a norm", before: "the penalty ‖w‖", "2", after: " keeps", .mathIndex),
             row("exponent after an absolute value", before: "|x|", "2", .mathIndex),
+            row("compound unit", before: "a speed of 5 m s", "-1", after: " and", .mathIndex),
+            row("compound unit after a capital unit", before: "a flux of 1000 W m", "-2", .mathIndex),
+            row("CO2 set level", before: "CO", "2", after: " levels", .mathIndex),
+            row("H2O set level", before: "H", "2", after: "O", .mathIndex),
+            row("CH3OH set level", before: "CH", "3", after: "OH", .mathIndex),
         ])
     }
 
@@ -84,6 +89,15 @@ final class PDFSmallRunClassifierTests: XCTestCase {
             row("roman numeral footnote", before: "the studies", "ii", after: " were", .footnoteMarker),
             row("marker after a bracket around prose", before: "(Smith, 2020)", "1", after: " and", .footnoteMarker),
             row("marker after a unit word with no number", before: "measured in cm", "2", .footnoteMarker),
+            row("marker after a decade", before: "in the 1990s", "1", after: " and", .footnoteMarker),
+            row("marker after an age", before: "in her 30s", "2", .footnoteMarker),
+            row("marker after a sample size", before: "(n = 24)", "1", .footnoteMarker),
+            row("marker after a slash in brackets", before: "(and/or)", "1", .footnoteMarker),
+            row("marker after a bracket opened on the line before", before: "p = 0.03)", "1", .footnoteMarker),
+            row("marker after a trademark", before: "Excel™", "1", .footnoteMarker),
+            row("letters after a hyphenated byline name", before: "Smith-Jones J", "a", after: ", Doe K", .footnoteMarker),
+            row("roman numeral list", before: "the studies", "ii,iii", .footnoteMarker),
+            row("marker after an acronym that isn't a formula", before: "NASA", "3", after: " and", .footnoteMarker),
             row("raised marker", before: "cost", "4", shift: 0.4, .footnoteMarker),
             row("unknown position", before: "cost", "4", shift: nil, .footnoteMarker),
         ])

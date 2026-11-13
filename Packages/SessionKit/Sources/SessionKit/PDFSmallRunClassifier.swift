@@ -15,6 +15,7 @@ import Foundation
 ///
 /// Known gaps: a star after a math letter ("x*", an optimum) is still a marker, and so is a digit after a lone
 /// letter outside math ("x2" in prose), because bylines ("Smith J¹,²") and names ("Hepatitis B¹²") look the same.
+/// A one-element formula set level ("O₂") is a marker too.
 public enum PDFSmallRunClassifier {
     public enum Kind: Equatable, Sendable {
         /// A citation or footnote marker: silenced.
@@ -60,12 +61,17 @@ public enum PDFSmallRunClassifier {
         "max", "min", "argmax", "argmin", "arg", "lim", "sup", "inf", "log", "ln", "exp", "det", "tr", "Pr",
         "Re", "Nu", "Pe",
     ]
+    /// Element symbols for `isFormula`. Not "I" ("as I¹") or "B" ("Hepatitis B¹²").
+    private static let elements: Set<String> = [
+        "H", "C", "N", "O", "S", "P", "F", "Cl", "Br", "Li", "Na", "K", "Ca", "Mg", "Fe", "Si", "Al", "Zn", "Cu",
+    ]
     /// Units that take an exponent after a number: "5 cm²", "1650 cm⁻¹".
     private static let units: Set<String> = [
         "m", "cm", "mm", "km", "nm", "µm", "μm", "s", "ms", "g", "kg", "mg", "L", "mL", "K", "Hz", "kHz", "MHz",
         "GHz", "J", "W", "N", "Pa", "mol", "V",
     ]
-    /// Lower-case roman numerals some papers use as footnote markers; "i", "v" and "x" alone are indices.
+    /// Lower-case roman numerals some papers use as footnote markers ("ii", "iii,iv"). A single "i" is a letter
+    /// like any other.
     private static let romanNumerals: Set<String> = ["ii", "iii", "iv", "vi", "vii", "viii", "ix", "xi", "xii"]
 
     public static func classify(_ run: Run) -> Kind {
@@ -87,20 +93,25 @@ public enum PDFSmallRunClassifier {
         let tokens = before.split(whereSeparator: \.isWhitespace)
         let word = String(before.reversed().prefix { $0.isLetter }.reversed())
         if operatorNames.contains(word) { return .mathIndex }
-        if number, units.contains(word), let token = tokens.last {
-            // Glued ("5cm") or after a number ("5 cm").
-            let afterNumber = token.count > word.count || tokens.dropLast().last?.last.map(isDecimalDigit) == true
-            if afterNumber { return .mathIndex }
+        if number, let token = tokens.last.map(String.init), isQuantity(token, glued: true)
+            || units.contains(word) && token == word && tokens.dropLast().last.map({ isQuantity(String($0)) }) == true {
+            // A unit glued to a number ("5cm"), or after a number or another unit ("5 cm", "5 m s⁻¹").
+            return .mathIndex
+        }
+        // A chemical formula: digits straight before a capital ("H₂O", "CH₃OH") or after element symbols ("CO₂").
+        if text.allSatisfy(\.isNumber), previous.isLetter, run.after.first?.isUppercase == true || isFormula(word) {
+            return .mathIndex
         }
         // Footnote letters are single ("a", "a,b", "a–c"); a run of letters ("log", "con", "max") is an index.
-        if text.range(of: "[a-z]{2,}", options: .regularExpression) != nil, !romanNumerals.contains(String(text)) {
+        if text.range(of: "[a-z]{2,}", options: .regularExpression) != nil,
+           !text.split(separator: ",").allSatisfy({ romanNumerals.contains(String($0)) }) {
             return .mathIndex
         }
         // Letters after a lone letter, as in "x", "(h", "set S": a variable's index. Not after an initial in a
         // byline ("Smith Jᵃ,"), and not digits, which follow initials and names ("Smith J¹", "Hepatitis B¹²").
         if word.count == 1, !text.contains(where: \.isNumber) {
             let initial = word.first?.isUppercase == true
-                && tokens.dropLast().last.map { $0.count >= 2 && $0.first?.isUppercase == true && $0.allSatisfy(\.isLetter) } == true
+                && tokens.dropLast().last.map { $0.count >= 2 && $0.first?.isUppercase == true && $0.allSatisfy { $0.isLetter || "-'’".contains($0) } } == true
                 && run.after.first(where: { !$0.isWhitespace }).map { $0 == "," } != false
             if !initial { return .mathIndex }
         }
@@ -118,7 +129,7 @@ public enum PDFSmallRunClassifier {
     private static func isMathScalar(_ character: Character) -> Bool {
         character.unicodeScalars.contains { scalar in
             (0x0391...0x03C9).contains(scalar.value)          // Greek
-                || (0x2100...0x214F).contains(scalar.value)   // letterlike: ℓ, ℝ
+                || (0x2100...0x214F).contains(scalar.value) && !(0x2120...0x2122).contains(scalar.value) // letterlike: ℓ, ℝ; not ™
                 || (0x2190...0x22FF).contains(scalar.value)   // arrows, operators: ∏, ∑, ∫
                 || (0x1D400...0x1D7FF).contains(scalar.value) // math alphanumerics: 𝑥, 𝛽
         }
@@ -139,9 +150,41 @@ public enum PDFSmallRunClassifier {
         var inner: [Character] = []
         for character in before.reversed() {
             if character == last { depth += 1 } else if character == opening { depth -= 1 }
-            if depth == 0 { break }
+            if depth == 0 {
+                // "=" and "/" are left out: "(n = 24)¹" and "(and/or)¹" are prose.
+                return inner.contains { "+−^×·".contains($0) || isMathScalar($0) }
+            }
             inner.append(character)
         }
-        return inner.contains { "+−=/^×·".contains($0) || isMathScalar($0) }
+        // No opening bracket on this line: a parenthesis that began on the line before.
+        return false
+    }
+
+    /// A number, a number with a unit ("5cm"), or a unit with or without its exponent ("m", "m-1"). Only `glued`:
+    /// a number with a unit, where a lone "s" is left out ("1990s", "her 30s").
+    private static func isQuantity(_ token: String, glued: Bool = false) -> Bool {
+        let digits = token.prefix { $0.isNumber || $0 == "." || $0 == "," }
+        let unit = String(token.dropFirst(digits.count))
+        if glued { return digits.first?.isNumber == true && units.contains(unit) && unit != "s" }
+        if token.last.map(isDecimalDigit) == true && digits.count == token.count { return true }
+        let bare = String(unit.reversed().drop { $0.isNumber || $0 == "-" || $0 == "–" }.reversed())
+        return units.contains(bare) && (digits.isEmpty || digits.first?.isNumber == true)
+    }
+
+    /// Two or more element symbols and nothing else: "CO", "CH", "NaCl".
+    private static func isFormula(_ word: String) -> Bool {
+        var rest = Substring(word)
+        var count = 0
+        while !rest.isEmpty {
+            if rest.count >= 2, elements.contains(String(rest.prefix(2))) {
+                rest = rest.dropFirst(2)
+            } else if elements.contains(String(rest.prefix(1))) {
+                rest = rest.dropFirst()
+            } else {
+                return false
+            }
+            count += 1
+        }
+        return count >= 2
     }
 }
