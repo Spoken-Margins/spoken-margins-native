@@ -58,6 +58,11 @@ export interface Margin {
   /** The Margin this one answers (2026-10-25 call: recorded during a friend's Margin = a reply). */
   replyToId?: string;
   /**
+   * The Margin this one answered before the listener chose "Stop replying" (#4107). Only `replyToId` is ever written to a
+   * packet, so a stopped reply goes out as the listener's own Margin; this keeps the link so "Reply to …" can put it back.
+   */
+  formerReplyToId?: string;
+  /**
    * The sender's ask, carried from the packet's `readAloud: false` on a written Margin (#3445): the browser's voice
    * doesn't read it, though its words still show. Only ever `false`; absent means read aloud.
    */

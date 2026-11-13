@@ -17,20 +17,46 @@ export function choiceFor(parent: Margin | undefined): ReplyChoice | undefined {
   return parent ? { parent, replying: true } : undefined;
 }
 
-/** The id that goes on the saved Margin as `replyToId`: the friend's Margin while replying, nothing once made independent. */
-export function replyIdFor(choice: ReplyChoice | undefined): string | undefined {
-  return choice?.replying ? choice.parent.id : undefined;
-}
-
 /** The × and "Reply to Cole" are one control. Each tap flips it, so a double tap ends where it began and the words show the result. */
 export function toggleReplying(choice: ReplyChoice | undefined): ReplyChoice | undefined {
   return choice ? { parent: choice.parent, replying: !choice.replying } : undefined;
 }
 
-/** The Margin with `replyToId` set to `id`, or taken off when there is none. Nothing else on it changes. */
-export function withReplyId(margin: Margin, id: string | undefined): Margin {
-  const { replyToId: _dropped, ...rest } = margin;
-  return id === undefined ? rest : { ...rest, replyToId: id };
+/**
+ * The Margin with its reply link set from the composer's choice, nothing else changed: answering puts the friend's id on
+ * `replyToId`; "Stop replying" keeps it on `formerReplyToId` so "Reply to Cole" can put it back; no choice carries neither.
+ * Only `replyToId` is ever written to a packet.
+ */
+export function withReplyChoice(margin: Margin, choice: ReplyChoice | undefined): Margin {
+  const { replyToId: _answers, formerReplyToId: _answered, ...rest } = margin;
+  if (!choice) return rest;
+  return choice.replying ? { ...rest, replyToId: choice.parent.id } : { ...rest, formerReplyToId: choice.parent.id };
+}
+
+/** Whether the Margin already carries the link `withReplyChoice` would give it, so a write that changes nothing is skipped. */
+export function hasReplyChoice(margin: Margin, choice: ReplyChoice | undefined): boolean {
+  const wanted = withReplyChoice(margin, choice);
+  return wanted.replyToId === margin.replyToId && wanted.formerReplyToId === margin.formerReplyToId;
+}
+
+/** A saved reply, made independent: the link moves to `formerReplyToId`. A Margin that answers nothing is returned as it is. */
+export function stopReplying(margin: Margin): Margin {
+  if (margin.replyToId === undefined) return margin;
+  const { replyToId, ...rest } = margin;
+  return { ...rest, formerReplyToId: replyToId };
+}
+
+/** "Reply to Cole" on a stopped reply: the link moves back to `replyToId`. A Margin with no former link is returned as it is. */
+export function resumeReplying(margin: Margin): Margin {
+  if (margin.formerReplyToId === undefined) return margin;
+  const { formerReplyToId, ...rest } = margin;
+  return { ...rest, replyToId: formerReplyToId };
+}
+
+/** The Margin an own Margin answers, or answered before "Stop replying", found among `margins`; undefined when it isn't there. */
+export function parentOf(margin: Margin, margins: readonly Margin[]): Margin | undefined {
+  const id = margin.replyToId ?? margin.formerReplyToId;
+  return id === undefined ? undefined : margins.find((m) => m.id === id);
 }
 
 /** The row at the top of a composer: while replying, the caption and the × (`stop`); after ×, "Not a reply" and the button that puts it back (`resume`). */

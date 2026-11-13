@@ -13,7 +13,7 @@ import {
   allPicked, candidateLabel, pickAll, pickedMargins, preselected, nowCard, replyBackOffer, savedFileNextStep, selectAllLabel, whyNotShared,
 } from '../logic/reply-back.ts';
 import { plainError } from '../logic/messages.ts';
-import { choiceFor, replyIdFor, replyRow, toggleReplying, withReplyId, type ReplyChoice } from '../logic/reply-choice.ts';
+import { choiceFor, hasReplyChoice, parentOf, replyRow, toggleReplying, withReplyChoice, type ReplyChoice } from '../logic/reply-choice.ts';
 import { SENDER_NAME_LIMIT, senderForPacket, senderNameHint, sendFile, sendRefusedNextStep } from '../logic/share-send.ts';
 import { NotSavedError } from '../logic/storage.ts';
 import { shareNativePacket } from '../logic/native-packets.ts';
@@ -267,6 +267,15 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
     const resume = kind === 'record' && player.interruptForRecording().resume;
     setComposer({ kind, at: player.now(), ...(reply && { reply }), ...(resume && { resume }) });
   };
+  // "Reply" on a friend's row: the episode moves to that Margin's moment and the Record composer opens answering it, whatever
+  // was heard last (#4107). A friend's clip that is playing is cut first, as Record does, so the microphone doesn't record it.
+  const replyFromRow = (friend: Margin) => {
+    if (composer) return;
+    const resume = player.interruptForRecording().resume;
+    player.seek(friend.atSeconds);
+    const reply = choiceFor(friend);
+    setComposer({ kind: 'record', at: friend.atSeconds, ...(reply && { reply }), ...(resume && { resume }) });
+  };
 
   return (
     <div className="now-playing" role="dialog" aria-modal="true" aria-labelledby="np-title">
@@ -381,7 +390,7 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
             <>
               <ol className="margin-list">
                 {margins.map((margin) => (
-                  <MarginRow key={margin.id} margin={margin} compact />
+                  <MarginRow key={margin.id} margin={margin} compact parent={parentOf(margin, margins)} onReply={replyFromRow} replyDisabled={composer !== null} />
                 ))}
               </ol>
               <ShareMargins key={episode.id} episode={episode} margins={margins} show={show} />
@@ -612,7 +621,7 @@ function WriteMargin({
   const save = async () => {
     const value = text.trim();
     if (!value) return;
-    const margin = withReplyId({ id: newId(), episodeId, atSeconds: at, createdAt: new Date().toISOString(), text: value }, replyIdFor(reply));
+    const margin = withReplyChoice({ id: newId(), episodeId, atSeconds: at, createdAt: new Date().toISOString(), text: value }, reply);
     try {
       await data.addMargin(margin);
       toast(`Margin saved at ${formatClock(at)}.`);
@@ -730,14 +739,14 @@ function RecordMargin({
 
   // The × and "Reply to Cole" (#4107). Until Stop there is no Margin to change; after it, a change goes on the saved
   // Margin through the same queue as its words, so it lands after the save it follows.
-  const replyId = replyIdFor(reply);
-  const replyIdRef = useRef(replyId);
-  replyIdRef.current = replyId;
+  const replyRef = useRef(reply);
+  replyRef.current = reply;
+  const replying = reply?.replying;
   useEffect(() => {
     writes.current = writes.current.then(async () => {
       const current = saved.current;
-      if (!current || current.replyToId === replyId) return;
-      const next = withReplyId(current, replyId);
+      if (!current || hasReplyChoice(current, replyRef.current)) return;
+      const next = withReplyChoice(current, replyRef.current);
       saved.current = next;
       try {
         await data.addMargin(next);
@@ -747,7 +756,7 @@ function RecordMargin({
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [replyId]);
+  }, [replying]);
 
   const transcription = useTranscription(recorded?.blob, (transcript) => {
     const result = prefillOverPlaceholder(wordsRef.current, edited.current, transcript, placeholderRef.current);
@@ -821,7 +830,7 @@ function RecordMargin({
   const saveNew = (voice: RecordedVoice, stoppedAt: Date) => {
     setSaving('saving');
     writes.current = writes.current.then(async () => {
-      const bare = withReplyId(voiceMarginOnStop({ id: marginId.current, episodeId, atSeconds: at, recordedAt: stoppedAt, voice }), replyIdRef.current);
+      const bare = withReplyChoice(voiceMarginOnStop({ id: marginId.current, episodeId, atSeconds: at, recordedAt: stoppedAt, voice }), replyRef.current);
       const margin = withWords(bare, wordsRef.current, placeholderRef.current) ?? bare;
       try {
         await data.addMargin(margin);

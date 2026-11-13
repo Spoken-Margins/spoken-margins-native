@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  excerpt, NOT_A_REPLY, replyName, replyPossessive, replyTo, replyingCaption, rowLine, senderNameOrNone, STOP_REPLYING,
+  excerpt, NOT_A_REPLY, replyName, replyPossessive, replyMarginName, replyTo, replyingCaption, rowLine, senderNameOrNone, STOP_REPLYING,
 } from './reply-words.ts';
 
 // #4107 B1: the app's MarginReplyWords rows (MarginReplyWordsTests.swift), in the web's words and typography.
@@ -89,4 +89,11 @@ test('the line on an own Margin: a reply, a stopped reply, a reply whose parent 
   assert.equal(rowLine({ replyToId: 'p' }, undefined), 'Reply to a Margin that isn’t here');
   assert.equal(rowLine({ formerReplyToId: 'p' }, parent), 'Not a reply');
   assert.equal(rowLine({ formerReplyToId: 'p' }, undefined), 'Not a reply');
+});
+
+test('replyMarginName: the spoken name of a Reply button and the line on a saved reply (#4107, B5)', () => {
+  assert.equal(replyMarginName({ author: 'Cole', atSeconds: 105 }), 'Reply to Cole’s Margin at 1:45');
+  assert.equal(replyMarginName({ author: undefined, atSeconds: 3725 }), 'Reply to your friend’s Margin at 1:02:05');
+  assert.equal(replyMarginName({ author: 'Unsigned sender', atSeconds: 0 }), 'Reply to your friend’s Margin at 0:00');
+  assert.equal(replyMarginName({ author: 'Cole', atSeconds: -1 }), 'Reply to Cole’s Margin');
 });
