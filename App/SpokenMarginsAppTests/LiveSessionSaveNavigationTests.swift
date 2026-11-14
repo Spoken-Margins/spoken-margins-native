@@ -7,7 +7,9 @@ import XCTest
 /// the item itself, which swapped the root's screen (the Library, and the add sheet or Live row presenting the live
 /// session screen) for the item's detail while that screen's cover was still up, and the cover, already let go of
 /// its session, was left showing its setup card. The save now only writes; the screen closes first and opens the item
-/// once it has gone (`LiveSessionFinish`). The first test fails on the old save, which opened the item itself.
+/// once it has gone. The first test fails on the old save, which opened the item itself. The close-then-open rules
+/// are host-tested in SessionKit (`LiveSessionFinishFlowTests`, #318); the one test of `LiveSessionFinish` here checks
+/// the screen's wrapper passes them through.
 @MainActor
 final class LiveSessionSaveNavigationTests: XCTestCase {
     func testSavingLeavesTheScreenUnderTheLiveSessionScreenInPlace() async throws {
@@ -34,29 +36,6 @@ final class LiveSessionSaveNavigationTests: XCTestCase {
                        "the confirmation counts the session's Margins, not the transcript placements Save as Notes passes")
     }
 
-    func testASecondTapWhileSavingDoesNotSaveAgain() {
-        let finish = LiveSessionFinish()
-
-        XCTAssertTrue(finish.beginSaving())
-        XCTAssertFalse(finish.beginSaving(), "a second tap during Saving… started another save")
-        finish.saved(Self.saved, dismiss: {}, open: { _ in })
-        XCTAssertFalse(finish.beginSaving(), "a tap while the screen closes saved the session again")
-    }
-
-    func testAFailedSaveLeavesTheSessionToSaveAgain() {
-        let finish = LiveSessionFinish()
-        var opened: [Gate1AppModel.SavedLiveSession] = []
-
-        XCTAssertTrue(finish.beginSaving())
-        finish.saveFailed()
-        finish.screenGone { opened.append($0) }
-
-        XCTAssertEqual(finish.state, .open)
-        XCTAssertTrue(opened.isEmpty, "a failed save opened an item")
-        finish.screenAppeared()
-        XCTAssertTrue(finish.beginSaving(), "after a failure the session can be saved again")
-    }
-
     func testASavedSessionClosesTheScreenThenOpensItsItemOnce() {
         let finish = LiveSessionFinish()
         var dismissals = 0
@@ -71,42 +50,6 @@ final class LiveSessionSaveNavigationTests: XCTestCase {
         finish.screenGone { opened.append($0) }
         finish.screenGone { opened.append($0) }
         XCTAssertEqual(opened, [Self.saved], "the item opens once, after the screen has gone")
-    }
-
-    func testASaveFinishingAfterTheScreenWentStillOpensItsItem() {
-        let finish = LiveSessionFinish()
-        var dismissals = 0
-        var opened: [Gate1AppModel.SavedLiveSession] = []
-        XCTAssertTrue(finish.beginSaving())
-        finish.screenGone { opened.append($0) } // Back during Saving…
-
-        finish.saved(Self.saved, dismiss: { dismissals += 1 }, open: { opened.append($0) })
-
-        XCTAssertEqual(opened, [Self.saved])
-        XCTAssertEqual(dismissals, 0)
-    }
-
-    func testAScreenBackFromItsOwnCoverWaitsToOpenTheItem() {
-        let finish = LiveSessionFinish()
-        var opened: [Gate1AppModel.SavedLiveSession] = []
-        finish.screenGone { opened.append($0) } // the recording cover over it
-        finish.screenAppeared()
-        XCTAssertTrue(finish.beginSaving())
-
-        finish.saved(Self.saved, dismiss: {}, open: { opened.append($0) })
-
-        XCTAssertTrue(opened.isEmpty, "the item opened under a live session screen that was showing again")
-    }
-
-    func testDiscardingNeverShowsTheSetupCardOrOpensAnItem() {
-        let finish = LiveSessionFinish()
-        var opened: [Gate1AppModel.SavedLiveSession] = []
-
-        finish.discarded()
-        finish.screenGone { opened.append($0) }
-
-        XCTAssertFalse(finish.showsSetup)
-        XCTAssertTrue(opened.isEmpty)
     }
 
     // MARK: - Fixtures
