@@ -8,9 +8,10 @@ public enum PlaybackPositionText {
     /// "7:30", or "1:07:30" from an hour on. Negative times read as 0:00.
     public static func visible(ms: Int) -> String {
         let seconds = max(0, ms) / 1_000
+        func two(_ value: Int) -> String { value < 10 ? "0\(value)" : "\(value)" }
         return seconds >= 3_600
-            ? String(format: "%d:%02d:%02d", seconds / 3_600, seconds / 60 % 60, seconds % 60)
-            : String(format: "%d:%02d", seconds / 60, seconds % 60)
+            ? "\(seconds / 3_600):\(two(seconds / 60 % 60)):\(two(seconds % 60))"
+            : "\(seconds / 60):\(two(seconds % 60))"
     }
 
     /// "1 hour, 7 minutes, 30 seconds". Units that are zero are left out ("7 minutes, 30 seconds", "1 hour"),

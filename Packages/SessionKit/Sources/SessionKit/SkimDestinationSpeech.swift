@@ -75,15 +75,19 @@ public enum SkimDestinationSpeech {
         Speech(label: "Next chapter", value: with(title, position))
     }
 
-    /// A chapter's own title, or "Chapter N" (1-based) when it has none.
+    /// A chapter's own title, or "Chapter N" (1-based) when it has none. Callers pass a chapter's title through here
+    /// first: an empty title given to `skim` is left out, not replaced.
     public static func chapterTitle(_ title: String?, index: Int) -> String {
         let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? "Chapter \(index + 1)" : trimmed
     }
 
-    /// "Sam's", or "A friend's" when the file names nobody (or only a stand-in).
+    /// "Sam's", or "A friend's" when the file names nobody (or only a stand-in, including the app's own "a friend").
     static func friendPossessive(_ name: String?) -> String {
-        SharedPacketArrival.senderName(name).map { "\($0)'s" } ?? "A friend's"
+        guard let named = SharedPacketArrival.senderName(name),
+              named.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) != "a friend"
+        else { return "A friend's" }
+        return "\(named)'s"
     }
 
     private static func with(_ parts: String?...) -> String {

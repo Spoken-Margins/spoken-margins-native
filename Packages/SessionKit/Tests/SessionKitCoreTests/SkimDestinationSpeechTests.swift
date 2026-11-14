@@ -22,6 +22,8 @@ final class SkimDestinationSpeechTests: XCTestCase {
         XCTAssertEqual(PlaybackPositionText.spoken(ms: 400), "0 seconds")
         XCTAssertEqual(PlaybackPositionText.spoken(ms: -5), "0 seconds", "a negative time is the start")
         XCTAssertEqual(PlaybackPositionText.visible(ms: -5), "0:00")
+        XCTAssertEqual(PlaybackPositionText.visible(ms: Int.max), "\(Int.max / 1_000 / 3_600):\(Int.max / 1_000 / 60 % 60 < 10 ? "0" : "")\(Int.max / 1_000 / 60 % 60):\(Int.max / 1_000 % 60 < 10 ? "0" : "")\(Int.max / 1_000 % 60)", "a huge time keeps all its hours")
+        XCTAssertEqual(PlaybackPositionText.visible(ms: 3_605_000), "1:00:05")
         XCTAssertEqual(PlaybackPositionText.visible(percent: 65), "65%")
         XCTAssertEqual(PlaybackPositionText.spoken(percent: 65), "65 percent")
         XCTAssertEqual(PlaybackPositionText.spoken(percent: 140), "100 percent", "a percent is kept inside 0 to 100")
@@ -61,7 +63,7 @@ final class SkimDestinationSpeechTests: XCTestCase {
     }
 
     func testAFriendWithNoNameOrAStandInNameIsAFriend() {
-        for name in [nil, "", "   ", "Someone", "Your friend", "your  FRIEND", "Unsigned sender", "Imported collection"] as [String?] {
+        for name in [nil, "", "   ", "Someone", "Your friend", "your  FRIEND", "Unsigned sender", "Imported collection", "a friend", "A Friend"] as [String?] {
             XCTAssertEqual(skim(.forward, .friendMargin(name: name), "1 minute").value, "A friend's Margin, 1 minute", "name: \(String(describing: name))")
         }
         XCTAssertEqual(skim(.forward, .friendMargin(name: "  Sam  ")).value, "Sam's Margin", "a name is trimmed")
