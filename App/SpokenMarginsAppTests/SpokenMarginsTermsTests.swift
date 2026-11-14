@@ -3,25 +3,8 @@ import SessionKit
 import SessionKitSupertonic
 @testable import SpokenMarginsApp
 
+/// The acceptance rules run on the host (`SpokenMarginsTermsHostTests`, #318); this checks the text in the app bundle.
 final class SpokenMarginsTermsStorageTests: XCTestCase {
-    func testAcceptanceIsVersionedAndExpiresWhenTheVersionChanges() throws {
-        let suiteName = "SpokenMarginsTermsStorageTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-
-        XCTAssertFalse(SpokenMarginsTerms.hasAcceptedCurrentVersion(in: defaults))
-
-        let acceptedAt = Date(timeIntervalSince1970: 1_790_000_000)
-        SpokenMarginsTerms.recordAcceptance(at: acceptedAt, in: defaults)
-
-        XCTAssertTrue(SpokenMarginsTerms.hasAcceptedCurrentVersion(in: defaults))
-        XCTAssertEqual(SpokenMarginsTerms.acceptedVersion(in: defaults), SpokenMarginsTerms.currentVersion)
-        XCTAssertEqual(SpokenMarginsTerms.acceptedAt(in: defaults), acceptedAt)
-
-        defaults.set("older-version", forKey: SpokenMarginsTerms.acceptanceVersionKey)
-        XCTAssertFalse(SpokenMarginsTerms.hasAcceptedCurrentVersion(in: defaults))
-    }
-
     func testBundledTermsContainTheOpenRAILAgreementAndMaterialChangeRule() {
         XCTAssertTrue(SpokenMarginsTerms.hasBundledText())
         let text = SpokenMarginsTerms.bundledText()
