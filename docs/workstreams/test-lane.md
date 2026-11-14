@@ -176,6 +176,16 @@ touches yours. Build through scripts/xcodebuild-lane. A test run there, or a ver
 test step, that prints its final summary and then goes quiet for 2 minutes is stopped and
 reports its tests' result with a "(forced, #2053)" note; don't kill it by hand.
 
+Who does what now (checked 2026-11-13): the integration script is installed (launchd
+com.spokenmargins.integration-run) and, with the hosted integration run, posts the
+integration report for nearly every tip; it also runs the scripted journeys at each phone
+build. So on most wakes steps 1 and 2 below are already done, and your work is, in order:
+the T4 work list from scripts/desk-batch.py (a GO line means requests have waited past
+their limit), then step 3 on the newest tip with a PASS, then the scripted journeys that
+the newest scripted-journeys report lists under "must end" (find whether the app or the
+script is wrong, and file or update one issue for each). Run steps 1 and 2 yourself only
+for a tip that has gone three hours without an integration report.
+
 What wakes you: main's tip moving. Check #184 and main about every 45 minutes (waits of 20 s
 or less at a time, or a background wait: a foreground sleep of 30 s or more is blocked).
 When main's tip has no integration report on #184, run one job on that tip, in this order:
@@ -214,7 +224,7 @@ desk has posted nothing on #184 for three hours, works in its own intrun-<sha7> 
 and stays off the simulator while a desk pool device is booted.
 
 The integration script (ops/testdesk/README.md, launchd every 10 minutes) replaces the
-scheduled understudy once installed. It runs --plan app on any tip with no integration
+scheduled understudy once installed; it is installed on the Mac (2026-11-13). It runs --plan app on any tip with no integration
 report on #184 when the Mac has room, letting waiting /lane T3+ requests go first unless
 next has gone three hours untested. It re-runs failing tests twice to rule out a flake,
 and calls Claude read-only only on a confirmed FAIL. Its reports say "run by: integration
