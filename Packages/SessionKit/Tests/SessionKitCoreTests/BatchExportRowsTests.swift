@@ -72,7 +72,7 @@ final class BatchExportRowsTests: XCTestCase {
         ticker.cancel()
         XCTAssertFalse(rows.isEmpty)
         // A blocked main actor gives 0 or 1 tick; a free one gives about 30. A loaded machine can starve the
-        // ticker down to a handful (4 seen), so the bar is the smallest count a blocked actor can't reach (#4292).
+        // ticker down to a handful (4 seen), so the bar is the smallest count that still separates the two (#4292).
         XCTAssertGreaterThanOrEqual(ticks, 2, "the main actor kept running while the read was slow (a blocked read gives 0 or 1)")
     }
 }
