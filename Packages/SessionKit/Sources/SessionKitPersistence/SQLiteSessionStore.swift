@@ -315,6 +315,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         case "feed_subscription": return columns(FeedSubscription.self, item: { _ in nil })
         case "feed_entry": return columns(FeedEntry.self, item: { _ in nil })
         case "item_collection": return columns(ItemCollection.self, item: { _ in nil })
+        case TranscriptTimes.recordKind: return columns(TranscriptTimes.self, item: { $0.itemId })
         default: return nil
         }
     }
@@ -1687,7 +1688,8 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         'imported_commentary_layer', 'canonical_source', 'audio_asset', 'source_transcript_timeline', \
         'podcast_download', 'owned_offline_asset', 'episode_map_preparation_job', 'audio_preparation_job', \
         'prepared_audio_manifest', 'edition_fingerprint_spine', 'transcript_phrase_sketch', \
-        'resolved_listening_map_projection', 'watch_audio_package', 'watch_sync_event', 'watch_package_request'
+        'resolved_listening_map_projection', 'watch_audio_package', 'watch_sync_event', 'watch_package_request', \
+        '\(TranscriptTimes.recordKind)'
         """
 
     private static let quarantinedRowBelongsToItem = """

@@ -146,23 +146,34 @@ public enum MarginPlaces {
     ///   argument to leave text Margins without a place.
     /// - `loadMediaChapters`: the item's chapters with their start times, empty when it has none. Asked only for items
     ///   that have a Margin with a clock time.
+    /// - `loadTranscriptTimes`: a meeting transcript's cue times (#2997). Asked once, only for a transcript item that has
+    ///   a text Margin. With it a text Margin gets `meetingClockMs`, even when `loadMap` is nil.
     public static func places(
         for entries: [MarginCollection.PrivateEntry],
         items: [Item],
         loadMap: ((String) -> ListeningMap?)?,
-        loadMediaChapters: (String) -> [MediaTimelineChapter] = { _ in [] }
+        loadMediaChapters: (String) -> [MediaTimelineChapter] = { _ in [] },
+        loadTranscriptTimes: ((String) -> TranscriptTimes?)? = nil
     ) -> [String: Place] {
         let itemsById = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var result: [String: Place] = [:]
         for (itemId, group) in Dictionary(grouping: entries.filter { $0.interjection.targetType == .item }, by: \.interjection.itemId) {
             let atText = group.filter { $0.interjection.anchor.mediaTimeMs == nil }
-            if let loadMap, let furthest = atText.map({ $0.interjection.anchor.startChar }).max() {
+            // A transcript item's meeting times, read once for the item and only for a transcript (#2997).
+            let times = itemsById[itemId]?.externalReferenceType == TranscriptItemText.referenceType && !atText.isEmpty
+                ? loadTranscriptTimes?(itemId) : nil
+            if loadMap != nil || times != nil, let furthest = atText.map({ $0.interjection.anchor.startChar }).max() {
                 let index = MarginPlaceIndex(
-                    chapters: loadMap(itemId)?.chapters ?? [], text: itemsById[itemId]?.text, readingUpTo: furthest)
+                    chapters: loadMap?(itemId)?.chapters ?? [], text: loadMap == nil ? nil : itemsById[itemId]?.text,
+                    readingUpTo: furthest)
                 for entry in atText {
                     let offset = entry.interjection.anchor.startChar
-                    let place = Place(chapterName: index.chapterName(atChar: offset), paragraph: index.paragraph(atChar: offset))
-                    if place.chapterName != nil || place.paragraph != nil { result[entry.id] = place }
+                    // Without a map argument a text Margin has no chapter or paragraph; a transcript's clock stands alone.
+                    let place = Place(
+                        chapterName: loadMap == nil ? nil : index.chapterName(atChar: offset),
+                        paragraph: loadMap == nil ? nil : index.paragraph(atChar: offset),
+                        meetingClockMs: times?.clockMs(atCharacter: offset))
+                    if place.chapterName != nil || place.paragraph != nil || place.meetingClockMs != nil { result[entry.id] = place }
                 }
             }
             let atTime = group.filter { $0.interjection.anchor.mediaTimeMs != nil }
