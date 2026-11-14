@@ -141,10 +141,10 @@ final class StoreReadMeterTests: XCTestCase {
     }
 
     /// The Library list decodes every article's full text. `listItems` is what the Library rows read today (#2102), so
-    /// until a summary read exists this is a known-oversized read: the test records the budget and skips with the
-    /// measured numbers. When a fix brings the read under the budget the test fails with "remove the marker", so the fix
-    /// that lands flips it on purpose (audit step 5, #2256).
-    func testTheLibraryListDoesNotDecodeEveryArticleText() throws {
+    /// until a summary read exists this is a known gap, and the test says so by name instead of skipping: it fails if
+    /// the read gets worse than today's measured cost (about 71 KB an item, 2.27 MB for the small fixture), and it fails
+    /// when a fix brings the read under the budget, so the fix that lands flips it on purpose (audit step 5, #2256, #4307).
+    func testTheLibraryListStillDecodesEveryArticleTextUntilTheFixForIssue2102() throws {
         let scale: LibraryFixture.Scale = largeScale ? .library : .small
         let fixture = try build(scale)
         let meter = StoreReadMeter()
@@ -156,14 +156,10 @@ final class StoreReadMeterTests: XCTestCase {
         let bytes = meter.totals(for: "listItems(includeDeleted:)").bytes
         // About 1 KB of row metadata per item is plenty for a title, status and dates.
         let budget = scale.items * 1_024
-        try expectKnownOversized(bytes > budget, issue: "#2102", message:
-            "listItems decoded \(bytes) bytes for \(scale.items) items; a Library row needs under \(budget)")
-    }
-
-    private func expectKnownOversized(_ oversized: Bool, issue: String, message: String,
-                                      file: StaticString = #filePath, line: UInt = #line) throws {
-        if oversized { throw XCTSkip("Known oversized read (\(issue)): \(message)") }
-        XCTFail("Within budget now: remove expectKnownOversized for \(issue) so the limit is enforced. \(message)", file: file, line: line)
+        // Today's read, rounded up by a few percent: 2,265,210 bytes for the 32 items of the small fixture.
+        let ceiling = scale.items * 80_000
+        XCTAssertLessThanOrEqual(bytes, ceiling, "#2102: the Library list got worse: \(bytes) bytes for \(scale.items) items, over today's \(ceiling)")
+        XCTAssertGreaterThan(bytes, budget, "#2102 is fixed (\(bytes) bytes for \(scale.items) items, budget \(budget)): rename this test to testTheLibraryListDoesNotDecodeEveryArticleText, assert bytes <= budget and drop the ceiling")
     }
 
     /// The fixture's mapped podcast has no `media`, so exports treat it as text. A recording's export reads its

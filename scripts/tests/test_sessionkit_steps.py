@@ -213,12 +213,12 @@ class ParallelCoreTests(unittest.TestCase):
         self.assertLessEqual(skipping, verification.CORE_ALLOWED_SKIPS)
 
     def test_the_read_meter_tests_that_skip_by_design_are_allowed_in_both_core_steps(self):
-        # #2258: the known-oversized Library read skips on every fast run, and the cost table skips unless asked for.
+        # #2258: the cost table skips unless asked for. The known-oversized Library read no longer skips (#4307).
         source = (SCRIPTS.parent / 'Packages/SessionKit/Tests/SessionKitCoreTests/StoreReadMeterTests.swift').read_text()
         skipping = {name for name, body in re.findall(r'func (test\w+)\(\)[^{]*\{(.*?)(?=\n    func |\n    private func |\Z)',
                                                       source, re.S)
                     if 'XCTSkip' in body or 'expectKnownOversized(' in body}
-        self.assertEqual(skipping, {'testTheLibraryListDoesNotDecodeEveryArticleText', 'testReadCostTableAtEveryScale'})
+        self.assertEqual(skipping, {'testReadCostTableAtEveryScale'})
         with tempfile.TemporaryDirectory() as state:
             host = Host(self, None, fail=['package-core']).run(state)
             for step in ('package-core', 'package-core-serial'):

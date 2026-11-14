@@ -986,10 +986,9 @@ HANG_PROBE_TIMING_TESTS = frozenset(f'SessionKitCoreTests/MainThreadHangProbeTes
     'testAStoppedProbeRecordsNothingAndASecondHangAfterAFirstIsCounted',
 ))
 
-# StoreReadMeterTests skip by design (#2258): the Library list is a known-oversized read that skips with its measured
-# bytes until #2102's fix fails it on purpose, and the cost table builds the large fixtures only when asked for.
+# StoreReadMeterTests: the cost table builds the large fixtures only when asked for. The Library list's known-oversized
+# read no longer skips: it asserts today's cost as a ceiling (#4307, #2102).
 READ_METER_SKIPS = frozenset(f'SessionKitCoreTests/StoreReadMeterTests/{test}' for test in (
-    'testTheLibraryListDoesNotDecodeEveryArticleText',
     'testReadCostTableAtEveryScale',
 ))
 # Measurements that build Library-sized fixtures only when asked for, by an environment variable (#2509, #2256).

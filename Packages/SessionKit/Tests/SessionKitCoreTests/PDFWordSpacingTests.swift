@@ -168,8 +168,12 @@ final class PDFWordSpacingTests: XCTestCase {
         XCTAssertEqual(String(Array(spaced)[marker]), "1")
         // No space goes in front of a marker set on a word: "economy¹", not "economy 1".
         let onWord = "theeconomy1Averaged"
-        let onWordInsertions = spacer.spaceInsertions(in: onWord, protected: [10..<11])
+        // With this word list the splitter does want a space at 10 (#4307), so the marker's protection is what stops it.
+        let proposing = PDFWordSpacer(isWord: ["theeconomy", "averaged"].contains)
+        XCTAssertTrue(proposing.spaceInsertions(in: onWord).contains(10), "fixture: unprotected, a space goes before the marker")
+        let onWordInsertions = proposing.spaceInsertions(in: onWord, protected: [10..<11])
         XCTAssertFalse(onWordInsertions.contains(10))
+        XCTAssertTrue(onWordInsertions.contains(11), "the space after the marker still goes in")
     }
 
     func testAMathIndexStaysOnItsLetterAndTakesNoSpaceAfterIt() {
