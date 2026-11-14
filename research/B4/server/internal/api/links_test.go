@@ -204,8 +204,7 @@ func TestLinkHTTPRoundTripReportsExpiryAndLogs(t *testing.T) {
 		t.Fatal("HTTP packet hash round trip changed")
 	}
 	// A pin, not a proof (#4318): the server is only ever sent the sealed bytes, so this can fail only if the store
-	// invents or decodes plaintext. What keeps plaintext out is the Sealed() check on every upload (links_test.go
-	// "unsealed"). The walk also has to find the sealed packet itself on disk, so it cannot pass by looking at nothing.
+	// invents or decodes plaintext. What keeps plaintext out is the Sealed() check on every upload (the ErrUnsealed rows in internal/links/links_test.go). The walk also has to find the sealed packet itself on disk, so it cannot pass by looking at nothing.
 	files, foundSealed := 0, false
 	filepath.WalkDir(filepath.Dir(s.PublicDir), func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
