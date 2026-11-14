@@ -1,9 +1,8 @@
 import XCTest
-import SessionKit
-@testable import SpokenMarginsApp
+@testable import SessionKit
 
-/// #3986: the chapter row's arrows say where they go. The words are `SkimDestinationSpeechTests` in SessionKit; these
-/// check the lookup that turns a Skim stop into a chapter, the listener's Margin or a friend's.
+/// #3986: the chapter row's arrows say where they go. The words are `SkimDestinationSpeechTests`; these check the
+/// lookup that turns a Skim stop into a chapter, the listener's Margin or a friend's.
 final class SkimDestinationDescriberTests: XCTestCase {
     private let textChapters: [(id: String, title: String, position: Int)] = [
         ("c1", "Intro", 0), ("c2", "Alignment", 4_000), ("c3", "", 8_000),
@@ -116,6 +115,53 @@ final class SkimDestinationDescriberTests: XCTestCase {
         XCTAssertEqual(d.speech(direction: .forward, choice: .unavailable, summaryDestination: nil).value, "Nothing ahead to skim to")
         XCTAssertEqual(d.speech(direction: .backward, choice: nil, summaryDestination: nil).value, "Nothing behind to skim to")
         XCTAssertEqual(d.landingSpeech(direction: .forward, at: 4_050_000).value, "Wrap up, 1 hour, 7 minutes, 30 seconds")
+    }
+
+    /// Audit of #4275: while a Margin's voice plays, forward only ends the voice (`.skipVoice`) and the source carries
+    /// on from where it paused. The arrow says that place, not the stop after the playhead, which the press never reaches.
+    func testDuringAMarginsVoiceForwardSaysWhereTheSourceCarriesOn() {
+        let d = describer(text: false, playhead: 1_500_000)
+        let stored = choice(d, .forward, playhead: 1_500_000, text: false)
+        XCTAssertEqual(d.speech(direction: .forward, choice: stored, summaryDestination: nil).value,
+                       "Deep dive, 30 minutes", "the stored choice is the next stop")
+        let voice = d.arrowSpeech(direction: .forward, summaryLanding: nil, momentPress: .skipVoice, choice: stored, summaryDestination: nil)
+        XCTAssertEqual(voice, .init(label: "Skim forward", value: "Welcome, 25 minutes"))
+        // A playing summary is answered first, as a press is.
+        XCTAssertEqual(d.arrowSpeech(direction: .forward, summaryLanding: 4_050_000, momentPress: .skipVoice,
+                                     choice: stored, summaryDestination: nil).value, "Wrap up, 1 hour, 7 minutes, 30 seconds")
+        // The lead-in plays the Margin now, which is the stop the routing chose; back ends the moment and then goes to
+        // the stop the routing chose. Both say the stored choice.
+        for press in [.navigate, .playMarginNow, .endMomentThenNavigate] as [SkimStopRouting.MomentPress] {
+            XCTAssertEqual(d.arrowSpeech(direction: .forward, summaryLanding: nil, momentPress: press, choice: stored,
+                                         summaryDestination: nil).value, "Deep dive, 30 minutes", "\(press)")
+        }
+    }
+
+    /// Audit of #4275: just after the playback screen opens, the item on screen can still be the one opened before. Its
+    /// chapters and length are not the playing item's, so the describer names none rather than the wrong item's.
+    func testAnotherItemsDetailGivesNoChaptersAndNoLength() {
+        var other = ItemDetailState()
+        other.id = "other"
+        other.text = String(repeating: "x", count: 500)
+        other.chapters = [Chapter(id: "o1", title: "Other item's chapter", startChar: 0, endChar: 500, percent: 0)]
+        other.mediaChapters = [MediaTimelineChapter(id: "o2", title: "Other episode's chapter", startMs: 0, transcriptSegmentId: "s")]
+        for isText in [true, false] {
+            let d = SkimDestinationDescriber(
+                playing: "playing", detail: other, isText: isText, ownMarginIds: [], friendLabels: [:], playhead: 100)
+            XCTAssertTrue(d.chapters.isEmpty, "isText \(isText)")
+            XCTAssertEqual(d.textLength, 0, "isText \(isText)")
+            XCTAssertEqual(d.speech(direction: .forward, choice: .summary, summaryDestination: 370).value,
+                           isText ? "summary first" : "summary first, 0 seconds", "isText \(isText)")
+        }
+        var playing = other
+        playing.id = "playing"
+        let text = SkimDestinationDescriber(
+            playing: "playing", detail: playing, isText: true, ownMarginIds: [], friendLabels: [:], playhead: 100)
+        XCTAssertEqual(text.speech(direction: .forward, choice: .summary, summaryDestination: 250).value,
+                       "Other item's chapter, summary first, 50 percent")
+        let media = SkimDestinationDescriber(
+            playing: "playing", detail: playing, isText: false, ownMarginIds: [], friendLabels: [:], playhead: 100)
+        XCTAssertEqual(media.chapterTitle(id: "o2"), "Other episode's chapter")
     }
 
     func testTextWithUnknownLengthLeavesTheNumberOut() {

@@ -6,19 +6,16 @@ import SessionKit
 /// describer the playing item's chapters and Margins and picks the row for each control. It keeps no state, and it sits
 /// in its own file so `Gate1AppModel` does not grow.
 extension Gate1AppModel {
-    /// The playing item's chapters, own Margins and friends' Margins, in the item's own unit.
+    /// The playing item's chapters, own Margins and friends' Margins, in the item's own unit. The describer leaves out
+    /// `selectedItem`'s chapters while it is still another item.
     var skimDescriber: SkimDestinationDescriber {
         let itemId = skimSource?.itemId ?? selectedItem.id
-        let chapters: [(id: String, title: String, position: Int)] = isTextReadingSnapshot
-            ? selectedItem.chapters.map { ($0.id, $0.title, $0.startChar) }
-            : (selectedItem.mediaChapters.isEmpty ? selectedItem.listeningMapScenes : selectedItem.mediaChapters)
-                .map { ($0.id, $0.title, $0.startMs) }
         var friendLabels: [String: String?] = [:]
         for row in sharedMarginRows where row.layer.itemId == itemId {
             friendLabels[row.interjection.id] = row.layer.displayLabel
         }
         return SkimDestinationDescriber(
-            isText: isTextReadingSnapshot, textLength: isTextReadingSnapshot ? selectedItem.text.count : 0, chapters: chapters,
+            playing: itemId, detail: selectedItem, isText: isTextReadingSnapshot,
             ownMarginIds: Set(marginRows.map(\.interjection).filter { $0.itemId == itemId }.map(\.id)),
             friendLabels: friendLabels, playhead: skimCurrentMediaTimeMs)
     }
@@ -59,17 +56,15 @@ extension Gate1AppModel {
         }
     }
 
-    /// A Skim arrow that can be pressed: where its press lands, or the place a playing summary ends.
+    /// A Skim arrow that can be pressed: where its press lands, asked in the order a press is answered.
     private func skimSpeech(_ direction: SkimDestinationSpeech.Direction) -> SkimDestinationSpeech.Speech {
         if snapshot.isRecording { return SkimDestinationSpeech.skim(direction, to: .locked, position: nil) }
         let forward = direction == .forward
-        let describer = skimDescriber
         let skim: SkimDirection = forward ? .forward : .backward
-        if let landing = snapshot.skimBridgeState?.destinationMediaTimeMs {
-            return describer.landingSpeech(direction: skim, at: landing)
-        }
-        return describer.speech(
-            direction: skim, choice: forward ? skimBridge.forwardChoice : skimBridge.backwardChoice,
+        return skimDescriber.arrowSpeech(
+            direction: skim, summaryLanding: snapshot.skimBridgeState?.destinationMediaTimeMs,
+            momentPress: skimMomentPress(direction: skim),
+            choice: forward ? skimBridge.forwardChoice : skimBridge.backwardChoice,
             summaryDestination: forward ? skimBridge.forwardDestinationMs : skimBridge.backwardDestinationMs)
     }
 
