@@ -279,7 +279,7 @@ public enum TranscriptImport {
 
     /// Words that open a line of prose, not a person: "Note: see below" is text from whoever is speaking.
     private static let notSpeakerLabels: Set<String> = [
-        "note", "notes", "nb", "warning", "reminder", "action", "action item", "action items", "agenda", "summary",
+        "note", "notes", "nb", "warning", "reminder", "action", "agenda", "summary",
         "todo", "important", "subject", "re", "fyi", "ps", "decision", "next steps", "attendees"
     ]
 
@@ -294,7 +294,7 @@ public enum TranscriptImport {
         let rest = text[afterColon...].trimmingCharacters(in: .whitespaces)
         let words = name.split(separator: " ")
         guard !name.isEmpty, !rest.isEmpty, name.count <= 40, (1...5).contains(words.count),
-              !notSpeakerLabels.contains(name.lowercased()),
+              !notSpeakerLabels.contains(name.lowercased()), !name.lowercased().hasPrefix("action "),
               name.rangeOfCharacter(from: CharacterSet(charactersIn: ".?!,;\"")) == nil,
               !name.allSatisfy({ $0.isNumber || $0 == ":" }),
               rest.first != "/" // a URL's "https://"
