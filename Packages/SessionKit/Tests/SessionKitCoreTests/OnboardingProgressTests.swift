@@ -261,6 +261,10 @@ final class OnboardingProgressTests: XCTestCase {
         XCTAssertEqual(OnboardingEvidenceClassifier.sourceSteps(items: [pasted]), [.addedOwnSource])
         XCTAssertEqual(OnboardingEvidenceClassifier.sourceSteps(items: [webpage]), [.addedOwnSource, .addedFromSafari])
         XCTAssertEqual(OnboardingEvidenceClassifier.sourceSteps(items: [file]), [.addedOwnSource, .addedFromFiles])
+        let transcript = item(id: "transcript", mediaType: "text", externalReferenceType: TranscriptItemText.referenceType)
+        XCTAssertEqual(
+            OnboardingEvidenceClassifier.sourceSteps(items: [transcript]), [.addedOwnSource, .addedFromFiles],
+            "a transcript picked from Files counts as added from Files (#2997)")
     }
 
     /// Neighbours of the cases above: what makes an item count as "added from Safari" or "from Files".
