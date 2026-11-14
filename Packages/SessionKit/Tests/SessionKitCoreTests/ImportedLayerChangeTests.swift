@@ -1,6 +1,6 @@
 import Foundation
 import SessionKit
-import SessionKitPersistence
+@testable import SessionKitPersistence
 import XCTest
 
 /// #3601: a change that loads a friend's layer in order to save it again must not carry an older copy of the layer with
@@ -154,21 +154,26 @@ final class ImportedLayerChangeTests: XCTestCase {
 
     /// Runs `work` on a second thread while this thread holds the write lock, then changes the layer under the lock and
     /// commits. `work` therefore starts, reads the layer as it was, and can only write after the other change.
+    ///
+    /// The other change waits for the work thread to reach the write lock, not for a delay (#4308): a thread that has
+    /// read the layer first reads before it gets here (reads use their own connections and never wait), and one that
+    /// takes the lock first has not read yet, so either way the other change lands after whatever the work will read
+    /// early, however slowly the thread starts.
     private func overlap(
         otherWriter change: (inout ImportedCommentaryLayer) -> Void,
         work: @escaping () throws -> Void
     ) throws {
         let job = Job(work)
-        let started = DispatchSemaphore(value: 0)
+        let atTheLock = DispatchSemaphore(value: 0)
         let finished = DispatchSemaphore(value: 0)
+        store.onWaitForConnectionLock = { atTheLock.signal() }
+        defer { store.onWaitForConnectionLock = nil }
         try store.withSessionTransaction {
             DispatchQueue.global().async {
-                started.signal()
                 do { try job.work() } catch { job.error = error }
                 finished.signal()
             }
-            XCTAssertEqual(started.wait(timeout: .now() + 10), .success)
-            Thread.sleep(forTimeInterval: 0.3)
+            XCTAssertEqual(atTheLock.wait(timeout: .now() + 10), .success, "the work thread reached the write lock held here")
             var layer = try XCTUnwrap(store.loadImportedCommentaryLayer(id: "layer"))
             change(&layer)
             try store.saveImportedCommentaryLayer(layer)

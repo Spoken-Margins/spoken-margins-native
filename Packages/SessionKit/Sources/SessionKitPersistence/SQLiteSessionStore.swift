@@ -24,6 +24,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job"]
     var db: OpaquePointer?
     let connectionLock = NSRecursiveLock()
+    /// Test seam, nil in the app: called by a thread that finds `connectionLock` held and is about to wait for it. A
+    /// test that needs "the other writer has reached the lock" waits on this instead of sleeping (#4308).
+    var onWaitForConnectionLock: (@Sendable () -> Void)?
     /// How many `withTransaction` calls are open on this connection. Guarded by `connectionLock`.
     private var transactionDepth = 0
     /// Read-only connections for reads, so a read never waits for `connectionLock` or for another read (#2103).
@@ -2215,6 +2218,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
 
     func withConnectionLock<T>(_ operation: () throws -> T) rethrows -> T {
         if !connectionLock.try() {
+            onWaitForConnectionLock?()
             // A background write holds the store. The main thread's wait is a hang of its own: name it (#2256).
             if Thread.isMainThread {
                 MainThreadOperationLabels.shared.scoped("store.writeWait") { connectionLock.lock() }
