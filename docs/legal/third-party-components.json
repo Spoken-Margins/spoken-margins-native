@@ -366,6 +366,23 @@
       }
     },
     {
+      "id": "regex",
+      "name": "regex (Python)",
+      "version": "2025.9.18",
+      "license": "Apache-2.0 AND CNRI-Python",
+      "distribution": "tool",
+      "by": "Matthew Barnett",
+      "source": "https://github.com/mrabarnett/mrab-regex",
+      "paths": [
+        "research/C1/tools"
+      ],
+      "licenseUrl": "https://github.com/mrabarnett/mrab-regex/blob/hg/LICENSE.txt",
+      "note": "Matches Unicode patterns in the marker comparison tests (research/C1/tools). Installed from requirements-dev.txt so the hosted research step really runs them (#4320); build-time only and none ships.",
+      "tracks": {
+        "pip": "regex"
+      }
+    },
+    {
       "id": "kitten",
       "name": "Kitten fallback voice (KittenTTS nano model and the Jasper voice style)",
       "version": "0.8 (fp32)",

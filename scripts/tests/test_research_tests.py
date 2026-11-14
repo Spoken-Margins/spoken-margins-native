@@ -3,6 +3,7 @@ import os
 import importlib.util
 import io
 import json
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -136,6 +137,29 @@ class ResearchRunnerTests(unittest.TestCase):
 
     def test_the_portable_job_installs_lxml_through_the_requirements_file_it_already_uses(self):
         self.assertRegex((ROOT / 'requirements-dev.txt').read_text(), r'(?m)^lxml==')
+
+    def test_marker_diff_runs_under_the_research_scope_with_its_package_pinned(self):
+        # #4320: the scope named this command for marker_diff.py changes while the command listed its tests as
+        # "not covered", so a wrong result there still gave a green T1.
+        self.assertIn(('test_marker_diff',), [arguments for _, folder, arguments in research_tests.PYTHON_SUITES
+                                              if folder == 'research/C1/tools'])
+        self.assertNotIn('test_marker_diff', ' '.join(label for label, _ in research_tests.NOT_COVERED))
+        self.assertTrue((ROOT / 'research/C1/tools/test_marker_diff.py').is_file())
+        self.assertRegex((ROOT / 'requirements-dev.txt').read_text(), r'(?m)^regex==')  # so the hosted job runs it
+
+    def test_a_wrong_marker_diff_result_turns_the_research_suite_red(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tools = Path(temporary) / 'research/C1/tools'
+            shutil.copytree(ROOT / 'research/C1/tools', tools, ignore=shutil.ignore_patterns('__pycache__'))
+            clean = research_tests.python_suite(Path(temporary), 'marker_diff', 'research/C1/tools', ('test_marker_diff',))
+            if clean.skipped:
+                self.skipTest(clean.skipped)  # no `regex` on this machine; the hosted job installs it
+            self.assertFalse(clean.error)
+            self.assertGreater(clean.tests, 0)
+            source = (tools / 'marker_diff.py').read_text()
+            (tools / 'marker_diff.py').write_text(source + '\n\ndef characters(text):\n    return []\n')
+            broken = research_tests.python_suite(Path(temporary), 'marker_diff', 'research/C1/tools', ('test_marker_diff',))
+            self.assertTrue(broken.error)
 
     def test_a_research_step_that_ran_nothing_fails(self):
         step, error, _ = self.run_step('skipped: go research/B4/server - no go\nresearch-tests: 0 tests in 0 suites; 3 skipped\n')
