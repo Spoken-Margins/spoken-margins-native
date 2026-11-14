@@ -1202,6 +1202,23 @@ enum PDFStructuredTextExtractor {
                 if !text.isEmpty {
                     let visibleLocation = firstVisibleLocation(in: source, range: range)
                     let font = attributed.attribute(.font, at: visibleLocation, effectiveRange: nil) as? UIFont
+                    // A raised number PDFKit returns as a line of its own is a small run of the
+                    // line it is printed against, for the classifier to judge like any other
+                    // (#4256). Left as a line it was read aloud, and its footnote had no marker.
+                    if detectSuperscripts, let bounds, let last = result.indices.last, let lineBounds = result[last].bounds,
+                       PDFStrayMarkerLine.isMarker(
+                           .init(text: text, bounds: bounds,
+                                 pointSize: Double(mainPointSize(in: attributed, range: range) ?? font?.pointSize ?? 0)),
+                           atEndOf: .init(text: result[last].text, bounds: lineBounds, pointSize: Double(result[last].mainPointSize))
+                       ) {
+                        let start = result[last].text.count
+                        result[last].text += text
+                        result[last].smallRuns.append(SmallRun(
+                            range: start..<(start + text.count),
+                            baselineShift: Double((bounds.minY - lineBounds.minY) / result[last].mainPointSize)
+                        ))
+                        continue
+                    }
                     result.append(TextLine(
                         text: text,
                         pointSize: font?.pointSize ?? 0,
