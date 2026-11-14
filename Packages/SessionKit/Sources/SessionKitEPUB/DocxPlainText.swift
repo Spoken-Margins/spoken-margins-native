@@ -18,9 +18,20 @@ public enum DocxPlainText {
     public static func text(from url: URL, maximumBytes: Int = 32 * 1_024 * 1_024) throws -> String {
         let archive: Archive
         do { archive = try Archive(url: url, accessMode: .read) } catch { throw Failure.notADocx }
+        return try text(from: archive, maximumBytes: maximumBytes)
+    }
+
+    /// The same, from a file already read into memory (#2997).
+    public static func text(from data: Data, maximumBytes: Int = 32 * 1_024 * 1_024) throws -> String {
+        let archive: Archive
+        do { archive = try Archive(data: data, accessMode: .read) } catch { throw Failure.notADocx }
+        return try text(from: archive, maximumBytes: maximumBytes)
+    }
+
+    private static func text(from archive: Archive, maximumBytes: Int) throws -> String {
         guard let entry = archive["word/document.xml"], entry.uncompressedSize <= UInt64(maximumBytes) else { throw Failure.notADocx }
         var data = Data()
-        _ = try archive.extract(entry, skipCRC32: false) { data.append($0) }
+        do { _ = try archive.extract(entry, skipCRC32: false) { data.append($0) } } catch { throw Failure.notADocx }
         return try text(fromDocumentXML: data)
     }
 
