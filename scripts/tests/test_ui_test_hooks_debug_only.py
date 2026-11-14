@@ -91,23 +91,25 @@ class HookIsActiveTests(unittest.TestCase):
     """
 
     HOOKS = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp" / "UITestingHooks.swift"
-    DEBUG_SWITCH = 'static var isActive: Bool { CommandLine.arguments.contains("--ui-testing") }'
-    RELEASE_STUB = "static var isActive: Bool { false }"
+    DEBUG_SWITCH = re.compile(
+        r'static\s+var\s+isActive\s*:\s*Bool\s*\{\s*(?:return\s+)?(?:CommandLine|ProcessInfo\.processInfo)\.arguments\s*\.contains\(\s*"--ui-testing"\s*\)\s*\}')
+    RELEASE_STUB = re.compile(r'static\s+(?:var\s+isActive\s*:\s*Bool\s*\{\s*(?:return\s+)?false\s*\}|let\s+isActive\s*(?::\s*Bool\s*)?=\s*false\b)')
 
     @classmethod
     def problems(cls, source: str) -> list[str]:
         """What is wrong with the two `isActive` definitions: the Debug one must read the launch argument, the Release
-        stub must answer no and name no hook literal."""
-        try:
-            debug = source.index("    #if DEBUG\n")
-            other = source.index("    #else\n", debug)
-            release = source[other:source.index("    #endif\n", other)]
-        except ValueError:
+        stub must answer no and name no hook literal. Formatting does not matter."""
+        opened = re.search(r"^[ \t]*#if[ \t]+DEBUG[ \t]*$", source, re.M)
+        other = re.search(r"^[ \t]*#else[ \t]*$", source[opened.end():], re.M) if opened else None
+        closed = re.search(r"^[ \t]*#endif", source[opened.end() + other.end():], re.M) if other else None
+        if not closed:
             return ["UITestingHooks.swift no longer has its #if DEBUG / #else / #endif"]
+        debug = source[opened.end():opened.end() + other.start()]
+        release = source[opened.end() + other.end():opened.end() + other.end() + closed.start()]
         found = []
-        if cls.DEBUG_SWITCH not in source[debug:other]:
+        if not cls.DEBUG_SWITCH.search(debug):
             found.append("the Debug isActive does not read --ui-testing")
-        if cls.RELEASE_STUB not in release:
+        if not cls.RELEASE_STUB.search(release):
             found.append("the Release isActive is not false")
         if HOOK.search(release):
             found.append("the Release stub names a hook literal")
@@ -118,10 +120,22 @@ class HookIsActiveTests(unittest.TestCase):
 
     def test_that_check_fails_for_an_always_on_switch_or_a_live_release_stub(self):
         real = self.HOOKS.read_text(encoding="utf-8")
-        self.assertEqual(self.problems(real.replace(self.DEBUG_SWITCH, "static var isActive: Bool { true }")),
+        debug = 'static var isActive: Bool { CommandLine.arguments.contains("--ui-testing") }'
+        stub = "static var isActive: Bool { false }"
+        self.assertIn(debug, real)
+        self.assertIn(stub, real)
+        self.assertEqual(self.problems(real.replace(debug, "static var isActive: Bool { true }")),
                          ["the Debug isActive does not read --ui-testing"])
-        self.assertEqual(self.problems(real.replace(self.RELEASE_STUB, "static var isActive: Bool { true }")),
+        self.assertEqual(self.problems(real.replace(stub, "static var isActive: Bool { true }")),
                          ["the Release isActive is not false"])
+
+    def test_a_correct_reformat_is_not_a_failure(self):
+        real = self.HOOKS.read_text(encoding="utf-8")
+        debug = 'static var isActive: Bool { CommandLine.arguments.contains("--ui-testing") }'
+        stub = "static var isActive: Bool { false }"
+        rewritten = real.replace(debug, 'static var isActive: Bool {\n        CommandLine.arguments.contains("--ui-testing")\n    }')
+        rewritten = rewritten.replace(stub, "static let isActive = false")
+        self.assertEqual(self.problems(rewritten), [])
 
 
 class ShareLinkHandoffTests(unittest.TestCase):
