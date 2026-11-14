@@ -18,6 +18,7 @@ Stream C1's research half (brief: `docs/workstreams/streams/C1-pdf.md`, tracking
 | `tools/report.py` | Writes `results/REPORT.md` from every `scores.json`. |
 | `tools/precheck.py` | C1 M2: cheap pre-check features, a threshold rule fitted on the corpus, and its recall and false alarms, in sample and leave-one-out. It needs the app's own output (a Mac run) for a real result. |
 | `tools/number_read_sites.py` | Lists the citation sites an extractor spoke as a bare number, with the words around each, so they can be sorted into a real citation style or something that only looks like one (#1189). `--markdown` prints a table. |
+| `tools/marker_diff.py` | Compares what two runs of the app's extractor silence: per paper, citation and footnote markers, footnote markers with a letter (the ones a math index is mistaken for) and footnote text, and with `--sites` every changed marker with the words around it (#4194). |
 | `tools/inspect_alignment.py` | Prints one paper's spoken text with each run of words tagged by category, so you can check the scorer by eye. |
 | `tools/test_score.py`, `tools/test_net.py` | Unit tests for the scorer, both parsers, and the downloader's handling of cut-off and mismatched files. |
 | `mac/` | **(Mac)** `c1-extract`, a command-line tool that runs the app's `PDFStructuredTextExtractor` over the corpus, plus `run.sh`, which does fetch, build, extract, score and report in one go. |
