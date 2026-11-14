@@ -202,7 +202,7 @@ final class LiveSessionPhotoStoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
         try Data("keep me".utf8).write(to: sibling.appending(path: "note.txt"))
         let survivor = try keep(session: "s3", margin: "m1")
-        for id in ["../s2", "..", "../../support", "/", "."] {
+        for id in ["../s2", "..", "../..", "/", "."] {
             store.removeFolder(sessionId: id)
             XCTAssertTrue(exists(sibling.appending(path: "note.txt")), "removeFolder(\(id)) left the store")
             XCTAssertTrue(store.fileExists(for: other), "removeFolder(\(id)) took another session's photo")
