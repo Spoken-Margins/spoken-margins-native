@@ -15,7 +15,7 @@ public struct FollowingShowRow: Equatable, Identifiable, Sendable {
     public var newestEpisodeDate: Date?
     /// "Oct 16", nil when the newest episode has no date.
     public var dateLabel: String?
-    /// The entry the row's play button plays: always the episode the row previews (`newestEntryID`), so ▶ plays
+    /// The entry the row's play button plays (`FollowingUpNext.pick`, the same episode the show's Up next card names): always the episode the row previews (`newestEntryID`), so ▶ plays
     /// what the listener sees. Nil when the show has nothing left to hear (every episode played or dismissed).
     public var playEntryID: String?
     /// When the previewed episode is already in the Library, its item: ▶ resumes it there instead of importing it again.
@@ -86,8 +86,9 @@ public enum FollowingShowRows {
             let shown = (bySubscription[subscription.id] ?? []).filter { $0.state != .dismissed }
             // The episode worth hearing next: unplayed, or in the Library and not finished. If none is left, the newest of
             // what is there, which only names the show's last word and offers no ▶.
-            let hearable = shown.filter { isHearable($0, libraryEpisodes: libraryEpisodes) }
-            let newest = hearable.min(by: newestFirst) ?? shown.min(by: newestFirst)
+            // One rule decides, here and on the show's Up next card (`FollowingUpNext`).
+            let upNext = FollowingUpNext.pick(entries: shown, libraryEpisodes: libraryEpisodes)
+            let newest = upNext ?? shown.min(by: newestFirst)
             let newestDate = newest.flatMap(date(of:))
             let isQuiet = subscription.state == .muted
             let count = isQuiet ? 0 : newCount(of: subscription, in: shown, lookedAt: lookedAt[subscription.id])
@@ -103,7 +104,7 @@ public enum FollowingShowRows {
             let label = [
                 title,
                 count > 0 ? "\(count) new" : nil,
-                newestTitle.map { "\(hearable.isEmpty ? "Newest" : "Up next"): \($0)" },
+                newestTitle.map { "\(upNext == nil ? "Newest" : "Up next"): \($0)" },
                 newest?.state == .imported ? "In your Library" : nil,
                 spokenDate.map { "Published \($0)" },
                 isQuiet ? "Quiet" : nil,
@@ -111,8 +112,8 @@ public enum FollowingShowRows {
             let row = FollowingShowRow(
                 id: subscription.id, title: title, newCount: count,
                 newestEpisodeTitle: newestTitle, newestEpisodeDate: newestDate, dateLabel: dateLabel,
-                playEntryID: hearable.isEmpty ? nil : newest?.id,
-                playItemID: hearable.isEmpty || newest?.state != .imported ? nil : newest.flatMap { libraryEpisodes[$0.id]?.itemID },
+                playEntryID: upNext?.id,
+                playItemID: upNext.flatMap { $0.state == .imported ? libraryEpisodes[$0.id]?.itemID : nil },
                 newestEntryID: newest?.id, isNewestInLibrary: newest?.state == .imported,
                 isQuiet: isQuiet, accessibilityLabel: label
             )
