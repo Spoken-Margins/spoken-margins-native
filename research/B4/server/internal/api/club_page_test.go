@@ -241,9 +241,31 @@ func TestClubPageKeepsTheSecurityHeadersAndFetchesNothing(t *testing.T) {
 		if strings.Contains(csp, "connect-src") || strings.Contains(csp, "unsafe-eval") || strings.Contains(csp, "script-src 'unsafe") {
 			t.Errorf("%s: CSP %q is wider than it needs", path, csp)
 		}
+		// default-src 'none' blocks an image, a stylesheet link or a prefetch that a script adds with the invite key in
+		// its address, but only while no directive loosens it. script-src must be exactly 'self', style-src the page's
+		// inline style, and every other fetch directive absent or 'none', so `img-src *` fails here (#4317).
+		for _, directive := range strings.Split(csp, ";") {
+			f := strings.Fields(directive)
+			if len(f) == 0 {
+				continue
+			}
+			allowed := map[string]string{"script-src": "'self'", "style-src": "'unsafe-inline'"}
+			if only, ok := allowed[f[0]]; ok {
+				if len(f) != 2 || f[1] != only {
+					t.Errorf("%s: CSP directive %q is not exactly %s", path, strings.TrimSpace(directive), only)
+				}
+			} else if (strings.HasSuffix(f[0], "-src") && f[0] != "default-src") || f[0] == "navigate-to" {
+				if len(f) != 2 || f[1] != "'none'" {
+					t.Errorf("%s: CSP directive %q lets the page reach beyond itself", path, strings.TrimSpace(directive))
+				}
+			}
+		}
 	}
 }
 
+// Go cannot run the script. That it makes no request is shown by club-page.test.mjs, which runs it with a recording
+// stub on every network path (#4317); this test checks the browser is served that very file, and keeps a text search as
+// a backstop only. TestClubPageKeepsTheSecurityHeadersAndFetchesNothing pins the CSP that blocks what a stub cannot see.
 func TestClubScriptIsServedAndMakesNoRequest(t *testing.T) {
 	c := newClubHarness(t)
 	got := c.do("GET", "/c/club-page.mjs", nil, "", clubAddr)
@@ -257,7 +279,7 @@ func TestClubScriptIsServedAndMakesNoRequest(t *testing.T) {
 	if !bytes.Equal(got.body, onDisk) {
 		t.Errorf("the served script is not the file")
 	}
-	// The page opens nothing but an address in the app: no network call of any kind may appear in it.
+	// Backstop only: a one-line image beacon passes this list; club-page.test.mjs is the check that runs the script.
 	for _, banned := range []string{"fetch(", "XMLHttpRequest", "sendBeacon", "WebSocket", "EventSource", "import(", "localStorage", "sessionStorage", "document.cookie", "location.replace", "location.assign", "location.href ="} {
 		if bytes.Contains(got.body, []byte(banned)) {
 			t.Errorf("the script uses %s", banned)
