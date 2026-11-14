@@ -8,10 +8,12 @@ public enum MarginRowWording {
 
     /// "Ch. 3 · 21:03 · Tue": where in the source it was made, then the day.
     /// - `placeName`: the chapter or listening-map scene, when there is one.
-    /// - Position: the clock time for media, "paragraph N" for text, else the rough percent.
+    /// - Position: the clock time for media, the meeting clock for a transcript, "paragraph N" for other text, else the
+    ///   rough percent. The meeting clock is the bare clock a podcast Margin shows (#2997).
     public static func placeLine(
         placeName: String? = nil,
         mediaTimeMs: Int?,
+        meetingClockMs: Int? = nil,
         paragraph: Int? = nil,
         roughPercent: Int,
         createdAt: Date,
@@ -23,6 +25,8 @@ public enum MarginRowWording {
         if let name = placeName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty { parts.append(name) }
         if let mediaTimeMs {
             parts.append(MarginDeepLink.clockPosition(ms: mediaTimeMs))
+        } else if let meetingClockMs {
+            parts.append(MarginDeepLink.clockPosition(ms: meetingClockMs))
         } else if let paragraph, paragraph > 0 {
             parts.append("paragraph \(paragraph)")
         } else {

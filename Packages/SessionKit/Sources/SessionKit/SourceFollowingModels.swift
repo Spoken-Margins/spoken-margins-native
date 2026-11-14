@@ -203,7 +203,7 @@ public enum ManualFollowPolicy {
     /// Items that came from the listener's own files or from the app itself. Even when a file
     /// names a web source (a Markdown `source:` line), the item is the file, not a feed entry.
     static let nonFollowableReferenceTypes: Set<String> = [
-        "file", "epub", "audiobook", "manual", "guided_onboarding", "spoken_margins_package"
+        "file", "epub", "audiobook", "manual", "guided_onboarding", "spoken_margins_package", TranscriptItemText.referenceType
     ]
 
     /// Whether to look for a feed for this item. This never shows Follow by itself: see ``offer``.
