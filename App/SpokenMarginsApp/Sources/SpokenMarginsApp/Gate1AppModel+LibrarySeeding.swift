@@ -34,6 +34,7 @@ extension Gate1AppModel {
             let store = try requireStore()
             libraryAccessError = nil
             purgeExpiredEpisodeMapPreparationJobs(store: store)
+            finishInterruptedPermanentDeletes(store: store)
             let seed = pendingUITestingSeed ?? UITestingLaunchSeed.none; pendingUITestingSeed = nil
             switch seed {
             case .none: break
