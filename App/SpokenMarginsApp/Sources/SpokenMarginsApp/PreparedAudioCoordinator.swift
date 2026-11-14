@@ -2,6 +2,7 @@ import AVFoundation
 import CryptoKit
 import Foundation
 import SessionKit
+import SessionKitPersistence
 import SessionKitSupertonic
 
 struct PreparedChunkPlan: Equatable, Sendable {
@@ -551,7 +552,8 @@ actor PreparedAudioCoordinator {
         return String(path.dropFirst(root.count + 1))
     }
 
+    /// The folder name the purge on permanent delete (`ItemOwnedFiles`, #4227) removes by, so the two cannot drift.
     private func safePath(_ value: String) -> String {
-        String(value.map { $0.isLetter || $0.isNumber ? $0 : "-" }.prefix(80))
+        ItemOwnedFiles.preparedAudioDirectoryName(itemId: value)
     }
 }

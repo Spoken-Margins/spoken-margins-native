@@ -69,4 +69,38 @@ extension Gate1AppModel {
         guard file.deletingLastPathComponent() == generatedDirectory else { return }
         Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: file) }
     }
+
+    /// The journal and the folders a permanent delete finishes removing from, even after a quit (#4227). Nil when the
+    /// app's support directory can't be found; permanent delete then goes on as it did, with the files left.
+    private func permanentDeletePurge() -> PermanentDeletePurge? {
+        guard let support = try? applicationSupportDirectory() else { return nil }
+        return PermanentDeletePurge(
+            journalDirectory: support.appending(path: "SpokenMargins/PurgeJournal", directoryHint: .isDirectory),
+            roots: [
+                .init(name: ItemOwnedFiles.preparedAudioRoot,
+                      url: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)),
+                .init(name: ItemOwnedFiles.listeningEditionsRoot,
+                      url: support.appending(path: "SpokenMargins/ListeningEditions", directoryHint: .isDirectory)),
+            ])
+    }
+
+    /// Runs `delete`, the call that removes the items' rows, and then removes the files only those items owned (their
+    /// prepared narration chunks and saved Listening Edition) off the main thread. A record of the files is written
+    /// first, so a quit or a failed removal is finished at the next launch. If `delete` throws, no file is touched.
+    func purgingItemFiles(ofItems itemIds: [String], delete: () throws -> Void) throws {
+        guard let purge = permanentDeletePurge() else { return try delete() }
+        try purge.deleting(itemIds: itemIds, targets: ItemOwnedFiles.targets(forItems: itemIds), delete: delete)
+    }
+
+    /// Finishes what a permanent delete left when the app was quit part way. Reads the Library off the main thread
+    /// and does nothing when no delete was interrupted.
+    func finishInterruptedPermanentDeletes(store: SQLiteSessionStore) {
+        guard let purge = permanentDeletePurge() else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            let outcome = purge.resumePending(store: store)
+            guard outcome.removed.count + outcome.kept.count + outcome.abandonedRecords > 0 else { return }
+            let line = "removed:\(outcome.removed.count):kept:\(outcome.kept.count):abandoned:\(outcome.abandonedRecords)"
+            await MainActor.run { self?.diagnostics["lastPermanentDeleteResume"] = line }
+        }
+    }
 }
