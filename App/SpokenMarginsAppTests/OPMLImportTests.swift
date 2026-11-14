@@ -145,6 +145,71 @@ final class OPMLImportTests: XCTestCase {
         XCTAssertTrue(try store.loadFeedSubscriptions().isEmpty)
     }
 
+    /// #4284: the Shortcut action opens the drawer on the same preview the file gives, and nothing is followed,
+    /// fetched or added until Follow is tapped.
+    func testShortcutActionOpensTheSamePreviewAndFollowsNothingUntilFollow() async throws {
+        let followed = try await followMutedShowWithADismissedEntry()
+        OPMLFeedsURLProtocol.reset()
+        let fromFile = makeImporter()
+        fromFile.load(data: Data(Self.mixedOPML.utf8))
+
+        let drawer = CatalogDrawerModel(
+            store: nil,
+            defaults: UserDefaults(suiteName: "opml-import-\(UUID().uuidString)")!,
+            subscriptions: { [] },
+            follow: { _ in "" },
+            makeOPMLImport: { [unowned self] in self.makeImporter() }
+        )
+        let priorDrawer = FollowPodcastsShortcutBridge.catalogDrawer
+        FollowPodcastsShortcutBridge.catalogDrawer = drawer
+        defer { FollowPodcastsShortcutBridge.catalogDrawer = priorDrawer }
+        let intent = FollowPodcastsInSpokenMarginsIntent()
+        intent.links = Self.mixedLinks
+        _ = try await intent.perform()
+
+        XCTAssertTrue(drawer.isPresented, "the drawer opens on the import")
+        let importer = try XCTUnwrap(drawer.shortcutImport)
+        XCTAssertEqual(importer.origin, .shortcut)
+        XCTAssertEqual(try preview(importer), try preview(fromFile))
+        XCTAssertEqual(importer.selected, fromFile.selected)
+        XCTAssertEqual(try store.loadFeedSubscriptions().map(\.id), [followed.id], "nothing followed before Follow")
+        XCTAssertTrue(OPMLFeedsURLProtocol.requestedURLs.isEmpty, "and nothing fetched")
+
+        await importer.followSelected()
+        guard case .finished(let result) = importer.phase else { return XCTFail("\(importer.phase)") }
+        XCTAssertEqual(result.followed.map(\.title), ["Pod One", "Pod Two", "Pod Three", "A Blog"])
+        XCTAssertEqual(try store.loadFeedSubscriptions().count, 5)
+        XCTAssertEqual(try store.listItems(includeDeleted: true).count, 0, "nothing is added to the Library")
+        XCTAssertEqual(refreshCount, 1)
+
+        drawer.didDismiss()
+        XCTAssertNil(drawer.shortcutImport, "closing the drawer drops the list")
+    }
+
+    func testShortcutActionWithNoLinksOrNoImportSaysWhyAndOpensNothing() async throws {
+        let drawer = CatalogDrawerModel(store: nil, subscriptions: { [] }, follow: { _ in "" }, makeOPMLImport: { [unowned self] in self.makeImporter() })
+        XCTAssertThrowsError(try FollowPodcastsShortcutBridge.open(["", " \n "], drawer: drawer)) {
+            XCTAssertEqual($0 as? FollowPodcastsShortcutError, .noLinks)
+        }
+        XCTAssertFalse(drawer.isPresented)
+        let noImport = CatalogDrawerModel(store: nil, subscriptions: { [] }, follow: { _ in "" })
+        XCTAssertThrowsError(try FollowPodcastsShortcutBridge.open(Self.mixedLinks, drawer: noImport)) {
+            XCTAssertEqual($0 as? FollowPodcastsShortcutError, .appNotReady)
+        }
+        XCTAssertFalse(noImport.isPresented)
+        XCTAssertTrue(try store.loadFeedSubscriptions().isEmpty)
+    }
+
+    /// `mixedOPML` as the lines a Shortcut passes: names before links, two in one text, and junk for the outline with no link.
+    static let mixedLinks = [
+        "Pod One https://feeds.example.com/pod1.xml\nPod Two https://feeds.example.com/pod2.xml",
+        "Pod Three: https://feeds.example.com/pod3.xml",
+        "Followed Show https://feeds.example.com/followed.xml",
+        "A Blog https://feeds.example.com/blog.xml",
+        "Pod One again https://feeds.example.com/pod1.xml/",
+        "Broken, no link",
+    ]
+
     /// 3 podcasts, 1 blog, 1 repeat, 1 outline with no feed link, 1 show already followed.
     static let mixedOPML = """
     <?xml version="1.0" encoding="UTF-8"?>

@@ -140,7 +140,7 @@ struct SpokenMarginsApp: App {
         _sharingCoordinator = StateObject(
             wrappedValue: Build23SharingCoordinator(model: model)
         )
-        _catalogDrawer = StateObject(wrappedValue: CatalogDrawerModel(
+        let drawer = CatalogDrawerModel(
             store: CatalogDrawerModel.makeStore(),
             subscriptions: { [weak model] in model?.feedSubscriptions ?? [] },
             follow: { [weak model] feedURL in
@@ -161,7 +161,11 @@ struct SpokenMarginsApp: App {
             startFirstListen: { [weak model] sourceIds, allowsWelcome in
                 await model?.startFirstListen(pickedSourceIds: sourceIds, allowsWelcomeSample: allowsWelcome)
             }
-        ))
+        )
+        _catalogDrawer = StateObject(wrappedValue: drawer)
+        #if !SPOKEN_MARGINS_LEGACY
+        FollowPodcastsShortcutBridge.catalogDrawer = drawer
+        #endif
     }
 
     private func open(_ url: URL) {

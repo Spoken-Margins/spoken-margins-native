@@ -31,6 +31,8 @@ final class CatalogDrawerModel: ObservableObject {
     /// Why the last search failed, in words. The subject list stays usable underneath it.
     @Published private(set) var searchError: String?
     @Published private(set) var isSearchPending = false
+    /// The import a "Follow Podcasts in Spoken Margins" Shortcut opened (#4284), shown over the drawer's list.
+    @Published var shortcutImport: OPMLImportModel?
 
     private let store: SourceCatalogStore?
     private let searcher: PodcastNameSearch?
@@ -200,6 +202,19 @@ final class CatalogDrawerModel: ObservableObject {
         isPresented = true
     }
 
+    /// A Shortcut passed in podcast feed links (#4284): the drawer opens, if it isn't open already, on their
+    /// import preview. Nothing is followed until the listener taps Follow there. A second list while the first
+    /// is still following is turned away rather than stopping that run. False when there is no import.
+    @discardableResult
+    func openShortcutImport(feedLinks: [String]) -> Bool {
+        guard let makeOPMLImport, shortcutImport?.isFollowing != true else { return false }
+        let importer = makeOPMLImport()
+        importer.load(feedLinks: feedLinks)
+        shortcutImport = importer
+        if !isPresented { present() }
+        return true
+    }
+
     /// Done. On the first-run opening the sheet closes and the listener's first pick starts playing as it
     /// goes (#2851). A swipe down closes it without playing.
     func finish() {
@@ -211,6 +226,7 @@ final class CatalogDrawerModel: ObservableObject {
 
     /// The sheet closed, however it closed.
     func didDismiss() {
+        shortcutImport = nil
         // Withdrawn for a friend's file: it opens again once the friend's item has been opened (#3291).
         if isWithdrawing { isWithdrawing = false; return }
         welcomeOrder.drawerClosed()
@@ -409,6 +425,15 @@ struct CatalogDrawerView: View {
                 }
             }
             .task { await drawer.load() }
+            .navigationDestination(isPresented: Binding(
+                get: { drawer.shortcutImport != nil },
+                set: { if !$0 { drawer.shortcutImport = nil } }
+            )) {
+                if let importer = drawer.shortcutImport {
+                    // A new list from the Shortcut is a new screen, not the old one's state.
+                    OPMLImportScreen(importer: importer).id(ObjectIdentifier(importer))
+                }
+            }
         }
         .accessibilityIdentifier("catalog.drawer")
     }
