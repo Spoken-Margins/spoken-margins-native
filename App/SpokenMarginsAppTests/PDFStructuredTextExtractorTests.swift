@@ -228,6 +228,75 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertTrue(spoken.contains("The largest step hmax was set by Smith J and Doe A, for every cohort."), "\(spoken)")
     }
 
+    func testV2ReadsADigitAfterALoneLetterByHowTheDocumentCites() throws {
+        // #4254: "B3" and "X2" read the same as a citation after a one-letter name, so the
+        // document decides. The same line is drawn in a paper that cites in brackets,
+        // where the digits are indices, and in one with ten raised citations, where they
+        // may be citations and stay silent. "L0" is spoken in both: no citation is
+        // numbered 0.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 11)]
+        let small: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 7)]
+        func line(_ pieces: [(String, Bool)]) -> NSAttributedString {
+            let result = NSMutableAttributedString()
+            for (text, isSmall) in pieces {
+                result.append(NSAttributedString(string: text, attributes: isSmall ? small : body))
+            }
+            return result
+        }
+        let probe = line([("We tested vitamin B", false), ("3", true), (" and the constant X", false), ("2", true), (" with the baseline L", false), ("0", true), (" in every cohort.", false)])
+        func spokenLines(_ lines: [NSAttributedString]) throws -> [String] {
+            let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+            let data = renderer.pdfData { context in
+                context.beginPage()
+                for (index, line) in (lines + [probe]).enumerated() {
+                    line.draw(at: CGPoint(x: 60, y: 80 + CGFloat(index) * 40))
+                }
+            }
+            return StructuredDocumentSpeech.spokenLines(try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: data))))
+        }
+
+        let bracketed = try spokenLines([
+            line([("Earlier work [12] and later work [14] agree with what the first cohort showed.", false)]),
+            line([("Reasoning and the aptitude of listeners rose in every cohort we studied.", false)]),
+        ])
+        XCTAssertTrue(bracketed.contains("We tested vitamin B3 and the constant X2 with the baseline L0 in every cohort."), "\(bracketed)")
+
+        let raised = try spokenLines([
+            line([("Reasoning rose,", false), ("1", true), (" aptitude fell,", false), ("2", true), (" and memory held,", false), ("3", true),
+                  (" in the first", false), ("4", true), (" and second", false), ("5", true), (" cohorts.", false)]),
+            line([("Speed rose,", false), ("6", true), (" accuracy fell,", false), ("7", true), (" and recall held,", false), ("8", true),
+                  (" in the third", false), ("9", true), (" and fourth", false), ("10", true), (" cohorts.", false)]),
+        ])
+        XCTAssertTrue(raised.contains("Reasoning rose, aptitude fell, and memory held, in the first and second cohorts."), "\(raised)")
+        XCTAssertTrue(raised.contains("We tested vitamin B and the constant X with the baseline L0 in every cohort."), "\(raised)")
+    }
+
+    func testV2KeepsAFootnoteOutOfTheBodyWhenTheOnlyRaisedNumberIsNowAnIndex() throws {
+        // #4254: a footnote is linked when its page sets the same number raised. In a paper
+        // that cites in brackets "t1" is now an index and spoken, and it was the page's
+        // only raised "1": without the wider set of cues the footnote lost its link and
+        // was read aloud as body text (C1 paper arxiv-2609.31218v1; the marker PDFKit
+        // loses there is #4256).
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 11)]
+        let small: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 7)]
+        let note: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 8)]
+        let index = NSMutableAttributedString(string: "We take the token t", attributes: body)
+        index.append(NSAttributedString(string: "1", attributes: small))
+        index.append(NSAttributedString(string: " as the first entry of the matrix and keep the others.", attributes: body))
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("Earlier work [12] and later work [14] agree with what the first cohort showed." as NSString).draw(at: CGPoint(x: 60, y: 80), withAttributes: body)
+            index.draw(at: CGPoint(x: 60, y: 120))
+            ("Reasoning and the aptitude of listeners rose in every cohort we studied." as NSString).draw(at: CGPoint(x: 60, y: 160), withAttributes: body)
+            ("1The isotropic gain assumption is adopted here for analytical simplicity only." as NSString).draw(at: CGPoint(x: 60, y: 700), withAttributes: note)
+        }
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: data)))
+        let spoken = StructuredDocumentSpeech.spokenLines(document)
+        XCTAssertTrue(spoken.contains("We take the token t1 as the first entry of the matrix and keep the others."), "\(spoken)")
+        XCTAssertFalse(spoken.contains { $0.contains("isotropic gain") }, "\(spoken)")
+    }
+
     func testV2ReadsEachOutlineHeadingOnceWhereItIsPrinted() throws {
         // #355: outline titles no line matched ("A.1" labels, wrapped headings, run-in
         // headings) were inserted at the top of their page and read, then the printed
