@@ -673,7 +673,7 @@ test('a double tap on Select all and on a star ends where the buttons say, not w
   }
   await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 1; });
   const row = (words: string) => playing.locator('li.margin').filter({ hasText: words });
-  // A star: two quick taps are two writes in order, so the star ends off and stays off after a reload.
+  // A star: two quick taps are two writes in order, so the star ends off.
   const star = row('Second note.').getByRole('button', { name: 'Star for sharing' });
   await star.dblclick();
   await expect(star).toHaveAttribute('aria-pressed', 'false');
