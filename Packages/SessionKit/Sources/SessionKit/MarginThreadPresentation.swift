@@ -6,7 +6,7 @@ import Foundation
 /// Built from `MarginReplyGraph` each time it's asked, so it follows whatever order packets
 /// arrived in. A reply whose parent isn't in this Library is shown on its own and says so.
 public enum MarginThreadPresentation {
-    public static let missingParentNote = "reply to a Margin you don't have"
+    public static let missingParentNote = "Reply to a Margin that isn't on this phone"
 
     public struct Row: Equatable, Sendable, Identifiable {
         public let reference: MarginReference

@@ -2500,6 +2500,47 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         }
     }
 
+    /// Per item, when the newest friend layer that has a counted Margin was imported (#4101), for the Library's Recently
+    /// Added order. The same rows as `sharedMarginTalliesSQL`, so a deleted layer, a hidden sender and a hidden Margin
+    /// count here exactly as they do in the tally. `importedAt` is ISO 8601 text of one shape, so MAX is the newest.
+    static let friendMarginsArrivalsSQL = """
+        SELECT layer.item_id, MAX(json_extract(layer.payload, '$.importedAt'))
+        FROM records AS note
+        JOIN records AS layer
+          ON layer.kind = ?2
+         AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
+        WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
+          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        GROUP BY layer.item_id;
+        """
+
+    /// One grouped read, in the Library's read snapshot beside the tallies: no query per row.
+    public func loadFriendMarginsArrivals(hiding hidden: HiddenSenders = HiddenSenders()) throws -> [String: Date] {
+        let timer = StoreReadTimer(readMeter, method: #function)
+        var rowCount = 0
+        defer { timer?.finish(rows: rowCount, bytes: 0) }
+        let (sql, bindings) = Self.hidingFromSharedMarginSQL(Self.friendMarginsArrivalsSQL, before: "GROUP BY layer.item_id;", hidden: hidden)
+        return try withReadConnection { connection in
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_friend_margins_arrivals")
+            }
+            defer { sqlite3_finalize(statement) }
+            bind(statement, index: 1, value: "imported_commentary_interjection")
+            bind(statement, index: 2, value: "imported_commentary_layer")
+            for (offset, value) in bindings.enumerated() { bind(statement, index: Int32(3 + offset), value: value) }
+            let formatter = ISO8601DateFormatter()
+            var arrivals: [String: Date] = [:]
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let item = sqlite3_column_text(statement, 0), let raw = sqlite3_column_text(statement, 1),
+                      let date = formatter.date(from: String(cString: raw)) else { continue }
+                rowCount += 1
+                arrivals[String(cString: item)] = date
+            }
+            return arrivals
+        }
+    }
+
     /// Per item, the new Margins with no recording that this listener has no way to meet (#3402). The check is Swift, so
     /// it runs here over `newNotesSQL` and nothing is stored: the database and the packets are as they were, and the
     /// answer follows the phone's voices. Runs on whichever thread reads the Library, and `noteCanBeMet` answers from memory.

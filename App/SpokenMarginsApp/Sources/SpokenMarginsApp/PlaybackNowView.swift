@@ -59,7 +59,7 @@ struct PlaybackNowView: View {
                         showDetails: { selectedMargin = row }, play: { MarginMomentTap.start(row, model: model) })
                 } else if let row = shared.first(where: { $0.id == entry.id }), entry.origin == .shared {
                     PlaybackMarginRowView(title: row.interjection.approvedTranscript,
-                        detail: "\(row.collectionLabel) · \(entry.isApproximate ? SharedMarginPlacementWording.approximate : row.positionDescription)",
+                        detail: "\(row.collectionLabel) · \(entry.isApproximate && row.layer.itemIdentity.itemType != .podcast ? SharedMarginPlacementWording.approximate : row.positionDescription)",
                         countdown: entry.countdown, isShared: true, identifier: "playback.now.margin.\(row.id)",
                         canPlay: row.canPlayFromNearbyList,
                         showDetails: { selectedSharedMargin = row }, play: { model.playSharedMarginMoment(row) })

@@ -13,9 +13,9 @@ public enum PlayRule {
     public enum Surface: Equatable, Sendable {
         /// The Library row's Continue. Asks about Margins behind the place.
         case libraryRow
-        /// The item screen's Play, beside "Skip to <friend>'s Margins". It starts the episode in place with no
-        /// question (#3219), so a Margin behind a saved place is skipped. That is how `main` behaves and issue #4125
-        /// is about changing it; when it is decided, this is the case that changes.
+        /// The item screen's Play, beside "Skip to <friend>'s Margins". It never shows the question: with Margins
+        /// behind the saved place its pinned buttons are the two choices instead (`ItemListeningChoices`, #4125), and
+        /// otherwise Play starts the episode in place (#3219), friend Margins ahead playing as it reaches them.
         case itemScreen
 
         var asksAboutMarginsBehind: Bool { self == .libraryRow }
@@ -123,18 +123,32 @@ public enum PlayRule {
     ) -> [SharedMarginReview.Entry] {
         guard let session = resumedSession(in: ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions)) else { return [] }
         if let mediaTimeMs = session.position.mediaTimeMs {
-            return entries.filter { $0.mediaTimeMs < mediaTimeMs }
+            // Play at the end of the episode has nothing left to cross, so the Margins that play after the others
+            // are behind it too, not skipped (#3789).
+            let atEnd = session.completionPercent >= ItemFinishedRule.listenedPercent
+            return entries.filter { atEnd && $0.playsAfterOthers ? true : SharedMarginReview.entriesBehind([$0], placeMs: mediaTimeMs).count == 1 }
         }
         let charOffset = session.position.charOffset
         guard charOffset > 0 else { return [] }
         return entries.filter { ($0.interjection.resolution.localStartChar ?? .max) < charOffset }
     }
 
+    /// What the item screen's two pinned buttons are built from (#4125): the Margins behind the saved place, or none
+    /// when the listener already turned them down in this run (`NewMarginsOfferMemory`, the same memory the Library
+    /// row's question keeps). Empty means the screen shows today's Play and "Skip to <friend>'s Margins".
+    public static func itemScreenMarginsBehind(
+        _ entries: [SharedMarginReview.Entry], itemId: String, sessions: [Session], addedAgainAt: Date?,
+        declined: NewMarginsOfferMemory
+    ) -> [SharedMarginReview.Entry] {
+        let behind = marginsBehindSavedPlace(entries, sessions: sessions, addedAgainAt: addedAgainAt)
+        return declined.isDeclined(itemId: itemId, margins: behind.map(\.marginId)) ? [] : behind
+    }
+
     /// The saved place is at the very end: the session Play resumes is at 99% or more, but not at 100%, where Play
     /// begins again (`SessionContinuation.continueResumes`). Resuming there plays the last seconds and finishes, so
     /// "without the Margins" is better said as starting over (#4125).
     public static func savedPlaceIsAtEnd(sessions: [Session], addedAgainAt: Date?) -> Bool {
-        (resumedSession(in: ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions))?.completionPercent ?? 0) >= 99
+        (resumedSession(in: ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions))?.completionPercent ?? 0) >= ItemFinishedRule.listenedPercent
     }
 
     private static func resumedSession(in sessions: [Session]) -> Session? {

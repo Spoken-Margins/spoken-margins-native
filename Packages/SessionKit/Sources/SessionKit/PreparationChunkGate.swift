@@ -27,7 +27,7 @@ public enum PreparationChunkGate {
 
     /// Automatic preparation skips an item the listener finished or nearly finished. Moved here
     /// from the app model unchanged (its cutoff was 99%, the same as "completed" above 98%).
-    public static let listenedCutoffPercent = 99
+    public static let listenedCutoffPercent = ItemFinishedRule.listenedPercent
 
     public static func itemAlreadyListened(_ sessions: [Session]) -> Bool {
         sessions.contains { session in

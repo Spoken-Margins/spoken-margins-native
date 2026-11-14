@@ -20,13 +20,14 @@ final class SharedMarginPromptsTests: XCTestCase {
             XCTAssertTrue(SharedMarginPrompts.prompts(layers: [rejected], recordsByLayerID: [rejected.id: [placed]],
                                                     announcedIDs: [], includeAnnounced: false).isEmpty)
         }
-        XCTAssertFalse(SharedMarginPrompts.isLayerPlaybackEligible(enabled, records: [absent]))
+        // A passage missing from this copy still has a Margin to play, after the others (#3789).
+        XCTAssertTrue(SharedMarginPrompts.isLayerPlaybackEligible(enabled, records: [absent]))
         XCTAssertFalse(SharedMarginPrompts.isLayerPlaybackEligible(enabled, records: []))
         XCTAssertTrue(SharedMarginPrompts.prompts(layers: [enabled], recordsByLayerID: [:],
                                                 announcedIDs: [], includeAnnounced: false).isEmpty)
     }
 
-    func testNumberingCountsOnlyPlacedRecordsInPositionOrderPerLayer() {
+    func testNumberingCountsEveryOfferedRecordInPositionOrderPerLayerAndTimelessOnesLast() {
         let first = layer()
         let second = layer(id: "second")
         let prompts = SharedMarginPrompts.prompts(
@@ -37,10 +38,12 @@ final class SharedMarginPromptsTests: XCTestCase {
                 second.id: [record("other", media: 1, layerID: second.id)]
             ], announcedIDs: [], includeAnnounced: false
         )
-        XCTAssertEqual(prompts.map(\.id), ["early", "late", "other"])
-        XCTAssertEqual(prompts.map(\.index), [1, 2, 1])
-        XCTAssertEqual(prompts.map(\.count), [2, 2, 1])
-        XCTAssertEqual(prompts.map(\.layer.id), [first.id, first.id, second.id])
+        XCTAssertEqual(Set(prompts.map(\.id)), ["early", "late", "absent", "unresolved", "other"])
+        XCTAssertEqual(prompts.prefix(2).map(\.id), ["early", "late"])
+        XCTAssertEqual(prompts.filter { $0.layer.id == first.id }.map(\.index), [1, 2, 3, 4])
+        XCTAssertEqual(prompts.filter { $0.layer.id == first.id }.map(\.count), [4, 4, 4, 4])
+        XCTAssertEqual(prompts.last?.id, "other")
+        XCTAssertEqual(prompts.last?.count, 1)
     }
 
     func testCrossingUsesMediaThenFallsBackToTextWhenEitherMediaTimeIsNil() {
@@ -128,17 +131,23 @@ final class SharedMarginPromptsTests: XCTestCase {
                                                   current: snapshot(media: 2_000)).isEmpty)
     }
 
-    /// Once a pass has run, or when the Margin was found twice or not at all, no guessed time plays.
-    func testNoSendersTimePlaysAfterThePassOrForAnAmbiguousOrAbsentMargin() {
+    /// After a pass, or when the Margin was found twice, it still plays at the sender's time (#3789). One with no
+    /// usable time is offered but never played at a made-up place (`UnplacedMarginPlansTests` has the table).
+    func testAfterThePassAnUnplacedMarginStillPlaysAtTheSendersTime() {
         var placedLayer = layer()
         placedLayer.resolvedRecipientEditionSHA256 = "digest-of-the-listeners-file"
         XCTAssertFalse(placedLayer.awaitsPlacementPass)
-        XCTAssertFalse(SharedMarginPrompts.isPlayable(senderTimed("after-pass", senderMs: 60_000), in: placedLayer))
+        let afterPass = senderTimed("after-pass", senderMs: 60_000)
+        XCTAssertTrue(SharedMarginPrompts.isPlayable(afterPass, in: placedLayer))
+        XCTAssertEqual(SharedMarginPrompts.mediaTimeMs(afterPass, in: placedLayer), 60_000)
 
         let waiting = layer()
-        XCTAssertFalse(SharedMarginPrompts.isPlayable(senderTimed("absent", senderMs: 60_000, evidence: .absentFromRecipientEdition), in: waiting))
-        XCTAssertFalse(SharedMarginPrompts.isPlayable(senderTimed("ambiguous", senderMs: 60_000, evidence: .ambiguous), in: waiting))
-        XCTAssertFalse(SharedMarginPrompts.isPlayable(senderTimed("no-time", senderMs: nil), in: waiting))
+        let twice = senderTimed("ambiguous", senderMs: 60_000, evidence: .ambiguous)
+        XCTAssertEqual(SharedMarginPrompts.mediaTimeMs(twice, in: waiting), 60_000)
+        for none in [senderTimed("absent", senderMs: 60_000, evidence: .absentFromRecipientEdition), senderTimed("no-time", senderMs: nil)] {
+            XCTAssertTrue(SharedMarginPrompts.isPlayable(none, in: waiting))
+            XCTAssertNil(SharedMarginPrompts.mediaTimeMs(none, in: waiting))
+        }
     }
 
     private func layer(id: String = "layer", label: String? = nil) -> ImportedCommentaryLayer {

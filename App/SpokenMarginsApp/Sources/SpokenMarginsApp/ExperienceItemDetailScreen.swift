@@ -49,7 +49,7 @@ struct ExperienceItemDetailScreen: View {
                     downloadRecovery
                     ItemLastFailureCard(itemId: model.selectedItem.id)
                     if !sharingCoordinator.importedLayers.isEmpty {
-                        Build23ImportedMarginPresentation(coordinator: sharingCoordinator)
+                        Build23ImportedMarginPresentation(coordinator: sharingCoordinator, hidesHeading: friendIntro != nil)
                     }
                     reactionsEntry
                     SourceFollowSuggestionCard()
@@ -268,7 +268,8 @@ struct ExperienceItemDetailScreen: View {
                 systemImage: "map"
             )
         }
-        if !model.selectedItem.interjections.isEmpty {
+        // Only while a friend's intro shows does it count the Margins itself (#3788); otherwise the listener's count stays.
+        if !model.selectedItem.interjections.isEmpty, FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin)) == nil {
             let count = model.selectedItem.interjections.count
             metadataPill("\(count) Margin\(count == 1 ? "" : "s")", systemImage: "quote.bubble")
         }
@@ -390,36 +391,58 @@ struct ExperienceItemDetailScreen: View {
             .accessibilityIdentifier("item.start.preparing")
         }
         let choices = listeningChoices
+        let behind = marginsBehindPlace
         Button {
-            // Play on this screen asks nothing today: the friend's Margins play in place as the episode reaches them
-            // (#3219). `PlayRule.Surface.itemScreen` is where that is decided.
-            model.continueListening(itemId: model.selectedItem.id, surface: .itemScreen) { pendingNewMarginsOffer = $0 }
+            perform(choices.primaryAction, behind: behind)
         } label: {
             Label(choices.primaryTitle, systemImage: "play.fill")
                 .frame(maxWidth: .infinity, minHeight: 52)
         }
         .filledActionButton()
+        .accessibilityLabel(choices.primaryAccessibilityLabel ?? choices.primaryTitle)
         .accessibilityIdentifier("item.start.button")
-        if let marginsOnlyTitle = choices.marginsOnlyTitle {
+        if let secondaryTitle = choices.secondaryTitle, let secondaryAction = choices.secondaryAction {
             Button {
-                model.reviewNewMargins(itemId: model.selectedItem.id, thenContinue: false)
+                perform(secondaryAction, behind: behind)
             } label: {
                 // Words only, as on the screens the owner reviewed (#3247): the line already says whose Margins.
-                Text(marginsOnlyTitle)
+                Text(secondaryTitle)
                     .fontWeight(.semibold)
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.bordered)
             .tint(AppColors.evergreen)
-            .accessibilityLabel(choices.marginsOnlyAccessibilityLabel ?? marginsOnlyTitle)
-            .accessibilityIdentifier("item.reviewNewMargins.button")
+            .accessibilityLabel(choices.secondaryAccessibilityLabel ?? secondaryTitle)
+            .accessibilityIdentifier(secondaryAction == .reviewNewMargins(thenContinue: false) ? "item.reviewNewMargins.button" : "item.listenWithout.button")
         }
+    }
+
+    /// What a pinned button does. The choice is `ItemListeningChoices`'s; this only calls the model (#4125).
+    private func perform(_ action: ItemListeningChoices.Action, behind: [SharedMarginReview.Entry]) {
+        let itemId = model.selectedItem.id
+        switch action {
+        case .play:
+            // Friend Margins ahead of the place play in place as the episode reaches them (#3219).
+            model.continueListening(itemId: itemId, surface: .itemScreen) { pendingNewMarginsOffer = $0 }
+        case .reviewNewMargins(let thenContinue):
+            model.reviewNewMargins(itemId: itemId, thenContinue: thenContinue, entries: thenContinue ? behind : nil)
+        case .continueWithout:
+            model.continueWithoutNewMargins(NewMarginsOfferRequest(itemId: itemId, entries: behind))
+        case .startFromBeginning:
+            model.startItemFromBeginning(itemId: itemId, entries: behind)
+        }
+    }
+
+    private var marginsBehindPlace: [SharedMarginReview.Entry] {
+        model.itemScreenMarginsBehindSavedPlace(itemId: model.selectedItem.id)
     }
 
     /// The start controls for this item: today's single button, or the two choices when a friend's Margins wait (#3219).
     private var listeningChoices: ItemListeningChoices {
         ItemListeningChoices(
             unheardFriendMargins: newSharedMargins.map(\.waitingMargin),
+            marginsBehindPlace: marginsBehindPlace.map(\.waitingMargin),
+            placeIsAtEnd: model.selectedItemSavedPlaceIsAtEnd(),
             hasFinishedSession: hasFinishedSession,
             hasContinuationSession: model.selectedItemPreferredContinuationSession != nil,
             isPreparingAudio: [.waiting, .preparing].contains(model.selectedItemStartupAudioState)

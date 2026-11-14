@@ -10,6 +10,15 @@ import Foundation
 ///
 /// Every caller that asks "is this item finished?" asks here, so no surface can count the old listening again.
 public enum ItemFinishedRule {
+    /// The one place the two "finished" percentages are named (#4106). Every reader of a session's `completionPercent`
+    /// that means "heard it" or "at the end" uses these, so no surface can drift to its own number.
+    ///
+    /// `listenedPercent`: at or above this the item counts as heard: Library "completed", Play's saved place at the end,
+    /// Following, and automatic audio preparation's skip. `atEndPercent`: the saved place is the end itself. Continue
+    /// does not resume there, it starts again from 0 (the item screen says "Replay").
+    public static let listenedPercent = 99
+    public static let atEndPercent = 100
+
     public static func isFinished(_ item: some LibraryItemFields, sessions: [Session]) -> Bool {
         item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(countedSessions(item, sessions: sessions))
     }

@@ -38,7 +38,7 @@ public struct CarPlayLibraryEntry: Equatable, Sendable, Identifiable {
         self.lastPlayedAt = lastPlayedAt
     }
 
-    public var isFinished: Bool { progressPercent >= 100 }
+    public var isFinished: Bool { progressPercent >= ItemFinishedRule.atEndPercent }
 
     /// Item states that can play. Anything else (failed, still importing) is not offered in a car.
     private static let playableStatuses: Set<String> = ["ready", "needs_transcript", "audio_ready", "needs_listening_map"]

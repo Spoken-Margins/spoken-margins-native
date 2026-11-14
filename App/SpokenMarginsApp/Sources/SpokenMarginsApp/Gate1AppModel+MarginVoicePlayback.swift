@@ -305,6 +305,8 @@ extension Gate1AppModel {
             seekMedia(toMediaTimeMs: mediaTimeMs)
         } else if let charOffset = prompt.interjection.resolution.localStartChar {
             seekText(toCharOffset: charOffset)
+        } else if SharedMarginPrompts.plan(prompt.interjection, in: prompt.layer, durationMs: nil) == .afterOthers {
+            // No usable time in this copy (#3789): a tap plays the Margin where the listener is, never at a made-up place.
         } else {
             reportFailure("The selected Shared Margin does not have a verified local position.")
             return false

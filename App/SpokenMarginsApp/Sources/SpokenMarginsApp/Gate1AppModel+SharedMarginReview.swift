@@ -28,7 +28,7 @@ extension Gate1AppModel {
         } else if selectedItem.id == itemId {
             entries = SharedMarginReview.entries(
                 layers: selectedItem.importedCommentaryLayers, records: selectedItem.importedCommentaryInterjections,
-                ownMargins: ownMargins(itemId: itemId)
+                ownMargins: ownMargins(itemId: itemId), durationMs: selectedItem.mediaDurationMs
             )
         } else if let store {
             // The listener's own Margins let a friend's reply say which of them it answers (#3221). They come from the
@@ -92,6 +92,28 @@ extension Gate1AppModel {
     func continueWithoutNewMargins(_ offer: NewMarginsOfferRequest) {
         Self.declinedNewMargins.decline(itemId: offer.itemId, margins: offer.entries.map(\.marginId))
         startItem(id: offer.itemId)
+    }
+
+    /// The friend Margins behind the place Play would resume on the open item, for the item screen's two pinned buttons
+    /// (#4125). Empty when none is, or when the listener turned them down in this run. The rule is `PlayRule`'s.
+    func itemScreenMarginsBehindSavedPlace(itemId: String) -> [SharedMarginReview.Entry] {
+        guard selectedItem.id == itemId else { return [] }
+        return PlayRule.itemScreenMarginsBehind(
+            newSharedMargins(itemId: itemId), itemId: itemId, sessions: selectedItem.sessions,
+            addedAgainAt: addedAgainAt(forItem: itemId), declined: Self.declinedNewMargins)
+    }
+
+    /// Whether the open item's saved place is its very end, from `PlayRule` (#4125).
+    func selectedItemSavedPlaceIsAtEnd() -> Bool {
+        PlayRule.savedPlaceIsAtEnd(sessions: selectedItem.sessions, addedAgainAt: addedAgainAt(forItem: selectedItem.id))
+    }
+
+    /// "Play from the start" on the item screen: leaves these Margins new, doesn't ask about them again this run, and
+    /// begins a new session at 0, where they are ahead and play in place. The old session stays, so there is no
+    /// "Start a separate listening session?" question (#4125).
+    func startItemFromBeginning(itemId: String, entries: [SharedMarginReview.Entry]) {
+        Self.declinedNewMargins.decline(itemId: itemId, margins: entries.map(\.marginId))
+        startNewSession(id: itemId)
     }
 
     /// Plays the new shared Margins on `itemId` in turn. Afterwards the item goes back to where the listener left

@@ -458,14 +458,28 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             layerStatus: layer.sourceResolutionStatus, pass: placementPass,
             hasPositionEvidence: margin.carriesPositionEvidence(in: layer),
             awaitingPlacementPass: layer.awaitsPlacementPass)
+        // A podcast Margin shows the time it plays at, then one of three plain phrases for where that came from; one
+        // with no usable time shows only the phrase (#3789). Other items keep the older wording.
+        var position = placement.positionDescription ?? positionDescription(for: margin.resolution, paragraphs: paragraphs)
+        var label = placement.label
+        if let words = SharedMarginPlacementWording.line(for: margin, in: layer, durationMs: nil) {
+            let plan = SharedMarginPrompts.plan(margin, in: layer, durationMs: nil)
+            if let clock = SharedMarginPlacementWording.clock(for: plan) {
+                position = clock
+                label = words
+            } else {
+                position = words
+                label = nil
+            }
+        }
         return Build23ImportedMarginSnapshot(
             id: margin.id,
             reviewedText: margin.approvedTranscript,
             resolution: margin.resolution.evidenceClass,
-            positionDescription: placement.positionDescription ?? positionDescription(for: margin.resolution, paragraphs: paragraphs),
+            positionDescription: position,
             isPlayable: Gate1AppModel.isPlayableImportedCommentaryResolution(margin.resolution),
             canListen: SharedMarginAudio.canOffer(margin),
-            placementLabel: placement.label
+            placementLabel: label
         )
     }
 
