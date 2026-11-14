@@ -82,6 +82,48 @@ class UITestingHooksDebugOnlyTests(unittest.TestCase):
         self.assertEqual(offenders, [], "UI-test hook literals outside #if DEBUG")
 
 
+class HookIsActiveTests(unittest.TestCase):
+    """`isActive` is the one switch every other hook leans on (#4302).
+
+    The literal scan above only flags a hook outside `#if DEBUG`, so `isActive { true }` (no literal left to flag)
+    passed. The Debug branch must read the launch argument and the Release stub must answer no. These are text checks of
+    the Swift source; the Release binary itself is checked by `scripts/check-release-test-hooks.sh`.
+    """
+
+    HOOKS = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp" / "UITestingHooks.swift"
+    DEBUG_SWITCH = 'static var isActive: Bool { CommandLine.arguments.contains("--ui-testing") }'
+    RELEASE_STUB = "static var isActive: Bool { false }"
+
+    @classmethod
+    def problems(cls, source: str) -> list[str]:
+        """What is wrong with the two `isActive` definitions: the Debug one must read the launch argument, the Release
+        stub must answer no and name no hook literal."""
+        try:
+            debug = source.index("    #if DEBUG\n")
+            other = source.index("    #else\n", debug)
+            release = source[other:source.index("    #endif\n", other)]
+        except ValueError:
+            return ["UITestingHooks.swift no longer has its #if DEBUG / #else / #endif"]
+        found = []
+        if cls.DEBUG_SWITCH not in source[debug:other]:
+            found.append("the Debug isActive does not read --ui-testing")
+        if cls.RELEASE_STUB not in release:
+            found.append("the Release isActive is not false")
+        if HOOK.search(release):
+            found.append("the Release stub names a hook literal")
+        return found
+
+    def test_isactive_reads_the_launch_argument_in_debug_and_is_false_in_release(self):
+        self.assertEqual(self.problems(self.HOOKS.read_text(encoding="utf-8")), [])
+
+    def test_that_check_fails_for_an_always_on_switch_or_a_live_release_stub(self):
+        real = self.HOOKS.read_text(encoding="utf-8")
+        self.assertEqual(self.problems(real.replace(self.DEBUG_SWITCH, "static var isActive: Bool { true }")),
+                         ["the Debug isActive does not read --ui-testing"])
+        self.assertEqual(self.problems(real.replace(self.RELEASE_STUB, "static var isActive: Bool { true }")),
+                         ["the Release isActive is not false"])
+
+
 class ShareLinkHandoffTests(unittest.TestCase):
     """J10 hands its share link to the app as `spokenmargins://ui-test-share-link?url=` (#1842).
 

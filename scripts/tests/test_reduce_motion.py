@@ -1,5 +1,9 @@
 """Motion the app starts by itself respects Reduce Motion (#1928).
 
+These are text checks of Swift sources, not runs of the app: they fail when a listed site goes back to a plain
+animation, and when a helper's Reduce Motion branch is turned round (the polarity of each condition is read out of the
+source, #4302). That the app really stills under the setting is the owner's check with Reduce Motion on.
+
 The Timeline scrolls to the playing entry on every change, slides in full screen, and lists animate their reorders.
 `withMotion`, `motionAnimation`, `motionTransition` and `numericTextTransition` (ReduceMotion.swift) are off under Reduce
 Motion. This scan fails when one of the listed sites goes back to a plain `withAnimation`, `.animation` or
@@ -14,6 +18,20 @@ SOURCES = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
 
 
 BARE_ANIMATION = re.compile(r"\bwithAnimation\b|\.animation\(")
+
+
+# helper -> the source line in which Reduce Motion picks the still branch
+HELPER_BRANCHES = {
+    "withMotion": "if UIAccessibility.isReduceMotionEnabled { return try body() }",
+    "motionAnimation": "content.animation(reduceMotion ? nil : animation, value: value)",
+    "motionTransition": "content.transition(reduceMotion ? .opacity : transition)",
+    "numericTextTransition": "content.contentTransition(reduceMotion ? .identity : .numericText())",
+}
+
+
+def branch_problems(text: str) -> list[str]:
+    """The helpers whose Reduce Motion branch is not the still one, or that no longer carry it."""
+    return [name for name, line in HELPER_BRANCHES.items() if line not in text]
 
 
 def _strip_comments(text: str) -> str:
@@ -76,6 +94,22 @@ class ReduceMotionTests(unittest.TestCase):
         text = _read("ReduceMotion.swift")
         self.assertIn("UIAccessibility.isReduceMotionEnabled", text)
         self.assertEqual(text.count("accessibilityReduceMotion"), 3)
+
+    def test_each_helper_turns_motion_off_when_reduce_motion_is_on(self):
+        """#4302: counting the spelling passed with every condition inverted, so each branch is read."""
+        self.assertEqual(branch_problems(_read("ReduceMotion.swift")), [])
+
+    def test_the_branch_check_catches_each_inverted_helper(self):
+        text = _read("ReduceMotion.swift")
+        for name, right in HELPER_BRANCHES.items():
+            wrong = {
+                "withMotion": "if !UIAccessibility.isReduceMotionEnabled { return try body() }",
+                "motionAnimation": "content.animation(reduceMotion ? animation : nil, value: value)",
+                "motionTransition": "content.transition(reduceMotion ? transition : .opacity)",
+                "numericTextTransition": "content.contentTransition(reduceMotion ? .numericText() : .identity)",
+            }[name]
+            self.assertIn(right, text, "the line moved; update this test with the source")
+            self.assertEqual(branch_problems(text.replace(right, wrong)), [name])
 
 
 if __name__ == "__main__":

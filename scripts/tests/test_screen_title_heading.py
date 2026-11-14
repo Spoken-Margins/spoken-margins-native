@@ -3,7 +3,8 @@
 The app had three `isHeader` uses, so the VoiceOver Headings rotor skipped nearly every title. `.screenTitle()`
 (ScreenTitle.swift) adds the trait. This scan fails when a `Text` that is given a title font (`.title`,
 `.title2`, `.title3`, `.largeTitle`) next to its literal or item-title string drops the modifier. Titles
-that are deliberately not headings are listed with the reason.
+that are deliberately not headings are listed with the reason. Both checks read the Swift source as text: they show the
+modifier is applied and still adds the heading trait, not what VoiceOver then does (#4302).
 """
 import re
 import unittest
@@ -46,6 +47,25 @@ class ScreenTitleHeadingTests(unittest.TestCase):
                     continue
                 missing.append(f"{path.name}:{index + 1} {text}")
         self.assertEqual(missing, [], "titles without the heading trait")
+
+
+def title_trait(source: str) -> str:
+    """The body of `screenTitle()` in ScreenTitle.swift, comments removed; empty when the function is gone."""
+    match = re.search(r"func screenTitle\(\) -> some View \{(.*?)\n    \}", re.sub(r"//[^\n]*", "", source), re.S)
+    return match[1].strip() if match else ""
+
+
+class ScreenTitleModifierTests(unittest.TestCase):
+    def test_screen_title_still_adds_the_heading_trait(self):
+        """#4302: the scan above trusts `.screenTitle()`, so the modifier itself must still add `.isHeader`."""
+        self.assertEqual(title_trait((SOURCES / "ScreenTitle.swift").read_text()), "accessibilityAddTraits(.isHeader)")
+
+    def test_that_check_fails_for_a_modifier_with_another_trait_or_none(self):
+        real = (SOURCES / "ScreenTitle.swift").read_text()
+        for wrong in ("accessibilityAddTraits(.isStaticText)", "self", "accessibilityRemoveTraits(.isHeader)"):
+            self.assertNotEqual(title_trait(real.replace("accessibilityAddTraits(.isHeader)", wrong)),
+                                "accessibilityAddTraits(.isHeader)", wrong)
+        self.assertEqual(title_trait("// func screenTitle() -> some View {}\n"), "")
 
 
 if __name__ == "__main__":
