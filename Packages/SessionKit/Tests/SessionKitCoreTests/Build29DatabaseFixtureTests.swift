@@ -239,6 +239,39 @@ final class Build29DatabaseFixtureTests: XCTestCase {
             ["itemId": linkedFile.id, "mediaURL": "file:///var/mobile/Library/linked.mp3", "durationMs": 1_790_000, "linkedEpisodeGUID": "guid-downloaded"],
         ]
 
+        // #2997: a transcript item and its `transcript_times` record. Build 29 sees an item with an `externalReferenceType` it
+        // has no name for and a record kind it doesn't read, and must still open the database and read the item, its
+        // session and its Margin.
+        let transcript = try TranscriptImport.parse(
+            text: TranscriptFixtures.all["generic.srt"]!, timeZone: TimeZone(identifier: "UTC")!)
+        let builtTranscript = TranscriptItemText.build(transcript, fileName: "generic.srt", timeZone: TimeZone(identifier: "UTC")!)
+        let transcriptItem = Item(
+            id: builtTranscript.id, title: builtTranscript.title, mediaType: "text", text: builtTranscript.text,
+            externalReference: "generic.srt", status: "needs_listening_map",
+            externalReferenceType: TranscriptItemText.referenceType, createdAt: Date(timeIntervalSince1970: 1_758_000_000))
+        try store.saveTranscriptItem(
+            transcriptItem, times: TranscriptTimes(transcript: transcript, built: builtTranscript),
+            readdedAt: Date(timeIntervalSince1970: 1_758_000_000))
+        let transcriptSession = Session(
+            id: "session-\(transcriptItem.id)", itemId: transcriptItem.id, status: "in_progress", phase: .itemPlayback,
+            currentTargetType: .itemTextTTS, currentTargetId: transcriptItem.id, position: Position(charOffset: 3),
+            completionPercent: 10, playbackRate: 1)
+        try store.saveSession(transcriptSession)
+        try store.saveInterjection(Interjection(
+            id: "margin-\(transcriptItem.id)", itemId: transcriptItem.id, sessionId: transcriptSession.id, targetType: .item,
+            targetId: transcriptItem.id, createdAt: Date(timeIntervalSince1970: 1), roughPercent: 10,
+            anchor: Anchor(anchorType: .text, startChar: 0, endChar: 5, anchorBefore: "", anchorAfter: ""),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+            displayText: "A Margin in a meeting", status: "active"))
+        XCTAssertNotNil(try store.loadTranscriptTimes(itemId: transcriptItem.id))
+        expected.append([
+            "itemId": transcriptItem.id,
+            "textSHA256": SHA256.hash(data: Data(builtTranscript.text.utf8)).map { String(format: "%02x", $0) }.joined(),
+            "sessionId": transcriptSession.id,
+            "marginId": "margin-\(transcriptItem.id)",
+            "hasListeningMap": try store.loadListeningMap(itemId: transcriptItem.id) != nil,
+        ])
+
         XCTAssertNil(try store.loadStructuredDocument(itemId: v1.id))
         XCTAssertEqual(try store.loadStructuredDocument(itemId: v2.id), document)
 

@@ -70,6 +70,9 @@ public struct ItemDetailState: Equatable, Sendable {
     /// the same stored facts the Library row reads, so the screen's title and sentences never say "item" and `body`
     /// never scans the Library for it.
     public var sourceNoun: SourceNoun = .text
+    /// For a meeting transcript: "Meeting on Thu 12 Nov, 15:00 · 48 min · Priya Patel and Sam Lee" (#2997). Worked out when
+    /// the detail loads, from the item's times record. Nil for every other item.
+    public var meetingLine: String?
 
     public init(
         id: String = "",
@@ -101,7 +104,8 @@ public struct ItemDetailState: Equatable, Sendable {
         sharedMapRefusalReason: String? = nil,
         textSceneSummaries: TextSceneSummaryProgress.State = .notApplicable,
         turns: [ConversationTurn] = [],
-        sourceNoun: SourceNoun = .text
+        sourceNoun: SourceNoun = .text,
+        meetingLine: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -133,6 +137,7 @@ public struct ItemDetailState: Equatable, Sendable {
         self.textSceneSummaries = textSceneSummaries
         self.turns = turns
         self.sourceNoun = sourceNoun
+        self.meetingLine = meetingLine
     }
 }
 

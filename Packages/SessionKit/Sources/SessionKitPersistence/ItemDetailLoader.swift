@@ -10,7 +10,8 @@ public struct ItemDetailLoader {
         snapshotItemId: String?,
         snapshotSessionId currentSnapshotSessionId: String?,
         placementPasses: SharedMarginPlacementPasses,
-        hiddenSenders: HiddenSenders = HiddenSenders()
+        hiddenSenders: HiddenSenders = HiddenSenders(),
+        now: Date = Date()
     ) throws -> ItemDetailState {
         let item = try store.loadItem(id: id)
         var map = try store.loadListeningMap(itemId: id)
@@ -120,6 +121,10 @@ public struct ItemDetailLoader {
             ? TextSceneSummaryProgress.state(
                 proposals: committed, friendsMapIsHere: map?.id == TextSceneSummaryProgress.sharedMapId(itemId: id))
             : .notApplicable
+        // A meeting transcript's line under the title, from its small times record: no cue is read (#2997).
+        let meetingLine = item.externalReferenceType == TranscriptItemText.referenceType
+            ? (try? store.loadTranscriptTimes(itemId: id))?.meetingLine(now: now)
+            : nil
         return ItemDetailState(
             id: item.id,
             title: item.title,
@@ -151,7 +156,8 @@ public struct ItemDetailLoader {
             turns: turns,
             sourceNoun: SourceNoun(
                 mediaType: item.mediaType, sourceReference: item.externalReference,
-                sourceReferenceType: item.externalReferenceType)
+                sourceReferenceType: item.externalReferenceType),
+            meetingLine: meetingLine
         ).includingTimelineSource(
             try? store.loadStructuredDocument(itemId: id),
             elements: try? store.loadSourceElements(itemId: id))
