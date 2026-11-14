@@ -60,6 +60,9 @@ public enum NextChapterSummaryRule {
         case skimDisabled
         /// Nothing: the item has no Skim, so the row is the title and, if there is one, Next chapter.
         case hidden
+        /// The listener is past every stop in the item's last stretch and another item is queued: the forward slot starts
+        /// that queued item (#3914). Only ever the answer where the slot would otherwise be a dimmed Skim.
+        case playNextItem
     }
 
     /// The control on the right of the chapter title. When forward Skim can be pressed it is the one forward control;
@@ -67,10 +70,19 @@ public enum NextChapterSummaryRule {
     /// otherwise a disabled Skim so the slot never goes empty.
     /// Only the button depends on Skim: the Lock Screen and external commands go by `isAvailable`. The Skim row can
     /// be on screen for Skim Back alone, so forward Skim counts only when the row is shown and forward is enabled.
-    public static func forwardControl(isAvailable: Bool, skimRowShown: Bool, canSkimForward: Bool) -> ChapterRowControl {
+    ///
+    /// Where the slot would be a dimmed Skim, it is `.playNextItem` instead when another item is queued (#3914). That
+    /// happens only when nothing is left ahead to Skim to or jump to, the stops have finished loading (so the slot never
+    /// shows Next in queue and then turns into Skim), and navigation isn't locked by a recording or imported commentary.
+    /// An item with no Skim row stays `.hidden`: the queue advances at its end as before.
+    public static func forwardControl(
+        isAvailable: Bool, skimRowShown: Bool, canSkimForward: Bool,
+        hasQueuedNext: Bool = false, stopsLoading: Bool = false, navigationLocked: Bool = false
+    ) -> ChapterRowControl {
         if skimRowShown && canSkimForward { return .skim }
         if isAvailable { return skimRowShown ? .nextChapterInSkimSlot : .nextChapter }
-        return skimRowShown ? .skimDisabled : .hidden
+        guard skimRowShown else { return .hidden }
+        return hasQueuedNext && !stopsLoading && !navigationLocked ? .playNextItem : .skimDisabled
     }
 
     /// The control on the left of the chapter title: Skim back, disabled when there is nowhere to go, and absent
