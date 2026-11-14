@@ -520,8 +520,8 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: 1_122_000, backward: false), "Skim forward to 18:42")
         XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: 725_000, backward: true), "Skim back to 12:05")
         XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: 3_909_000, backward: false), "Skim forward to 1:05:09")
-        XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: nil, backward: false), "Skim forward by scene summary")
-        XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: nil, backward: true), "Skim backward by scene summary")
+        XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: nil, backward: false), "Skim forward")
+        XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: nil, backward: true), "Skim back")
         // The playback screen keeps its titles, now from the same formatter.
         XCTAssertEqual(PlaybackQualityPresentation.skimTitle(destinationMs: 1_122_000, backward: false), "Skim to 18:42")
         XCTAssertEqual(PlaybackQualityPresentation.skimTitle(destinationMs: 725_000, backward: true), "Back to 12:05")

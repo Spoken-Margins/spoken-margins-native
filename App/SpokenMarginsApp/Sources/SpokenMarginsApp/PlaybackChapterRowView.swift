@@ -8,10 +8,10 @@ struct PlaybackChapterRowView: View {
     /// listener crosses a chapter: the right side is Skim forward, else Next chapter, else a dimmed Skim.
     var backward: NextChapterSummaryRule.ChapterRowControl = .hidden
     var forward: NextChapterSummaryRule.ChapterRowControl = .hidden
-    var skimBackwardTitle = ""
-    var skimForwardTitle = ""
-    /// Why forward Skim can't be pressed, said by the Next chapter that stands in for it (#2185).
-    var skimForwardUnavailable: SkimUnavailableReason?
+    /// What VoiceOver reads for each arrow: the action as the label and where it goes as the value (#3986). Nil
+    /// falls back to the action alone.
+    var backwardSpeech: SkimDestinationSpeech.Speech?
+    var forwardSpeech: SkimDestinationSpeech.Speech?
     /// A recording locks Skim, as it did when the arrows sat in the transport.
     var skimLocked = false
     /// What the silence is while playback starts. It takes the title's place in this fixed-height row, so the
@@ -29,9 +29,6 @@ struct PlaybackChapterRowView: View {
     static let nextChapterSymbol = "forward.end"
     /// An arrow to a line, unlike Skim's filled triangle and bar, so the plain jump never passes for Skim (#2185).
     static let nextChapterInSkimSlotSymbol = "arrow.right.to.line"
-    static func nextChapterInSkimSlotLabel(_ reason: SkimUnavailableReason?) -> String {
-        "Next chapter. " + (reason ?? .noSceneSummary).message
-    }
 
     var body: some View {
         Group {
@@ -105,7 +102,8 @@ struct PlaybackChapterRowView: View {
                 Image(systemName: Self.nextChapterSymbol)
                     .minimumTapTarget()
             }
-            .accessibilityLabel("Next chapter")
+            .accessibilityLabel(nextChapterWords.label)
+            .accessibilityValue(nextChapterWords.value)
             .accessibilityIdentifier("playback.nextChapter.button")
         case .nextChapterInSkimSlot:
             // Skim can't be pressed here, so this is a plain chapter jump: its own arrow, never Skim's (#2185).
@@ -113,14 +111,16 @@ struct PlaybackChapterRowView: View {
                 Image(systemName: Self.nextChapterInSkimSlotSymbol)
                     .minimumTapTarget()
             }
-            .accessibilityLabel(Self.nextChapterInSkimSlotLabel(skimForwardUnavailable))
+            .accessibilityLabel(nextChapterWords.label)
+            .accessibilityValue(nextChapterWords.value)
             .accessibilityIdentifier("playback.nextChapter.button")
         case .hidden:
             EmptyView()
         }
     }
 
-    /// A compact Skim arrow. It says where it goes ("Skim to 36:11") for VoiceOver; a dimmed one reads as unavailable.
+    /// A compact Skim arrow. VoiceOver reads the action, then where it goes ("Skim forward", "Chapter 4: Alignment, 65
+    /// percent"); a dimmed one says there is nothing that way.
     private func skimButton(backward isBackward: Bool, enabled: Bool) -> some View {
         Button(action: isBackward ? skimBackward : skimForward) {
             Image(systemName: isBackward ? Self.skimBackwardSymbol : Self.skimForwardSymbol)
@@ -128,7 +128,19 @@ struct PlaybackChapterRowView: View {
         }
         .disabled(!enabled || skimLocked)
         .opacity(enabled ? 1 : 0.35)
-        .accessibilityLabel((isBackward ? skimBackwardTitle : skimForwardTitle) + " by scene summary")
+        .accessibilityLabel(skimWords(backward: isBackward).label)
+        .accessibilityValue(skimWords(backward: isBackward).value)
         .accessibilityIdentifier(isBackward ? "playback.skim.backward.button" : "playback.skim.forward.button")
+    }
+
+    /// What VoiceOver reads for a Skim arrow: the action, and where it goes when the model supplied that.
+    func skimWords(backward isBackward: Bool) -> SkimDestinationSpeech.Speech {
+        (isBackward ? backwardSpeech : forwardSpeech)
+            ?? .init(label: SkimDestinationSpeech.label(isBackward ? .backward : .forward), value: "")
+    }
+
+    /// What VoiceOver reads for Next chapter, plain or standing in for Skim.
+    var nextChapterWords: SkimDestinationSpeech.Speech {
+        forwardSpeech ?? .init(label: "Next chapter", value: "")
     }
 }

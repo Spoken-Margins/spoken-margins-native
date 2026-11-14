@@ -120,6 +120,10 @@ extension SkimBridgeHost {
 final class SkimBridgeController {
     private(set) var forwardDestinationMs: Int?
     private(set) var backwardDestinationMs: Int?
+    /// What each press would do from here: go to a stop, play a summary first, or nothing. Kept for text items too,
+    /// where the destination times above are cleared, so the arrows can say where they go (#3986).
+    private(set) var forwardChoice: SkimStopRouting.Choice?
+    private(set) var backwardChoice: SkimStopRouting.Choice?
     /// The playing item has a Listening Map, so its chapter row keeps the Skim controls even where neither can be
     /// pressed, and Next chapter in Skim's slot is drawn as standing in (#2185).
     private(set) var itemHasMap = false
@@ -201,25 +205,27 @@ final class SkimBridgeController {
         let forward = effectiveTime.map { resolve(direction: .forward, at: $0) }
         let backward = effectiveTime.map { resolve(direction: .backward, at: $0) }
         // The next chapter or Margin counts as somewhere to go, with or without a Listening Map (#460).
-        let forwardChoice = effectiveTime.map {
+        let forwardChoiceNow = effectiveTime.map {
             host.skimStopChoice(direction: .forward, at: $0, summaryDestination: forward?.destinationMediaTimeMs)
         }
-        let backwardChoice = effectiveTime.map {
+        let backwardChoiceNow = effectiveTime.map {
             host.skimStopChoice(direction: .backward, at: $0, summaryDestination: backward?.destinationMediaTimeMs)
         }
         let forwardTime = bridge?.destinationMediaTimeMs
-            ?? forwardChoice?.destination(summaryDestination: forward?.destinationMediaTimeMs)
+            ?? forwardChoiceNow?.destination(summaryDestination: forward?.destinationMediaTimeMs)
         let backwardTime = bridge?.destinationMediaTimeMs
-            ?? backwardChoice?.destination(summaryDestination: backward?.destinationMediaTimeMs)
+            ?? backwardChoiceNow?.destination(summaryDestination: backward?.destinationMediaTimeMs)
         let hasMap = host.skimSource.flatMap { loadedResources(for: $0) }?.hasMap ?? false
         var forwardReason: SkimUnavailableReason? = forward == nil ? .noSource : forward?.unavailableReason
         if forwardTime != nil { forwardReason = nil } // a stop to go to: Next chapter isn't standing in for Skim
         let destinationsChanged = forwardDestinationMs != forwardTime || backwardDestinationMs != backwardTime
             || itemHasMap != hasMap || forwardUnavailableReason != forwardReason
+            || forwardChoice != forwardChoiceNow || backwardChoice != backwardChoiceNow
         if destinationsChanged {
             host.skimDestinationsWillChange()
             (forwardDestinationMs, backwardDestinationMs, itemHasMap) = (forwardTime, backwardTime, hasMap)
             forwardUnavailableReason = forwardReason
+            (forwardChoice, backwardChoice) = (forwardChoiceNow, backwardChoiceNow)
         }
         let canForward = forwardTime != nil, canBackward = backwardTime != nil
         let available = host.skimAvailability

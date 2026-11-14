@@ -54,11 +54,13 @@ extension Gate1AppModel {
     func nextChapterFromChapterRow() {
         let standsInForSkim = chapterRowForwardControl == .nextChapterInSkimSlot
         let reason = skimBridge.forwardUnavailableReason ?? .noSceneSummary
+        let title = nextChapterAnnouncementTitle
         jumpToNextChapter()
         guard standsInForSkim else { return }
         recordDeveloperDiagnostic(
             "skim.press", SkimPressOutcome.fellBackToChapter.diagnosticFields(direction: .forward, reason: reason.rawValue))
-        reportSuccess("Next chapter. \(reason.message)")
+        // The reason is for Diagnostics: the listener hears where the jump went, not a stale reason (#3986).
+        reportSuccess(["Next chapter", title].compactMap { $0 }.joined(separator: ", "))
     }
 
     /// Reads the summary of the chapter being left, when it has one, then lands at the next
