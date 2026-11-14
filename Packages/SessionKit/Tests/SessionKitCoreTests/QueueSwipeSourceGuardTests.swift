@@ -17,44 +17,46 @@ final class QueueSwipeSourceGuardTests: XCTestCase {
         }
     }
 
-    func testEveryQueueSwipeIsTheSwipeSlateTintAndHasItsIdentifier() throws {
-        let expected: [(file: String, identifier: String)] = [
-            ("ExperienceLibraryScreen.swift", "library.queueSwipe.\\(row.id)"),
-            ("ExperienceLibraryScreen.swift", "library.addToQueue.\\(row.id)"),
-            ("ExperienceSourcesScreen.swift", "sources.show.\\(row.id).queue"),
-            ("ExperienceSourcesScreen.swift", "\\(identifier).queue"),
-            ("ExperienceShowScreen.swift", "show.episode.\\(episode.entry.id).queue"),
-            ("ExperienceShowScreen.swift", "show.episode.\\(episode.entry.id).more")
+    /// Source-text guard (#4306): reads the comment-stripped code of each screen, and checks the line before each queue
+    /// swipe button's identifier, not the file as a whole, so another `swipeSlate` elsewhere in the file can't stand in.
+    func testSourceTextEveryQueueSwipeIsTheSwipeSlateTintAndHasItsIdentifier() throws {
+        let expected: [(file: String, identifier: String, tinted: Bool)] = [
+            ("ExperienceLibraryScreen.swift", "library.queueSwipe.\\(row.id)", true),
+            ("ExperienceLibraryScreen.swift", "library.addToQueue.\\(row.id)", false),
+            ("ExperienceSourcesScreen.swift", "sources.show.\\(row.id).queue", true),
+            ("ExperienceSourcesScreen.swift", "\\(identifier).queue", true),
+            ("ExperienceShowScreen.swift", "show.episode.\\(episode.entry.id).queue", true),
+            ("ExperienceShowScreen.swift", "show.episode.\\(episode.entry.id).more", false)
         ]
         for item in expected {
-            let text = try TestInputs.text(.appSources, item.file)
-            XCTAssertTrue(text.contains("accessibilityIdentifier(\"\(item.identifier)\")"), "\(item.file) lost \(item.identifier)")
+            let lines = try TestInputs.code(.appSources, item.file).components(separatedBy: "\n")
+            let line = "accessibilityIdentifier(\"\(item.identifier)\")"
+            let index = try XCTUnwrap(lines.firstIndex { $0.contains(line) }, "\(item.file) lost \(item.identifier)")
+            guard item.tinted else { continue }
+            let before = lines[..<index].last { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            XCTAssertEqual(before?.trimmingCharacters(in: .whitespaces), ".tint(AppColors.swipeSlate)",
+                           "\(item.file): the queue swipe \(item.identifier) uses the fixed swipeSlate tint (#4045)")
         }
         // The journeys tap these by identifier; the new buttons must not have moved them.
-        let library = try TestInputs.text(.appSources, "ExperienceLibraryScreen.swift")
-        let sources = try TestInputs.text(.appSources, "ExperienceSourcesScreen.swift")
+        let library = try TestInputs.code(.appSources, "ExperienceLibraryScreen.swift")
+        let sources = try TestInputs.code(.appSources, "ExperienceSourcesScreen.swift")
         XCTAssertTrue(library.contains("library.complete.\\(row.id)"))
         XCTAssertTrue(sources.contains("sources.show.\\(row.id).add"))
-        for name in ["ExperienceLibraryScreen.swift", "ExperienceSourcesScreen.swift", "ExperienceShowScreen.swift"] {
-            let text = try TestInputs.text(.appSources, name)
-            if text.contains("QueueRowAction"), text.contains(".queue") || text.contains("queueSwipe") {
-                XCTAssertTrue(text.contains("AppColors.swipeSlate"), "\(name): the queue swipe uses the fixed swipeSlate tint (#4045)")
-            }
-        }
     }
 
-    func testTheLongSwipeStillBelongsToTheFirstButtonOnEachRow() throws {
+    /// Source-text guard (#4306): the call's own text, comments removed, so a comment that quotes the old flag can't pass.
+    func testSourceTextTheLongSwipeStillBelongsToTheFirstButtonOnEachRow() throws {
         // The first button in a leading swipeActions block takes the long swipe, so Add to Queue is written after Complete
         // and after Add, and a row with only the queue button turns the long swipe off.
-        let library = try TestInputs.text(.appSources, "ExperienceLibraryScreen.swift")
+        let library = try TestInputs.code(.appSources, "ExperienceLibraryScreen.swift")
         XCTAssertLessThan(try XCTUnwrap(library.range(of: "library.complete.\\(row.id)")).lowerBound,
                           try XCTUnwrap(library.range(of: "library.queueSwipe.\\(row.id)")).lowerBound)
         XCTAssertTrue(library.contains("swipeActions(edge: .leading, allowsFullSwipe: !row.isCompleted)"))
-        let sources = try TestInputs.text(.appSources, "ExperienceSourcesScreen.swift")
+        let sources = try TestInputs.code(.appSources, "ExperienceSourcesScreen.swift")
         XCTAssertLessThan(try XCTUnwrap(sources.range(of: "sources.show.\\(row.id).add\")")).lowerBound,
                           try XCTUnwrap(sources.range(of: "queueSwipeButton(row)")).lowerBound)
         XCTAssertTrue(sources.contains("swipeActions(edge: .leading, allowsFullSwipe: row.addEntryID != nil)"))
-        let show = try TestInputs.text(.appSources, "ExperienceShowScreen.swift")
+        let show = try TestInputs.code(.appSources, "ExperienceShowScreen.swift")
         XCTAssertTrue(show.contains("swipeActions(edge: .leading, allowsFullSwipe: false)"), "an in-Library episode has no long swipe")
     }
 }

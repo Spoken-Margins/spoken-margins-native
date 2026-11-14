@@ -104,6 +104,27 @@ public enum TestInputs {
         try String(contentsOf: url(input, relative), encoding: .utf8)
     }
 
+    /// The text of a Swift file inside `input` with its comments blanked, line for line (#4306). A guard that checks a
+    /// source file for a call or a modifier must read the code, not a comment that quotes the old code: `.tint(.red) // was
+    /// .tint(AppColors.swipeSlate)` has to fail it. Comments are found by `//` after whitespace (so `https://` stays) and
+    /// by `/* */`; a `//` inside a string literal after a space would be dropped too, which only makes a guard stricter.
+    public static func code(_ input: Input, _ relative: String) throws -> String {
+        withoutComments(try text(input, relative))
+    }
+
+    /// `text` with `//` and `/* */` comments replaced by nothing, keeping every newline so line numbers still match.
+    public static func withoutComments(_ text: String) -> String {
+        var result = text
+        let blocks = try! NSRegularExpression(pattern: #"/\*.*?\*/"#, options: [.dotMatchesLineSeparators])
+        for match in blocks.matches(in: result, range: NSRange(result.startIndex..., in: result)).reversed() {
+            let range = Range(match.range, in: result)!
+            let newlines = result[range].filter { $0 == "\n" }
+            result.replaceSubrange(range, with: newlines)
+        }
+        let lines = try! NSRegularExpression(pattern: #"(^|[ \t])//[^\n]*"#, options: [.anchorsMatchLines])
+        return lines.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "$1")
+    }
+
     /// The bytes of a file inside `input`.
     public static func data(_ input: Input, _ relative: String) throws -> Data {
         try Data(contentsOf: url(input, relative))

@@ -5,9 +5,10 @@ import SessionKitTestInputs
 /// Guards that read app files as text and need no Apple framework. They live here, in the target that also runs on Linux,
 /// rather than beside the Mac-only tests of the same subject, so a diff under `App/` can be checked without a Mac (#3538).
 final class AppFileReadGuardTests: XCTestCase {
-    func testModelRetainsDiagnosticErrorAndRequestLiterals() throws {
-        // These remain app-owned. Pin their bytes at the call site without pretending to run the app.
-        let source = try TestInputs.text(.appSources, "Gate1AppModel+PackageImport.swift")
+    func testSourceTextModelRetainsDiagnosticErrorAndRequestLiterals() throws {
+        // These remain app-owned. Pin their bytes at the call site without pretending to run the app: the code with its
+        // comments removed, so a commented-out write (#4306) does not count.
+        let source = try TestInputs.code(.appSources, "Gate1AppModel+PackageImport.swift")
         let start = try XCTUnwrap(source.range(of: "func acquirePodcastForImportedPackage("))
         let end = try XCTUnwrap(source.range(of: "\n    }\n", range: start.upperBound..<source.endIndex))
         let body = String(source[start.lowerBound..<end.lowerBound])
@@ -40,7 +41,7 @@ final class AppFileReadGuardTests: XCTestCase {
         let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: appTests, includingPropertiesForKeys: nil))
         var counts: [String: Int] = [:]
         for case let file as URL in enumerator where file.pathExtension == "swift" {
-            let text = try String(contentsOf: file, encoding: .utf8)
+            let text = TestInputs.withoutComments(try String(contentsOf: file, encoding: .utf8))
             let matches = call.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text))
             if matches > 0 { counts[file.lastPathComponent] = matches }
         }

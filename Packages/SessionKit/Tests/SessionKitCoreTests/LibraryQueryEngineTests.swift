@@ -189,7 +189,7 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(LibrarySort.allCases.map { LibraryQueryEngine.displayName($0.rawValue) },
                        ["Recently Added", "Recently Listened", "Title", "Progress", "Published"])
         // The menu lives in the app target: it must ask the engine, not capitalize on its own.
-        let screen = try TestInputs.text(.appSources, "ExperienceLibraryScreen.swift")
+        let screen = try TestInputs.code(.appSources, "ExperienceLibraryScreen.swift")
         XCTAssertTrue(screen.contains("LibraryQueryEngine.displayName(rawValue)"))
         XCTAssertFalse(screen.contains(".capitalized"))
     }
@@ -204,7 +204,7 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(LibraryOfflineStateFilter.allCases.map(\.rawValue), ["all", "preparing", "ready_offline", "needs_repreparation", "online_only"])
         XCTAssertEqual(LibrarySort.allCases.map(\.rawValue), ["recently_added", "recently_listened", "title", "progress", "published"])
         // The writer stays app-side. Pin its literal keys without loading the iOS app.
-        let source = try TestInputs.text(.appSources, "Gate1AppModel.swift")
+        let source = try TestInputs.code(.appSources, "Gate1AppModel.swift")
         for key in ["libraryContentTypeFilter", "libraryListeningStateFilter", "libraryOfflineStateFilter", "librarySort"] {
             XCTAssertTrue(source.contains("forKey: \"\(key)\""), key)
         }

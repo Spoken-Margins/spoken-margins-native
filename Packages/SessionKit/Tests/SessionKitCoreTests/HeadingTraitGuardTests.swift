@@ -5,14 +5,15 @@ import SessionKitTestInputs
 /// screen titles; these guards cover the section titles it left: the item screen's sections, the Live session's headlines,
 /// the Margins tab's item groups and the share extension's title.
 final class HeadingTraitGuardTests: XCTestCase {
-    private func source(_ input: TestInputs.Input, _ name: String) throws -> [String] {
+    /// The file's lines, comments blanked (#4306): a trait that only a comment mentions is not a trait. Line numbers match the file.
+    private func source(_ input: TestInputs.Input, _ name: String, keepComments: Bool = false) throws -> [String] {
         let directory = try TestInputs.directory(input)
         let text = try String(contentsOf: directory.appending(path: name), encoding: .utf8)
-        return text.components(separatedBy: "\n")
+        return (keepComments ? text : TestInputs.withoutComments(text)).components(separatedBy: "\n")
     }
 
     /// The item screen's `sectionHeading` is used for Recent Margins, Listening sessions, Chapters and the Listening Map.
-    func testEveryItemScreenSectionHeadingCarriesTheHeaderTrait() throws {
+    func testSourceTextEveryItemScreenSectionHeadingCarriesTheHeaderTrait() throws {
         var found = 0
         for name in ["ExperienceItemDetailScreen.swift", "ExperienceReactionsScreen.swift"] {
             let lines = try source(.appSources, name)
@@ -30,9 +31,10 @@ final class HeadingTraitGuardTests: XCTestCase {
     /// The screen drawn like playback (#3491) keeps three: the setup field label, "Session ended" and "End Session".
     func testEveryLiveSessionHeadlineCarriesTheHeaderTrait() throws {
         let lines = try source(.appSources, "LiveSessionView.swift")
+        let commented = try source(.appSources, "LiveSessionView.swift", keepComments: true)  // the field-label mark is a comment
         let headlines = lines.indices.filter { lines[$0].contains(".font(.headline)") }
         XCTAssertGreaterThanOrEqual(headlines.count, 3, "the scan must see the headlines")
-        for index in headlines where !lines[index].contains("a field label") {
+        for index in headlines where !commented[index].contains("a field label") {
             XCTAssertTrue(lines[index].contains(".isHeader"), "LiveSessionView.swift:\(index + 1) is a headline without the heading trait")
         }
     }
