@@ -271,28 +271,104 @@ final class PermanentDeletePurgeTests: XCTestCase {
     // MARK: Which files an item owns
 
     func testWhichFilesAnItemOwns() {
-        let table: [(id: String, prepared: Bool, note: String)] = [
-            ("item-6f1c2d3e-0000-4000-8000-000000000001", true, "an id the app makes"),
-            ("epub-6F1C2D3E-0000-4000-8000-000000000001", true, "upper case"),
-            ("a_b", false, "an underscore would share a folder with a-b"),
-            ("a b", false, "a space"),
-            ("café", false, "non-ASCII"),
-            ("", false, "empty"),
-            (String(repeating: "x", count: 81), false, "cut at 80"),
-            (String(repeating: "x", count: 80), true, "exactly 80"),
-            ("a/b", false, "a slash"),
-            ("..", false, "dots"),
-            ("a\u{0301}", false, "a combining mark"),
+        let table: [(id: String, others: [String], prepared: Bool, note: String)] = [
+            ("item-6f1c2d3e-0000-4000-8000-000000000001", [], true, "an id the app makes"),
+            ("epub-6F1C2D3E-0000-4000-8000-000000000001", [], true, "upper case"),
+            ("a_b", [], true, "an underscore, alone in its folder"),
+            ("a_b", ["a-b"], false, "an underscore shares a folder with a-b, which stays"),
+            ("a-b", ["a_b"], false, "the same, the other way round"),
+            ("a-b", ["a-c", "a--b"], true, "neighbours that map elsewhere"),
+            ("a b", ["a-b"], false, "a space shares with a-b"),
+            ("café", [], true, "non-ASCII, alone"),
+            ("café!", ["café-"], false, "non-ASCII letters kept, punctuation shares"),
+            ("", [], false, "empty"),
+            (String(repeating: "x", count: 81), [], true, "cut at 80, alone"),
+            (String(repeating: "x", count: 81), [String(repeating: "x", count: 82)], false, "cut at 80, shared"),
+            (String(repeating: "x", count: 80), [String(repeating: "x", count: 80) + "y"], false, "80 shares with a longer one"),
+            ("a/b", [], true, "a slash becomes a hyphen, so it stays one name"),
+            ("..", [], true, "dots become hyphens"),
+            ("a\u{0301}", [], true, "a combining mark"),
         ]
         for row in table {
-            let targets = ItemOwnedFiles.targets(forItem: row.id)
+            let targets = ItemOwnedFiles.targets(forItem: row.id, otherItemIds: row.others)
             XCTAssertEqual(targets.contains { $0.root == ItemOwnedFiles.preparedAudioRoot }, row.prepared, row.note)
             XCTAssertEqual(targets.filter { $0.root == ItemOwnedFiles.listeningEditionsRoot }.count, 1, row.note)
             for target in targets {
                 XCTAssertFalse(target.relativePath.contains("/"), "\(row.note): one name under its root")
+                if target.root == ItemOwnedFiles.preparedAudioRoot {
+                    XCTAssertFalse(target.relativePath.contains("."), "\(row.note): no dots, so no climbing")
+                }
                 XCTAssertFalse(target.relativePath.isEmpty, row.note)
+                XCTAssertEqual(target.itemId, row.id, row.note)
             }
         }
+    }
+
+    func testItemsDeletedTogetherDoNotBlockEachOthersFolders() {
+        // a_b and a-b share a folder and both go: the folder is named once. A third item that maps there keeps it.
+        let both = ItemOwnedFiles.targets(forItems: ["a_b", "a-b"], existingItemIds: ["a_b", "a-b", "z"])
+        XCTAssertEqual(both.filter { $0.root == ItemOwnedFiles.preparedAudioRoot }.map(\.relativePath), ["a-b"])
+        let blocked = ItemOwnedFiles.targets(forItems: ["a_b", "a-b"], existingItemIds: ["a_b", "a-b", "a b"])
+        XCTAssertTrue(blocked.filter { $0.root == ItemOwnedFiles.preparedAudioRoot }.isEmpty)
+        let unread = ItemOwnedFiles.targets(forItems: ["item-1"], existingItemIds: [], namingPreparedAudio: false)
+        XCTAssertEqual(unread.map(\.root), [ItemOwnedFiles.listeningEditionsRoot], "ids that couldn't be read: the edition only")
+    }
+
+    func testAPurgeNeverTakesAnotherItemsSharedFolder() async throws {
+        let store = try SQLiteSessionStore(path: base.appending(path: "store.sqlite").path)
+        for id in ["a-b", "a_b", "other"] {
+            try store.saveItem(Item(id: id, title: id, mediaType: "text", text: "Body", externalReference: nil, status: "ready"))
+        }
+        XCTAssertEqual(Set(try store.loadAllItemIds()), ["a-b", "a_b", "other"])
+        try seedFiles(of: "a-b")   // the folder a_b maps to as well
+        let targets = ItemOwnedFiles.targets(forItems: ["a_b"], existingItemIds: try store.loadAllItemIds())
+        let outcome = await (try purge().deleting(itemIds: ["a_b"], targets: targets) { try store.deleteItem(id: "a_b") }).value
+        XCTAssertEqual(outcome.removed.map(\.root), [ItemOwnedFiles.listeningEditionsRoot], "a_b's edition only")
+        XCTAssertTrue(filesExist(of: "a-b").chunks, "a-b's chunks live in the folder a_b also maps to")
+    }
+
+    // MARK: A resumed delete checks again just before each removal
+
+    func testAnItemThatComesBackWhileARecordIsFinishedKeepsItsFiles() throws {
+        try seedFiles(of: gone); try seedFiles(of: kept)
+        _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
+        // Absent when the record is read; imported again (same id) before the first removal.
+        var lookups = 0
+        let outcome = purge().resumePending(recordsBefore: later, rowState: { _ in
+            lookups += 1
+            return lookups == 1 ? .absent : .present
+        })
+        XCTAssertEqual(outcome.reappeared.count, 2)
+        XCTAssertTrue(outcome.removed.isEmpty)
+        XCTAssertEqual(filesExist(of: gone).chunks, true, "the re-imported item's files stay")
+        XCTAssertEqual(filesExist(of: gone).edition, true)
+        XCTAssertEqual(journalCount(), 0, "nothing is left to retry")
+    }
+
+    func testAnItemWhoseRowCannotBeReadAtTheSecondLookKeepsItsTarget() throws {
+        try seedFiles(of: gone)
+        _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
+        var lookups = 0
+        let outcome = purge().resumePending(recordsBefore: later, rowState: { _ in
+            lookups += 1
+            return lookups == 1 ? .absent : .unknown
+        })
+        XCTAssertEqual(outcome.kept.count, 2)
+        XCTAssertEqual(filesExist(of: gone).chunks, true)
+        XCTAssertEqual(journalCount(), 1, "tried again at the next launch")
+    }
+
+    func testARecordWithNoItemOnATargetIsRemovedAsWritten() throws {
+        // The shape of a record written before targets named their item.
+        try seedFiles(of: gone)
+        let target = PermanentDeletePurge.Target(
+            root: ItemOwnedFiles.listeningEditionsRoot, relativePath: ItemOwnedFiles.listeningEditionFileName(itemId: gone))
+        let json = #"{"root":"\#(target.root)","relativePath":"\#(target.relativePath)"}"#
+        XCTAssertEqual(try JSONDecoder().decode(PermanentDeletePurge.Target.self, from: Data(json.utf8)), target)
+        let record = try purge().begin(itemIds: [gone], targets: [target])
+        let outcome = purge().finish(record, recheck: { _ in .present })
+        XCTAssertEqual(outcome.removed, [target], "no item named, so nothing to check")
+        XCTAssertEqual(filesExist(of: gone).edition, false)
     }
 
     func testTheWritersFolderRuleIsUnchanged() {

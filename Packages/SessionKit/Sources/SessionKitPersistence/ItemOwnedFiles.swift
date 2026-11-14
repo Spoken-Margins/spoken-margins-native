@@ -24,23 +24,32 @@ public enum ItemOwnedFiles {
         ListeningEdition.digest(itemId) + ".json"
     }
 
-    /// Every file the item owns alone. The prepared-audio folder is named from the id by a lossy rule, so it is named
-    /// here only when the rule changed nothing for this id (plain ASCII letters, digits and hyphens, at most 80
-    /// characters): an id with other characters, or a long one, might share its folder with another id, and is left
-    /// for a later pass. For the ids the app makes (a prefix and a UUID) the folder is the item's alone. If a hand-made
-    /// id such as `a_b` did share the folder of `a-b`, the loss is rendered narration, which the app renders again;
-    /// it is never a recording or a Margin.
-    public static func targets(forItem itemId: String) -> [PermanentDeletePurge.Target] {
-        var targets = [PermanentDeletePurge.Target(
-            root: listeningEditionsRoot, relativePath: listeningEditionFileName(itemId: itemId))]
-        let folder = preparedAudioDirectoryName(itemId: itemId)
-        if !itemId.isEmpty, folder == itemId, itemId.allSatisfy({ $0.isASCII }) {
-            targets.append(.init(root: preparedAudioRoot, relativePath: folder))
-        }
-        return targets
+    /// Every file the item owns alone. The prepared-audio folder is named from the id by a lossy rule, so two ids can
+    /// map to one folder (`a-b` and `a_b`; an 80-character id and a longer one that starts with it). It is named here
+    /// only when no id in `otherItemIds` (the other items that still have rows) maps to the same folder, so a purge
+    /// never takes another item's narration chunks. An empty id has no folder.
+    public static func targets(forItem itemId: String, otherItemIds: [String] = []) -> [PermanentDeletePurge.Target] {
+        targets(forItems: [itemId], existingItemIds: otherItemIds + [itemId])
     }
 
-    public static func targets(forItems itemIds: [String]) -> [PermanentDeletePurge.Target] {
-        itemIds.flatMap(targets(forItem:))
+    /// The files of `itemIds`, which are being deleted together. `existingItemIds` is every id that has a row now
+    /// (the ids being deleted may be in it): the ones not being deleted decide which prepared-audio folders are shared.
+    /// `namingPreparedAudio: false` leaves every prepared-audio folder out, for a caller that couldn't read the ids.
+    public static func targets(
+        forItems itemIds: [String], existingItemIds: [String], namingPreparedAudio: Bool = true
+    ) -> [PermanentDeletePurge.Target] {
+        let deleting = Set(itemIds)
+        let staying = Set(existingItemIds.filter { !deleting.contains($0) }.map(preparedAudioDirectoryName(itemId:)))
+        var targets: [PermanentDeletePurge.Target] = []
+        var folders: Set<String> = []
+        for itemId in itemIds {
+            targets.append(.init(
+                root: listeningEditionsRoot, relativePath: listeningEditionFileName(itemId: itemId), itemId: itemId))
+            let folder = preparedAudioDirectoryName(itemId: itemId)
+            if namingPreparedAudio, !itemId.isEmpty, !staying.contains(folder), folders.insert(folder).inserted {
+                targets.append(.init(root: preparedAudioRoot, relativePath: folder, itemId: itemId))
+            }
+        }
+        return targets
     }
 }

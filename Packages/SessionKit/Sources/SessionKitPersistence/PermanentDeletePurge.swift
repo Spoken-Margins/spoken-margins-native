@@ -28,11 +28,16 @@ public struct PermanentDeletePurge: Sendable {
         public init(name: String, url: URL) { self.name = name; self.url = url }
     }
 
-    /// One file or folder to remove: a path under a root.
+    /// One file or folder to remove: a path under a root. `itemId` names the item the file belongs to, so a resumed
+    /// delete can check that item is still gone just before it removes this file; a record without one is removed
+    /// as written.
     public struct Target: Codable, Hashable, Sendable {
         public let root: String
         public let relativePath: String
-        public init(root: String, relativePath: String) { self.root = root; self.relativePath = relativePath }
+        public let itemId: String?
+        public init(root: String, relativePath: String, itemId: String? = nil) {
+            self.root = root; self.relativePath = relativePath; self.itemId = itemId
+        }
     }
 
     /// The journal entry for one delete.
@@ -49,6 +54,9 @@ public struct PermanentDeletePurge: Sendable {
         /// Targets that could not be removed (still in their record, tried again at the next launch) or whose root
         /// this build does not know.
         public var kept: [Target] = []
+        /// Targets left alone because their item came back (a re-import of the same id) after the record was read:
+        /// dropped from the record, nothing removed.
+        public var reappeared: [Target] = []
         /// Records whose items still have rows, so the delete never happened: dropped, nothing removed.
         public var abandonedRecords = 0
         /// Records read and dropped because they could not be decoded.
@@ -131,9 +139,10 @@ public struct PermanentDeletePurge: Sendable {
                 outcome.deferredRecords += 1
                 continue
             }
-            let finished = finish(record)
+            let finished = withoutActuallyEscaping(rowState) { finish(record, recheck: $0) }
             outcome.removed += finished.removed
             outcome.kept += finished.kept
+            outcome.reappeared += finished.reappeared
         }
         return outcome
     }
@@ -163,10 +172,22 @@ public struct PermanentDeletePurge: Sendable {
 
     /// Removes the record's files. The record goes when every file is gone; otherwise it is rewritten with only the
     /// files left, so the next launch tries those again.
+    ///
+    /// With `recheck`, each file's item is looked up again just before that file is removed (a launch can finish a
+    /// record while the listener imports the same item again, which gives it the same id and the same file names): an
+    /// item that is present again keeps its file and the target is dropped, and one that can't be read keeps the
+    /// target for the next launch. This narrows the window to the one lookup before the removal; it does not close it.
     @discardableResult
-    public func finish(_ record: Record) -> Outcome {
+    public func finish(_ record: Record, recheck: ((String) -> RowState)? = nil) -> Outcome {
         var outcome = Outcome()
         for target in record.targets {
+            if let recheck, let itemId = target.itemId {
+                switch recheck(itemId) {
+                case .present: outcome.reappeared.append(target); continue
+                case .unknown: outcome.kept.append(target); continue
+                case .absent: break
+                }
+            }
             if remove(target) { outcome.removed.append(target) } else { outcome.kept.append(target) }
         }
         if outcome.kept.isEmpty {

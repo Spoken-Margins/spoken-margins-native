@@ -2379,6 +2379,29 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         return documents.max { $0.extraction.version < $1.extraction.version }
     }
 
+    /// The id of every item that has a row, trashed or not, read without decoding any payload. Permanent delete uses it
+    /// to tell whether another item shares a lossy file name with the one going (#4227).
+    public func loadAllItemIds() throws -> [String] {
+        let timer = StoreReadTimer(readMeter, method: #function)
+        var itemIds: [String] = []
+        defer { timer?.finish(rows: itemIds.count, bytes: itemIds.reduce(0) { $0 + $1.utf8.count }) }
+        return try withReadConnection { connection in
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(
+                connection, "SELECT id FROM records WHERE kind = ?;", -1, &statement, nil
+            ) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_all_item_ids")
+            }
+            defer { sqlite3_finalize(statement) }
+            bind(statement, index: 1, value: "item")
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let raw = sqlite3_column_text(statement, 0) else { continue }
+                itemIds.append(String(cString: raw))
+            }
+            return itemIds
+        }
+    }
+
     /// The items that have a structured document, read without decoding the
     /// documents, so the Library can mark new-reader PDFs cheaply (#359).
     public func loadStructuredDocumentItemIds() throws -> Set<String> {
