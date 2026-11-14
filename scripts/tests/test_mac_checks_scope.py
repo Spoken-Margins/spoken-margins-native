@@ -562,14 +562,14 @@ class WorkflowScopeTests(unittest.TestCase):
     def test_the_portable_job_does_not_wait_for_the_scope_job(self):
         self.assertNotIn('needs', self.jobs['portable'])
 
-    def test_the_scope_job_fails_safe(self):
+    def test_the_scope_job_asks_the_rule_for_the_mac_verdict(self):
         text = (ROOT / '.github/workflows/hosted-portable.yml').read_text()
-        self.assertIn('echo "mac=true" >> "$GITHUB_OUTPUT"', text)
         self.assertIn('--mac-required', text)
 
-    def scope_says(self, layout, *, base_has_script=True):
+    def scope_says(self, layout, *, base_has_script=True, base_rule=None):
         """The scope step, run for real: a base whose rule needs the Mac for a Swift file, and a PR that changes that
-        rule so its own copy says Mac-free. <layout>: 'pr' (GitHub's merge commit) or 'dispatch' (the PR's branch, with a base)."""
+        rule so its own copy says Mac-free. <layout>: 'pr' (GitHub's merge commit) or 'dispatch' (the PR's branch, with a base).
+        <base_rule>: the text of the base's scripts/test-scope.py, the real one by default."""
         step = next(step for step in self.jobs['scope']['steps'] if step.get('id') == 'scope')['run']
 
         def git(*args, cwd):
@@ -581,7 +581,7 @@ class WorkflowScopeTests(unittest.TestCase):
             (origin / 'scripts').mkdir(parents=True)
             git('init', '--quiet', '--initial-branch=main', cwd=origin)
             if base_has_script:
-                (origin / 'scripts/test-scope.py').write_text((ROOT / 'scripts/test-scope.py').read_text())
+                (origin / 'scripts/test-scope.py').write_text(base_rule if base_rule is not None else (ROOT / 'scripts/test-scope.py').read_text())
             (origin / 'readme.txt').write_text('base\n')
             git('add', '.', cwd=origin)
             git('commit', '--quiet', '-m', 'base', cwd=origin)
@@ -611,6 +611,26 @@ class WorkflowScopeTests(unittest.TestCase):
         for layout in ('pr', 'dispatch'):
             with self.subTest(layout=layout):
                 self.assertEqual(self.scope_says(layout)['mac'], 'true')
+
+    def test_a_rule_that_crashes_or_says_nothing_runs_the_mac_checks(self):
+        # #4303: the step's last line is the fail-safe. A rule that raises, exits 1 or prints no `mac=` line must leave
+        # `mac=true` in the output, not a skipped Mac job. The step is the real one, run for real (not grepped), with
+        # a base rule that misbehaves; the same run with a rule that says `mac=false` shows false is still reachable.
+        # Not covered, on purpose: a rule that prints `mac=false` and then exits 1. The step has no pipefail (GitHub's
+        # default `bash -e`), so `rule | tee || echo mac=true` never fires its `||` and the printed verdict stands; the
+        # `grep -q '^mac='` line is what does the work here. Changing that is a `.github/` edit, the owner's tap (#4303).
+        misbehaving = {
+            'raises': 'raise RuntimeError("the rule broke")\n',
+            'exits 1': 'import sys\nsys.exit(1)\n',
+            'prints nothing': '',
+            'prints other lines only': 'print("reason=I forgot the verdict")\n',
+        }
+        for layout in ('pr', 'dispatch'):
+            for name, rule in misbehaving.items():
+                with self.subTest(layout=layout, rule=name):
+                    self.assertEqual(self.scope_says(layout, base_rule=rule).get('mac'), 'true')
+            with self.subTest(layout=layout, rule='says mac=false'):
+                self.assertEqual(self.scope_says(layout, base_rule='print("mac=false")\nprint("reason=docs only")\n')['mac'], 'false')
 
     def test_a_base_without_the_script_runs_the_mac_checks(self):
         for layout in ('pr', 'dispatch'):
