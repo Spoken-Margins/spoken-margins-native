@@ -306,6 +306,16 @@ Parses the workflow files in scripts/tests/test_workflow_files.py. Installed fro
 
 Parses HTML in the research ground-truth tests (research/C1/tools). Installed from requirements-dev.txt so the hosted research step really runs them (#2596); build-time only and none ships.
 
+### regex (Python) 2025.9.18
+
+- Licence: Apache-2.0 AND CNRI-Python
+- From: Matthew Barnett
+- Source: <https://github.com/mrabarnett/mrab-regex>
+- Where: `research/C1/tools`
+- Licence text: <https://raw.githubusercontent.com/mrabarnett/mrab-regex/hg/LICENSE.txt>
+
+Used by research/C1/tools/marker_diff.py to count characters the way Swift does. Installed from requirements-dev.txt so the hosted research step really runs test_marker_diff (#4320); build-time only and none ships.
+
 ### Design prototypes' npm packages
 
 - Licence: Each package's own licence, installed by npm

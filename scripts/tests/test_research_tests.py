@@ -49,6 +49,36 @@ class ResearchRunnerTests(unittest.TestCase):
         for label, folder, arguments in research_tests.PYTHON_SUITES:
             self.assertTrue((ROOT / folder).is_dir(), label)
 
+    def test_marker_diff_is_run_by_the_research_command_not_listed_as_a_gap(self):
+        # #4320: the T1 command for a research change skipped test_marker_diff ("not covered"), so a green run on a
+        # wrong marker_diff.py proved nothing. The suite is counted now, and the package it imports is installed
+        # wherever the hosted step runs (a skipped suite fails the step there), as lxml is for the ground-truth tests.
+        self.assertIn(('python research/C1/tools test_marker_diff', 'research/C1/tools', ('test_marker_diff',)),
+                      research_tests.PYTHON_SUITES)
+        self.assertFalse([label for label, _ in research_tests.NOT_COVERED if 'test_marker_diff' in label])
+        pinned = {line.split('==')[0].lower() for line in (ROOT / 'requirements-dev.txt').read_text().splitlines()
+                  if '==' in line}
+        imported = {line.split()[1] for line in (ROOT / 'research/C1/tools/marker_diff.py').read_text().splitlines()
+                    if line.startswith('import ') and line.split()[1] in research_tests.THIRD_PARTY}
+        self.assertEqual(imported, {'regex'})
+        self.assertTrue(imported <= pinned, f'requirements-dev.txt lacks {imported - pinned}')
+
+    @unittest.skipUnless(importlib.util.find_spec('regex'), 'needs the `regex` package from requirements-dev.txt')
+    def test_a_wrong_marker_diff_result_turns_the_research_suite_red(self):
+        import shutil
+        label, folder, arguments = next(suite for suite in research_tests.PYTHON_SUITES if 'test_marker_diff' in suite[0])
+        self.assertIsNone(research_tests.python_suite(ROOT, label, folder, arguments).error)
+        with tempfile.TemporaryDirectory() as temporary:
+            copy = Path(temporary) / 'research/C1/tools'
+            shutil.copytree(ROOT / 'research/C1/tools', copy, ignore=shutil.ignore_patterns('__pycache__'))
+            module = copy / 'marker_diff.py'
+            source = module.read_text()
+            wrong = source.replace('return regex.findall(r"\\X", text)', 'return list(text)')
+            self.assertNotEqual(wrong, source, 'the mutation must apply')
+            module.write_text(wrong)
+            result = research_tests.python_suite(Path(temporary), label, folder, arguments)
+        self.assertIn('unittest exited 1', result.error or '')
+
     def test_a_diff_that_touches_only_the_tested_research_code_is_t1_not_docs(self):
         # The lane runs nothing for T0, so a server-only PR never reached any gate.
         for path in ('research/B4/server/internal/maps/store.go', 'research/B4/deploy/edit-caddyfile.sh',
