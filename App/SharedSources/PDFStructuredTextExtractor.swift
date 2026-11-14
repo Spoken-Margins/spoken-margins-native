@@ -44,6 +44,12 @@ enum PDFStructuredTextExtractor {
         /// `smallRuns` that `PDFSmallRunClassifier` calls markers. Set by `markerRanges` once
         /// the text has its word spaces and the layout is known.
         var superscripts: [Range<Int>] = []
+        /// Character ranges of `text` that may be a footnote's number or letter on this
+        /// page (v2 only): the markers under the cautious reading, where a digit after a
+        /// lone letter may be one whatever the document does. `footnoteLineIndices` links a
+        /// footnote's text by these. They are the wider set because a missed link reads the
+        /// footnote aloud as body text (#4254).
+        var noteCues: [Range<Int>] = []
         /// Short runs of smaller type set after other text (v2 only): markers, math indices
         /// and exponents, ordinals.
         var smallRuns: [SmallRun] = []
@@ -357,11 +363,25 @@ enum PDFStructuredTextExtractor {
         let layout = BodyLayout(lines: allLines, bodySize: bodySize)
         // Which small runs are markers (#4194). Settled here, not as each line is read: a
         // run in a display equation is an index, and only the layout says which lines
-        // those are.
+        // those are. And a digit after a lone letter ("X0") is a citation or an index by
+        // how the whole document cites (#4254), so that is counted first, over the lines set
+        // in the body's size: a byline's affiliation numbers and a table's notes aren't
+        // citations.
+        var citationStyle = PDFCitationStyle()
+        for line in allLines where abs(line.mainPointSize - bodySize) <= 0.5 {
+            let runs = line.smallRuns.isEmpty ? [] : classifierRuns(in: line, isDisplayMath: layout.looksLikeDisplayMath(line)).map(\.run)
+            citationStyle.count(line: line.text, runs: runs)
+        }
+        let raisedNumbersCite = citationStyle.citesWithRaisedNumbers
         for pageIndex in pages.indices {
             for lineIndex in pages[pageIndex].indices where !pages[pageIndex][lineIndex].smallRuns.isEmpty {
                 let line = pages[pageIndex][lineIndex]
-                pages[pageIndex][lineIndex].superscripts = markerRanges(in: line, isDisplayMath: layout.looksLikeDisplayMath(line))
+                let isDisplayMath = layout.looksLikeDisplayMath(line)
+                let cues = markerRanges(in: line, isDisplayMath: isDisplayMath, raisedNumbersCite: true)
+                pages[pageIndex][lineIndex].noteCues = cues
+                pages[pageIndex][lineIndex].superscripts = raisedNumbersCite
+                    ? cues
+                    : markerRanges(in: line, isDisplayMath: isDisplayMath, raisedNumbersCite: false)
             }
         }
         let cover = titleOnlyCover(pages: pages, bodySize: bodySize)
@@ -580,6 +600,7 @@ enum PDFStructuredTextExtractor {
             let next = position + 1 < texts.count ? texts[position + 1] : ""
             let continued = line.text.hasSuffix("-") ? String(next.prefix(while: \.isLowercase)) : ""
             // The layout isn't known yet, and a display equation's letters aren't glued prose.
+            // How the document cites isn't either: its words aren't apart yet to count by.
             let runs = smallRunKinds(in: line, isDisplayMath: false)
             let insertions = spacer.spaceInsertions(
                 in: line.text,
@@ -1021,7 +1042,7 @@ enum PDFStructuredTextExtractor {
         var bodyMarkers = Set<String>()
         for line in lines where !isSmall(line) {
             let characters = Array(line.text)
-            for range in line.superscripts where range.lowerBound >= 0 && range.upperBound <= characters.count {
+            for range in line.noteCues where range.lowerBound >= 0 && range.upperBound <= characters.count {
                 let label = digits(String(characters[range]))
                 for piece in label.split(whereSeparator: { ",–- ".contains($0) }) where !piece.isEmpty {
                     bodyMarkers.insert(String(piece))
@@ -1314,23 +1335,35 @@ enum PDFStructuredTextExtractor {
     /// The line's small runs that are citation or footnote markers, which the listener
     /// doesn't hear. A math index or exponent ("xₙ", "10⁵", "CO₂") and an ordinal ("20th")
     /// are spoken: silencing every level run read "Fᵢ = vᵢ" as "F = v" (#4074, #4194).
-    private static func markerRanges(in line: TextLine, isDisplayMath: Bool) -> [Range<Int>] {
-        smallRunKinds(in: line, isDisplayMath: isDisplayMath).filter(\.kind.isSilenced).map(\.range)
+    private static func markerRanges(in line: TextLine, isDisplayMath: Bool, raisedNumbersCite: Bool) -> [Range<Int>] {
+        smallRunKinds(in: line, isDisplayMath: isDisplayMath, raisedNumbersCite: raisedNumbersCite).filter(\.kind.isSilenced).map(\.range)
     }
 
     /// What `PDFSmallRunClassifier` makes of each small run, from the line's text as it
-    /// now reads.
-    private static func smallRunKinds(in line: TextLine, isDisplayMath: Bool) -> [(range: Range<Int>, kind: PDFSmallRunClassifier.Kind)] {
+    /// now reads. `raisedNumbersCite` is the cautious reading until the document is counted.
+    private static func smallRunKinds(
+        in line: TextLine, isDisplayMath: Bool, raisedNumbersCite: Bool = true
+    ) -> [(range: Range<Int>, kind: PDFSmallRunClassifier.Kind)] {
+        classifierRuns(in: line, isDisplayMath: isDisplayMath, raisedNumbersCite: raisedNumbersCite).map {
+            ($0.range, PDFSmallRunClassifier.classify($0.run))
+        }
+    }
+
+    /// The line's small runs as the classifier takes them: each with the text around it.
+    private static func classifierRuns(
+        in line: TextLine, isDisplayMath: Bool, raisedNumbersCite: Bool = true
+    ) -> [(range: Range<Int>, run: PDFSmallRunClassifier.Run)] {
         let characters = Array(line.text)
         return line.smallRuns.compactMap { run in
             guard run.range.lowerBound > 0, run.range.upperBound <= characters.count else { return nil }
-            return (run.range, PDFSmallRunClassifier.classify(PDFSmallRunClassifier.Run(
+            return (run.range, PDFSmallRunClassifier.Run(
                 text: String(characters[run.range]),
                 before: String(characters[..<run.range.lowerBound]),
                 after: String(characters[run.range.upperBound...]),
                 baselineShift: run.baselineShift,
-                lineLooksLikeMath: isDisplayMath
-            )))
+                lineLooksLikeMath: isDisplayMath,
+                raisedNumbersCite: raisedNumbersCite
+            ))
         }
     }
 
