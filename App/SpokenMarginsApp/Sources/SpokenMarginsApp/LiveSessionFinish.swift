@@ -24,7 +24,10 @@ final class LiveSessionFinish: ObservableObject {
     }
 
     func saved(_ saved: Gate1AppModel.SavedLiveSession, dismiss: () -> Void, open: (Gate1AppModel.SavedLiveSession) -> Void) {
-        flow.saved(saved, dismiss: dismiss, open: open)
+        // On a copy, so a closure that reads `showsSetup` or `isSaving` meets no overlapping access to `flow`.
+        var next = flow
+        next.saved(saved, dismiss: dismiss, open: open)
+        flow = next
         publish()
     }
 
@@ -36,7 +39,9 @@ final class LiveSessionFinish: ObservableObject {
     func screenAppeared() { flow.screenAppeared() }
 
     func screenGone(open: (Gate1AppModel.SavedLiveSession) -> Void) {
-        flow.screenGone(open: open)
+        var next = flow
+        next.screenGone(open: open)
+        flow = next
         publish()
     }
 
