@@ -108,6 +108,22 @@ final class PDFSmallRunClassifierTests: XCTestCase {
     }
 
     /// The index shapes #4194 left silenced on the C1 corpus (#4254), each with the marker that looks like it.
+    func testALetterWithADigitStraightAfterItIsAnIndex() {
+        check([
+            row("Nav1.2", before: "the voltage-gated sodium channel Na", "v", after: "1.2, is strongly", .mathIndex),
+            row("Kv7.2", before: "loss of K", "v", after: "7.2 current", .mathIndex),
+            row("Ci1i2", before: "coefficients Ci1", "i", after: "2...iN", .mathIndex),
+            row("two letters", before: "the term GL", "nr", after: "2", .mathIndex),
+            // The neighbours: a letter marker ends at a space, a comma, a bracket or the line.
+            row("a number after a space", before: "Jane Doe", "a", after: " 2 John Roe", .footnoteMarker),
+            row("a comma, then a number", before: "Jane Doe", "a", after: ",1 John Roe", .footnoteMarker),
+            row("a letter list before a digit", before: "Jane Doe", "a,b", after: "1", .footnoteMarker),
+            row("at the line's end", before: "the WHO", "a", .footnoteMarker),
+            row("before a year in brackets", before: "the WHO", "a", after: " (2010)", .footnoteMarker),
+            row("a number before a digit", before: "the cohort", "3", after: "1 more", .footnoteMarker),
+        ])
+    }
+
     func testIndexShapesTheFirstRulesMissed() {
         check([
             // No citation is numbered 0.

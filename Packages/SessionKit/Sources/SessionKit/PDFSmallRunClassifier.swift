@@ -20,7 +20,8 @@ import Foundation
 ///
 /// Known gaps: a star after a math letter ("x*", an optimum) is still a marker, and so is a digit after a lone
 /// letter in a paper that cites with raised numbers ("T2, T3 and T4"). A one-element formula set level ("O₂")
-/// is a marker too.
+/// is a marker too. So is a single letter after a word, a number or a bracket ("Idn", "2n", "[0,1]m"), because
+/// "WHOᵃ" and a table's "12.5ᵃ" look the same: about 90 runs on C1, none of them a real footnote letter (#4257).
 public enum PDFSmallRunClassifier {
     public enum Kind: Equatable, Sendable {
         /// A citation or footnote marker: silenced.
@@ -111,6 +112,8 @@ public enum PDFSmallRunClassifier {
            next == "(" || text.first == "," && !next.isWhitespace && !",.;:".contains(next) {
             return .mathIndex
         }
+        // A footnote letter is never followed straight by a digit: "Nav1.2", "Ci1i2" (#4257).
+        if text.allSatisfy(\.isLetter), run.after.first.map(isDecimalDigit) == true { return .mathIndex }
         let tokens = before.split(whereSeparator: \.isWhitespace)
         let word = String(before.reversed().prefix { $0.isLetter }.reversed())
         if operatorNames.contains(word) { return .mathIndex }
