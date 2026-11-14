@@ -21,6 +21,24 @@ public struct LiveInputWord: Sendable, Equatable {
     }
 }
 
+extension LiveInputWord {
+    /// Whether these words say "stop margin" or "end margin" as two whole words in a row, for the spike's one-flag
+    /// evidence that the phrase was heard. Case, punctuation and spacing don't matter; "stop margins", "stopped
+    /// margin" and the two words apart do. The words themselves never go to Diagnostics (the export has no redaction
+    /// for free text), so the answer is all that is kept.
+    public static func mentionsEndPhrase(_ words: [LiveInputWord]) -> Bool {
+        let spoken = words.map(\.text).joined(separator: " ").lowercased()
+        let tokens = spoken
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "'" })
+            .map(String.init)
+        guard tokens.count >= 2 else { return false }
+        for index in 0..<(tokens.count - 1) where tokens[index + 1] == "margin" {
+            if tokens[index] == "stop" || tokens[index] == "end" { return true }
+        }
+        return false
+    }
+}
+
 /// Why a live-input session could not start. `reason` is a short stable key for Diagnostics, never listener words.
 public struct LiveInputUnavailable: Error, Sendable, Equatable {
     public var reason: String

@@ -167,6 +167,31 @@ final class LiveInputTapTests: XCTestCase {
         XCTAssertEqual(stopped?.fields["cpuMsPerMinute"], "18000", "30% of a core is 18 000 ms of CPU per minute")
     }
 
+    func testTheEndPhraseFlagReadsWholeWordsOnly() {
+        // The spike logs this flag instead of the words (the export has no redaction for free text).
+        let rows: [(spoken: [String], heard: Bool)] = [
+            (["stop", "margin"], true),
+            (["Stop", "Margin."], true),
+            (["STOP MARGIN"], true),
+            (["and that's my point,", "end", "margin"], true),
+            (["stop,", "margin"], true),
+            (["I will not stop margin notes here"], true), // the spike flags what it hears; the rule that ends a Margin is PR 1's
+            (["stop", "margins"], false),
+            (["stopped", "margin"], false),
+            (["end", "margins"], false),
+            (["stop", "the", "margin"], false),
+            (["margin", "stop"], false),
+            (["stop"], false),
+            (["margin"], false),
+            ([], false),
+            ([""], false)
+        ]
+        for row in rows {
+            let words = row.spoken.enumerated().map { LiveInputWord(text: $0.element, startMs: $0.offset * 400, endMs: $0.offset * 400 + 300, isFinal: true) }
+            XCTAssertEqual(LiveInputWord.mentionsEndPhrase(words), row.heard, "\(row.spoken)")
+        }
+    }
+
     func testTheSummaryOfANoTimeRunDoesNotDivideByZero() {
         let summary = LiveInputTapSummary(wallMs: 0, cpuMs: 40, wordCount: 0, finalWordCount: 0, firstWordAfterMs: nil)
         XCTAssertEqual(summary.cpuMsPerMinute, 0)

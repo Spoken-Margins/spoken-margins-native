@@ -641,11 +641,13 @@ final class MarginEndPhraseSpike {
         let finals = batch.filter(\.isFinal)
         guard !finals.isEmpty, wordEventsLogged < Self.wordEventLimit else { return }
         wordEventsLogged += 1
+        // Never the words themselves: the export is the one way off the phone and has no redaction for free text.
+        // Timing and a count show words arrive (also while locked); one flag shows the phrase was heard.
         record?("margin.endPhrase.spike.words", [
-            "text": finals.map(\.text).joined(separator: " "),
             "startMs": String(finals.first?.startMs ?? 0),
             "endMs": String(finals.last?.endMs ?? 0),
-            "count": String(finals.count)
+            "count": String(finals.count),
+            "heardEndPhrase": String(LiveInputWord.mentionsEndPhrase(finals))
         ])
     }
 }
