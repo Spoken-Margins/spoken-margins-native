@@ -217,7 +217,7 @@ class ParallelCoreTests(unittest.TestCase):
         source = (SCRIPTS.parent / 'Packages/SessionKit/Tests/SessionKitCoreTests/StoreReadMeterTests.swift').read_text()
         skipping = {name for name, body in re.findall(r'func (test\w+)\(\)[^{]*\{(.*?)(?=\n    func |\n    private func |\Z)',
                                                       source, re.S)
-                    if 'XCTSkip' in body or 'expectKnownOversized(' in body}
+                    if 'XCTSkip' in body}
         self.assertEqual(skipping, {'testReadCostTableAtEveryScale'})
         with tempfile.TemporaryDirectory() as state:
             host = Host(self, None, fail=['package-core']).run(state)
