@@ -557,13 +557,25 @@ func TestReadsAreMarkedOncePerDay(t *testing.T) {
 	if _, err := s.Post(c.id, c.post, sealed(links.PartPacket, 64, "p"), t0); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := os.Stat(s.path(c.id, "meta.json"))
+	// writeMeta stamps meta.json with midnight UTC of the day, so a same-day rewrite would leave the same mtime and this
+	// test could not see it (#4318). A sentinel mtime that no write produces makes any rewrite visible.
+	meta := s.path(c.id, "meta.json")
+	sentinel := time.Date(2001, 2, 3, 4, 5, 6, 0, time.UTC)
+	if err := os.Chtimes(meta, sentinel, sentinel); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 5; i++ {
 		s.List(c.id, c.read, 0, t0.Add(time.Duration(i)*time.Hour))
 	}
-	after, _ := os.Stat(s.path(c.id, "meta.json"))
-	if !after.ModTime().Equal(before.ModTime()) {
+	after, _ := os.Stat(meta)
+	if !after.ModTime().Equal(sentinel) {
 		t.Fatalf("meta.json was rewritten by reads on the same day")
+	}
+	// And the other side: the first read of a new day does mark it.
+	s.List(c.id, c.read, 0, t0.Add(24*time.Hour))
+	next, _ := os.Stat(meta)
+	if next.ModTime().Equal(sentinel) {
+		t.Fatalf("the first read of the next day did not mark the club")
 	}
 }
 

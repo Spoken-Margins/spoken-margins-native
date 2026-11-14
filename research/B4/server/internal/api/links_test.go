@@ -203,12 +203,16 @@ func TestLinkHTTPRoundTripReportsExpiryAndLogs(t *testing.T) {
 	if w.Code != 200 || sha256.Sum256(w.Body.Bytes()) != sha256.Sum256(linkPacket) {
 		t.Fatal("HTTP packet hash round trip changed")
 	}
-	// Nothing readable reached the disk.
+	// A pin, not a proof (#4318): the server is only ever sent the sealed bytes, so this can fail only if the store
+	// invents or decodes plaintext. What keeps plaintext out is the Sealed() check on every upload (the ErrUnsealed rows in internal/links/links_test.go). The walk also has to find the sealed packet itself on disk, so it cannot pass by looking at nothing.
+	files, foundSealed := 0, false
 	filepath.WalkDir(filepath.Dir(s.PublicDir), func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
+		files++
 		data, _ := os.ReadFile(path)
+		foundSealed = foundSealed || bytes.Equal(data, linkPacket)
 		for _, plain := range [][]byte{[]byte("This is the part I wanted you to hear"), []byte("Fourier"), linkPreviewPlain, linkPacketPlain[:32]} {
 			if bytes.Contains(data, plain) {
 				t.Fatalf("%s holds readable %q", path, plain)
@@ -216,6 +220,9 @@ func TestLinkHTTPRoundTripReportsExpiryAndLogs(t *testing.T) {
 		}
 		return nil
 	})
+	if files == 0 || !foundSealed {
+		t.Fatalf("looked at %d files and the sealed packet was not among them", files)
+	}
 	if w.Header().Get("Content-Type") != "application/octet-stream" {
 		t.Fatal("packet can render as active content")
 	}
