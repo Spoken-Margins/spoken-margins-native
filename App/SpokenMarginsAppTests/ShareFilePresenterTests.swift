@@ -109,27 +109,51 @@ final class ShareFilePresenterTests: XCTestCase {
     }
 
     /// The control for the test above, run against the arrangement #4026 replaced: a plain `.sheet` on a row of a form
-    /// whose screen watches the model. The test above only means something if this shows the fault it guards: every
-    /// publish must re-run the sheet's content closure. If it stops doing that, the test above no longer reproduces the
-    /// owner's recording and its pass proves nothing.
+    /// whose screen watches the model. The test above only means something if this shows the fault it guards: a write
+    /// to what the sheet shows must re-run the sheet's content closure. If it stops doing that, the test above no longer
+    /// reproduces the owner's recording and its pass proves nothing.
+    ///
+    /// This reads what the sheet's content *shows*, not how many times it was built (#4260). A count asserted idle first
+    /// ("no rebuilds with no publish") failed on the hosted runner (6 builds where 2 were expected): a sheet that has just
+    /// come up rebuilds for reasons that are not publishes (its presentation settling, a trait or safe-area change), so
+    /// the count of builds cannot say what caused them. A value only a publish writes can: the sheet shows the status
+    /// and the first Library row's progress the model holds, so each sentinel below reaches the sheet only if a publish
+    /// made the sheet rebuild. The wait for each is a deadline, not a count.
     func testWithAPlainSheetOnAScreenThatWatchesTheModelTheSheetIsRebuiltByPublishes() async throws {
+        PlainSheetShareProbe.reset()
         let model = try makeModel()
+        model.preparedTextAudioStatus = "control-start"
         let mounted = try mount(AnyView(PlainSheetSharePresenter(model: model)))
         defer { mounted.close() }
-        try await pollUntil { PlainSheetShareProbe.builds != 0 }
-        XCTAssertGreaterThan(PlainSheetShareProbe.builds, 0, "The plain sheet's content was never built, so there is nothing to compare")
-        try await waitUntilQuiet { PlainSheetShareProbe.builds }
-        let before = PlainSheetShareProbe.builds
-        try await Task.sleep(for: .milliseconds(500))
-        XCTAssertEqual(PlainSheetShareProbe.builds, before, "The plain sheet kept rebuilding with no publish, so a count after the publishes proves nothing")
+        try await pollUntil { PlainSheetShareProbe.lastStatus != nil }
+        XCTAssertNotNil(PlainSheetShareProbe.lastStatus, "The plain sheet's content was never built, so there is nothing to compare")
 
         for index in 0..<Self.publishes {
             publish(index, on: model)
             try await Task.sleep(for: .milliseconds(25))
         }
 
-        let rebuilt = PlainSheetShareProbe.builds - before
-        XCTAssertGreaterThan(rebuilt, 0, "Plain sheet: \(Self.publishes) model publishes rebuilt the sheet's content \(rebuilt) times")
+        // The sentinels are written after the publishes above, one at a time: the sheet must come to show each. One
+        // is a write to the status, one is a write to a Library row (the two kinds of write the sheet can show; a bare
+        // `objectWillChange` or a progress chunk carries no value to read back).
+        for sentinel in ["control-first", "control-second", "control-third"] {
+            model.preparedTextAudioStatus = sentinel
+            try await pollUntil(timeout: .seconds(10)) { PlainSheetShareProbe.lastStatus == sentinel }
+            XCTAssertEqual(PlainSheetShareProbe.lastStatus, sentinel,
+                           "Plain sheet: after \(Self.publishes) model publishes and a write of \(sentinel), the sheet's content still showed "
+                           + "\(PlainSheetShareProbe.lastStatus ?? "nothing"), so a status write did not rebuild it")
+        }
+        for percent in [901, 902, 903] {
+            model.libraryItems = model.libraryItems.map { row in
+                var row = row
+                row.continuationProgressPercent = percent
+                return row
+            }
+            try await pollUntil(timeout: .seconds(10)) { PlainSheetShareProbe.lastPercent == percent }
+            XCTAssertEqual(PlainSheetShareProbe.lastPercent, percent,
+                           "Plain sheet: after a Library row write of \(percent) percent, the sheet's content still showed "
+                           + "\(PlainSheetShareProbe.lastPercent.map { String($0) } ?? "nothing"), so a Library write did not rebuild it")
+        }
     }
 
     /// Every kind of write audio makes: the bare `objectWillChange` every write ends in, a rendered chunk, the prepared
@@ -241,10 +265,17 @@ final class ShareFilePresenterTests: XCTestCase {
     private struct NotPresented: Error {}
 }
 
-/// Counts how often the plain sheet's content closure runs; read by the control test. A publish can come from any
-/// thread's point of view of the compiler, so the counter is not actor-bound; SwiftUI runs the closure on the main thread.
+/// Records the status the plain sheet's content closure last showed; read by the control test. A publish can come from
+/// any thread's point of view of the compiler, so the state is not actor-bound; SwiftUI runs the closure on the main thread.
+/// A build is told apart by what it shows, never by how many there were (#4260).
 private enum PlainSheetShareProbe {
-    nonisolated(unsafe) static var builds = 0
+    nonisolated(unsafe) static var lastStatus: String?
+    nonisolated(unsafe) static var lastPercent: Int?
+
+    static func reset() {
+        lastStatus = nil
+        lastPercent = nil
+    }
 }
 
 /// What #4026 replaced: a plain `.sheet` on a row of a form, on a screen that reads the model, as the old Settings did
@@ -260,8 +291,9 @@ private struct PlainSheetSharePresenter: View {
             Text("Audio: \(model.preparedTextAudioStatus)")
             Button("Share Diagnostics") { isPresented = true }
                 .sheet(isPresented: $isPresented) {
-                    let _ = PlainSheetShareProbe.builds += 1
-                    Text("Share sheet, audio \(model.preparedTextAudioStatus)")
+                    let _ = PlainSheetShareProbe.lastStatus = model.preparedTextAudioStatus
+                    let _ = PlainSheetShareProbe.lastPercent = model.libraryItems.first?.continuationProgressPercent
+                    Text("Share sheet, audio \(model.preparedTextAudioStatus), \(model.libraryItems.first?.continuationProgressPercent ?? 0) percent")
                 }
         }
     }
