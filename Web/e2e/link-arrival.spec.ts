@@ -692,11 +692,18 @@ test('a double tap on Select all and on a star ends where the buttons say, not w
   await list.getByRole('button', { name: 'Select none' }).dblclick();
   await expect(list.getByRole('checkbox', { checked: true })).toHaveCount(3);
   await expect(list.getByRole('button', { name: 'Select none' })).toBeVisible();
+  // In the Margins tab after a reload: a star made above is kept, and a double tap on an unstarred Margin writes on then
+  // off, so it is off in the store too (a second reload shows what was kept).
   await page.reload();
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
   const stored = (words: string) => page.locator('li.margin').filter({ hasText: words }).getByRole('button', { name: 'Star for sharing' });
   await expect(stored('Second note.')).toHaveAttribute('aria-pressed', 'true');
-  await stored('Second note.').dblclick();
+  await expect(stored('First note.')).toHaveAttribute('aria-pressed', 'false');
+  await stored('First note.').dblclick();
+  await expect(stored('First note.')).toHaveAttribute('aria-pressed', 'false');
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
+  await expect(stored('First note.')).toHaveAttribute('aria-pressed', 'false');
   await expect(stored('Second note.')).toHaveAttribute('aria-pressed', 'true');
   await context.close();
 });
