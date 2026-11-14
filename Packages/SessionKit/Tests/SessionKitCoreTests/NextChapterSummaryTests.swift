@@ -105,6 +105,61 @@ final class NextChapterSummaryTests: XCTestCase {
         XCTAssertEqual(forward(false, row: false, canForward: true), .hidden)
     }
 
+    // MARK: Next in queue takes the slot a dimmed Skim would hold (#3914)
+
+    func testForwardSlotStartsTheQueuedItemOnlyWhereItWouldBeADimmedSkim() {
+        func forward(
+            _ isAvailable: Bool, row: Bool, canForward: Bool,
+            queued: Bool, loading: Bool = false, locked: Bool = false
+        ) -> Rule.ChapterRowControl {
+            Rule.forwardControl(
+                isAvailable: isAvailable, skimRowShown: row, canSkimForward: canForward,
+                hasQueuedNext: queued, stopsLoading: loading, navigationLocked: locked)
+        }
+        // the last chapter, nothing left to Skim to, another item queued
+        XCTAssertEqual(forward(false, row: true, canForward: false, queued: true), .playNextItem)
+        // the same place with an empty queue stays a dimmed Skim ("Nothing ahead to skim to", #3986)
+        XCTAssertEqual(forward(false, row: true, canForward: false, queued: false), .skimDisabled)
+        // a Margin or scene still ahead in the last chapter: Skim wins over the queue
+        XCTAssertEqual(forward(false, row: true, canForward: true, queued: true), .skim)
+        // a chapter still ahead: Next chapter wins over the queue
+        XCTAssertEqual(forward(true, row: true, canForward: false, queued: true), .nextChapterInSkimSlot)
+        XCTAssertEqual(forward(true, row: false, canForward: false, queued: true), .nextChapter)
+        // no Skim row (a podcast with no chapters): the slot stays empty and the queue advances at the end as before
+        XCTAssertEqual(forward(false, row: false, canForward: false, queued: true), .hidden)
+        XCTAssertEqual(forward(false, row: false, canForward: true, queued: true), .hidden)
+        // Skim's stops are still loading: today's control, so the slot never shows Next in queue and turns into Skim
+        XCTAssertEqual(forward(false, row: true, canForward: false, queued: true, loading: true), .skimDisabled)
+        // a recording or imported commentary locks navigation: dimmed, as Skim is
+        XCTAssertEqual(forward(false, row: true, canForward: false, queued: true, locked: true), .skimDisabled)
+    }
+
+    func testQueuedItemDoesNotChangeAnyOtherForwardControl() {
+        // Every row of the old three-input table gives the same answer whatever the queue state says,
+        // except the one cell that was a dimmed Skim.
+        for isAvailable in [false, true] {
+            for row in [false, true] {
+                for canForward in [false, true] {
+                    let today = Rule.forwardControl(isAvailable: isAvailable, skimRowShown: row, canSkimForward: canForward)
+                    for queued in [false, true] {
+                        for loading in [false, true] {
+                            for locked in [false, true] {
+                                let now = Rule.forwardControl(
+                                    isAvailable: isAvailable, skimRowShown: row, canSkimForward: canForward,
+                                    hasQueuedNext: queued, stopsLoading: loading, navigationLocked: locked)
+                                if today == .skimDisabled && queued && !loading && !locked {
+                                    XCTAssertEqual(now, .playNextItem)
+                                } else {
+                                    XCTAssertEqual(now, today, "available \(isAvailable) row \(row) forward \(canForward) queued \(queued) loading \(loading) locked \(locked)")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     func testBackwardSlotKeepsItsPlaceWhenTheItemHasSkim() {
         XCTAssertEqual(Rule.backwardControl(skimRowShown: true, canSkimBackward: true), .skim)
         XCTAssertEqual(Rule.backwardControl(skimRowShown: true, canSkimBackward: false), .skimDisabled)
