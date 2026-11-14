@@ -182,6 +182,28 @@ export function pickAll(candidates: readonly Margin[], value: boolean): Record<s
   return Object.fromEntries(candidates.map((m) => [m.id, value]));
 }
 
+/** The ticks the panel shows: the listener's own changes laid over the starting picks (#4093). */
+export function currentPicks(
+  candidates: readonly Margin[],
+  changed: Readonly<Record<string, boolean>>,
+  starting: ReadonlySet<string>,
+): Set<string> {
+  return new Set(candidates.map((m) => m.id).filter((id) => changed[id] ?? starting.has(id)));
+}
+
+/**
+ * What a tap on "Select all" / "Select none" does to the listener's changes: the label says what the next tap does, so
+ * it sets every listed Margin to the opposite of "all ticked" as the panel shows it now. The panel and its tests both
+ * call this, so a double tap is two calls in order (#4319).
+ */
+export function selectAllTap(
+  candidates: readonly Margin[],
+  changed: Readonly<Record<string, boolean>>,
+  starting: ReadonlySet<string>,
+): Record<string, boolean> {
+  return { ...changed, ...pickAll(candidates, !allPicked(candidates, currentPicks(candidates, changed, starting))) };
+}
+
 /** The writer's limit, said before the tap: undefined up to `LIMITS.margins` ticked. */
 export function tooManyReason(pickedCount: number): string | undefined {
   return pickedCount > LIMITS.margins ? TOO_MANY_MARGINS : undefined;

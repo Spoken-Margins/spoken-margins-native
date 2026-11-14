@@ -10,7 +10,7 @@ import { cueFor, friendMargins, leading, possessive, readsAloud, senderName, spe
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
 import {
-  allPicked, candidateLabel, pickAll, pickedFromList, pickedMargins, preselected, nowCard, replyBackOffer, savedFileNextStep, selectAllLabel,
+  allPicked, candidateLabel, currentPicks, pickedFromList, pickedMargins, preselected, nowCard, replyBackOffer, savedFileNextStep, selectAllLabel, selectAllTap,
   starredPicks, starredShareList, whyNotShared,
 } from '../logic/reply-back.ts';
 import { plainError } from '../logic/messages.ts';
@@ -446,7 +446,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   // The listener's own changes sit over the starting picks, so a reply made while this is open starts picked too.
   const [changed, setChanged] = useState<Readonly<Record<string, boolean>>>({});
   const starting = offer ? preselected(offer, PAGE_OPENED_AT) : starredList ? starredPicks(starredList) : new Set<string>();
-  const picked = new Set((listed ?? []).map((m) => m.id).filter((id) => changed[id] ?? starting.has(id)));
+  const picked = currentPicks(listed ?? [], changed, starting);
   const toWrite = offer ? pickedMargins(offer, picked) : starredList ? pickedFromList(starredList, picked) : margins;
   const replyIds = new Set((offer?.replies ?? []).map((m) => m.id));
   // Greyed buttons say why (#3784), and point at the sentence so a screen reader reads it too.
@@ -507,7 +507,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
               type="button"
               className="button reply-back-all"
               disabled={busy}
-              onClick={() => setChanged({ ...changed, ...pickAll(listed, !allPicked(listed, picked)) })}
+              onClick={() => setChanged(selectAllTap(listed, changed, starting))}
             >
               {selectAllLabel(allPicked(listed, picked))}
             </button>

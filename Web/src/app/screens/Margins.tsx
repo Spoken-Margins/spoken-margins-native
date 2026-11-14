@@ -11,7 +11,7 @@ import { plainError } from '../logic/messages.ts';
 import { firesByItself } from '../logic/margin-autoplay.ts';
 import { parentOf, resumeReplying, stopReplying } from '../logic/reply-choice.ts';
 import { replyMarginName, replyTo, rowLine, STOP_REPLYING } from '../logic/reply-words.ts';
-import { canStar, isStarred, toggleStar } from '../logic/star.ts';
+import { canStar, isStarred, shownStar, starTapWrites } from '../logic/star.ts';
 import { NotSavedError } from '../logic/storage.ts';
 import { usePlayer } from '../player.tsx';
 import { useUi } from '../ui.tsx';
@@ -137,7 +137,7 @@ export function MarginRow({
   // The visible row says more than the label used to: keep the tag, author, date and reply line in the spoken name.
   const [starPending, setStarPending] = useState<boolean>();
   const starWrites = useRef(0);
-  const starred = starPending ?? isStarred(margin);
+  const starred = shownStar(starPending, isStarred(margin));
   const details = [newest ? 'Newest' : '', margin.author ?? '', starred ? 'Starred' : '', compact ? '' : shortDate(margin.createdAt), replyLine ?? ''].filter(Boolean).join(', ');
   // "Stop replying" and "Reply to Cole" are one button: it needs the Margin it answers, or answered, to be on the episode.
   const stoppable = replyLine !== undefined && parent !== undefined;
@@ -153,7 +153,7 @@ export function MarginRow({
   // The star flips at once and is held here until the stored Margin agrees; a failed write flips it back, and the write
   // has already said what wasn't saved. A double tap is two writes in order, and it ends where it began.
   const flipStar = async () => {
-    const next = toggleStar(starred);
+    const next = starTapWrites(starPending, isStarred(margin));
     setStarPending(next);
     starWrites.current += 1;
     try {
