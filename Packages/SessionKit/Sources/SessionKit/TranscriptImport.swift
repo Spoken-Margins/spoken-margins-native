@@ -34,13 +34,38 @@ public struct ImportedTranscript: Codable, Equatable, Sendable {
     public var startTimeOfDaySeconds: Int?
     /// A title from the file's header, when it has one.
     public var title: String?
+    /// How many non-blank lines come before the first cue and are not part of the cue format (#2997). A real
+    /// transcript has a short preamble (title, date, attendees); an agenda or a recipe with times has prose.
+    /// Plain text: the lines `parsePlain` treats as header. VTT- or SRT-shaped text: the lines before the first
+    /// timing line, not counting the `WEBVTT` line, `NOTE`, `STYLE` and `REGION` blocks, or the cue id directly
+    /// above the timing line.
+    public var skippedHeaderLineCount: Int
 
-    public init(format: Format, cues: [TranscriptCue], absoluteStart: Date? = nil, startTimeOfDaySeconds: Int? = nil, title: String? = nil) {
+    public init(
+        format: Format, cues: [TranscriptCue], absoluteStart: Date? = nil, startTimeOfDaySeconds: Int? = nil,
+        title: String? = nil, skippedHeaderLineCount: Int = 0
+    ) {
         self.format = format
         self.cues = cues
         self.absoluteStart = absoluteStart
         self.startTimeOfDaySeconds = startTimeOfDaySeconds
         self.title = title
+        self.skippedHeaderLineCount = skippedHeaderLineCount
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case format, cues, absoluteStart, startTimeOfDaySeconds, title, skippedHeaderLineCount
+    }
+
+    /// Reads a transcript written before `skippedHeaderLineCount` existed.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        format = try container.decode(Format.self, forKey: .format)
+        cues = try container.decode([TranscriptCue].self, forKey: .cues)
+        absoluteStart = try container.decodeIfPresent(Date.self, forKey: .absoluteStart)
+        startTimeOfDaySeconds = try container.decodeIfPresent(Int.self, forKey: .startTimeOfDaySeconds)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        skippedHeaderLineCount = try container.decodeIfPresent(Int.self, forKey: .skippedHeaderLineCount) ?? 0
     }
 
     public var durationMs: Int? {
@@ -57,18 +82,66 @@ public enum TranscriptImport {
     public enum Failure: Error, Equatable, LocalizedError {
         case empty
         case noCues
+        case tooLarge
 
         public var errorDescription: String? {
             switch self {
             case .empty: "The transcript file is empty."
+            case .tooLarge: "The transcript file is larger than 10 MB."
             case .noCues: "No timed lines were found. Choose a .vtt, .srt, or a text or Word transcript with timestamps."
             }
         }
     }
 
+    /// The largest file read (#2997): ten decimal megabytes, about 25 hours of meeting.
+    public static let maximumBytes = 10_000_000
+
     public static func parse(data: Data, timeZone: TimeZone = .current) throws -> ImportedTranscript {
-        let text = String(decoding: data, as: UTF8.self)
-        return try parse(text: text, timeZone: timeZone)
+        guard data.count <= maximumBytes else { throw Failure.tooLarge }
+        return try parse(text: decode(data), timeZone: timeZone)
+    }
+
+    /// Text from a transcript file's bytes. UTF-8 (with or without a BOM), UTF-16 (a BOM, or no BOM when the
+    /// zero bytes of ASCII text all sit on one byte parity), and otherwise Windows-1252, which is what older
+    /// Windows tools write. Windows-1252 leaves five bytes undefined; a file with one reads as ISO Latin-1.
+    static func decode(_ data: Data) -> String {
+        let bytes = [UInt8](data)
+        if bytes.starts(with: [0xEF, 0xBB, 0xBF]) { return decodeUTF8OrLegacy(Data(bytes.dropFirst(3))) }
+        if bytes.starts(with: [0xFF, 0xFE]) { return decodeUTF16(bytes.dropFirst(2), littleEndian: true) }
+        if bytes.starts(with: [0xFE, 0xFF]) { return decodeUTF16(bytes.dropFirst(2), littleEndian: false) }
+        if let littleEndian = unmarkedUTF16Order(bytes) { return decodeUTF16(bytes[...], littleEndian: littleEndian) }
+        return decodeUTF8OrLegacy(data)
+    }
+
+    private static func decodeUTF8OrLegacy(_ data: Data) -> String {
+        if let text = String(data: data, encoding: .utf8) { return text }
+        return String(data: data, encoding: .windowsCP1252) ?? String(data: data, encoding: .isoLatin1) ?? ""
+    }
+
+    /// UTF-16 with no BOM: 30% or more of the first 1,000 bytes are zero, and every zero is on even offsets
+    /// (big-endian ASCII) or every zero is on odd offsets (little-endian ASCII). Nil when it doesn't look so.
+    private static func unmarkedUTF16Order(_ bytes: [UInt8]) -> Bool? {
+        let sample = bytes.prefix(1_000)
+        guard sample.count >= 2 else { return nil }
+        var evenZeros = 0
+        var oddZeros = 0
+        for (offset, byte) in sample.enumerated() where byte == 0 {
+            if offset % 2 == 0 { evenZeros += 1 } else { oddZeros += 1 }
+        }
+        guard Double(evenZeros + oddZeros) >= 0.3 * Double(sample.count) else { return nil }
+        if evenZeros == 0 { return true }
+        if oddZeros == 0 { return false }
+        return nil
+    }
+
+    private static func decodeUTF16(_ bytes: ArraySlice<UInt8>, littleEndian: Bool) -> String {
+        var units: [UInt16] = []
+        units.reserveCapacity(bytes.count / 2)
+        var iterator = bytes.makeIterator()
+        while let first = iterator.next(), let second = iterator.next() {
+            units.append(littleEndian ? UInt16(first) | UInt16(second) << 8 : UInt16(first) << 8 | UInt16(second))
+        }
+        return String(decoding: units, as: UTF16.self)
     }
 
     public static func parse(text raw: String, timeZone: TimeZone = .current) throws -> ImportedTranscript {
@@ -79,15 +152,53 @@ public enum TranscriptImport {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw Failure.empty }
         let lines = text.components(separatedBy: "\n")
         var transcript: ImportedTranscript
-        if lines.contains(where: { timingLine($0) != nil }) {
+        if let firstTiming = lines.firstIndex(where: { timingLine($0) != nil }) {
             let isVTT = lines.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }?.hasPrefix("WEBVTT") == true
-            transcript = ImportedTranscript(format: isVTT ? .webVTT : .srt, cues: parseCueBlocks(lines))
+            transcript = ImportedTranscript(
+                format: isVTT ? .webVTT : .srt, cues: parseCueBlocks(lines),
+                skippedHeaderLineCount: cueFormatPreambleLineCount(lines, firstTiming: firstTiming)
+            )
         } else {
             transcript = parsePlain(lines, timeZone: timeZone)
         }
-        transcript.cues = fillEnds(transcript.cues.filter { !$0.text.isEmpty })
+        // Sorted by start, ties kept in file order, so the same file always reads the same way.
+        let ordered = transcript.cues.enumerated().sorted {
+            ($0.element.startMs, $0.offset) < ($1.element.startMs, $1.offset)
+        }.map(\.element)
+        transcript.cues = fillEnds(ordered.filter { !$0.text.isEmpty }.map(normalizingSpeaker))
         guard !transcript.cues.isEmpty else { throw Failure.noCues }
         return transcript
+    }
+
+    /// A speaker is compared and written in composed Unicode form, so "Zoe" + U+0308 and "Zoë" are one person.
+    private static func normalizingSpeaker(_ cue: TranscriptCue) -> TranscriptCue {
+        var cue = cue
+        if let name = cue.speaker?.precomposedStringWithCanonicalMapping.trimmingCharacters(in: .whitespaces) {
+            cue.speaker = name.isEmpty ? nil : name
+        }
+        return cue
+    }
+
+    /// The prose before the first timing line of VTT- or SRT-shaped text (see `skippedHeaderLineCount`).
+    private static func cueFormatPreambleLineCount(_ lines: [String], firstTiming: Int) -> Int {
+        var count = 0
+        var skippingBlock = false
+        var sawWebVTTLine = false
+        for index in 0..<firstTiming {
+            let line = lines[index].trimmingCharacters(in: .whitespaces)
+            if line.isEmpty { skippingBlock = false; continue }
+            if skippingBlock { continue }
+            // The WEBVTT line opens a header block of `Kind: captions` style lines, up to the next blank line.
+            if !sawWebVTTLine, line.hasPrefix("WEBVTT") { sawWebVTTLine = true; skippingBlock = true; continue }
+            if ["NOTE", "STYLE", "REGION"].contains(where: { line == $0 || line.hasPrefix($0 + " ") }) {
+                skippingBlock = true
+                continue
+            }
+            // The cue id sits directly above its timing line; an SRT number is one.
+            if index == firstTiming - 1 || line.allSatisfy(\.isNumber) { continue }
+            count += 1
+        }
+        return count
     }
 
     // MARK: Times
@@ -166,6 +277,12 @@ public enum TranscriptImport {
         return (speaker, text)
     }
 
+    /// Words that open a line of prose, not a person: "Note: see below" is text from whoever is speaking.
+    private static let notSpeakerLabels: Set<String> = [
+        "note", "notes", "nb", "warning", "reminder", "action", "agenda", "summary",
+        "todo", "important", "subject", "re", "fyi", "ps", "decision", "next steps", "attendees"
+    ]
+
     /// `Alice Example: Welcome…` → ("Alice Example", "Welcome…"). Only a short name-like prefix counts, so a
     /// sentence such as "Note: the budget is late" from someone unnamed stays text when it reads like prose.
     static func namePrefix(_ text: String) -> (String, String)? {
@@ -177,6 +294,7 @@ public enum TranscriptImport {
         let rest = text[afterColon...].trimmingCharacters(in: .whitespaces)
         let words = name.split(separator: " ")
         guard !name.isEmpty, !rest.isEmpty, name.count <= 40, (1...5).contains(words.count),
+              !notSpeakerLabels.contains(name.lowercased()), !name.lowercased().hasPrefix("action "),
               name.rangeOfCharacter(from: CharacterSet(charactersIn: ".?!,;\"")) == nil,
               !name.allSatisfy({ $0.isNumber || $0 == ":" }),
               rest.first != "/" // a URL's "https://"
@@ -281,10 +399,11 @@ public enum TranscriptImport {
         let headerInfo = parseHeader(headerLines.filter { !$0.isEmpty }, timeZone: timeZone)
         return ImportedTranscript(
             format: .plainText,
-            cues: cues.sorted { $0.startMs < $1.startMs },
+            cues: cues,
             absoluteStart: wallClockOrigin == nil ? headerInfo.date : nil,
             startTimeOfDaySeconds: wallClockOrigin,
-            title: headerInfo.title
+            title: headerInfo.title,
+            skippedHeaderLineCount: headerLines.filter { !$0.isEmpty }.count
         )
     }
 
