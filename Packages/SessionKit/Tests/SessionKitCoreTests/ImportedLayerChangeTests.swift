@@ -5,8 +5,8 @@ import XCTest
 
 /// #3601: a change that loads a friend's layer in order to save it again must not carry an older copy of the layer with
 /// it. Each test forces the overlap on a real SQLite file: another writer holds the write lock and changes the layer
-/// while the change under test is already running with the layer as it was before. A change that read first and saved
-/// later would put the old copy back.
+/// while the change under test is already running. A change that read first and saved later would put the old copy
+/// back; one that takes the write lock before it reads sees the other change.
 final class ImportedLayerChangeTests: XCTestCase {
     private var folder: URL!
     private var store: SQLiteSessionStore!
@@ -18,6 +18,9 @@ final class ImportedLayerChangeTests: XCTestCase {
         folder = FileManager.default.temporaryDirectory.appendingPathComponent("layer-change-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         store = try SQLiteSessionStore(path: folder.appendingPathComponent("library.sqlite").path)
+        // The overlap relies on reads using their own connections and never waiting for the write lock; without the
+        // read pool a stale read would wait too and the hook would fire before it, so the tests would pass vacuously.
+        XCTAssertNotNil(store.readConnections, "reads must use pooled connections (WAL) for the overlap to prove anything")
     }
 
     override func tearDownWithError() throws {
@@ -153,9 +156,13 @@ final class ImportedLayerChangeTests: XCTestCase {
     }
 
     /// Runs `work` on a second thread while this thread holds the write lock, then changes the layer under the lock and
-    /// commits. The commit waits until `work` is blocked on the lock (the store says so before it waits), not for a fixed
-    /// time: a change that read the layer first has read it by then however late its thread started, and a change that
-    /// reads after taking the lock has not read yet, so only the first can save the old copy over this commit.
+    /// commits. `work` therefore starts and can only take the write lock after the other change. A `work` that reads
+    /// before it takes the lock has read the layer as it was; one that takes the lock first reads it as changed.
+    ///
+    /// The commit waits until `work` is blocked on the lock (the store says so before it waits), not for a fixed time
+    /// (#4308): a change that read the layer first reads before it gets here (reads use their own connections and never
+    /// wait, which `setUp` asserts), and a change that reads after taking the lock has not read yet, so only the first
+    /// can save the old copy over this commit.
     private func overlap(
         otherWriter change: (inout ImportedCommentaryLayer) -> Void,
         work: @escaping () throws -> Void
