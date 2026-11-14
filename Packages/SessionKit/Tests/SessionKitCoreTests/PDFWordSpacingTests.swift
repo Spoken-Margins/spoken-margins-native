@@ -172,6 +172,37 @@ final class PDFWordSpacingTests: XCTestCase {
         XCTAssertFalse(onWordInsertions.contains(10))
     }
 
+    func testAMathIndexStaysOnItsLetterAndTakesNoSpaceAfterIt() {
+        // #4194: an index is spoken now, so it is no longer a marker. Left to the splitter
+        // it came apart ("σxx, max", "log 10"); kept as a marker it pushed a space into the
+        // formula after it ("Al2 O3", "KH2 PO4").
+        let spacer = PDFWordSpacer(isWord: ["the", "stress", "is", "large", "we", "use", "in", "ceramics", "such", "as", "and", "max", "log"].contains)
+        func spaced(_ line: String, unbroken: [Range<Int>] = [], protected: [Range<Int>] = []) -> String {
+            PDFWordSpacer.applying(spacer.spaceInsertions(in: line, protected: protected, unbroken: unbroken), to: line)
+        }
+        let rows: [(line: String, unbroken: [Range<Int>], expected: String)] = [
+            ("thestressσxx,maxislarge", [10..<16], "the stress σxx,max is large"),
+            ("thestress(σxx,max)islarge", [11..<17], "the stress (σxx,max) is large"),
+            ("weuselog10(B)", [8..<10], "we use log10(B)"),
+            ("ceramicssuchasAl2O3andAlN", [16..<17, 18..<19], "ceramics such as Al2O3 and AlN"),
+            ("inKH2PO4,", [4..<5, 7..<8], "in KH2PO4,"),
+            // An empty list changes nothing, and an index at the line's end is left alone.
+            ("thestressislarge", [], "the stress is large"),
+            ("thestressσxx,max", [10..<16], "the stress σxx,max"),
+        ]
+        for row in rows {
+            XCTAssertEqual(spaced(row.line, unbroken: row.unbroken), row.expected, row.line)
+        }
+        // The same runs as markers: a space goes after each, into the formula.
+        XCTAssertEqual(spaced("ceramicssuchasAl2O3andAlN", protected: [16..<17, 18..<19]), "ceramics such as Al2 O3 and AlN")
+        // A marker beside an index keeps its own rule: "max" stays whole, "1" is followed by a space.
+        XCTAssertEqual(spaced("thestressσxx,max.1Thestress", unbroken: [10..<16], protected: [17..<18]), "the stress σxx,max.1 The stress")
+        // Ranges move with the text.
+        let line = "thestressσxx,maxislarge"
+        let insertions = spacer.spaceInsertions(in: line, unbroken: [10..<16])
+        XCTAssertEqual(String(Array(PDFWordSpacer.applying(insertions, to: line))[PDFWordSpacer.shifted(10..<16, by: insertions)]), "xx,max")
+    }
+
     func testAnyWordListWorks() {
         // Runs without the bundled lexicon, so the splitter is checked on every checkout.
         let words: Set<String> = ["standard", "tool", "for", "describing", "which", "occupations", "likely", "to", "affect"]
