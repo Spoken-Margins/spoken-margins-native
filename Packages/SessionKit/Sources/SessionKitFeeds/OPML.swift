@@ -118,11 +118,11 @@ private final class OPMLDelegate: NSObject, XMLParserDelegate {
         }
         if let rawURL = attributes["xmlurl"] ?? attributes["url"].flatMap({ type == "rss" ? $0 : nil }) {
             outlineStack.append((nil, true))
-            guard let feedURL = Self.webURL(rawURL) else { unusable += 1; return }
+            guard let feedURL = OPMLParser.webURL(rawURL) else { unusable += 1; return }
             feeds.append(OPMLFeed(
                 title: label.flatMap { $0.isEmpty ? nil : $0 } ?? feedURL,
                 feedURL: feedURL,
-                websiteURL: attributes["htmlurl"].flatMap(Self.webURL),
+                websiteURL: attributes["htmlurl"].flatMap(OPMLParser.webURL),
                 folders: outlineStack.compactMap(\.folder)
             ))
             return
@@ -151,7 +151,10 @@ private final class OPMLDelegate: NSObject, XMLParserDelegate {
         if failure == nil { failure = error }
         parser.abortParsing()
     }
+}
 
+extension OPMLParser {
+    /// An http(s) link with a host, trimmed; nil for anything else (feed:, itpc:, a bare word).
     static func webURL(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let components = URLComponents(string: trimmed),
@@ -159,6 +162,51 @@ private final class OPMLDelegate: NSObject, XMLParserDelegate {
               !(components.host ?? "").isEmpty else { return nil }
         return trimmed
     }
+}
+
+/// #4284: the feed links a Shortcut hands over, read into the same document an OPML file gives, so the
+/// import preview and follow path are OPML's. Apple Podcasts on iPhone has no OPML export, but Shortcuts'
+/// "Get Podcasts from Library" gives each show's Feed URL. Each entry may hold several lines; each line is
+/// one show: a feed link, optionally with the show's name around it ("Name https://…" or "Name: https://…").
+/// A line with no usable feed link (a junk line, an Apple Podcasts store page, a feed: or itpc: link)
+/// counts as unusable; blank lines are skipped.
+public enum FeedLinkListParser {
+    public static func parse(_ entries: [String], limits: OPMLLimits = OPMLLimits()) throws -> OPMLDocument {
+        guard entries.reduce(0, { $0 + $1.utf8.count }) <= limits.maximumBytes else { throw OPMLError.tooLarge }
+        var feeds: [OPMLFeed] = []
+        var unusable = 0
+        for line in entries.flatMap({ $0.components(separatedBy: .newlines) }) {
+            let words = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            guard !words.isEmpty else { continue }
+            guard feeds.count + unusable < limits.maximumOutlines else { throw OPMLError.tooManyOutlines }
+            guard let index = words.firstIndex(where: { feedURL(in: $0) != nil }), let url = feedURL(in: words[index]) else {
+                unusable += 1
+                continue
+            }
+            var rest = words
+            rest.remove(at: index)
+            let title = rest.filter { OPMLParser.webURL(trimmingWrappers($0)) == nil }
+                .joined(separator: " ")
+                .trimmingCharacters(in: separators)
+            feeds.append(OPMLFeed(title: title.isEmpty ? url : title, feedURL: url, websiteURL: nil, folders: []))
+        }
+        return OPMLDocument(title: nil, feeds: feeds, unusableOutlineCount: unusable)
+    }
+
+    /// A word that is a feed link once the brackets, quotes and punctuation around it are dropped. An Apple
+    /// Podcasts store page is a web link but not a feed, so following it would only fail later.
+    static func feedURL(in word: String) -> String? {
+        guard let url = OPMLParser.webURL(trimmingWrappers(word)),
+              let host = URLComponents(string: url)?.host?.lowercased(),
+              host != "podcasts.apple.com", host != "itunes.apple.com", !host.hasSuffix(".itunes.apple.com") else { return nil }
+        return url
+    }
+
+    private static func trimmingWrappers(_ word: String) -> String {
+        word.trimmingCharacters(in: CharacterSet(charactersIn: "<>()[]{}\"'“”‘’,;"))
+    }
+
+    private static let separators = CharacterSet.whitespaces.union(CharacterSet(charactersIn: ":-–—|•,;\"“”"))
 }
 
 /// What importing a file would do, for the preview screen. Nothing is followed until

@@ -145,6 +145,108 @@ final class OPMLImportTests: XCTestCase {
         XCTAssertTrue(try store.loadFeedSubscriptions().isEmpty)
     }
 
+    /// #4284: the Shortcut action opens the drawer on the same preview the file gives, and nothing is followed,
+    /// fetched or added until Follow is tapped.
+    func testShortcutActionOpensTheSamePreviewAndFollowsNothingUntilFollow() async throws {
+        let followed = try await followMutedShowWithADismissedEntry()
+        OPMLFeedsURLProtocol.reset()
+        let fromFile = makeImporter()
+        fromFile.load(data: Data(Self.mixedOPML.utf8))
+
+        // As on a cold launch: the app's follows are published only by the bridge's prepare step.
+        let published = PublishedSubscriptions()
+        let drawer = CatalogDrawerModel(
+            store: nil,
+            defaults: UserDefaults(suiteName: "opml-import-\(UUID().uuidString)")!,
+            subscriptions: { [] },
+            follow: { _ in "" },
+            makeOPMLImport: { [unowned self] in
+                OPMLImportModel(
+                    subscriptions: { published.list },
+                    follow: { [coordinator] feedURL in _ = try await coordinator!.followFeed(urlString: feedURL) },
+                    didFollow: { [weak self] in self?.refreshCount += 1 }
+                )
+            }
+        )
+        let intent = FollowPodcastsInSpokenMarginsIntent()
+        intent.links = Self.mixedLinks
+        try await withShortcutBridge(drawer: drawer, prepare: { [store] in published.list = (try? store?.loadFeedSubscriptions()) ?? [] }) {
+            _ = try await intent.perform()
+        }
+
+        XCTAssertTrue(drawer.isPresented, "the drawer opens on the import")
+        let importer = try XCTUnwrap(drawer.shortcutImport)
+        XCTAssertEqual(importer.origin, .shortcut)
+        var fileRows = try preview(fromFile)
+        // A list of links has no title and no folders (nothing shows folders); every row is otherwise the same.
+        fileRows.documentTitle = nil
+        fileRows.alreadyFollowed = fileRows.alreadyFollowed.map { var feed = $0; feed.folders = []; return feed }
+        fileRows.duplicatesInFile = fileRows.duplicatesInFile.map { var feed = $0; feed.folders = []; return feed }
+        XCTAssertEqual(try preview(importer), fileRows)
+        XCTAssertEqual(try preview(importer).alreadyFollowed.map(\.title), ["Followed Show"], "follows loaded before the preview")
+        XCTAssertEqual(importer.selected, fromFile.selected)
+        XCTAssertEqual(try store.loadFeedSubscriptions().map(\.id), [followed.id], "nothing followed before Follow")
+        XCTAssertTrue(OPMLFeedsURLProtocol.requestedURLs.isEmpty, "and nothing fetched")
+
+        await importer.followSelected()
+        guard case .finished(let result) = importer.phase else { return XCTFail("\(importer.phase)") }
+        XCTAssertEqual(result.followed.map(\.title), ["Pod One", "Pod Two", "Pod Three", "A Blog"])
+        XCTAssertEqual(try store.loadFeedSubscriptions().count, 5)
+        XCTAssertEqual(try store.listItems(includeDeleted: true).count, 0, "nothing is added to the Library")
+        XCTAssertEqual(refreshCount, 1)
+
+        drawer.didDismiss()
+        XCTAssertNil(drawer.shortcutImport, "closing the drawer drops the list")
+    }
+
+    func testShortcutActionWithNoLinksASheetUpOrNoImportSaysWhyAndOpensNothing() async throws {
+        let drawer = CatalogDrawerModel(store: nil, subscriptions: { [] }, follow: { _ in "" }, makeOPMLImport: { [unowned self] in self.makeImporter() })
+        let noImport = CatalogDrawerModel(store: nil, subscriptions: { [] }, follow: { _ in "" })
+        let cases: [(links: [String], drawer: CatalogDrawerModel, sheetIsOpen: Bool, error: FollowPodcastsShortcutError)] = [
+            (["", " \n "], drawer, false, .noLinks),
+            (Self.mixedLinks, drawer, true, .sheetOpen),
+            (Self.mixedLinks, noImport, false, .appNotReady),
+        ]
+        for row in cases {
+            do {
+                try await withShortcutBridge(drawer: row.drawer, sheetIsOpen: row.sheetIsOpen) {
+                    try await FollowPodcastsShortcutBridge.open(row.links)
+                }
+                XCTFail("expected \(row.error)")
+            } catch {
+                XCTAssertEqual(error as? FollowPodcastsShortcutError, row.error)
+            }
+            XCTAssertFalse(row.drawer.isPresented, "\(row.error)")
+            XCTAssertNil(row.drawer.shortcutImport, "\(row.error)")
+        }
+        XCTAssertTrue(try store.loadFeedSubscriptions().isEmpty)
+    }
+
+    /// The running app sets the bridge to its own drawer; each test swaps in its own and puts the app's back.
+    private func withShortcutBridge(
+        drawer: CatalogDrawerModel,
+        sheetIsOpen: Bool = false,
+        prepare: (@MainActor () async -> Void)? = nil,
+        _ body: () async throws -> Void
+    ) async throws {
+        let prior = (FollowPodcastsShortcutBridge.catalogDrawer, FollowPodcastsShortcutBridge.prepare, FollowPodcastsShortcutBridge.sheetIsOpen)
+        FollowPodcastsShortcutBridge.catalogDrawer = drawer
+        FollowPodcastsShortcutBridge.prepare = prepare
+        FollowPodcastsShortcutBridge.sheetIsOpen = { sheetIsOpen }
+        defer { (FollowPodcastsShortcutBridge.catalogDrawer, FollowPodcastsShortcutBridge.prepare, FollowPodcastsShortcutBridge.sheetIsOpen) = prior }
+        try await body()
+    }
+
+    /// `mixedOPML` as the lines a Shortcut passes: names before links, two in one text, and junk for the outline with no link.
+    static let mixedLinks = [
+        "Pod One https://feeds.example.com/pod1.xml\nPod Two https://feeds.example.com/pod2.xml",
+        "Pod Three: https://feeds.example.com/pod3.xml",
+        "Followed Show https://feeds.example.com/followed.xml",
+        "A Blog https://feeds.example.com/blog.xml",
+        "Pod One again https://feeds.example.com/pod1.xml/",
+        "Broken, no link",
+    ]
+
     /// 3 podcasts, 1 blog, 1 repeat, 1 outline with no feed link, 1 show already followed.
     static let mixedOPML = """
     <?xml version="1.0" encoding="UTF-8"?>
@@ -172,6 +274,12 @@ final class OPMLImportTests: XCTestCase {
       <outline type="rss" text="Pod Three" xmlUrl="https://feeds.example.com/pod3.xml"/>
     </body></opml>
     """
+}
+
+/// The app's published follows, filled only when the Shortcut bridge prepares.
+@MainActor
+private final class PublishedSubscriptions {
+    var list: [FeedSubscription] = []
 }
 
 /// Serves small RSS feeds on feeds.example.com. /blog.xml has no enclosures; /gone.xml is a 404.
