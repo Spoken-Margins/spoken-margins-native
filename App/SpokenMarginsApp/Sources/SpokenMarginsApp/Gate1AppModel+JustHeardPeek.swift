@@ -55,6 +55,9 @@ extension Gate1AppModel {
     func clearRecordingPresentation() {
         marginCapture.clearPresentationContext()
         justHeardPeek.end()
+        #if SM_MARGIN_END_PHRASE_SPIKE
+        endMarginEndPhraseSpike() // the live tap ends with the recording, however it ended (#3940)
+        #endif
     }
 
     nonisolated private static func transcribeJustHeard(
