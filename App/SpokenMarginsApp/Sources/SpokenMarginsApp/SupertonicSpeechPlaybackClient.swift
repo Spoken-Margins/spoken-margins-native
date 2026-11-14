@@ -50,7 +50,12 @@ extension SupertonicRendering {
     func setEventSink(_ sink: @escaping @Sendable (_ kind: String, _ fields: [String: String]) -> Void) {}
 }
 
-extension SupertonicNarrationRenderer: SupertonicRendering {}
+extension SupertonicNarrationRenderer: SupertonicRendering {
+    /// `SupertonicNarrationRenderer` is a public type, so its conformance to SessionKit's public `VoiceWarmUpRendering`
+    /// needs a public witness; the internal default below can't be one. Supertonic's own renderer has no downloaded
+    /// model to warm, so this does nothing, as the default did (#2856, #318).
+    public func prepareToRender() async {}
+}
 
 /// The bundled voice that renders a chunk when Supertonic isn't allowed (#849). A seam so a test can hold one render
 /// open while a play releases the voice; the app passes `KittenNarrationRenderer`.
