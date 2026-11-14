@@ -140,7 +140,7 @@ struct SpokenMarginsApp: App {
         _sharingCoordinator = StateObject(
             wrappedValue: Build23SharingCoordinator(model: model)
         )
-        _catalogDrawer = StateObject(wrappedValue: CatalogDrawerModel(
+        let drawer = CatalogDrawerModel(
             store: CatalogDrawerModel.makeStore(),
             subscriptions: { [weak model] in model?.feedSubscriptions ?? [] },
             follow: { [weak model] feedURL in
@@ -161,7 +161,20 @@ struct SpokenMarginsApp: App {
             startFirstListen: { [weak model] sourceIds, allowsWelcome in
                 await model?.startFirstListen(pickedSourceIds: sourceIds, allowsWelcomeSample: allowsWelcome)
             }
-        ))
+        )
+        _catalogDrawer = StateObject(wrappedValue: drawer)
+        #if !SPOKEN_MARGINS_LEGACY
+        FollowPodcastsShortcutBridge.catalogDrawer = drawer
+        FollowPodcastsShortcutBridge.prepare = { [weak model] in
+            // The root view's own bootstrap, which then does nothing when it appears.
+            MainThreadOperationLabels.shared.scoped("shortcut.followPodcasts.bootstrap") { model?.bootstrapLibraryIfNeeded() }
+            await model?.publishFeedSubscriptionsAfterChange()
+        }
+        FollowPodcastsShortcutBridge.sheetIsOpen = { [weak model] in
+            guard let model else { return false }
+            return model.isTermsOfUsePresented || model.isHelpPresented || model.isSharingInterjectionsPresented
+        }
+        #endif
     }
 
     private func open(_ url: URL) {
