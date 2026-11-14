@@ -178,7 +178,10 @@ final class OPMLImportTests: XCTestCase {
         let importer = try XCTUnwrap(drawer.shortcutImport)
         XCTAssertEqual(importer.origin, .shortcut)
         var fileRows = try preview(fromFile)
-        fileRows.documentTitle = nil // a list of links has no title; every row is the same
+        // A list of links has no title and no folders (nothing shows folders); every row is otherwise the same.
+        fileRows.documentTitle = nil
+        fileRows.alreadyFollowed = fileRows.alreadyFollowed.map { var feed = $0; feed.folders = []; return feed }
+        fileRows.duplicatesInFile = fileRows.duplicatesInFile.map { var feed = $0; feed.folders = []; return feed }
         XCTAssertEqual(try preview(importer), fileRows)
         XCTAssertEqual(try preview(importer).alreadyFollowed.map(\.title), ["Followed Show"], "follows loaded before the preview")
         XCTAssertEqual(importer.selected, fromFile.selected)
