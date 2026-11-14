@@ -66,6 +66,7 @@ final class FeedLinkListTests: XCTestCase {
             ("Show A https://podcasts.apple.com/us/podcast/a/id1 https://feeds.example.com/a.xml", "Show A", "https://feeds.example.com/a.xml"),
             ("Show A https://podcasts.apple.com/us/podcast/a/id1", nil, nil),
             ("Show A https://itunes.apple.com/us/podcast/id1", nil, nil),
+            ("Show A https://geo.itunes.apple.com/us/podcast/id1", nil, nil),
             ("Show A feed://feeds.example.com/a.xml", nil, nil),
             ("Show A itpc://feeds.example.com/a.xml", nil, nil),
             ("Show A ftp://feeds.example.com/a.xml", nil, nil),

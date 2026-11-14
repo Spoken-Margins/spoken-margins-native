@@ -198,7 +198,7 @@ public enum FeedLinkListParser {
     static func feedURL(in word: String) -> String? {
         guard let url = OPMLParser.webURL(trimmingWrappers(word)),
               let host = URLComponents(string: url)?.host?.lowercased(),
-              host != "podcasts.apple.com", host != "itunes.apple.com" else { return nil }
+              host != "podcasts.apple.com", host != "itunes.apple.com", !host.hasSuffix(".itunes.apple.com") else { return nil }
         return url
     }
 

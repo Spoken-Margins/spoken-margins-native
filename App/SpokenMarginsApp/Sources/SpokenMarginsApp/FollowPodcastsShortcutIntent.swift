@@ -4,6 +4,7 @@ import Foundation
 
 enum FollowPodcastsShortcutError: Error, Equatable, LocalizedError {
     case noLinks
+    case sheetOpen
     case stillFollowing
     case appNotReady
 
@@ -11,6 +12,8 @@ enum FollowPodcastsShortcutError: Error, Equatable, LocalizedError {
         switch self {
         case .noLinks:
             return "No podcast links were passed in. In Shortcuts, use Get Podcasts from Library, then pass each podcast's Feed URL detail."
+        case .sheetOpen:
+            return "Close the sheet that's open in Spoken Margins, then run the Shortcut again."
         case .stillFollowing:
             return "Spoken Margins is still following the podcasts from the last run. Try again when it finishes."
         case .appNotReady:
@@ -41,7 +44,7 @@ struct FollowPodcastsInSpokenMarginsIntent: AppIntent {
     }
 
     @MainActor func perform() async throws -> some IntentResult {
-        try FollowPodcastsShortcutBridge.open(links)
+        try await FollowPodcastsShortcutBridge.open(links)
         return .result()
     }
 }
@@ -49,14 +52,21 @@ struct FollowPodcastsInSpokenMarginsIntent: AppIntent {
 @MainActor
 enum FollowPodcastsShortcutBridge {
     static weak var catalogDrawer: CatalogDrawerModel?
+    /// Loads the Library's follows before the preview reads them. A Shortcut can launch the app and get here
+    /// before the root view has, and an unloaded list would show followed shows as new.
+    static var prepare: (@MainActor () async -> Void)?
+    /// Whether another of the root's sheets is up: the drawer can't present over it.
+    static var sheetIsOpen: (@MainActor () -> Bool)?
 
     /// Hands the links to the drawer's import preview. Throws, so Shortcuts shows why, when nothing was passed
-    /// in or the app has no drawer to open.
-    static func open(_ links: [String], drawer: CatalogDrawerModel? = catalogDrawer) throws {
+    /// in, another sheet is in the way, the last list is still following, or the app has no drawer to open.
+    static func open(_ links: [String], drawer: CatalogDrawerModel? = catalogDrawer) async throws {
         guard links.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
             throw FollowPodcastsShortcutError.noLinks
         }
+        if sheetIsOpen?() == true { throw FollowPodcastsShortcutError.sheetOpen }
         if drawer?.shortcutImport?.isFollowing == true { throw FollowPodcastsShortcutError.stillFollowing }
+        await prepare?()
         guard let drawer, drawer.openShortcutImport(feedLinks: links) else {
             throw FollowPodcastsShortcutError.appNotReady
         }

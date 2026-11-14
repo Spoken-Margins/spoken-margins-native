@@ -339,7 +339,12 @@ struct OPMLImportScreen: View {
                     importer.startFollowing()
                 }
                 .disabled(importer.selected.isEmpty)
-                Button { importer.cancel() } label: { Text("Cancel").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
+                Button {
+                    // A Shortcut's list has no file to go back to choosing: Cancel leaves the import.
+                    let leaves = importer.origin == .shortcut
+                    importer.cancel()
+                    if leaves { dismiss() }
+                } label: { Text("Cancel").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityIdentifier("opml.import.cancel")
             case .following:
                 Button { importer.cancel() } label: { Text("Stop").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
