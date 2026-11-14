@@ -358,6 +358,58 @@ final class PermanentDeletePurgeTests: XCTestCase {
         XCTAssertEqual(journalCount(), 1, "tried again at the next launch")
     }
 
+    func testAFolderAnotherIdMapsToIsKeptWhenThatIdIsImportedAfterTheDelete() throws {
+        let path = base.appending(path: "store.sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        for id in ["a_b", "other"] {
+            try store.saveItem(Item(id: id, title: id, mediaType: "text", text: "Body", externalReference: nil, status: "ready"))
+        }
+        try seedFiles(of: "a_b")                                   // the folder a-b maps to as well
+        _ = try purge().begin(itemIds: ["a_b"], targets: ItemOwnedFiles.targets(forItems: ["a_b"], existingItemIds: ["a_b", "other"]))
+        try store.deleteItem(id: "a_b")                            // the delete went through; the app was killed
+        // Before the launch finishes the record, a friend's packet brings in a-b.
+        try store.saveItem(Item(id: "a-b", title: "a-b", mediaType: "text", text: "Body", externalReference: nil, status: "ready"))
+        let outcome = purge().resumePending(recordsBefore: later, store: store)
+        XCTAssertEqual(outcome.removed.map(\.root), [ItemOwnedFiles.listeningEditionsRoot], "a_b's edition went")
+        XCTAssertEqual(outcome.reappeared.map(\.root), [ItemOwnedFiles.preparedAudioRoot], "the shared folder stays")
+        XCTAssertTrue(filesExist(of: "a_b").chunks)
+        XCTAssertEqual(journalCount(), 0)
+    }
+
+    func testAQuarantinedItemStillOwnsItsFolderAndItsRow() throws {
+        let path = base.appending(path: "store.sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        try StoreRawSQL.execute([
+            "INSERT INTO quarantined_records(kind,id,payload,decode_error) VALUES('item','a-b','not json','bad')",
+        ], at: path)
+        XCTAssertEqual(try store.loadAllItemIds(), ["a-b"])
+        XCTAssertTrue(try store.hasItemRow(id: "a-b"))
+        XCTAssertFalse(try store.hasItemRow(id: "a_b"))
+        let targets = ItemOwnedFiles.targets(forItems: ["a_b"], existingItemIds: try store.loadAllItemIds())
+        XCTAssertEqual(targets.map(\.root), [ItemOwnedFiles.listeningEditionsRoot], "a-b's folder is not named")
+    }
+
+    func testFoldersAreComparedWithoutRegardToCase() {
+        // APFS is case-insensitive by default: A-1 and a-1 are one directory.
+        let targets = ItemOwnedFiles.targets(forItems: ["A-1"], existingItemIds: ["A-1", "a-1"])
+        XCTAssertEqual(targets.map(\.root), [ItemOwnedFiles.listeningEditionsRoot])
+    }
+
+    // MARK: A late episode-map job save
+
+    func testALateJobSaveDoesNotBringBackADeletedItemsJobRow() throws {
+        let store = try SQLiteSessionStore(path: base.appending(path: "store.sqlite").path)
+        try store.saveItem(Item(id: gone, title: "x", mediaType: "audio", text: "", externalReference: nil, status: "ready"))
+        let job = EpisodeMapPreparationJob(id: "job-1", itemId: gone, policy: .explicit)
+        XCTAssertTrue(try store.saveEpisodeMapPreparationJobIfItemExists(job))
+        try store.deleteItem(id: gone)
+        XCTAssertNil(try store.loadEpisodeMapPreparationJob(id: "job-1"), "the delete took the job")
+        // The run finishes or is cancelled after the delete and records where it stopped.
+        XCTAssertFalse(try store.saveEpisodeMapPreparationJobIfItemExists(job))
+        XCTAssertNil(try store.loadEpisodeMapPreparationJob(id: "job-1"), "nothing came back")
+        XCTAssertEqual(try store.loadEpisodeMapPreparationJobs(itemId: gone), [])
+    }
+
     func testARecordWithNoItemOnATargetIsRemovedAsWritten() throws {
         // The shape of a record written before targets named their item.
         try seedFiles(of: gone)
@@ -365,8 +417,12 @@ final class PermanentDeletePurgeTests: XCTestCase {
             root: ItemOwnedFiles.listeningEditionsRoot, relativePath: ItemOwnedFiles.listeningEditionFileName(itemId: gone))
         let json = #"{"root":"\#(target.root)","relativePath":"\#(target.relativePath)"}"#
         XCTAssertEqual(try JSONDecoder().decode(PermanentDeletePurge.Target.self, from: Data(json.utf8)), target)
-        let record = try purge().begin(itemIds: [gone], targets: [target])
-        let outcome = purge().finish(record, recheck: { _ in .present })
+        _ = try purge().begin(itemIds: [gone], targets: [target])
+        var lookups = 0
+        let outcome = purge().resumePending(recordsBefore: later, rowState: { _ in
+            lookups += 1
+            return lookups == 1 ? .absent : .present
+        })
         XCTAssertEqual(outcome.removed, [target], "no item named, so nothing to check")
         XCTAssertEqual(filesExist(of: gone).edition, false)
     }

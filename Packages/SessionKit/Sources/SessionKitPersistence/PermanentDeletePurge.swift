@@ -106,7 +106,7 @@ public struct PermanentDeletePurge: Sendable {
     }
 
     /// Whether an item still has a row, in the trash or not.
-    public enum RowState: Sendable {
+    public enum RowState: Sendable, Equatable {
         case present, absent
         /// The answer could not be read (a busy database). The record is kept for the next launch.
         case unknown
@@ -118,8 +118,13 @@ public struct PermanentDeletePurge: Sendable {
     /// For each record: if any item `rowState` calls present, the delete never happened and the record is dropped;
     /// otherwise, if any is unknown, the record is kept untouched; otherwise its files are removed.
     @discardableResult
-    public func resumePending(recordsBefore cutoff: Date, rowState: (String) -> RowState) -> Outcome {
+    public func resumePending(
+        recordsBefore cutoff: Date, rowState: @escaping (String) -> RowState,
+        recheck: ((Target) -> RowState)? = nil
+    ) -> Outcome {
         var outcome = Outcome()
+        // Unless the caller says otherwise, each file is checked again by its item's row alone.
+        let recheck: (Target) -> RowState = recheck ?? { target in target.itemId.map(rowState) ?? .absent }
         for url in recordFiles() {
             guard let data = try? Data(contentsOf: url),
                   let record = try? Self.decoder.decode(Record.self, from: data) else {
@@ -139,7 +144,7 @@ public struct PermanentDeletePurge: Sendable {
                 outcome.deferredRecords += 1
                 continue
             }
-            let finished = withoutActuallyEscaping(rowState) { finish(record, recheck: $0) }
+            let finished = finish(record, recheck: recheck)
             outcome.removed += finished.removed
             outcome.kept += finished.kept
             outcome.reappeared += finished.reappeared
@@ -147,11 +152,16 @@ public struct PermanentDeletePurge: Sendable {
         return outcome
     }
 
-    /// `resumePending` against the store's rows.
+    /// `resumePending` against the store's rows. A quarantined item row counts as present: it can be restored, and
+    /// its files are its own. Just before a prepared-audio folder goes, every item id is read again, in case another
+    /// id that maps to the same folder was imported since the delete.
     @discardableResult
     public func resumePending(recordsBefore cutoff: Date, store: SQLiteSessionStore) -> Outcome {
-        resumePending(recordsBefore: cutoff, rowState: { id in
-            do { return try store.loadItemSummary(id: id) != nil ? .present : .absent } catch { return .unknown }
+        let rowState: @Sendable (String) -> RowState = { id in
+            do { return try store.hasItemRow(id: id) ? .present : .absent } catch { return .unknown }
+        }
+        return resumePending(recordsBefore: cutoff, rowState: rowState, recheck: { target in
+            ItemOwnedFiles.stillFree(target, rowState: rowState, allItemIds: { try store.loadAllItemIds() })
         })
     }
 
@@ -178,11 +188,11 @@ public struct PermanentDeletePurge: Sendable {
     /// item that is present again keeps its file and the target is dropped, and one that can't be read keeps the
     /// target for the next launch. This narrows the window to the one lookup before the removal; it does not close it.
     @discardableResult
-    public func finish(_ record: Record, recheck: ((String) -> RowState)? = nil) -> Outcome {
+    public func finish(_ record: Record, recheck: ((Target) -> RowState)? = nil) -> Outcome {
         var outcome = Outcome()
         for target in record.targets {
-            if let recheck, let itemId = target.itemId {
-                switch recheck(itemId) {
+            if let recheck {
+                switch recheck(target) {
                 case .present: outcome.reappeared.append(target); continue
                 case .unknown: outcome.kept.append(target); continue
                 case .absent: break

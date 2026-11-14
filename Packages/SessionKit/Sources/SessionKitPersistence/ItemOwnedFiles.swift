@@ -24,6 +24,29 @@ public enum ItemOwnedFiles {
         ListeningEdition.digest(itemId) + ".json"
     }
 
+    /// What two ids are compared by when asking whether they share a folder: the folder name, lower-cased, because
+    /// the volume (APFS) is case-insensitive by default, so `A-1` and `a-1` are one directory.
+    public static func folderKey(itemId: String) -> String {
+        preparedAudioDirectoryName(itemId: itemId).lowercased()
+    }
+
+    /// Whether `target` is still free to remove, asked just before it is removed on a resumed delete: its item has no
+    /// row, and, for a prepared-audio folder, no item at all has a row that maps to the folder (another id may have
+    /// been imported since, and `allItemIds` is read only when a folder target is met).
+    public static func stillFree(
+        _ target: PermanentDeletePurge.Target, rowState: (String) -> PermanentDeletePurge.RowState,
+        allItemIds: () throws -> [String]
+    ) -> PermanentDeletePurge.RowState {
+        if let itemId = target.itemId {
+            let own = rowState(itemId)
+            if own != .absent { return own }
+        }
+        guard target.root == preparedAudioRoot else { return .absent }
+        guard let ids = try? allItemIds() else { return .unknown }
+        let key = target.relativePath.lowercased()
+        return ids.contains { folderKey(itemId: $0) == key } ? .present : .absent
+    }
+
     /// Every file the item owns alone. The prepared-audio folder is named from the id by a lossy rule, so two ids can
     /// map to one folder (`a-b` and `a_b`; an 80-character id and a longer one that starts with it). It is named here
     /// only when no id in `otherItemIds` (the other items that still have rows) maps to the same folder, so a purge
@@ -38,15 +61,17 @@ public enum ItemOwnedFiles {
     public static func targets(
         forItems itemIds: [String], existingItemIds: [String], namingPreparedAudio: Bool = true
     ) -> [PermanentDeletePurge.Target] {
-        let deleting = Set(itemIds)
-        let staying = Set(existingItemIds.filter { !deleting.contains($0) }.map(preparedAudioDirectoryName(itemId:)))
+        // Ids are the same only when their bytes are (SQLite compares bytes; Swift's `==` also joins canonically
+        // equivalent spellings, which would drop a staying id that merely looks like a deleted one).
+        let deleting = Set(itemIds.map { Array($0.utf8) })
+        let staying = Set(existingItemIds.filter { !deleting.contains(Array($0.utf8)) }.map(folderKey(itemId:)))
         var targets: [PermanentDeletePurge.Target] = []
         var folders: Set<String> = []
         for itemId in itemIds {
             targets.append(.init(
                 root: listeningEditionsRoot, relativePath: listeningEditionFileName(itemId: itemId), itemId: itemId))
             let folder = preparedAudioDirectoryName(itemId: itemId)
-            if namingPreparedAudio, !itemId.isEmpty, !staying.contains(folder), folders.insert(folder).inserted {
+            if namingPreparedAudio, !itemId.isEmpty, !staying.contains(folderKey(itemId: itemId)), folders.insert(folder).inserted {
                 targets.append(.init(root: preparedAudioRoot, relativePath: folder, itemId: itemId))
             }
         }
