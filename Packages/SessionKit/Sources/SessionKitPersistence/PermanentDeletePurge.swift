@@ -86,9 +86,13 @@ public struct PermanentDeletePurge: Sendable {
     /// touched and the error is rethrown; the record stays, because a throw after the commit would leave the rows gone,
     /// and the next launch's `resumePending` drops it when the items still have rows. The returned task finishes when
     /// the removal does; callers need not wait for it. With nothing to remove, `delete` just runs.
+    ///
+    /// `recheck`, if given, runs on the background task just before each file is removed (see `finish`), so a read of
+    /// the store for it never waits on the calling thread.
     @discardableResult
     public func deleting(
-        itemIds: [String], targets: [Target], delete: () throws -> Void
+        itemIds: [String], targets: [Target], recheck: (@Sendable (Target) -> RowState)? = nil,
+        delete: () throws -> Void
     ) throws -> Task<Outcome, Never> {
         guard !targets.isEmpty else {
             try delete()
@@ -102,7 +106,7 @@ public struct PermanentDeletePurge: Sendable {
         }
         try delete()
         let purge = self
-        return Task.detached(priority: .utility) { purge.finish(record) }
+        return Task.detached(priority: .utility) { purge.finish(record, recheck: recheck) }
     }
 
     /// Whether an item still has a row, in the trash or not.
@@ -157,12 +161,9 @@ public struct PermanentDeletePurge: Sendable {
     /// id that maps to the same folder was imported since the delete.
     @discardableResult
     public func resumePending(recordsBefore cutoff: Date, store: SQLiteSessionStore) -> Outcome {
-        let rowState: @Sendable (String) -> RowState = { id in
-            do { return try store.hasItemRow(id: id) ? .present : .absent } catch { return .unknown }
-        }
-        return resumePending(recordsBefore: cutoff, rowState: rowState, recheck: { target in
-            ItemOwnedFiles.stillFree(target, rowState: rowState, allItemIds: { try store.loadAllItemIds() })
-        })
+        resumePending(
+            recordsBefore: cutoff, rowState: { ItemOwnedFiles.rowState(ofItem: $0, in: store) },
+            recheck: ItemOwnedFiles.recheck(store: store))
     }
 
     // MARK: Steps

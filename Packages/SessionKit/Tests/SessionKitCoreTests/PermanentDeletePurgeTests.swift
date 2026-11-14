@@ -271,26 +271,21 @@ final class PermanentDeletePurgeTests: XCTestCase {
     // MARK: Which files an item owns
 
     func testWhichFilesAnItemOwns() {
-        let table: [(id: String, others: [String], prepared: Bool, note: String)] = [
-            ("item-6f1c2d3e-0000-4000-8000-000000000001", [], true, "an id the app makes"),
-            ("epub-6F1C2D3E-0000-4000-8000-000000000001", [], true, "upper case"),
-            ("a_b", [], true, "an underscore, alone in its folder"),
-            ("a_b", ["a-b"], false, "an underscore shares a folder with a-b, which stays"),
-            ("a-b", ["a_b"], false, "the same, the other way round"),
-            ("a-b", ["a-c", "a--b"], true, "neighbours that map elsewhere"),
-            ("a b", ["a-b"], false, "a space shares with a-b"),
-            ("café", [], true, "non-ASCII, alone"),
-            ("café!", ["café-"], false, "non-ASCII letters kept, punctuation shares"),
-            ("", [], false, "empty"),
-            (String(repeating: "x", count: 81), [], true, "cut at 80, alone"),
-            (String(repeating: "x", count: 81), [String(repeating: "x", count: 82)], false, "cut at 80, shared"),
-            (String(repeating: "x", count: 80), [String(repeating: "x", count: 80) + "y"], false, "80 shares with a longer one"),
-            ("a/b", [], true, "a slash becomes a hyphen, so it stays one name"),
-            ("..", [], true, "dots become hyphens"),
-            ("a\u{0301}", [], true, "a combining mark"),
+        let table: [(id: String, prepared: Bool, note: String)] = [
+            ("item-6f1c2d3e-0000-4000-8000-000000000001", true, "an id the app makes"),
+            ("epub-6F1C2D3E-0000-4000-8000-000000000001", true, "upper case"),
+            ("a_b", true, "an underscore"),
+            ("a b", true, "a space"),
+            ("café", true, "non-ASCII"),
+            ("", false, "empty: no folder name"),
+            (String(repeating: "x", count: 81), true, "cut at 80"),
+            (String(repeating: "x", count: 80), true, "exactly 80"),
+            ("a/b", true, "a slash becomes a hyphen, so it stays one name"),
+            ("..", true, "dots become hyphens"),
+            ("a\u{0301}", true, "a combining mark"),
         ]
         for row in table {
-            let targets = ItemOwnedFiles.targets(forItem: row.id, otherItemIds: row.others)
+            let targets = ItemOwnedFiles.targets(forItem: row.id)
             XCTAssertEqual(targets.contains { $0.root == ItemOwnedFiles.preparedAudioRoot }, row.prepared, row.note)
             XCTAssertEqual(targets.filter { $0.root == ItemOwnedFiles.listeningEditionsRoot }.count, 1, row.note)
             for target in targets {
@@ -304,27 +299,69 @@ final class PermanentDeletePurgeTests: XCTestCase {
         }
     }
 
-    func testItemsDeletedTogetherDoNotBlockEachOthersFolders() {
-        // a_b and a-b share a folder and both go: the folder is named once. A third item that maps there keeps it.
-        let both = ItemOwnedFiles.targets(forItems: ["a_b", "a-b"], existingItemIds: ["a_b", "a-b", "z"])
-        XCTAssertEqual(both.filter { $0.root == ItemOwnedFiles.preparedAudioRoot }.map(\.relativePath), ["a-b"])
-        let blocked = ItemOwnedFiles.targets(forItems: ["a_b", "a-b"], existingItemIds: ["a_b", "a-b", "a b"])
-        XCTAssertTrue(blocked.filter { $0.root == ItemOwnedFiles.preparedAudioRoot }.isEmpty)
-        let unread = ItemOwnedFiles.targets(forItems: ["item-1"], existingItemIds: [], namingPreparedAudio: false)
-        XCTAssertEqual(unread.map(\.root), [ItemOwnedFiles.listeningEditionsRoot], "ids that couldn't be read: the edition only")
+    func testItemsDeletedTogetherNameASharedFolderOnce() {
+        let targets = ItemOwnedFiles.targets(forItems: ["a_b", "a-b", "A-B"])
+        XCTAssertEqual(targets.filter { $0.root == ItemOwnedFiles.preparedAudioRoot }.count, 1)
+        XCTAssertEqual(targets.filter { $0.root == ItemOwnedFiles.listeningEditionsRoot }.count, 3)
     }
 
-    func testAPurgeNeverTakesAnotherItemsSharedFolder() async throws {
+    /// Just before a folder goes, is it still free? A table of the ids that map to the same folder, and ones that don't.
+    func testWhichIdsKeepAPreparedAudioFolder() {
+        let gone = "a_b"
+        let target = ItemOwnedFiles.targets(forItem: gone).first { $0.root == ItemOwnedFiles.preparedAudioRoot }!
+        let table: [(others: [String], free: Bool, note: String)] = [
+            ([], true, "no other item"),
+            (["other", "a-c", "a--b"], true, "neighbours that map elsewhere"),
+            (["a-b"], false, "a-b shares the folder"),
+            (["A-B"], false, "case: APFS is case-insensitive"),
+            (["a b"], false, "a space"),
+            (["a!b"], false, "punctuation"),
+        ]
+        for row in table {
+            let state = ItemOwnedFiles.stillFree(target, rowState: { _ in .absent }, allItemIds: { row.others })
+            XCTAssertEqual(state, row.free ? .absent : .present, row.note)
+        }
+        let long = String(repeating: "x", count: 81)
+        let longTarget = ItemOwnedFiles.targets(forItem: long).first { $0.root == ItemOwnedFiles.preparedAudioRoot }!
+        XCTAssertEqual(
+            ItemOwnedFiles.stillFree(longTarget, rowState: { _ in .absent }, allItemIds: { [long + "y"] }), .present,
+            "an 80-character cut shared with a longer id")
+        XCTAssertEqual(
+            ItemOwnedFiles.stillFree(target, rowState: { _ in .absent }, allItemIds: { throw CocoaError(.fileReadUnknown) }),
+            .unknown, "ids that can't be read keep the folder for the next launch")
+        XCTAssertEqual(
+            ItemOwnedFiles.stillFree(target, rowState: { _ in .present }, allItemIds: { [] }), .present,
+            "the item's own row came back")
+    }
+
+    func testADeleteWithTheStoresRecheckNeverTakesAnotherItemsSharedFolder() async throws {
         let store = try SQLiteSessionStore(path: base.appending(path: "store.sqlite").path)
         for id in ["a-b", "a_b", "other"] {
             try store.saveItem(Item(id: id, title: id, mediaType: "text", text: "Body", externalReference: nil, status: "ready"))
         }
         XCTAssertEqual(Set(try store.loadAllItemIds()), ["a-b", "a_b", "other"])
         try seedFiles(of: "a-b")   // the folder a_b maps to as well
-        let targets = ItemOwnedFiles.targets(forItems: ["a_b"], existingItemIds: try store.loadAllItemIds())
-        let outcome = await (try purge().deleting(itemIds: ["a_b"], targets: targets) { try store.deleteItem(id: "a_b") }).value
+        let outcome = await (try purge().deleting(
+            itemIds: ["a_b"], targets: ItemOwnedFiles.targets(forItem: "a_b"), recheck: ItemOwnedFiles.recheck(store: store)
+        ) { try store.deleteItem(id: "a_b") }).value
         XCTAssertEqual(outcome.removed.map(\.root), [ItemOwnedFiles.listeningEditionsRoot], "a_b's edition only")
+        XCTAssertEqual(outcome.reappeared.map(\.root), [ItemOwnedFiles.preparedAudioRoot])
         XCTAssertTrue(filesExist(of: "a-b").chunks, "a-b's chunks live in the folder a_b also maps to")
+        XCTAssertEqual(journalCount(), 0, "nothing is left to retry")
+    }
+
+    func testAnUnsharedFolderGoesWithTheStoresRecheck() async throws {
+        let store = try SQLiteSessionStore(path: base.appending(path: "store.sqlite").path)
+        for id in [gone, kept] {
+            try store.saveItem(Item(id: id, title: id, mediaType: "text", text: "Body", externalReference: nil, status: "ready"))
+        }
+        try seedFiles(of: gone); try seedFiles(of: kept)
+        let outcome = await (try purge().deleting(
+            itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone), recheck: ItemOwnedFiles.recheck(store: store)
+        ) { try store.deleteItem(id: gone) }).value
+        XCTAssertEqual(outcome.removed.count, 2)
+        XCTAssertFalse(filesExist(of: gone).chunks)
+        XCTAssertTrue(filesExist(of: kept).chunks)
     }
 
     // MARK: A resumed delete checks again just before each removal
@@ -365,7 +402,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
             try store.saveItem(Item(id: id, title: id, mediaType: "text", text: "Body", externalReference: nil, status: "ready"))
         }
         try seedFiles(of: "a_b")                                   // the folder a-b maps to as well
-        _ = try purge().begin(itemIds: ["a_b"], targets: ItemOwnedFiles.targets(forItems: ["a_b"], existingItemIds: ["a_b", "other"]))
+        _ = try purge().begin(itemIds: ["a_b"], targets: ItemOwnedFiles.targets(forItem: "a_b"))
         try store.deleteItem(id: "a_b")                            // the delete went through; the app was killed
         // Before the launch finishes the record, a friend's packet brings in a-b.
         try store.saveItem(Item(id: "a-b", title: "a-b", mediaType: "text", text: "Body", externalReference: nil, status: "ready"))
@@ -385,14 +422,8 @@ final class PermanentDeletePurgeTests: XCTestCase {
         XCTAssertEqual(try store.loadAllItemIds(), ["a-b"])
         XCTAssertTrue(try store.hasItemRow(id: "a-b"))
         XCTAssertFalse(try store.hasItemRow(id: "a_b"))
-        let targets = ItemOwnedFiles.targets(forItems: ["a_b"], existingItemIds: try store.loadAllItemIds())
-        XCTAssertEqual(targets.map(\.root), [ItemOwnedFiles.listeningEditionsRoot], "a-b's folder is not named")
-    }
-
-    func testFoldersAreComparedWithoutRegardToCase() {
-        // APFS is case-insensitive by default: A-1 and a-1 are one directory.
-        let targets = ItemOwnedFiles.targets(forItems: ["A-1"], existingItemIds: ["A-1", "a-1"])
-        XCTAssertEqual(targets.map(\.root), [ItemOwnedFiles.listeningEditionsRoot])
+        let target = ItemOwnedFiles.targets(forItem: "a_b").first { $0.root == ItemOwnedFiles.preparedAudioRoot }!
+        XCTAssertEqual(ItemOwnedFiles.recheck(store: store)(target), .present, "a-b's folder is not free")
     }
 
     // MARK: A late episode-map job save

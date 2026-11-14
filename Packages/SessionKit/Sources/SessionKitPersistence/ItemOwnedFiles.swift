@@ -47,34 +47,39 @@ public enum ItemOwnedFiles {
         return ids.contains { folderKey(itemId: $0) == key } ? .present : .absent
     }
 
-    /// Every file the item owns alone. The prepared-audio folder is named from the id by a lossy rule, so two ids can
-    /// map to one folder (`a-b` and `a_b`; an 80-character id and a longer one that starts with it). It is named here
-    /// only when no id in `otherItemIds` (the other items that still have rows) maps to the same folder, so a purge
-    /// never takes another item's narration chunks. An empty id has no folder.
-    public static func targets(forItem itemId: String, otherItemIds: [String] = []) -> [PermanentDeletePurge.Target] {
-        targets(forItems: [itemId], existingItemIds: otherItemIds + [itemId])
+    /// `stillFree` against the store's rows, for `PermanentDeletePurge`'s removal step, which runs off the calling thread.
+    /// A quarantined item row counts as present: it can be restored, and its files are its own. A row that can't be read
+    /// (a busy database) is `unknown`, which keeps the file for the next launch.
+    public static func recheck(store: SQLiteSessionStore) -> @Sendable (PermanentDeletePurge.Target) -> PermanentDeletePurge.RowState {
+        { target in
+            stillFree(
+                target, rowState: { id in rowState(ofItem: id, in: store) }, allItemIds: { try store.loadAllItemIds() })
+        }
     }
 
-    /// The files of `itemIds`, which are being deleted together. `existingItemIds` is every id that has a row now
-    /// (the ids being deleted may be in it): the ones not being deleted decide which prepared-audio folders are shared.
-    /// `namingPreparedAudio: false` leaves every prepared-audio folder out, for a caller that couldn't read the ids.
-    public static func targets(
-        forItems itemIds: [String], existingItemIds: [String], namingPreparedAudio: Bool = true
-    ) -> [PermanentDeletePurge.Target] {
-        // Ids are the same only when their bytes are (SQLite compares bytes; Swift's `==` also joins canonically
-        // equivalent spellings, which would drop a staying id that merely looks like a deleted one).
-        let deleting = Set(itemIds.map { Array($0.utf8) })
-        let staying = Set(existingItemIds.filter { !deleting.contains(Array($0.utf8)) }.map(folderKey(itemId:)))
+    public static func rowState(ofItem id: String, in store: SQLiteSessionStore) -> PermanentDeletePurge.RowState {
+        do { return try store.hasItemRow(id: id) ? .present : .absent } catch { return .unknown }
+    }
+
+    /// Every file the items own, as a record names them. A prepared-audio folder is named for every non-empty id, even
+    /// though the lossy name can be shared (`a-b` and `a_b`; an 80-character id and a longer one that starts with it):
+    /// whether the folder is still free is decided just before it is removed, by `stillFree`, so a purge never takes
+    /// another item's narration chunks and the delete itself reads nothing from the store.
+    public static func targets(forItems itemIds: [String]) -> [PermanentDeletePurge.Target] {
         var targets: [PermanentDeletePurge.Target] = []
         var folders: Set<String> = []
         for itemId in itemIds {
             targets.append(.init(
                 root: listeningEditionsRoot, relativePath: listeningEditionFileName(itemId: itemId), itemId: itemId))
             let folder = preparedAudioDirectoryName(itemId: itemId)
-            if namingPreparedAudio, !itemId.isEmpty, !staying.contains(folderKey(itemId: itemId)), folders.insert(folder).inserted {
+            if !itemId.isEmpty, folders.insert(folderKey(itemId: itemId)).inserted {
                 targets.append(.init(root: preparedAudioRoot, relativePath: folder, itemId: itemId))
             }
         }
         return targets
+    }
+
+    public static func targets(forItem itemId: String) -> [PermanentDeletePurge.Target] {
+        targets(forItems: [itemId])
     }
 }
