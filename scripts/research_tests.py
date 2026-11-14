@@ -46,7 +46,7 @@ THIRD_PARTY = ('lxml', 'regex', 'fitz', 'pdfminer', 'jsonschema')
 # Suites in the research folders that need packages or models this runner does not install.
 NOT_COVERED = (
     ('python research/C1/tools (test_i14, test_score, test_precheck, test_chapters)',
-     'they need the packages in research/C1/requirements.txt (pymupdf, regex, ...)'),
+     'they need the packages in research/C1/requirements.txt (pymupdf, pdfminer, ...)'),
     ('python research/C2/frontend', 'it needs research/C2/.venv with the speech engines installed'),
 )
 
