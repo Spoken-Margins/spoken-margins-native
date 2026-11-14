@@ -21,6 +21,11 @@ public enum TranscriptionFailureWording {
         }
     }
 
+    /// The two statuses a Margins row offers a Retry beside (#3856). `MarginRowRepair` keys off these same strings, so the
+    /// button can only appear beside the words it fixes.
+    public static let contextNeedsRetry = "Context needs retry"
+    public static let transcriptionNeedsRetry = "Transcription needs retry"
+
     public static func isSpeechRecognitionOff(error: String) -> Bool {
         error.contains(speechRecognitionOffError)
     }
@@ -55,7 +60,7 @@ public enum TranscriptionFailureWording {
     ) -> String {
         let transcript = marginStatus(transcriptionStatus: transcriptionStatus, speechRecognitionOff: speechRecognitionOff)
         if transcriptionStatus == "failed", speechRecognitionOff, let transcript { return transcript }
-        if contextUnavailable { return "Context needs retry" }
+        if contextUnavailable { return contextNeedsRetry }
         if recordingMissing { return "Recording is unavailable" }
         return transcript ?? "Margin needs attention"
     }
@@ -68,7 +73,7 @@ public enum TranscriptionFailureWording {
         case "failed":
             return speechRecognitionOff
                 ? "No transcript: Speech Recognition is off. Turn it on in Settings."
-                : "Transcription needs retry"
+                : transcriptionNeedsRetry
         case "pending":
             // Only live work is "pending": a launch settles the orphans as "failed" (#942).
             return "Transcribing…"
