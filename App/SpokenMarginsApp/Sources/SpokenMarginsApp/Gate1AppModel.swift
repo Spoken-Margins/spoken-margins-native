@@ -277,6 +277,9 @@ final class Gate1AppModel: ObservableObject {
     }()
     /// "Play this moment" (#159). The sequence is published for the playback screen; the conductor runs it.
     @Published private(set) var marginMoment: MarginMomentSequence?
+    /// How many times "Go to this moment in the source" has succeeded (#3961). The playback screen switches to Now each time
+    /// this changes, so a written Margin lands on the source as a spoken one does. It holds no state beyond the count.
+    @Published private(set) var showNowRequests = 0
     @Published private(set) var marginMomentVoiceIsPaused = false
     /// Whose Margin the moment is for ("Your Margin", "Cole's Margin"), and whether its position is only a guess.
     @Published private(set) var marginMomentTitle = "Your Margin"
@@ -1119,6 +1122,7 @@ final class Gate1AppModel: ObservableObject {
             if previousItemID != session.itemId { resetMixWithOtherAudioForNewSession() }
             startMarginMomentIfSpoken(interjection, store: store)
             screen = .playback
+            showNowRequests += 1
             lastError = nil
             return true
         } catch {
@@ -1127,42 +1131,6 @@ final class Gate1AppModel: ObservableObject {
             reportFailure(error, context: "Could not play this Margin's position")
             return false
         }
-    }
-
-    /// Tapping a shared Margin in the Timeline plays its moment (#158): a lead-in, their voice, then the item.
-    /// Position is the best the app has: a verified or interpolated match, else the sender's own time.
-    func playSharedMarginMoment(_ row: SharedMarginRow) {
-        guard !rejectNavigationOrSessionMutationWhileRecording("play_shared_margin_moment") else { return }
-        guard let itemID = row.layer.itemId else {
-            reportFailure("The source for this shared Margin isn't in your Library.")
-            return
-        }
-        guard let position = SharedMarginPlaybackPosition(row.interjection) else {
-            reportFailure("This shared Margin has no position in the episode.")
-            return
-        }
-        let audio = WrittenMarginReadings.audio(for: row.interjection, in: row.layer, voiceFile: resolvedApplicationSupportAssetURL(for:)) // a recording or a written Margin's reading, as every way to play one asks (#3412)
-        if WrittenMarginReadings.waitsThenPlays(audio, row: row, model: self) { return } // the chosen voice's reading isn't made yet
-        guard let voiceURL = WrittenMarginReadings.startingRender(audio) else { return reportFailure(SharedMarginAudio.unavailableWords(for: row.interjection)) }
-        endMarginMoment(); stopInterjectionAudioPlayback() // one Margin voice at a time: a paused one of yours mustn't take the resume below (#1672)
-        if snapshot.itemId != itemID || !hasActiveSession { startItem(id: itemID) }
-        guard snapshot.itemId == itemID else { return }
-        // The moment plays this voice; the automatic shared-Margin prompt mustn't play it again.
-        sharedMarginOffers.markAnnounced(row.interjection.id)
-        let targetID = "shared::\(row.layer.id)::\(row.interjection.id)"
-        startMarginMoment(
-            sequence: MarginMomentSequence(itemId: itemID, target: MarginMomentAnchor(marginId: targetID, mediaTimeMs: position.mediaTimeMs, label: row.collectionLabel), otherMargins: []),
-            voiceURLs: [targetID: voiceURL],
-            title: "\(row.collectionLabel)'s Margin",
-            isApproximate: position.isApproximate
-        )
-        marginMomentConductor?.onVoiceStarted = { [weak self] in if $0 == targetID { self?.markSharedMarginHeard(row.interjection) } }
-        // Their voice gets the same chime as the automatic prompt, unless the layer is muted (#932).
-        marginMomentConductor?.chimedMarginIds = row.layer.isMuted ? [] : [targetID]
-        marginMomentConductor?.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }
-        WrittenMarginReadings.rewordUnavailable(on: marginMomentConductor, marginId: targetID, audio: audio, model: self) // a reading that isn't there at its turn
-        if !snapshot.status.isPlaybackActive { resumePlayback() }
-        screen = .playback
     }
 
     /// Runs `sequence` through the conductor: a Margin moment (#159) or a review of new Margins (#474). `listening`
