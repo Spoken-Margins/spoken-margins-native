@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitPersistence
 
 struct ListeningEditionStore {
     let directory: URL
@@ -18,7 +19,7 @@ struct ListeningEditionStore {
         try edition.encoded().write(to: file(edition.itemID), options: .atomic)
     }
     func file(_ itemID: String) -> URL {
-        directory.appendingPathComponent(ListeningEdition.digest(itemID)).appendingPathExtension("json")
+        directory.appendingPathComponent(ItemOwnedFiles.listeningEditionFileName(itemId: itemID))
     }
     static func stage(_ edition: ListeningEdition) throws -> URL {
         guard let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Gate5BrowserTextHandoffStore.appGroupIdentifier) else {
