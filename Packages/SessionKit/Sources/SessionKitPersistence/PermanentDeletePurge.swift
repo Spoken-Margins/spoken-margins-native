@@ -10,12 +10,12 @@ import SessionKit
 ///
 /// The order, in `deleting`:
 /// 1. write the record (the intent);
-/// 2. run the delete. If it throws, the record is dropped and no file is touched;
+/// 2. run the delete. If it throws, no file is touched (the record stays, and is dropped at launch while the rows exist);
 /// 3. remove the files and drop the record. A file that can't be removed stays in the record.
 ///
 /// On the next launch `resumePending` reads each record. If any of its items still has a row, the delete never
-/// happened (the app was killed between 1 and 2), so the record is dropped and nothing is removed. Otherwise the
-/// files left are removed.
+/// happened (the app was killed between 1 and 2), so the record is dropped and nothing is removed. If a row can't be
+/// read, the record is kept for the launch after. Otherwise the files left are removed.
 ///
 /// A record names a file by a root's name and a path under it, never an absolute path: the app's container path can
 /// change, and an absolute path read back from disk should not be trusted to point inside the app's own folders.
@@ -53,6 +53,8 @@ public struct PermanentDeletePurge: Sendable {
         public var abandonedRecords = 0
         /// Records read and dropped because they could not be decoded.
         public var unreadableRecords = 0
+        /// Records left untouched because an item's row could not be read.
+        public var deferredRecords = 0
         public init() {}
     }
 
@@ -72,9 +74,10 @@ public struct PermanentDeletePurge: Sendable {
 
     // MARK: Orchestration
 
-    /// Writes the record, runs `delete`, then removes the files off the calling thread. If `delete` throws, the record
-    /// is dropped, no file is touched and the error is rethrown. The returned task finishes when the removal does;
-    /// callers need not wait for it. With nothing to remove, `delete` just runs.
+    /// Writes the record, runs `delete`, then removes the files off the calling thread. If `delete` throws, no file is
+    /// touched and the error is rethrown; the record stays, because a throw after the commit would leave the rows gone,
+    /// and the next launch's `resumePending` drops it when the items still have rows. The returned task finishes when
+    /// the removal does; callers need not wait for it. With nothing to remove, `delete` just runs.
     @discardableResult
     public func deleting(
         itemIds: [String], targets: [Target], delete: () throws -> Void
@@ -89,21 +92,25 @@ public struct PermanentDeletePurge: Sendable {
             try delete()
             return Task { Outcome() }
         }
-        do {
-            try delete()
-        } catch {
-            abandon(record)
-            throw error
-        }
+        try delete()
         let purge = self
         return Task.detached(priority: .utility) { purge.finish(record) }
     }
 
-    /// Finishes every record a killed or failed delete left. Call at launch, before the listener can delete anything.
-    /// `itemExists` answers whether an item still has a row, in the trash or not; if it can't be answered, answer `true`
-    /// (the record is then dropped and nothing is removed, which only ever leaves files behind).
+    /// Whether an item still has a row, in the trash or not.
+    public enum RowState: Sendable {
+        case present, absent
+        /// The answer could not be read (a busy database). The record is kept for the next launch.
+        case unknown
+    }
+
+    /// Finishes the records a killed or failed delete left. Call at launch. A record made after `cutoff` belongs to a
+    /// delete running in this process, which finishes it itself, so it is left alone: pass the moment the launch began.
+    ///
+    /// For each record: if any item `rowState` calls present, the delete never happened and the record is dropped;
+    /// otherwise, if any is unknown, the record is kept untouched; otherwise its files are removed.
     @discardableResult
-    public func resumePending(itemExists: (String) -> Bool) -> Outcome {
+    public func resumePending(recordsBefore cutoff: Date, rowState: (String) -> RowState) -> Outcome {
         var outcome = Outcome()
         for url in recordFiles() {
             guard let data = try? Data(contentsOf: url),
@@ -112,9 +119,16 @@ public struct PermanentDeletePurge: Sendable {
                 outcome.unreadableRecords += 1
                 continue
             }
-            if record.itemIds.contains(where: itemExists) {
+            if record.createdAt > cutoff { continue }
+            let states = record.itemIds.map(rowState)
+            if states.contains(where: { if case .present = $0 { true } else { false } }) {
                 abandon(record)
                 outcome.abandonedRecords += 1
+                continue
+            }
+            if states.contains(where: { if case .unknown = $0 { true } else { false } }) {
+                outcome.kept += record.targets
+                outcome.deferredRecords += 1
                 continue
             }
             let finished = finish(record)
@@ -124,12 +138,11 @@ public struct PermanentDeletePurge: Sendable {
         return outcome
     }
 
-    /// `resumePending` against the store's rows. An item whose row can't be read counts as present, so a failed read
-    /// removes nothing.
+    /// `resumePending` against the store's rows.
     @discardableResult
-    public func resumePending(store: SQLiteSessionStore) -> Outcome {
-        resumePending(itemExists: { id in
-            do { return try store.loadItemSummary(id: id) != nil } catch { return true }
+    public func resumePending(recordsBefore cutoff: Date, store: SQLiteSessionStore) -> Outcome {
+        resumePending(recordsBefore: cutoff, rowState: { id in
+            do { return try store.loadItemSummary(id: id) != nil ? .present : .absent } catch { return .unknown }
         })
     }
 
@@ -210,13 +223,13 @@ public struct PermanentDeletePurge: Sendable {
 
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = .millisecondsSince1970
         return encoder
     }()
 
     private static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .millisecondsSince1970
         return decoder
     }()
 }

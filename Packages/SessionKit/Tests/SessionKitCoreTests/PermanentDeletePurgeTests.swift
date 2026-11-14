@@ -46,6 +46,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
         ((try? manager.contentsOfDirectory(atPath: journal.path)) ?? []).filter { $0.hasSuffix(".json") }.count
     }
 
+    private var later: Date { Date().addingTimeInterval(60) }
     private let gone = "item-6f1c2d3e-0000-4000-8000-000000000001"
     private let kept = "item-6f1c2d3e-0000-4000-8000-000000000002"
 
@@ -77,7 +78,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
         XCTAssertEqual(recordsDuringDelete, 1)
     }
 
-    func testAFailedDeleteTouchesNoFileAndLeavesNoRecord() throws {
+    func testAFailedDeleteTouchesNoFileAndItsRecordIsDroppedAtLaunch() throws {
         try seedFiles(of: gone)
         struct DeleteFailed: Error {}
         XCTAssertThrowsError(try purge().deleting(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone)) {
@@ -85,6 +86,10 @@ final class PermanentDeletePurgeTests: XCTestCase {
         }) { XCTAssertTrue($0 is DeleteFailed) }
         XCTAssertEqual(filesExist(of: gone).chunks, true)
         XCTAssertEqual(filesExist(of: gone).edition, true)
+        XCTAssertEqual(journalCount(), 1, "kept: the throw may have come after the commit")
+        let launch = purge().resumePending(recordsBefore: Date().addingTimeInterval(1), rowState: { _ in .present })
+        XCTAssertEqual(launch.abandonedRecords, 1)
+        XCTAssertEqual(filesExist(of: gone).chunks, true)
         XCTAssertEqual(journalCount(), 0)
     }
 
@@ -116,7 +121,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
         _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
         XCTAssertEqual(filesExist(of: gone).chunks, true)
 
-        let outcome = purge().resumePending(itemExists: { _ in false })
+        let outcome = purge().resumePending(recordsBefore: later, rowState: { _ in .absent })
         XCTAssertEqual(outcome.removed.count, 2)
         XCTAssertEqual(filesExist(of: gone).chunks, false)
         XCTAssertEqual(filesExist(of: gone).edition, false)
@@ -127,7 +132,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
     func testAKillBeforeTheRowsWentRemovesNothing() throws {
         try seedFiles(of: gone)
         _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
-        let outcome = purge().resumePending(itemExists: { $0 == self.gone })
+        let outcome = purge().resumePending(recordsBefore: later, rowState: { $0 == self.gone ? .present : .absent })
         XCTAssertEqual(outcome.abandonedRecords, 1)
         XCTAssertTrue(outcome.removed.isEmpty)
         XCTAssertEqual(filesExist(of: gone).chunks, true, "the item still has its row, so its files stay")
@@ -152,10 +157,34 @@ final class PermanentDeletePurgeTests: XCTestCase {
         XCTAssertEqual(journalCount(), 1, "the failure is not swallowed: it is recorded")
 
         // Next launch, nothing in the way.
-        let retry = purge().resumePending(itemExists: { _ in false })
+        let retry = purge().resumePending(recordsBefore: later, rowState: { _ in .absent })
         XCTAssertEqual(retry.removed.map(\.root), [ItemOwnedFiles.listeningEditionsRoot])
         XCTAssertEqual(filesExist(of: gone).edition, false)
         XCTAssertEqual(journalCount(), 0)
+    }
+
+    func testARowThatCannotBeReadKeepsTheRecordForTheNextLaunch() throws {
+        try seedFiles(of: gone)
+        _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
+        let busy = purge().resumePending(recordsBefore: later, rowState: { _ in .unknown })
+        XCTAssertEqual(busy.deferredRecords, 1)
+        XCTAssertTrue(busy.removed.isEmpty)
+        XCTAssertEqual(filesExist(of: gone).chunks, true)
+        XCTAssertEqual(journalCount(), 1, "not dropped: a busy database must not orphan the files")
+        let next = purge().resumePending(recordsBefore: later, rowState: { _ in .absent })
+        XCTAssertEqual(next.removed.count, 2)
+        XCTAssertEqual(journalCount(), 0)
+    }
+
+    func testARecordMadeAfterTheLaunchBeganIsLeftToItsOwnDelete() throws {
+        try seedFiles(of: gone)
+        let launchBegan = Date().addingTimeInterval(-1)
+        _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
+        // This process's own delete wrote it, rows still present at the moment resume looks.
+        let outcome = purge().resumePending(recordsBefore: launchBegan, rowState: { _ in .present })
+        XCTAssertEqual(outcome, PermanentDeletePurge.Outcome())
+        XCTAssertEqual(journalCount(), 1)
+        XCTAssertEqual(filesExist(of: gone).chunks, true)
     }
 
     func testAFileAlreadyGoneCountsAsRemoved() throws {
@@ -169,7 +198,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
         try seedFiles(of: gone)
         _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
         try Data("not json".utf8).write(to: journal.appending(path: "broken.json"))
-        let outcome = purge().resumePending(itemExists: { _ in false })
+        let outcome = purge().resumePending(recordsBefore: later, rowState: { _ in .absent })
         XCTAssertEqual(outcome.unreadableRecords, 1)
         XCTAssertEqual(outcome.removed.count, 2)
         XCTAssertEqual(journalCount(), 0)
@@ -225,17 +254,16 @@ final class PermanentDeletePurgeTests: XCTestCase {
             try store.saveItem(Item(id: id, title: id, mediaType: "text", text: "Body", externalReference: nil, status: "ready"))
         }
         try seedFiles(of: gone); try seedFiles(of: kept)
-        let exists: (String) -> Bool = { (try? store.loadItemSummary(id: $0)) != nil }
 
         // Killed before the delete: the row is still there.
         _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
-        XCTAssertEqual(purge().resumePending(itemExists: exists).abandonedRecords, 1)
+        XCTAssertEqual(purge().resumePending(recordsBefore: later, store: store).abandonedRecords, 1)
         XCTAssertTrue(filesExist(of: gone).chunks)
 
         // Killed after it: the row is gone, the files go.
         _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
         try store.deleteItem(id: gone)
-        XCTAssertEqual(purge().resumePending(itemExists: exists).removed.count, 2)
+        XCTAssertEqual(purge().resumePending(recordsBefore: later, store: store).removed.count, 2)
         XCTAssertFalse(filesExist(of: gone).chunks)
         XCTAssertTrue(filesExist(of: kept).chunks)
     }

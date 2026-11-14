@@ -96,8 +96,10 @@ extension Gate1AppModel {
     /// and does nothing when no delete was interrupted.
     func finishInterruptedPermanentDeletes(store: SQLiteSessionStore) {
         guard let purge = permanentDeletePurge() else { return }
+        // A record written after this moment is a delete running in this process, which finishes it itself.
+        let launchBegan = Date()
         Task.detached(priority: .utility) { [weak self] in
-            let outcome = purge.resumePending(store: store)
+            let outcome = purge.resumePending(recordsBefore: launchBegan, store: store)
             guard outcome.removed.count + outcome.kept.count + outcome.abandonedRecords > 0 else { return }
             let line = "removed:\(outcome.removed.count):kept:\(outcome.kept.count):abandoned:\(outcome.abandonedRecords)"
             await MainActor.run { self?.diagnostics["lastPermanentDeleteResume"] = line }
