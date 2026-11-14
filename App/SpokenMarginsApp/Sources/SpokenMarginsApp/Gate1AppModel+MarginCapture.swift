@@ -366,9 +366,6 @@ extension Gate1AppModel {
                 let latencyMs = max(0, Int(Date().timeIntervalSince(requestedAt) * 1000))
                 diagnostics["lastInterjectionRecordingStartLatencyMs"] = "\(latencyMs)"
                 startJustHeardPeek()
-                #if SM_MARGIN_END_PHRASE_SPIKE
-                beginMarginEndPhraseSpike() // phone builds only (#3940)
-                #endif
             }
         }
         guard !snapshot.isRecording else { return }
@@ -599,25 +596,34 @@ extension MarginCaptureSupervisor.Health {
 @MainActor
 final class MarginEndPhraseSpike {
     static let shared = MarginEndPhraseSpike()
-    /// Final results logged per Margin. These events skip the playback-event log (300 events, #3752) and go to the
-    /// developer recording only; the run's summary is always logged.
-    static let wordEventLimit = 5
+    /// Final results logged per Margin: with the lifecycle events that is at most 6 of the playback-event log's 300
+    /// (#3752). That log is the one that is always on, so the owner's export has the events without a Settings
+    /// toggle. The run's summary is always logged.
+    static let wordEventLimit = 3
 
     private var tap: LiveInputTap?
+    /// Which Margin's tap is current. Words and events of an earlier tap that is still finishing (its stop waits up to
+    /// 3 s for the recogniser) must not be counted against, or logged as, the next Margin's.
+    private var run = 0
     private var wordEventsLogged = 0
     private var record: (@MainActor (String, [String: String]) -> Void)?
 
     func begin(record: @escaping @MainActor (String, [String: String]) -> Void) {
         end()
+        run += 1
+        let thisRun = run
         self.record = record
         wordEventsLogged = 0
         let tap = LiveInputTap(
             makeSession: { SpeechLiveInputSession(isAuthorized: { SpeechRecognitionAccess.isAuthorized }) },
             onWords: { batch in
-                Task { @MainActor in MarginEndPhraseSpike.shared.heard(batch) }
+                Task { @MainActor in
+                    if MarginEndPhraseSpike.shared.run == thisRun { MarginEndPhraseSpike.shared.heard(batch) }
+                }
             },
             onEvent: { kind, fields in
-                Task { @MainActor in MarginEndPhraseSpike.shared.record?(kind, fields) }
+                // The stop of a Margin that has ended reports after the next one began: its summary is still its own.
+                Task { @MainActor in MarginEndPhraseSpike.shared.record?(kind, fields.merging(["run": String(thisRun)]) { $1 }) }
             }
         )
         self.tap = tap

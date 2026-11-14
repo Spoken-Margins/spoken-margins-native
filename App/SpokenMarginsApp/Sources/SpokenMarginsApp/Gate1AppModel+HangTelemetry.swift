@@ -83,7 +83,12 @@ extension Gate1AppModel {
                 endMarginEndPhraseSpike() // every way a recording ends, not only the ones that clear its screen (#3940)
                 #endif
             }
-            if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
+            if !oldValue.isRecording, snapshot.isRecording {
+                startCaptureWatch()
+                #if SM_MARGIN_END_PHRASE_SPIKE
+                beginMarginEndPhraseSpike() // every way a recording starts (in-app, Lock Screen, headset, Live Activity), as the end below (#3940)
+                #endif
+            }
         }
         labels.scoped("snapshot.speechResume") { settleSpeechInterruptionResume() }
         labels.scoped("snapshot.cantPlayListening") { hearFriendMarginsIfStartFailed(from: oldValue) } // the episode can't play: a friend's Margins don't need it (#3392)
