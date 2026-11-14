@@ -41,6 +41,11 @@ final class TranscriptLibraryImportTests: XCTestCase {
         return (id, title, readded)
     }
 
+    /// `DispatchSemaphore.wait` is unavailable from an async test in the Swift 6 language mode; a plain function can call it.
+    private static func wait(for semaphore: DispatchSemaphore, seconds: Double) -> DispatchTimeoutResult {
+        semaphore.wait(timeout: .now() + seconds)
+    }
+
     private func itemCount() throws -> Int {
         try StoreRawSQL.ids(kind: "item", at: path).count
     }
@@ -226,10 +231,10 @@ final class TranscriptLibraryImportTests: XCTestCase {
             }
             done.signal()
         }
-        XCTAssertEqual(holding.wait(timeout: .now() + 10), .success)
+        XCTAssertEqual(Self.wait(for: holding, seconds: 10), .success)
         let outcome = try await importFile("meet.txt", TranscriptFixtures.all["meet.txt"]!)
         release.signal()
-        _ = done.wait(timeout: .now() + 10)
+        _ = Self.wait(for: done, seconds: 10)
         let result = try added(outcome)
         XCTAssertNotNil(try store.loadTranscriptTimes(itemId: result.id))
     }
