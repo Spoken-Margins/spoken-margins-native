@@ -97,7 +97,8 @@ struct PlaybackChapterRowView: View {
 
     @ViewBuilder private var forwardControl: some View {
         switch forward {
-        case .skim, .skimDisabled:
+        case .skim, .skimDisabled, .playNextItem:
+            // `.playNextItem` is never produced until the app passes the queue to the rule (#3914 PR 2 draws it).
             skimButton(backward: false, enabled: forward == .skim)
         case .nextChapter:
             Button(action: nextChapter) {
