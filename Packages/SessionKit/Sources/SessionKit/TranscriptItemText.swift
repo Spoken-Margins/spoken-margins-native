@@ -31,6 +31,10 @@ public struct TranscriptItemText: Equatable, Sendable {
     public var text: String
     public var cues: [TranscriptItemCue]
 
+    /// The `externalReferenceType` of an item made from a transcript file. The item is ordinary text (`mediaType`
+    /// "text"); this marks it for its Library label, noun, meeting line and Margin clocks.
+    public static let referenceType = "transcript"
+
     /// A paragraph also ends before the first cue that starts this long after the paragraph's first cue.
     public static let paragraphSpanMs = 60_000
 

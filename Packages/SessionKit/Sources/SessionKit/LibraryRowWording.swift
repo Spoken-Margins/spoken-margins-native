@@ -10,6 +10,8 @@ public enum LibraryRowWording {
         sourceReference: String?,
         sourceReferenceType: String?
     ) -> LibraryContentTypeFilter {
+        // A meeting transcript is text whatever its file is called ("notes.pdf.txt" is still a transcript) (#2997).
+        if sourceReferenceType == TranscriptItemText.referenceType { return .text }
         if sourceReference?.lowercased().contains(".pdf") == true { return .pdf }
         switch mediaType.lowercased() {
         case "pdf": return .pdf
@@ -34,6 +36,7 @@ public enum LibraryRowWording {
     ) -> String {
         if mediaType.lowercased() == "guided_tour" { return "Guided tour" }
         if SpokenNoteItem.isSpokenNote(mediaType: mediaType) { return "Spoken note" }
+        if sourceReferenceType == TranscriptItemText.referenceType { return "Transcript" }
         switch contentType(mediaType: mediaType, sourceReference: sourceReference, sourceReferenceType: sourceReferenceType) {
         case .pdf:
             // The app reads a PDF through the new reader only when it's stored as "pdf".

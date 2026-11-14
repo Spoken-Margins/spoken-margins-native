@@ -95,6 +95,7 @@ public struct LibraryItemRow: Identifiable, Hashable, Sendable {
     /// The SF Symbol the Library row shows for this kind of item.
     public var mediaSymbol: String {
         if SpokenNoteItem.isSpokenNote(mediaType: mediaType) { return "mic" }
+        if sourceReferenceType == TranscriptItemText.referenceType { return "text.bubble" }
         if hasNativeAudio { return "headphones" }
         return switch mediaType.lowercased() {
         case "podcast", "audio", "audiobook", "m4a", "m4b", "mp3":

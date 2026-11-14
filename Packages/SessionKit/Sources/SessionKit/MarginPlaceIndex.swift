@@ -124,6 +124,15 @@ public enum MarginPlaces {
     public struct Place: Equatable, Sendable {
         public let chapterName: String?
         public let paragraph: Int?
+        /// For a Margin in a meeting transcript: where in the meeting it was made, in ms from the transcript's start
+        /// (#2997). Shown ahead of `paragraph`.
+        public let meetingClockMs: Int?
+
+        public init(chapterName: String?, paragraph: Int?, meetingClockMs: Int? = nil) {
+            self.chapterName = chapterName
+            self.paragraph = paragraph
+            self.meetingClockMs = meetingClockMs
+        }
     }
 
     /// Keyed by `MarginCollection.PrivateEntry.id`. Only Margins on the item itself have a place; responses and

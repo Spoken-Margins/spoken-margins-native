@@ -226,7 +226,8 @@ public enum OnboardingEvidenceClassifier {
         if userItems.contains(where: { $0.mediaType == "text" && $0.externalReferenceType == "url" }) {
             evidence.formUnion([.addedOwnSource, .addedFromSafari])
         }
-        if userItems.contains(where: { $0.externalReferenceType == "file" }) {
+        // A meeting transcript is a file the listener picked from Files, Open In or Share (#2997).
+        if userItems.contains(where: { $0.externalReferenceType == "file" || $0.externalReferenceType == TranscriptItemText.referenceType }) {
             evidence.formUnion([.addedOwnSource, .addedFromFiles])
         }
         return evidence
