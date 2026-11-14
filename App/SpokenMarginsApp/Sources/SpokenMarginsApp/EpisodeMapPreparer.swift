@@ -414,23 +414,15 @@ final class EpisodeMapPreparer {
                     matches: EpisodeMapAssembly.identityMatches(for: allLandmarks),
                     exactEdition: true
                 )
-                try await Gate1AppModel.offMain {
-                    // One transaction that first checks the item still has a row: a permanent delete asked while the run
-                    // finished lands before the check (nothing is written; the run stops as cancelled) or after the
-                    // commit (the delete takes these rows with the item), so no row is written back for an item that is
-                    // gone (#4227).
-                    try store.withSessionTransaction {
-                        guard try store.hasItemRow(id: itemID) else { throw CancellationError() }
-                        try store.saveEpisodeMapPreparationJob(commitJob)
-                        try store.saveEditionFingerprintSpine(spine)
-                        try store.saveTranscriptPhraseSketch(sketch)
-                        try store.savePortableListeningMapProposal(proposal, itemId: itemID)
-                        try store.saveResolvedListeningMapProjection(projection)
-                        for asset in try store.loadOwnedOfflineAssets(itemId: itemID) where asset.category == .fingerprintMap {
-                            try store.updateOwnedOfflineAsset(id: asset.id) { $0.protections.remove(.activeEpisodeMapPreparation) }
-                        }
-                    }
+                // One transaction that first checks the item still has a row (`commitEpisodeMapRun`): a permanent delete asked
+                // while the run finished lands before the check (nothing is written; the run stops as cancelled) or after the
+                // commit (the delete takes these rows with the item) (#4227).
+                let committed = try await Gate1AppModel.offMain {
+                    try store.commitEpisodeMapRun(
+                        itemId: itemID, job: commitJob, spine: spine, sketch: sketch, proposal: proposal,
+                        projection: projection)
                 }
+                guard committed else { throw CancellationError() }
                 try await host.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
                 try Task.checkCancellation() // the purge now suspends; a cancel that lands there must not complete the run
                 job.stage = .completed

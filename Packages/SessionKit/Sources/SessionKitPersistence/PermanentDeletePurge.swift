@@ -163,7 +163,26 @@ public struct PermanentDeletePurge: Sendable {
     public func resumePending(recordsBefore cutoff: Date, store: SQLiteSessionStore) -> Outcome {
         resumePending(
             recordsBefore: cutoff, rowState: { ItemOwnedFiles.rowState(ofItem: $0, in: store) },
-            recheck: ItemOwnedFiles.recheck(store: store))
+            recheck: storeRecheck(store: store))
+    }
+
+    /// `ItemOwnedFiles.stillFree` against the store's rows, for the removal step, which runs off the calling thread. A
+    /// quarantined item row counts as present: it can be restored, and its files are its own. A row that can't be read
+    /// (a busy database) is `unknown`, which keeps the file for the next launch. Whether the prepared-audio folder's
+    /// volume is case-sensitive is looked up when a folder target is met, on the removal step's own thread.
+    public func storeRecheck(store: SQLiteSessionStore) -> @Sendable (Target) -> RowState {
+        let purge = self
+        return { target in
+            ItemOwnedFiles.stillFree(
+                target, rowState: { ItemOwnedFiles.rowState(ofItem: $0, in: store) },
+                allItemIds: { try store.loadAllItemIds() },
+                caseSensitiveNames: target.root == ItemOwnedFiles.preparedAudioRoot && purge.rootIsCaseSensitive(target.root))
+        }
+    }
+
+    /// Whether the volume holding the named root treats case as different (false when unknown).
+    public func rootIsCaseSensitive(_ rootName: String) -> Bool {
+        roots.first { $0.name == rootName }.map { ItemOwnedFiles.volumeIsCaseSensitive(at: $0.url) } ?? false
     }
 
     // MARK: Steps

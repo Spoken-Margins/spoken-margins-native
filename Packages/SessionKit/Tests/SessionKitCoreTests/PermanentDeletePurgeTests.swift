@@ -299,10 +299,32 @@ final class PermanentDeletePurgeTests: XCTestCase {
         }
     }
 
-    func testItemsDeletedTogetherNameASharedFolderOnce() {
+    func testItemsDeletedTogetherNameEachDistinctFolderOnce() {
+        // a_b and a-b map to one folder name; A-B maps to another (they are one directory only on a case-insensitive
+        // volume, where removing the second finds the folder already gone). On a case-sensitive volume every folder
+        // is in the record, so none is left behind with no record to retry it.
         let targets = ItemOwnedFiles.targets(forItems: ["a_b", "a-b", "A-B"])
-        XCTAssertEqual(targets.filter { $0.root == ItemOwnedFiles.preparedAudioRoot }.count, 1)
+        XCTAssertEqual(
+            targets.filter { $0.root == ItemOwnedFiles.preparedAudioRoot }.map(\.relativePath), ["a-b", "A-B"])
         XCTAssertEqual(targets.filter { $0.root == ItemOwnedFiles.listeningEditionsRoot }.count, 3)
+    }
+
+    /// The same ids on both kinds of volume: `A-1` going while `a-1` stays.
+    func testCaseSensitiveVolumesKeepTwoCasesApart() {
+        let target = ItemOwnedFiles.targets(forItem: "A-1").first { $0.root == ItemOwnedFiles.preparedAudioRoot }!
+        XCTAssertEqual(
+            ItemOwnedFiles.stillFree(target, rowState: { _ in .absent }, allItemIds: { ["a-1"] }, caseSensitiveNames: true),
+            .absent, "two different folders: A-1's own is free, so its chunks go")
+        XCTAssertEqual(
+            ItemOwnedFiles.stillFree(target, rowState: { _ in .absent }, allItemIds: { ["a-1"] }, caseSensitiveNames: false),
+            .present, "one folder: a-1 still uses it, so it stays")
+        XCTAssertEqual(
+            ItemOwnedFiles.stillFree(target, rowState: { _ in .absent }, allItemIds: { ["A-1"] }, caseSensitiveNames: true),
+            .present, "the same name is the same folder on either kind of volume")
+    }
+
+    func testAVolumeThatDoesNotSayItsCaseRuleIsTreatedAsCaseInsensitive() {
+        XCTAssertFalse(ItemOwnedFiles.volumeIsCaseSensitive(at: base.appending(path: "no-such-folder")))
     }
 
     /// Just before a folder goes, is it still free? A table of the ids that map to the same folder, and ones that don't.
@@ -342,7 +364,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
         XCTAssertEqual(Set(try store.loadAllItemIds()), ["a-b", "a_b", "other"])
         try seedFiles(of: "a-b")   // the folder a_b maps to as well
         let outcome = await (try purge().deleting(
-            itemIds: ["a_b"], targets: ItemOwnedFiles.targets(forItem: "a_b"), recheck: ItemOwnedFiles.recheck(store: store)
+            itemIds: ["a_b"], targets: ItemOwnedFiles.targets(forItem: "a_b"), recheck: purge().storeRecheck(store: store)
         ) { try store.deleteItem(id: "a_b") }).value
         XCTAssertEqual(outcome.removed.map(\.root), [ItemOwnedFiles.listeningEditionsRoot], "a_b's edition only")
         XCTAssertEqual(outcome.reappeared.map(\.root), [ItemOwnedFiles.preparedAudioRoot])
@@ -357,7 +379,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
         }
         try seedFiles(of: gone); try seedFiles(of: kept)
         let outcome = await (try purge().deleting(
-            itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone), recheck: ItemOwnedFiles.recheck(store: store)
+            itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone), recheck: purge().storeRecheck(store: store)
         ) { try store.deleteItem(id: gone) }).value
         XCTAssertEqual(outcome.removed.count, 2)
         XCTAssertFalse(filesExist(of: gone).chunks)
@@ -423,7 +445,66 @@ final class PermanentDeletePurgeTests: XCTestCase {
         XCTAssertTrue(try store.hasItemRow(id: "a-b"))
         XCTAssertFalse(try store.hasItemRow(id: "a_b"))
         let target = ItemOwnedFiles.targets(forItem: "a_b").first { $0.root == ItemOwnedFiles.preparedAudioRoot }!
-        XCTAssertEqual(ItemOwnedFiles.recheck(store: store)(target), .present, "a-b's folder is not free")
+        XCTAssertEqual(purge().storeRecheck(store: store)(target), .present, "a-b's folder is not free")
+    }
+
+    // MARK: The episode-map run's last step
+
+    private func commitInputs(itemId: String) -> (
+        job: EpisodeMapPreparationJob, spine: EditionFingerprintSpineArtifact, sketch: TranscriptPhraseSketchArtifact,
+        proposal: PortableListeningMapProposalArtifact, projection: ResolvedListeningMapProjection
+    ) {
+        (EpisodeMapPreparationJob(id: "job-\(itemId)", itemId: itemId, policy: .explicit, stage: .commit),
+         EditionFingerprintSpineArtifact(id: "spine-\(itemId)", itemId: itemId, landmarks: []),
+         TranscriptPhraseSketchArtifact(id: "sketch-\(itemId)", itemId: itemId, saltBase64: "c2FsdA==", windows: []),
+         PortableListeningMapProposalArtifact(
+            id: "proposal-\(itemId)", createdAt: Date(timeIntervalSince1970: 1_000), generator: "test",
+            scenes: [.init(id: "scene-1", order: 0, title: "Part one", summaryText: "Overview.",
+                           summaryProvenance: .senderAuthored, eligibility: .eligible, eligibilityReason: nil,
+                           startAnchor: .init(anchorType: .media, mediaTimeMs: 0),
+                           endAnchor: .init(anchorType: .media, mediaTimeMs: 30_000))]),
+         ResolvedListeningMapProjection(
+            id: "projection-\(itemId)", itemId: itemId, proposalId: "proposal-\(itemId)", points: [], intervals: []))
+    }
+
+    func testTheRunsLastStepWritesNothingForAnItemThatIsGone() throws {
+        let store = try SQLiteSessionStore(path: base.appending(path: "store.sqlite").path)
+        let inputs = commitInputs(itemId: gone)
+        // The item was permanently deleted while the run finished: no row for it exists.
+        XCTAssertFalse(try store.commitEpisodeMapRun(
+            itemId: gone, job: inputs.job, spine: inputs.spine, sketch: inputs.sketch,
+            proposal: inputs.proposal, projection: inputs.projection))
+        XCTAssertNil(try store.loadEpisodeMapPreparationJob(id: inputs.job.id))
+        XCTAssertNil(try store.loadEditionFingerprintSpine(itemId: gone))
+        XCTAssertNil(try store.loadTranscriptPhraseSketch(itemId: gone))
+        XCTAssertEqual(try store.loadPortableListeningMapProposals(itemId: gone), [])
+        XCTAssertNil(try store.loadResolvedListeningMapProjection(itemId: gone))
+    }
+
+    func testTheRunsLastStepCommitsForAnItemThatStays() throws {
+        let store = try SQLiteSessionStore(path: base.appending(path: "store.sqlite").path)
+        try store.saveItem(Item(id: kept, title: "x", mediaType: "audio", text: "", externalReference: nil, status: "ready"))
+        try store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "asset-1", itemId: kept, category: .fingerprintMap, relativePath: "EpisodeMaps/a.sig", byteCount: 1,
+            isReproducible: true, protections: [.activeEpisodeMapPreparation]))
+        let inputs = commitInputs(itemId: kept)
+        XCTAssertTrue(try store.commitEpisodeMapRun(
+            itemId: kept, job: inputs.job, spine: inputs.spine, sketch: inputs.sketch,
+            proposal: inputs.proposal, projection: inputs.projection))
+        XCTAssertNotNil(try store.loadEpisodeMapPreparationJob(id: inputs.job.id))
+        XCTAssertNotNil(try store.loadEditionFingerprintSpine(itemId: kept))
+        XCTAssertNotNil(try store.loadTranscriptPhraseSketch(itemId: kept))
+        XCTAssertEqual(try store.loadPortableListeningMapProposals(itemId: kept).count, 1)
+        XCTAssertNotNil(try store.loadResolvedListeningMapProjection(itemId: kept))
+        XCTAssertEqual(try store.loadOwnedOfflineAssets(itemId: kept).first?.protections, [], "the run's protection is released")
+        // Then the item is permanently deleted: the commit's rows go with it, and a late repeat writes nothing.
+        try store.deleteItem(id: kept)
+        XCTAssertNil(try store.loadEditionFingerprintSpine(itemId: kept))
+        XCTAssertFalse(try store.commitEpisodeMapRun(
+            itemId: kept, job: inputs.job, spine: inputs.spine, sketch: inputs.sketch,
+            proposal: inputs.proposal, projection: inputs.projection))
+        XCTAssertNil(try store.loadEditionFingerprintSpine(itemId: kept))
+        XCTAssertNil(try store.loadEpisodeMapPreparationJob(id: inputs.job.id))
     }
 
     // MARK: A late episode-map job save

@@ -95,7 +95,7 @@ extension Gate1AppModel {
         guard let purge = permanentDeletePurge() else { return try delete() }
         try purge.deleting(
             itemIds: itemIds, targets: ItemOwnedFiles.targets(forItems: itemIds),
-            recheck: ItemOwnedFiles.recheck(store: store), delete: delete)
+            recheck: purge.storeRecheck(store: store), delete: delete)
     }
 
     /// Finishes what a permanent delete left when the app was quit part way. Reads the Library off the main thread
