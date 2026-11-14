@@ -91,8 +91,12 @@ Cluster leads and the chief of staff are automatic sessions. The hook blocks at 
 
 ## Wind-down
 
-When every rollup is merged or handed back:
+When every rollup is merged or handed back, the run winds down at once. **The chief of staff owns the trigger:** the moment the last lead stops, it starts the steps below in that same turn, without waiting for the director or the owner. On run #4225 (2026-11-13) every cluster was finished by 21:44Z, but nobody wound down. The chief of staff kept a usage watcher and a watcher on a PR that could no longer merge, its status still called a merged rollup open, and the owner came back almost four hours later to sessions that had lost their cache and had to ask whether the run was done.
 
 1. Each lead sets its status comment to its final state and stops.
-2. The chief of staff removes the run's merged worktrees and local branches (the housekeeping in the owner overlay's 2026-10-14 calls), and checks that every finished issue is closed.
-3. The run's lead session posts a short retrospective on the tracking issue (what merged, what was handed back, token use per session, what to change), then closes it.
+2. The chief of staff stops every watcher it armed. No watcher runs while no lead is working.
+3. The chief of staff re-reads from GitHub the state of every PR and issue the run lists, and fixes its status comment from what it read. It removes the run's merged worktrees and local branches (the housekeeping in the owner overlay's 2026-10-14 calls), and checks that every finished issue is closed.
+4. The chief of staff drafts the retrospective (what merged, what was handed back, token use per session, what to change) and sends it to the director. The director posts it on the tracking issue and closes the issue. If the director has stopped, the chief of staff posts it and closes the issue itself.
+5. Sessions archive at the end. The chief of staff archives the leads, and the director archives the chief of staff. The owner archives only the director.
+
+Any status comment, at any point in the run, is written from the PR and issue states read just before writing, not from memory.
