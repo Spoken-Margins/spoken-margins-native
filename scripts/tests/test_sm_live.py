@@ -6,7 +6,6 @@ tag message reads a real plist, because those are the boundaries that would brea
 import base64
 import contextlib
 import datetime as dt
-import hashlib
 import io
 import json
 import plistlib
@@ -201,6 +200,20 @@ class Site(unittest.TestCase):
         self.assertIn('/terms/: NOT LIVE (HTTP 404)', text)
         self.assertIn('last deploy 2026-11-09T00:00:00Z, commit abc1234', text)
 
+    def test_a_live_page_that_differs_only_in_bytes_a_text_compare_would_miss_does_not_match_main(self):
+        # #4304: the hash is over the bytes. A page that differs from main in a non-ASCII character, a line ending or a
+        # trailing space is not main's page, and "matches main" is what the owner's "what is deployed" answer reports.
+        main = 'caf\u00e9\nline\n'.encode()
+        differing = {'a different accented letter': 'cafe\u0301\nline\n'.encode(), 'a missing accent': b'cafe\nline\n',
+                     'CRLF line ends': 'caf\u00e9\r\nline\r\n'.encode(), 'a trailing space': 'caf\u00e9\nline \n'.encode(),
+                     'a trailing newline less': 'caf\u00e9\nline'.encode(), 'a BOM': b'\xef\xbb\xbf' + main}
+        for name, live_bytes in {'the same bytes': main, **differing}.items():
+            with self.subTest(name):
+                world = FakeWorld(web={f'{live.SITE}/': (200, {}, live_bytes)},
+                                  git={('fetch',): b'', ('ls-tree',): b'Site/index.html\n', ('show', 'origin/main:Site/index.html'): main})
+                row = {row['page']: row for row in live.site(world)['rows']}['/']
+                self.assertEqual(row['matches_trunk'], name == 'the same bytes')
+
     def test_a_page_that_cannot_be_reached_is_unknown_not_missing(self):
         world = self.world()
         world.web_answers = {f'{live.SITE}/': live.ReadError('could not reach it')}
@@ -391,9 +404,6 @@ class Output(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             self.assertEqual(live.main(['--section', 'server'], FakeWorld()), 0)
         self.assertIn('do not fill it in from a comment', out.getvalue())
-
-    def test_the_page_hash_is_over_bytes(self):
-        self.assertEqual(hashlib.sha256('é'.encode()).digest(), hashlib.sha256(b'\xc3\xa9').digest())
 
 
 if __name__ == '__main__':
