@@ -596,16 +596,11 @@ extension MarginCaptureSupervisor.Health {
 @MainActor
 final class MarginEndPhraseSpike {
     static let shared = MarginEndPhraseSpike()
-    /// Final results logged per Margin: with the lifecycle events that is at most 6 of the playback-event log's 300
-    /// (#3752). That log is the one that is always on, so the owner's export has the events without a Settings
-    /// toggle. The run's summary is always logged.
-    static let wordEventLimit = 3
 
     private var tap: LiveInputTap?
-    /// Which Margin's tap is current. Words and events of an earlier tap that is still finishing (its stop waits up to
-    /// 3 s for the recogniser) must not be counted against, or logged as, the next Margin's.
+    /// Which Margin's tap an event belongs to: the stop of a tap still finishing (it waits up to 3 s for the
+    /// recogniser) reports after the next Margin began, and its summary is its own.
     private var run = 0
-    private var wordEventsLogged = 0
     private var record: (@MainActor (String, [String: String]) -> Void)?
 
     func begin(record: @escaping @MainActor (String, [String: String]) -> Void) {
@@ -613,16 +608,9 @@ final class MarginEndPhraseSpike {
         run += 1
         let thisRun = run
         self.record = record
-        wordEventsLogged = 0
         let tap = LiveInputTap(
             makeSession: { SpeechLiveInputSession(isAuthorized: { SpeechRecognitionAccess.isAuthorized }) },
-            onWords: { batch in
-                Task { @MainActor in
-                    if MarginEndPhraseSpike.shared.run == thisRun { MarginEndPhraseSpike.shared.heard(batch) }
-                }
-            },
             onEvent: { kind, fields in
-                // The stop of a Margin that has ended reports after the next one began: its summary is still its own.
                 Task { @MainActor in MarginEndPhraseSpike.shared.record?(kind, fields.merging(["run": String(thisRun)]) { $1 }) }
             }
         )
@@ -635,20 +623,6 @@ final class MarginEndPhraseSpike {
         guard let tap else { return }
         self.tap = nil
         Task.detached { await tap.stop() } // a stop that beats its start is fine: the tap then never starts
-    }
-
-    private func heard(_ batch: [LiveInputWord]) {
-        let finals = batch.filter(\.isFinal)
-        guard !finals.isEmpty, wordEventsLogged < Self.wordEventLimit else { return }
-        wordEventsLogged += 1
-        // Never the words themselves: the export is the one way off the phone and has no redaction for free text.
-        // Timing and a count show words arrive (also while locked); one flag shows the phrase was heard.
-        record?("margin.endPhrase.spike.words", [
-            "startMs": String(finals.first?.startMs ?? 0),
-            "endMs": String(finals.last?.endMs ?? 0),
-            "count": String(finals.count),
-            "heardEndPhrase": String(LiveInputWord.mentionsEndPhrase(finals))
-        ])
     }
 }
 

@@ -22,20 +22,30 @@ public struct LiveInputWord: Sendable, Equatable {
 }
 
 extension LiveInputWord {
-    /// Whether these words say "stop margin" or "end margin" as two whole words in a row, for the spike's one-flag
-    /// evidence that the phrase was heard. Case, punctuation and spacing don't matter; "stop margins", "stopped
-    /// margin" and the two words apart do. The words themselves never go to Diagnostics (the export has no redaction
-    /// for free text), so the answer is all that is kept.
-    public static func mentionsEndPhrase(_ words: [LiveInputWord]) -> Bool {
-        let spoken = words.map(\.text).joined(separator: " ").lowercased()
-        let tokens = spoken
+    /// The words as lowercase tokens: letters, digits and apostrophes (a curly one counts as a straight one, so
+    /// "margin's" reads the same however the recogniser wrote it). Everything else separates tokens.
+    public static func tokens(_ words: [LiveInputWord]) -> [String] {
+        words.map(\.text).joined(separator: " ").lowercased()
+            .replacingOccurrences(of: "\u{2019}", with: "'")
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "'" })
             .map(String.init)
+    }
+
+    /// Whether `tokens` hold "stop margin" or "end margin" as two whole words in a row.
+    public static func tokensHoldEndPhrase(_ tokens: [String]) -> Bool {
         guard tokens.count >= 2 else { return false }
         for index in 0..<(tokens.count - 1) where tokens[index + 1] == "margin" {
             if tokens[index] == "stop" || tokens[index] == "end" { return true }
         }
         return false
+    }
+
+    /// Whether these words say "stop margin" or "end margin" as two whole words in a row, for the spike's one-flag
+    /// evidence that the phrase was heard. Case, punctuation and spacing don't matter; "stop margins", "stopped
+    /// margin" and the two words apart do. The words themselves never go to Diagnostics (the export has no redaction
+    /// for free text), so the answer is all that is kept.
+    public static func mentionsEndPhrase(_ words: [LiveInputWord]) -> Bool {
+        tokensHoldEndPhrase(tokens(words))
     }
 }
 
@@ -68,8 +78,20 @@ public struct LiveInputTapSummary: Sendable, Equatable {
     public var wordCount: Int
     public var finalWordCount: Int
     public var firstWordAfterMs: Int?
+    /// Whether the final results, across the whole run, said "stop margin" or "end margin". Kept for the run, not
+    /// per event, so a log cap can't drop the one result that matters (#3940).
+    public var heardEndPhrase = false
 
     /// Process CPU time per minute of tap time, for the Design's cost note ("CPU above 30% of a core sustained").
+    public init(wallMs: Int, cpuMs: Int, wordCount: Int, finalWordCount: Int, firstWordAfterMs: Int?, heardEndPhrase: Bool = false) {
+        self.wallMs = wallMs
+        self.cpuMs = cpuMs
+        self.wordCount = wordCount
+        self.finalWordCount = finalWordCount
+        self.firstWordAfterMs = firstWordAfterMs
+        self.heardEndPhrase = heardEndPhrase
+    }
+
     public var cpuMsPerMinute: Int {
         guard wallMs > 0 else { return 0 }
         return Int((Double(cpuMs) / Double(wallMs) * 60_000).rounded())
@@ -78,7 +100,7 @@ public struct LiveInputTapSummary: Sendable, Equatable {
     public var fields: [String: String] {
         var result = [
             "wallMs": String(wallMs), "cpuMs": String(cpuMs), "cpuMsPerMinute": String(cpuMsPerMinute),
-            "words": String(wordCount), "finalWords": String(finalWordCount)
+            "words": String(wordCount), "finalWords": String(finalWordCount), "heardEndPhrase": String(heardEndPhrase)
         ]
         if let firstWordAfterMs { result["firstWordAfterMs"] = String(firstWordAfterMs) }
         return result
@@ -112,10 +134,13 @@ public actor LiveInputTap {
     private var wordCount = 0
     private var finalWordCount = 0
     private var firstWordAfterMs: Int?
+    private var heardEndPhrase = false
+    /// The last token of the final results so far, so a phrase the recogniser splits across two results is found.
+    private var lastFinalToken: String?
 
     public init(
         makeSession: @escaping @Sendable () -> any LiveInputSession,
-        onWords: @escaping @Sendable ([LiveInputWord]) -> Void,
+        onWords: @escaping @Sendable ([LiveInputWord]) -> Void = { _ in },
         onEvent: @escaping Event,
         wallClockMs: @escaping @Sendable () -> Int = { LiveInputTap.monotonicMs() },
         cpuClockMs: @escaping @Sendable () -> Int = { LiveInputTap.processCpuMs() }
@@ -188,7 +213,8 @@ public actor LiveInputTap {
                 cpuMs: max(0, summaryClockCpu - startedCpuMs),
                 wordCount: wordCount,
                 finalWordCount: finalWordCount,
-                firstWordAfterMs: firstWordAfterMs
+                firstWordAfterMs: firstWordAfterMs,
+                heardEndPhrase: heardEndPhrase
             )
             onEvent("margin.endPhrase.spike.stopped", summary.fields)
         case .stopped:
@@ -200,7 +226,15 @@ public actor LiveInputTap {
         guard !batch.isEmpty else { return }
         if firstWordAfterMs == nil { firstWordAfterMs = max(0, wallClockMs() - startedWallMs) }
         wordCount += batch.count
-        finalWordCount += batch.filter(\.isFinal).count
+        let finals = batch.filter(\.isFinal)
+        finalWordCount += finals.count
+        if !finals.isEmpty {
+            // The whole run, not one event: a result that ends in "stop" followed by one that starts with "margin" counts.
+            var tokens = LiveInputWord.tokens(finals)
+            if let lastFinalToken { tokens.insert(lastFinalToken, at: 0) }
+            if LiveInputWord.tokensHoldEndPhrase(tokens) { heardEndPhrase = true }
+            lastFinalToken = tokens.last
+        }
     }
 
     public static func monotonicMs() -> Int {

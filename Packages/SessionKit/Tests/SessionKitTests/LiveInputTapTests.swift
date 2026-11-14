@@ -192,6 +192,47 @@ final class LiveInputTapTests: XCTestCase {
         }
     }
 
+    func testThePhraseIsFoundOverTheWholeRunNotJustTheFirstResults() async {
+        // A log cap once dropped the one result that mattered: thirty seconds of speech is many finals, and the
+        // phrase comes last (the audit of #4296).
+        let session = FakeSession()
+        let recorder = Recorder()
+        let tap = makeTap(session, recorder)
+        await tap.start()
+        for index in 0..<6 { session.say([word("and then I said something number \(index)", index * 5_000)]) }
+        session.say([word("and that's my point stop margin", 31_000)])
+        while recorder.words.count < 7 { await Task.yield() }
+        await tap.stop()
+        XCTAssertEqual(recorder.events.last?.fields["heardEndPhrase"], "true")
+    }
+
+    func testAPhraseTheRecogniserSplitsAcrossTwoResultsIsStillHeard() async {
+        let session = FakeSession()
+        let recorder = Recorder()
+        let tap = makeTap(session, recorder)
+        await tap.start()
+        session.say([word("so that is it, stop", 0)])
+        session.say([word("margin", 1_400)])
+        while recorder.words.count < 2 { await Task.yield() }
+        await tap.stop()
+        XCTAssertEqual(recorder.events.last?.fields["heardEndPhrase"], "true")
+    }
+
+    func testOnlyFinalResultsCountAndALookalikeDoesNot() async {
+        for (spoken, final, expected) in [("stop margin", false, "false"), ("stop margins", true, "false"),
+                                          ("stopped margin", true, "false"), ("stop margin's", true, "false"),
+                                          ("stop margin\u{2019}s", true, "false"), ("end margin", true, "true")] {
+            let session = FakeSession()
+            let recorder = Recorder()
+            let tap = makeTap(session, recorder)
+            await tap.start()
+            session.say([word(spoken, 0, final: final)])
+            while recorder.words.isEmpty { await Task.yield() }
+            await tap.stop()
+            XCTAssertEqual(recorder.events.last?.fields["heardEndPhrase"], expected, "\(spoken), final: \(final)")
+        }
+    }
+
     func testTheSummaryOfANoTimeRunDoesNotDivideByZero() {
         let summary = LiveInputTapSummary(wallMs: 0, cpuMs: 40, wordCount: 0, finalWordCount: 0, firstWordAfterMs: nil)
         XCTAssertEqual(summary.cpuMsPerMinute, 0)
