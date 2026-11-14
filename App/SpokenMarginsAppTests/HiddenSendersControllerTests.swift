@@ -1,3 +1,4 @@
+import Combine
 import SessionKit
 import XCTest
 @testable import SpokenMarginsApp
@@ -29,5 +30,19 @@ final class HiddenSendersControllerTests: XCTestCase {
 
         relaunched.unhide(ana)
         XCTAssertTrue(HiddenSendersController(directory: directory).isEmpty)
+    }
+
+    /// The screens redraw from `current`, so every hide and show of a Margin must publish it.
+    func testHidingAndShowingAMarginPublishesTheList() {
+        let controller = HiddenSendersController(directory: directory)
+        var published: [Bool] = []
+        let sink = controller.$current.dropFirst().sink { published.append($0.isMarginHidden("margin-1")) }
+        defer { sink.cancel() }
+
+        XCTAssertTrue(controller.hideMargin("margin-1", senderLabel: "Ana", text: "A few words"))
+        controller.unhideMargin("margin-1")
+        controller.unhideMargin("margin-1") // nothing changed, so nothing is published
+
+        XCTAssertEqual(published, [true, false])
     }
 }
