@@ -3,6 +3,17 @@ import Foundation
 /// Serializes eligibility and enqueue writes with extraction upgrades.
 public protocol SessionRepositoryTransaction: SessionRepository {
     func withSessionTransaction<T>(_ operation: () throws -> T) throws -> T
+    /// Whether `id` has an item row, trashed or quarantined or not (#4227). A writer that saves rows for an item
+    /// after a long step asks inside `withSessionTransaction`, so a permanent delete lands before the check
+    /// (nothing is written) or after the commit (the delete takes what was written).
+    func hasItemRow(id: String) throws -> Bool
+}
+
+extension SessionRepositoryTransaction {
+    /// For a store with no cheaper read: the item loads, or `loadItem` says it is not there.
+    public func hasItemRow(id: String) throws -> Bool {
+        do { _ = try loadItem(id: id); return true } catch SessionKitError.missingFixture { return false }
+    }
 }
 
 public enum PreparedAudioEnqueue {

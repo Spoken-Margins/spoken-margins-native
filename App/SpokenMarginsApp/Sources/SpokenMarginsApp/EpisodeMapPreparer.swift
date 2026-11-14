@@ -261,7 +261,8 @@ final class EpisodeMapPreparer {
                     let generatedByteCount = try await Gate1AppModel.offMain {
                         Int64((try? Data(contentsOf: generatedFileURL).count) ?? 0)
                     }
-                    try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
+                    // Only while the item still has a row (#4227): a permanent delete asked during the render leaves no row or file.
+                    guard try await ledger.commitIfItemExists(reservationId: reservation.id, asset: OwnedOfflineAsset(
                         id: assetID,
                         itemId: item.id,
                         category: .fingerprintMap,
@@ -269,7 +270,7 @@ final class EpisodeMapPreparer {
                         byteCount: generatedByteCount,
                         isReproducible: true,
                         protections: [.activeEpisodeMapPreparation]
-                    ))
+                    )) else { throw CancellationError() }
                     gridIndex += 1
                     startMs += SparseFingerprintSchedule.periodicIntervalMs
                     job.nextUnitIndex = gridIndex
@@ -319,7 +320,7 @@ final class EpisodeMapPreparer {
                     )
                     do {
                         try await Gate1AppModel.offMain { try transcriptData.write(to: transcriptURL, options: .atomic) }
-                        try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
+                        guard try await ledger.commitIfItemExists(reservationId: reservation.id, asset: OwnedOfflineAsset(
                             id: "episode-transcript-\(safeItemID)",
                             itemId: item.id,
                             category: .transientEpisodeTranscript,
@@ -327,7 +328,7 @@ final class EpisodeMapPreparer {
                             byteCount: Int64(transcriptData.count),
                             isReproducible: true,
                             protections: [.activeEpisodeMapPreparation]
-                        ))
+                        )) else { throw CancellationError() }
                     } catch {
                         try? await ledger.release(reservationId: reservation.id)
                         try? await Gate1AppModel.offMain { try FileManager.default.removeItem(at: transcriptURL) }
