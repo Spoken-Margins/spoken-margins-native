@@ -483,7 +483,7 @@ class TheWorkflow(unittest.TestCase):
             env = {'PATH': f'{temp / "bin"}:/usr/bin:/bin', 'LOG': str(temp)}
             if update_fails is not None:
                 env['FAILS'] = str(update_fails)
-            ran = subprocess.run(['bash', '-e', '-c', script], capture_output=True, text=True, env=env)
+            ran = subprocess.run(['bash', '-e', '-c', script], capture_output=True, text=True, env=env, timeout=60)
             log = lambda name: (temp / name).read_text().split() if (temp / name).exists() else []
             return ran.returncode, ran.stdout + ran.stderr, log('apt'), log('sleep')
 
