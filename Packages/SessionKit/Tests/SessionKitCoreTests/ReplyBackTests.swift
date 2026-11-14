@@ -201,10 +201,13 @@ final class ReplyBackTests: XCTestCase {
         XCTAssertEqual(entries.first?.replyContext?.caption, "Reply to a Margin you don't have yet")
     }
 
-    func testAMarginThatIsNotAReplyHasNoContextAndTheOldCallStillWorks() {
+    func testAMarginThatIsNotAReplyHasNoContextAndTheOldCallStillWorks() throws {
         let records = ["ben": [friendMargin("plain", in: "ben")]]
-        XCTAssertNil(SharedMarginReview.entries(layers: [layer("ben")], records: records).first?.replyContext)
-        XCTAssertNil(SharedMarginReview.entries(layers: [layer("ben")], records: records).first?.anchor.caption)
+        // The entry must exist: `.first?` of an empty list is nil too, which passed with no entry at all.
+        let entry = try XCTUnwrap(SharedMarginReview.entries(layers: [layer("ben")], records: records).first)
+        XCTAssertEqual(entry.interjection.id, "plain")
+        XCTAssertNil(entry.replyContext)
+        XCTAssertNil(entry.anchor.caption)
     }
 
     func testThePlaylistPlaysTheOwnParentBeforeItsReplyAndOnlyOnce() throws {

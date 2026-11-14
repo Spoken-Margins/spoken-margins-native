@@ -176,9 +176,7 @@ final class SaveThenQueueWishesTests: XCTestCase {
             apply(wishes.settle(key, outcome: .imported(itemId: "item-\(key)"), itemExists: everyItemExists), to: &queue)
             try store.save(queue)
         }
-        // The app is killed here and starts again.
-        let relaunched = SaveThenQueueWishes()
-        XCTAssertEqual(relaunched.pendingKeys, [])
+        // The app is killed here and starts again: only the queue file survives.
         XCTAssertEqual(store.load().itemIds, ["old"], "B and C were waiting behind A, so the file never held them")
     }
 
