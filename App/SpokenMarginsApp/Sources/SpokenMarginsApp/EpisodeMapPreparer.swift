@@ -414,16 +414,15 @@ final class EpisodeMapPreparer {
                     matches: EpisodeMapAssembly.identityMatches(for: allLandmarks),
                     exactEdition: true
                 )
-                try await Gate1AppModel.offMain {
-                    try store.saveEpisodeMapPreparationJob(commitJob)
-                    try store.saveEditionFingerprintSpine(spine)
-                    try store.saveTranscriptPhraseSketch(sketch)
-                    try store.savePortableListeningMapProposal(proposal, itemId: itemID)
-                    try store.saveResolvedListeningMapProjection(projection)
-                    for asset in try store.loadOwnedOfflineAssets(itemId: itemID) where asset.category == .fingerprintMap {
-                        try store.updateOwnedOfflineAsset(id: asset.id) { $0.protections.remove(.activeEpisodeMapPreparation) }
-                    }
+                // One transaction that first checks the item still has a row (`commitEpisodeMapRun`): a permanent delete asked
+                // while the run finished lands before the check (nothing is written; the run stops as cancelled) or after the
+                // commit (the delete takes these rows with the item) (#4227).
+                let committed = try await Gate1AppModel.offMain {
+                    try store.commitEpisodeMapRun(
+                        itemId: itemID, job: commitJob, spine: spine, sketch: sketch, proposal: proposal,
+                        projection: projection)
                 }
+                guard committed else { throw CancellationError() }
                 try await host.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
                 try Task.checkCancellation() // the purge now suspends; a cancel that lands there must not complete the run
                 job.stage = .completed
@@ -474,7 +473,8 @@ final class EpisodeMapPreparer {
     /// Takes the save's place in line now and returns the task that runs it (#3331).
     private func enqueueSaveJob(_ job: EpisodeMapPreparationJob, store: SQLiteSessionStore?) -> Task<Void, Error>? {
         guard let store else { return nil }
-        return StoreReader(store).enqueueInOrder(AutomaticEpisodeMapJobs.orderKey) { try $0.saveEpisodeMapPreparationJob(job) }
+        // Only while the item has a row, so a run that stops after a permanent delete can't write its job back (#4227).
+        return StoreReader(store).enqueueInOrder(AutomaticEpisodeMapJobs.orderKey) { _ = try $0.saveEpisodeMapPreparationJobIfItemExists(job) }
     }
 
     /// The start of a request: the job row is written behind the tap, ahead of the run's own first save. A save that

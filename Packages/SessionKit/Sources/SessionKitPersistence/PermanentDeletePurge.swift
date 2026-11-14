@@ -28,11 +28,16 @@ public struct PermanentDeletePurge: Sendable {
         public init(name: String, url: URL) { self.name = name; self.url = url }
     }
 
-    /// One file or folder to remove: a path under a root.
+    /// One file or folder to remove: a path under a root. `itemId` names the item the file belongs to, so a resumed
+    /// delete can check that item is still gone just before it removes this file; a record without one is removed
+    /// as written.
     public struct Target: Codable, Hashable, Sendable {
         public let root: String
         public let relativePath: String
-        public init(root: String, relativePath: String) { self.root = root; self.relativePath = relativePath }
+        public let itemId: String?
+        public init(root: String, relativePath: String, itemId: String? = nil) {
+            self.root = root; self.relativePath = relativePath; self.itemId = itemId
+        }
     }
 
     /// The journal entry for one delete.
@@ -49,6 +54,9 @@ public struct PermanentDeletePurge: Sendable {
         /// Targets that could not be removed (still in their record, tried again at the next launch) or whose root
         /// this build does not know.
         public var kept: [Target] = []
+        /// Targets left alone because their item came back (a re-import of the same id) after the record was read:
+        /// dropped from the record, nothing removed.
+        public var reappeared: [Target] = []
         /// Records whose items still have rows, so the delete never happened: dropped, nothing removed.
         public var abandonedRecords = 0
         /// Records read and dropped because they could not be decoded.
@@ -78,9 +86,13 @@ public struct PermanentDeletePurge: Sendable {
     /// touched and the error is rethrown; the record stays, because a throw after the commit would leave the rows gone,
     /// and the next launch's `resumePending` drops it when the items still have rows. The returned task finishes when
     /// the removal does; callers need not wait for it. With nothing to remove, `delete` just runs.
+    ///
+    /// `recheck`, if given, runs on the background task just before each file is removed (see `finish`), so a read of
+    /// the store for it never waits on the calling thread.
     @discardableResult
     public func deleting(
-        itemIds: [String], targets: [Target], delete: () throws -> Void
+        itemIds: [String], targets: [Target], recheck: (@Sendable (Target) -> RowState)? = nil,
+        delete: () throws -> Void
     ) throws -> Task<Outcome, Never> {
         guard !targets.isEmpty else {
             try delete()
@@ -94,11 +106,11 @@ public struct PermanentDeletePurge: Sendable {
         }
         try delete()
         let purge = self
-        return Task.detached(priority: .utility) { purge.finish(record) }
+        return Task.detached(priority: .utility) { purge.finish(record, recheck: recheck) }
     }
 
     /// Whether an item still has a row, in the trash or not.
-    public enum RowState: Sendable {
+    public enum RowState: Sendable, Equatable {
         case present, absent
         /// The answer could not be read (a busy database). The record is kept for the next launch.
         case unknown
@@ -110,8 +122,13 @@ public struct PermanentDeletePurge: Sendable {
     /// For each record: if any item `rowState` calls present, the delete never happened and the record is dropped;
     /// otherwise, if any is unknown, the record is kept untouched; otherwise its files are removed.
     @discardableResult
-    public func resumePending(recordsBefore cutoff: Date, rowState: (String) -> RowState) -> Outcome {
+    public func resumePending(
+        recordsBefore cutoff: Date, rowState: @escaping (String) -> RowState,
+        recheck: ((Target) -> RowState)? = nil
+    ) -> Outcome {
         var outcome = Outcome()
+        // Unless the caller says otherwise, each file is checked again by its item's row alone.
+        let recheck: (Target) -> RowState = recheck ?? { target in target.itemId.map(rowState) ?? .absent }
         for url in recordFiles() {
             guard let data = try? Data(contentsOf: url),
                   let record = try? Self.decoder.decode(Record.self, from: data) else {
@@ -131,19 +148,41 @@ public struct PermanentDeletePurge: Sendable {
                 outcome.deferredRecords += 1
                 continue
             }
-            let finished = finish(record)
+            let finished = finish(record, recheck: recheck)
             outcome.removed += finished.removed
             outcome.kept += finished.kept
+            outcome.reappeared += finished.reappeared
         }
         return outcome
     }
 
-    /// `resumePending` against the store's rows.
+    /// `resumePending` against the store's rows. A quarantined item row counts as present: it can be restored, and
+    /// its files are its own. Just before a prepared-audio folder goes, every item id is read again, in case another
+    /// id that maps to the same folder was imported since the delete.
     @discardableResult
     public func resumePending(recordsBefore cutoff: Date, store: SQLiteSessionStore) -> Outcome {
-        resumePending(recordsBefore: cutoff, rowState: { id in
-            do { return try store.loadItemSummary(id: id) != nil ? .present : .absent } catch { return .unknown }
-        })
+        resumePending(
+            recordsBefore: cutoff, rowState: { ItemOwnedFiles.rowState(ofItem: $0, in: store) },
+            recheck: storeRecheck(store: store))
+    }
+
+    /// `ItemOwnedFiles.stillFree` against the store's rows, for the removal step, which runs off the calling thread. A
+    /// quarantined item row counts as present: it can be restored, and its files are its own. A row that can't be read
+    /// (a busy database) is `unknown`, which keeps the file for the next launch. Whether the prepared-audio folder's
+    /// volume is case-sensitive is looked up when a folder target is met, on the removal step's own thread.
+    public func storeRecheck(store: SQLiteSessionStore) -> @Sendable (Target) -> RowState {
+        let purge = self
+        return { target in
+            ItemOwnedFiles.stillFree(
+                target, rowState: { ItemOwnedFiles.rowState(ofItem: $0, in: store) },
+                allItemIds: { try store.loadAllItemIds() },
+                caseSensitiveNames: target.root == ItemOwnedFiles.preparedAudioRoot && purge.rootIsCaseSensitive(target.root))
+        }
+    }
+
+    /// Whether the volume holding the named root treats case as different (false when unknown).
+    public func rootIsCaseSensitive(_ rootName: String) -> Bool {
+        roots.first { $0.name == rootName }.map { ItemOwnedFiles.volumeIsCaseSensitive(at: $0.url) } ?? false
     }
 
     // MARK: Steps
@@ -163,10 +202,22 @@ public struct PermanentDeletePurge: Sendable {
 
     /// Removes the record's files. The record goes when every file is gone; otherwise it is rewritten with only the
     /// files left, so the next launch tries those again.
+    ///
+    /// With `recheck`, each file's item is looked up again just before that file is removed (a launch can finish a
+    /// record while the listener imports the same item again, which gives it the same id and the same file names): an
+    /// item that is present again keeps its file and the target is dropped, and one that can't be read keeps the
+    /// target for the next launch. This narrows the window to the one lookup before the removal; it does not close it.
     @discardableResult
-    public func finish(_ record: Record) -> Outcome {
+    public func finish(_ record: Record, recheck: ((Target) -> RowState)? = nil) -> Outcome {
         var outcome = Outcome()
         for target in record.targets {
+            if let recheck {
+                switch recheck(target) {
+                case .present: outcome.reappeared.append(target); continue
+                case .unknown: outcome.kept.append(target); continue
+                case .absent: break
+                }
+            }
             if remove(target) { outcome.removed.append(target) } else { outcome.kept.append(target) }
         }
         if outcome.kept.isEmpty {

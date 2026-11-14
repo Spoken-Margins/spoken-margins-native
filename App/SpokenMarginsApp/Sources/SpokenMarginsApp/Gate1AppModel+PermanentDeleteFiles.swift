@@ -87,9 +87,15 @@ extension Gate1AppModel {
     /// Runs `delete`, the call that removes the items' rows, and then removes the files only those items owned (their
     /// prepared narration chunks and saved Listening Edition) off the main thread. A record of the files is written
     /// first, so a quit or a failed removal is finished at the next launch. If `delete` throws, no file is touched.
-    func purgingItemFiles(ofItems itemIds: [String], delete: () throws -> Void) throws {
+    ///
+    /// Just before each file goes, on that background task, the Library is asked again whether the file is still free: an
+    /// item imported again under the same id keeps its Edition, and a prepared-narration folder that another item's id
+    /// maps to keeps its chunks (`ItemOwnedFiles.stillFree`). The store is read there, never on the main thread.
+    func purgingItemFiles(ofItems itemIds: [String], store: SQLiteSessionStore, delete: () throws -> Void) throws {
         guard let purge = permanentDeletePurge() else { return try delete() }
-        try purge.deleting(itemIds: itemIds, targets: ItemOwnedFiles.targets(forItems: itemIds), delete: delete)
+        try purge.deleting(
+            itemIds: itemIds, targets: ItemOwnedFiles.targets(forItems: itemIds),
+            recheck: purge.storeRecheck(store: store), delete: delete)
     }
 
     /// Finishes what a permanent delete left when the app was quit part way. Reads the Library off the main thread

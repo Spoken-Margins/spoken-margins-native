@@ -1397,6 +1397,43 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try save(kind: "episode_map_preparation_job", id: job.id, sessionId: nil, itemId: job.itemId, value: job)
     }
 
+    /// Whether `id` has an item row, trashed or quarantined or not, read from the id column alone (#4227). A caller that writes rows for
+    /// an item after a long step (an episode-map run) asks inside `withSessionTransaction`, so a permanent delete
+    /// lands before the check (nothing is written) or after the commit (the delete takes what was written).
+    public func hasItemRow(id: String) throws -> Bool {
+        let timer = StoreReadTimer(readMeter, method: #function)
+        var found = false
+        defer { timer?.finish(rows: found ? 1 : 0, bytes: id.utf8.count) }
+        return try withReadConnection { connection in
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(
+                connection,
+                "SELECT 1 FROM records WHERE kind = ?1 AND id = ?2 UNION ALL SELECT 1 FROM quarantined_records WHERE kind = ?1 AND id = ?2 LIMIT 1;",
+                -1, &statement, nil
+            ) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_has_item_row")
+            }
+            defer { sqlite3_finalize(statement) }
+            bind(statement, index: 1, value: "item")
+            bind(statement, index: 2, value: id)
+            found = sqlite3_step(statement) == SQLITE_ROW
+            return found
+        }
+    }
+
+    /// Saves the job only while its item has a row. A run that was cancelled or finishes after the item was deleted for
+    /// good records where it stopped through this, so the save can't write a job row for an item that is gone (#4227).
+    /// Returns whether it saved. `saveEpisodeMapPreparationJob` stays the plain write, for a caller whose item may not
+    /// be in the store yet.
+    @discardableResult
+    public func saveEpisodeMapPreparationJobIfItemExists(_ job: EpisodeMapPreparationJob) throws -> Bool {
+        try withSessionTransaction {
+            guard try hasItemRow(id: job.itemId) else { return false }
+            try saveEpisodeMapPreparationJob(job)
+            return true
+        }
+    }
+
     public func loadEpisodeMapPreparationJobs() throws -> [EpisodeMapPreparationJob] {
         try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", ["episode_map_preparation_job"])
     }
@@ -2377,6 +2414,32 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
     public func loadStructuredDocument(itemId: String) throws -> StructuredDocument? {
         let documents: [StructuredDocument] = try loadByItem(kind: Self.structuredDocumentKind, itemId: itemId)
         return documents.max { $0.extraction.version < $1.extraction.version }
+    }
+
+    /// The id of every item that has a row, trashed or not, quarantined or not, read without decoding any payload.
+    /// Permanent delete uses it to tell whether another item shares a lossy file name with the one going (#4227). A
+    /// quarantined item can be restored, so it still owns its files.
+    public func loadAllItemIds() throws -> [String] {
+        let timer = StoreReadTimer(readMeter, method: #function)
+        var itemIds: [String] = []
+        defer { timer?.finish(rows: itemIds.count, bytes: itemIds.reduce(0) { $0 + $1.utf8.count }) }
+        return try withReadConnection { connection in
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(
+                connection,
+                "SELECT id FROM records WHERE kind = ?1 UNION SELECT id FROM quarantined_records WHERE kind = ?1;",
+                -1, &statement, nil
+            ) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_all_item_ids")
+            }
+            defer { sqlite3_finalize(statement) }
+            bind(statement, index: 1, value: "item")
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let raw = sqlite3_column_text(statement, 0) else { continue }
+                itemIds.append(String(cString: raw))
+            }
+            return itemIds
+        }
     }
 
     /// The items that have a structured document, read without decoding the

@@ -24,23 +24,63 @@ public enum ItemOwnedFiles {
         ListeningEdition.digest(itemId) + ".json"
     }
 
-    /// Every file the item owns alone. The prepared-audio folder is named from the id by a lossy rule, so it is named
-    /// here only when the rule changed nothing for this id (plain ASCII letters, digits and hyphens, at most 80
-    /// characters): an id with other characters, or a long one, might share its folder with another id, and is left
-    /// for a later pass. For the ids the app makes (a prefix and a UUID) the folder is the item's alone. If a hand-made
-    /// id such as `a_b` did share the folder of `a-b`, the loss is rendered narration, which the app renders again;
-    /// it is never a recording or a Margin.
-    public static func targets(forItem itemId: String) -> [PermanentDeletePurge.Target] {
-        var targets = [PermanentDeletePurge.Target(
-            root: listeningEditionsRoot, relativePath: listeningEditionFileName(itemId: itemId))]
-        let folder = preparedAudioDirectoryName(itemId: itemId)
-        if !itemId.isEmpty, folder == itemId, itemId.allSatisfy({ $0.isASCII }) {
-            targets.append(.init(root: preparedAudioRoot, relativePath: folder))
+    /// What two ids are compared by when asking whether they share a folder: the folder name, and, on a volume that
+    /// treats case as the same (`caseSensitiveNames` false, the safe answer when it is not known), the lower-cased name,
+    /// because `A-1` and `a-1` are then one directory.
+    public static func folderKey(itemId: String, caseSensitiveNames: Bool) -> String {
+        let name = preparedAudioDirectoryName(itemId: itemId)
+        return caseSensitiveNames ? name : name.lowercased()
+    }
+
+    /// Whether the volume holding `directory` treats `A` and `a` as different names. Unknown (a missing folder, a platform
+    /// that doesn't say) is false: the folder is then kept when another id could share it, never removed.
+    public static func volumeIsCaseSensitive(at directory: URL) -> Bool {
+        (try? directory.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?
+            .volumeSupportsCaseSensitiveNames ?? false
+    }
+
+    /// Whether `target` is still free to remove, asked just before it is removed on a resumed delete: its item has no
+    /// row, and, for a prepared-audio folder, no item at all has a row that maps to the folder (another id may have
+    /// been imported since, and `allItemIds` is read only when a folder target is met).
+    public static func stillFree(
+        _ target: PermanentDeletePurge.Target, rowState: (String) -> PermanentDeletePurge.RowState,
+        allItemIds: () throws -> [String], caseSensitiveNames: Bool = false
+    ) -> PermanentDeletePurge.RowState {
+        if let itemId = target.itemId {
+            let own = rowState(itemId)
+            if own != .absent { return own }
+        }
+        guard target.root == preparedAudioRoot else { return .absent }
+        guard let ids = try? allItemIds() else { return .unknown }
+        let key = caseSensitiveNames ? target.relativePath : target.relativePath.lowercased()
+        return ids.contains { folderKey(itemId: $0, caseSensitiveNames: caseSensitiveNames) == key } ? .present : .absent
+    }
+
+    public static func rowState(ofItem id: String, in store: SQLiteSessionStore) -> PermanentDeletePurge.RowState {
+        do { return try store.hasItemRow(id: id) ? .present : .absent } catch { return .unknown }
+    }
+
+    /// Every file the items own, as a record names them. A prepared-audio folder is named for every non-empty id, even
+    /// though the lossy name can be shared (`a-b` and `a_b`; an 80-character id and a longer one that starts with it):
+    /// whether the folder is still free is decided just before it is removed, by `stillFree`, so a purge never takes
+    /// another item's narration chunks and the delete itself reads nothing from the store. Only exactly equal folder
+    /// names are listed once: ids that differ by case alone are listed separately, so on a case-sensitive volume each
+    /// folder is named in the record, and on a case-insensitive one the second removal finds the folder already gone.
+    public static func targets(forItems itemIds: [String]) -> [PermanentDeletePurge.Target] {
+        var targets: [PermanentDeletePurge.Target] = []
+        var folders: Set<String> = []
+        for itemId in itemIds {
+            targets.append(.init(
+                root: listeningEditionsRoot, relativePath: listeningEditionFileName(itemId: itemId), itemId: itemId))
+            let folder = preparedAudioDirectoryName(itemId: itemId)
+            if !itemId.isEmpty, folders.insert(folder).inserted {
+                targets.append(.init(root: preparedAudioRoot, relativePath: folder, itemId: itemId))
+            }
         }
         return targets
     }
 
-    public static func targets(forItems itemIds: [String]) -> [PermanentDeletePurge.Target] {
-        itemIds.flatMap(targets(forItem:))
+    public static func targets(forItem itemId: String) -> [PermanentDeletePurge.Target] {
+        targets(forItems: [itemId])
     }
 }
