@@ -264,7 +264,7 @@ class ThirdPartyNoticesTests(unittest.TestCase):
         requirements = root / 'requirements-dev.txt'
         requirements.write_text('-r other.txt\n' + requirements.read_text())
         self.assertEqual(notices.problems(root), [])
-        self.assertEqual(set(notices.pip_requirements(root)), {'jsonschema', 'lxml', 'pyyaml'})
+        self.assertEqual(set(notices.pip_requirements(root)), {'jsonschema', 'lxml', 'pyyaml', 'regex'})
 
     def test_a_stale_generated_file_fails(self):
         root = self.tree()
