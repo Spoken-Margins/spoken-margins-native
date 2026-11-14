@@ -178,6 +178,9 @@ struct PlaybackScreen: View {
                 .onChange(of: model.marginMoment?.target.marginId) { _, target in
                     if target != nil { selectedPane = .now }
                 }
+                // "Go to this moment in the source" lands on Now for a written Margin too (#3961); a spoken one is also covered
+                // above, and both set the same pane. The first value is never acted on, so a later open never jumps panes.
+                .onChange(of: model.showNowRequests) { _, _ in selectedPane = .now }
                 // The dock returns only once the keyboard has left the Timeline editor (#4043); a missed hide can't
                 // strand it.
                 .tracksKeyboard(for: $timelineDock)

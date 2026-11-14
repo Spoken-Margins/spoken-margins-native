@@ -4909,7 +4909,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
     private func textAnchoredMomentFixture(
         otherMarginChars: [Int] = [],
-        chapterStartChars: [Int] = []
+        chapterStartChars: [Int] = [],
+        written: Bool = false
     ) throws -> (model: Gate1AppModel, row: MarginRow, targetChar: Int, sentenceLength: Int) {
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-moment-text-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -4939,8 +4940,12 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         margin.anchor = Anchor(anchorType: .text, startChar: targetChar, endChar: targetChar + sentenceLength,
             anchorBefore: "", anchorAfter: "")
         XCTAssertNil(margin.anchor.mediaTimeMs, "a Margin made while the article was read aloud has only a text place")
-        margin.audioPath = root.appending(path: "margin.m4a").path
-        margin.audioStatus = "recorded"
+        if written {
+            margin.captureKind = .written
+        } else {
+            margin.audioPath = root.appending(path: "margin.m4a").path
+            margin.audioStatus = "recorded"
+        }
         try store.saveInterjection(margin)
         for char in otherMarginChars {
             var other = margin
@@ -4951,6 +4956,58 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.refreshMarginRows()
         let row = try XCTUnwrap(model.marginRows.first { $0.interjection.id == margin.id })
         return (model, row, targetChar, sentenceLength)
+    }
+
+    /// #3961: "Go to this moment in the source" on a written Margin switched nothing, because only a spoken Margin starts
+    /// a Margin moment (the playback screen's pane switch watched that), so the listener stayed on the Timeline. The action
+    /// now counts each success in `showNowRequests`, which the screen turns into the Now pane. The test layer that should
+    /// have caught it is this one: the action, for a written Margin, and what it tells the screen.
+    func testGoToThisMomentOnAWrittenMarginAsksTheScreenToShowNow() throws {
+        let fixture = try textAnchoredMomentFixture(written: true)
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertEqual(model.showNowRequests, 0)
+
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+
+        XCTAssertEqual(model.showNowRequests, 1)
+        XCTAssertNil(model.marginMoment, "a written Margin starts no Margin moment: the request is what switches the pane")
+        XCTAssertEqual(model.screen, .playback)
+    }
+
+    func testGoToThisMomentOnASpokenMarginAlsoAsksTheScreenToShowNowOnce() throws {
+        let fixture = try textAnchoredMomentFixture()
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+
+        XCTAssertEqual(model.showNowRequests, 1)
+        XCTAssertNotNil(model.marginMoment)
+    }
+
+    func testEachSuccessfulGoToThisMomentIsAFreshRequest() throws {
+        let fixture = try textAnchoredMomentFixture(written: true)
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+
+        XCTAssertEqual(model.showNowRequests, 2, "a second tap after browsing back to the Timeline must switch again")
+    }
+
+    func testAGoToThisMomentThatCannotReadItsMarginAsksForNothing() throws {
+        let fixture = try textAnchoredMomentFixture(written: true)
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        var missing = fixture.row.interjection
+        missing.id = "no-such-margin"
+        let row = MarginRow(interjection: missing, itemTitle: fixture.row.itemTitle, sessionDate: nil)
+
+        XCTAssertFalse(model.playMarginMoment(row))
+
+        XCTAssertEqual(model.showNowRequests, 0, "a failure keeps the listener where they were")
     }
 
     func testGlobalMarginSearchStarsAndSharedRowsKeepSessionIdentity() throws {
