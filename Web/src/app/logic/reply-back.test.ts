@@ -7,10 +7,10 @@ import { TOO_MANY_MARGINS, writePacket } from '../../packet/write.ts';
 import type { Margin } from '../../shared/model.ts';
 import { cueFor } from './arrival.ts';
 import {
-  allPicked, candidateLabel, friendNames, nothingPickedReason, pickAll, pickedFromList, pickedMargins, preselected, replyBackOffer, nowCard,
-  savedFileNextStep, savedMarginCard, selectAllLabel, starredPicks, starredShareList, tooManyReason, whyNotShared,
+  allPicked, candidateLabel, currentPicks, friendNames, nothingPickedReason, pickAll, pickedFromList, pickedMargins, preselected, replyBackOffer, nowCard,
+  savedFileNextStep, savedMarginCard, selectAllLabel, selectAllTap, starredPicks, starredShareList, tooManyReason, whyNotShared,
 } from './reply-back.ts';
-import { toggleStar, withStar } from './star.ts';
+import { shownStar, starTapWrites, withStar } from './star.ts';
 
 const D1 = 'a'.repeat(64);
 const D2 = 'b'.repeat(64);
@@ -244,12 +244,12 @@ test('#3784: a voice Margin row never reads "0:00"', () => {
   assert.equal(candidateLabel(own('t', '2026-11-02T10:00:00Z', { text: 'my words' }), clock), 'my words');
 });
 
-// #4093: one button ticks every listed Margin, and unticks them when all are ticked. The panel merges `pickAll` over its
-// starting picks (`changed` over `preselected`), so these tests do the same.
-const ticks = (offer: NonNullable<ReturnType<typeof replyBackOffer>>, changed: Record<string, boolean>): Set<string> => {
-  const starting = preselected(offer);
-  return new Set(offer.candidates.map((m) => m.id).filter((id) => changed[id] ?? starting.has(id)));
-};
+// #4093: one button ticks every listed Margin, and unticks them when all are ticked. The panel calls `currentPicks` and
+// `selectAllTap` itself, so these tests call the same two functions rather than a copy of their merge (#4319).
+const ticks = (offer: NonNullable<ReturnType<typeof replyBackOffer>>, changed: Record<string, boolean>): Set<string> =>
+  currentPicks(offer.candidates, changed, preselected(offer));
+const tapAll = (offer: NonNullable<ReturnType<typeof replyBackOffer>>, changed: Record<string, boolean>): Record<string, boolean> =>
+  selectAllTap(offer.candidates, changed, preselected(offer));
 const manyOwn = (count: number, replies: number): Margin[] =>
   Array.from({ length: count }, (_, i) => own(`m${i}`, '2026-11-02T10:00:00Z', i < replies ? { replyToId: friend(1).id } : {}));
 
@@ -261,7 +261,7 @@ test('#4093 select all: all, then untick one, then the label reads right, then a
   assert.equal(allPicked(offer.candidates, ticks(offer, changed)), false);
   assert.equal(selectAllLabel(allPicked(offer.candidates, ticks(offer, changed))), 'Select all', 'older notes are unticked by default');
   // Select all ticks the older notes too, as the listener's own act.
-  changed = { ...changed, ...pickAll(offer.candidates, !allPicked(offer.candidates, ticks(offer, changed))) };
+  changed = tapAll(offer, changed);
   assert.deepEqual(ids(pickedMargins(offer, ticks(offer, changed))), ids(offer.candidates));
   assert.equal(selectAllLabel(allPicked(offer.candidates, ticks(offer, changed))), 'Select none');
   // Untick one: the next tap is "Select all" again.
@@ -269,21 +269,37 @@ test('#4093 select all: all, then untick one, then the label reads right, then a
   assert.equal(selectAllLabel(allPicked(offer.candidates, ticks(offer, changed))), 'Select all');
   assert.equal(pickedMargins(offer, ticks(offer, changed)).length, 3);
   // Select all again ticks the one back; Select none then clears the list.
-  changed = { ...changed, ...pickAll(offer.candidates, !allPicked(offer.candidates, ticks(offer, changed))) };
+  changed = tapAll(offer, changed);
   assert.equal(allPicked(offer.candidates, ticks(offer, changed)), true);
-  changed = { ...changed, ...pickAll(offer.candidates, !allPicked(offer.candidates, ticks(offer, changed))) };
+  changed = tapAll(offer, changed);
   assert.equal(pickedMargins(offer, ticks(offer, changed)).length, 0);
   assert.equal(whyNotShared(offer, 0), nothingPickedReason(offer, 0));
 });
 
-test('#4093 select all: first-run reads "Select none"; a double tap ends where it began (burst)', () => {
+test('#4093 select all: first-run reads "Select none"; taps alternate, and a double tap ends where the label says (burst)', () => {
   const offer = replyBackOffer([friend(1), ...manyOwn(3, 3)]); // three replies, all ticked by default
   assert.ok(offer);
   const start = ticks(offer, {});
   assert.equal(selectAllLabel(allPicked(offer.candidates, start)), 'Select none');
-  const tap = (changed: Record<string, boolean>) => ({ ...changed, ...pickAll(offer.candidates, !allPicked(offer.candidates, ticks(offer, changed))) });
-  const twice = tap(tap({}));
+  // All ticked: one tap unticks everything (not "ticks all" again), the second ticks everything.
+  const once = tapAll(offer, {});
+  assert.equal(ticks(offer, once).size, 0);
+  assert.equal(selectAllLabel(allPicked(offer.candidates, ticks(offer, once))), 'Select all');
+  const twice = tapAll(offer, once);
   assert.deepEqual([...ticks(offer, twice)].sort(), [...start].sort());
+});
+
+test('#4093 select all: from a mix, the first tap ticks all and the second ticks none (burst)', () => {
+  const offer = replyBackOffer([friend(1), ...manyOwn(4, 2)]); // two replies ticked, two older notes not
+  assert.ok(offer);
+  const start = ticks(offer, {});
+  assert.equal(start.size, 2);
+  const once = tapAll(offer, {});
+  assert.equal(ticks(offer, once).size, 4, 'the first tap, from a mix, ticks every row');
+  const twice = tapAll(offer, once);
+  assert.equal(ticks(offer, twice).size, 0, 'the second tap clears every row, so a double tap from a mix leaves none');
+  // A tick the listener made by hand counts as the panel shows it: one row off makes the next tap "all".
+  assert.equal(ticks(offer, tapAll(offer, { ...once, m3: false })).size, 4);
 });
 
 test('#4093 select all: never ticks the friend\'s Margins, and an empty list is never "all picked"', () => {
@@ -387,11 +403,18 @@ test('#4172 the greyed-out sentence is the same for a starred list as for a repl
   assert.equal(whyNotShared(undefined, 0), 'There is nothing to share yet.');
 });
 
-test('#4172 burst: a double tap on a star ends where it began', () => {
-  let shown = false;
-  for (let tap = 0; tap < 2; tap += 1) shown = toggleStar(shown);
-  assert.equal(shown, false);
-  assert.equal(toggleStar(toggleStar(true)), true);
+test('#4172 burst: a double tap on a star writes on then off, and the second tap follows the first, not the stored copy', () => {
+  // The button flips at once and is held until the store agrees, so the second tap sees the first tap's flip.
+  let pending: boolean | undefined;
+  const writes: boolean[] = [];
+  for (let tap = 0; tap < 2; tap += 1) {
+    const next = starTapWrites(pending, false); // the stored Margin is still unstarred when both taps land
+    writes.push(next);
+    pending = next;
+  }
+  assert.deepEqual(writes, [true, false]);
+  assert.equal(shownStar(pending, false), false, 'the button ends where it began');
+  assert.deepEqual([starTapWrites(undefined, true), starTapWrites(true, true), starTapWrites(false, true)], [false, false, true]);
 });
 
 test('#4172 long-source: more than 50 starred all start ticked, and the limit sentence greys Send', () => {

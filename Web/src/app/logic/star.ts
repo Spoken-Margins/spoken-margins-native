@@ -12,6 +12,15 @@ export function toggleStar(current: boolean): boolean {
   return !current;
 }
 
+/** What the star button shows: the flip not yet stored, when there is one, else the stored star. */
+export const shownStar = (pending: boolean | undefined, stored: boolean): boolean => pending ?? stored;
+
+/**
+ * What a tap writes: the opposite of what the button shows now, which is the pending flip while an earlier tap is still
+ * being written. So a double tap is two writes in order and ends where it began (#4172, #4319).
+ */
+export const starTapWrites = (pending: boolean | undefined, stored: boolean): boolean => toggleStar(shownStar(pending, stored));
+
 /** Whether the Margin is starred. */
 export const isStarred = (margin: Margin): boolean => margin.starred === true;
 

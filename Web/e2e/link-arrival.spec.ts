@@ -658,6 +658,49 @@ test('when the episode can’t load and the browser refuses a clip that starts l
   await context.close();
 });
 
+test('a double tap on Select all and on a star ends where the buttons say, not where a single tap would (#4319)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  await page.goto(LINK);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture’s first Margin in');
+  for (const words of ['First note.', 'Second note.', 'Third note.']) {
+    await playing.getByRole('button', { name: 'Write a Margin' }).click();
+    await playing.getByLabel(/Your Margin at/).fill(words);
+    await playing.getByRole('button', { name: 'Save Margin' }).click();
+    await expect(playing.locator('li.margin').filter({ hasText: words })).toBeVisible();
+  }
+  await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 1; });
+  const row = (words: string) => playing.locator('li.margin').filter({ hasText: words });
+  // A star: two quick taps are two writes in order, so the star ends off and stays off after a reload.
+  const star = row('Second note.').getByRole('button', { name: 'Star for sharing' });
+  await star.dblclick();
+  await expect(star).toHaveAttribute('aria-pressed', 'false');
+  await star.click();
+  await expect(star).toHaveAttribute('aria-pressed', 'true');
+  await row('Third note.').getByRole('button', { name: 'Star for sharing' }).click();
+  // Two of three ticked (the stars): "Select all". A double tap ticks all, then none, so none is ticked.
+  const list = playing.locator('.reply-back');
+  await expect(list.getByRole('checkbox', { checked: true })).toHaveCount(2);
+  await list.getByRole('button', { name: 'Select all' }).dblclick();
+  await expect(list.getByRole('checkbox', { checked: true })).toHaveCount(0);
+  await expect(list.getByRole('button', { name: 'Select all' })).toBeVisible();
+  // One tap ticks all and the label turns; a double tap then unticks and reticks, so all are ticked.
+  await list.getByRole('button', { name: 'Select all' }).click();
+  await expect(list.getByRole('checkbox', { checked: true })).toHaveCount(3);
+  await list.getByRole('button', { name: 'Select none' }).dblclick();
+  await expect(list.getByRole('checkbox', { checked: true })).toHaveCount(3);
+  await expect(list.getByRole('button', { name: 'Select none' })).toBeVisible();
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
+  const stored = (words: string) => page.locator('li.margin').filter({ hasText: words }).getByRole('button', { name: 'Star for sharing' });
+  await expect(stored('Second note.')).toHaveAttribute('aria-pressed', 'true');
+  await stored('Second note.').dblclick();
+  await expect(stored('Second note.')).toHaveAttribute('aria-pressed', 'true');
+  await context.close();
+});
+
 test('star two of four Margins and Share starts only those ticked and writes only those; the stars stay after a reload (#4172)', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);
