@@ -152,27 +152,52 @@ final class MarginCollectionTests: XCTestCase {
         XCTAssertTrue(sharedMoment.contains(#"let targetID = "shared::\(row.layer.id)::\(row.interjection.id)""#))
     }
 
-    func testAppRefreshKeepsDiagnosticAndPublishesOnlyAfterSuccessfulBuildInOrder() throws {
-        // The main-thread rebuild moved next to the off-main reads it is sequenced with (#2505).
-        let model = try appSource("Gate1AppModel+MarginRowsRefresh.swift")
-        let start = try XCTUnwrap(model.range(of: "    func refreshMarginRows() {"))
-        let end = try XCTUnwrap(model.range(of: "    func refreshMarginRowsAsync() async {", range: start.upperBound..<model.endIndex))
-        let refresh = String(model[start.lowerBound..<end.lowerBound])
-        XCTAssertTrue(refresh.contains(#"diagnostics["marginRefresh"] = "failed:\(String(describing: type(of: error)))""#))
+    /// Text guard on the app's `refreshMarginRows` (#4306): the app cannot be built on Linux, so this reads the function's
+    /// code with comments removed and checks the failure path and the order, never the file as a whole.
+    static func refreshProblems(_ modelText: String) -> [String] {
+        let code = SwiftSourceScan.code(modelText)
+        guard let refresh = SwiftSourceScan.body(after: "func refreshMarginRows()", in: code) else { return ["refreshMarginRows is gone"] }
+        var problems: [String] = []
+        func squash(_ text: String) -> String { text.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        // A failed rebuild records why and changes nothing else: the list the listener sees stays as it was.
+        let failure = SwiftSourceScan.catchBody(after: "func refreshMarginRows()", in: code).map(squash)
+        let diagnostic = #"diagnostics["marginRefresh"] = "failed:\(String(describing: type(of: error)))""#
+        if failure != diagnostic { problems.append("the catch of refreshMarginRows must only record the diagnostic, found: \(failure ?? "no catch")") }
+        // Rows are published only after the whole build succeeded, in this order, and never from the catch.
         var remainder = refresh[...]
         for fragment in ["let entries = try MarginRowsReading.all(", "noteRebuild()", "publishMarginEntries(entries)", "} catch {"] {
-            let range = try XCTUnwrap(remainder.range(of: fragment), fragment)
+            guard let range = remainder.range(of: fragment) else { problems.append("\(fragment) is missing or out of order"); break }
             remainder = remainder[range.upperBound...]
         }
-        XCTAssertFalse(remainder.contains("publishMarginEntries"))
-        XCTAssertFalse(remainder.contains("marginRows ="))
-        let publishStart = try XCTUnwrap(model.range(of: "    private func publishMarginEntries("))
-        let publish = model[publishStart.upperBound...].prefix { $0 != "}" }
+        if remainder.contains("publishMarginEntries") { problems.append("the catch publishes") }
+        guard let publish = SwiftSourceScan.body(after: "private func publishMarginEntries(", in: code) else { return problems + ["publishMarginEntries is gone"] }
         var published = publish[...]
         for fragment in ["sharedMarginRows = entries.sharedRows.map", "marginRows = entries.privateRows.map", "marginOutput.deliverSoon()"] {
-            let range = try XCTUnwrap(published.range(of: fragment), fragment)
+            guard let range = published.range(of: fragment) else { problems.append("publishMarginEntries lost or reordered \(fragment)"); break }
             published = published[range.upperBound...]
         }
+        return problems
+    }
+
+    func testAppRefreshKeepsDiagnosticAndPublishesOnlyAfterSuccessfulBuildInOrderInSourceText() throws {
+        // The main-thread rebuild moved next to the off-main reads it is sequenced with (#2505).
+        XCTAssertEqual(Self.refreshProblems(try appSource("Gate1AppModel+MarginRowsRefresh.swift")), [])
+    }
+
+    func testARefreshThatEmptiesTheListWhenTheRebuildFailsIsCaughtInSourceText() throws {
+        let model = try appSource("Gate1AppModel+MarginRowsRefresh.swift")
+        let diagnostic = #"diagnostics["marginRefresh"] = "failed:\(String(describing: type(of: error)))""#
+        let start = try XCTUnwrap(model.range(of: "func refreshMarginRows() {"))
+        let catchLine = try XCTUnwrap(model.range(of: diagnostic, range: start.upperBound..<model.endIndex))
+        for added in ["marginRows.removeAll(); sharedMarginRows.removeAll()", "marginRows = []", "publishMarginEntries(.init(privateRows: [], sharedRows: []))"] {
+            var mutated = model
+            mutated.replaceSubrange(catchLine, with: added + "\n            " + diagnostic)
+            XCTAssertNotEqual(Self.refreshProblems(mutated), [], added)
+        }
+        // A commented-out clean-up is not a change to the list.
+        var harmless = model
+        harmless.replaceSubrange(catchLine, with: "// marginRows.removeAll()\n            " + diagnostic)
+        XCTAssertEqual(Self.refreshProblems(harmless), [])
     }
 
     private func build(notes: [Interjection] = [], layers: [ImportedCommentaryLayer] = [], shared: [ImportedCommentaryInterjection] = []) throws -> MarginCollection.Entries {
