@@ -77,7 +77,12 @@ extension Gate1AppModel {
         labels.scoped("snapshot.playbackEvents") { recordPlaybackEventState(previous: oldValue) }
         if oldValue.sessionId != snapshot.sessionId { resumeDeferredPodcastPlacements() }
         labels.scoped("snapshot.captureWatch") {
-            if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
+            if oldValue.isRecording, !snapshot.isRecording {
+                endCaptureWatch()
+                #if SM_MARGIN_END_PHRASE_SPIKE
+                endMarginEndPhraseSpike() // every way a recording ends, not only the ones that clear its screen (#3940)
+                #endif
+            }
             if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
         }
         labels.scoped("snapshot.speechResume") { settleSpeechInterruptionResume() }

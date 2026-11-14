@@ -366,6 +366,9 @@ extension Gate1AppModel {
                 let latencyMs = max(0, Int(Date().timeIntervalSince(requestedAt) * 1000))
                 diagnostics["lastInterjectionRecordingStartLatencyMs"] = "\(latencyMs)"
                 startJustHeardPeek()
+                #if SM_MARGIN_END_PHRASE_SPIKE
+                beginMarginEndPhraseSpike() // phone builds only (#3940)
+                #endif
             }
         }
         guard !snapshot.isRecording else { return }
@@ -584,3 +587,70 @@ extension MarginCaptureSupervisor.Health {
         }
     }
 }
+
+#if SM_MARGIN_END_PHRASE_SPIKE
+/// Spike #3940 (PR 0 of the Design), phone builds only: while a spoken Margin records, an `AVAudioEngine` input tap runs
+/// beside the recorder and feeds the on-device recogniser, and what it hears goes to Diagnostics. Nothing ends a Margin
+/// and nothing reaches the Margin, the transcript or a packet. The owner's three device checks (phone microphone
+/// unlocked, AirPods locked, a headset started by double press) read the `margin.endPhrase.spike.*` events.
+///
+/// The holder is not a stored property of `Gate1AppModel` (a hot file at its ceiling). It keeps one tap at a time and
+/// lets the last one go before the next starts.
+@MainActor
+final class MarginEndPhraseSpike {
+    static let shared = MarginEndPhraseSpike()
+    /// Final results logged per Margin. These events skip the playback-event log (300 events, #3752) and go to the
+    /// developer recording only; the run's summary is always logged.
+    static let wordEventLimit = 5
+
+    private var tap: LiveInputTap?
+    private var wordEventsLogged = 0
+    private var record: (@MainActor (String, [String: String]) -> Void)?
+
+    func begin(record: @escaping @MainActor (String, [String: String]) -> Void) {
+        end()
+        self.record = record
+        wordEventsLogged = 0
+        let tap = LiveInputTap(
+            makeSession: { SpeechLiveInputSession(isAuthorized: { SpeechRecognitionAccess.isAuthorized }) },
+            onWords: { batch in
+                Task { @MainActor in MarginEndPhraseSpike.shared.heard(batch) }
+            },
+            onEvent: { kind, fields in
+                Task { @MainActor in MarginEndPhraseSpike.shared.record?(kind, fields) }
+            }
+        )
+        self.tap = tap
+        Task.detached { await tap.start() } // the tap is its own actor: nothing of it runs on main
+    }
+
+    /// Safe on a recording that never started and when called twice: the tap is single use and stops once.
+    func end() {
+        guard let tap else { return }
+        self.tap = nil
+        Task.detached { await tap.stop() } // a stop that beats its start is fine: the tap then never starts
+    }
+
+    private func heard(_ batch: [LiveInputWord]) {
+        let finals = batch.filter(\.isFinal)
+        guard !finals.isEmpty, wordEventsLogged < Self.wordEventLimit else { return }
+        wordEventsLogged += 1
+        record?("margin.endPhrase.spike.words", [
+            "text": finals.map(\.text).joined(separator: " "),
+            "startMs": String(finals.first?.startMs ?? 0),
+            "endMs": String(finals.last?.endMs ?? 0),
+            "count": String(finals.count)
+        ])
+    }
+}
+
+extension Gate1AppModel {
+    func beginMarginEndPhraseSpike() {
+        MarginEndPhraseSpike.shared.begin { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) }
+    }
+
+    func endMarginEndPhraseSpike() {
+        MarginEndPhraseSpike.shared.end()
+    }
+}
+#endif
