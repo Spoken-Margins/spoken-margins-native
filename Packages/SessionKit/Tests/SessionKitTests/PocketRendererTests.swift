@@ -4,6 +4,7 @@ import OnnxRuntimeBindings
 import XCTest
 @testable import SessionKitPocket
 import SessionKit
+import SessionKitTestInputs
 
 /// Tests of the Pocket TTS renderer (#459). The first group needs no downloads. The rest read the
 /// weights `research/C2/pocket/fetch_weights.sh` fetches (or the folder in `POCKET_TTS_MODEL_DIR`)
