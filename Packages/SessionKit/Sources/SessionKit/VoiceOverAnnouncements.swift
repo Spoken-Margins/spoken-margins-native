@@ -72,6 +72,15 @@ public enum VoiceOverAnnouncements {
         previous == step ? nil : step.title
     }
 
+    /// The ended line on a live session's writing screen (#3847). It appears in place while the listener types (the Watch
+    /// ended the session), so focus stays where it was and VoiceOver would say nothing. Returns the line when it has just
+    /// appeared (`previous` nil, `line` set), and nil when it goes away (the session resumed) or only changed words. A screen
+    /// that opens with the line already there has no change to watch, so the view posts nothing and the line is read in order
+    /// after the anchor.
+    public static func liveSessionEnded(from previous: String?, to line: String?) -> String? {
+        previous == nil ? line : nil
+    }
+
     /// The Reader's chapter step (Previous or Next chapter replaces the text and the heading under the pressed button):
     /// "Chapter 2 of 7, The Method". Without a position (no chapters, or a chapter that can't be placed) the title alone;
     /// nil when there is nothing to say. A position of "1 of 1" is never spoken, as on screen.

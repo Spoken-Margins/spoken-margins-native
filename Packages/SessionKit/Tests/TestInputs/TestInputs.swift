@@ -11,7 +11,7 @@ import XCTest
 /// Inside the spoken-margins-native checkout every input is found next to the package. A package
 /// checked out alone has none of them: a test that needs one is skipped with the input named, never
 /// passed silently. `SESSIONKIT_CONTRACTS_DIR`, `SESSIONKIT_VOICE_ASSETS_DIR` and `SESSIONKIT_SUPERTONIC_DIR`
-/// point those three inputs somewhere else.
+/// point those three inputs somewhere else, and `POCKET_TTS_MODEL_DIR` points the Pocket weights somewhere else.
 /// `scripts/sessionkit_pass.py`'s `READS` lists the same folders, so the lane's pass key covers them.
 ///
 /// Read an input into a `let` before asserting on it. XCTest records a skip thrown inside an
@@ -51,12 +51,18 @@ public enum TestInputs {
         /// the repository nor the app holds it (#1820). `scripts/voice-catalog fetch supertonic-3-int8` downloads it
         /// here, each file checked against `Contracts/voice-models/sources.json`. Read it with `supertonicModel()`.
         case supertonicModel = "artifacts/voice-catalog/files/supertonic-3-int8"
+        /// Pocket TTS's weights: the int8 networks, tokenizer, bundle description and alba's voice state. They are
+        /// git-ignored; `research/C2/pocket/fetch_weights.sh` downloads them here (#459). Read them with `pocketModel()`.
+        case pocketModel = "research/C2/models/pocket"
+        /// The git-ignored folder where the repository keeps local evidence (renders, logs). Read it with `artifactsFolder(_:)`.
+        case artifacts = "artifacts"
 
         var environmentOverride: String? {
             switch self {
             case .contracts: return "SESSIONKIT_CONTRACTS_DIR"
             case .voiceAssets: return "SESSIONKIT_VOICE_ASSETS_DIR"
             case .supertonicModel: return "SESSIONKIT_SUPERTONIC_DIR"
+            case .pocketModel: return "POCKET_TTS_MODEL_DIR"
             default: return nil
             }
         }
@@ -121,6 +127,26 @@ public enum TestInputs {
         if !(environment["SM_REQUIRE_MODELS"] ?? "").isEmpty { throw ModelNotFetched(path: graph.path) }
         throw XCTSkip("needs supertonicModel (\(folder.path)): Supertonic's model is a download, not in the repository (#1820). "
             + "Run `scripts/voice-catalog fetch supertonic-3-int8`, or set SESSIONKIT_SUPERTONIC_DIR to a folder that holds it")
+    }
+
+    // MARK: Pocket
+
+    /// Pocket TTS's weights folder (the `pocketModel` input), or `XCTSkip` when this package is checked out alone.
+    /// The folder may still be empty: the caller validates the files and skips with "weights not fetched".
+    public static func pocketModel() throws -> URL {
+        try directory(.pocketModel)
+    }
+
+    /// The Python that runs Pocket's scoring script: `POCKET_TTS_PYTHON`, else the research folder's own environment.
+    /// `XCTSkip` when neither is there to name (this package is checked out alone and the variable is unset).
+    public static func pocketPython(environment: [String: String] = ProcessInfo.processInfo.environment) throws -> String {
+        if let override = environment["POCKET_TTS_PYTHON"], !override.isEmpty { return override }
+        return try url(.research, "C2/.venv/bin/python").path
+    }
+
+    /// A folder for local evidence inside the repository's git-ignored `artifacts/`, such as `artifacts/pocket`.
+    public static func artifactsFolder(_ name: String) throws -> URL {
+        try directory(.artifacts).appending(path: name, directoryHint: .isDirectory)
     }
 
     public struct ModelNotFetched: Error, CustomStringConvertible {
