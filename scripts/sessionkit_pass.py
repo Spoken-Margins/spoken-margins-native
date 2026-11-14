@@ -51,7 +51,8 @@ READS = (
     'research/B2/',
     'research/B4/',
     # Pocket's renderer tests read the committed passages, the PyTorch reference results, and the scoring script
-    # (the weights and the Python environment they also use are git-ignored; see NOT_REPOSITORY_READS).
+    # (the weights and the Python environment they also use are git-ignored: TestInputs.pocketModel() and
+    # pocketPython() find them, and `research/C2/pocket/fetch_weights.sh` pins the weights by sha256).
     'research/C2/pocket/',
     'research/C2/passages.json',
     'research/C2/results/darwin/',

@@ -7,21 +7,12 @@ import SessionKit
 
 /// Tests of the Pocket TTS renderer (#459). The first group needs no downloads. The rest read the
 /// weights `research/C2/pocket/fetch_weights.sh` fetches (or the folder in `POCKET_TTS_MODEL_DIR`)
-/// and say "skipped: weights not fetched" when they aren't there.
+/// and say "skipped: weights not fetched" when they aren't there. Every read from outside the package
+/// goes through `TestInputs`, so a package checked out alone skips these tests with the input named (#1387).
 final class PocketRendererTests: XCTestCase {
-    private static let repoRoot = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().deletingLastPathComponent()
-
-    static var weightsFolder: URL {
-        if let override = ProcessInfo.processInfo.environment["POCKET_TTS_MODEL_DIR"] {
-            return URL(fileURLWithPath: override, isDirectory: true)
-        }
-        return repoRoot.appending(path: "research/C2/models/pocket", directoryHint: .isDirectory)
-    }
-
     private func fetchedWeights() throws -> PocketAssetLocation {
-        let assets = PocketAssetLocation(rootURL: Self.weightsFolder)
+        let folder = try TestInputs.pocketModel()
+        let assets = PocketAssetLocation(rootURL: folder)
         guard (try? assets.validate()) != nil else { throw XCTSkip("skipped: weights not fetched") }
         return assets
     }
@@ -42,8 +33,7 @@ final class PocketRendererTests: XCTestCase {
     }
 
     private func golden() throws -> Golden {
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .appending(path: "Fixtures/pocket-tokenizer-golden.json")
+        let url = TestInputs.packageURL("Tests/SessionKitTests/Fixtures/pocket-tokenizer-golden.json")
         return try JSONDecoder().decode(Golden.self, from: Data(contentsOf: url))
     }
 
@@ -162,11 +152,11 @@ final class PocketRendererTests: XCTestCase {
 
         func get(assets: PocketAssetLocation) async throws -> (load: Double, renders: [PassageRender]) {
             if let cached { return cached }
-            let directory = PocketRendererTests.repoRoot.appending(path: "artifacts/pocket", directoryHint: .isDirectory)
+            let directory = try TestInputs.artifactsFolder("pocket")
             let renderer = try PocketNarrationRenderer(assets: assets, outputDirectory: directory, threads: 1, noiseSeed: 20_261_014, governor: OnDeviceVoiceGovernor())
             let load = try await renderer.preload()
             struct File: Decodable { struct Passage: Decodable { var id: String; var text: String }; var passages: [Passage] }
-            let passages = try JSONDecoder().decode(File.self, from: Data(contentsOf: PocketRendererTests.repoRoot.appending(path: "research/C2/passages.json"))).passages
+            let passages = try JSONDecoder().decode(File.self, from: TestInputs.data(.research, "C2/passages.json")).passages
             var renders: [PassageRender] = []
             for passage in passages {
                 let result = try await renderer.render(text: passage.text)
@@ -187,7 +177,7 @@ final class PocketRendererTests: XCTestCase {
     func testRendersTheThreeC2PassagesFasterThanRealTimeOnOneThread() async throws {
         let assets = try fetchedWeights()
         let (load, renders) = try await Self.renders.get(assets: assets)
-        let reference = try JSONDecoder().decode(Reference.self, from: Data(contentsOf: Self.repoRoot.appending(path: "research/C2/results/darwin/pocket-alba.t1.json")))
+        let reference = try JSONDecoder().decode(Reference.self, from: TestInputs.data(.research, "C2/results/darwin/pocket-alba.t1.json"))
         var totalAudio = 0.0, totalRender = 0.0
         for render in renders {
             let expected = try XCTUnwrap(reference.passages[render.id]).audio_s
@@ -205,19 +195,21 @@ final class PocketRendererTests: XCTestCase {
     func testProsePassagesAreSpokenWithinTwoPointsOfThePyTorchWordError() async throws {
         let assets = try fetchedWeights()
         let environment = ProcessInfo.processInfo.environment
-        let python = environment["POCKET_TTS_PYTHON"] ?? Self.repoRoot.appending(path: "research/C2/.venv/bin/python").path
+        let python = try TestInputs.pocketPython(environment: environment)
         guard FileManager.default.isExecutableFile(atPath: python) else {
             throw XCTSkip("skipped: no python with faster-whisper (set POCKET_TTS_PYTHON)")
         }
         let (_, renders) = try await Self.renders.get(assets: assets)
         let clips = try JSONSerialization.data(withJSONObject: Dictionary(uniqueKeysWithValues: renders.map { ($0.id, $0.audioURL.path) }))
-        let clipsURL = Self.repoRoot.appending(path: "artifacts/pocket/clips.json")
+        let clipsURL = try TestInputs.artifactsFolder("pocket").appending(path: "clips.json")
+        let scoringScript = try TestInputs.url(.research, "C2/pocket/wer.py")
+        let passagesFile = try TestInputs.url(.research, "C2/passages.json")
+        let intelligibility = try TestInputs.data(.research, "C2/results/darwin/intelligibility.json")
         try clips.write(to: clipsURL)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: python)
-        process.arguments = ["-I", Self.repoRoot.appending(path: "research/C2/pocket/wer.py").path,
-                             Self.repoRoot.appending(path: "research/C2/passages.json").path, clipsURL.path]
+        process.arguments = ["-I", scoringScript.path, passagesFile.path, clipsURL.path]
         let output = Pipe()
         process.standardOutput = output
         let errors = Pipe()
@@ -232,7 +224,7 @@ final class PocketRendererTests: XCTestCase {
         struct Score: Decodable { var wer: Double; var heard: String }
         let scores = try JSONDecoder().decode([String: Score].self, from: data)
         struct Reference: Decodable { var wer: Double }
-        let reference = try JSONDecoder().decode([String: [String: Reference]].self, from: Data(contentsOf: Self.repoRoot.appending(path: "research/C2/results/darwin/intelligibility.json")))["pocket-alba"] ?? [:]
+        let reference = try JSONDecoder().decode([String: [String: Reference]].self, from: intelligibility)["pocket-alba"] ?? [:]
         for (id, score) in scores.sorted(by: { $0.key < $1.key }) {
             print("POCKET wer \(id)=\(score.wer) reference=\(reference[id]?.wer ?? -1)")
         }

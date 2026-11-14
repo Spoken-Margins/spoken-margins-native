@@ -21,15 +21,12 @@ NOT_REPOSITORY_READS = {
     'references': 'a heading word the Obsidian parser drops',
     'Site': 'a source title in a library-row test; the catalog and tour reads are Site/onboarding/catalog/ and Site/onboarding/v1/, which READS covers',
     'scripts/run.sh': 'a zip entry name in a packet-rejection test',
-    'research/C2/models/pocket': 'git-ignored weights that research/C2/pocket/fetch_weights.sh (a read) pins by sha256',
-    'research/C2/.venv/bin/python': 'git-ignored local Python for the scoring script (a read); POCKET_TTS_PYTHON overrides it',
 }
 
 # Package tests that still name the app's or the research folder's files themselves instead of going through
 # TestInputs (#1851). Each waits for its voice to move to the download registry; delete the entry when it moves.
-NOT_YET_THROUGH_HELPER = {
-    'PocketRendererTests.swift': 'Pocket weights and research results, until its voice moves (#1392)',
-}
+# Empty since PocketRendererTests moved to TestInputs (#1387).
+NOT_YET_THROUGH_HELPER = {}
 
 
 def git(root, *args):
