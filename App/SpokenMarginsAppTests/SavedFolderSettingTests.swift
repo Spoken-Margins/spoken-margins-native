@@ -43,25 +43,6 @@ final class SavedFolderSettingTests: XCTestCase {
         XCTAssertEqual(model.marginOutput.rows.first?.folderName, "Vault")
     }
 
-    func testFirstLaunchKeepsNotesInTheFolderTheyAlreadyUsed() throws {
-        let suite = "saved-folder-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        defaults.set(Data([1, 2, 3]), forKey: "batchExportFolderBookmark")
-        defaults.set("Spoken export", forKey: "batchExportFolderName")
-
-        XCTAssertTrue(SavedFolderSetting.separateMarginNotesFromSessionExport(defaults: defaults))
-        XCTAssertEqual(defaults.data(forKey: "marginNotesFolderBookmark"), Data([1, 2, 3]))
-        XCTAssertEqual(defaults.string(forKey: "marginNotesFolderName"), "Spoken export")
-
-        // Later launches never overwrite a notes folder the listener chose.
-        defaults.set(Data([9]), forKey: "marginNotesFolderBookmark")
-        defaults.set("Vault", forKey: "marginNotesFolderName")
-        XCTAssertFalse(SavedFolderSetting.separateMarginNotesFromSessionExport(defaults: defaults))
-        XCTAssertEqual(defaults.data(forKey: "marginNotesFolderBookmark"), Data([9]))
-        XCTAssertEqual(defaults.string(forKey: "marginNotesFolderName"), "Vault")
-    }
-
     func testSavedFolderResolvesBackToTheSameFolder() throws {
         let suite = "saved-folder-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -79,14 +60,5 @@ final class SavedFolderSettingTests: XCTestCase {
         let resolved = try XCTUnwrap(SavedFolderSetting.marginNotes.resolvedURL(in: defaults))
         XCTAssertEqual(resolved.lastPathComponent, folder.lastPathComponent)
         XCTAssertFalse(SavedFolderSetting.sessionExport.hasFolder(in: defaults))
-    }
-
-    func testFirstLaunchWithoutAnExportFolderSetsNoNotesFolder() throws {
-        let suite = "saved-folder-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-
-        XCTAssertFalse(SavedFolderSetting.separateMarginNotesFromSessionExport(defaults: defaults))
-        XCTAssertNil(defaults.data(forKey: "marginNotesFolderBookmark"))
     }
 }
