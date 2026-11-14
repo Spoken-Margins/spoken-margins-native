@@ -59,9 +59,9 @@ public enum SkimUnavailableReason: String, Equatable, Sendable {
     /// What the listener is told, in place of a Skim that does nothing.
     public var message: String {
         switch self {
-        case .noSource: return "Skim isn't available while recording or outside an episode."
-        case .noMap: return "Skim needs a Listening Map for this episode."
-        case .noSceneSummary: return "There's no scene summary to skim to from here."
+        case .noSource: return "Skim isn't available while recording or before something is playing."
+        case .noMap: return "There's nowhere ahead to skim to."
+        case .noSceneSummary: return "There's nowhere ahead to skim to."
         case .suppliedSummaryMissing: return "This scene's recorded summary is missing. Reimport the package to restore it."
         case .loading: return "Skim is still loading this episode's map. Try again in a moment."
         case .preparationFailed: return "The scene summary couldn't be prepared, so Skim didn't move."
