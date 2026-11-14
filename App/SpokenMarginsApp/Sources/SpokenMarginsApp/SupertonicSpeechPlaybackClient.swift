@@ -8,7 +8,7 @@ import SessionKitSupertonic
 import UIKit
 #endif
 
-protocol SupertonicRendering: Sendable {
+protocol SupertonicRendering: VoiceWarmUpRendering {
     func render(
         text: String,
         voice: SupertonicVoiceID,
@@ -35,9 +35,7 @@ protocol SupertonicRendering: Sendable {
     /// `SupertonicSpeechPlaybackClient.maxModelLoadExtensions` more waits (#2856).
     var isLoadingModel: Bool { get }
 
-    /// Loads the model and runs one short render ahead of the first Play, so that first Play doesn't pay the load
-    /// (#2856). Best effort: it never throws, and a renderer that has nothing to load does nothing.
-    func prepareToRender() async
+    // `prepareToRender()` comes from `VoiceWarmUpRendering` (SessionKit); the default below does nothing.
 
     /// Where a renderer reports its own events (`voice.load`) for the diagnostics export: voice, timing and error text,
     /// never source text.
