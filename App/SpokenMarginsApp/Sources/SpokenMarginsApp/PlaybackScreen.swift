@@ -279,9 +279,8 @@ struct PlaybackScreen: View {
                 sourceTitle: model.playbackItemHeaderTitle,
                 backward: model.chapterRowBackwardControl,
                 forward: model.chapterRowForwardControl,
-                skimBackwardTitle: model.skimBackwardTitle,
-                skimForwardTitle: model.skimForwardTitle,
-                skimForwardUnavailable: model.skimBridge.forwardUnavailableReason,
+                backwardSpeech: model.chapterRowBackwardSpeech,
+                forwardSpeech: model.chapterRowForwardSpeech,
                 skimLocked: model.snapshot.isRecording,
                 waitingText: model.snapshot.status == .starting
                     ? PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot) : nil,

@@ -36,6 +36,20 @@ final class SkimPressTests: XCTestCase {
         }
     }
 
+    /// #3986: Skim goes to the next chapter or Margin with or without a Listening Map, so the messages for "nowhere to
+    /// go" no longer tell the listener to get a map or mention a scene summary they never asked for.
+    func testNowhereToGoMessagesDoNotMentionAMapOrAScene() {
+        XCTAssertEqual(SkimUnavailableReason.noMap.message, "There's nowhere ahead to skim to.")
+        XCTAssertEqual(SkimUnavailableReason.noSceneSummary.message, "There's nowhere ahead to skim to.")
+        XCTAssertEqual(SkimUnavailableReason.noSource.message,
+                       "Skim isn't available while recording or before something is playing.")
+        for reason in [SkimUnavailableReason.noSource, .noMap, .noSceneSummary] {
+            XCTAssertFalse(reason.message.localizedCaseInsensitiveContains("listening map"), reason.rawValue)
+            XCTAssertFalse(reason.message.localizedCaseInsensitiveContains("scene summary"), reason.rawValue)
+            XCTAssertFalse(reason.message.localizedCaseInsensitiveContains("episode"), reason.rawValue)
+        }
+    }
+
     func testTheDiagnosticFieldsNameTheOutcomeDirectionAndReason() {
         XCTAssertEqual(
             SkimPressOutcome.noPlan.diagnosticFields(direction: .forward, reason: SkimUnavailableReason.noMap.rawValue),

@@ -168,7 +168,8 @@ final class PlaybackDockLayoutTests: XCTestCase {
         ) -> CGFloat {
             let row = PlaybackChapterRowView(
                 title: "Chapter 2", sourceTitle: "An episode", backward: backward, forward: forward,
-                skimBackwardTitle: "Back to 12:05", skimForwardTitle: "Skim to 36:11",
+                backwardSpeech: SkimDestinationSpeech.skim(.backward, to: .chapter(title: "Intro"), position: "12 minutes, 5 seconds"),
+                forwardSpeech: SkimDestinationSpeech.skim(.forward, to: .chapter(title: "Chapter 3"), position: "36 minutes, 11 seconds"),
                 showItem: {}, nextChapter: {}
             )
             return UIHostingController(rootView: row.fixedSize(horizontal: true, vertical: false))
@@ -195,10 +196,26 @@ final class PlaybackDockLayoutTests: XCTestCase {
         XCTAssertNotEqual(Row.nextChapterInSkimSlotSymbol, Row.nextChapterSymbol)
         XCTAssertFalse(Row.nextChapterInSkimSlotSymbol.hasPrefix("forward.end"), "not a variant of Skim's own arrow")
         XCTAssertNotNil(UIImage(systemName: Row.nextChapterInSkimSlotSymbol), "the symbol exists on this OS")
-        XCTAssertEqual(Row.nextChapterInSkimSlotLabel(.noSceneSummary),
-                       "Next chapter. " + SkimUnavailableReason.noSceneSummary.message, "VoiceOver hears why it isn't Skim")
-        XCTAssertEqual(Row.nextChapterInSkimSlotLabel(.suppliedSummaryMissing),
-                       "Next chapter. " + SkimUnavailableReason.suppliedSummaryMissing.message)
+        // The row reads what the model gives it, and falls back to the action alone (#3986).
+        let spoken = SkimDestinationSpeech.nextChapterInSkimSlot(reason: nil, title: "Alignment", position: "65 percent")
+        let row = PlaybackChapterRowView(
+            title: "Chapter 2", sourceTitle: "An episode", backward: .skim, forward: .nextChapterInSkimSlot,
+            backwardSpeech: SkimDestinationSpeech.skim(.backward, to: .chapterStart, position: nil),
+            forwardSpeech: spoken, showItem: {}, nextChapter: {})
+        XCTAssertEqual(row.nextChapterWords, spoken)
+        XCTAssertEqual(row.skimWords(backward: true), .init(label: "Skim back", value: "Start of this chapter"))
+        XCTAssertEqual(row.skimWords(backward: false), spoken, "the forward arrow reads the forward words")
+        let bare = PlaybackChapterRowView(
+            title: "Chapter 2", sourceTitle: "An episode", backward: .skim, forward: .skim,
+            backwardSpeech: nil, forwardSpeech: nil, showItem: {}, nextChapter: {})
+        XCTAssertEqual(bare.skimWords(backward: false), .init(label: "Skim forward", value: ""))
+        XCTAssertEqual(bare.skimWords(backward: true), .init(label: "Skim back", value: ""))
+        XCTAssertEqual(bare.nextChapterWords, .init(label: "Next chapter", value: ""))
+        // VoiceOver hears the action and the destination, never a reason that no longer applies (#3986).
+        XCTAssertEqual(SkimDestinationSpeech.nextChapterInSkimSlot(reason: nil, title: "Alignment", position: "65 percent"),
+                       .init(label: "Next chapter", value: "Alignment, 65 percent"))
+        XCTAssertEqual(SkimDestinationSpeech.nextChapterInSkimSlot(reason: .suppliedSummaryMissing, title: "Alignment", position: nil).value,
+                       SkimUnavailableReason.suppliedSummaryMissing.message, "a real reason still says why it isn't Skim")
     }
 
     /// #1933: at accessibility sizes the chapter title was one line between two 44-point buttons and showed a few
@@ -208,7 +225,8 @@ final class PlaybackDockLayoutTests: XCTestCase {
         func fittedHeight(title: String, size: DynamicTypeSize) -> CGFloat {
             let row = PlaybackChapterRowView(
                 title: title, sourceTitle: "An episode", backward: .skim, forward: .skim,
-                skimBackwardTitle: "Back to 12:05", skimForwardTitle: "Skim to 36:11",
+                backwardSpeech: SkimDestinationSpeech.skim(.backward, to: .chapter(title: "Intro"), position: "12 minutes, 5 seconds"),
+                forwardSpeech: SkimDestinationSpeech.skim(.forward, to: .chapter(title: "Chapter 3"), position: "36 minutes, 11 seconds"),
                 showItem: {}, nextChapter: {}
             )
             return UIHostingController(rootView: row.environment(\.dynamicTypeSize, size))
@@ -236,7 +254,8 @@ final class PlaybackDockLayoutTests: XCTestCase {
         ) -> CGFloat {
             let row = PlaybackChapterRowView(
                 title: title, sourceTitle: "An episode", backward: backward, forward: forward,
-                skimBackwardTitle: "Back to 12:05", skimForwardTitle: "Skim to 36:11", waitingText: waitingText,
+                backwardSpeech: SkimDestinationSpeech.skim(.backward, to: .chapter(title: "Intro"), position: "12 minutes, 5 seconds"),
+                forwardSpeech: SkimDestinationSpeech.skim(.forward, to: .chapter(title: "Chapter 3"), position: "36 minutes, 11 seconds"), waitingText: waitingText,
                 showItem: {}, nextChapter: {}
             )
             return UIHostingController(rootView: row.environment(\.dynamicTypeSize, .accessibility3))
