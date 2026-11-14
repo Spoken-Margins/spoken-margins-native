@@ -200,6 +200,34 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         }
     }
 
+    func testV2SpeaksMathIndicesSetLevelAndKeepsTheCitationSilent() throws {
+        // #4194: an index set level with its letter ("xn", "ht", "hmax") looked like a
+        // citation marker and was silenced, so the listener heard "x" and "h". The real
+        // marker after "earlier," and the byline's "1,2" stay silent.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 11)]
+        let small: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 7)]
+        func line(_ pieces: [(String, Bool)]) -> NSAttributedString {
+            let result = NSMutableAttributedString()
+            for (text, isSmall) in pieces {
+                result.append(NSAttributedString(string: text, attributes: isSmall ? small : body))
+            }
+            return result
+        }
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("Reasoning and the aptitude of listeners rose in every cohort we studied." as NSString).draw(at: CGPoint(x: 60, y: 80), withAttributes: body)
+            line([("The update for x", false), ("n", true), (" and h", false), ("t", true), (" uses the rate reported earlier,", false), ("1", true), (" which we keep.", false)])
+                .draw(at: CGPoint(x: 60, y: 120))
+            line([("The largest step h", false), ("max", true), (" was set by Smith J", false), ("1,2", true), (" and Doe A", false), ("a", true), (", for every cohort.", false)])
+                .draw(at: CGPoint(x: 60, y: 160))
+        }
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: data)))
+        let spoken = StructuredDocumentSpeech.spokenLines(document)
+        XCTAssertTrue(spoken.contains("The update for xn and ht uses the rate reported earlier, which we keep."), "\(spoken)")
+        XCTAssertTrue(spoken.contains("The largest step hmax was set by Smith J and Doe A, for every cohort."), "\(spoken)")
+    }
+
     func testV2ReadsEachOutlineHeadingOnceWhereItIsPrinted() throws {
         // #355: outline titles no line matched ("A.1" labels, wrapped headings, run-in
         // headings) were inserted at the top of their page and read, then the printed
