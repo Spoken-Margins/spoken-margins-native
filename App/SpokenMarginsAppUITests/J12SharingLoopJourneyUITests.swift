@@ -139,10 +139,15 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             app.launch()
             XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Episode is missing after relaunch")
             tap("queue.start.\(itemId)")
-            let skip = offerButton("newMarginsOffer.skip", orLabel: "Listen without them")
-            XCTAssertTrue(skip.waitForExistence(timeout: 5), "Continue did not offer the friend's Margin")
-            skip.tap() // listen on: the answer below is made on the friend's item either way
-            XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
+            // This episode was never started, so Continue plays from the beginning and reaches the friend's Margin on
+            // its own: `PlayRule` asks only about Margins behind a saved place (`PlayRuleTests`, "not open, a row with no
+            // session"; J14 row 3). The offer belongs to an episode with a place past the Margin, which step 4 of the
+            // other test covers, so here it is taken if it shows and is not required (#4253).
+            let skip = app.buttons["newMarginsOffer.skip"].firstMatch
+            let nowPlaying = element("playback.screen")
+            waitUntil("Continue neither offered the friend's Margin nor opened Now Playing", timeout: 10) { skip.exists || nowPlaying.exists }
+            if skip.exists { skip.tap() } // listen on: the answer below is made on the friend's item either way
+            XCTAssertTrue(nowPlaying.waitForExistence(timeout: 8), "Now Playing did not open")
             try waitUntilPlaying("Episode never reached the playing state")
             try recordAMargin(seconds: 3)
         }
