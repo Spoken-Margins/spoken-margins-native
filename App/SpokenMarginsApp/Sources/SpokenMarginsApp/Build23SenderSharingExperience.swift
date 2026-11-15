@@ -160,7 +160,7 @@ struct Build23SenderSharingExperience: View {
         } message: {
             Text("Spoken Margins can remove filler words and tighten pauses for the Margins you include. You can review every change, undo it, or turn this off later.")
         }
-        .sheet(isPresented: $isSystemSharePresented, onDismiss: finishSystemShare) {
+        .trackedSheet(isPresented: $isSystemSharePresented, onDismiss: finishSystemShare) {
             if let packageURL = verifiedShareURLForPresentation {
                 SharedSpokenMarginsPackageActivityView(packageURL: packageURL) { coordinator.recordSystemShareCompleted(packetURL: packageURL) }
             }

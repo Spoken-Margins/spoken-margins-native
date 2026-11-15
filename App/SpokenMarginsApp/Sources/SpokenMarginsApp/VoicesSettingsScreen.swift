@@ -44,7 +44,7 @@ struct VoicesSettingsScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("settings.voices.screen")
         .task { await voices.open() }
-        .sheet(item: $agreementRow) { row in
+        .trackedSheet(item: $agreementRow) { row in
             VoiceAgreementSheet(row: row) {
                 agreementRow = nil
                 voices.agreeAndDownload(row)

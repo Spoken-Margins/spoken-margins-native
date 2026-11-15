@@ -109,13 +109,13 @@ struct ExperienceLibraryScreen: View {
             }
         }
         .accessibilityIdentifier("library.screen")
-        .sheet(isPresented: $isAudioPreparationQueuePresented) {
+        .trackedSheet(isPresented: $isAudioPreparationQueuePresented) {
             ExperienceAudioPreparationQueueScreen()
                 .environmentObject(model)
         }
         .playQueueSheet(isPresented: $isPlayQueuePresented, model: model)
         .onAppear { model.loadPlayQueue() }
-        .fullScreenCover(item: $openedNote) { opening in
+        .trackedFullScreenCover(item: $openedNote) { opening in
             SpokenNoteRecordingView(opening: opening).environmentObject(model)
         }
         .spokenNoteExportFlow(noteExport)
@@ -125,7 +125,7 @@ struct ExperienceLibraryScreen: View {
             if noteExport.isPreparing { SpokenNoteExportProgress() }
             if notePlay.isPreparing { SpokenNotePlayProgress() }
         }
-        .sheet(item: $collectionItem) { item in
+        .trackedSheet(item: $collectionItem) { item in
             ItemCollectionSheet(item: item)
                 .environmentObject(model)
         }

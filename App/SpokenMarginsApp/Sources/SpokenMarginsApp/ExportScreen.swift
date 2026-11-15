@@ -93,7 +93,7 @@ struct ExportScreen: View {
                             }
                             .buttonStyle(PrimaryButtonStyle())
                             .accessibilityIdentifier("export.share.button")
-                            .sheet(isPresented: $isSharePresented) {
+                            .trackedSheet(isPresented: $isSharePresented) {
                                 SessionActivityView(
                                     activityItems: exportActivityItems,
                                     onSuccessfulCompletion: model.recordSessionExported
@@ -182,7 +182,7 @@ struct ExportScreen: View {
 extension View {
     /// The share sheet for a file while `url` is set; closing it clears `url` (#493).
     func fileShareSheet(_ url: Binding<URL?>) -> some View {
-        sheet(isPresented: Binding(get: { url.wrappedValue != nil }, set: {
+        trackedSheet(isPresented: Binding(get: { url.wrappedValue != nil }, set: {
             guard !$0 else { return }
             // The share sheet has closed: its file is no longer needed.
             if let file = url.wrappedValue { MarginMarkdownShare.discardShare(file) }
@@ -208,7 +208,7 @@ extension View {
     /// The share sheet for a Margin's export while `share` is set; closing it clears it and removes the files. One sheet
     /// carries both the note alone and the recording with the note, since two sheets on one view can drop each other.
     func marginExportShareSheet(_ share: Binding<MarginExportShare?>) -> some View {
-        sheet(isPresented: Binding(get: { share.wrappedValue != nil }, set: {
+        trackedSheet(isPresented: Binding(get: { share.wrappedValue != nil }, set: {
             guard !$0 else { return }
             share.wrappedValue?.discard()
             share.wrappedValue = nil
@@ -225,7 +225,7 @@ extension View {
     /// since two sheets on one view can drop each other. Clearing them, which the sheet does when it closes, removes the
     /// folder the export was made in (`SpokenNoteExportModel`).
     func spokenNoteExportSheet(_ export: SpokenNoteExportModel) -> some View {
-        sheet(isPresented: Binding(get: { export.files != nil || export.text != nil }, set: {
+        trackedSheet(isPresented: Binding(get: { export.files != nil || export.text != nil }, set: {
             guard !$0 else { return }
             export.files = nil
             export.text = nil

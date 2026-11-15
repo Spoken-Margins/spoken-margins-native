@@ -61,7 +61,10 @@ struct DiagnosticsExportInputs: Sendable {
         if let watchDiagnosticsFile, let report = WatchDiagnosticsStore.exportJSON(fileURL: watchDiagnosticsFile) {
             stored[WatchDiagnosticsStore.exportKey] = report
         }
-        let text = try DiagnosticsExport.jsonText(DiagnosticsExport.entries(live: live, stored: stored, fixed: fixed))
+        // The tracker is thread-safe and holds only places and counts, so it is read here, not copied with the inputs (#4337).
+        var exported = self.fixed
+        exported.screenRebuilds = PresentationTracker.shared.summary
+        let text = try DiagnosticsExport.jsonText(DiagnosticsExport.entries(live: live, stored: stored, fixed: exported))
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Diagnostics", isDirectory: true)
         return try DiagnosticsExportFile.write(text, build: fixed.developerBuild, exportedAt: fixed.exportedAt, to: directory)
     }

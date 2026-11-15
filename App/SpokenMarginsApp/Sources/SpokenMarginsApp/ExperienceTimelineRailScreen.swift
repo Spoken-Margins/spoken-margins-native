@@ -176,16 +176,16 @@ struct ExperienceTimelineRailScreen: View {
                     .accessibilityIdentifier("timeline.keyboard.done")
             }
         }
-        .sheet(item: $selectedSource) { entry in
+        .trackedSheet(item: $selectedSource) { entry in
             PlaybackTimelineSourceView(selection: entry)
         }
-        .sheet(item: $selectedElement) { element in
+        .trackedSheet(item: $selectedElement) { element in
             PlaybackTimelineElementView(element: element)
         }
-        .sheet(item: $selectedSharedMargin) { row in
+        .trackedSheet(item: $selectedSharedMargin) { row in
             SharedMarginDetailView(row: row).environmentObject(model)
         }
-        .sheet(item: $selectedMargin) { row in
+        .trackedSheet(item: $selectedMargin) { row in
             ExperienceMarginDetailView(row: row)
                 .environmentObject(model)
         }

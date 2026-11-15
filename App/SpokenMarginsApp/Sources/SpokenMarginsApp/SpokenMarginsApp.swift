@@ -195,6 +195,7 @@ struct SpokenMarginsApp: App {
     var body: some Scene {
         WindowGroup {
             Gate1RootView()
+                .presentationSceneToken()
                 .environmentObject(model)
                 .environmentObject(sharingCoordinator)
                 .environmentObject(catalogDrawer)

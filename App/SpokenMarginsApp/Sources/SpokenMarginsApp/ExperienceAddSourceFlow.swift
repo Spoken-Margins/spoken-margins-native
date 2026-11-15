@@ -228,10 +228,10 @@ struct ExperienceAddSourceFlow: View {
                     .accessibilityIdentifier("document.import.error")
             }
         }
-        .fullScreenCover(isPresented: $showsLiveSession, onDismiss: { dismiss() }) {
+        .trackedFullScreenCover(isPresented: $showsLiveSession, onDismiss: { dismiss() }) {
             LiveSessionView(model: model).equatable()
         }
-        .fullScreenCover(isPresented: $showsSpokenNote, onDismiss: { dismiss() }) {
+        .trackedFullScreenCover(isPresented: $showsSpokenNote, onDismiss: { dismiss() }) {
             SpokenNoteRecordingView().environmentObject(model)
         }
     }

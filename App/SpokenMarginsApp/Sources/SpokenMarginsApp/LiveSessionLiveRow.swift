@@ -176,7 +176,7 @@ struct LiveSessionCoverHost: View, Equatable {
         #endif
         // The binding writes the row's own state, so an older copy of this closure still closes the screen.
         Color.clear
-            .fullScreenCover(item: Binding(get: { sessionId.map { Opened(id: $0) } }, set: { sessionId = $0?.id })) { opened in
+            .trackedFullScreenCover(item: Binding(get: { sessionId.map { Opened(id: $0) } }, set: { sessionId = $0?.id })) { opened in
                 LiveSessionView(model: model, sessionId: opened.id).equatable()
             }
     }

@@ -222,21 +222,21 @@ struct PlaybackScreen: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .sheet(item: $selectedInterjection) { interjection in
+            .trackedSheet(item: $selectedInterjection) { interjection in
                 ExperienceMarginDetailView(row: MarginRow(interjection: interjection, itemTitle: model.selectedItem.title, sessionDate: nil))
                     .environmentObject(model)
             }
-            .sheet(isPresented: $isPastingAssistantResponse) {
+            .trackedSheet(isPresented: $isPastingAssistantResponse) {
                 PastedAssistantResponseView(isPresented: $isPastingAssistantResponse)
                     .environmentObject(model)
             }
-            .sheet(item: $sourceTextTarget) { target in
+            .trackedSheet(item: $sourceTextTarget) { target in
                 NativeTextPeekView(
                     title: model.selectedItem.title, target: target,
                     text: model.selectedItem.text, chapters: model.selectedItem.chapters
                 )
             }
-            .sheet(isPresented: $isPlaybackOptionsPresented, onDismiss: performPendingOptionsNavigation) {
+            .trackedSheet(isPresented: $isPlaybackOptionsPresented, onDismiss: performPendingOptionsNavigation) {
                 NavigationStack {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 18) {

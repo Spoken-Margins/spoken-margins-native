@@ -26,6 +26,8 @@ public enum DiagnosticsExport {
         public var sessionPhase: String
         public var targetType: String?
         public var pendingAIJobs: Int
+        /// `PresentationLedger.summaryText`: how many sheets and covers were built again while open (#4337).
+        public var screenRebuilds: String
 
         public init(
             developerBuild: String,
@@ -35,7 +37,8 @@ public enum DiagnosticsExport {
             playbackStatus: String,
             sessionPhase: String,
             targetType: String?,
-            pendingAIJobs: Int
+            pendingAIJobs: Int,
+            screenRebuilds: String = PresentationLedger().summaryText
         ) {
             self.developerBuild = developerBuild
             self.developerRecording = developerRecording
@@ -45,6 +48,7 @@ public enum DiagnosticsExport {
             self.sessionPhase = sessionPhase
             self.targetType = targetType
             self.pendingAIJobs = pendingAIJobs
+            self.screenRebuilds = screenRebuilds
         }
     }
 
@@ -211,6 +215,8 @@ public enum DiagnosticsExport {
         safe["sessionPhase"] = fixed.sessionPhase
         safe["targetType"] = fixed.targetType ?? "none"
         safe["pendingAIJobs"] = "\(fixed.pendingAIJobs)"
+        // Places in the app's own source and counts, so nothing the listener chose; set last so no live entry stands in for it (#4337).
+        safe["screenRebuilds"] = fixed.screenRebuilds
         return safe
     }
 

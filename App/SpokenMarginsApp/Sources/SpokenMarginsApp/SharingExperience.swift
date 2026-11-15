@@ -878,7 +878,7 @@ struct SharedSpokenMarginsPackageReadyView: View {
             }.value
             packetSizeText = bytes.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) }
         }
-        .sheet(isPresented: $isActivityPresented) {
+        .trackedSheet(isPresented: $isActivityPresented) {
             SharedSpokenMarginsPackageActivityView(packageURL: packageURL) {
                 model.listeningSignals.share(packetURL: packageURL)
             }
