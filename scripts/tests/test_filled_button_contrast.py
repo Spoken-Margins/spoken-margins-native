@@ -15,7 +15,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "App/SpokenMarginsApp/Sources/SpokenMarginsApp"
-AUDIT = ROOT / "Packages/SessionKit/Sources/SessionKit/ExperienceColorContrast.swift"
+SESSIONKIT = ROOT / "Packages/SessionKit/Sources/SessionKit"
+# The audit reads palettes that live in their own files (#3736); the probe compiles them together, Foundation only.
+AUDIT = [SESSIONKIT / "ExperienceColorContrast.swift", SESSIONKIT / "ReaderSentenceHighlight.swift"]
 DESIGN_SYSTEM = APP / "ExperienceDesignSystem.swift"
 
 PROBE = """
@@ -49,7 +51,7 @@ def run_audit() -> list[str]:
         main = Path(tmp) / "main.swift"
         main.write_text(PROBE, encoding="utf-8")
         binary = Path(tmp) / "contrast-audit"
-        subprocess.run([swiftc, str(AUDIT), str(main), "-o", str(binary)], check=True,
+        subprocess.run([swiftc, *[str(f) for f in AUDIT], str(main), "-o", str(binary)], check=True,
                        capture_output=True, text=True, timeout=300)
         out = subprocess.run([str(binary)], check=True, capture_output=True, text=True, timeout=60)
     return out.stdout.splitlines()
