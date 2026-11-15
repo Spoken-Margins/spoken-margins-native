@@ -103,13 +103,24 @@ extension Gate1AppModel {
         if returnsSource, snapshot.status == .paused {
             resumePlayback(returningFromMargin: true)
         }
+    }
+
+    /// The listener skipped the card: it goes, and the next Margin that waits for the end is offered (#4347).
+    func skipPendingImportedCommentary() {
+        dismissPendingImportedCommentary()
         offerNextMarginWaitingForTheEnd()
     }
 
     /// The episode has ended and no tick will come: the Margins that wait for the end are offered one after another,
-    /// the next one when the one before has been heard, skipped or let go (#4347). `SharedMarginOfferQueue` decides
-    /// whether anything is due; this only says whether the slot is free.
-    private func offerNextMarginWaitingForTheEnd() {
+    /// the next one when the one before has been heard or skipped (#4347). `SharedMarginOfferQueue` decides whether
+    /// anything is due; this only says whether the slot is free.
+    ///
+    /// Called only where the listener is done with a Margin and stays at the end: its voice ending
+    /// (`marginVoiceSharedPlaybackEnded`), Return to source, the card's own Skip and the card timing out. Never from
+    /// `stopImportedCommentaryPlayback` or `dismissPendingImportedCommentary` themselves: more than a dozen callers
+    /// use those to clear the slot before hiding a sender, going to a Skim stop, replying or jumping, and a Margin
+    /// offered then would be one the listener didn't ask for (a hidden friend's) or one lost on the way (#4347 audit).
+    func offerNextMarginWaitingForTheEnd() {
         let slotIsFree = pendingImportedCommentary == nil && playingImportedCommentary == nil && !snapshot.isRecording
             && marginMomentConductor?.sequence.isReview != true && marginMomentConductor?.isPlayingVoice != true
         guard let prompt = sharedMarginOffers.nextWaitingAtEpisodeEnd(
@@ -134,6 +145,7 @@ extension Gate1AppModel {
 
     func returnToSourceFromImportedCommentary() {
         stopImportedCommentaryPlayback(resumeSource: true)
+        offerNextMarginWaitingForTheEnd()
     }
 
     func listenToImportedCommentary(_ prompt: ImportedCommentaryPrompt) {
@@ -245,7 +257,6 @@ extension Gate1AppModel {
         marginVoicePlayer.forgetSharedMargin()
         sharedMarginReturn.voiceStopped()
         if returnsSource, snapshot.status == .paused { resumePlayback(returningFromMargin: true) }
-        offerNextMarginWaitingForTheEnd()
     }
 
     func reconcileImportedCommentary(previous: SessionSnapshot, current: SessionSnapshot) {
@@ -301,7 +312,7 @@ extension Gate1AppModel {
                     // A listener still touching the card, or with focus on it, keeps it (#3720).
                     try? await FeedbackBannerHold.marginCard.waitWhileHeld()
                     guard !Task.isCancelled, self.pendingImportedCommentary?.id == prompt.id else { return }
-                    self.dismissPendingImportedCommentary()
+                    self.skipPendingImportedCommentary()
                 }
             }
         }
@@ -471,6 +482,7 @@ extension Gate1AppModel: MarginVoicePlayerHost {
 
     func marginVoiceSharedPlaybackEnded() {
         stopImportedCommentaryPlayback(resumeSource: true)
+        offerNextMarginWaitingForTheEnd()
     }
 
     func marginVoiceRemoteCommand(_ command: CompactControlCommand) {

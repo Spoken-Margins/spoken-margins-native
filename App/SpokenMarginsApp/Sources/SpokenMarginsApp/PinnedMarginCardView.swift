@@ -86,7 +86,7 @@ struct PinnedMarginCardView: View {
         case .playMomentNow: model.playMarginMomentNow()
         case .keepListening, .stopReview, .stopPlayingMine: model.endMarginMoment()
         case .listen: model.listenToPendingImportedCommentary()
-        case .dismiss: model.dismissPendingImportedCommentary()
+        case .dismiss: model.skipPendingImportedCommentary()
         }
     }
 

@@ -64,8 +64,10 @@ public struct SharedMarginOfferQueue: Equatable {
     /// The next Margin that waits for the end of the episode, once the episode has ended and the slot is free (#4347).
     ///
     /// Playback ticks only run while the source plays, so after the end no tick comes to drain the queue: the first
-    /// Margin is offered on the end tick and the rest would wait for ever. The app calls this when a card is let go
-    /// or a Margin's voice ends. Mid-episode it returns nil, so the ticks keep offering what crossed together as before.
+    /// Margin is offered on the end tick and the rest would wait for ever. The app calls this only where the listener is
+    /// done with a Margin and stays at the end (its voice ends, Return to source, the card's Skip, the card timing out),
+    /// never from a teardown that clears the slot to do something else. Mid-episode it returns nil, so the ticks keep
+    /// offering what crossed together as before.
     public mutating func nextWaitingAtEpisodeEnd(
         snapshot: SessionSnapshot, selectedItemID: String, slotIsFree: Bool,
         offerable: @autoclosure () -> [ImportedCommentaryPrompt]
