@@ -394,11 +394,13 @@ final class SupertonicSpeechTests: XCTestCase {
         let progressBefore = progress.completed.count
         let paused = try XCTUnwrap(client.currentCharOffset())
         try client.pause()
+        let decisionsBefore = decisions.values.count
         try client.play(targetId: "rank2", from: paused)
         // play() picks its path before it returns, so the decision a wrong mapping would change is already made; a fixed
         // 300 ms passed for a restart whose first render was slower than that (#4313).
-        let path = decisions.values.last?["path"] ?? ""
-        XCTAssertTrue(["resume_player", "seek_player"].contains(path), "the play kept the current chunk's player: \(decisions.values)")
+        let paths = decisions.values.dropFirst(decisionsBefore).map { $0["path"] ?? "" }
+        XCTAssertEqual(paths.count, 1, "\(decisions.values)")
+        XCTAssertTrue(paths.allSatisfy { ["resume_player", "seek_player"].contains($0) }, "the play kept the current chunk's player: \(paths)")
         XCTAssertFalse(progress.completed.dropFirst(progressBefore).contains(0),
                        "no restart: progress never went back to 0 (\(progress.completed))")
         let renders = await renderer.renders
@@ -543,8 +545,10 @@ final class SupertonicSpeechTests: XCTestCase {
         // Each play picks its path before it returns and a rate change never renders, so the restart #303 was is
         // already decided here; a fixed 400 ms passed for a restart whose render was slower than that (#4313).
         let paths = decisions.values.dropFirst(decisionsBefore).map { $0["path"] ?? "" }
+        // Only the live player's own paths: a restart, a planned or awaited render or a cached chunk would each start a
+        // render or a player the checks below could only see later.
         XCTAssertEqual(paths.count, 3, "\(decisions.values)")
-        XCTAssertFalse(paths.contains("restart_rendering"), "no play threw the live audio away: \(paths)")
+        XCTAssertTrue(paths.allSatisfy { ["resume_player", "seek_player"].contains($0) }, "every play kept the live audio: \(paths)")
 
         XCTAssertFalse(progress.completed.dropFirst(progressBefore).contains(0),
                        "no new generation: progress never went back to 0 (\(progress.completed))")

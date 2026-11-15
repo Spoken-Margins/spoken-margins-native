@@ -135,8 +135,8 @@ final class SharedMarginReturnAppTests: XCTestCase {
         model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
         XCTAssertNotNil(model.playingImportedCommentary)
         model.returnToSourceFromImportedCommentary()
-        // Return decides at once, and the stop drops the voice's end-of-play poll, so nothing is left to resume it later;
-        // a fixed 300 ms only gave a poll that survived time to fire (#4313).
+        // Return decides at once (its first resume attempt is synchronous), and the stop drops the voice's end-of-play
+        // poll, so nothing is left to resume it later; a fixed 300 ms only gave a poll that survived time to fire (#4313).
         XCTAssertNil(model.marginVoicePlayer.completionTask, "the voice's end-of-play poll is gone")
         XCTAssertEqual(model.snapshot.status, .paused)
     }
@@ -183,8 +183,8 @@ final class SharedMarginReturnAppTests: XCTestCase {
         model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
         model.stopInterjectionAudioPlayback()
         model.returnToSourceFromImportedCommentary()
-        // Return decides at once, and the stop drops the voice's end-of-play poll, so nothing is left to resume it later;
-        // a fixed 300 ms only gave a poll that survived time to fire (#4313).
+        // Return decides at once (its first resume attempt is synchronous), and the stop drops the voice's end-of-play
+        // poll, so nothing is left to resume it later; a fixed 300 ms only gave a poll that survived time to fire (#4313).
         XCTAssertNil(model.marginVoicePlayer.completionTask, "the voice's end-of-play poll is gone")
         XCTAssertEqual(model.snapshot.status, .paused)
     }
@@ -296,9 +296,8 @@ final class SharedMarginReturnAppTests: XCTestCase {
         let poll = try XCTUnwrap(model.marginVoicePlayer.completionTask, "the end-of-voice poll is running")
         model.toggleInterjectionAudioPlayback(heard)
         XCTAssertFalse(model.isPlayingInterjectionAudio(heard))
-        // Only the poll could call the Margin ended and resume the source; the stop cancels it, and once it has returned
-        // nothing can. A fixed 600 ms could never have caught that with a 5 s voice (#4313).
-        await poll.value
+        // Only the poll could call the Margin ended and resume the source, and a cancelled poll returns without doing so;
+        // the stop cancels it at once. A fixed 600 ms could never have caught a live poll with a 5 s voice (#4313).
         XCTAssertTrue(poll.isCancelled, "the stop cancelled the poll, so no end can resume the source later")
         XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertNil(model.marginMoment)
