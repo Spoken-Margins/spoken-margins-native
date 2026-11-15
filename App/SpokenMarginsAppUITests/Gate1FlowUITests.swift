@@ -503,6 +503,9 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(waitForDisappearance(libraryRow, timeout: 4))
 
         openLibrarySettings()
+        // Settings draws Recently Deleted as a collapsed group since #1254, so the row's menu is not on screen until it
+        // is opened (#4391). The label gains a count once an item is in it, hence "containing".
+        scrollToButton(containingLabel: "Recently Deleted").tap()
         // Delete Permanently sits behind the row's menu, away from Restore (#3206).
         scrollToButton(containingLabel: "More options for \(itemTitle)").tap()
         let delete = app.buttons["Delete Permanently"].firstMatch
