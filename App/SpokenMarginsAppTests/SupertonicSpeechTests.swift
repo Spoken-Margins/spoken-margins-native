@@ -1984,6 +1984,22 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertLessThan(reported, chunk[1], "the position is back in A, not C (\(reported))")
     }
 
+    // #4310: after a stop the client still reports where its last speech started, not nil. The engine must not take that
+    // for the listener's place after a refused start (#4199); on the host, `RenderedSpeechPlaceTests` and the stand-in
+    // `TextSpeechAtTheEndInventory.RefusingAtTheEndSpeech(keepsLastOffsetAfterStop:)` rest on this.
+    func testAfterAStopTheClientStillReportsWhereItsLastSpeechStarted() async throws {
+        let harness = try SupertonicClientHarness(heldRenders: [3])
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 2)
+        await harness.waitForRenderStarts(3)                        // the client has taken B: it renders C, held
+        try harness.play(from: chunk[1] + 5)
+        try harness.client.stop()
+        let reported = try XCTUnwrap(harness.client.currentCharOffset(), "a stopped client still reports an offset")
+        XCTAssertGreaterThanOrEqual(reported, chunk[1], "the last speech's chunk, not the top (\(reported))")
+        XCTAssertLessThanOrEqual(reported, chunk[1] + 5, "where the last speech started, not past it (\(reported))")
+    }
+
     // #538: the owner's phone went silent when he left the app, because the seam between two chunks needed the
     // app to make and start a new player, and a backgrounded app with nothing playing can be suspended right
     // there. With the app away, the next rendered chunk is already on the player behind the playing one, so

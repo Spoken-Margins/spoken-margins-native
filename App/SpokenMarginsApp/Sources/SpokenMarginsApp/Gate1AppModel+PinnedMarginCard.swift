@@ -112,14 +112,10 @@ extension Gate1AppModel {
         return nil
     }
 
-    /// What happens when the episode reaches `prompt`, from that Margin's own layer and the offer queue's memory, the
-    /// same facts the offer uses, so the card and Next Margin never promise what the offer will not do.
+    /// What happens when the episode reaches `prompt`, from the same facts the offer uses, so the card and Next Margin
+    /// never promise what the offer will not do.
     private func sharedMarginArrival(_ prompt: ImportedCommentaryPrompt) -> PinnedMarginCard.Arrival {
-        // Announced is not heard: the tone sounded or the card was dismissed, and the voice may never have played. Only
-        // `firstHeardAt` says the listener heard it.
-        .forMargin(
-            announced: sharedMarginOffers.announcedIDs.contains(prompt.id), heard: !prompt.interjection.isNewToListener,
-            revealMode: prompt.layer.revealMode)
+        .forMargin(prompt, offers: sharedMarginOffers)
     }
 
     private var nextMarginContext: NextMarginPress.Context? {

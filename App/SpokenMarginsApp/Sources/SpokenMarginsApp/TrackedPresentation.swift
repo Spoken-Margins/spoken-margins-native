@@ -1,6 +1,7 @@
 import SessionKit
 import SwiftUI
 import Synchronization
+import os
 
 /// The one place the app presents a sheet or a full-screen cover (#4337).
 ///
@@ -122,19 +123,23 @@ private struct PresentationTracking: ViewModifier {
 
 /// The app's `PresentationLedger`, and what a rebuild does (#4337).
 ///
-/// - Release: counted. `summary` is the Diagnostics `screenRebuilds` line, so a rebuild a listener met shows up in
-///   an export without a trace.
+/// - Every build: counted, and logged as a fault naming the place (never the item). `summary` is the Diagnostics
+///   `screenRebuilds` line, so a rebuild a listener met shows up in an export without a trace.
 /// - Debug app-hosted tests: the test bundle sets `onRebuild`, which fails the running test.
 /// - Debug UI tests (scripted journeys, launched with `--ui-testing`): the app stops, naming the presentation.
 final class PresentationTracker: Sendable {
     static let shared = PresentationTracker()
 
     private let ledger = Mutex(PresentationLedger())
+    private let log = Logger(subsystem: "com.spokenmargins.native", category: "screen-rebuild")
 
     func appeared(place: String, item: String?, scene: String? = nil, instance: UUID) {
         let rebuild = ledger.withLock { $0.appeared(place: place, item: item, scene: scene, instance: instance, at: ProcessInfo.processInfo.systemUptime) }
+        guard let rebuild else { return }
+        // The place and the reason are the app's own words; the item can be a title, so it stays out of the log.
+        log.fault("Screen rebuilt while open: \(rebuild.place, privacy: .public), \(rebuild.reason.rawValue, privacy: .public)")
         #if DEBUG
-        if let rebuild { tripped(by: rebuild) }
+        tripped(by: rebuild)
         #endif
     }
 

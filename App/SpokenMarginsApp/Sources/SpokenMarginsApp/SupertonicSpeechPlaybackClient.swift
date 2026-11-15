@@ -992,18 +992,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             )
         }
         if snapshot.0 { return fallback.currentCharOffset() }
-        let currentTime = playerTime(snapshot.3)
-        guard snapshot.4 > 0, snapshot.2 > 0, currentTime.isFinite else {
-            return snapshot.5.sourceOffset(
-                atSpokenCharacterOffset: max(snapshot.1, snapshot.6 ?? snapshot.1)
-            )
-        }
-        let fraction = max(0, min(1, currentTime / snapshot.4))
-        let spokenOffset = max(
-            snapshot.1 + Int((Double(snapshot.2) * fraction).rounded(.down)),
-            snapshot.6 ?? snapshot.1
+        let place = RenderedSpeechPlace(
+            projection: snapshot.5, chunkStart: snapshot.1, chunkLength: snapshot.2, requestedStart: snapshot.6,
+            chunkDuration: snapshot.4
         )
-        return snapshot.5.sourceOffset(atSpokenCharacterOffset: spokenOffset)
+        return place.sourceOffset(playerTime: playerTime(snapshot.3))
     }
 
     func currentRecoveryCharOffset() -> Int? {
