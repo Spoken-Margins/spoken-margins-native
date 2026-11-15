@@ -1988,10 +1988,11 @@ final class SupertonicSpeechTests: XCTestCase {
     // for the listener's place after a refused start (#4199); on the host, `RenderedSpeechPlaceTests` and the stand-in
     // `TextSpeechAtTheEndInventory.RefusingAtTheEndSpeech(keepsLastOffsetAfterStop:)` rest on this.
     func testAfterAStopTheClientStillReportsWhereItsLastSpeechStarted() async throws {
-        let harness = try SupertonicClientHarness()
+        let harness = try SupertonicClientHarness(heldRenders: [3])
         defer { harness.tearDown() }
         let chunk = harness.chunkStarts
         try await harness.start(waitingForRenders: 2)
+        await harness.waitForRenderStarts(3)                        // the client has taken B: it renders C, held
         try harness.play(from: chunk[1] + 5)
         try harness.client.stop()
         let reported = try XCTUnwrap(harness.client.currentCharOffset(), "a stopped client still reports an offset")

@@ -250,7 +250,9 @@ final class BackgroundKillSeamTests: XCTestCase {
     // whatever the app does as it returns (#4310). The guards for the app's own code are app-hosted:
     // `Gate1AppModelWorkflowTests.testLeavingTheForegroundSavesThePositionWithoutReloadingTheItem` (no re-read of the
     // item on the main thread on the way out or back) and `SkimBridgeControllerTests.testResourcesLoadOncePerItemAndMapChange`
-    // (a reload of the item does not re-read the Skim resources; they load once per item and map change).
+    // (a reload of the item does not re-read the Skim resources; they load once per item and map change) and
+    // `SkimBridgeControllerTests.testAskingBeforeTheResourcesLoadAnswersLoadingAndDoesNotWait` (asking for Skim does not
+    // wait on the main thread for them to load).
 
     /// The Build 35 shape: backgrounded for a minute and a half, then, as the app returns, one 10.5 s block of the main
     /// thread (what a synchronous reload of the Skim resources was). 10 s is what the export's late checkpoint and kill

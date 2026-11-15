@@ -35,7 +35,8 @@ public enum TextSpeechAtTheEndInventory {
         var source = ""
         /// Whether the client still reports where its last speech started once it is stopped, as the on-device
         /// (Supertonic) voice does; the system speech client reports nothing. The offset is the one that voice's own
-        /// `RenderedSpeechPlace` gives with no audio loaded, the state its `stop()` leaves (#4310).
+        /// `RenderedSpeechPlace` gives with no audio loaded, the state its `stop()` leaves (#4310). It is the worst case:
+        /// an earlier speech's start, never the refused one's.
         let keepsLastOffsetAfterStop: Bool
         private var lastStart = 0
         /// With `keepsLastOffsetAfterStop`, an earlier speech (the article playing before the Margin was tapped) started at 5.
