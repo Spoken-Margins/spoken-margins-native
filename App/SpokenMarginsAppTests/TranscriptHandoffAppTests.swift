@@ -96,6 +96,15 @@ final class TranscriptHandoffAppTests: XCTestCase {
         try TranscriptHandoffFolder(baseDirectory: directory).pending().count
     }
 
+    /// Runs one more drain and waits until it reports what it found in the transcript folder (the drain writes the count
+    /// every time), so a "nothing more was imported" assertion after it reads a drain that has run, not a pause.
+    private func drainAgainAndSeeNothingWaiting(_ model: Gate1AppModel) async throws {
+        model.diagnostics["pendingTranscriptHandoffs"] = nil
+        model.importPendingSourceLinkHandoffs()
+        try await waitFor("another drain to find the transcript folder empty") { model.diagnostics["pendingTranscriptHandoffs"] == "0" }
+        try await waitFor("that drain to finish") { !model.isImportingPendingSourceLinkHandoffs }
+    }
+
     private func waitFor(_ what: String, timeout: TimeInterval = 20, _ condition: () throws -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -182,8 +191,7 @@ final class TranscriptHandoffAppTests: XCTestCase {
         model.importPendingSourceLinkHandoffs()
         model.importPendingSourceLinkHandoffs()
         try await waitFor("the item") { try transcripts(model).count == 1 }
-        model.importPendingSourceLinkHandoffs()
-        try await Task.sleep(nanoseconds: 500_000_000)
+        try await drainAgainAndSeeNothingWaiting(model)
 
         XCTAssertEqual(try transcripts(model).count, 1)
         XCTAssertEqual(try folderEntries(directory), 0)
@@ -223,8 +231,7 @@ final class TranscriptHandoffAppTests: XCTestCase {
         let id = try XCTUnwrap(try transcripts(model).first?.id)
 
         try shareText("meeting.txt", zoomTXT, into: directory)
-        model.importPendingSourceLinkHandoffs()
-        try await Task.sleep(nanoseconds: 800_000_000)
+        try await drainAgainAndSeeNothingWaiting(model)
 
         XCTAssertEqual(try transcripts(model).map(\.id), [id])
     }
