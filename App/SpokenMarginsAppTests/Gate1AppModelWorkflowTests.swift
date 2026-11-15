@@ -4977,8 +4977,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        // The Timeline pane reads the sharing coordinator; without it, switching to the Timeline stops the test host.
         window.rootViewController = UIHostingController(rootView: AnyView(PlaybackScreen().environmentObject(model)
-            .environmentObject(Build23SharingCoordinator(model: model)))  // the Timeline pane reads it)
+            .environmentObject(Build23SharingCoordinator(model: model))))
         window.makeKeyAndVisible()
         let mounted = MountedTree(window: window, previousKeyWindow: previousKeyWindow)
         defer { mounted.close() }
