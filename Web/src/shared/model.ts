@@ -55,6 +55,12 @@ export interface Margin {
   voice?: { blob: Blob; mimeType: string; durationSeconds: number };
   /** Set on Margins imported from someone else's packet. */
   author?: string;
+  /**
+   * Where this Margin travelled when the listener shared it (#4174): one `packet:<digest>:margin-000N` per packet it
+   * went out in, which is the id a friend's reply to it carries as `replyToId`. Set on the share path only, never
+   * written into a packet. Absent on a Margin that was never shared, or shared before this was kept.
+   */
+  sharedAs?: string[];
   /** The Margin this one answers (2026-10-25 call: recorded during a friend's Margin = a reply). */
   replyToId?: string;
   /**
