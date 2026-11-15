@@ -167,9 +167,14 @@ final class PDFWordSpacingTests: XCTestCase {
         let marker = PDFWordSpacer.shifted(15..<16, by: insertions)
         XCTAssertEqual(String(Array(spaced)[marker]), "1")
         // No space goes in front of a marker set on a word: "economy¹", not "economy 1".
-        let onWord = "theeconomy1Averaged"
-        let onWordInsertions = spacer.spaceInsertions(in: onWord, protected: [10..<11])
-        XCTAssertFalse(onWordInsertions.contains(10))
+        // "economy" is a word, so with nothing protected the splitter does put a space before the digit (offset 7);
+        // set as a marker it must not (without the protected filter this fails).
+        let economy = PDFWordSpacer(isWord: ["economy"].contains)
+        let onWord = "economy1Averaged"
+        XCTAssertTrue(economy.spaceInsertions(in: onWord).contains(7), "the unprotected line is split before the digit")
+        let onWordInsertions = economy.spaceInsertions(in: onWord, protected: [7..<8])
+        XCTAssertFalse(onWordInsertions.contains(7))
+        XCTAssertEqual(PDFWordSpacer.applying(onWordInsertions, to: onWord), "economy1 Averaged")
     }
 
     func testAMathIndexStaysOnItsLetterAndTakesNoSpaceAfterIt() {
