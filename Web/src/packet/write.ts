@@ -60,6 +60,8 @@ export interface WrittenPacket {
 const REPLY_ID = /^packet:([0-9a-f]{64}):(.+)$/;
 
 const pad = (n: number): string => String(n).padStart(4, '0');
+/** The name the writer gives the Margin at this position (0-based) in `included`: `margin-0001`, `margin-0002`, ... */
+export const scopedMarginId = (index: number): string => `margin-${pad(index + 1)}`;
 
 const httpsShareable = (value: string | undefined): string | undefined => {
   const link = shareableLink(value);
@@ -144,7 +146,7 @@ export async function writePacket(episode: Episode, margins: readonly Margin[], 
   const replies: ConversationReply[] = [];
   for (const [index, margin] of withText.entries()) {
     const n = pad(index + 1);
-    const scopedId = `margin-${n}`;
+    const scopedId = scopedMarginId(index);
     const text = words.get(margin) as string;
     if (characterCount(text) > LIMITS.transcriptCharacters) throw new PacketError('cannotShare', `${margin.id} text is too long`);
     const mediaTimeMs = Math.max(0, Math.round(margin.atSeconds * 1000));

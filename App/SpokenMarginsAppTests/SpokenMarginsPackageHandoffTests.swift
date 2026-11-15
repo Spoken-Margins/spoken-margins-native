@@ -245,14 +245,23 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let first = try XCTUnwrap(ShareLinkURL(url: try XCTUnwrap(ShareLinkSealing.linkURL(base: URL(string: base + firstID)!, key: .random()))))
         let second = try XCTUnwrap(ShareLinkURL(url: try XCTUnwrap(ShareLinkSealing.linkURL(base: URL(string: base + secondID)!, key: .random()))))
 
-        opener.open(first, stage: { _ in XCTFail("the first link has no packet") }, fail: { message, _ in failures.first.append(message) })
+        // The first link's task holds `alive` through its `fail` closure and lets go only when it has finished, after any
+        // fail() it makes. Waiting for that, not a fixed 200 ms, is what makes "no error" mean something: a replaced link
+        // that reported "expired" more slowly than the sleep used to pass (#4313).
+        final class TaskAlive {}
+        var alive: TaskAlive? = TaskAlive()
+        weak let firstTaskAlive = alive
+        opener.open(first, stage: { _ in XCTFail("the first link has no packet") }, fail: { [alive] message, _ in
+            withExtendedLifetime(alive) { failures.first.append(message) }
+        })
+        alive = nil
         try await pollUntil { firstAnswer.isWaiting }
         XCTAssertTrue(firstAnswer.isWaiting, "the first link's download never started")
         opener.open(second, stage: { _ in XCTFail("the second link has no packet") }, fail: { message, _ in failures.second.append(message) })
+        XCTAssertNotNil(firstTaskAlive, "the first link's task is still waiting on its server")
         firstAnswer.answer()
-        try await pollUntil { !(failures.second.isEmpty || !firstAnswer.answered) }
-        // Give the replaced task time to reach its catch on the main actor.
-        try await Task.sleep(for: .milliseconds(200))
+        try await pollUntil { !failures.second.isEmpty && firstTaskAlive == nil }
+        XCTAssertNil(firstTaskAlive, "the replaced link's task never finished")
 
         XCTAssertEqual(failures.second, ["This link has expired. Ask your friend to share it again."])
         XCTAssertEqual(failures.first, [], "the replaced link must not show an error over the link the listener tapped next")

@@ -55,6 +55,7 @@ const packets: PacketPort = {
       bytes: written.bytes,
       fileName: written.fileName,
       mimeType: written.mimeType,
+      contentDigest: written.contentDigest,
       included: written.included,
       ...(written.notice && { notice: written.notice }),
     };
