@@ -17,6 +17,8 @@ final class SystemSpeechResumePlannerTests: XCTestCase {
         let text = article()
         XCTAssertGreaterThan(text.utf8.count, SpeechProjectionMemo.minimumBytes)
         SpeechTextNormalizer.prewarm(text, kinds: .system)
+        // Without this the memo could be off and the "not again" check below would still hold (#4316).
+        XCTAssertTrue(SpeechTextNormalizer.projectionMemo.remembers(text, kind: .systemSpeech), "prewarm keeps the projection")
         let offset = text.count / 2
         let remaining = String(Array(text)[offset...])
         XCTAssertGreaterThan(remaining.utf8.count, SpeechProjectionMemo.minimumBytes)
