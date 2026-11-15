@@ -200,5 +200,37 @@ class Report(unittest.TestCase):
         self.assertEqual({p: p.read_bytes() for p in self.paths}, before)
 
 
+class HangProbeInBuild(unittest.TestCase):
+    """`has_hang_probe` reads a real git history: the probe file lives at either of its two paths (#318 moved it)."""
+
+    def commit(self, repo, files):
+        import subprocess
+        env = {'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t', 'GIT_COMMITTER_NAME': 't',
+               'GIT_COMMITTER_EMAIL': 't@t', 'PATH': '/usr/bin:/bin:/usr/local/bin', 'HOME': str(repo)}
+        for path in files:
+            target = Path(repo) / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('x')
+        subprocess.run(['git', '-C', str(repo), 'add', '-A'], check=True, env=env, capture_output=True)
+        subprocess.run(['git', '-C', str(repo), 'commit', '-q', '-m', 'c', '--allow-empty'], check=True, env=env,
+                       capture_output=True)
+        return subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], check=True, env=env,
+                              capture_output=True, text=True).stdout.strip()
+
+    def test_the_probe_is_found_at_the_old_path_the_new_path_or_not_at_all(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as folder:
+            repo = Path(folder)
+            subprocess.run(['git', '-C', str(repo), 'init', '-q'], check=True, capture_output=True)
+            none = self.commit(repo, ['README.md'])
+            old = self.commit(repo, [dh.HANG_PROBE_FILES[0]])
+            (repo / dh.HANG_PROBE_FILES[0]).unlink()
+            moved = self.commit(repo, [dh.HANG_PROBE_FILES[1]])
+            rows = [(none, 'no'), (old, 'yes'), (moved, 'yes'), ('0' * 40, 'unknown'), ('not-a-sha', 'unknown')]
+            for sha, expected in rows:
+                with self.subTest(sha=sha[:8]):
+                    self.assertEqual(dh.has_hang_probe(sha, repo), expected)
+
+
 if __name__ == '__main__':
     unittest.main()
