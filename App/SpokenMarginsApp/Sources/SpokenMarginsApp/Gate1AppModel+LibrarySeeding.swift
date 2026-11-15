@@ -180,12 +180,11 @@ extension Gate1AppModel {
             try store.reset()
             let item = try loadFixtureItem(name: "text-with-listening-map")
             let map = try loadFixtureMap(name: "valid-listening-map")
-            try store.seed(item: item)
-            try store.seed(map: map)
             let fillers = UITestingLaunchSeed.libraryFillerItems(
                 count: UITestingHooks.libraryFillerCount, fixtureAddedAt: item.createdAt ?? Date()
             )
-            for filler in fillers { try store.seed(item: filler) }
+            for seeded in [item] + fillers { try store.seed(item: seeded) }
+            try store.seed(map: map)
             self.store = store
             try configurePodcastDownloads(store: store)
             installEngine(try makeEngine(store: store))
