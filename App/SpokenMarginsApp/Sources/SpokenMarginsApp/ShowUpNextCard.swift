@@ -20,7 +20,6 @@ struct ShowUpNext: Equatable, Sendable {
 struct ShowUpNextCard: View {
     @EnvironmentObject private var model: Gate1AppModel
     @ObservedObject private var playQueue = PlayQueueState.shared
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let upNext: ShowUpNext
 
     private var entry: FeedEntry { upNext.card.entry }
@@ -63,39 +62,46 @@ struct ShowUpNextCard: View {
         .accessibilityIdentifier("show.upNext")
     }
 
-    /// Side by side at ordinary sizes; stacked and full width at accessibility sizes, where there is no room for three.
+    /// Side by side when they fit; stacked and full width when they don't (large text sizes), where three controls and a
+    /// menu have no room on one line.
     private var buttons: some View {
-        let layout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-            : AnyLayout(HStackLayout(spacing: 10))
-        return layout {
-            if upNext.card.isInLibrary {
-                Label("In your Library", systemImage: "checkmark.circle")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppColors.evergreen)
-                    .frame(minHeight: 44)
-                    .accessibilityIdentifier("show.upNext.inLibrary")
-            } else {
-                Button { model.importFollowedSourceEntry(entry) } label: {
-                    Text(isImporting ? "Adding…" : "Add to Library")
-                        .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil, minHeight: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
-                .disabled(isImporting)
-                .accessibilityIdentifier("show.upNext.add")
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                choices
+                Spacer(minLength: 0)
+                moreMenu
             }
-            Button(action: play) {
-                Label("Play", systemImage: "play.fill")
-                    .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil, minHeight: 44)
+            VStack(alignment: .leading, spacing: 8) {
+                choices
+                moreMenu
             }
-            .buttonStyle(.bordered)
+        }
+    }
+
+    @ViewBuilder
+    private var choices: some View {
+        if upNext.card.isInLibrary {
+            Label("In your Library", systemImage: "checkmark.circle")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AppColors.evergreen)
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("show.upNext.inLibrary")
+        } else {
+            Button { model.importFollowedSourceEntry(entry) } label: {
+                Text(isImporting ? "Adding…" : "Add to Library").frame(minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
             .tint(AppColors.evergreen)
             .disabled(isImporting)
-            .accessibilityIdentifier("show.upNext.play")
-            if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
-            moreMenu
+            .accessibilityIdentifier("show.upNext.add")
         }
+        Button(action: play) {
+            Label("Play", systemImage: "play.fill").frame(minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .tint(AppColors.evergreen)
+        .disabled(isImporting)
+        .accessibilityIdentifier("show.upNext.play")
     }
 
     /// In the Library: resume it there. Otherwise the episode enters the Library as it starts and not before, as the

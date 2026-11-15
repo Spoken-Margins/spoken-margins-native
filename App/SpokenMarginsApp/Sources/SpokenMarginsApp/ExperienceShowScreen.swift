@@ -16,6 +16,8 @@ struct ExperienceShowScreen: View {
     @State private var episodes: [FollowingShowEpisode] = []
     /// The Up next card (#3863): `FollowingUpNext.pick`, the episode the Following row's ▶ plays. Built with `episodes`.
     @State private var upNext: ShowUpNext?
+    /// The Library's size when this screen last looked, so a change reads the entries again (see the task below).
+    @State private var libraryCountSeen: Int?
 
     init(subscriptionID: String, lookedAtOnOpen: Date?, artwork: FollowingArtworkCache) {
         self.subscriptionID = subscriptionID
@@ -40,6 +42,14 @@ struct ExperienceShowScreen: View {
         .accessibilityIdentifier("show.screen")
         .onAppear { if subscription != nil { model.markShowLooked(id: subscriptionID) } }
         .onDisappear { if subscription != nil { model.markShowLooked(id: subscriptionID) } }
+        // Add and Play on the Up next card change what the Library holds while this screen is up. The reload that Following's
+        // own screen runs on that change may not run while it is covered, so this screen asks too; the card then flips to
+        // "In your Library" (#3863). The first value is only noted: opening the screen reads nothing extra.
+        .task(id: model.libraryItems.count) {
+            defer { libraryCountSeen = model.libraryItems.count }
+            guard let seen = libraryCountSeen, seen != model.libraryItems.count else { return }
+            await model.reloadFollowingShowEntries()
+        }
         .task(id: model.followingShowRevision) {
             guard let subscription else { return }
             // The library state is read here with the entries: both are set together, under the revision this task keys on.

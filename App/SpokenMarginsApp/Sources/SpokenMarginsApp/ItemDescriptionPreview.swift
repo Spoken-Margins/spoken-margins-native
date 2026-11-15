@@ -27,6 +27,8 @@ struct ItemDescriptionPreview: View {
                 Button { expanded.toggle() } label: {
                     Text(expanded ? "Less" : "More").frame(minHeight: 44, alignment: .leading).contentShape(Rectangle())
                 }
+                    // In a List row (a show's Up next card) an automatic-style button takes a tap anywhere on the row.
+                    .buttonStyle(.borderless)
                     .font(.subheadline.weight(.semibold))
                     .accessibilityHint(expanded ? "Shows fewer lines of the description." : "Shows the whole description.")
                     .accessibilityIdentifier("\(identifierPrefix).more")
