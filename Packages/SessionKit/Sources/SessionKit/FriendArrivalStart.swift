@@ -36,6 +36,8 @@ public struct FriendArrivalStart: Equatable, Sendable {
     /// whether the download failed.
     public let play: Readiness
     /// What Skip needs: the first Margin's audio. Never `failed`: a Margin that can't play is reported by the review.
+    /// A recording that never arrives keeps Skip `waiting`, so the screen ends a kept Skip itself after a limit, as
+    /// "Skip to the Margins" already does for readings (`WrittenMarginReadings.reviewHold`), by calling `cancel()`.
     public let skip: Readiness
 
     /// - Parameters:
@@ -93,7 +95,9 @@ public struct KeptFriendStart: Equatable, Sendable {
             cancel()
             return .start(tapped)
         case .failed:
-            // The failure card is already on screen; keeping the tap would wait for nothing.
+            // The failure card is already on screen; keeping this tap would wait for nothing. A Skip kept earlier
+            // does not wait on the episode, so it stays.
+            if choice == .skip, self.itemId == itemId { return .kept(announce: false) }
             cancel()
             return .idle
         case .waiting:

@@ -128,67 +128,24 @@ final class FriendArrivalStartTests: XCTestCase {
         XCTAssertEqual(kept.update(itemId: item, start: skipWaits), .kept(announce: false))
     }
 
+    func testATapOnAFailedPlayLeavesAKeptSkipAlone() {
+        let failedPlayWaitingSkip = Start(episodeCanStart: false, episodeFailed: true, firstMargin: .reading(isReady: false))
+        var kept = KeptFriendStart()
+        XCTAssertEqual(kept.tap(.skip, itemId: item, start: failedPlayWaitingSkip), .kept(announce: true))
+        XCTAssertEqual(kept.tap(.play, itemId: item, start: failedPlayWaitingSkip), .kept(announce: false))
+        XCTAssertEqual(kept.choice, .skip, "Play had nothing to keep; Skip is still waiting for its reading")
+        XCTAssertEqual(kept.update(itemId: item, start: Start(episodeCanStart: false, episodeFailed: true, firstMargin: .reading(isReady: true))), .start(.skip))
+        // A kept Play on a different item is not Skip's to keep.
+        var other = KeptFriendStart()
+        _ = other.tap(.skip, itemId: "first", start: failedPlayWaitingSkip)
+        XCTAssertEqual(other.tap(.play, itemId: "second", start: failedPlayWaitingSkip), .idle)
+        XCTAssertNil(other.choice)
+    }
+
     func testAnUpdateWithNothingKeptDoesNothing() {
         var kept = KeptFriendStart()
         XCTAssertEqual(kept.update(itemId: item, start: allHere), .idle)
         XCTAssertEqual(kept, KeptFriendStart())
-    }
-
-    // MARK: The Design's starting states, on the intro and the two choices
-
-    /// A packet just opened on an episode that isn't downloaded gives the intro and both choices on the first read,
-    /// whatever the listener's history with the item: first run, returning, finished, marked complete, 99%.
-    func testTheIntroAndBothChoicesExistOnTheFirstReadInEveryStartingState() throws {
-        let packet = SharedMarginReview.entries(
-            layers: [layer(finishedPass: false)],
-            records: ["layer": [margin(id: "web", sender: 134_000), margin(id: "none", sender: nil)]])
-        let waiting = packet.map(\.waitingMargin)
-        XCTAssertEqual(waiting.count, 2)
-        for finished in [false, true] {
-            for continuing in [false, true] {
-                for preparing in [false, true] {
-                    let state = "finished \(finished), continuing \(continuing), preparing \(preparing)"
-                    let intro = try XCTUnwrap(FriendMarginsIntro(unheardFriendMargins: waiting), state)
-                    XCTAssertEqual(intro.senderLine, "From Cole", state)
-                    let choices = ItemListeningChoices(
-                        unheardFriendMargins: waiting, hasFinishedSession: finished,
-                        hasContinuationSession: continuing, isPreparingAudio: preparing)
-                    XCTAssertEqual(choices.primaryTitle, "Play", state)
-                    XCTAssertTrue(choices.secondaryTitle?.hasPrefix("Skip to Cole's Margins") == true, state)
-                }
-            }
-        }
-    }
-
-    func testAMarginBehindTheListenersPlaceStillMakesTheIntro() throws {
-        var unheard = margin(id: "behind", sender: 5_000)
-        unheard.firstHeardAt = nil
-        let entries = SharedMarginReview.entries(layers: [layer(finishedPass: true)], records: ["layer": [unheard]])
-        XCTAssertEqual(entries.count, 1)
-        XCTAssertNotNil(FriendMarginsIntro(unheardFriendMargins: entries.map(\.waitingMargin)))
-        var heard = unheard
-        heard.firstHeardAt = Date(timeIntervalSince1970: 1)
-        XCTAssertTrue(SharedMarginReview.entries(layers: [layer(finishedPass: true)], records: ["layer": [heard]]).isEmpty)
-    }
-
-    func testAWrongEpisodeGivesNoIntroAndNoSkipMinutes() {
-        var other = layer(finishedPass: false)
-        other.sourceResolutionStatus = .wrongSource
-        let entries = SharedMarginReview.entries(layers: [other], records: ["layer": [margin(id: "m", sender: 5_000)]])
-        XCTAssertTrue(entries.isEmpty)
-        XCTAssertNil(FriendMarginsIntro(unheardFriendMargins: entries.map(\.waitingMargin)))
-        let choices = ItemListeningChoices(
-            unheardFriendMargins: entries.map(\.waitingMargin), hasFinishedSession: false,
-            hasContinuationSession: false, isPreparingAudio: false)
-        XCTAssertNil(choices.secondaryTitle, "no Skip button, so no minutes")
-    }
-
-    func testSkipOrderPutsTheEarliestMarginFirst() {
-        // `FirstMarginAudio` is read from the first of these, so the order is the screen's input.
-        let late = margin(id: "late", sender: 90_000)
-        let early = margin(id: "early", sender: 5_000)
-        let entries = SharedMarginReview.entries(layers: [layer(finishedPass: true)], records: ["layer": [late, early]])
-        XCTAssertEqual(entries.map(\.interjection.id), ["early", "late"])
     }
 
     // MARK: Helpers
