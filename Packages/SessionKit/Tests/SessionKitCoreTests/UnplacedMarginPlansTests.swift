@@ -62,7 +62,9 @@ final class UnplacedMarginPlansTests: XCTestCase {
         XCTAssertEqual(prompts.count, 1)
     }
 
-    func testAMarginWithNoUsableTimeIsOfferedButNeverCrossedByThePlayhead() {
+    /// It has no time to cross in place, so the playhead never crosses it. It plays when the episode ends instead
+    /// (`FriendMarginsPlanTests`, #4347).
+    func testAMarginWithNoUsableTimeIsOfferedButNeverCrossedByThePlayheadInPlace() {
         let none = margin(evidence: .unresolved, sender: nil)
         let done = layer(finishedPass: true)
         XCTAssertTrue(SharedMarginPrompts.isPlayable(none, in: done))

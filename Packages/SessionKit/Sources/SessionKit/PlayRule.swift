@@ -104,7 +104,7 @@ public enum PlayRule {
     public static func decide(_ context: Context) -> Outcome {
         let start = start(for: context)
         guard context.surface.asksAboutMarginsBehind else { return .play(start) }
-        let behind = SharedMarginReview.entriesBehind(context.newMargins, placeMs: place(of: start))
+        let behind = FriendMarginsPlan.behind(context.newMargins, place: place(of: start, in: context))
         if behind.isEmpty || context.declined.isDeclined(itemId: context.itemId, margins: behind.map(\.marginId)) {
             return .play(start)
         }
@@ -124,9 +124,9 @@ public enum PlayRule {
         guard let session = resumedSession(in: ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions)) else { return [] }
         if let mediaTimeMs = session.position.mediaTimeMs {
             // Play at the end of the episode has nothing left to cross, so the Margins that play after the others
-            // are behind it too, not skipped (#3789).
+            // are behind it too, not skipped (#3789). Short of the end they wait for it (#4347).
             let atEnd = session.completionPercent >= ItemFinishedRule.listenedPercent
-            return entries.filter { atEnd && $0.playsAfterOthers ? true : SharedMarginReview.entriesBehind([$0], placeMs: mediaTimeMs).count == 1 }
+            return FriendMarginsPlan.behind(entries, place: .known(mediaTimeMs: mediaTimeMs, isAtEnd: atEnd))
         }
         let charOffset = session.position.charOffset
         guard charOffset > 0 else { return [] }
@@ -187,10 +187,19 @@ public enum PlayRule {
         return row.continuePlaceMs == 0 ? .beginning : .savedPlace(mediaTimeMs: nil) // a row holds no place
     }
 
-    private static func place(of start: Start) -> Int? {
+    private static func place(of start: Start, in context: Context) -> FriendMarginsPlan.Place {
         switch start {
-        case .beginning: return 0
-        case .savedPlace(let ms): return ms
+        case .beginning: return .known(mediaTimeMs: 0, isAtEnd: false)
+        case .savedPlace(let ms):
+            guard let ms else { return .unknown }
+            // The playhead of what is playing now is not at the end (the episode's end plays its own Margins); a saved
+            // session left at 99% is, and only the open item's sessions say so.
+            let playingNow = context.nowPlaying?.itemId == context.itemId
+            var isAtEnd = false
+            if !playingNow, let open = context.openItem, open.id == context.itemId {
+                isAtEnd = savedPlaceIsAtEnd(sessions: open.sessions, addedAgainAt: open.addedAgainAt)
+            }
+            return .known(mediaTimeMs: ms, isAtEnd: isAtEnd)
         }
     }
 }

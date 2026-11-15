@@ -4,13 +4,25 @@ public struct ImportedCommentaryPrompt: Identifiable {
     public let interjection: ImportedCommentaryInterjection
     public let index: Int
     public let count: Int
+    /// The open item's length, when known. A sender time past it plays after the others (#4347), so the prompt
+    /// carries it for `plan` to read wherever the prompt is crossed, jumped to or ordered.
+    public let durationMs: Int?
 
-    public init(layer: ImportedCommentaryLayer, interjection: ImportedCommentaryInterjection, index: Int, count: Int) {
+    public init(
+        layer: ImportedCommentaryLayer, interjection: ImportedCommentaryInterjection, index: Int, count: Int,
+        durationMs: Int? = nil
+    ) {
         self.layer = layer
         self.interjection = interjection
         self.index = index
         self.count = count
+        self.durationMs = durationMs
     }
+
+    /// How it plays in this copy (#3789), with the item's length.
+    public var plan: SharedMarginPlacementPlan { SharedMarginPrompts.plan(interjection, in: layer, durationMs: durationMs) }
+    /// Where it plays in the episode: nil for a Margin placed in text only and for one that plays after the others.
+    public var mediaTimeMs: Int? { SharedMarginPrompts.mediaTimeMs(interjection, in: layer, durationMs: durationMs) }
 
     public var senderLabel: String { SharedPacketArrival.snapshotSenderLabel(layer.displayLabel) }
 }
@@ -41,9 +53,10 @@ public enum SharedMarginPrompts {
 
     public static func position(
         _ interjection: ImportedCommentaryInterjection,
-        in layer: ImportedCommentaryLayer? = nil
+        in layer: ImportedCommentaryLayer? = nil,
+        durationMs: Int? = nil
     ) -> Int {
-        mediaTimeMs(interjection, in: layer)
+        mediaTimeMs(interjection, in: layer, durationMs: durationMs)
             ?? interjection.resolution.localStartChar
             ?? .max
     }
@@ -97,7 +110,8 @@ public enum SharedMarginPrompts {
         layers: [ImportedCommentaryLayer],
         recordsByLayerID: [String: [ImportedCommentaryInterjection]],
         announcedIDs: Set<String>,
-        includeAnnounced: Bool
+        includeAnnounced: Bool,
+        durationMs: Int? = nil
     ) -> [ImportedCommentaryPrompt] {
         layers
             .filter { layer in
@@ -110,7 +124,7 @@ public enum SharedMarginPrompts {
                 let records = (recordsByLayerID[layer.id] ?? [])
                     .filter { isPlayable($0, in: layer) }
                     .sorted { lhs, rhs in
-                        position(lhs, in: layer) < position(rhs, in: layer)
+                        position(lhs, in: layer, durationMs: durationMs) < position(rhs, in: layer, durationMs: durationMs)
                     }
                 return records.enumerated().compactMap { pair -> ImportedCommentaryPrompt? in
                     let (offset, record) = pair
@@ -121,7 +135,8 @@ public enum SharedMarginPrompts {
                         layer: layer,
                         interjection: record,
                         index: offset + 1,
-                        count: records.count
+                        count: records.count,
+                        durationMs: durationMs
                     )
                 }
             }
@@ -133,7 +148,11 @@ public enum SharedMarginPrompts {
         current: SessionSnapshot
     ) -> [ImportedCommentaryPrompt] {
         prompts.filter { prompt in
-            if let anchor = mediaTimeMs(prompt.interjection, in: prompt.layer),
+            // A Margin that plays after the others has no time to cross: it plays when the episode ends (#4347).
+            if prompt.plan == .afterOthers {
+                return FriendMarginsPlan.episodeEndReached(previous: previous, current: current)
+            }
+            if let anchor = prompt.mediaTimeMs,
                previous.currentMediaTimeMs != nil, current.currentMediaTimeMs != nil {
                 return PlaybackAnchorCrossing.isCrossed(
                     anchor: anchor, before: previous.currentMediaTimeMs, after: current.currentMediaTimeMs
@@ -146,8 +165,8 @@ public enum SharedMarginPrompts {
             }
             return false
         }.sorted {
-            position($0.interjection, in: $0.layer)
-                < position($1.interjection, in: $1.layer)
+            position($0.interjection, in: $0.layer, durationMs: $0.durationMs)
+                < position($1.interjection, in: $1.layer, durationMs: $1.durationMs)
         }
     }
 }

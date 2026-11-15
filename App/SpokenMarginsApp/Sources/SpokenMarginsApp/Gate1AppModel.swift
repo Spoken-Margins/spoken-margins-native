@@ -1907,7 +1907,7 @@ final class Gate1AppModel: ObservableObject {
             layers: selectedItem.importedCommentaryLayers,
             recordsByLayerID: selectedItem.importedCommentaryInterjections,
             announcedIDs: includeAnnounced ? [] : sharedMarginOffers.announcedIDs, // nextOffer's autoclosure runs inside its modify of sharedMarginOffers
-            includeAnnounced: includeAnnounced
+            includeAnnounced: includeAnnounced, durationMs: selectedItem.mediaDurationMs
         )
     }
 

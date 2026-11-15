@@ -113,7 +113,8 @@ extension Gate1AppModel {
             layer: layer,
             interjection: records[offset],
             index: offset + 1,
-            count: records.count
+            count: records.count,
+            durationMs: selectedItem.mediaDurationMs
         ))
     }
 
@@ -301,11 +302,11 @@ extension Gate1AppModel {
         sharedMarginOffers.markAnnounced(prompt.id)
         if sourceWasPlaying { pause() }
         // A Margin still waiting for its placement pass is at the sender's time (#3059), as it is when the episode reaches it.
-        if let mediaTimeMs = SharedMarginPrompts.mediaTimeMs(prompt.interjection, in: prompt.layer) {
+        if let mediaTimeMs = prompt.mediaTimeMs {
             seekMedia(toMediaTimeMs: mediaTimeMs)
         } else if let charOffset = prompt.interjection.resolution.localStartChar {
             seekText(toCharOffset: charOffset)
-        } else if SharedMarginPrompts.plan(prompt.interjection, in: prompt.layer, durationMs: nil) == .afterOthers {
+        } else if prompt.plan == .afterOthers {
             // No usable time in this copy (#3789): a tap plays the Margin where the listener is, never at a made-up place.
         } else {
             reportFailure("The selected Shared Margin does not have a verified local position.")
