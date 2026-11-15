@@ -13,10 +13,6 @@ final class LiveSessionRecordingScreenAppTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(400))
     }
 
-    private func filedItems(in root: URL) -> [String] {
-        (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
-    }
-
     @MainActor
     func testStartingStateIsSetOnStartAndClearedOnStop() async throws {
         let root = makeRoot()
@@ -39,28 +35,67 @@ final class LiveSessionRecordingScreenAppTests: XCTestCase {
         XCTAssertFalse(capture.isStarting)
     }
 
+    /// A capture recording for session "s", which is saved first so a recording that is filed has somewhere to go. The
+    /// stand-in recorder needs no microphone, so the recording starts at once and Finish files it (#4311).
+    @MainActor
+    private func recording(in root: URL) async throws -> (LiveSessionSpokenCapture, LiveSessionFileWorker, StandInMarginRecorder) {
+        let files = LiveSessionFileWorker(root: root)
+        let saved = try await files.save(LiveSession(id: "s", title: "Budget meeting", startedAt: Date().addingTimeInterval(-60)), generation: 1)
+        XCTAssertTrue(saved)
+        let recorder = StandInMarginRecorder()
+        let capture = LiveSessionSpokenCapture(files: files, recorder: recorder, transcribe: { _ in nil })
+        capture.start(sessionId: "s")
+        return (capture, files, recorder)
+    }
+
+    /// Waits until the recorder was told to stop or to cancel, and says how many times each.
+    private func ending(of recorder: StandInMarginRecorder) async throws -> (stops: Int, cancels: Int) {
+        try await pollUntil(timeout: .seconds(10)) { await recorder.stops + recorder.cancels > 0 }
+        return (await recorder.stops, await recorder.cancels)
+    }
+
+    /// The control for the Cancel tests below: the same set-up does file a recording when it is finished, so their
+    /// "no Margins" is not the store failing to show one.
+    @MainActor
+    func testFinishFilesTheRecordingIntoItsSession() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (capture, files, recorder) = try await recording(in: root)
+        let view = LiveSessionRecordingView(capture: capture, sessionId: "s", anchorTitle: "t", anchorSubtitle: { "" }, onWriteInstead: { _ in })
+        view.actions.finish()
+        try await pollUntil(timeout: .seconds(10)) { await files.session(id: "s")?.margins.isEmpty == false }
+        let margins = await files.session(id: "s")?.margins ?? []
+        XCTAssertEqual(margins.map(\.spokenOn), ["phone"], "Finish files the recording into the session")
+        let ended = (stops: await recorder.stops, cancels: await recorder.cancels)
+        XCTAssertEqual(ended.stops, 1)
+        XCTAssertEqual(ended.cancels, 0)
+    }
+
     @MainActor
     func testCancelClearsTheRecordingAndFilesNothing() async throws {
         let root = makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        let capture = LiveSessionSpokenCapture(files: LiveSessionFileWorker(root: root))
-        capture.start(sessionId: "s")
+        let (capture, files, recorder) = try await recording(in: root)
         capture.cancel(sessionId: "s")
         XCTAssertNil(capture.sessionId)
         XCTAssertNil(capture.recordingStartedAt)
         XCTAssertFalse(capture.isStarting)
-        try await settle()
-        XCTAssertEqual(filedItems(in: root), [], "a discarded recording is never filed")
+        let ended = try await ending(of: recorder)
+        XCTAssertEqual(ended.cancels, 1, "the recorder threw the recording away")
+        XCTAssertEqual(ended.stops, 0, "a discarded recording is never stopped and filed")
+        let margins = await files.session(id: "s")?.margins
+        XCTAssertEqual(margins?.count, 0, "a discarded recording is never filed")
     }
 
     @MainActor
     func testTheAdapterCancelDiscardsAndTheScreenShowsTheStartingState() async throws {
         let root = makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        let capture = LiveSessionSpokenCapture(files: LiveSessionFileWorker(root: root))
-        capture.start(sessionId: "s")
+        let (capture, files, recorder) = try await recording(in: root)
+        var cancelled = 0
         let view = LiveSessionRecordingView(
-            capture: capture, sessionId: "s", anchorTitle: "Budget meeting", anchorSubtitle: { "12:30" }, onWriteInstead: { _ in }
+            capture: capture, sessionId: "s", anchorTitle: "Budget meeting", anchorSubtitle: { "12:30" }, onWriteInstead: { _ in },
+            onCancelled: { cancelled += 1 }
         )
         XCTAssertEqual(view.state.phase, .starting)
         XCTAssertEqual(view.state.anchorTitle, "Budget meeting")
@@ -70,16 +105,19 @@ final class LiveSessionRecordingScreenAppTests: XCTestCase {
 
         view.actions.cancel()
         XCTAssertNil(capture.sessionId)
-        try await settle()
-        XCTAssertEqual(filedItems(in: root), [], "Cancel calls cancel, not stopAndFile")
+        XCTAssertEqual(cancelled, 1)
+        let ended = try await ending(of: recorder)
+        XCTAssertEqual(ended.cancels, 1, "Cancel calls cancel, not stopAndFile")
+        XCTAssertEqual(ended.stops, 0, "Cancel calls cancel, not stopAndFile")
+        let margins = await files.session(id: "s")?.margins
+        XCTAssertEqual(margins?.count, 0, "Cancel files nothing")
     }
 
     @MainActor
     func testWriteInsteadDiscardsTheRecordingThenAsksToWrite() async throws {
         let root = makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        let capture = LiveSessionSpokenCapture(files: LiveSessionFileWorker(root: root))
-        capture.start(sessionId: "s")
+        let (capture, files, recorder) = try await recording(in: root)
         var wrote = 0
         let view = LiveSessionRecordingView(
             capture: capture, sessionId: "s", anchorTitle: "t", anchorSubtitle: { "" }, onWriteInstead: { _ in wrote += 1 }
@@ -87,8 +125,11 @@ final class LiveSessionRecordingScreenAppTests: XCTestCase {
         view.actions.writeInstead(true)
         XCTAssertNil(capture.sessionId)
         XCTAssertEqual(wrote, 1)
-        try await settle()
-        XCTAssertEqual(filedItems(in: root), [])
+        let ended = try await ending(of: recorder)
+        XCTAssertEqual(ended.cancels, 1, "writing instead throws the recording away")
+        XCTAssertEqual(ended.stops, 0, "writing instead never files the recording as well")
+        let margins = await files.session(id: "s")?.margins
+        XCTAssertEqual(margins?.count, 0)
     }
 
     /// The audit on 17f2ffa: cancel clears the recording's start, so writing instead used the moment of the change
@@ -108,4 +149,32 @@ final class LiveSessionRecordingScreenAppTests: XCTestCase {
         XCTAssertNil(capture.recordingStartedAt, "cancel clears it, which is why it is read first")
         XCTAssertEqual(handedOver, .some(.some(began)))
     }
+}
+
+/// A recorder that needs no microphone (#4311): it starts at once, `stop` hands back a recording, and it counts how each
+/// recording ended, so a test can tell a recording filed from one thrown away.
+actor StandInMarginRecorder: LiveSessionMarginRecorder {
+    private(set) var stops = 0
+    private(set) var cancels = 0
+    private var startedAt: Date?
+
+    func checkCanRecord() async throws {}
+
+    func start() async throws {
+        startedAt = startedAt ?? Date()
+    }
+
+    func stop() async throws -> LiveSessionPhoneRecorder.Recording? {
+        stops += 1
+        guard let startedAt else { return nil }
+        self.startedAt = nil
+        return LiveSessionPhoneRecorder.Recording(audioPath: "SpokenMargins/interjections/stand-in.m4a", startedAt: startedAt, durationMs: 1_000)
+    }
+
+    func cancel() async {
+        cancels += 1
+        startedAt = nil
+    }
+
+    func isCapturing() async -> Bool { startedAt != nil }
 }

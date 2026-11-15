@@ -155,8 +155,8 @@ final class NativeTextReaderView: UITextView {
         let content = NSMutableAttributedString(string: reader.text, attributes: [
             .font: font, .foregroundColor: UIColor.label, .paragraphStyle: paragraph
         ])
-        if let range = reader.currentSentenceRange, range.length > 0 {
-            content.addAttribute(.backgroundColor, value: UIColor.systemYellow.withAlphaComponent(0.22), range: range)
+        if let span = ReaderSentenceHighlight.span(textLength: content.length, sentence: reader.currentSentenceRange) {
+            Self.applySentenceHighlight(span, to: content)
         }
         attributedText = content
         if changedDocument {
@@ -168,6 +168,24 @@ final class NativeTextReaderView: UITextView {
             setContentOffset(previousOffset, animated: false)
         }
         setNeedsLayout()
+    }
+
+    /// Draws what `ReaderSentenceHighlight` decided: an ochre fill and a thick underline (#3736). The underline is the
+    /// cue that does not rest on hue, so it is always drawn, not only under Differentiate Without Color.
+    static func applySentenceHighlight(_ span: ReaderSentenceHighlight.Span, to content: NSMutableAttributedString) {
+        content.addAttribute(.backgroundColor, value: dynamicColor(span.fill).withAlphaComponent(span.fillAlpha), range: span.range)
+        if span.underlineIsThick {
+            content.addAttribute(.underlineStyle, value: NSUnderlineStyle.thick.rawValue, range: span.range)
+            content.addAttribute(.underlineColor, value: dynamicColor(span.underline), range: span.range)
+        }
+    }
+
+    /// Re-resolves with the appearance, like `AppColors.dynamicColor`.
+    private static func dynamicColor(_ colors: AppDynamicRGB) -> UIColor {
+        UIColor { traits in
+            let value = traits.userInterfaceStyle == .dark ? colors.dark : colors.light
+            return UIColor(red: value.red, green: value.green, blue: value.blue, alpha: 1)
+        }
     }
 
     override func layoutSubviews() {
