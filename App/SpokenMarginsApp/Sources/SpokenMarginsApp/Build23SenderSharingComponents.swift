@@ -337,6 +337,22 @@ struct Build23SendFileButton: View {
     }
 }
 
+/// The caption under the button that sends the file (#3800): a friend needs the app to open a file. One view, so a
+/// test can render the real line for each build.
+struct Build23FileNeedsAppCaption: View {
+    let linksOffered: Bool
+
+    var body: some View {
+        Text(ShareFileMessage.caption(linksOffered: linksOffered))
+            .font(.footnote)
+            .foregroundStyle(AppColors.secondaryText)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("build23.sender.file-caption")
+    }
+}
+
 /// "Preview what your friend gets": one full-width bordered row at the end of the review step's content (#3896),
 /// the last thing before the pinned send buttons. On a wide iPad it stops at a readable width.
 struct Build23PreviewRow: View {
