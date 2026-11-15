@@ -128,4 +128,16 @@ final class FriendArrivalWordsTests: XCTestCase {
             XCTAssertEqual(FriendArrivalWords.liveActivitySender(senderLabel: raw), "a friend", "\(raw ?? "nil")")
         }
     }
+
+    /// #3790: the Now screen's switch uses the owner-reviewed words, and its caption follows the global switch only.
+    func testTheNowSwitchSaysWhatItDoesInTheReviewedWords() {
+        XCTAssertEqual(FriendArrivalWords.autoPlayLabel, "Play Margins from friends as you reach them")
+        XCTAssertEqual(FriendArrivalWords.autoPlayCaption(isOn: true), "The episode pauses for each one, then goes on.")
+        XCTAssertEqual(FriendArrivalWords.autoPlayCaption(isOn: false), "A tone marks each one.")
+        for isOn in [true, false] {
+            let caption = FriendArrivalWords.autoPlayCaption(isOn: isOn)
+            XCTAssertFalse(caption.contains("Auto-play"), "the old name is gone")
+            XCTAssertFalse(caption.lowercased().contains("shared"), "a friend's Margin is never 'shared' on Now")
+        }
+    }
 }

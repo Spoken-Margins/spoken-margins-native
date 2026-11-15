@@ -144,6 +144,83 @@ final class PlaybackMarginTranscriptionStatusTests: XCTestCase {
         }
     }
 
+    // MARK: Failed and missing, told apart (#3790)
+
+    func testFailedWithItsRecordingAndMissingRecordingsAreToldApart() throws {
+        try withStore { store, _, _ in
+            var failedMissing = note("f-missing", transcription: "failed")
+            failedMissing.audioStatus = "missing"
+            var pendingNoPath = note("p-nopath", transcription: "pending")
+            pendingNoPath.audioPath = nil
+            for row in [note("p1", transcription: "pending"), note("f1", transcription: "failed"),
+                        note("f2", transcription: "failed"), failedMissing, pendingNoPath] { try store.saveInterjection(row) }
+            let result = present(try store.loadInterjections(sessionId: "A-current"))
+            XCTAssertEqual(result.pendingCount, 1)
+            XCTAssertEqual(result.failedCount, 2)
+            XCTAssertEqual(result.missingCount, 2)
+            XCTAssertEqual(result.attentionCount, 4, "attention is still failed plus missing")
+            XCTAssertEqual(result.words, "1 transcript pending · 2 transcripts failed · 2 recordings missing")
+            XCTAssertEqual(result.voiceOverWords,
+                "1 Margin transcript pending. 2 Margin transcripts failed. Open the Margins to try again. 2 Margin recordings are missing.")
+        }
+    }
+
+    func testEachKindAloneSingularAndPluralAndTheOrderWhenMixed() {
+        func status(pending: Int, failed: Int, missing: Int) -> PlaybackMarginTranscriptionStatus {
+            var notes: [Interjection] = []
+            func make(_ id: String, _ transcription: String, noAudio: Bool = false) -> Interjection {
+                var row = note(id, transcription: transcription)
+                if noAudio { row.audioPath = nil }
+                return row
+            }
+            notes += (0..<pending).map { make("p\($0)", "pending") }
+            notes += (0..<failed).map { make("f\($0)", "failed") }
+            notes += (0..<missing).map { make("m\($0)", "failed", noAudio: true) }
+            return present(notes)
+        }
+        let table: [(Int, Int, Int, String?, String?)] = [
+            (0, 0, 0, nil, nil),
+            (1, 0, 0, "1 transcript pending", "1 Margin transcript pending."),
+            (3, 0, 0, "3 transcripts pending", "3 Margin transcripts pending."),
+            (0, 1, 0, "1 transcript failed", "1 Margin transcript failed. Open the Margin to try again."),
+            (0, 2, 0, "2 transcripts failed", "2 Margin transcripts failed. Open the Margins to try again."),
+            (0, 0, 1, "1 recording missing", "1 Margin recording is missing."),
+            (0, 0, 2, "2 recordings missing", "2 Margin recordings are missing."),
+            (1, 1, 0, "1 transcript pending · 1 transcript failed", "1 Margin transcript pending. 1 Margin transcript failed. Open the Margin to try again."),
+            (0, 1, 1, "1 transcript failed · 1 recording missing", "1 Margin transcript failed. Open the Margin to try again. 1 Margin recording is missing.")
+        ]
+        for (pending, failed, missing, words, spoken) in table {
+            let result = status(pending: pending, failed: failed, missing: missing)
+            XCTAssertEqual(result.words, words, "\(pending)/\(failed)/\(missing)")
+            XCTAssertEqual(result.voiceOverWords, spoken, "\(pending)/\(failed)/\(missing)")
+            XCTAssertEqual(result.text == nil, words == nil, "the older words and the new ones agree on whether there is anything to say")
+        }
+    }
+
+    func testARetryingNoteIsPendingEvenWhenItsRecordingIsMissingAndNoNewWordsNeedAttention() throws {
+        try withStore { store, _, _ in
+            var row = note("retry", transcription: "failed")
+            row.audioStatus = "missing"
+            try store.saveInterjection(row)
+            let result = present(try store.loadInterjections(sessionId: "A-current"), isRetrying: { _ in true })
+            XCTAssertEqual(result.words, "1 transcript pending")
+            XCTAssertEqual(result.failedCount, 0)
+            XCTAssertEqual(result.missingCount, 0)
+        }
+    }
+
+    func testTheWordsNeverUseTheOldAttentionPhrasing() throws {
+        try withStore { store, _, _ in
+            var missing = note("m", transcription: "failed")
+            missing.audioPath = nil
+            for row in [note("f", transcription: "failed"), missing] { try store.saveInterjection(row) }
+            let result = present(try store.loadInterjections(sessionId: "A-current"))
+            for words in [result.words, result.voiceOverWords].compactMap({ $0 }) {
+                XCTAssertFalse(words.contains("attention"), words)
+            }
+        }
+    }
+
     private func present(_ notes: [Interjection], isRetrying: (Interjection) -> Bool = { _ in false }) -> PlaybackMarginTranscriptionStatus {
         PlaybackMarginTranscriptionStatus(selectedItemId: "A", playingItemId: "A", sessionId: "A-current",
                                          interjections: notes, isRetrying: isRetrying)

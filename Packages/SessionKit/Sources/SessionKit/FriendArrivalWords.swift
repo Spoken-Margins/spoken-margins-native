@@ -77,6 +77,15 @@ public enum FriendArrivalWords {
     /// The name of the control that picks the play mode.
     public static let playModeTitle = "When Margins play"
 
+    /// The Now screen's switch for a friend's Margins (#3790): the owner-reviewed words, the same name the item screen's
+    /// layer control uses for its modes, in place of "Auto-play shared Margins".
+    public static let autoPlayLabel = "Play Margins from friends as you reach them"
+
+    /// The one line under the switch. It follows the global switch only; a layer's own mode is shown on the item screen.
+    public static func autoPlayCaption(isOn: Bool) -> String {
+        isOn ? "The episode pauses for each one, then goes on." : "A tone marks each one."
+    }
+
     /// A plain sentence for the one placement problem a listener can act on: the file isn't this episode or article.
     /// Every other state says nothing here; each Margin's own row says where it plays (#3789).
     public static func placementProblem(_ status: ImportedSourceResolutionStatus) -> String? {
