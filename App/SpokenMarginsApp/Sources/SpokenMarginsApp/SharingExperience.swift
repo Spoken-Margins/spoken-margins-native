@@ -786,12 +786,15 @@ private struct ShareRevisionAudioPreviewButton: View {
 
 struct SharedSpokenMarginsPackageActivityView: UIViewControllerRepresentable {
     let packageURL: URL
+    /// The item's title. When it is set, Messages and Mail get a line beside the file saying what it is and where to
+    /// get the app (#3800); every other target gets the file alone.
+    var itemTitle: String?
     /// Runs when the share sheet reports the packet was sent (logged as an I4 `share`, #483).
     var onShared: () -> Void = {}
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let controller = UIActivityViewController(
-            activityItems: [SpokenMarginsPackageActivityItem(packageURL: packageURL)],
+            activityItems: Self.activityItems(packageURL: packageURL, itemTitle: itemTitle),
             applicationActivities: nil
         )
         controller.completionWithItemsHandler = { _, completed, _, _ in
@@ -801,13 +804,54 @@ struct SharedSpokenMarginsPackageActivityView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+
+    /// What the sheet carries: the packet, then, when there is a title, the line that only Messages and Mail take.
+    /// A test reads this; `UIActivityViewController` doesn't give its items back.
+    static func activityItems(packageURL: URL, itemTitle: String?) -> [Any] {
+        guard let itemTitle else { return [SpokenMarginsPackageActivityItem(packageURL: packageURL)] }
+        return [
+            SpokenMarginsPackageActivityItem(packageURL: packageURL, mailSubject: ShareFileMessage.mailSubject(itemTitle: itemTitle)),
+            SpokenMarginsFileMessageActivityItem(itemTitle: itemTitle),
+        ]
+    }
+}
+
+/// The line beside a file sent as a file (#3800): returned for Messages and Mail, and nothing for any other target, so
+/// an app that keeps one of two items can never keep the line and drop the file.
+final class SpokenMarginsFileMessageActivityItem: NSObject, UIActivityItemSource {
+    let itemTitle: String
+
+    init(itemTitle: String) {
+        self.itemTitle = itemTitle
+    }
+
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
+        ShareFileMessage.text(itemTitle: itemTitle)
+    }
+
+    func activityViewController(
+        _ activityViewController: UIActivityViewController,
+        itemForActivityType activityType: UIActivity.ActivityType?
+    ) -> Any? {
+        ShareFileMessage.carriesMessage(activityType: activityType?.rawValue) ? ShareFileMessage.text(itemTitle: itemTitle) : nil
+    }
+
+    func activityViewController(
+        _ activityViewController: UIActivityViewController,
+        subjectForActivityType activityType: UIActivity.ActivityType?
+    ) -> String {
+        ShareFileMessage.mailSubject(itemTitle: itemTitle)
+    }
 }
 
 final class SpokenMarginsPackageActivityItem: NSObject, UIActivityItemSource {
     let packageURL: URL
+    /// The subject Mail gets. A file sent beside the line in #3800 names the item; the rest keep the old one.
+    let mailSubject: String
 
-    init(packageURL: URL) {
+    init(packageURL: URL, mailSubject: String = "Spoken Margins shared session") {
         self.packageURL = packageURL
+        self.mailSubject = mailSubject
     }
 
     func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
@@ -832,7 +876,7 @@ final class SpokenMarginsPackageActivityItem: NSObject, UIActivityItemSource {
         _ activityViewController: UIActivityViewController,
         subjectForActivityType activityType: UIActivity.ActivityType?
     ) -> String {
-        "Spoken Margins shared session"
+        mailSubject
     }
 }
 

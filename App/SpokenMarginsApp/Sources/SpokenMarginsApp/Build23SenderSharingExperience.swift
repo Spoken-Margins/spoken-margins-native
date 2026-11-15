@@ -121,6 +121,7 @@ struct Build23SenderSharingExperience: View {
                         .controlSize(.large)
                         .frame(maxWidth: .infinity)
                     secondaryAction(snapshot)
+                    fileCaption(snapshot)
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
@@ -162,7 +163,10 @@ struct Build23SenderSharingExperience: View {
         }
         .trackedSheet(isPresented: $isSystemSharePresented, onDismiss: finishSystemShare) {
             if let packageURL = verifiedShareURLForPresentation {
-                SharedSpokenMarginsPackageActivityView(packageURL: packageURL) { coordinator.recordSystemShareCompleted(packetURL: packageURL) }
+                SharedSpokenMarginsPackageActivityView(
+                    packageURL: packageURL,
+                    itemTitle: coordinator.snapshot.itemTitle
+                ) { coordinator.recordSystemShareCompleted(packetURL: packageURL) }
             }
         }
     }
@@ -289,6 +293,23 @@ struct Build23SenderSharingExperience: View {
                     presentVerifiedSystemShare()
                 }
             }
+        default:
+            EmptyView()
+        }
+    }
+
+    /// The line under the button that sends the file (#3800): the friend needs the app to open it. With links on it
+    /// sits under "Send as a file", where that button is drawn; with links off the main Share button sends the file,
+    /// so it sits under that, and says only the first sentence because there is no link to offer.
+    @ViewBuilder
+    private func fileCaption(_ snapshot: Build23SharingSnapshot) -> some View {
+        switch snapshot.stage {
+        case .review:
+            Build23FileNeedsAppCaption(linksOffered: sharesLink)
+        case .recipientPreview where !sharesLink:
+            Build23FileNeedsAppCaption(linksOffered: false)
+        case .recipientPreview where snapshot.previewState == .ready && snapshot.verifiedPreview != nil:
+            Build23FileNeedsAppCaption(linksOffered: true)
         default:
             EmptyView()
         }

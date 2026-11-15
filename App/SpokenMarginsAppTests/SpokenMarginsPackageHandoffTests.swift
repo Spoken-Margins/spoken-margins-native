@@ -1,3 +1,5 @@
+import SwiftUI
+import UIKit
 import XCTest
 @testable import SessionKit
 import SessionKitAudio
@@ -1378,4 +1380,68 @@ private final class ShareLinkRequestLog: @unchecked Sendable {
     }
 
     var urls: [URL] { lock.lock(); defer { lock.unlock() }; return recorded }
+}
+
+/// #3800: a file sent as a file says what it is and where to get the app, but only where the line is known to arrive
+/// with the file. These read what the share sheet's item sources hand out for each target, and the caption the sender
+/// sees, not the strings they are built from.
+@MainActor
+final class FileNeedsTheAppShareTests: XCTestCase {
+    private let packet = URL(fileURLWithPath: "/tmp/shared-session.spokenmargins")
+
+    private func type(_ raw: String) -> UIActivity.ActivityType { UIActivity.ActivityType(rawValue: raw) }
+
+    func testAFileWithATitleGoesWithALineThatOnlyMessagesAndMailTake() throws {
+        let items = SharedSpokenMarginsPackageActivityView.activityItems(packageURL: packet, itemTitle: "The Daily")
+        XCTAssertEqual(items.count, 2)
+        let file = try XCTUnwrap(items.first as? SpokenMarginsPackageActivityItem)
+        let line = try XCTUnwrap(items.last as? SpokenMarginsFileMessageActivityItem)
+        let controller = UIActivityViewController(activityItems: [], applicationActivities: nil)
+        let words = "I left you notes on “The Daily”. Open this file in Spoken Margins. Get it here: https://spokenmargins.com/join"
+
+        for target in [UIActivity.ActivityType.message, .mail] {
+            XCTAssertEqual(line.activityViewController(controller, itemForActivityType: target) as? String, words, "\(target)")
+        }
+        // Every other target, and a target that reports none, gets the file alone.
+        let others: [UIActivity.ActivityType?] = [
+            .airDrop, .copyToPasteboard, .saveToCameraRoll, .addToReadingList,
+            type("com.apple.CloudDocsUI.AddToiCloudDrive"), type("net.whatsapp.WhatsApp.ShareExtension"), nil,
+        ]
+        for target in others {
+            XCTAssertNil(line.activityViewController(controller, itemForActivityType: target), "\(String(describing: target))")
+            // The file itself goes to all of them, unchanged.
+            XCTAssertEqual(file.activityViewController(controller, itemForActivityType: target) as? URL, packet)
+        }
+        XCTAssertEqual(line.activityViewController(controller, subjectForActivityType: .mail), "Margins on “The Daily”")
+        XCTAssertEqual(file.activityViewController(controller, subjectForActivityType: .mail), "Margins on “The Daily”")
+    }
+
+    /// A sheet with no title, the old call, still sends the file alone with the old subject.
+    func testAFileWithNoTitleIsUnchanged() throws {
+        let items = SharedSpokenMarginsPackageActivityView.activityItems(packageURL: packet, itemTitle: nil)
+        XCTAssertEqual(items.count, 1)
+        let file = try XCTUnwrap(items.first as? SpokenMarginsPackageActivityItem)
+        let controller = UIActivityViewController(activityItems: [], applicationActivities: nil)
+        XCTAssertEqual(file.activityViewController(controller, subjectForActivityType: .mail), "Spoken Margins shared session")
+    }
+
+    func testTheCaptionFitsTheNarrowestPhoneAtEveryTextSize() throws {
+        for linksOffered in [true, false] {
+            for size in [DynamicTypeSize.large, .accessibility5] {
+                let content = Build23FileNeedsAppCaption(linksOffered: linksOffered)
+                    .environment(\.dynamicTypeSize, size)
+                    .background(Color(uiColor: .systemBackground))
+                let renderer = ImageRenderer(content: content)
+                renderer.proposedSize = ProposedViewSize(width: 343, height: nil)
+                renderer.scale = 2
+                let image = try XCTUnwrap(renderer.uiImage, "links \(linksOffered) \(size): the caption drew nothing")
+                XCTAssertLessThanOrEqual(image.size.width, 344, "links \(linksOffered) \(size): ran off the screen")
+                XCTAssertGreaterThan(image.size.height, 12, "links \(linksOffered) \(size)")
+                let attachment = XCTAttachment(image: image)
+                attachment.name = "file-needs-app-caption-links-\(linksOffered)-\(size)"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+        }
+    }
 }
