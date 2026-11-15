@@ -450,6 +450,8 @@ struct AccessibilityNode {
     let identifier: String?
     let traits: UIAccessibilityTraits
     let frame: CGRect
+    /// What Voice Control matches a spoken name against (#4312).
+    let inputLabels: [String]
 }
 
 @MainActor
@@ -507,7 +509,7 @@ struct MountedTree {
         let label = element.accessibilityLabel
         guard label?.isEmpty == false || identifier?.isEmpty == false else { return nil }
         return AccessibilityNode(label: label, identifier: identifier, traits: element.accessibilityTraits,
-                                 frame: element.accessibilityFrame)
+                                 frame: element.accessibilityFrame, inputLabels: element.accessibilityUserInputLabels ?? [])
     }
 
     private static func children(of node: NSObject) -> [NSObject] {

@@ -56,14 +56,24 @@ final class AddMarginSiriRouteAppTests: XCTestCase {
         XCTAssertEqual(stored?.margins.map(\.text), ["test two"])
     }
 
+    /// #4312: this asserted only that a draft still existed, which held whether Siri's words went to the live session,
+    /// into the draft or nowhere. Siri's words go to the live session, and the half-written Margin keeps its own words.
     func testTheLiveSessionTakesItEvenWhileAPlayerMarginIsBeingWritten() async throws {
         let model = makeModel()
         model.startItem(id: "item-pill")
         model.beginWrittenMargin()
-        let files = try await runningWorker()
-        _ = try await AddMarginShortcutAction.perform(text: "both kept", toItemId: nil, in: model, files: files, now: t0.addingTimeInterval(30))
-        XCTAssertNotNil(model.writtenMarginDraft)
-        model.cancelWrittenMargin()
+        defer { model.cancelWrittenMargin() }  // the draft is journaled; a throw must not leave it for the next test
+        model.updateWrittenMarginText("half written")
+        model.refreshMarginRows()
+        let before = model.marginRows.count
+        let files = try await runningWorker(title: "Night read")
+        let name = try await AddMarginShortcutAction.perform(text: "both kept", toItemId: nil, in: model, files: files, now: t0.addingTimeInterval(30))
+        XCTAssertEqual(name, "Night read")
+        let stored = await files.session(id: "live")
+        XCTAssertEqual(stored?.margins.map(\.text), ["both kept"])
+        XCTAssertEqual(model.writtenMarginDraft?.text, "half written")
+        model.refreshMarginRows()
+        XCTAssertEqual(model.marginRows.count, before, "Siri's Margin also landed on the item in the player")
     }
 
     func testWithNoLiveSessionThePlayerStillTakesIt() async throws {

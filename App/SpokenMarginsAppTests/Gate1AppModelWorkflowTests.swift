@@ -7,6 +7,7 @@ import SessionKitFeeds
 import SessionKitPersistence
 @testable import SpokenMarginsApp
 import SQLite3
+import SwiftUI
 #if canImport(UIKit)
 import UIKit
 import PDFKit
@@ -4965,15 +4966,41 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// a Margin moment (the playback screen's pane switch watched that), so the listener stayed on the Timeline. The action
     /// now counts each success in `showNowRequests`, which the screen turns into the Now pane. The test layer that should
     /// have caught it is this one: the action, for a written Margin, and what it tells the screen.
-    func testGoToThisMomentOnAWrittenMarginAsksTheScreenToShowNow() throws {
+    ///
+    /// #4312: counting requests passed with the screen's `.onChange` that turns them into the Now pane deleted. This
+    /// mounts the playback screen, goes to the Timeline as a listener does, and reads which pane the switch says is
+    /// selected, twice, because a second tap after browsing back to the Timeline must switch again.
+    func testGoToThisMomentOnAWrittenMarginShowsNowFromTheTimeline() async throws {
         let fixture = try textAnchoredMomentFixture(written: true)
         let model = fixture.model
         defer { model.endMarginMoment(); model.pause() }
-        XCTAssertEqual(model.showNowRequests, 0)
+        let automationWasEnabled = AccessibilityAutomation.enable()
+        defer { if let automationWasEnabled { AccessibilityAutomation.set(automationWasEnabled) } }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        // The Timeline pane reads the sharing coordinator; without it, switching to the Timeline stops the test host.
+        window.rootViewController = UIHostingController(rootView: AnyView(PlaybackScreen().environmentObject(model)
+            .environmentObject(Build23SharingCoordinator(model: model))))
+        window.makeKeyAndVisible()
+        let mounted = MountedTree(window: window, previousKeyWindow: previousKeyWindow)
+        defer { mounted.close() }
 
-        XCTAssertTrue(model.playMarginMoment(fixture.row))
+        for tap in 1...2 {
+            _ = try await mounted.waitForNode("the Timeline pane button") { $0.identifier == PlaybackPane.timeline.accessibilityIdentifier }
+            XCTAssertTrue(mounted.activate { $0.identifier == PlaybackPane.timeline.accessibilityIdentifier },
+                          "the Timeline pane button refused activation")
+            _ = try await mounted.waitForNode("the Timeline selected before tap \(tap)") {
+                $0.identifier == PlaybackPane.timeline.accessibilityIdentifier && $0.traits.contains(.selected)
+            }
 
-        XCTAssertEqual(model.showNowRequests, 1)
+            XCTAssertTrue(model.playMarginMoment(fixture.row))
+
+            _ = try await mounted.waitForNode("the Now pane selected after tap \(tap) of Go to this moment") {
+                $0.identifier == PlaybackPane.now.accessibilityIdentifier && $0.traits.contains(.selected)
+            }
+        }
         XCTAssertNil(model.marginMoment, "a written Margin starts no Margin moment: the request is what switches the pane")
         XCTAssertEqual(model.screen, .playback)
     }
@@ -4987,17 +5014,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertEqual(model.showNowRequests, 1)
         XCTAssertNotNil(model.marginMoment)
-    }
-
-    func testEachSuccessfulGoToThisMomentIsAFreshRequest() throws {
-        let fixture = try textAnchoredMomentFixture(written: true)
-        let model = fixture.model
-        defer { model.endMarginMoment(); model.pause() }
-
-        XCTAssertTrue(model.playMarginMoment(fixture.row))
-        XCTAssertTrue(model.playMarginMoment(fixture.row))
-
-        XCTAssertEqual(model.showNowRequests, 2, "a second tap after browsing back to the Timeline must switch again")
     }
 
     func testAGoToThisMomentThatCannotReadItsMarginAsksForNothing() throws {
