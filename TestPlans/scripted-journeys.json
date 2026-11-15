@@ -56,7 +56,7 @@
       "journey": "Live session: End is in the dock, reachable without scrolling after many Margins (#3491)"
     },
     {
-      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLiveSessionEndSheetStaysUpForThreeSeconds",
+      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLiveSessionEndSheetStaysUpWhileTheSessionClockTicks",
       "journey": "Live session: the End sheet stays up until the listener answers it (#2831)"
     },
     {

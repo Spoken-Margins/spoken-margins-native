@@ -477,7 +477,7 @@ final class CatalogDrawerTests: XCTestCase {
     func testAShowWithNoPublicFeedIsListedWithItsReasonAndCannotBeFollowed() async throws {
         let log = FollowLog()
         let drawer = try makeDrawer(defaults: try freshDefaults(), log: log, searcher: searcher { _ in
-            Self.iTunesResponse([(7, "Exclusive Show", nil)])
+            Self.iTunesResponse([(7, "Exclusive Show", nil), (8, "Open Show", "https://open.example/feed.xml")])
         })
         await drawer.load()
         drawer.searchText = "exclusive show"
@@ -485,10 +485,15 @@ final class CatalogDrawerTests: XCTestCase {
         let show = try XCTUnwrap(drawer.searchResults?.first)
         XCTAssertNil(show.feed)
         XCTAssertEqual(show.reason, "No public feed: this show is exclusive to another app")
+        let open = try XCTUnwrap(drawer.searchResults?.last)
 
         drawer.followSearchResult(show)
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertEqual(log.feeds, [], "nothing was followed")
+        XCTAssertNil(drawer.state(for: show))
+        // A later follow on the same main actor: once it has landed, a follow the first tap wrongly started would have
+        // run too. A fixed 100 ms passed for a follow slower than that (#4313).
+        drawer.followSearchResult(open)
+        try await waitFor { drawer.state(for: open) == .followed }
+        XCTAssertEqual(log.feeds, ["https://open.example/feed.xml"], "only the show with a feed was followed")
         XCTAssertNil(drawer.state(for: show))
     }
 
@@ -535,7 +540,8 @@ final class CatalogDrawerTests: XCTestCase {
             return Self.iTunesResponse([])
         })
         drawer.searchText = "h"
-        try await Task.sleep(for: .milliseconds(100))
+        // No wait (#4313): the drawer turns one character away before any search task exists, so a search that started
+        // shows at once as isSearchPending; a fixed sleep only gave a started search's request time to arrive.
         XCTAssertEqual(requests.value, 0)
         XCTAssertFalse(drawer.isSearching)
         XCTAssertFalse(drawer.isSearchPending)

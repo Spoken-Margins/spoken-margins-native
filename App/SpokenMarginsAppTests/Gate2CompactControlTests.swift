@@ -361,8 +361,13 @@ final class Gate2CompactControlTests: XCTestCase {
         let center = NotificationCenter()
         var nowMs = 1_000
         let watcher = MarginCaptureWatcher(autoPoll: false, notificationCenter: center, nowMs: { nowMs })
+        // An observer added after the watcher, on the same queue: once it has the change, a watcher that listened before
+        // start() would have had it too. A fixed 100 ms passed for a delivery slower than that (#4313).
+        let delivered = expectation(description: "the route change reached the main-queue observers")
+        let sentinel = center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { _ in delivered.fulfill() }
         center.post(name: AVAudioSession.routeChangeNotification, object: nil)
-        try await Task.sleep(for: .milliseconds(100))
+        await fulfillment(of: [delivered], timeout: 10)
+        center.removeObserver(sentinel)
         XCTAssertNil(watcher.msSinceRouteChange, "nothing records")
 
         watcher.start(reading: { nil }, restart: {}, changed: { _, _ in })

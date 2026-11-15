@@ -814,14 +814,35 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertLessThanOrEqual(end.frame.maxY, window.maxY, "End is below the screen")
     }
 
-    /// #2831: the End sheet stays up until its own End or Cancel closes it; nothing on the screen redraws it away.
-    func testLiveSessionEndSheetStaysUpForThreeSeconds() throws {
+    /// #2831: the End sheet stays up until its own End or Cancel closes it; nothing on the screen redraws it away. The
+    /// redraw that closed it was the session clock, which now ticks every 0.5 s (LiveSessionDock's TimelineView). #4313:
+    /// the test reads that clock before End and after Cancel, so it shows the clock ran 8 s (about 16 redraws) under the
+    /// sheet, not merely that some time went by.
+    func testLiveSessionEndSheetStaysUpWhileTheSessionClockTicks() throws {
         startLiveSession()
+        let clock = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] 'session time '")).firstMatch
+        XCTAssertTrue(clock.waitForExistence(timeout: 6), "The session clock is missing")
+        let before = try XCTUnwrap(sessionSeconds(clock.label), "The session clock is unreadable: \(clock.label)")
         app.buttons["liveSession.endSession"].tap()
         let confirm = app.buttons["liveSession.confirmEnd"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 6), "End did not open its sheet")
-        Thread.sleep(forTimeInterval: 3)
+        // fixed-sleep ok: the claim is "stays up across 8 s of clock redraws"; the sheet hides the clock from the
+        // accessibility tree, so the clock read after Cancel is what shows those redraws happened. Returns early if it closes.
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: confirm)
+        _ = XCTWaiter().wait(for: [closed], timeout: 8)
         XCTAssertTrue(confirm.exists && app.buttons["liveSession.cancelEnd"].exists, "The End sheet closed by itself")
+        app.buttons["liveSession.cancelEnd"].tap()
+        XCTAssertTrue(clock.waitForExistence(timeout: 6), "The session clock is missing after Cancel")
+        let after = try XCTUnwrap(sessionSeconds(clock.label), "The session clock is unreadable: \(clock.label)")
+        XCTAssertGreaterThanOrEqual(after, before + 8, "The session clock did not run while the End sheet was up")
+    }
+
+    /// "m:ss" or "h:mm:ss" at the end of a label such as "Session time 0:12" or "Meeting 47:30, session time 0:12".
+    private func sessionSeconds(_ label: String) -> Int? {
+        guard let clock = label.split(separator: " ").last else { return nil }
+        let parts = clock.split(separator: ":").map { Int($0) }
+        guard parts.count == 2 || parts.count == 3, !parts.contains(nil) else { return nil }
+        return parts.compactMap { $0 }.reduce(0) { $0 * 60 + $1 }
     }
 
     private func startLiveSession() {

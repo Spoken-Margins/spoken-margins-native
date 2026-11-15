@@ -68,9 +68,15 @@ final class SharedMarginReturnAppTests: XCTestCase {
         XCTAssertEqual(model.sharedMarginReturn, .none, "nothing was paused, so nothing is owed back")
 
         model.dismissPendingImportedCommentary()
-        try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(model.snapshot.status, .playing)
-        XCTAssertNil(model.pendingImportedCommentary)
+        // A re-offer would come from a playback tick, which runs the offer check in the job that moves the clock, so a
+        // clock past the dismiss is the signal; a fixed 300 ms passed for a tick slower than that (#4313).
+        let dismissedAtMs = model.snapshot.currentMediaTimeMs ?? 0
+        try await fixture.waitUntil("a playback tick after the dismiss has run the offer check") {
+            (model.snapshot.currentMediaTimeMs ?? 0) > dismissedAtMs
+        }
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertNil(model.pendingImportedCommentary, "the dismissed Margin is not offered again")
     }
 
     // R02, R04: the source was already paused when the offer arrived, so dismissing leaves it paused.
@@ -84,7 +90,8 @@ final class SharedMarginReturnAppTests: XCTestCase {
         XCTAssertNotNil(model.pendingImportedCommentary)
 
         model.dismissPendingImportedCommentary()
-        try await Task.sleep(for: .milliseconds(300))
+        // The dismiss decides at once; its one deferred path is the card's auto-play task, which it drops (#4313).
+        XCTAssertNil(model.importedCommentaryAutoPlayTask, "no deferred card task is left to resume it")
         XCTAssertEqual(model.snapshot.status, .paused, "nothing paused it for the offer, so nothing owes it back")
     }
 
@@ -128,7 +135,9 @@ final class SharedMarginReturnAppTests: XCTestCase {
         model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
         XCTAssertNotNil(model.playingImportedCommentary)
         model.returnToSourceFromImportedCommentary()
-        try await Task.sleep(for: .milliseconds(300))
+        // Return decides at once, and the stop drops the voice's end-of-play poll, so nothing is left to resume it later;
+        // a fixed 300 ms only gave a poll that survived time to fire (#4313).
+        XCTAssertNil(model.marginVoicePlayer.completionTask, "the voice's end-of-play poll is gone")
         XCTAssertEqual(model.snapshot.status, .paused)
     }
 
@@ -174,7 +183,9 @@ final class SharedMarginReturnAppTests: XCTestCase {
         model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
         model.stopInterjectionAudioPlayback()
         model.returnToSourceFromImportedCommentary()
-        try await Task.sleep(for: .milliseconds(300))
+        // Return decides at once, and the stop drops the voice's end-of-play poll, so nothing is left to resume it later;
+        // a fixed 300 ms only gave a poll that survived time to fire (#4313).
+        XCTAssertNil(model.marginVoicePlayer.completionTask, "the voice's end-of-play poll is gone")
         XCTAssertEqual(model.snapshot.status, .paused)
     }
 
@@ -267,7 +278,8 @@ final class SharedMarginReturnAppTests: XCTestCase {
 
         model.toggleInterjectionAudioPlayback(heard)
         try await fixture.waitUntil("the Margin ends", timeout: 10) { !model.isPlayingInterjectionAudio(heard) }
-        try await Task.sleep(for: .milliseconds(400))
+        // The end handler stops the voice and decides the resume in one main-actor job, so the wait above is the signal;
+        // a fixed 400 ms after it added nothing (#4313).
         XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertNil(model.marginMoment)
     }
@@ -281,9 +293,13 @@ final class SharedMarginReturnAppTests: XCTestCase {
 
         model.toggleInterjectionAudioPlayback(heard)
         XCTAssertEqual(model.snapshot.status, .paused)
+        let poll = try XCTUnwrap(model.marginVoicePlayer.completionTask, "the end-of-voice poll is running")
         model.toggleInterjectionAudioPlayback(heard)
         XCTAssertFalse(model.isPlayingInterjectionAudio(heard))
-        try await Task.sleep(for: .milliseconds(600))
+        // Only the poll could call the Margin ended and resume the source; the stop cancels it, and once it has returned
+        // nothing can. A fixed 600 ms could never have caught that with a 5 s voice (#4313).
+        await poll.value
+        XCTAssertTrue(poll.isCancelled, "the stop cancelled the poll, so no end can resume the source later")
         XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertNil(model.marginMoment)
     }
@@ -304,7 +320,8 @@ final class SharedMarginReturnAppTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .paused)
 
         try await fixture.waitUntil("the Margin ends", timeout: 10) { !model.isPlayingInterjectionAudio(heard) }
-        try await Task.sleep(for: .milliseconds(400))
+        // The end handler stops the voice and decides the resume in one main-actor job, so the wait above is the signal;
+        // a fixed 400 ms after it added nothing (#4313).
         XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertNil(model.marginMoment)
     }
@@ -328,7 +345,8 @@ final class SharedMarginReturnAppTests: XCTestCase {
         XCTAssertEqual(model.sleepTimerState, .inactive)
 
         try await fixture.waitUntil("the Margin ends", timeout: 10) { !model.isPlayingInterjectionAudio(heard) }
-        try await Task.sleep(for: .milliseconds(400))
+        // The end handler stops the voice and decides the resume in one main-actor job, so the wait above is the signal;
+        // a fixed 400 ms after it added nothing (#4313).
         XCTAssertEqual(model.snapshot.status, .paused)
     }
 
