@@ -108,8 +108,12 @@ public struct OnboardingProgress: Equatable, Sendable {
 
     /// #2852: once audio is on, one prompt to add a first Margin, until the listener has tapped or dismissed it
     /// or has made a Margin. While it shows, the tour coach and the Library strip stay out of the way.
-    public func shouldShowFirstMarginPrompt(hasActiveSession: Bool, suppressed: Bool) -> Bool {
-        !suppressed && hasActiveSession && !isComplete(.firstInterjection) && !isComplete(.sawFirstMarginPrompt)
+    ///
+    /// `duringFriendListen` (#3790) hides it while a friend's Margins play, so the sender's Margin has the screen to
+    /// itself; false is the rule as it was. It is not `suppressed`, which means "under tests". It hides the prompt for
+    /// now and does not mark it seen: `noteFriendListen` does that when the end card shows.
+    public func shouldShowFirstMarginPrompt(hasActiveSession: Bool, suppressed: Bool, duringFriendListen: Bool = false) -> Bool {
+        !suppressed && !duringFriendListen && hasActiveSession && !isComplete(.firstInterjection) && !isComplete(.sawFirstMarginPrompt)
     }
 
     public func shouldShowCoach(guidedItemIsSelected: Bool) -> Bool {
