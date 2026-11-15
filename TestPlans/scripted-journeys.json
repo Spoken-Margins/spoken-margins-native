@@ -65,7 +65,7 @@
     },
     {
       "test": "SpokenMarginsAppUITests/J14ComeBackToAFriendsMarginsJourneyUITests",
-      "journey": "J14: a friend's Margins offered and heard by a listener who heard the episode to its end, marked it complete or never started it; the episode found in the Library after (#4100)"
+      "journey": "J14: a friend's Margins offered and heard by a listener who heard the episode to its end, marked it complete or never started it; the episode found in the Library after, under the all-items filter, not the default view (#4100, #3794)"
     },
     {
       "test": "SpokenMarginsAppUITests/J12SharingLoopJourneyUITests",
