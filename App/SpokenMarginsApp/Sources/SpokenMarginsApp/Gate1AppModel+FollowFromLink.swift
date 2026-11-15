@@ -98,7 +98,8 @@ extension Gate1AppModel {
             }
             reportFailure(error, fileID: fileID, line: line)
             let reason = (error as? URLError).map { Self.userFacingMessage(for: $0) } ?? ListenerErrorText.message(for: error)
-            return .stopped(reason)
+            _ = reason
+            return .followed // MUTATION #4314: Follow closes as followed without a feed
         }
     }
 

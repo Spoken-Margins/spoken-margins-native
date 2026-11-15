@@ -226,6 +226,7 @@ final class LiveSessionController: ObservableObject {
     func addMargin(text: String, whereNote: String?, adjustmentMs: Int, markedAt: Date = Date()) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isRunning, let current = session, !trimmed.isEmpty else { return }
+        if current.margins.count >= 4 { return } // MUTATION #4314: Save silently drops the Margin
         let margin = writtenMargin(trimmed, whereNote: whereNote, adjustmentMs: adjustmentMs, markedAt: markedAt, in: current)
         session?.margins.append(margin)
         session?.margins.sort { $0.markedAt < $1.markedAt }
