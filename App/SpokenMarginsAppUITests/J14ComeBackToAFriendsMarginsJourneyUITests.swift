@@ -44,8 +44,11 @@ final class J14ComeBackToAFriendsMarginsJourneyUITests: XCTestCase {
             let hear = offerButton("newMarginsOffer.review", orLabel: "Hear new Margins first")
             XCTAssertTrue(hear.waitForExistence(timeout: 5), "Continue did not offer the friend's Margin first")
             XCTAssertFalse(element("playback.screen").exists, "Continue skipped past the friend's Margin without asking")
-            XCTAssertTrue(offerButton("newMarginsOffer.skip", orLabel: "Listen without them").exists,
-                          "The offer has no way to carry on without the Margin")
+            // The place is the very end (99%), so the way past the question is starting over (#4125, state D).
+            let skip = offerButton("newMarginsOffer.skip", orLabel: "Play from the start")
+            XCTAssertTrue(skip.exists, "The offer has no way to carry on without the Margin")
+            // Both buttons share the identifier, so say which one this is: the label is what the listener reads.
+            XCTAssertEqual(skip.label, "Play from the start", "The second choice at the very end reads \(skip.label)")
             hear.tap()
         }
 
