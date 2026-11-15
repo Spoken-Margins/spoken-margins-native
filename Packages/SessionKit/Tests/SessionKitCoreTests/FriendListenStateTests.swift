@@ -112,4 +112,54 @@ final class FriendListenStateTests: XCTestCase {
         XCTAssertEqual(value.noteFriendListen(state(card: card(.friend("Cole"), .lastMargin(senders: 1)))), [])
         XCTAssertEqual(value.storedSteps, before)
     }
+
+    // MARK: Margins ahead of the playhead (audit of #4390)
+
+    private func entry(_ id: String, mediaMs: Int, char: Int? = nil, playsAfterOthers: Bool = false) -> SharedMarginReview.Entry {
+        let layer = ImportedCommentaryLayer(
+            id: "ana", itemId: "item", packageDigest: "d", packageId: "p",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode", durationMs: 2_400_000),
+            displayLabel: "Cole", importedAt: Date(timeIntervalSince1970: 1), sourceResolutionStatus: .resolved,
+            isEnabled: true, isMuted: false)
+        let record = ImportedCommentaryInterjection(
+            id: id, layerId: "ana", packageScopedId: id, createdAt: Date(timeIntervalSince1970: 1),
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: "Words",
+            audioPath: "ImportedCommentary/\(id).m4a", audioDurationMs: 4_000,
+            resolution: ImportedAnchorResolution(
+                evidenceClass: .acousticVerified, localStartChar: char, localMediaTimeMs: mediaMs, confidence: 1))
+        return SharedMarginReview.Entry(
+            layer: layer, interjection: record, mediaTimeMs: mediaMs, isApproximate: false, playsAfterOthers: playsAfterOthers)
+    }
+
+    /// The audit's case: a friend Margin at 5:00, the listener at 25:00. It stays new but nothing will play it, so it is
+    /// no friend listen. One row per place, and the same Margins on either side of the playhead.
+    func testAMarginTheListenerHasGonePastDoesNotHoldTheListenOpen() {
+        let early = entry("a", mediaMs: 300_000), late = entry("b", mediaMs: 1_800_000), end = entry("c", mediaMs: 2_400_000, playsAfterOthers: true)
+        let table: [(String, [SharedMarginReview.Entry], Int, Bool, Int)] = [
+            ("behind the only Margin", [early], 1_500_000, false, 0),
+            ("before the Margin", [early], 60_000, false, 1),
+            ("exactly at the Margin: it plays in place", [early], 300_000, false, 1),
+            ("one behind, one ahead", [early, late], 1_500_000, false, 1),
+            ("past both", [early, late], 1_900_000, false, 0),
+            ("a Margin that plays after the others is ahead until the end", [early, end], 1_500_000, false, 1),
+            ("at the end itself, nothing is left to play it in", [early, end], 2_400_000, true, 0),
+            ("a media item whose clock has not started", [early], 0, false, 1),
+            ("no Margins", [], 1_500_000, false, 0),
+        ]
+        for (name, entries, at, isAtEnd, expected) in table {
+            XCTAssertEqual(FriendListenState.aheadCount(entries, mediaTimeMs: at, textStart: nil, isAtEnd: isAtEnd), expected, name)
+        }
+        let behind = FriendListenState(
+            selectedItemId: "A", playingItemId: "A",
+            entryCount: FriendListenState.aheadCount([early], mediaTimeMs: 1_500_000, textStart: nil, isAtEnd: false), pinnedCard: nil)
+        XCTAssertEqual(behind, .none, "nothing ahead and no friend card: the prompt and the transcript line are not hidden")
+    }
+
+    func testTextCountsByCharacterTheWayTheNextMarginCardDoes() {
+        let first = entry("a", mediaMs: 0, char: 100), second = entry("b", mediaMs: 0, char: 900), unplaced = entry("c", mediaMs: 0, char: nil)
+        XCTAssertEqual(FriendListenState.aheadCount([first, second], mediaTimeMs: nil, textStart: nil, isAtEnd: false), 2, "before anything is read")
+        XCTAssertEqual(FriendListenState.aheadCount([first, second], mediaTimeMs: nil, textStart: 500, isAtEnd: false), 1)
+        XCTAssertEqual(FriendListenState.aheadCount([first, second], mediaTimeMs: nil, textStart: 900, isAtEnd: false), 0, "the Margin at the character being read is not ahead")
+        XCTAssertEqual(FriendListenState.aheadCount([unplaced], mediaTimeMs: nil, textStart: nil, isAtEnd: false), 0, "no place in the text, as on the card")
+    }
 }

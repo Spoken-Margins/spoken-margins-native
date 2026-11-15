@@ -63,9 +63,12 @@ extension Gate1AppModel {
         // friend listen. This runs on every playback tick, so the cheap answers come before the card is built.
         let layers = selectedItem.importedCommentaryLayers
         guard !layers.isEmpty, selectedItem.id == snapshot.itemId else { return .none }
-        let entryCount = SharedMarginReview.entriesInMemory(
-            layers: layers, records: selectedItem.importedCommentaryInterjections, durationMs: selectedItem.mediaDurationMs
-        ).count
+        let entries = SharedMarginReview.entriesInMemory(
+            layers: layers, records: selectedItem.importedCommentaryInterjections, durationMs: selectedItem.mediaDurationMs)
+        let entryCount = FriendListenState.aheadCount(
+            entries, mediaTimeMs: isMediaPlaybackSnapshot ? (snapshot.currentMediaTimeMs ?? 0) : nil,
+            textStart: snapshot.currentTextStart,
+            isAtEnd: snapshot.currentPlaybackProgressPercent >= ItemFinishedRule.atEndPercent)
         return FriendListenState(
             selectedItemId: selectedItem.id, playingItemId: snapshot.itemId,
             entryCount: entryCount, pinnedCard: pinnedMarginCard)
