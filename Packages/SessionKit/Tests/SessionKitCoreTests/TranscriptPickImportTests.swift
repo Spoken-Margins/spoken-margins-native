@@ -205,4 +205,67 @@ final class TranscriptPickImportTests: XCTestCase {
         _ = try await run([url], stillListening: [id])
         XCTAssertEqual(try store.loadItem(id: id).addedAgainAt, stamped.addedAgainAt, "no new added-again stamp while the listener is in it")
     }
+
+    // MARK: The order a queue takes the pick's items in (#2997, the Quick Folder's queue paths)
+
+    private func file(_ name: String) -> URL { URL(fileURLWithPath: "/folder/\(name)") }
+
+    private func added(_ name: String, id: String) -> TranscriptPickImport.Added {
+        TranscriptPickImport.Added(itemId: id, title: name, readded: false, url: file(name))
+    }
+
+    func testQueueOrderFollowsThePickAcrossTranscriptsAndTextFiles() {
+        let picked = ["a.txt", "b.vtt", "c.txt", "d.srt"].map(file)
+        let ids = TranscriptPickImport.itemIdsInPickOrder(
+            picked: picked,
+            added: [added("b.vtt", id: "B"), added("d.srt", id: "D")],
+            passthrough: [file("a.txt"), file("c.txt")],
+            textItemIds: ["A", "C"])
+        XCTAssertEqual(ids, ["A", "B", "C", "D"])
+    }
+
+    func testQueueOrderTableOfNeighbouringPicks() {
+        struct Row { var name: String; var picked: [String]; var added: [(String, String)]; var passthrough: [String]; var text: [String]; var expected: [String] }
+        let rows = [
+            Row(name: "nothing picked", picked: [], added: [], passthrough: [], text: [], expected: []),
+            Row(name: "text only keeps the text import's order", picked: ["a.md", "b.txt"], added: [], passthrough: ["a.md", "b.txt"], text: ["A", "B"], expected: ["A", "B"]),
+            Row(name: "transcripts only", picked: ["b.vtt", "a.vtt"], added: [("b.vtt", "B"), ("a.vtt", "A")], passthrough: [], text: [], expected: ["B", "A"]),
+            Row(name: "a refused transcript adds nothing and leaves a gap", picked: ["a.vtt", "bad.vtt", "c.vtt"], added: [("a.vtt", "A"), ("c.vtt", "C")], passthrough: [], text: [], expected: ["A", "C"]),
+            Row(name: "a refused word file between two text files", picked: ["a.md", "essay.docx", "c.md"], added: [], passthrough: ["a.md", "c.md"], text: ["A", "C"], expected: ["A", "C"]),
+            Row(name: "the same transcript twice is one id at its first place", picked: ["a.vtt", "b.md", "a.vtt"], added: [("a.vtt", "A"), ("a.vtt", "A")], passthrough: ["b.md"], text: ["B"], expected: ["A", "B"]),
+            Row(name: "no text item saved leaves only the transcripts", picked: ["a.md", "b.vtt"], added: [("b.vtt", "B")], passthrough: ["a.md"], text: [], expected: ["B"]),
+            Row(name: "upper-case extensions and spaces in names", picked: ["Zoom Call.TXT", "x y.VTT"], added: [("x y.VTT", "X")], passthrough: ["Zoom Call.TXT"], text: ["Z"], expected: ["Z", "X"]),
+        ]
+        for row in rows {
+            let ids = TranscriptPickImport.itemIdsInPickOrder(
+                picked: row.picked.map(file),
+                added: row.added.map { added($0.0, id: $0.1) },
+                passthrough: row.passthrough.map(file),
+                textItemIds: row.text)
+            XCTAssertEqual(ids, row.expected, row.name)
+        }
+    }
+
+    func testAFailedTextFileNeverDropsOrDuplicatesAnId() {
+        // The text import saved one of two files and the pick cannot say which; the ids still all come out, once each.
+        let ids = TranscriptPickImport.itemIdsInPickOrder(
+            picked: ["a.md", "b.vtt", "c.md"].map(file),
+            added: [added("b.vtt", id: "B")],
+            passthrough: [file("a.md"), file("c.md")],
+            textItemIds: ["C"])
+        XCTAssertEqual(Set(ids), ["B", "C"])
+        XCTAssertEqual(ids.count, 2)
+    }
+
+    func testARealPickCarriesEachTranscriptsFileSoTheQueueOrderFollowsThePick() async throws {
+        let first = try write("first.txt", essay)
+        let meeting = try write("zoom.vtt", TranscriptFixtures.all["zoom.vtt"]!)
+        let last = try write("last.md", "# Last")
+        let result = try await run([first, meeting, last])
+        XCTAssertEqual(result.added.map(\.url), [meeting])
+        let ids = TranscriptPickImport.itemIdsInPickOrder(
+            picked: [first, meeting, last], added: result.added, passthrough: result.passthrough,
+            textItemIds: ["text-first", "text-last"])
+        XCTAssertEqual(ids, ["text-first", try XCTUnwrap(result.added.first?.itemId), "text-last"])
+    }
 }
