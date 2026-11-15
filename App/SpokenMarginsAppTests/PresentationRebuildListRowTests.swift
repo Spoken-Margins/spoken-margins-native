@@ -89,6 +89,7 @@ final class PresentationRebuildListRowTests: XCTestCase {
     }
 
     private func churnTheList(_ churn: Churn) async throws {
+        // fixed-count ok: it makes `rowRebuilds` list rebuilds, one per pass, and waits for nothing
         for _ in 0..<Self.rowRebuilds {
             churn.rowGeneration += 1
             try await Task.sleep(for: .milliseconds(700))
