@@ -243,7 +243,7 @@ The script `J14ComeBackToAFriendsMarginsJourneyUITests` runs rows 1 (from the Li
 
 ## J15 — Import a meeting transcript
 
-A listener adds a transcript file from a meeting app (#2997, Design plan PR 4). Zoom gives a `.vtt` or a `.txt`, Teams a `.vtt` or a `.docx`, Meet and Webex a `.vtt` or `.srt`, Otter a `.txt`. The file becomes its own Library item, read aloud with the speaker named when the speaker changes, and it takes Margins. Open In, AirDrop and the share sheet are PR 5 and add their steps here.
+A listener adds a transcript file from a meeting app (#2997, Design plan PR 4). Zoom gives a `.vtt` or a `.txt`, Teams a `.vtt` or a `.docx`, Meet and Webex a `.vtt` or `.srt`, Otter a `.txt`. The file becomes its own Library item, read aloud with the speaker named when the speaker changes, and it takes Margins. Open In and AirDrop (PR 5a) add steps 13 to 16; the share sheet is the next slice and adds its steps here.
 
 **Fixtures:** `WRITE_TRANSCRIPT_FIXTURES=1 swift test --filter TranscriptFixtureFilesTests` (in `Packages/SessionKit`) writes the eight fixtures, a Teams-style `.docx`, and a short essay as `.txt` and `.docx` to `artifacts/transcript-fixtures/`. Copy them into the simulator's Files (On My iPhone).
 
@@ -271,6 +271,16 @@ A listener adds a transcript file from a meeting app (#2997, Design plan PR 4). 
     - Pass: the transcript's item screen opens, and the file leaves the folder list.
 12. Run J1, J3 and J7 step 2 on the transcript item.
     - Pass: they pass as for any text item.
+13. In Files (On My iPhone), touch and hold `teams.vtt`, tap **Share** and pick Spoken Margins in the list of apps (or tap the file, then **Share**, then Spoken Margins; **Open In** reads the same on an iPad). Do it with the Library open, then again with something loaded in Now Playing.
+    - Pass: the app comes forward on the screen it was on, with no navigation: a live session or a recording in progress is not disturbed. A banner says "Added <title> to Library." (with **Play now** only when nothing is loaded; "without changing Now Playing" when something is). One Transcript row, at the top of Recently Added.
+14. Open the Zoom captions `.txt` and the essay `.txt` the same way, then `notes.md`.
+    - Pass: the Zoom file is a Transcript row; the essay and `notes.md` are Text rows with today's banner ("Imported 1 source file."). No screen changes.
+15. Open a `.csv` (any file with another plain-text type) with Spoken Margins.
+    - Pass: nothing is added; a banner says "Spoken Margins can't add “<name>”. It adds meeting transcripts (.vtt, .srt, .docx, .txt) and text or Markdown files."
+    - Also select two transcripts in Files at once and share them to Spoken Margins: both are added, one after the other, and neither is refused with "Another source is already importing."
+16. Open the same `.vtt` from a file in iCloud Drive that is not downloaded.
+    - Pass: it downloads and is added, or the banner says "“<name>” couldn't be read. If it's in iCloud Drive, open it in Files so it downloads, then try again." Nothing is left half-added.
+    - Not testable in a simulator: AirDrop from a Mac and a real iCloud download. The owner's check is in the issue (C8 in `docs/design/live-sessions/SITUATIONS.md`).
 
 Airplane Mode changes nothing (J10): the whole flow is local. The script for this journey is not written: scripts follow breaks found on the phone.
 
