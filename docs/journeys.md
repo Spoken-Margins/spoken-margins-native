@@ -237,6 +237,39 @@ A listener with history on an episode receives a friend's Margins (#4100, part o
 
 The script `J14ComeBackToAFriendsMarginsJourneyUITests` runs rows 1 (from the Library row, from the item screen's Margins choice, and from the item screen's "Play", which fails today, #4125), 2 and 3, one test each, each with its own history from the seed hooks `SPOKEN_MARGINS_UI_TEST_PODCAST_PLACE` (a saved place, in seconds) and `SPOKEN_MARGINS_UI_TEST_PODCAST_COMPLETED=1` (marked complete by hand). Both apply only to the launch that seeds the podcast; the relaunch with `KEEP_LIBRARY=1` and `COOP=1` imports the friend's Margin the way J9 does, so the import in step 1 and the packet's own file are not covered. The script checks steps 2, 3 and 5 for rows 1 to 3 and step 4 for row 1. It sets the Library to "All" because the default view hides a completed episode (#3794, step 5), so it proves the episode is findable once the filter allows it, and nothing about the default view; its step 5 asserts only that the Library row exists. Row 4 is seeded by `PODCAST_PLACE=1500` (the end of the episode, a finished session); the script does not run it yet, because no run has shown what its item screen offers. Step 1's import from Files, step 6 and the default Library view (step 5) stay with the agent run. A script pass never stands in for them, and audible content stays with the owner.
 
+## J15 — Import a meeting transcript
+
+A listener adds a transcript file from a meeting app (#2997, Design plan PR 4). Zoom gives a `.vtt` or a `.txt`, Teams a `.vtt` or a `.docx`, Meet and Webex a `.vtt` or `.srt`, Otter a `.txt`. The file becomes its own Library item, read aloud with the speaker named when the speaker changes, and it takes Margins. Open In, AirDrop and the share sheet are PR 5 and add their steps here.
+
+**Fixtures:** `WRITE_TRANSCRIPT_FIXTURES=1 swift test --filter TranscriptFixtureFilesTests` (in `Packages/SessionKit`) writes the eight fixtures, a Teams-style `.docx`, and a short essay as `.txt` and `.docx` to `artifacts/transcript-fixtures/`. Copy them into the simulator's Files (On My iPhone).
+
+1. Library tab, **+**, **Import from Files**. The Add sheet's tile reads "A document, book, transcript, audiobook or Margins packet". Pick `teams.vtt`.
+   - Pass: `.vtt`, `.srt` and `.docx` are selectable in the picker (greyed out before). The sheet closes. A banner says "Added <title> to Library." with **Play now** (without Play now, and "without changing Now Playing", when something is loaded). The new row reads "about N min · Transcript" with a speech-bubble icon, at the top of Recently Added.
+2. Open the row.
+   - Pass: the screen is titled "Transcript". Under the title a meeting line reads, for example, "Meeting on Wed 4 Mar, 10:00 · under 1 min · Alice Example and Ben Sample" (the date form depends on the file: time of day only, or no start, for a file without a date).
+3. **Start listening**.
+   - Pass: Now Playing reads "Alice Example: Welcome everyone…", then "Ben Sample: …" when the speaker changes. The clock advances. No timestamp is spoken.
+4. Add a written Margin (the pencil), then open the Margins tab.
+   - Pass: the Margin's place line shows the meeting clock where a text item shows "paragraph N", for example "00:06 · Today".
+5. Import `teams.vtt` again.
+   - Pass: the same banner, no second row, the row back at the top of Recently Added. The Margin from step 4 is still on the item.
+6. Import `generic.srt`, a Teams-style `.docx`, and the Zoom captions `.txt`, one at a time.
+   - Pass: each is a Transcript row (the `.srt` and `.vtt` of one meeting are one item, because the id comes from the words).
+7. Import the essay `.txt`.
+   - Pass: a Text row, exactly as before this feature. The banner is today's.
+8. Import the essay `.docx`.
+   - Pass: nothing is added; the banner says "“essay.docx” isn't a meeting transcript. Spoken Margins adds Word files only when they are transcripts. To hear it, copy its text and use Paste Text."
+9. Pick `teams.vtt` and `notes.md` together.
+   - Pass: one banner, "Imported 2 files." When one of them can't be added, it says "Imported 1 file. 1 couldn't be added: <name>."
+10. Share the Margins of the transcript item from its Margins tab.
+    - Pass: the review does not offer to include the whole text (a transcript is never embedded); it shows the line it shows for a text item the friend must supply.
+11. Quick Folder: with the Zoom captions `.txt` in the folder, tap **Add and open** on it.
+    - Pass: the transcript's item screen opens, and the file leaves the folder list.
+12. Run J1, J3 and J7 step 2 on the transcript item.
+    - Pass: they pass as for any text item.
+
+Airplane Mode changes nothing (J10): the whole flow is local. The script for this journey is not written: scripts follow breaks found on the phone.
+
 ## Writing scripted journeys
 
 The Test Desk keeps this guide. Threads writing a first pass follow it, and the desk corrects it when a script teaches it something.
