@@ -173,7 +173,7 @@
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testPrivateExperienceRootsPreserveNowPlayingAndStateConsentBoundaries",
-      "journey": "Following: the roots keep Now Playing, and following a source asks consent first (#141, #3205)",
+      "journey": "Following: the roots keep Now Playing, and Follow on a typed link it cannot read as a feed (an unreachable host) follows nothing and says why on the sheet (#141, #3205, #4314)",
       "batch": 2
     },
     {

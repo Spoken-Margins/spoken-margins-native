@@ -98,6 +98,11 @@ enum UITestingHooks {
         return environment("SPOKEN_MARGINS_UI_TEST_SPEECH_RATE").flatMap(Double.init)
     }
 
+    /// Filler articles a fixture launch adds below the fixture article, so the Library scrolls (#4314).
+    static var libraryFillerCount: Int {
+        UITestingLaunchSeed.libraryFillerCount(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
+    }
+
     /// The script exercises Supertonic narration instead of system speech.
     static var usesSupertonic: Bool {
         isActive && environment("SPOKEN_MARGINS_UI_TEST_SUPERTONIC") == "1"
@@ -166,6 +171,7 @@ enum UITestingHooks {
     static var localFoundationModelClient: (any LocalFoundationModelClient)? { nil }
     static var speechRate: Double? { nil }
     static var usesSupertonic: Bool { false }
+    static var libraryFillerCount: Int { 0 }
     static var summaryInterjectionNote: String? { nil }
     static var liveActivityPreviewTextSize: String? { nil }
     static var appearanceRequest: String? { nil }

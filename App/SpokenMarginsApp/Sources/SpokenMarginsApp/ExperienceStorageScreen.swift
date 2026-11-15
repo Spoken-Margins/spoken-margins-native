@@ -33,7 +33,7 @@ struct ExperienceStorageScreen: View {
                 Button("Cancel", role: .cancel) {}
                 Button("Clear Audio", role: .destructive, action: model.clearReproducibleOfflineAudio)
             } message: {
-                Text("Up to \(bytes(snapshot.clearableBytes)) can be recreated later. Imported audiobooks, recordings, Margins, and protected active playback will remain.")
+                Text("Up to \(bytes(snapshot.clearableBytes)) can be recreated later. Imported audiobooks stay.")
             }
             .task { model.refreshOfflineStoragePresentation() }
             .miniPlayerKeepOut()
