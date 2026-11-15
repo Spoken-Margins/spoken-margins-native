@@ -10,14 +10,20 @@ import XCTest
 /// Session sheet closed before it could be answered. The setup card only shows on a screen that has not loaded its
 /// session yet, so the screen was being created anew, not redrawn.
 ///
-/// The Live row presented the screen from a cover on a Library list row. These tests mount the real Live row in a real
-/// `List`, open the session by activating the row's button, then churn the list the way the Library changes while it
-/// sits under the screen (rows above come and go, items are added and removed, the model publishes) and count how many
-/// screens were built. The control runs the same churn against a cover hosted on a list row, the shape the Live row
-/// had; if it shows no rebuilds, this churn no longer re-hosts a row and the first test's pass proves nothing.
+/// The Live row presented the screen from a cover on a Library list row, so whenever the Library re-hosted that row
+/// the cover went with it and came back as a new screen. Ordinary list churn in a test harness does not make SwiftUI
+/// re-host a row (the desk tried: 40 changes, one build), so these tests force the strongest form of it: the row gets
+/// a new identity, which always tears it down and builds it again. The Live row test opens the session the way the
+/// row's button does, through `LiveSessionLinkRouter`, then rebuilds the row over and over and counts screens built.
+/// The control does the same to a cover hosted on the row, the shape the Live row had; if it is not built again, the
+/// rebuild no longer reaches the row and the Live row test proves nothing.
+///
+/// What this does not cover: whether the row's button still calls the router (the harness could not find the button
+/// in the accessibility tree), and what the real Library does to re-host a row. The fix was checked on a simulator
+/// against a no-fix control for that (#4091).
 @MainActor
 final class LiveSessionCoverRehostTests: XCTestCase {
-    private static let churnSteps = 40
+    private static let rowRebuilds = 8
     private static let sessionId = "live-rehost-4091-not-stored"
 
     override func tearDown() async throws {
@@ -35,13 +41,13 @@ final class LiveSessionCoverRehostTests: XCTestCase {
             .environmentObject(model)))
         defer { mounted.close() }
 
-        let how = try await openFromTheLiveRow(in: mounted)
+        LiveSessionLinkRouter.shared.openScreen(sessionId: Self.sessionId)
         try await waitUntil("the live session screen was built") { ScreenRedrawProbe.count("liveSessionController.init") > built }
-        try await churnTheList(churn, model: model)
+        try await rebuildTheRow(churn, model: model)
 
         let builds = ScreenRedrawProbe.count("liveSessionController.init") - built
-        XCTAssertEqual(builds, 1, "Opened by \(how), the live session screen was built \(builds) times while the list changed "
-                           + "\(Self.churnSteps) times: each extra build is the setup card flashing and any open sheet closing")
+        XCTAssertEqual(builds, 1, "The live session screen was built \(builds) times while the Live row was rebuilt "
+                           + "\(Self.rowRebuilds) times: each extra build is the setup card flashing and any open sheet closing")
         var visited = Set<ObjectIdentifier>()
         XCTAssertNotNil(Self.accessibilityElement(withIdentifier: "liveSession.back.button", in: mounted.window, visited: &visited),
                         "The live session screen was not up after the list changed")
@@ -55,46 +61,24 @@ final class LiveSessionCoverRehostTests: XCTestCase {
         defer { mounted.close() }
 
         try await waitUntil("the control's cover was built") { ScreenRedrawProbe.count("rehostControl.build") > built }
-        try await churnTheList(churn, model: model)
+        try await rebuildTheRow(churn, model: model)
 
         let builds = ScreenRedrawProbe.count("rehostControl.build") - built
-        XCTAssertGreaterThan(builds, 1, "A cover on a list row was built \(builds) time(s) across \(Self.churnSteps) list changes, so "
-                                 + "this churn no longer re-hosts a row and the Live row test guards nothing")
+        XCTAssertGreaterThan(builds, 1, "A cover on a list row was built \(builds) time(s) across \(Self.rowRebuilds) row rebuilds, so "
+                                 + "the rebuild no longer reaches the row and the Live row test guards nothing")
     }
 
-    // MARK: - Churn
+    // MARK: - Rebuilding the row
 
-    /// What changes under the screen while it is up: a row above the Live row comes and goes (the copied-link card),
-    /// items are added and removed (a link finishing, an item completed), and the model publishes (audio rendering).
-    private func churnTheList(_ churn: ListChurn, model: Gate1AppModel) async throws {
-        for step in 0..<Self.churnSteps {
-            switch step % 4 {
-            case 0: churn.showsCardAbove.toggle()
-            case 1: churn.items.insert("Item \(1_000 + step)", at: 0)
-            case 2: churn.items.removeLast()
-            default: model.objectWillChange.send()
-            }
-            try await Task.sleep(for: .milliseconds(100))
+    /// Gives the row a new identity, so SwiftUI tears it down and builds it again, with the model publishing in between
+    /// the way it does while audio renders. The pause lets a cover dismissed with the old row present again.
+    private func rebuildTheRow(_ churn: ListChurn, model: Gate1AppModel) async throws {
+        for _ in 0..<Self.rowRebuilds {
+            churn.rowGeneration += 1
+            model.objectWillChange.send()
+            try await Task.sleep(for: .milliseconds(700))
         }
-        try await Task.sleep(for: .milliseconds(500)) // a presentation dismissed by the last change has time to come back
-    }
-
-    // MARK: - Opening
-
-    /// Opens the session the way a tap does: through the Live row button's accessibility activation. Says how it opened.
-    private func openFromTheLiveRow(in mounted: Mounted) async throws -> String {
-        let identifier = "library.liveRow.\(Self.sessionId)"
-        let deadline = ContinuousClock.now + .seconds(10)
-        while ContinuousClock.now < deadline {
-            var visited = Set<ObjectIdentifier>()
-            if let button = Self.accessibilityElement(withIdentifier: identifier, in: mounted.window, visited: &visited) {
-                XCTAssertTrue(button.accessibilityActivate(), "The Live row's button refused activation")
-                return "the Live row button"
-            }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        XCTFail("The Live row's button never appeared")
-        throw Unsettled()
+        try await Task.sleep(for: .milliseconds(500))
     }
 
     private static func runningRow() -> LiveSessionFileWorker.Summary {
@@ -108,12 +92,11 @@ final class LiveSessionCoverRehostTests: XCTestCase {
 
     @MainActor
     private final class ListChurn: ObservableObject {
-        @Published var showsCardAbove = false
-        @Published var items = (0..<12).map { "Item \($0)" }
+        @Published var rowGeneration = 0
     }
 
-    /// The Library's shape: a `List` that watches the model, a row above the Live row that comes and goes, the Live row,
-    /// then the items.
+    /// The Library's shape: a `List` that watches the model, the Live row (rebuilt whenever `rowGeneration` moves), then
+    /// items.
     private struct LibraryLikeList<LiveRow: View>: View {
         @ObservedObject var churn: ListChurn
         @ObservedObject var model: Gate1AppModel
@@ -121,9 +104,8 @@ final class LiveSessionCoverRehostTests: XCTestCase {
 
         var body: some View {
             List {
-                if churn.showsCardAbove { Text("A copied link") }
-                liveRow()
-                ForEach(churn.items, id: \.self) { Text($0) }
+                liveRow().id(churn.rowGeneration)
+                ForEach(0..<12, id: \.self) { Text("Item \($0)") }
                 Text(model.shouldShowMiniPlayer ? "Mini player" : "No mini player")
             }
         }
