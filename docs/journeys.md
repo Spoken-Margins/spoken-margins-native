@@ -51,7 +51,7 @@ A step that is true for "whatever state" (or "any", "every") must have a test fo
 3. Pause, lock the phone, then resume from the Lock Screen (owner step).
    - Pass: it resumes from the same sentence.
 4. Read the article's text from More, step to another chapter and back without leaving the reader (#1579).
-   - Pass: the chapter title changes and returns, a way back to the playing chapter shows while away, and playback is unchanged.
+   - Pass: the chapter title changes and returns, a way back to the playing chapter shows while away, and playback is unchanged. The sentence being read is marked by a highlighter fill and a thick underline under every line it spans, in light and dark (#3736); the underline is what tells it apart, so check it without relying on the fill's colour.
 
 ## J2 — Podcast playback survives relaunch
 
