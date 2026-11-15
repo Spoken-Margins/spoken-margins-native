@@ -45,6 +45,13 @@ public struct LibraryItemRow: Identifiable, Hashable, Sendable {
     public var sharedMargins = SharedMarginTally.none
     /// How many Margins the listener has made on this item (#2394), so a row can be cleared without opening it to look.
     public var marginCount = 0
+    /// The audio's own length in milliseconds (`item.media.durationMs`), for "41 min" and "24 min left" on a Library
+    /// row (#4062). Nil when the item has no recorded length (a text item, or a feed that gave none).
+    public var mediaDurationMs: Int?
+    /// Where the continuation session left off, in media milliseconds (`position.mediaTimeMs`); nil when there is no
+    /// such session or it holds no media time. A text row never reads it. `continuePlaceMs` can't say this: it is nil
+    /// for any in-progress row (#4062).
+    public var continuationMediaTimeMs: Int?
 
     public init(
         id: String,

@@ -131,6 +131,8 @@ public enum LibraryRowBuilder {
             row.canMarkUnfinished = item.sourceCompletedAt != nil
                 && !PreparationChunkGate.itemAlreadyListened(ItemFinishedRule.countedSessions(item, sessions: sessions))
             row.textCharacterCount = row.hasNativeAudio ? nil : item.textCharacterCount
+            row.mediaDurationMs = item.media?.durationMs.flatMap { $0 > 0 ? $0 : nil }
+            row.continuationMediaTimeMs = continuation?.position.mediaTimeMs
             return row
         }
     }
