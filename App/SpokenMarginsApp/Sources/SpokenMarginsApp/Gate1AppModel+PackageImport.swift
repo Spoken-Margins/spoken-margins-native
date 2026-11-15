@@ -328,7 +328,7 @@ extension Gate1AppModel {
             diagnostics["lastSharedPodcastAcquisition"] = diagnostic
         }
         guard result.status == .playable,
-              let importedItem = try persistResolvedSourceLinkInBackground(request: request, result: result) else {
+              let importedItem = try persistResolvedSourceLinkInBackground(request: request, result: result, listenerAdded: false) else {
             throw SessionKitError.persistenceFailed("shared_podcast_item_not_created")
         }
         return importedItem.id

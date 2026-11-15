@@ -85,9 +85,11 @@ extension Gate1AppModel {
             let reference = secureSharedItemURL(for: item)
             sharingState.itemReferenceURL = reference
             sharingState.isAppAuthoredItem = item.id == Self.welcomeSampleItemId
+            // A meeting transcript is never embedded (#2997): a friend brings their own copy of the file.
             sharingState.canEmbedLinklessItem = reference == nil
                 && sharedItemType(for: item) != .podcast
                 && item.hasListenableText
+                && SharedItemTransportRule.allowsEmbeddedText(externalReferenceType: item.externalReferenceType)
             sharingState.confirmsPrivateSharingRights = sharingState.isAppAuthoredItem
         }
         // A voice Margin with no words starts with placeholder words instead of being left out (#3027).

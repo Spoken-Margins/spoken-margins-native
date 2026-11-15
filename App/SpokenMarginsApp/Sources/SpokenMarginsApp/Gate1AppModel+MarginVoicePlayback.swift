@@ -105,6 +105,31 @@ extension Gate1AppModel {
         }
     }
 
+    /// The listener skipped the card: it goes, and the next Margin that waits for the end is offered (#4347).
+    func skipPendingImportedCommentary() {
+        dismissPendingImportedCommentary()
+        offerNextMarginWaitingForTheEnd()
+    }
+
+    /// The episode has ended and no tick will come: the Margins that wait for the end are offered one after another,
+    /// the next one when the one before has been heard or skipped (#4347). `SharedMarginOfferQueue` decides whether
+    /// anything is due; this only says whether the slot is free.
+    ///
+    /// Called only where the listener is done with a Margin and stays at the end: its voice ending
+    /// (`marginVoiceSharedPlaybackEnded`), Return to source, the card's own Skip and the card timing out. Never from
+    /// `stopImportedCommentaryPlayback` or `dismissPendingImportedCommentary` themselves: more than a dozen callers
+    /// use those to clear the slot before hiding a sender, going to a Skim stop, replying or jumping, and a Margin
+    /// offered then would be one the listener didn't ask for (a hidden friend's) or one lost on the way (#4347 audit).
+    func offerNextMarginWaitingForTheEnd() {
+        let slotIsFree = pendingImportedCommentary == nil && playingImportedCommentary == nil && !snapshot.isRecording
+            && marginMomentConductor?.sequence.isReview != true && marginMomentConductor?.isPlayingVoice != true
+        guard let prompt = sharedMarginOffers.nextWaitingAtEpisodeEnd(
+            snapshot: snapshot, selectedItemID: selectedItem.id, slotIsFree: slotIsFree,
+            offerable: importedCommentaryPrompts(includeAnnounced: true).filter { $0.layer.revealMode != .fresh }
+        ) else { return }
+        presentImportedCommentaryPrompt(prompt, sourceWasPlaying: false)
+    }
+
     func listenToImportedCommentary(layerID: String, interjectionID: String) {
         guard let layer = selectedItem.importedCommentaryLayers.first(where: { $0.id == layerID }),
               let records = selectedItem.importedCommentaryInterjections[layerID],
@@ -113,12 +138,14 @@ extension Gate1AppModel {
             layer: layer,
             interjection: records[offset],
             index: offset + 1,
-            count: records.count
+            count: records.count,
+            durationMs: selectedItem.mediaDurationMs
         ))
     }
 
     func returnToSourceFromImportedCommentary() {
         stopImportedCommentaryPlayback(resumeSource: true)
+        offerNextMarginWaitingForTheEnd()
     }
 
     func listenToImportedCommentary(_ prompt: ImportedCommentaryPrompt) {
@@ -131,8 +158,8 @@ extension Gate1AppModel {
         case .voiceFile(let url), .readingReady(_, let url): audioURL = url
         case .readingRendering: return WrittenMarginReadings.waitThenListen(prompt, model: self) // not rendered yet
         case .cannotBeRead:
-            dismissPendingImportedCommentary()
             reportFailure(SharedMarginAudio.unavailableWords(for: prompt.interjection))
+            skipPendingImportedCommentary() // finished with, and the listener stays: the next waiting Margin is offered (#4347)
             return
         }
         importedCommentaryAutoPlayTask?.cancel()
@@ -165,6 +192,7 @@ extension Gate1AppModel {
         } catch {
             stopImportedCommentaryPlayback(resumeSource: false)
             reportFailure(error, context: "Shared Margin playback failed")
+            offerNextMarginWaitingForTheEnd() // as above: a Margin that can't play is finished with (#4347)
         }
         #else
         reportFailure("Shared Margin playback is unavailable on this device.")
@@ -285,7 +313,7 @@ extension Gate1AppModel {
                     // A listener still touching the card, or with focus on it, keeps it (#3720).
                     try? await FeedbackBannerHold.marginCard.waitWhileHeld()
                     guard !Task.isCancelled, self.pendingImportedCommentary?.id == prompt.id else { return }
-                    self.dismissPendingImportedCommentary()
+                    self.skipPendingImportedCommentary()
                 }
             }
         }
@@ -301,10 +329,12 @@ extension Gate1AppModel {
         sharedMarginOffers.markAnnounced(prompt.id)
         if sourceWasPlaying { pause() }
         // A Margin still waiting for its placement pass is at the sender's time (#3059), as it is when the episode reaches it.
-        if let mediaTimeMs = SharedMarginPrompts.mediaTimeMs(prompt.interjection, in: prompt.layer) {
+        if let mediaTimeMs = prompt.mediaTimeMs {
             seekMedia(toMediaTimeMs: mediaTimeMs)
         } else if let charOffset = prompt.interjection.resolution.localStartChar {
             seekText(toCharOffset: charOffset)
+        } else if prompt.plan == .afterOthers {
+            // No usable time in this copy (#3789): a tap plays the Margin where the listener is, never at a made-up place.
         } else {
             reportFailure("The selected Shared Margin does not have a verified local position.")
             return false
@@ -453,6 +483,7 @@ extension Gate1AppModel: MarginVoicePlayerHost {
 
     func marginVoiceSharedPlaybackEnded() {
         stopImportedCommentaryPlayback(resumeSource: true)
+        offerNextMarginWaitingForTheEnd()
     }
 
     func marginVoiceRemoteCommand(_ command: CompactControlCommand) {

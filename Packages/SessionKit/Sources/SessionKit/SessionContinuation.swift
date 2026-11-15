@@ -12,7 +12,7 @@ public enum SessionContinuation {
             return left == right ? lhs.id < rhs.id : left > right
         }.first { session in
             isResumableSession(session)
-                || (session.status == "finished" && session.completionPercent >= 100)
+                || (session.status == "finished" && session.completionPercent >= ItemFinishedRule.atEndPercent)
         }
     }
 
@@ -20,7 +20,7 @@ public enum SessionContinuation {
     /// one at the start (the item screen says "Replay"). One rule for `startItem`, the question about Margins the
     /// listener would skip (#474) and the Library row, so they can't disagree about where Continue lands (#4097).
     public static func continueResumes(_ session: Session) -> Bool {
-        session.phase != .finished && session.status != "finished" && session.completionPercent < 100
+        session.phase != .finished && session.status != "finished" && session.completionPercent < ItemFinishedRule.atEndPercent
     }
 
     /// Where Continue puts the listener on an item with these sessions, in media milliseconds: the place of the
@@ -39,7 +39,7 @@ public enum SessionContinuation {
     /// hold, and the caller asks about every new Margin.
     public static func continuePlaceMs(hasContinuationSession: Bool, progressPercent: Int?) -> Int? {
         guard hasContinuationSession else { return 0 }
-        return (progressPercent ?? 0) >= 100 ? 0 : nil
+        return (progressPercent ?? 0) >= ItemFinishedRule.atEndPercent ? 0 : nil
     }
 }
 

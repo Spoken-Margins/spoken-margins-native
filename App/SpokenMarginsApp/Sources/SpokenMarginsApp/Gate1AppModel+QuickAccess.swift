@@ -70,13 +70,14 @@ extension Gate1AppModel {
             importQuickFolderLinkLists([file], folderURL: urls.folderURL)
             return
         }
-        beginObsidianMarkdownImport(
+        // A `.txt` that reads as a meeting transcript becomes a transcript item; anything else imports as before (#2997).
+        importFilesWithTranscriptRule(
             urls: [urls.fileURL],
-            securityScopedURLs: [urls.folderURL],
-            refreshQuickFolderWhenFinished: true,
-            openImportedItemWhenFinished: openWhenFinished,
-            quickAccessFileToDismiss: file
-        )
+            route: TranscriptPickRoute(
+                securityScopedURLs: [urls.folderURL],
+                refreshQuickFolderWhenFinished: true,
+                openImportedItemWhenFinished: openWhenFinished,
+                quickAccessFileToDismiss: file))
     }
 
     func refreshQuickAddFeed(force: Bool = true) {

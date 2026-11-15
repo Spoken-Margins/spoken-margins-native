@@ -150,7 +150,8 @@ extension Gate1AppModel {
         onImported: (([Item]) -> Void)? = nil,
         onFinished: (([Item]) -> Void)? = nil,
         navigatesWhenFinished: Bool = true,
-        confirmationOverride: ((Int) -> String)? = nil
+        confirmationOverride: ((Int) -> String)? = nil,
+        summary: ((_ importedCount: Int, _ failedFileNames: [String]) -> Void)? = nil
     ) {
         guard !urls.isEmpty else {
             reportFailure("Choose at least one Markdown, text, or PDF file to import.")
@@ -203,7 +204,8 @@ extension Gate1AppModel {
                 onImported: onImported,
                 onFinished: onFinished,
                 navigatesWhenFinished: navigatesWhenFinished,
-                confirmationOverride: confirmationOverride
+                confirmationOverride: confirmationOverride,
+                summary: summary
             )
         }
     }
@@ -312,7 +314,8 @@ extension Gate1AppModel {
         onImported: (([Item]) -> Void)? = nil,
         onFinished: (([Item]) -> Void)? = nil,
         navigatesWhenFinished: Bool = true,
-        confirmationOverride: ((Int) -> String)? = nil
+        confirmationOverride: ((Int) -> String)? = nil,
+        summary: ((Int, [String]) -> Void)? = nil
     ) async {
         // What this import saved, set once `onImported` has run; `onFinished` hears it, or an empty list on any failure (#4044).
         var landed: [Item] = []
@@ -330,8 +333,13 @@ extension Gate1AppModel {
             let imported = saved.imported
             let failures = saved.failures
             guard !imported.isEmpty else {
-                reportFailure(failures.isEmpty ? "No source files were imported." : failures.joined(separator: "\n\n"))
                 if !saved.rawFailures.isEmpty { diagnostics["recentFailure"] = saved.rawFailures.joined(separator: "\n") }
+                // A pick that held a transcript says what happened in its own banner (#2997).
+                if let summary {
+                    summary(0, failures.map(Self.failedFileName(in:)))
+                    return
+                }
+                reportFailure(failures.isEmpty ? "No source files were imported." : failures.joined(separator: "\n\n"))
                 return
             }
             // The Library and the opened item are read off the main actor, as the EPUB and audiobook imports do.
@@ -372,11 +380,22 @@ extension Gate1AppModel {
             diagnostics["lastObsidianImportCount"] = "\(imported.count)"
             diagnostics["lastObsidianImportFailures"] = "\(failures.count)"
             markOnboardingSteps([.addedOwnSource, .addedFromFiles])
+            if let summary {
+                summary(imported.count, failures.map(Self.failedFileName(in:)))
+                return
+            }
             let suffix = failures.isEmpty ? "" : " \(failures.count) failed."
             reportConfirmation(confirmationOverride?(imported.count) ?? "Imported \(imported.count) source file\(imported.count == 1 ? "" : "s").\(suffix)")
         } catch {
+            // The transcripts this pick already added still get their banner before the failure (#2997).
+            summary?(0, [])
             reportFailure(error, context: "File import failed")
         }
+    }
+
+    /// A failure entry reads "file name", a line break, then the reason; the name is the first line.
+    nonisolated static func failedFileName(in failure: String) -> String {
+        failure.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? failure
     }
 
     func reportImportFailure(_ error: Error) {
