@@ -25,11 +25,32 @@ public struct FriendListenState: Equatable, Sendable {
         self.isShowingEndCard = isShowingEndCard
     }
 
+    /// How many of the item's new friend Margins are still ahead of the playhead, the number `entryCount` takes. A Margin
+    /// the listener has gone past without hearing (a start that skipped it, a seek, a tone not tapped) stays new, but
+    /// nothing will play it, so it must not hold the listen open: the prompt and the listener's own transcript line would
+    /// stay hidden, with no friend card on screen to explain why (audit of #4390).
+    ///
+    /// Media compares by time, by `FriendMarginsPlan`'s rule (a Margin that plays after the others is ahead until the
+    /// place is the end itself). Text compares by character, as the pinned card's "next Margin" does.
+    /// - Parameters:
+    ///   - mediaTimeMs: the playhead, for a media item; nil for text read aloud.
+    ///   - textStart: the character being read, for text; nil before the first is read.
+    ///   - isAtEnd: the playhead is the end of the episode.
+    public static func aheadCount(
+        _ entries: [SharedMarginReview.Entry], mediaTimeMs: Int?, textStart: Int?, isAtEnd: Bool
+    ) -> Int {
+        if let mediaTimeMs {
+            return entries.count - FriendMarginsPlan.behind(entries, place: .known(mediaTimeMs: mediaTimeMs, isAtEnd: isAtEnd)).count
+        }
+        let from = textStart ?? -1
+        return entries.filter { ($0.interjection.resolution.localStartChar ?? -1) > from }.count
+    }
+
     /// - Parameters:
     ///   - selectedItemId: the item the Now screen shows.
     ///   - playingItemId: the item that is playing. A friend's packet on one item while another plays gives no friend
     ///     listen for the playing one, and none for the packet's item either, since it is not on Now.
-    ///   - entryCount: how many of the selected item's friend Margins are new and will play (`SharedMarginReview.entries`).
+    ///   - entryCount: how many of the selected item's friend Margins are new and still ahead (`aheadCount`).
     ///   - pinnedCard: the card in the pinned slot, if any.
     public init(selectedItemId: String, playingItemId: String?, entryCount: Int, pinnedCard: PinnedMarginCard?) {
         guard selectedItemId == playingItemId else {

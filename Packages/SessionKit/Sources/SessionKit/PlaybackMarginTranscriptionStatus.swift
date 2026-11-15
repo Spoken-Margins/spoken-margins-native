@@ -49,33 +49,8 @@ public struct PlaybackMarginTranscriptionStatus: Equatable, Sendable {
         attentionCount = failed + missing
     }
 
-    public var text: String? {
-        var parts: [String] = []
-        if pendingCount > 0 {
-            parts.append("\(pendingCount) transcript\(pendingCount == 1 ? "" : "s") pending")
-        }
-        if attentionCount > 0 {
-            parts.append(pendingCount > 0
-                ? "\(attentionCount) need\(attentionCount == 1 ? "s" : "") attention"
-                : "\(attentionCount) Margin\(attentionCount == 1 ? " needs" : "s need") attention")
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    public var accessibilityLabel: String? {
-        var parts: [String] = []
-        if pendingCount > 0 {
-            parts.append("\(pendingCount) Margin transcript\(pendingCount == 1 ? "" : "s") pending")
-        }
-        if attentionCount > 0 {
-            parts.append("\(attentionCount) Margin\(attentionCount == 1 ? " needs" : "s need") attention")
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: ". ")
-    }
-
     /// The status line's words, one part per kind present, in this order, joined with " · " (#3790): "1 transcript
-    /// pending", "2 transcripts failed", "1 recording missing". Nil when there is nothing to say. `text` is the older
-    /// wording ("need attention") that the view reads until it switches to this.
+    /// pending", "2 transcripts failed", "1 recording missing". Nil when there is nothing to say.
     public var words: String? {
         var parts: [String] = []
         if pendingCount > 0 { parts.append("\(pendingCount) transcript\(pendingCount == 1 ? "" : "s") pending") }

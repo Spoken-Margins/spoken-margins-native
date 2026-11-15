@@ -10,8 +10,8 @@ final class PlaybackMarginTranscriptionStatusTests: XCTestCase {
             let result = present(try store.loadInterjections(sessionId: "A-current"))
             XCTAssertEqual(result.pendingCount, 1)
             XCTAssertEqual(result.attentionCount, 0)
-            XCTAssertEqual(result.text, "1 transcript pending")
-            XCTAssertEqual(result.accessibilityLabel, "1 Margin transcript pending")
+            XCTAssertEqual(result.words, "1 transcript pending")
+            XCTAssertEqual(result.voiceOverWords, "1 Margin transcript pending.")
         }
     }
 
@@ -26,7 +26,7 @@ final class PlaybackMarginTranscriptionStatusTests: XCTestCase {
             ] {
                 let result = PlaybackMarginTranscriptionStatus(
                     selectedItemId: selected, playingItemId: playing, sessionId: session, interjections: notes)
-                XCTAssertNil(result.text, "\(selected)/\(String(describing: playing))/\(String(describing: session))")
+                XCTAssertNil(result.words, "\(selected)/\(String(describing: playing))/\(String(describing: session))")
                 XCTAssertEqual(result.pendingCount, 0)
             }
         }
@@ -43,7 +43,7 @@ final class PlaybackMarginTranscriptionStatusTests: XCTestCase {
             let result = present(all)
             XCTAssertEqual(result.pendingCount, 0)
             XCTAssertEqual(result.attentionCount, 0)
-            XCTAssertNil(result.text)
+            XCTAssertNil(result.words)
         }
     }
 
@@ -60,8 +60,8 @@ final class PlaybackMarginTranscriptionStatusTests: XCTestCase {
                 try store.saveInterjection(row)
             }
             let result = present(try store.loadInterjections(sessionId: "A-current"))
-            XCTAssertNil(result.text)
-            XCTAssertNil(result.accessibilityLabel)
+            XCTAssertNil(result.words)
+            XCTAssertNil(result.voiceOverWords)
         }
     }
 
@@ -75,7 +75,7 @@ final class PlaybackMarginTranscriptionStatusTests: XCTestCase {
             let result = present(try store.loadInterjections(sessionId: "A-current"))
             XCTAssertEqual(result.pendingCount, 0)
             XCTAssertEqual(result.attentionCount, 2)
-            XCTAssertEqual(result.text, "2 Margins need attention")
+            XCTAssertEqual(result.words, "2 recordings missing")
         }
     }
 
@@ -86,8 +86,8 @@ final class PlaybackMarginTranscriptionStatusTests: XCTestCase {
             let result = present(try store.loadInterjections(sessionId: "A-current"))
             XCTAssertEqual(result.pendingCount, 2)
             XCTAssertEqual(result.attentionCount, 1)
-            XCTAssertEqual(result.text, "2 transcripts pending · 1 needs attention")
-            XCTAssertEqual(result.accessibilityLabel, "2 Margin transcripts pending. 1 Margin needs attention")
+            XCTAssertEqual(result.words, "2 transcripts pending · 1 transcript failed")
+            XCTAssertEqual(result.voiceOverWords, "2 Margin transcripts pending. 1 Margin transcript failed. Open the Margin to try again.")
         }
     }
 
@@ -101,7 +101,7 @@ final class PlaybackMarginTranscriptionStatusTests: XCTestCase {
             let result = present(try store.loadInterjections(sessionId: "A-current"), isRetrying: { _ in true })
             XCTAssertEqual(result.pendingCount, 2)
             XCTAssertEqual(result.attentionCount, 0)
-            XCTAssertEqual(result.text, "2 transcripts pending")
+            XCTAssertEqual(result.words, "2 transcripts pending")
         }
     }
 
@@ -111,7 +111,7 @@ final class PlaybackMarginTranscriptionStatusTests: XCTestCase {
             try store.saveInterjection(note("same", transcription: "failed", session: "A-older"))
             _ = try engine.deleteRepresentation(interjectionId: "same", sessionId: "A-current", representation: "transcript")
             var rows = try store.loadInterjections(sessionId: "A-current")
-            XCTAssertEqual(present(rows).text, "1 Margin needs attention")
+            XCTAssertEqual(present(rows).words, "1 transcript failed")
             let otherSessionRetry = present(rows, isRetrying: { $0.sessionId == "A-older" && $0.id == "same" })
             XCTAssertEqual(otherSessionRetry.attentionCount, 1)
             XCTAssertEqual(otherSessionRetry.pendingCount, 0)
@@ -126,7 +126,7 @@ final class PlaybackMarginTranscriptionStatusTests: XCTestCase {
             _ = try engine.transcriptionCompleted(interjectionId: "same", sessionId: "A-current", transcript: "Again")
             rows = try store.loadInterjections(sessionId: "A-current")
             XCTAssertEqual(rows.first?.transcript, "Again")
-            XCTAssertNil(present(rows).text)
+            XCTAssertNil(present(rows).words)
             XCTAssertEqual(try store.loadInterjections(sessionId: "A-older").first?.transcriptionStatus, "failed")
         }
     }
@@ -193,7 +193,6 @@ final class PlaybackMarginTranscriptionStatusTests: XCTestCase {
             let result = status(pending: pending, failed: failed, missing: missing)
             XCTAssertEqual(result.words, words, "\(pending)/\(failed)/\(missing)")
             XCTAssertEqual(result.voiceOverWords, spoken, "\(pending)/\(failed)/\(missing)")
-            XCTAssertEqual(result.text == nil, words == nil, "the older words and the new ones agree on whether there is anything to say")
         }
     }
 
