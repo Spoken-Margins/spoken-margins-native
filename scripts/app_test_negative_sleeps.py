@@ -10,12 +10,16 @@ would have happened, a clock that has visibly advanced past it (#3714, #4313).
   scripts/app_test_negative_sleeps.py              list the sleeps (count, then the first few); exit 1 on a new one
   scripts/app_test_negative_sleeps.py --write F    also write every sleep found to the JSON file F
                                                    (use artifacts/app-test-negative-sleeps.json; artifacts/ is git-ignored)
-  scripts/app_test_negative_sleeps.py --update     rewrite the baseline to what is found now (only ever to shrink it)
+  scripts/app_test_negative_sleeps.py --update     shrink the baseline to what is still found (never adds or raises a test)
+  scripts/app_test_negative_sleeps.py --update --allow-new
+                                                   list everything found; only when the scan itself is widened, and
+                                                   say so in the PR, since it is the one way the baseline grows
 
-A sleep is flagged when it is a statement of its own (`try await Task.sleep(...)`, `Thread.sleep(...)`, `usleep(...)`) and
+A sleep is flagged when it is a statement of its own (`try await Task.sleep(...)`, `Thread.sleep(...)`, `usleep(...)`,
+`RunLoop.main.run(until:)`, `_ = XCTWaiter().wait(...)`, a clock's `sleep`) and
 the run of assertions right after it (blank and comment lines skipped) holds a negative one: `XCTAssertFalse`,
-`XCTAssertNil`, `XCTAssertEqual(x, [])` (or `0`, `nil`, `false`, `""`), `XCTAssertTrue(x.isEmpty)`, or any assertion
-whose message says "must not", "never", "nothing", "by itself", "no longer" or "still".
+`XCTAssertNil`, `XCTAssertEqual(x, [])` (or `[:]`, `0`, `nil`, `false`, `""`, either way round), `XCTAssertTrue(x.isEmpty)`,
+or any assertion whose message says "not", "no", "never", "nothing", "by itself", "still" or a word ending in "n't".
 A sleep that is itself the point (the test claims something holds for that long, and no signal marks the end) carries
 `// fixed-sleep ok: <why>` on its line or in the comment lines just above it, and is not flagged.
 The sleeps that were there when the guard came in are listed per test in scripts/app_test_negative_sleeps_baseline.json;
@@ -31,13 +35,19 @@ ROOT = Path(__file__).resolve().parents[1]
 FOLDERS = (ROOT / 'App' / 'SpokenMarginsAppTests', ROOT / 'App' / 'SpokenMarginsAppUITests')
 BASELINE = ROOT / 'scripts' / 'app_test_negative_sleeps_baseline.json'
 
-SLEEP = re.compile(r'^\s*(?:try\??\s+)?(?:await\s+)?(?:Task\.sleep\(|Thread\.sleep\(|usleep\()')
+# A wait of fixed length: Task, Thread, clock and C sleeps, a run loop run for a while, and an XCTWaiter wait (which
+# ends at its timeout when nothing fulfils it). `_ =` and `try?` in front are allowed.
+SLEEP = re.compile(r'^\s*(?:_\s*=\s*)?(?:try\??\s+)?(?:await\s+)?'
+                   r'(?:Task\.sleep\(|Thread\.sleep\(|usleep\(|sleep\(|\w*[Cc]lock(?:\(\))?\.sleep\('
+                   r'|RunLoop\.\w+\.run\(until|XCTWaiter(?:\(\))?\.wait\()')
 ASSERT = re.compile(r'^(?:XCTAssert|XCTFail)')
 NEGATIVE = re.compile(
     r'XCTAssertFalse\(|XCTAssertNil\('
-    r'|XCTAssertEqual\(.*,\s*(?:\[\]|0|nil|false|"")\s*[,)]'
-    r'|XCTAssertTrue\(.*\.isEmpty\b')
-NEGATIVE_MESSAGE = re.compile(r'XCTAssert\w*\(.*"[^"]*\b(?:must not|never|nothing|by itself|no longer|still)\b', re.I)
+    r'|XCTAssertEqual\(.*,\s*(?:\[\]|\[:\]|0|nil|false|"")\s*[,)]'
+    r'|XCTAssertEqual\(\s*(?:\[\]|\[:\])\s*,'
+    r'|XCTAssert(?:True)?\(.*\.isEmpty\b')
+NEGATIVE_MESSAGE = re.compile(
+    r'XCTAssert\w*\(.*"[^"]*(?:\b(?:must not|not|no|never|nothing|by itself|no longer|still)\b|n\'t\b)', re.I)
 REASON = re.compile(r'//\s*fixed-sleep ok:\s*\S')
 FUNC = re.compile(r'\bfunc\s+(\w+)\s*[(<]')
 
@@ -130,7 +140,8 @@ def load_baseline(path=BASELINE):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--write', metavar='FILE', help='write every sleep found to this JSON file')
-    parser.add_argument('--update', action='store_true', help='rewrite the baseline to what is found now')
+    parser.add_argument('--update', action='store_true', help='shrink the baseline to what is still found')
+    parser.add_argument('--allow-new', action='store_true', help=argparse.SUPPRESS)  # with --update: list new ones too
     parser.add_argument('--folder', action='append', help=argparse.SUPPRESS)
     parser.add_argument('--baseline', default=str(BASELINE), help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
@@ -140,7 +151,11 @@ def main(argv=None):
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(found, indent=1) + '\n')
     if args.update:
-        Path(args.baseline).write_text(json.dumps(per_test(flagged(found)), indent=1) + '\n')
+        # Only ever shrinks: a test keeps the smaller of its listed and found counts, and a test not listed stays out.
+        listed = load_baseline(args.baseline)
+        counts = per_test(flagged(found))
+        kept = dict(counts) if args.allow_new else {key: min(n, counts[key]) for key, n in listed.items() if counts.get(key)}
+        Path(args.baseline).write_text(json.dumps(dict(sorted(kept.items())), indent=1) + '\n')
     baseline = load_baseline(args.baseline)
     new, stale = compare(found, baseline)
     print(f'{len(flagged(found))} fixed sleep(s) before a negative assertion; {sum(baseline.values())} listed in the '

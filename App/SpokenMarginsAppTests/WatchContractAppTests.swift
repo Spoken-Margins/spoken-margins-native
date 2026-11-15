@@ -148,6 +148,9 @@ final class WatchContractAppTests: XCTestCase {
         receiver.runTransport = { _ in } // the player refuses it
         let paused = WatchNowPlaying(itemId: "ep", title: "Episode", isPlaying: false, positionMs: 5_000, positionAt: Date())
         receiver.nowPlayingChanged(paused)
+        // That board comes from a task of its own; it must be out before `before` is read, or it could pass for the settle.
+        try await pollUntil { receiver.lastBoard?.nowPlaying == paused }
+        XCTAssertEqual(receiver.lastBoard?.nowPlaying, paused)
         let held = TranscriptionGate()
         receiver.transcribe = { _ in await held.wait(); return nil }
         try deliver(receiver, WatchMarginTransfer(id: "w-hold", wallStart: Date(), durationMs: 1_000), bytes: "aac-hold")

@@ -541,7 +541,7 @@ final class CatalogDrawerTests: XCTestCase {
         })
         drawer.searchText = "h"
         // No wait (#4313): the drawer turns one character away before any search task exists, so a search that started
-        // shows at once as isSearchPending; a fixed sleep only gave a started search's request time to arrive.
+        // shows at once as isSearchPending, which carries this test; the request count only says none went out yet.
         XCTAssertEqual(requests.value, 0)
         XCTAssertFalse(drawer.isSearching)
         XCTAssertFalse(drawer.isSearchPending)
