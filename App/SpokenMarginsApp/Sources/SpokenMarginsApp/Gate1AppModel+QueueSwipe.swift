@@ -61,13 +61,14 @@ extension Gate1AppModel {
             return
         }
         QueueWishController.register(file.id)
-        beginObsidianMarkdownImport(
+        // A `.txt` that reads as a meeting transcript is saved as a transcript item and queued like any other (#2997).
+        importFilesWithTranscriptRule(
             urls: [urls.fileURL],
-            securityScopedURLs: [urls.folderURL],
-            refreshQuickFolderWhenFinished: true,
-            quickAccessFileToDismiss: file,
-            onFinished: { [weak self] items in self?.settleQueueWish(key: file.id, itemId: items.first?.id) }
-        )
+            route: TranscriptPickRoute(
+                securityScopedURLs: [urls.folderURL],
+                refreshQuickFolderWhenFinished: true,
+                quickAccessFileToDismiss: file,
+                onFinished: { [weak self] outcome in self?.settleQueueWish(key: file.id, itemId: outcome.itemIds.first) }))
     }
 
     /// An import for `key` ended: `itemId` is the item it saved, nil when it saved nothing. A wish for it is released to

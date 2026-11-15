@@ -12,6 +12,20 @@ extension Gate1AppModel {
         var refreshQuickFolderWhenFinished = false
         var openImportedItemWhenFinished = false
         var quickAccessFileToDismiss: QuickAccessFile?
+        /// The text import's own navigation and words, for the Quick Folder inbox, which queues what it adds (#1990).
+        var navigatesWhenFinished = true
+        var confirmationOverride: ((Int) -> String)?
+        /// Hears how the pick ended, once, after its items are saved and its banner is posted: the ids it saved in the
+        /// order picked, none when it failed. The Quick Folder's queue paths queue those ids (#2997).
+        var onFinished: ((TranscriptPickOutcome) -> Void)?
+    }
+
+    /// What a pick saved: the items' ids in the order the files were picked (a transcript picked twice is one id), and
+    /// whether the pick held a file the transcript rule handled, which means its banner is the transcript banner.
+    struct TranscriptPickOutcome {
+        var itemIds: [String]
+        var handledTranscript: Bool
+        static let nothing = TranscriptPickOutcome(itemIds: [], handledTranscript: false)
     }
 
     /// Imports a pick of document files. A `.vtt`, `.srt`, `.docx` or `.txt` goes through the transcript rule first;
@@ -22,16 +36,18 @@ extension Gate1AppModel {
     /// "Another source is already importing." Nothing here navigates, except the Quick Folder's "Add and open".
     func importFilesWithTranscriptRule(urls: [URL], route: TranscriptPickRoute) {
         guard urls.contains(where: TranscriptPickImport.isCandidate) else {
-            importPickAsText(urls, route: route, summary: nil)
+            importPickAsText(urls, route: route, summary: nil, picked: urls, added: [], handledTranscript: false)
             return
         }
         guard sourceImportTask == nil else {
             reportFailure("Another source is already importing. You can keep using playback while it finishes.")
+            route.onFinished?(.nothing)
             return
         }
         let store: SQLiteSessionStore
         do { store = try requireStore() } catch {
             reportFailure(error, context: "File import failed")
+            route.onFinished?(.nothing)
             return
         }
         let scopedAccess = route.securityScopedURLs.map { url in (url: url, didAccess: url.startAccessingSecurityScopedResource()) }
@@ -39,7 +55,6 @@ extension Gate1AppModel {
         statusMessage = sourceImportProgressMessage ?? "Importing sources…"
         lastError = nil
         let stillListening = engine?.itemIdsStillListening ?? []
-        let pickedCount = urls.count
 
         sourceImportTask = Task { [weak self] in
             // Reading, parsing and the store write run off the main actor, one file after another.
@@ -62,18 +77,35 @@ extension Gate1AppModel {
                 do { try await self.reloadLibraryRowsOffMain(store: store) } catch { reloadError = error }
             }
             let itemToOpen = self.hangTelemetry.labels.scoped("transcriptImportFinish") {
-                self.finishTranscriptImport(picked, reloadError: reloadError, store: store, pickedCount: pickedCount, route: route)
+                self.finishTranscriptImport(picked, reloadError: reloadError, store: store, pickedURLs: urls, route: route)
             }
             if let itemToOpen { await self.openImportedTranscript(itemId: itemToOpen, store: store) }
         }
     }
 
-    private func importPickAsText(_ files: [URL], route: TranscriptPickRoute, summary: ((Int, [String]) -> Void)?) {
+    /// Hands `files` to today's text import. `picked` and `added` are the whole pick and the transcripts it already
+    /// added, so the route's `onFinished` hears every item the pick saved, in the order picked.
+    private func importPickAsText(
+        _ files: [URL], route: TranscriptPickRoute, summary: ((Int, [String]) -> Void)?,
+        picked: [URL], added: [TranscriptPickImport.Added], handledTranscript: Bool
+    ) {
+        var onFinished: (([Item]) -> Void)?
+        if let finished = route.onFinished {
+            onFinished = { (textItems: [Item]) in
+                finished(TranscriptPickOutcome(
+                    itemIds: TranscriptPickImport.itemIdsInPickOrder(
+                        picked: picked, added: added, passthrough: files, textItemIds: textItems.map(\.id)),
+                    handledTranscript: handledTranscript))
+            }
+        }
         beginObsidianMarkdownImport(
             urls: files, securityScopedURLs: route.securityScopedURLs,
             refreshQuickFolderWhenFinished: route.refreshQuickFolderWhenFinished,
             openImportedItemWhenFinished: route.openImportedItemWhenFinished,
             quickAccessFileToDismiss: route.quickAccessFileToDismiss,
+            onFinished: onFinished,
+            navigatesWhenFinished: route.navigatesWhenFinished,
+            confirmationOverride: route.confirmationOverride,
             summary: summary)
     }
 
@@ -81,7 +113,7 @@ extension Gate1AppModel {
     /// when the pick asked to ("Add and open"), for the caller to load off the main actor.
     private func finishTranscriptImport(
         _ picked: Result<TranscriptPickImport.Result, Error>, reloadError: Error?, store: SQLiteSessionStore,
-        pickedCount: Int, route: TranscriptPickRoute
+        pickedURLs: [URL], route: TranscriptPickRoute
     ) -> String? {
         var releasedSlot = false
         func releaseImportSlot() {
@@ -96,7 +128,8 @@ extension Gate1AppModel {
             guard result.handledAnyTranscript else {
                 // No file was a transcript: today's import, with today's words.
                 releaseImportSlot()
-                importPickAsText(result.passthrough, route: route, summary: nil)
+                importPickAsText(
+                    result.passthrough, route: route, summary: nil, picked: pickedURLs, added: [], handledTranscript: false)
                 return nil
             }
             if let reloadError { throw reloadError }
@@ -110,19 +143,30 @@ extension Gate1AppModel {
             if route.refreshQuickFolderWhenFinished { refreshQuickAccessFolder() }
             let added = result.added.map { (itemId: $0.itemId, title: $0.title) }
             if result.passthrough.isEmpty {
-                reportTranscriptPick(added: added, refusals: result.refusals, documentsImported: 0, documentFailureNames: [], pickedCount: pickedCount)
+                reportTranscriptPick(added: added, refusals: result.refusals, documentsImported: 0, documentFailureNames: [], pickedCount: pickedURLs.count)
+                // The slot is free before the route hears the end, as it is when the text import ends.
+                releaseImportSlot()
+                route.onFinished?(TranscriptPickOutcome(
+                    itemIds: TranscriptPickImport.itemIdsInPickOrder(
+                        picked: pickedURLs, added: result.added, passthrough: [], textItemIds: []),
+                    handledTranscript: true))
             } else {
                 // The rest of the pick goes to the text import, which tells this banner how many it added and what failed.
                 releaseImportSlot()
-                importPickAsText(result.passthrough, route: route) { [weak self] imported, failedNames in
-                    self?.reportTranscriptPick(
-                        added: added, refusals: result.refusals, documentsImported: imported,
-                        documentFailureNames: failedNames, pickedCount: pickedCount)
-                }
+                importPickAsText(
+                    result.passthrough, route: route,
+                    summary: { [weak self] imported, failedNames in
+                        self?.reportTranscriptPick(
+                            added: added, refusals: result.refusals, documentsImported: imported,
+                            documentFailureNames: failedNames, pickedCount: pickedURLs.count)
+                    },
+                    picked: pickedURLs, added: result.added, handledTranscript: true)
             }
             return route.openImportedItemWhenFinished ? result.added.first?.itemId : nil
         } catch {
             reportFailure(error, context: "File import failed")
+            releaseImportSlot()
+            route.onFinished?(.nothing)
             return nil
         }
     }
