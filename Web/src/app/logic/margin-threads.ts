@@ -44,23 +44,30 @@ export function threadLine(parent: ThreadParent): string {
   return replyMarginName(parent.margin);
 }
 
-const byTime = (a: Margin, b: Margin) => a.atSeconds - b.atSeconds || (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0);
+/** Time order, then the order they were created in (parsed: packets write dates in different forms); equal Margins keep their incoming order. */
+const created = (m: Margin) => {
+  const t = Date.parse(m.createdAt);
+  return Number.isNaN(t) ? 0 : t;
+};
+const byTime = (a: Margin, b: Margin) => a.atSeconds - b.atSeconds || created(a) - created(b);
 
 /**
- * One episode's Margins in the order the Margins screen lists them: each Margin in time order, and after it the Margins
+ * One episode's Margins (`margins`) in the order the Margins screen lists them: each Margin in time order, and after it the Margins
  * that answer it (each followed by its own), in their own time order. A Margin that answers nothing, or whose link leads
- * nowhere, stands at its own time. Links that loop back on themselves can't stack: the Margins in the loop are listed at
- * their own times, none lost. Every Margin appears exactly once.
+ * nowhere, stands at its own time. Links that loop back on themselves can't stack: the first Margin of a loop stands at its
+ * own time and the rest hang under it, none lost. Every Margin appears exactly once.
  */
-export function threadedRows(margins: readonly Margin[]): ThreadedRow[] {
+export function threadedRows(margins: readonly Margin[], all: readonly Margin[] = margins): ThreadedRow[] {
   const sorted = [...margins].sort(byTime);
+  const inGroup = new Set(sorted);
   const parents = new Map<Margin, ThreadParent>();
   const children = new Map<Margin, Margin[]>();
   for (const margin of sorted) {
-    const parent = findParent(margin, sorted);
+    // The lookup covers every Margin in the browser, so "can't find" is true; only a Margin in this group can have a reply listed under it.
+    const parent = findParent(margin, all);
     if (!parent) continue;
     parents.set(margin, parent);
-    if (parent.kind !== 'lost') children.set(parent.margin, [...(children.get(parent.margin) ?? []), margin]);
+    if (parent.kind !== 'lost' && inGroup.has(parent.margin)) children.set(parent.margin, [...(children.get(parent.margin) ?? []), margin]);
   }
   const rows: ThreadedRow[] = [];
   const placed = new Set<Margin>();
@@ -77,11 +84,9 @@ export function threadedRows(margins: readonly Margin[]): ThreadedRow[] {
   // Standing Margins first, in time order; they bring their replies with them.
   for (const margin of sorted) {
     const parent = parents.get(margin);
-    if (!parent || parent.kind === 'lost') place(margin, false);
+    if (!parent || parent.kind === 'lost' || !inGroup.has(parent.margin)) place(margin, false);
   }
-  // Whatever is left answers another in a loop; list each at its own time, not indented, without its replies.
-  for (const margin of sorted) {
-    if (!placed.has(margin)) add(margin, false);
-  }
+  // Whatever is left answers another in a loop: each stands at its own time and brings what is under it.
+  for (const margin of sorted) place(margin, false);
   return rows;
 }

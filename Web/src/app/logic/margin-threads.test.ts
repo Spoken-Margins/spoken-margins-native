@@ -44,6 +44,22 @@ test('later replies to the same Margin follow in their own time order; Margins w
   assert.deepEqual(order(margins), ['mine-a', '  cole-1', '  cole-2', 'plain']);
 });
 
+test('same-time replies to one Margin are ordered by when they were made, whatever form the date is written in', () => {
+  const margins = [
+    own('mine-a', 10, { sharedAs: ['packet:d1:margin-0001'] }),
+    friend('later', 30, { replyToId: 'packet:d1:margin-0001', createdAt: '2026-11-10T09:30:00Z' }),
+    friend('earlier', 30, { replyToId: 'packet:d1:margin-0001', createdAt: '2026-11-10T10:00:00+02:00' }),
+  ];
+  assert.deepEqual(order(margins), ['mine-a', '  earlier', '  later']);
+});
+
+test('a parent on another episode is found for the line but the reply stays at its own time in its own group', () => {
+  const elsewhere = own('mine-a', 10, { episodeId: 'other', sharedAs: ['packet:d1:margin-0001'] });
+  const reply = friend('cole-1', 30, { replyToId: 'packet:d1:margin-0001' });
+  const rows = threadedRows([reply], [elsewhere, reply]);
+  assert.deepEqual(rows.map((r) => [r.margin.id, r.indented, r.line]), [['cole-1', false, 'Reply to your Margin at 0:10']]);
+});
+
 test('a stopped reply is not a reply: only replyToId threads', () => {
   const margins = [friend('packet:d2:margin-0001', 40), own('mine-r', 50, { formerReplyToId: 'packet:d2:margin-0001' })];
   assert.deepEqual(order(margins), ['packet:d2:margin-0001', 'mine-r']);
@@ -52,7 +68,9 @@ test('a stopped reply is not a reply: only replyToId threads', () => {
 test('neighbours: a Margin never answers itself, links that loop list each Margin once at its own time, an empty list is empty', () => {
   assert.equal(findParent(own('x', 1, { replyToId: 'x' }), [own('x', 1, { replyToId: 'x' })])?.kind, 'lost');
   const loop = [friend('a', 10, { replyToId: 'b' }), friend('b', 20, { replyToId: 'a' }), own('c', 5)];
-  assert.deepEqual(order(loop), ['c', 'a', 'b']);
+  assert.deepEqual(order(loop), ['c', 'a', '  b']);
+  const withD = [...loop, friend('d', 40, { replyToId: 'a' })];
+  assert.deepEqual(order(withD), ['c', 'a', '  b', '  d']);
   assert.deepEqual(threadedRows([]), []);
 });
 

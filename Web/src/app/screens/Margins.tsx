@@ -94,7 +94,7 @@ export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void
               </h2>
             </header>
             <ol className="margin-list">
-              {threadedRows(group.margins).map(({ margin, indented, line }) => (
+              {threadedRows(group.margins, data.margins).map(({ margin, indented, line }) => (
                 <MarginRow key={margin.id} margin={margin} parent={parentOf(margin, data.margins)} newest={margin.id === newestId} onPlay={onPlay} indented={indented} threadLine={line} />
               ))}
             </ol>
