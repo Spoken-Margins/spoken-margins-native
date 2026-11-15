@@ -246,14 +246,27 @@ final class DiagnosticsExportTests: XCTestCase {
         XCTAssertEqual(entries["targetType"], "none")
     }
 
-    func testTheExportCarriesExactlyTheTenFixedKeysWhenThereIsNothingElse() {
+    func testTheExportCarriesExactlyTheElevenFixedKeysWhenThereIsNothingElse() {
         let entries = DiagnosticsExport.entries(live: [:], stored: [:], fixed: fixed())
 
         XCTAssertEqual(
             Set(entries.keys),
             ["developerBuild", "developerRecording", "playbackEvents", "schemaVersion", "exportedAt",
-             "playbackStatus", "sessionPhase", "targetType", "pendingAIJobs", "responsiveness"]
+             "playbackStatus", "sessionPhase", "targetType", "pendingAIJobs", "responsiveness", "screenRebuilds"]
         )
+    }
+
+    func testTheScreenRebuildsLineIsTheAppsOwnAndNoLiveEntryStandsInForIt() {
+        var ledger = PresentationLedger()
+        ledger.appeared(place: "PlaybackScreen:229", item: "item-my-secret-diary", instance: UUID(), at: 0)
+        ledger.appeared(place: "PlaybackScreen:229", item: "item-my-secret-diary", instance: UUID(), at: 0)
+        var rebuilt = fixed()
+        rebuilt.screenRebuilds = ledger.summaryText
+
+        let entries = DiagnosticsExport.entries(live: ["screenRebuilds": "stale"], stored: ["screenRebuilds": "stale"], fixed: rebuilt)
+
+        XCTAssertEqual(entries["screenRebuilds"], "rebuilds=1 whileShowing=1 afterDismissal=0 places=PlaybackScreen:229x1")
+        XCTAssertEqual(DiagnosticsExport.entries(live: [:], stored: [:], fixed: fixed())["screenRebuilds"], "rebuilds=0", "a healthy export says zero, not nothing")
     }
 
     // MARK: The file text
