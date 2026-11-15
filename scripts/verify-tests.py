@@ -998,6 +998,8 @@ READ_METER_SKIPS = frozenset(f'SessionKitCoreTests/StoreReadMeterTests/{test}' f
 MEASURE_ON_REQUEST_SKIPS = frozenset({
     'SessionKitCoreTests/EngineCompletionCostTests/testTheCostOfEachCompletionCall',
     'SessionKitCoreTests/PlayAndRecordStartCostTests/testPrintTheStartCostsAtLibrarySize',
+    # Writes the transcript fixture files for the journey only when WRITE_TRANSCRIPT_FIXTURES=1 (#2997).
+    'SessionKitCoreTests/TranscriptFixtureFilesTests/testWriteTheFixtureFilesForTheJourney',
 })
 CORE_ALLOWED_SKIPS = HANG_PROBE_TIMING_TESTS | READ_METER_SKIPS | MEASURE_ON_REQUEST_SKIPS
 
