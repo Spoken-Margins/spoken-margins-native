@@ -17,6 +17,10 @@ struct LiveSessionWriteSheet: View {
     var photo: LiveSessionPhotoStore.Staged?
     /// A line above the photo, like the microphone being off when the photo was taken to be spoken about.
     var notice: String?
+    /// Said above the field when the session ended while this screen was open; Save still adds the Margin (#3847).
+    var endedLine: String?
+    /// Save was refused because the session was saved to the Library or discarded: the draft stays, with the reason.
+    var refused = false
     @State private var text = ""
     @State private var whereNote = ""
     @State private var adjustmentMs = 0
@@ -43,12 +47,16 @@ struct LiveSessionWriteSheet: View {
             toggleReply: {},
             text: $text,
             saveTitle: "Save Margin",
-            error: nil,
+            error: refused ? "It was saved to your Library or discarded while you were writing." : nil,
             onSave: {
                 onSave(text, whereNote.isEmpty ? nil : whereNote, adjustmentMs)
             },
             onCancel: onCancel,
-            lead: lead
+            lead: lead,
+            errorHeadline: refused
+                ? "Your draft is still here. This session can't take new Margins. Copy your words before you cancel."
+                : "Your draft is still here. Try saving again.",
+            statusLine: endedLine
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 if kind != .meeting {
@@ -65,6 +73,12 @@ struct LiveSessionWriteSheet: View {
                         )
                     }
                 }
+            }
+        }
+        .onChange(of: endedLine) { old, new in
+            // Said once, when the line appears while the screen is open; a screen that opens already ended says nothing extra.
+            if let text = VoiceOverAnnouncements.liveSessionEnded(from: old, to: new) {
+                AccessibilityNotification.Announcement(text).post()
             }
         }
     }

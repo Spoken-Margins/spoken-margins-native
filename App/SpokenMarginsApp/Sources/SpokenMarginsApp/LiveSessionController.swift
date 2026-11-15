@@ -221,15 +221,32 @@ final class LiveSessionController: ObservableObject {
         sessionChanged()
     }
 
+    /// Whether a Margin the listener began on this screen would be kept if saved now (#3847): it is, unless the session
+    /// was saved to the Library or is gone. The writing screen asks before it closes, so a refusal keeps the draft.
+    func checkBegunMargin(markedAt: Date) -> LiveSessionBegunMargin.Check {
+        LiveSessionBegunMargin.check(markedAt: markedAt, in: session)
+    }
+
+    /// What the writing screen says once the session ended while it was open; nil while the session runs.
+    var endedLine: String? { session.flatMap { LiveSessionBegunMargin.endedLine(for: $0) } }
+
     /// Adds a Margin now. `adjustmentMs` is the listener's slide of the predicted position; nonzero stores it as
-    /// their own position.
-    func addMargin(text: String, whereNote: String?, adjustmentMs: Int, markedAt: Date = Date()) {
+    /// their own position. A Margin begun while the session ran is kept even if the session ended somewhere else since
+    /// (the Watch's End, #3847): it goes into the ended session, labelled "after the session ended" when it is later
+    /// than the stop time. Only a session saved to the Library, or gone, refuses it.
+    @discardableResult
+    func addMargin(
+        text: String, whereNote: String?, adjustmentMs: Int, markedAt: Date = Date()
+    ) -> LiveSessionBegunMargin.Check {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isRunning, let current = session, !trimmed.isEmpty else { return }
+        guard let current = session, !trimmed.isEmpty else { return .refused }
         let margin = writtenMargin(trimmed, whereNote: whereNote, adjustmentMs: adjustmentMs, markedAt: markedAt, in: current)
-        session?.margins.append(margin)
-        session?.margins.sort { $0.markedAt < $1.markedAt }
+        guard var edited = session else { return .refused }
+        let result = LiveSessionBegunMargin.add(margin, to: &edited)
+        guard result != .refused else { return result }
+        session = edited
         save()
+        return result
     }
 
     /// Adds a written Margin that was taken with a photo (#2708). The photo's file is moved into place first and the Margin
@@ -239,7 +256,7 @@ final class LiveSessionController: ObservableObject {
         text: String, whereNote: String?, adjustmentMs: Int, markedAt: Date, photo staged: LiveSessionPhotoStore.Staged
     ) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isRunning, let current = session, !trimmed.isEmpty else {
+        guard let current = session, !trimmed.isEmpty, checkBegunMargin(markedAt: markedAt) != .refused else {
             await files.discardStaged(staged)
             return
         }
@@ -250,12 +267,12 @@ final class LiveSessionController: ObservableObject {
             errorMessage = LiveSessionPhotoMargin.couldNotKeepLine
         }
         // The session may have ended its screen, or been discarded, while the file moved.
-        guard session?.id == current.id else {
+        guard session?.id == current.id, var edited = session,
+              LiveSessionBegunMargin.add(margin, to: &edited) != .refused else {
             if let photo = margin.photo { await files.removePhoto(photo) }
             return
         }
-        session?.margins.append(margin)
-        session?.margins.sort { $0.markedAt < $1.markedAt }
+        session = edited
         save()
     }
 
@@ -334,6 +351,12 @@ final class LiveSessionController: ObservableObject {
             lastWrite = Task { [files] in await files.discard(sessionId: discarded, generation: generation) }
         }
         sessionChanged()
+    }
+
+    /// Picks watching up again for a screen that comes back (from under its own cover) without a reload (#3847).
+    func resumeWatching() {
+        observeDisk()
+        if pollTask == nil { startPolling() }
     }
 
     func stopPolling() {
