@@ -66,6 +66,18 @@ public enum SharedMarginReview {
         ownMargins: [Interjection] = [],
         durationMs: Int? = nil
     ) -> [Entry] {
+        entriesInMemory(layers: layers, records: records, ownMargins: ownMargins, durationMs: durationMs)
+    }
+
+    /// `entries(layers:records:ownMargins:durationMs:)` under a name no store read shares. It works only on the layers
+    /// and records it is given and reads nothing, so a screen may call it on every render (the Now screen's friend
+    /// listen does, #3790); `entries(itemId:in:)`, which reads the store, is a different function.
+    public static func entriesInMemory(
+        layers: [ImportedCommentaryLayer],
+        records: [String: [ImportedCommentaryInterjection]],
+        ownMargins: [Interjection] = [],
+        durationMs: Int? = nil
+    ) -> [Entry] {
         let contexts = replyContexts(layers: layers, records: records, ownMargins: ownMargins)
         return layers.flatMap { layer -> [Entry] in
             let layerRecords = records[layer.id] ?? []

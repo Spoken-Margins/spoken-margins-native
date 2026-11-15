@@ -63,7 +63,7 @@ extension Gate1AppModel {
         // friend listen. This runs on every playback tick, so the cheap answers come before the card is built.
         let layers = selectedItem.importedCommentaryLayers
         guard !layers.isEmpty, selectedItem.id == snapshot.itemId else { return .none }
-        let entryCount = SharedMarginReview.entries(
+        let entryCount = SharedMarginReview.entriesInMemory(
             layers: layers, records: selectedItem.importedCommentaryInterjections, durationMs: selectedItem.mediaDurationMs
         ).count
         return FriendListenState(
