@@ -2867,8 +2867,35 @@ class VerificationTests(unittest.TestCase):
                 self.assertTrue(inventory.scripted_journey_errors(root), malformed)
             listing.write_text(json.dumps({'version': 1, 'gating': [], 'probation': [], 'passes': {}}))
             self.assertTrue(inventory.scripted_journey_errors(root))
+            # A script that widens the Library filter to all items says so in its journey (#4315, J14).
+            (root / 'App/SpokenMarginsAppUITests/Wide.swift').write_text(
+                'final class WideUITests: XCTestCase {\n'
+                '    override func setUp() { app.launchArguments = ["--ui-testing",\n'
+                '        "-libraryContentTypeFilter", "all", "-libraryListeningStateFilter", "all"] }\n'
+                '    func testFound() {} }')
+            write(probation=[{'test': 'SpokenMarginsAppUITests/WideUITests', 'journey': 'J14: found in the Library'}])
+            self.assertIn('all-items filter', ' '.join(inventory.scripted_journey_errors(root)))
+            write(probation=[{'test': 'SpokenMarginsAppUITests/WideUITests/testFound',
+                              'journey': 'J14: found in the Library under the all-items filter'}])
+            self.assertEqual(inventory.scripted_journey_errors(root), [])
+            # Only the state filter counts: the content-type filter on "all" is every script's default.
+            (root / 'App/SpokenMarginsAppUITests/Narrow.swift').write_text(
+                'final class NarrowUITests: XCTestCase {\n'
+                '    override func setUp() { app.launchArguments = ["--ui-testing",\n'
+                '        "-libraryContentTypeFilter", "all", "-libraryListeningStateFilter", "unfinished"] }\n'
+                '    func testFound() {} }')
+            write(probation=[{'test': 'SpokenMarginsAppUITests/NarrowUITests', 'journey': 'J9: found in the Library'}])
+            self.assertEqual(inventory.scripted_journey_errors(root), [])
             listing.unlink()
             self.assertTrue(inventory.scripted_journey_errors(root))
+
+    def test_the_real_journey_listing_says_where_a_widened_library_filter_finds_its_item(self):
+        self.assertEqual(inventory.scripted_journey_errors(inventory.ROOT), [])
+        listing = json.loads((inventory.ROOT / 'TestPlans/scripted-journeys.json').read_text())
+        j14 = [entry['journey'] for status in ('gating', 'probation') for entry in listing[status]
+               if 'J14ComeBackToAFriendsMarginsJourneyUITests' in entry['test']]
+        self.assertEqual(len(j14), 1, j14)
+        self.assertIn('all-items filter', j14[0])
 
 
 class WarmLaunchTests(unittest.TestCase):
