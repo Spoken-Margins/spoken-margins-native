@@ -450,6 +450,13 @@ struct AccessibilityNode {
     let identifier: String?
     let traits: UIAccessibilityTraits
     let frame: CGRect
+    /// What Voice Control matches a spoken name against (#4312).
+    let inputLabels: [String]
+    /// The element itself, so a test can activate it the way VoiceOver or Voice Control does.
+    let element: NSObject
+
+    /// Activates the element as a double-tap in VoiceOver does. False when it refused.
+    func activate() -> Bool { element.accessibilityActivate() }
 }
 
 @MainActor
@@ -499,7 +506,8 @@ struct MountedTree {
         let label = node.accessibilityLabel
         if label?.isEmpty == false || identifier?.isEmpty == false {
             found.append(AccessibilityNode(label: label, identifier: identifier, traits: node.accessibilityTraits,
-                                           frame: node.accessibilityFrame))
+                                           frame: node.accessibilityFrame,
+                                           inputLabels: node.accessibilityUserInputLabels ?? [], element: node))
         }
         var children: [NSObject] = []
         if let view = node as? UIView { children += view.subviews }

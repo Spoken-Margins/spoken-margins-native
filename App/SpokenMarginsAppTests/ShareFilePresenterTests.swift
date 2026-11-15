@@ -65,27 +65,30 @@ final class ShareFilePresenterTests: XCTestCase {
 
     /// The owner's recording (build 94a7bfb): with audio rendering, the share sheet over Settings reloaded again and
     /// again, because it was a SwiftUI `.sheet` inside a screen the model's publishes redraw. This mounts Settings in the
-    /// app's own tab bar (which watches the whole model, as it does on the phone), presents the sheet the way the
-    /// Share Diagnostics button does, and publishes about two seconds' worth of every kind of model write audio makes.
+    /// app's own tab bar (which watches the whole model, as it does on the phone), activates Share Diagnostics, and
+    /// publishes about two seconds' worth of every kind of model write audio makes.
     /// The same `UIActivityViewController` must stay presented from the first look to the last: a rebuilt or re-presented
     /// sheet is a different controller (or one briefly not presented).
     ///
-    /// What this does and does not guard: the presentation is called directly, not by tapping Share Diagnostics, so it
-    /// guards that a sheet UIKit presents over the window survives the app's publishes and redraws. It does not catch
-    /// Settings going back to hosting the sheet itself; `SettingsScreen` calls `ShareFilePresenter.present` at both buttons
-    /// and has no `.sheet` for a share view, and a reviewer must keep it so.
+    /// The sheet comes from activating the Share Diagnostics button itself, as VoiceOver does (#4312). An earlier version
+    /// called `ShareFilePresenter.present` directly, so it still passed with Settings hosting the sheet in a `.sheet`; that
+    /// sheet is not a `UIActivityViewController` presented over the window, so this finds none and fails.
     func testTheSheetOverSettingsIsNotReloadedByModelPublishes() async throws {
+        let automationWasEnabled = AccessibilityAutomation.enable()
+        defer { if let automationWasEnabled { AccessibilityAutomation.set(automationWasEnabled) } }
         let model = try makeModel()
         let mounted = try mount(settingsInTheTabBar(model: model))
         defer { mounted.close() }
         try await waitUntilQuiet { ScreenRedrawProbe.count("settings") }
-        let file = try exportFile()
-        defer { try? FileManager.default.removeItem(at: file) }
+        let shareDiagnostics = try await scrollToNode("the Share Diagnostics button", in: mounted.window) {
+            $0.identifier == "settings.shareDiagnostics.button"
+        }
+        try await waitUntilQuiet { ScreenRedrawProbe.count("settings") }
         var modelPublishes = 0
         let watch = model.objectWillChange.sink { modelPublishes += 1 }
         defer { watch.cancel() }
 
-        ShareFilePresenter.present(fileURL: file)
+        XCTAssertTrue(shareDiagnostics.activate(), "the Share Diagnostics button refused activation")
         let sheet = try await presentedActivitySheet(in: mounted.window)
         // Let the sheet finish coming up, so the looks below are of a settled sheet, not one still animating in.
         try await Task.sleep(for: .milliseconds(500))
@@ -207,10 +210,36 @@ final class ShareFilePresenterTests: XCTestCase {
         return AnyView(TabsHost(navigation: navigation, notice: notice).environmentObject(model).environmentObject(drawer))
     }
 
-    private func exportFile() throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("share-sheet-\(UUID().uuidString).json")
-        try Data("{\"fixture\":true}".utf8).write(to: url)
-        return url
+    /// Finds a node in the window, scrolling the screen's list on a screenful at a time: a Form builds only the rows on
+    /// screen, and Share Diagnostics is far down Settings.
+    private func scrollToNode(_ description: String, in window: UIWindow,
+                              _ matches: (AccessibilityNode) -> Bool) async throws -> AccessibilityNode {
+        let tree = MountedTree(window: window, previousKeyWindow: nil)
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
+            if let node = tree.nodes().first(where: matches) { return node }
+            if let list = Self.longestScrollView(in: window) {
+                let bottom = max(0, list.contentSize.height + list.adjustedContentInset.bottom - list.bounds.height)
+                let next = min(bottom, list.contentOffset.y + list.bounds.height * 0.7)
+                list.setContentOffset(CGPoint(x: list.contentOffset.x, y: next), animated: false)
+            }
+            try await Task.sleep(for: .milliseconds(80))
+        }
+        XCTFail("Never found \(description), scrolling to the end of the screen")
+        throw NotPresented()
+    }
+
+    private static func longestScrollView(in view: UIView) -> UIScrollView? {
+        var best: UIScrollView?
+        var stack = [view]
+        while let next = stack.popLast() {
+            if let scroll = next as? UIScrollView, !scroll.isHidden,
+               scroll.contentSize.height - scroll.bounds.height > (best.map { $0.contentSize.height - $0.bounds.height } ?? 0) {
+                best = scroll
+            }
+            stack += next.subviews
+        }
+        return best
     }
 
     @MainActor
