@@ -4986,13 +4986,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             let timeline = try await mounted.waitForNode("the Timeline pane button") { $0.identifier == PlaybackPane.timeline.accessibilityIdentifier }
             XCTAssertTrue(timeline.activate(), "the Timeline pane button refused activation")
             _ = try await mounted.waitForNode("the Timeline selected before tap \(tap)") {
-                $0.identifier == PlaybackPane.timeline.accessibilityIdentifier && $0.traits.contains(.isSelected)
+                $0.identifier == PlaybackPane.timeline.accessibilityIdentifier && $0.traits.contains(.selected)
             }
 
             XCTAssertTrue(model.playMarginMoment(fixture.row))
 
             _ = try await mounted.waitForNode("the Now pane selected after tap \(tap) of Go to this moment") {
-                $0.identifier == PlaybackPane.now.accessibilityIdentifier && $0.traits.contains(.isSelected)
+                $0.identifier == PlaybackPane.now.accessibilityIdentifier && $0.traits.contains(.selected)
             }
         }
         XCTAssertNil(model.marginMoment, "a written Margin starts no Margin moment: the request is what switches the pane")
