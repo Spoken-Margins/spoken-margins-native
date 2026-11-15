@@ -243,7 +243,7 @@ The script `J14ComeBackToAFriendsMarginsJourneyUITests` runs rows 1 (from the Li
 
 ## J15 — Import a meeting transcript
 
-A listener adds a transcript file from a meeting app (#2997, Design plan PR 4). Zoom gives a `.vtt` or a `.txt`, Teams a `.vtt` or a `.docx`, Meet and Webex a `.vtt` or `.srt`, Otter a `.txt`. The file becomes its own Library item, read aloud with the speaker named when the speaker changes, and it takes Margins. Open In and AirDrop (PR 5a) add steps 13 to 16; the share sheet is the next slice and adds its steps here.
+A listener adds a transcript file from a meeting app (#2997, Design plan PR 4). Zoom gives a `.vtt` or a `.txt`, Teams a `.vtt` or a `.docx`, Meet and Webex a `.vtt` or `.srt`, Otter a `.txt`. The file becomes its own Library item, read aloud with the speaker named when the speaker changes, and it takes Margins. Open In and AirDrop (PR 5a) add steps 13 to 16; the share sheet (PR 5b) adds steps 17 to 21.
 
 **Fixtures:** `WRITE_TRANSCRIPT_FIXTURES=1 swift test --filter TranscriptFixtureFilesTests` (in `Packages/SessionKit`) writes the eight fixtures, a Teams-style `.docx`, and a short essay as `.txt` and `.docx` to `artifacts/transcript-fixtures/`. Copy them into the simulator's Files (On My iPhone).
 
@@ -280,7 +280,18 @@ A listener adds a transcript file from a meeting app (#2997, Design plan PR 4). 
     - Also select two transcripts in Files at once and share them to Spoken Margins: both are added, one after the other, and neither is refused with "Another source is already importing."
 16. Open the same `.vtt` from a file in iCloud Drive that is not downloaded.
     - Pass: it downloads and is added, or the banner says "“<name>” couldn't be read. If it's in iCloud Drive, open it in Files so it downloads, then try again." Nothing is left half-added.
-    - Not testable in a simulator: AirDrop from a Mac and a real iCloud download. The owner's check is in the issue (C8 in `docs/design/live-sessions/SITUATIONS.md`).
+17. In Files (On My iPhone), touch and hold `teams.vtt`, tap **Share**, and in the list of actions below the row of apps tap **Spoken Margins** (the share extension, with the waveform icon; not an app in the top row, which is Open In, steps 13 to 16). Do it again with `generic.srt` and a Teams-style `.docx`.
+    - Pass: the card says "Sent <name without its extension> to Spoken Margins." and closes by itself (it stays until Done with VoiceOver on). Nothing is parsed in the extension. Open Spoken Margins: a banner says "Added <title> to Library." (with **Play now** when nothing is loaded), the screen is the one it was on, and there is one Transcript row at the top of Recently Added. With several files shared one after another before opening the app, one banner says "Added N to Library." (Selecting two files and sharing them at once copies only the first, as every other share does.)
+18. Share the Zoom captions `.txt`, then the essay `.txt`, the same way.
+    - Pass: the card says "Sent <name> to Spoken Margins." for both. In the app the Zoom file is a Transcript row; the essay is a Text row with today's banner. No screen changes.
+19. Share the essay `.docx` the same way.
+    - Pass: the card says "Sent essay to Spoken Margins." In the app nothing is added and a banner says "“essay.docx” isn't a meeting transcript. Spoken Margins adds Word files only when they are transcripts. To hear it, copy its text and use Paste Text." It is not offered again at the next foreground.
+20. Share a `.vtt` larger than 10 MB (`python3 -c "print('WEBVTT\n' + ('00:00:01.000 --> 00:00:02.000\nA: x\n\n' * 400000))" > artifacts/big.vtt`, about 14 MB).
+    - Pass: the card says "“big.vtt” is larger than 10 MB, so nothing was added." with **Done**. Opening the app adds nothing.
+21. Share `teams.vtt`, then force-quit Spoken Margins (swipe it away in the app switcher) before opening it. Open it, wait, then send it to the background and open it again.
+    - Pass: one Transcript row. The banner appears once. The second foreground adds nothing.
+
+Not testable in a simulator: AirDrop from a Mac and a real iCloud download (steps 13 to 16). The owner's check is in the issue (C8 in `docs/design/live-sessions/SITUATIONS.md`). Also phone-only: that Spoken Margins is offered in the Share action list for a real `.vtt` and `.srt` from Files (the extension's activation rule matches `public.text`, `public.url` and Word).
 
 Airplane Mode changes nothing (J10): the whole flow is local. The script for this journey is not written: scripts follow breaks found on the phone.
 
