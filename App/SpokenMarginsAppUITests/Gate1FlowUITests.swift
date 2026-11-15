@@ -160,6 +160,12 @@ final class Gate1FlowUITests: XCTestCase {
     }
 
     func testSeededGate1FlowHasPlaybackMiniPlayerExportAndSettings() throws {
+        // Filler articles below the fixture make the Library longer than the screen, so its last row reaches the
+        // mini-player unless the list keeps clear of it. With the one fixture row the check could not fail (#4314).
+        let fillerCount = 16
+        app.terminate()
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_LIBRARY_FILLER"] = String(fillerCount)
+        launchAllowingOneStall()
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         XCTAssertTrue(element("library.screen").exists)
 
@@ -191,18 +197,14 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("miniPlayer.close.button").exists)
         XCTAssertTrue(element("miniPlayer.interject.button").exists)
         XCTAssertTrue(element("miniPlayer.playPause.button").exists)
-        let hero = element("library.row.item-pill")
-        // A finished article leaves the Unfinished Library, as it should; Show completed brings its row back. The
-        // caught-up card has a Show completed button too, so take the one in the filter row.
-        if !hero.waitForExistence(timeout: 4) {
-            let showCompleted = element("library.completed.visibility").buttons["Show completed"]
-            XCTAssertTrue(showCompleted.waitForExistence(timeout: 4), app.debugDescription)
-            showCompleted.tap()
-            XCTAssertTrue(hero.waitForExistence(timeout: 4), app.debugDescription)
-        }
+        // The fillers sort below the fixture article, oldest last. Scroll until the last one is in the list, then once
+        // more so the list rests at its end.
+        let lastRow = app.buttons["library.row.item-ui-filler-\(fillerCount)"]
+        for _ in 0..<10 where !lastRow.exists { app.swipeUp() }
+        XCTAssertTrue(lastRow.exists, "The Library's last row never appeared: \(app.debugDescription)")
         app.swipeUp()
-        XCTAssertLessThanOrEqual(hero.frame.maxY, element("miniPlayer.bar").frame.minY,
-                                 "The playing item's row must scroll clear of the mini-player")
+        XCTAssertLessThanOrEqual(lastRow.frame.maxY, element("miniPlayer.bar").frame.minY,
+                                 "The Library's last row must scroll clear of the mini-player")
         openLibrarySettings()
 
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))
@@ -626,21 +628,37 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(element("sources.follow.url").exists)
         // The identifier appears twice on iOS 26.5 (a wrapper and the Button), so a descendants query finds
         // "multiple matches"; ask for the Button (#2717).
+        let notFollowing = app.staticTexts["You’re not following anything yet"]
+        XCTAssertTrue(notFollowing.waitForExistence(timeout: 4), "The fixture Library already follows a show")
         app.buttons["sources.manageFeeds"].firstMatch.tap()
-        XCTAssertTrue(element("sources.follow.url").waitForExistence(timeout: 4))
+        let feedLink = element("sources.follow.url")
+        XCTAssertTrue(feedLink.waitForExistence(timeout: 4))
         XCTAssertTrue(element("sources.follow.paste").exists)
-        XCTAssertTrue(element("sources.follow.button").exists)
         XCTAssertTrue(element("sources.browseCatalog").exists)
         // Read Later and Listening Edition imports are in Settings, not on this sheet.
         XCTAssertFalse(app.buttons["Read Later Services"].exists)
         XCTAssertFalse(app.buttons["Import Listening Edition"].exists)
+        // Follow acts on a typed link at once and the banner offers Undo (#3205), so the guard is that it follows only
+        // a feed: a link that isn't one follows nothing, keeps the sheet up and says why there (#4314).
+        let follow = app.buttons["sources.follow.button"].firstMatch
+        XCTAssertTrue(follow.exists)
+        XCTAssertFalse(follow.isEnabled, "Follow is enabled with no link typed")
+        feedLink.tap()
+        feedLink.typeText("https://feeds.example.invalid/not-a-feed.xml")
+        XCTAssertTrue(waitUntil(follow, "enabled == true"), "Follow stayed disabled with a link typed")
+        follow.tap()
+        XCTAssertTrue(element("sources.follow.problem").waitForExistence(timeout: 20),
+                      "Follow on a link that is not a feed said nothing on the sheet")
+        XCTAssertTrue(feedLink.exists, "The Follow sheet closed although nothing could be followed")
+        XCTAssertFalse(app.buttons["following.follow.undo.button"].exists, "A link that is not a feed was followed")
         app.buttons["sources.follow.cancel"].firstMatch.tap()
         XCTAssertTrue(app.buttons["sources.manageFeeds"].firstMatch.waitForExistence(timeout: 4))
+        XCTAssertTrue(notFollowing.waitForExistence(timeout: 4), "A link that is not a feed added a show")
         tapRoot("Settings")
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 5))
         captureScreen(named: "following-settings-opened")
         tapRoot("Following")
-        XCTAssertFalse(app.staticTexts["Follow is not Add"].exists)
+        XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(element("miniPlayer.bar").exists)
         assertMiniPlayerClearsRootNavigation()
 
@@ -806,6 +824,10 @@ final class Gate1FlowUITests: XCTestCase {
             editor.typeText("Margin number \(index) with enough words to fill about two lines of the row on a phone.")
             app.buttons["writtenMargin.save.button"].tap()
             XCTAssertTrue(waitForDisappearance(element("writtenMargin.screen"), timeout: 4))
+            // A Cancel or a save that drops the Margin also closes the sheet; only the session's count shows it kept
+            // this one (#4314). The rows sit in a lazy stack, so counting them would miss ones scrolled away.
+            XCTAssertTrue(waitUntil(element("liveSession.margins.count"), "label == %@", "Margins: \(index + 1)"),
+                          "Save did not keep Margin \(index + 1): \(element("liveSession.margins.count").label)")
         }
         let end = app.buttons["liveSession.endSession"]
         XCTAssertTrue(end.waitForExistence(timeout: 4))
@@ -954,7 +976,12 @@ final class Gate1FlowUITests: XCTestCase {
         captureScreen(named: "library-row-accessibility-size")
     }
 
+    /// The podcast seed's downloaded episode is reproducible and unprotected until it plays, so Clear is enabled and its
+    /// alert must say what stays. The fixture seed had nothing to clear, so the alert went unchecked (#4314).
     func testOfflineStorageExplainsProtectionBeforeSafeClear() throws {
+        app.terminate()
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_PODCAST"] = "1"
+        launchAllowingOneStall()
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         openLibrarySettings()
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))
@@ -966,17 +993,19 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(scrollToElement("offlineStorage.reproducible.row").exists)
         XCTAssertTrue(scrollToElement("offlineStorage.clearable.row").exists)
         let clear = scrollToElement("offlineStorage.clear.button")
-        if clear.isEnabled {
-            clear.tap()
-            let confirmation = app.alerts["Clear reproducible audio?"]
-            XCTAssertTrue(confirmation.waitForExistence(timeout: 3))
+        // The storage ledger adopts the episode on its startup scan, which may finish after the screen opens.
+        XCTAssertTrue(waitUntil(clear, "enabled == true", timeout: 10), "Clear is disabled: the seeded episode is not clearable audio")
+        clear.tap()
+        let confirmation = app.alerts["Clear reproducible audio?"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 3))
+        for promise in ["can be recreated later", "recordings, Margins, and protected active playback will remain"] {
             XCTAssertTrue(
-                confirmation.staticTexts.matching(
-                    NSPredicate(format: "label CONTAINS %@", "recordings, Margins, and protected active playback will remain")
-                ).firstMatch.exists
+                confirmation.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", promise)).firstMatch.exists,
+                "The Clear alert does not say \"\(promise)\""
             )
-            confirmation.buttons["Cancel"].tap()
         }
+        confirmation.buttons["Cancel"].tap()
+        XCTAssertTrue(waitForDisappearance(confirmation, timeout: 3))
     }
 
     func testBatchExportOffersPersistentJumpToDestination() throws {
