@@ -85,4 +85,157 @@ final class QueueSwipeAppTests: XCTestCase {
         model.settleQueueWish(key: "entry-first", itemId: "swipe-a")
         XCTAssertEqual(queuedIds, ["swipe-a", "swipe-b"])
     }
+
+    // MARK: The Quick Folder's queue paths and meeting transcripts (#2997)
+
+    private let otterTXT = """
+    Budget sync
+    Mar 4, 2026 10:00 AM
+
+    Alice Example  0:03
+    Welcome everyone, let's start with the budget.
+
+    Ben Sample  0:06
+    Thanks. I have the draft numbers ready.
+
+    Alice Example  0:09
+    Great, please share them.
+    """
+
+    private let essayTXT = "A short essay.\n\nIt has two paragraphs and no meeting in it."
+
+    private func writeFiles(_ files: [(name: String, text: String)]) throws -> [URL] {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("queue-transcript-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        return try files.map { file in
+            let url = folder.appendingPathComponent(file.name)
+            try file.text.write(to: url, atomically: true, encoding: .utf8)
+            return url
+        }
+    }
+
+    private func quickFile(_ url: URL) -> QuickAccessFile {
+        QuickAccessFile(
+            id: "quick-\(url.lastPathComponent)", name: url.lastPathComponent, relativePath: url.lastPathComponent,
+            modifiedAt: Date(timeIntervalSince1970: 1_000), modifiedAtDescription: "")
+    }
+
+    /// The model's Quick Folder remembers dismissed files in the standard defaults; put them back after the test.
+    private func restoreDismissedQuickFilesAfterTheTest() {
+        let key = "dismissedQuickAccessFilesV1"
+        let prior = UserDefaults.standard.object(forKey: key)
+        addTeardownBlock {
+            if let prior { UserDefaults.standard.set(prior, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+    }
+
+    /// Runs a pick and returns what the route heard and how many times it heard it. The count is read after a pause, so
+    /// a second call to `onFinished` shows up.
+    private func importPick(
+        _ urls: [URL], route: Gate1AppModel.TranscriptPickRoute, on model: Gate1AppModel
+    ) async throws -> (outcome: Gate1AppModel.TranscriptPickOutcome, calls: Int) {
+        let finished = expectation(description: "the pick ended")
+        finished.assertForOverFulfill = true
+        var heard: Gate1AppModel.TranscriptPickOutcome?
+        var calls = 0
+        var route = route
+        let original = route.onFinished
+        route.onFinished = { outcome in
+            calls += 1
+            heard = outcome
+            original?(outcome)
+            if calls == 1 { finished.fulfill() }
+        }
+        model.importFilesWithTranscriptRule(urls: urls, route: route)
+        await fulfillment(of: [finished], timeout: 20)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        return (heard ?? .nothing, calls)
+    }
+
+    private func kinds(of ids: [String], in store: SQLiteSessionStore) throws -> [String?] {
+        try ids.map { try store.loadItem(id: $0).externalReferenceType }
+    }
+
+    func testAPickWithATranscriptHearsEveryItemOnceInTheOrderPicked() async throws {
+        let (model, store) = try makeModel()
+        let urls = try writeFiles([
+            (name: "essay.txt", text: essayTXT), (name: "meeting.txt", text: otterTXT), (name: "notes.md", text: "# Notes\n\nSomething to read."),
+        ])
+        let result = try await importPick(urls, route: .init(securityScopedURLs: []), on: model)
+        XCTAssertEqual(result.calls, 1)
+        XCTAssertEqual(result.outcome.itemIds.count, 3)
+        XCTAssertEqual(try kinds(of: result.outcome.itemIds, in: store), ["file", TranscriptItemText.referenceType, "file"],
+                       "a Zoom-style .txt becomes a transcript, sitting where its file was picked")
+    }
+
+    func testAPickWithNoTranscriptKeepsTodaysImportAndHearsItsItemsOnce() async throws {
+        let (model, store) = try makeModel()
+        let urls = try writeFiles([(name: "essay.txt", text: essayTXT), (name: "notes.md", text: "# Notes\n\nSomething to read.")])
+        let result = try await importPick(urls, route: .init(securityScopedURLs: []), on: model)
+        XCTAssertEqual(result.calls, 1)
+        XCTAssertEqual(try kinds(of: result.outcome.itemIds, in: store), ["file", "file"])
+    }
+
+    func testAPickThatCannotStartHearsAnEndOnceWhateverTheFilesAre() async throws {
+        let (model, _) = try makeModel()
+        let busy = Task<Void, Never> { try? await Task.sleep(nanoseconds: 60_000_000_000) }
+        model.sourceImportTask = busy
+        defer { busy.cancel(); model.sourceImportTask = nil }
+        for name in ["meeting.txt", "notes.md"] {
+            let urls = try writeFiles([(name: name, text: name.hasSuffix(".md") ? "# Notes" : otterTXT)])
+            let result = try await importPick(urls, route: .init(securityScopedURLs: []), on: model)
+            XCTAssertEqual(result.calls, 1, name)
+            XCTAssertEqual(result.outcome.itemIds, [], name)
+        }
+        let none = try await importPick([], route: .init(securityScopedURLs: []), on: model)
+        XCTAssertEqual(none.calls, 1)
+    }
+
+    func testAZoomTxtSwipedToTheQueueIsSavedAsATranscriptAndQueued() async throws {
+        restoreDismissedQuickFilesAfterTheTest()
+        let (model, store) = try makeModel()
+        let url = try writeFiles([(name: "meeting.txt", text: otterTXT)])[0]
+        let file = quickFile(url)
+        QueueWishController.register(file.id)
+        let result = try await importPick([url], route: model.quickFolderSwipeRoute(for: file, folderURL: url.deletingLastPathComponent()), on: model)
+        XCTAssertEqual(result.calls, 1)
+        XCTAssertEqual(queuedIds, result.outcome.itemIds, "the wish was settled with the saved transcript, once")
+        XCTAssertEqual(queuedIds.count, 1)
+        XCTAssertEqual(try kinds(of: queuedIds, in: store), [TranscriptItemText.referenceType])
+    }
+
+    func testAnEssayTxtSwipedToTheQueueStillImportsAsTextAndIsQueued() async throws {
+        restoreDismissedQuickFilesAfterTheTest()
+        let (model, store) = try makeModel()
+        let url = try writeFiles([(name: "essay.txt", text: essayTXT)])[0]
+        let file = quickFile(url)
+        QueueWishController.register(file.id)
+        let result = try await importPick([url], route: model.quickFolderSwipeRoute(for: file, folderURL: url.deletingLastPathComponent()), on: model)
+        XCTAssertEqual(result.calls, 1)
+        XCTAssertEqual(try kinds(of: queuedIds, in: store), ["file"])
+    }
+
+    func testTheInboxQueuesATranscriptAndATextFileInFilenameOrderWithoutNavigating() async throws {
+        restoreDismissedQuickFilesAfterTheTest()
+        let (model, store) = try makeModel()
+        let urls = try writeFiles([(name: "1-essay.txt", text: essayTXT), (name: "2-meeting.txt", text: otterTXT), (name: "3-notes.md", text: "# Notes\n\nSomething to read.")])
+        let screenBefore = String(describing: model.screen)
+        let route = model.quickFolderInboxRoute(files: urls.map(quickFile), folderURL: urls[0].deletingLastPathComponent())
+        let result = try await importPick(urls, route: route, on: model)
+        XCTAssertEqual(result.calls, 1)
+        XCTAssertEqual(try kinds(of: queuedIds, in: store), ["file", TranscriptItemText.referenceType, "file"])
+        XCTAssertEqual(model.diagnostics["quickFolderInboxQueued"], "3")
+        XCTAssertEqual(String(describing: model.screen), screenBefore, "the inbox never moves the listener")
+    }
+
+    func testTheInboxQueuesNothingWhenNothingWasSaved() async throws {
+        restoreDismissedQuickFilesAfterTheTest()
+        let (model, _) = try makeModel()
+        let urls = try writeFiles([(name: "empty.txt", text: "   ")])
+        let route = model.quickFolderInboxRoute(files: urls.map(quickFile), folderURL: urls[0].deletingLastPathComponent())
+        let result = try await importPick(urls, route: route, on: model)
+        XCTAssertEqual(result.calls, 1)
+        XCTAssertEqual(queuedIds, [])
+    }
 }
