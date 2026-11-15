@@ -452,7 +452,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     /// recording, or a note the phone's voice reads), never the recording's path alone (#3412).
     static func importedMarginSnapshot(
         _ margin: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer,
-        placementPass: SharedMarginPlacementPasses.Pass?, paragraphs: MarginPlaceIndex?
+        placementPass: SharedMarginPlacementPasses.Pass?, paragraphs: MarginPlaceIndex?, durationMs: Int? = nil
     ) -> Build23ImportedMarginSnapshot {
         let placement = SharedMarginPlacementStatus(resolution: margin.resolution, marginId: margin.id,
             layerStatus: layer.sourceResolutionStatus, pass: placementPass,
@@ -462,8 +462,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         // with no usable time shows only the phrase (#3789). Other items keep the older wording.
         var position = placement.positionDescription ?? positionDescription(for: margin.resolution, paragraphs: paragraphs)
         var label = placement.label
-        if let words = SharedMarginPlacementWording.line(for: margin, in: layer, durationMs: nil) {
-            let plan = SharedMarginPrompts.plan(margin, in: layer, durationMs: nil)
+        if let words = SharedMarginPlacementWording.line(for: margin, in: layer, durationMs: durationMs) {
+            let plan = SharedMarginPrompts.plan(margin, in: layer, durationMs: durationMs)
             if let clock = SharedMarginPlacementWording.clock(for: plan) {
                 position = clock
                 label = words
@@ -491,7 +491,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             .filter { $0.deletedAt == nil }
             .map { layer in
                 let margins = item.importedCommentaryInterjections[layer.id, default: []]
-                    .map { Self.importedMarginSnapshot($0, in: layer, placementPass: item.sharedMarginPlacement, paragraphs: paragraphs) }
+                    .map { Self.importedMarginSnapshot($0, in: layer, placementPass: item.sharedMarginPlacement, paragraphs: paragraphs, durationMs: item.mediaDurationMs) }
                 return Build23ImportedLayerSnapshot(
                     id: layer.id,
                     senderLabel: SharedPacketArrival.snapshotSenderLabel(layer.displayLabel),

@@ -103,6 +103,20 @@ extension Gate1AppModel {
         if returnsSource, snapshot.status == .paused {
             resumePlayback(returningFromMargin: true)
         }
+        offerNextMarginWaitingForTheEnd()
+    }
+
+    /// The episode has ended and no tick will come: the Margins that wait for the end are offered one after another,
+    /// the next one when the one before has been heard, skipped or let go (#4347). `SharedMarginOfferQueue` decides
+    /// whether anything is due; this only says whether the slot is free.
+    private func offerNextMarginWaitingForTheEnd() {
+        let slotIsFree = pendingImportedCommentary == nil && playingImportedCommentary == nil && !snapshot.isRecording
+            && marginMomentConductor?.sequence.isReview != true && marginMomentConductor?.isPlayingVoice != true
+        guard let prompt = sharedMarginOffers.nextWaitingAtEpisodeEnd(
+            snapshot: snapshot, selectedItemID: selectedItem.id, slotIsFree: slotIsFree,
+            offerable: importedCommentaryPrompts(includeAnnounced: true).filter { $0.layer.revealMode != .fresh }
+        ) else { return }
+        presentImportedCommentaryPrompt(prompt, sourceWasPlaying: false)
     }
 
     func listenToImportedCommentary(layerID: String, interjectionID: String) {
@@ -231,6 +245,7 @@ extension Gate1AppModel {
         marginVoicePlayer.forgetSharedMargin()
         sharedMarginReturn.voiceStopped()
         if returnsSource, snapshot.status == .paused { resumePlayback(returningFromMargin: true) }
+        offerNextMarginWaitingForTheEnd()
     }
 
     func reconcileImportedCommentary(previous: SessionSnapshot, current: SessionSnapshot) {

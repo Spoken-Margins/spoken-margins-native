@@ -61,6 +61,20 @@ public struct SharedMarginOfferQueue: Equatable {
         return next(from: all.filter { $0.layer.revealMode != .fresh })
     }
 
+    /// The next Margin that waits for the end of the episode, once the episode has ended and the slot is free (#4347).
+    ///
+    /// Playback ticks only run while the source plays, so after the end no tick comes to drain the queue: the first
+    /// Margin is offered on the end tick and the rest would wait for ever. The app calls this when a card is let go
+    /// or a Margin's voice ends. Mid-episode it returns nil, so the ticks keep offering what crossed together as before.
+    public mutating func nextWaitingAtEpisodeEnd(
+        snapshot: SessionSnapshot, selectedItemID: String, slotIsFree: Bool,
+        offerable: @autoclosure () -> [ImportedCommentaryPrompt]
+    ) -> ImportedCommentaryPrompt? {
+        guard slotIsFree, !waitingIDs.isEmpty, snapshot.itemId == selectedItemID, !snapshot.status.isPlaybackActive,
+              snapshot.currentPlaybackProgressPercent >= ItemFinishedRule.atEndPercent else { return nil }
+        return next(from: offerable())
+    }
+
     /// Adds prompts behind any already waiting. A Margin already waiting is not added twice.
     public mutating func append(_ prompts: [ImportedCommentaryPrompt]) {
         for prompt in prompts where !waitingIDs.contains(prompt.id) {

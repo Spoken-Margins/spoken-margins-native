@@ -109,13 +109,66 @@ final class FriendMarginsPlanTests: XCTestCase {
             previous: snapshot(percent: 99), current: snapshot(percent: 100), selectedItemID: "item", canOffer: false, prompts: all)
         XCTAssertNil(held)
         XCTAssertEqual(queue.waitingIDs, ["a"])
-        let later = queue.nextOffer(
-            previous: snapshot(percent: 100), current: snapshot(percent: 100), selectedItemID: "item", canOffer: true, prompts: all)
-        XCTAssertEqual(later?.interjection.id, "a", "offered when the slot is free")
+        // No later tick comes in the app, so what is queued is drained by `nextWaitingAtEpisodeEnd` (the tests below).
         var otherItem = SharedMarginOfferQueue()
         _ = otherItem.nextOffer(
             previous: snapshot(percent: 99), current: snapshot(percent: 100), selectedItemID: "elsewhere", canOffer: false, prompts: all)
         XCTAssertTrue(otherItem.isEmpty, "the open item isn't the one that ended")
+    }
+
+    /// The audit of 8957d00: ticks stop when the source stops, so after the end only a call when a Margin's voice
+    /// ends or a card is let go can offer the next one. Drives the queue the way the app does, with no second tick.
+    func testEveryMarginThatWaitsForTheEndIsOfferedWithNoTickAfterTheEnd() {
+        let all = prompts(unplaced: ["a", "b", "c"], durationMs: end)
+        var queue = SharedMarginOfferQueue()
+        var ended = snapshot(percent: 100)
+        ended.status = .paused
+        var playing = snapshot(percent: 99)
+        playing.status = .playing
+        var heard: [String] = []
+        if let first = queue.nextOffer(previous: playing, current: ended, selectedItemID: "item", canOffer: true, prompts: all) {
+            heard.append(first.interjection.id)
+        }
+        XCTAssertNil(queue.nextWaitingAtEpisodeEnd(snapshot: ended, selectedItemID: "item", slotIsFree: false, offerable: all),
+                     "a card or voice still has the slot")
+        while let next = queue.nextWaitingAtEpisodeEnd(snapshot: ended, selectedItemID: "item", slotIsFree: true, offerable: all) {
+            heard.append(next.interjection.id)
+        }
+        XCTAssertEqual(heard, ["a", "b", "c"], "one at a time, in order, each once")
+        XCTAssertTrue(queue.isEmpty)
+    }
+
+    /// A card was up at the end (nothing could be offered): when it is let go, what was queued is offered.
+    func testWhatWasQueuedBehindACardAtTheEndIsOfferedWhenTheCardIsLetGo() {
+        let all = prompts(unplaced: ["a", "b"], durationMs: end)
+        var queue = SharedMarginOfferQueue()
+        var ended = snapshot(percent: 100)
+        ended.status = .paused
+        var playing = snapshot(percent: 99)
+        playing.status = .playing
+        XCTAssertNil(queue.nextOffer(previous: playing, current: ended, selectedItemID: "item", canOffer: false, prompts: all))
+        XCTAssertEqual(queue.waitingIDs, ["a", "b"])
+        XCTAssertEqual(queue.nextWaitingAtEpisodeEnd(snapshot: ended, selectedItemID: "item", slotIsFree: true, offerable: all)?.interjection.id, "a")
+        XCTAssertEqual(queue.nextWaitingAtEpisodeEnd(snapshot: ended, selectedItemID: "item", slotIsFree: true, offerable: all)?.interjection.id, "b")
+    }
+
+    /// Only after the end, on the open item, with the source stopped: anywhere else the ticks do the offering.
+    func testNothingIsOfferedThisWayMidEpisodeOrWhileTheSourcePlaysOrOnAnotherItem() {
+        let all = prompts(unplaced: ["a"], durationMs: end)
+        var waiting = SharedMarginOfferQueue()
+        waiting.append(all)
+        var stoppedAtEnd = snapshot(percent: 100)
+        stoppedAtEnd.status = .paused
+        var midway = snapshot(percent: 60)
+        midway.status = .paused
+        var playingAtEnd = snapshot(percent: 100)
+        playingAtEnd.status = .playing
+        for (name, snap, item) in [("mid-episode", midway, "item"), ("source playing", playingAtEnd, "item"), ("another item", stoppedAtEnd, "other")] {
+            XCTAssertNil(waiting.nextWaitingAtEpisodeEnd(snapshot: snap, selectedItemID: item, slotIsFree: true, offerable: all), name)
+            XCTAssertEqual(waiting.waitingIDs, ["a"], "\(name): nothing was taken")
+        }
+        XCTAssertEqual(waiting.nextWaitingAtEpisodeEnd(snapshot: stoppedAtEnd, selectedItemID: "item", slotIsFree: true, offerable: all)?.interjection.id, "a")
+        XCTAssertNil(waiting.nextWaitingAtEpisodeEnd(snapshot: stoppedAtEnd, selectedItemID: "item", slotIsFree: true, offerable: all), "empty")
     }
 
     func testAFriendsMarginInPlaceStillPlaysWhereItIsAndNotAtTheEnd() {
