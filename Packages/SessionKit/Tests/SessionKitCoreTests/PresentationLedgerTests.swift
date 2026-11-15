@@ -150,4 +150,17 @@ final class PresentationLedgerTests: XCTestCase {
 
         XCTAssertEqual(rebuild.description, "PlaybackScreen:229 (item margin-a): built a second time while the first was still showing")
     }
+
+    func testBuildsThatWentLongAgoAreForgotten() {
+        var ledger = PresentationLedger()
+        for step in 0..<50 {
+            let build = UUID()
+            ledger.appeared(place: "P:\(step)", item: "item-\(step)", instance: build, at: Double(step) * 10)
+            ledger.disappeared(instance: build, at: Double(step) * 10 + 1)
+        }
+        ledger.appeared(place: "Q:1", instance: UUID(), at: 1000)
+
+        XCTAssertEqual(ledger.rememberedGoneCount, 0)
+        XCTAssertEqual(ledger.rebuildCount, 0)
+    }
 }

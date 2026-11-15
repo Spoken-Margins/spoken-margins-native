@@ -59,6 +59,8 @@ public struct PresentationLedger: Equatable, Sendable {
 
     private var showing: [UUID: Key] = [:]
     private var gone: [Key: Gone] = [:]
+    /// Builds still inside the window; exposed so a test can see the ledger forgets the rest.
+    var rememberedGoneCount: Int { gone.count }
 
     public private(set) var rebuildCount = 0
     public private(set) var whileShowingCount = 0
@@ -77,6 +79,8 @@ public struct PresentationLedger: Equatable, Sendable {
     public mutating func appeared(place: String, item: String? = nil, instance: UUID, at time: TimeInterval) -> Rebuild? {
         let key = Key(place: place, item: item)
         if showing[instance] != nil { return nil }
+        // A build that went longer ago than the window can no longer make a rebuild, so it needn't be kept.
+        gone = gone.filter { time - $0.value.at <= Self.rebuildWindow }
         var reason: Reason?
         if showing.contains(where: { $0.value == key }) {
             reason = .whileShowing
