@@ -203,6 +203,8 @@ final class Gate1FlowUITests: XCTestCase {
         for _ in 0..<10 where !lastRow.exists { app.swipeUp() }
         XCTAssertTrue(lastRow.exists, "The Library's last row never appeared: \(app.debugDescription)")
         app.swipeUp()
+        // Let the end-of-list bounce settle before reading the frame; a row under the bar may never be hittable.
+        _ = waitUntil(lastRow, "hittable == true", timeout: 3)
         XCTAssertLessThanOrEqual(lastRow.frame.maxY, element("miniPlayer.bar").frame.minY,
                                  "The Library's last row must scroll clear of the mini-player")
         openLibrarySettings()
@@ -626,12 +628,12 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
         // Following opens on its entries; the feed field lives on the Follow sheet (#141, #3205).
         XCTAssertFalse(element("sources.follow.url").exists)
-        // The identifier appears twice on iOS 26.5 (a wrapper and the Button), so a descendants query finds
-        // "multiple matches"; ask for the Button (#2717).
         let notFollowing = app.staticTexts["You’re not following anything yet"]
         XCTAssertTrue(notFollowing.waitForExistence(timeout: 4), "The fixture Library already follows a show")
+        // The identifier appears twice on iOS 26.5 (a wrapper and the Button), so a descendants query finds
+        // "multiple matches"; ask for the Button (#2717).
         app.buttons["sources.manageFeeds"].firstMatch.tap()
-        let feedLink = element("sources.follow.url")
+        let feedLink = app.textFields["sources.follow.url"].firstMatch
         XCTAssertTrue(feedLink.waitForExistence(timeout: 4))
         XCTAssertTrue(element("sources.follow.paste").exists)
         XCTAssertTrue(element("sources.browseCatalog").exists)
@@ -639,21 +641,22 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Read Later Services"].exists)
         XCTAssertFalse(app.buttons["Import Listening Edition"].exists)
         // Follow acts on a typed link at once and the banner offers Undo (#3205), so the guard is that it follows only
-        // a feed: a link that isn't one follows nothing, keeps the sheet up and says why there (#4314).
+        // a feed it could read: a link it can't read follows nothing, keeps the sheet up and says why there (#4314).
+        // Nothing listens on port 9 of the simulator's own host, so the fetch is refused at once, with no DNS to wait on.
         let follow = app.buttons["sources.follow.button"].firstMatch
         XCTAssertTrue(follow.exists)
         XCTAssertFalse(follow.isEnabled, "Follow is enabled with no link typed")
         feedLink.tap()
-        feedLink.typeText("https://feeds.example.invalid/not-a-feed.xml")
+        feedLink.typeText("https://127.0.0.1:9/not-a-feed.xml")
         XCTAssertTrue(waitUntil(follow, "enabled == true"), "Follow stayed disabled with a link typed")
         follow.tap()
-        XCTAssertTrue(element("sources.follow.problem").waitForExistence(timeout: 20),
-                      "Follow on a link that is not a feed said nothing on the sheet")
+        XCTAssertTrue(element("sources.follow.problem").waitForExistence(timeout: 45),
+                      "Follow on a link it can't read said nothing on the sheet")
         XCTAssertTrue(feedLink.exists, "The Follow sheet closed although nothing could be followed")
-        XCTAssertFalse(app.buttons["following.follow.undo.button"].exists, "A link that is not a feed was followed")
+        XCTAssertFalse(app.buttons["following.follow.undo.button"].exists, "A link Follow can't read was followed")
         app.buttons["sources.follow.cancel"].firstMatch.tap()
         XCTAssertTrue(app.buttons["sources.manageFeeds"].firstMatch.waitForExistence(timeout: 4))
-        XCTAssertTrue(notFollowing.waitForExistence(timeout: 4), "A link that is not a feed added a show")
+        XCTAssertTrue(notFollowing.waitForExistence(timeout: 4), "A link Follow can't read added a show")
         tapRoot("Settings")
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 5))
         captureScreen(named: "following-settings-opened")
