@@ -85,8 +85,6 @@ final class ShareFilePresenterTests: XCTestCase {
         let isShareDiagnostics = { (node: AccessibilityNode) in node.identifier == "settings.shareDiagnostics.button" }
         _ = try await scrollToNode("the Share Diagnostics button", in: mounted.window, isShareDiagnostics)
         try await waitUntilQuiet { ScreenRedrawProbe.count("settings") }
-        // Found again after the screen settles: a list cell rebuilt meanwhile would leave the first element dead.
-        let shareDiagnostics = try await scrollToNode("the Share Diagnostics button", in: mounted.window, isShareDiagnostics)
         var modelPublishes = 0
         let watch = model.objectWillChange.sink { modelPublishes += 1 }
         defer { watch.cancel() }
