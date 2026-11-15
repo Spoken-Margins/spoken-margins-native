@@ -80,6 +80,8 @@ struct LiveSessionView: View, Equatable {
     @State private var photoTappedAt = Date()
     /// A photo waiting for the written Margin it belongs to (Write instead, or a microphone that couldn't start).
     @State private var writingPhoto: LiveSessionPhotoStore.Staged?
+    /// Save was refused (the session was saved or discarded while the listener wrote): the sheet keeps its draft and says why (#3847).
+    @State private var writingRefused = false
     /// A line above the photo on the writing sheet.
     @State private var writingNotice: String?
     @State private var showsCameraOff = false
@@ -141,16 +143,27 @@ struct LiveSessionView: View, Equatable {
         .environment(\.miniPlayerClearance, 0)
         .onAppear {
             finish.screenAppeared()
-            controller.load()
+            // Coming back from under a cover (the writing screen, the camera) must not re-read the store: with no
+            // requested id that reads only the running session, which an ended one is not (#3847).
+            if controller.didLoad {
+                controller.resumeWatching()
+                applyLink()
+            } else {
+                controller.load()
+            }
         }
         .onDisappear {
             unregisterRunningScreen()
-            controller.stopPolling()
+            // The disk observer is how a Watch End reaches this screen, so it stays while this screen is only under
+            // one of its own covers. Every path that dismisses the whole screen runs with `cover == nil`.
+            if cover == nil { controller.stopPolling() }
             finish.screenGone(open: openSavedItem)
         }
         .onChange(of: links.pendingAction) { _, _ in applyLink() }
         .onChange(of: controller.didLoad) { _, _ in applyLink() }
         .onChange(of: controller.session?.id) { _, _ in showsEndCard = false }
+        // Any cover opening or closing clears a refusal, so the next writing screen starts clean.
+        .onChange(of: cover) { _, _ in writingRefused = false }
         // An ended session shows what to do with it, which is on the Session pane.
         .onChange(of: controller.hasEnded, initial: true) { _, ended in if ended { pane = .session } }
         // The mini player's mic starts the item's recording on the root, which sits under this screen. This screen
@@ -665,6 +678,12 @@ struct LiveSessionView: View, Equatable {
             anchorLabel: anchorSubtitle(at: writingStartedAt),
             predictedPosition: { controller.predictedPosition(at: $0, adjustmentMs: $1) },
             onSave: { text, whereNote, adjustmentMs in
+                // A Margin begun while the session ran is kept after the End; only a session saved to the Library, or
+                // gone, refuses it, and then the draft stays on screen with the reason (#3847).
+                if controller.checkBegunMargin(markedAt: writingStartedAt) == .refused {
+                    writingRefused = true
+                    return
+                }
                 if let photo = writingPhoto {
                     // The picture's file goes into place before the Margin that names it is saved.
                     let placedAt = writingStartedAt
@@ -684,7 +703,9 @@ struct LiveSessionView: View, Equatable {
                 cover = nil
             },
             photo: writingPhoto,
-            notice: writingNotice
+            notice: writingNotice,
+            endedLine: controller.endedLine,
+            refused: writingRefused
         )
         .environmentObject(model)
     }
