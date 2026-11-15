@@ -348,7 +348,8 @@ final class WatchContractAppTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(50))
         }
         XCTFail("timed out waiting for the stored session \(id)")
-        return try XCTUnwrap(await files.session(id: id))
+        let last = await files.session(id: id)
+        return try XCTUnwrap(last)
     }
 
     private func waitUntil(_ condition: @MainActor () -> Bool, timeout: TimeInterval = 5) async throws {
