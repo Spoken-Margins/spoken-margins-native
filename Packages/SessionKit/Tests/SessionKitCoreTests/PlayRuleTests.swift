@@ -103,8 +103,11 @@ final class PlayRuleTests: XCTestCase {
         notAtEnd(context(row: try row([finished()])), "row, finished at 100%")
         notAtEnd(context(row: try row([])), "row, no session")
         notAtEnd(context(), "not open, the Library holds no row")
-        // What is playing now is not at the end.
-        notAtEnd(context(nowPlaying: PlayRule.NowPlaying(itemId: "item", mediaTimeMs: end - 5_000), open: late(99)), "playing now")
+        // A relaunch restores the newest session as the loaded, paused one, so the item is "now playing" at its saved
+        // place: a 99% session there is still the end (the audit's J14 case), and a mid-way one still isn't.
+        atEnd(context(nowPlaying: PlayRule.NowPlaying(itemId: "item", mediaTimeMs: end - 10_000), open: late(99)), "restored at 99%: loaded, paused")
+        notAtEnd(context(nowPlaying: PlayRule.NowPlaying(itemId: "item", mediaTimeMs: end / 2), open: late(50)), "playing mid-way")
+        atEnd(context(nowPlaying: PlayRule.NowPlaying(itemId: "item", mediaTimeMs: end - 10_000), row: try row(late(99))), "playing now, not open, row at 99%")
         atEnd(context(nowPlaying: PlayRule.NowPlaying(itemId: "other", mediaTimeMs: 1), open: late(99)), "another item playing says nothing about this one")
     }
 

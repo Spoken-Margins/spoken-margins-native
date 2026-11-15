@@ -112,10 +112,26 @@ extension Gate1AppModel {
         PlayRule.savedPlaceIsAtEnd(sessions: selectedItem.sessions, addedAgainAt: addedAgainAt(forItem: selectedItem.id))
     }
 
-    /// "Play from the start" on the item screen: leaves these Margins new, doesn't ask about them again this run, and
+    /// What starting an item does before its session begins, for every way of starting it: the imported audio bridges, the
+    /// community map, the publisher voiceover lookup, and opening audio that is still being prepared. False when a
+    /// recording in progress blocks the start.
+    func prepareToStartItem(id: String) -> Bool {
+        guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return false }
+        prepareImportedLocalAudioBridges(itemId: id); fetchCommunityMapIfNeeded(itemId: id); listenerStartedItem(itemId: id)
+        if [.waiting, .preparing].contains(libraryItems.first(where: { $0.id == id })?.startupAudioState) {
+            scheduleStartupAudioPreparationIfNeeded(itemId: id)
+            diagnostics["startupAudioPlayback:\(id)"] = "started_without_waiting_for_opening_buffer"
+        }
+        return true
+    }
+
+    /// "Play from the start" on the item screen and the Library row's question: leaves these Margins new, doesn't ask about them again this run, and
     /// begins a new session at 0, where they are ahead and play in place. The old session stays, so there is no
     /// "Start a separate listening session?" question (#4125).
     func startItemFromBeginning(itemId: String, entries: [SharedMarginReview.Entry]) {
+        // The Library row's question reaches here without the item ever having been opened, so it does what `startItem`
+        // does before a session starts, not only what opening the item screen did (#4125).
+        guard prepareToStartItem(id: itemId) else { return }
         Self.declinedNewMargins.decline(itemId: itemId, margins: entries.map(\.marginId))
         startNewSession(id: itemId)
     }

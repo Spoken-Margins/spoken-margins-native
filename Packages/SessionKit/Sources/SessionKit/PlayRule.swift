@@ -155,10 +155,10 @@ public enum PlayRule {
     /// end of the episode: 99% up to, not including, 100%. Then "Listen without them" would resume for the last few
     /// seconds and finish, so the question offers "Play from the start" instead, as the item screen's second button
     /// does (#4125, state D). The open item says it from its sessions; an item that is not open, from its Library row's
-    /// percentage (the row's own session already leaves out an item added again, #4183). The playhead of what is
-    /// playing now is not the end: the episode's end plays its own Margins.
+    /// percentage (the row's own session already leaves out an item added again, #4183). Whether the item is loaded
+    /// or playing makes no difference: a relaunch restores the newest session as the loaded, paused one, so "now
+    /// playing" is also where a listener who heard it to the end finds it.
     public static func askedPlaceIsAtEnd(_ context: Context) -> Bool {
-        if context.nowPlaying?.itemId == context.itemId { return false }
         if let open = context.openItem, open.id == context.itemId {
             return savedPlaceIsAtEnd(sessions: open.sessions, addedAgainAt: open.addedAgainAt)
         }
