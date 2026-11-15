@@ -8,7 +8,7 @@ import XCTest
 /// The likely cause, read from the code and not yet reproduced on a device: the screen watched the whole
 /// `Gate1AppModel`, and the Live row presented it from a Library row that redraws on every model publish, so each
 /// publish reran the whole screen, the class that once closed this screen's menus and sheets (#2831). The screen now
-/// reads the model through a feed, and the Live row presents it from `LiveSessionCoverHost`.
+/// reads the model through a feed, and the Live row has the root present it (`LiveSessionLinkRouter.openScreen`).
 ///
 /// The screen is presented the way the Live row presents it, from a presenter that watches the model (as the Library
 /// does), left to settle, then given 20 model publishes 25 ms apart. The control runs the same publishes against a
@@ -25,25 +25,25 @@ final class LiveSessionRedrawTests: XCTestCase {
     func testTheLiveSessionScreenIsNotRedrawnByModelPublishes() async throws {
         let model = try makeModel()
         let presented = ScreenRedrawProbe.count("liveSession")
-        let mounted = try mount(AnyView(LiveRowLikePresenter(model: model, sessionId: Self.sessionId)))
-        defer { mounted.close() }
+        let mounted = try mount(AnyView(LiveRowLikePresenter(model: model)))
+        defer {
+            LiveSessionLinkRouter.shared.cover = nil
+            mounted.close()
+        }
+        LiveSessionLinkRouter.shared.openScreen(sessionId: Self.sessionId)
         try await waitForFirstRun("liveSession", after: presented)
         try await waitUntilQuiet("liveSession")
         let screenBefore = ScreenRedrawProbe.count("liveSession")
-        let hostBefore = ScreenRedrawProbe.count("liveSessionCoverHost")
         let checksBefore = ScreenRedrawProbe.equalityCheckCount("liveSession")
 
         try await publish(on: model)
 
         try await waitUntilQuiet("liveSession")
         let screenRuns = ScreenRedrawProbe.count("liveSession") - screenBefore
-        let hostRuns = ScreenRedrawProbe.count("liveSessionCoverHost") - hostBefore
         let checks = ScreenRedrawProbe.equalityCheckCount("liveSession") - checksBefore
         XCTAssertLessThanOrEqual(screenRuns, Self.allowedRuns,
                                  "\(Self.publishes) model publishes ran the live session screen's body \(screenRuns) times "
-                                     + "(its cover host \(hostRuns) times; SwiftUI asked the screen's == \(checks) times)")
-        XCTAssertLessThanOrEqual(hostRuns, Self.allowedRuns,
-                                 "\(Self.publishes) model publishes re-ran the Live row's cover host \(hostRuns) times")
+                                     + "(SwiftUI asked the screen's == \(checks) times)")
     }
 
     func testControlAScreenThatWatchesTheModelIsRedrawnByTheSamePublishes() async throws {
@@ -87,15 +87,13 @@ final class LiveSessionRedrawTests: XCTestCase {
         return model
     }
 
-    /// The Library's shape around the Live row: a presenter that watches the model, so every publish redraws it, and
-    /// presents the live session screen the way the Live row does.
+    /// The Library's shape around the Live row: a presenter that watches the model, so every publish redraws it, with
+    /// the root's live session cover, which is where the Live row's screen is presented from.
     private struct LiveRowLikePresenter: View {
         @ObservedObject var model: Gate1AppModel
-        @State var sessionId: String?
 
         var body: some View {
-            Color.clear
-                .background { LiveSessionCoverHost(model: model, sessionId: $sessionId).equatable() }
+            Color.clear.liveSessionLinkCover(model)
         }
     }
 

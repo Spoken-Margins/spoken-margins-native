@@ -116,6 +116,15 @@ struct ExperienceAddSourceFlow: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .accessibilityIdentifier("addSource.sheet")
+        // On the sheet's outermost view, not on the tile picker: the picker sits in a branch that gives way to the link
+        // review or a chosen route, and a cover on a view that leaves dismisses with it, so a screen still in use
+        // closed or was built again (#4091).
+        .fullScreenCover(isPresented: $showsLiveSession, onDismiss: { dismiss() }) {
+            LiveSessionView(model: model).equatable()
+        }
+        .fullScreenCover(isPresented: $showsSpokenNote, onDismiss: { dismiss() }) {
+            SpokenNoteRecordingView().environmentObject(model)
+        }
     }
 
     private var pastedTextActions: some View {
@@ -227,12 +236,6 @@ struct ExperienceAddSourceFlow: View {
                 FailureMessageLabel(fileImportError)
                     .accessibilityIdentifier("document.import.error")
             }
-        }
-        .fullScreenCover(isPresented: $showsLiveSession, onDismiss: { dismiss() }) {
-            LiveSessionView(model: model).equatable()
-        }
-        .fullScreenCover(isPresented: $showsSpokenNote, onDismiss: { dismiss() }) {
-            SpokenNoteRecordingView().environmentObject(model)
         }
     }
 
