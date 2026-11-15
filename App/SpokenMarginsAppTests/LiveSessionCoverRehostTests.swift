@@ -14,7 +14,9 @@ import XCTest
 /// the cover went with it and came back as a new screen. Ordinary list churn in a test harness does not make SwiftUI
 /// re-host a row (the desk tried: 40 changes, one build), so these tests force the strongest form of it: the row gets
 /// a new identity, which always tears it down and builds it again. The Live row test opens the session the way the
-/// row's button does, through `LiveSessionLinkRouter`, then rebuilds the row over and over and counts screens built.
+/// row's button does, through `LiveSessionLinkRouter` with the window the row is in, then rebuilds the row over and
+/// over and counts screens built. The test host's own root is a second window on the same router, so a screen counted
+/// twice is also a Live row opening its screen in every window (an iPad with two windows), not just in its own.
 /// The control does the same to a cover hosted on the row, the shape the Live row had; if it is not built again, the
 /// rebuild no longer reaches the row and the Live row test proves nothing.
 ///
@@ -35,13 +37,17 @@ final class LiveSessionCoverRehostTests: XCTestCase {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         let churn = ListChurn()
         let board = LiveSessionBoard(rows: [Self.runningRow()])
+        let rowsWindow = LiveSessionWindowProbe.Seen()
         let built = ScreenRedrawProbe.count("liveSessionController.init")
-        let mounted = try mount(AnyView(LibraryLikeList(churn: churn, model: model) { LiveSessionLiveRows(board: board) }
+        let mounted = try mount(AnyView(LibraryLikeList(churn: churn, model: model) {
+            LiveSessionLiveRows(board: board).background { LiveSessionWindowProbe(seen: rowsWindow) }
+        }
             .liveSessionLinkCover(model)
             .environmentObject(model)))
         defer { mounted.close() }
 
-        LiveSessionLinkRouter.shared.openScreen(sessionId: Self.sessionId)
+        try await waitUntil("the Live row knew its window") { rowsWindow.window != nil }
+        LiveSessionLinkRouter.shared.openScreen(sessionId: Self.sessionId, window: rowsWindow.window)
         try await waitUntil("the live session screen was built") { ScreenRedrawProbe.count("liveSessionController.init") > built }
         try await rebuildTheRow(churn, model: model)
 
@@ -187,5 +193,21 @@ final class LiveSessionCoverRehostTests: XCTestCase {
             if let found = accessibilityElement(withIdentifier: identifier, in: child, visited: &visited) { return found }
         }
         return nil
+    }
+}
+
+/// Reads the window a view is in, the way the Live row's button does, so a test can open the screen from where the
+/// row is (#4091).
+struct LiveSessionWindowProbe: View {
+    @MainActor
+    final class Seen {
+        var window: UUID?
+    }
+
+    let seen: Seen
+    @Environment(\.liveSessionWindow) private var window
+
+    var body: some View {
+        Color.clear.onAppear { seen.window = window }
     }
 }

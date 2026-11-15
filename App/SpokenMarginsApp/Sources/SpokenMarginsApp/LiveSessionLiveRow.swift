@@ -54,6 +54,7 @@ final class LiveSessionBoard: ObservableObject {
 struct LiveSessionLiveRows: View {
     @ObservedObject private var board: LiveSessionBoard
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.liveSessionWindow) private var window
     @ScaledMetric(relativeTo: .title3) private var glyphWidth: CGFloat = 28
 
     private static let shownRows = 3
@@ -68,8 +69,8 @@ struct LiveSessionLiveRows: View {
                 ForEach(board.rows.prefix(Self.shownRows)) { row in
                     AdaptiveStack(spacing: 8, wrapsText: true) {
                         // The root presents the screen, not this row: a list re-hosts its rows, and a cover on a row was
-                        // presented again each time, as a new screen (#4091).
-                        Button { LiveSessionLinkRouter.shared.openScreen(sessionId: row.id) } label: { line(row) }
+                        // presented again each time, as a new screen (#4091). This window's root only, not every window's.
+                        Button { LiveSessionLinkRouter.shared.openScreen(sessionId: row.id, window: window) } label: { line(row) }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("library.liveRow.\(row.id)")
                         if let until = row.resumableUntil { resumeButton(row, until: until) }

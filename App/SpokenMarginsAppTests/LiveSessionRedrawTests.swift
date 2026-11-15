@@ -25,12 +25,14 @@ final class LiveSessionRedrawTests: XCTestCase {
     func testTheLiveSessionScreenIsNotRedrawnByModelPublishes() async throws {
         let model = try makeModel()
         let presented = ScreenRedrawProbe.count("liveSession")
-        let mounted = try mount(AnyView(LiveRowLikePresenter(model: model)))
+        let presentersWindow = LiveSessionWindowProbe.Seen()
+        let mounted = try mount(AnyView(LiveRowLikePresenter(model: model, seen: presentersWindow)))
         defer {
             LiveSessionLinkRouter.shared.cover = nil
             mounted.close()
         }
-        LiveSessionLinkRouter.shared.openScreen(sessionId: Self.sessionId)
+        try await waitForWindow(presentersWindow)
+        LiveSessionLinkRouter.shared.openScreen(sessionId: Self.sessionId, window: presentersWindow.window)
         try await waitForFirstRun("liveSession", after: presented)
         try await waitUntilQuiet("liveSession")
         let screenBefore = ScreenRedrawProbe.count("liveSession")
@@ -91,9 +93,10 @@ final class LiveSessionRedrawTests: XCTestCase {
     /// the root's live session cover, which is where the Live row's screen is presented from.
     private struct LiveRowLikePresenter: View {
         @ObservedObject var model: Gate1AppModel
+        let seen: LiveSessionWindowProbe.Seen
 
         var body: some View {
-            Color.clear.liveSessionLinkCover(model)
+            Color.clear.background { LiveSessionWindowProbe(seen: seen) }.liveSessionLinkCover(model)
         }
     }
 
@@ -140,6 +143,17 @@ final class LiveSessionRedrawTests: XCTestCase {
         window.rootViewController = UIHostingController(rootView: view)
         window.makeKeyAndVisible()
         return Mounted(window: window, previousKeyWindow: previousKeyWindow)
+    }
+
+    /// The presenter has appeared and read its window, so the screen opens in this test's window only, not also in the
+    /// test host's (#4091).
+    private func waitForWindow(_ seen: LiveSessionWindowProbe.Seen) async throws {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
+            if seen.window != nil { return }
+            try await Task.sleep(for: .milliseconds(40))
+        }
+        XCTFail("The presenter never read its window")
     }
 
     /// The cover has presented once the screen's body has run since `count` was read, before mounting.
