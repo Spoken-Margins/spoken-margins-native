@@ -268,6 +268,14 @@ struct PlaybackScreen: View {
             }
         }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
+        // The friend's end card counts as the first-Margin prompt: once it shows on the Now pane, the prompt is seen
+        // (#3790). The card lives on that pane, so another pane showing never marks it.
+        .onChange(of: model.friendListenState, initial: true) { _, _ in
+            if selectedPane == .now { model.noteFriendListen() }
+        }
+        .onChange(of: selectedPane) { _, pane in
+            if pane == .now { model.noteFriendListen() }
+        }
     }
 
     /// Spacing only is tightened (owner, 2026-10-13): the rows, their order and their controls stay as approved, so
@@ -580,7 +588,7 @@ struct PlaybackScreen: View {
         // The playing and waiting Margin is on the pinned card (#3220); only the auto-play switch is left here.
         if model.hasEnabledImportedCommentary {
             Toggle(
-                "Auto-play shared Margins",
+                FriendArrivalWords.autoPlayLabel,
                 isOn: Binding(
                     get: { model.importedCommentaryAutoPlayEnabled },
                     set: { enabled in
@@ -593,15 +601,13 @@ struct PlaybackScreen: View {
             .tint(AppColors.accent)
             .padding(.horizontal, 4)
             .accessibilityIdentifier("importedCommentary.autoPlay")
-            if !model.importedCommentaryAutoPlayEnabled {
-                Text("Off: a tone marks each shared Margin and the episode plays on.")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.72))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 4)
-            }
+            Text(FriendArrivalWords.autoPlayCaption(isOn: model.importedCommentaryAutoPlayEnabled))
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.72))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 4)
+                .accessibilityIdentifier("importedCommentary.autoPlayCaption")
         }
-
     }
 
     private var playbackHeader: some View {
@@ -631,13 +637,16 @@ struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.showTitle")
             }
 
-            PlaybackMarginTranscriptionStatusView(status: PlaybackMarginTranscriptionStatus(
-                selectedItemId: model.selectedItem.id,
-                playingItemId: model.snapshot.itemId,
-                sessionId: model.snapshot.sessionId,
-                interjections: model.selectedItem.interjections,
-                isRetrying: model.isRetryingInterjectionTranscription
-            ))
+            // The line is about the listener's own Margins, so it waits while a friend's Margin has the screen (#3790).
+            if !model.friendListenState.isInProgress {
+                PlaybackMarginTranscriptionStatusView(status: PlaybackMarginTranscriptionStatus(
+                    selectedItemId: model.selectedItem.id,
+                    playingItemId: model.snapshot.itemId,
+                    sessionId: model.snapshot.sessionId,
+                    interjections: model.selectedItem.interjections,
+                    isRetrying: model.isRetryingInterjectionTranscription
+                ))
+            }
 
             // The chapter title is not repeated here: the dock's chapter row, right above the bar, already shows it
             // and opens the same item details (#1475).
