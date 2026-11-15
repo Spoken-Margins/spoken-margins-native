@@ -54,9 +54,12 @@ final class LiveSessionCoverRehostTests: XCTestCase {
         let builds = ScreenRedrawProbe.count("liveSessionController.init") - built
         XCTAssertEqual(builds, 1, "The live session screen was built \(builds) times while the Live row was rebuilt "
                            + "\(Self.rowRebuilds) times: each extra build is the setup card flashing and any open sheet closing")
-        var visited = Set<ObjectIdentifier>()
-        XCTAssertNotNil(Self.accessibilityElement(withIdentifier: "liveSession.back.button", in: mounted.window, visited: &visited),
-                        "The live session screen was not up after the list changed")
+        // Dismissing the screen clears the router's cover through the binding, so a cover still set and still presented
+        // in this window is the screen still up. (An accessibility lookup read no identifiers here: a unit test does not
+        // turn accessibility automation on, and SwiftUI's elements don't answer the protocol cast.)
+        XCTAssertEqual(LiveSessionLinkRouter.shared.cover?.sessionId, Self.sessionId, "The live session screen was closed while the list changed")
+        XCTAssertNotNil(mounted.window.rootViewController?.presentedViewController,
+                        "The live session screen was not presented in the Live row's window after the list changed")
     }
 
     func testControlACoverHostedOnAListRowIsBuiltAgainByTheSameChurn() async throws {
@@ -173,26 +176,6 @@ final class LiveSessionCoverRehostTests: XCTestCase {
         }
         XCTFail("Timed out waiting until \(what)")
         throw Unsettled()
-    }
-
-    /// The first element at or under `root` whose accessibility identifier is `identifier`, looking through views and
-    /// accessibility containers the way a UI test does.
-    private static func accessibilityElement(withIdentifier identifier: String, in root: NSObject, visited: inout Set<ObjectIdentifier>) -> NSObject? {
-        guard visited.insert(ObjectIdentifier(root)).inserted else { return nil }
-        if (root as? UIAccessibilityIdentification)?.accessibilityIdentifier == identifier { return root }
-        var children: [NSObject] = []
-        if let view = root as? UIView {
-            children += (view.accessibilityElements ?? []).compactMap { $0 as? NSObject }
-            children += view.subviews
-        }
-        let count = root.accessibilityElementCount()
-        if count != NSNotFound, count > 0 {
-            children += (0..<count).compactMap { root.accessibilityElement(at: $0) as? NSObject }
-        }
-        for child in children {
-            if let found = accessibilityElement(withIdentifier: identifier, in: child, visited: &visited) { return found }
-        }
-        return nil
     }
 }
 
