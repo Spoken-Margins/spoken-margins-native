@@ -25,7 +25,7 @@ extension View {
     ) -> some View {
         let place = PresentationLedger.place(fileID: fileID, line: line)
         return sheet(isPresented: isPresented, onDismiss: onDismiss) {
-            content().modifier(PresentationTracking(place: place, item: nil))
+            content().trackedPresentation(place: place)
         }
     }
 
@@ -38,7 +38,7 @@ extension View {
     ) -> some View {
         let place = PresentationLedger.place(fileID: fileID, line: line)
         return sheet(item: item, onDismiss: onDismiss) { presented in
-            content(presented).modifier(PresentationTracking(place: place, item: String(describing: presented.id)))
+            content(presented).trackedPresentation(place: place, item: String(describing: presented.id))
         }
     }
 
@@ -51,7 +51,7 @@ extension View {
     ) -> some View {
         let place = PresentationLedger.place(fileID: fileID, line: line)
         return fullScreenCover(isPresented: isPresented, onDismiss: onDismiss) {
-            content().modifier(PresentationTracking(place: place, item: nil))
+            content().trackedPresentation(place: place)
         }
     }
 
@@ -64,8 +64,42 @@ extension View {
     ) -> some View {
         let place = PresentationLedger.place(fileID: fileID, line: line)
         return fullScreenCover(item: item, onDismiss: onDismiss) { presented in
-            content(presented).modifier(PresentationTracking(place: place, item: String(describing: presented.id)))
+            content(presented).trackedPresentation(place: place, item: String(describing: presented.id))
         }
+    }
+}
+
+extension View {
+    /// Reports this view, the content of a presentation, appearing and disappearing. The wrappers above use it; so does
+    /// the play queue, which UIKit presents and so has no `.sheet` to wrap (`PlayQueueSheetHost`). `scene` names the
+    /// window when the view is outside the scene's environment, as a UIKit-presented one is.
+    func trackedPresentation(place: String, item: String? = nil, scene: String? = nil) -> some View {
+        modifier(PresentationTracking(place: place, item: item, explicitScene: scene))
+    }
+
+    /// Gives this window's views a scene token for the presentations in them (#4337). The app supports several windows
+    /// on an iPad, and they share one model, so each shows the Terms or Help sheet when the model sets it: the same
+    /// place and item in two windows is not a screen built twice.
+    func presentationSceneToken() -> some View { modifier(PresentationSceneToken()) }
+}
+
+private struct PresentationSceneKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
+extension EnvironmentValues {
+    fileprivate var presentationScene: String? {
+        get { self[PresentationSceneKey.self] }
+        set { self[PresentationSceneKey.self] = newValue }
+    }
+}
+
+/// Made once for each window, because a `WindowGroup`'s content is built once for each scene and keeps its state.
+private struct PresentationSceneToken: ViewModifier {
+    @State private var token = UUID().uuidString
+
+    func body(content: Content) -> some View {
+        content.environment(\.presentationScene, token)
     }
 }
 
@@ -75,11 +109,13 @@ extension View {
 private struct PresentationTracking: ViewModifier {
     let place: String
     let item: String?
+    let explicitScene: String?
+    @Environment(\.presentationScene) private var environmentScene
     @State private var instance = UUID()
 
     func body(content: Content) -> some View {
         content
-            .onAppear { PresentationTracker.shared.appeared(place: place, item: item, instance: instance) }
+            .onAppear { PresentationTracker.shared.appeared(place: place, item: item, scene: explicitScene ?? environmentScene, instance: instance) }
             .onDisappear { PresentationTracker.shared.disappeared(instance: instance) }
     }
 }
@@ -95,8 +131,8 @@ final class PresentationTracker: Sendable {
 
     private let ledger = Mutex(PresentationLedger())
 
-    func appeared(place: String, item: String?, instance: UUID) {
-        let rebuild = ledger.withLock { $0.appeared(place: place, item: item, instance: instance, at: ProcessInfo.processInfo.systemUptime) }
+    func appeared(place: String, item: String?, scene: String? = nil, instance: UUID) {
+        let rebuild = ledger.withLock { $0.appeared(place: place, item: item, scene: scene, instance: instance, at: ProcessInfo.processInfo.systemUptime) }
         #if DEBUG
         if let rebuild { tripped(by: rebuild) }
         #endif

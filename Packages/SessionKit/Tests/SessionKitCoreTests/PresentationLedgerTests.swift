@@ -163,4 +163,25 @@ final class PresentationLedgerTests: XCTestCase {
         XCTAssertEqual(ledger.rememberedGoneCount, 0)
         XCTAssertEqual(ledger.rebuildCount, 0)
     }
+
+    func testTheSamePresentationInAnotherWindowIsNotARebuild() throws {
+        // An iPad's two windows share one model, so each presents the Terms sheet when the model sets it.
+        var ledger = PresentationLedger()
+        ledger.appeared(place: "Gate1RootView:71", scene: "scene-a", instance: UUID(), at: 0)
+
+        XCTAssertNil(ledger.appeared(place: "Gate1RootView:71", scene: "scene-b", instance: UUID(), at: 0.1))
+        XCTAssertEqual(ledger.rebuildCount, 0)
+
+        let rebuild = try XCTUnwrap(ledger.appeared(place: "Gate1RootView:71", scene: "scene-b", instance: UUID(), at: 0.2), "a second build in the same window still is")
+        XCTAssertEqual(rebuild.reason, .whileShowing)
+    }
+
+    func testAWindowGoingAndTheSameSheetOpeningInAnotherIsNotARebuildAfterDismissal() {
+        var ledger = PresentationLedger()
+        let first = UUID()
+        ledger.appeared(place: "Gate1RootView:86", scene: "scene-a", instance: first, at: 0)
+        ledger.disappeared(instance: first, at: 1)
+
+        XCTAssertNil(ledger.appeared(place: "Gate1RootView:86", scene: "scene-b", instance: UUID(), at: 1.2))
+    }
 }

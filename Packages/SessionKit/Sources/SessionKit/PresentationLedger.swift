@@ -9,10 +9,11 @@ import Foundation
 /// for every build of the content. This type holds the rule; it knows nothing about SwiftUI and takes its times as
 /// arguments, so a host test can walk it through any sequence.
 ///
-/// What counts as a rebuild: a second build of the same presentation (the same place and the same item) that
-/// appears while the first is still showing, or within `rebuildWindow` of the first going. The same build showing
+/// What counts as a rebuild: a second build of the same presentation (the same place, the same item and the same
+/// window scene) that appears while the first is still showing, or within `rebuildWindow` of the first going. The same build showing
 /// again is not one (a cover under another cover disappears and appears with the same token), and neither is
-/// another item in the same place (a different Margin opening in the same sheet).
+/// another item in the same place (a different Margin opening in the same sheet), or the same sheet in another
+/// window on an iPad (two scenes share one model, so each presents the Terms or Help sheet when it is set).
 ///
 /// The ledger holds places (a file and line in the app's own source) and counts, never an item, a title or
 /// anything the listener typed, so its summary can go in the Diagnostics export.
@@ -50,6 +51,7 @@ public struct PresentationLedger: Equatable, Sendable {
     private struct Key: Hashable, Sendable {
         let place: String
         let item: String?
+        let scene: String?
     }
 
     private struct Gone: Equatable, Sendable {
@@ -72,12 +74,13 @@ public struct PresentationLedger: Equatable, Sendable {
 
     public init() {}
 
-    /// A presentation's content appeared. `instance` is a token made once for each build of the content, so it
+    /// A presentation's content appeared. `scene` names the window it is in, nil when there is only one.
+    /// `instance` is a token made once for each build of the content, so it
     /// is the same every time the same build appears and different for a new build. Returns the rebuild when
     /// this appearance is one.
     @discardableResult
-    public mutating func appeared(place: String, item: String? = nil, instance: UUID, at time: TimeInterval) -> Rebuild? {
-        let key = Key(place: place, item: item)
+    public mutating func appeared(place: String, item: String? = nil, scene: String? = nil, instance: UUID, at time: TimeInterval) -> Rebuild? {
+        let key = Key(place: place, item: item, scene: scene)
         if showing[instance] != nil { return nil }
         // A build that went longer ago than the window can no longer make a rebuild, so it needn't be kept.
         gone = gone.filter { time - $0.value.at <= Self.rebuildWindow }

@@ -18,7 +18,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "App"
 HOME = "TrackedPresentation.swift"
-RAW = re.compile(r"\.(?:sheet|fullScreenCover)\s*\(")
+# SwiftUI's two forms both open with a label, and an extension on View calls them with no receiver (`sheet(isPresented:`),
+# so the dot is optional. The label keeps a closure that happens to be named `sheet()` from matching.
+RAW = re.compile(r"(?<![A-Za-z0-9_])(?:sheet|fullScreenCover)\s*\(\s*(?:isPresented|item)\s*:")
 WRAPPERS = ("trackedSheet", "trackedFullScreenCover")
 
 
@@ -55,7 +57,8 @@ class TrackedPresentationTests(unittest.TestCase):
         raw = {"sheet(isPresented:": 1, "sheet(item:": 1, "fullScreenCover(isPresented:": 1, "fullScreenCover(item:": 1}
         for call, count in raw.items():
             self.assertEqual(text.count(f"return {call}"), count, call)
-        self.assertEqual(text.count(".modifier(PresentationTracking("), 4, "every form puts the tracking modifier on the content")
+        self.assertEqual(len(re.findall(r"\.trackedPresentation\(place: place", text)), 4, "every form puts the tracking modifier on the content")
+        self.assertIn("modifier(PresentationTracking(", text, "and it is the one modifier that reports")
 
     def test_the_app_actually_uses_the_wrapper(self):
         used = sum(len(re.findall(r"\.tracked(?:Sheet|FullScreenCover)\(", _code(text))) for text in app_sources().values())
@@ -63,13 +66,18 @@ class TrackedPresentationTests(unittest.TestCase):
 
     def test_the_scan_catches_the_look_alikes(self):
         for source in (".sheet(isPresented: $x) { }", ".sheet (item: $x) { _ in }", "    .sheet(\nitem: $x)",
-                       "content.fullScreenCover(item: $links.cover) { _ in }", ".fullScreenCover(isPresented: $a) { }"):
+                       "content.fullScreenCover(item: $links.cover) { _ in }", ".fullScreenCover(isPresented: $a) { }",
+                       # an extension on View presents with implicit self, so there is no dot (ExportScreen.swift, #4337 audit)
+                       "sheet(isPresented: Binding(get: { a }, set: { _ in })) { }", "        fullScreenCover(item: $x) { _ in }",
+                       "return sheet(\n isPresented: b) { }"):
             self.assertEqual(raw_presentations({"App/X/Screen.swift": source}), {"App/X/Screen.swift": 1}, source)
 
     def test_the_scan_leaves_the_wrapper_comments_and_tests_alone(self):
         for source in (".trackedSheet(isPresented: $x) { }", ".trackedFullScreenCover(item: $x) { _ in }",
                        "// .sheet(item: $x) is what this replaced", "/* .fullScreenCover(isPresented: $a) */",
-                       "let sheetHeight = 3  // sheet(", "let x = model.sheetRoute"):
+                       "let sheetHeight = 3  // sheet(", "let x = model.sheetRoute",
+                       ".trackedSheet(item: sheetReview) { _ in sheet() }", "func playQueueSheet(isPresented: b)",
+                       "ShareFilePresenter.present(fileURL: url)"):
             self.assertEqual(raw_presentations({"App/X/Screen.swift": source}), {}, source)
         self.assertEqual(raw_presentations({f"App/X/{HOME}": ".sheet(isPresented: p) { }"}), {}, "the wrapper's own file is the one place")
 
