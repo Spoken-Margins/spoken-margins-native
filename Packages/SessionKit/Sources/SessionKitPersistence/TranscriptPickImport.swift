@@ -14,6 +14,8 @@ public enum TranscriptPickImport {
         public var itemId: String
         public var title: String
         public var readded: Bool
+        /// The picked file this transcript came from, so a caller can put its item among the pick's other files.
+        public var url: URL
     }
 
     public struct Result: Equatable, Sendable {
@@ -65,7 +67,7 @@ public enum TranscriptPickImport {
                 stillListeningItemIds: stillListeningItemIds, timeZone: timeZone)
             switch outcome {
             case .added(let itemId, let title, let readded):
-                result.added.append(Added(itemId: itemId, title: title, readded: readded))
+                result.added.append(Added(itemId: itemId, title: title, readded: readded, url: url))
             case .failed(let message):
                 // A `.txt` that is not UTF-8 and not a transcript keeps today's import and its words (design, section 2);
                 // an empty one, and every other type, is refused with its own sentence.
@@ -80,6 +82,37 @@ public enum TranscriptPickImport {
             }
         }
         return result
+    }
+
+    /// The ids of the items a pick saved, in the order the files were picked, for a caller that queues them (the Quick
+    /// Folder's swipe-to-queue and inbox, #2997).
+    ///
+    /// Transcripts come back in `added` and the rest in `passthrough`, each in pick order, and the text import saves
+    /// `textItemIds` in `passthrough` order. This walks the pick and takes the next of each as its file comes up. A file
+    /// that was refused adds nothing. A text file that failed to save leaves the text ids one short, so the ones after
+    /// it shift to earlier files; they keep their order among themselves. The same transcript picked twice is one id.
+    public static func itemIdsInPickOrder(
+        picked: [URL], added: [Added], passthrough: [URL], textItemIds: [String]
+    ) -> [String] {
+        var ordered: [String] = []
+        var seen = Set<String>()
+        func take(_ id: String) { if seen.insert(id).inserted { ordered.append(id) } }
+        var addedIndex = 0
+        var passthroughIndex = 0
+        var textIndex = 0
+        for url in picked {
+            if addedIndex < added.count, added[addedIndex].url == url {
+                take(added[addedIndex].itemId)
+                addedIndex += 1
+            } else if passthroughIndex < passthrough.count, passthrough[passthroughIndex] == url {
+                passthroughIndex += 1
+                if textIndex < textItemIds.count {
+                    take(textItemIds[textIndex])
+                    textIndex += 1
+                }
+            }
+        }
+        return ordered
     }
 
     private static func fileSize(_ url: URL) -> Int? {
