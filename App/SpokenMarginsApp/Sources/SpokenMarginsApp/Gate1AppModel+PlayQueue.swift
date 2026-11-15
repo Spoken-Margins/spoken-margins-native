@@ -134,23 +134,26 @@ extension Gate1AppModel {
         }
         quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union(plan.newSeenKeys)
         let files = plan.toImport
-        let queuedWords: (Int) -> String = { "Queued \($0) new Quick Folder file\($0 == 1 ? "" : "s")." }
         // A `.txt` that reads as a meeting transcript is saved as a transcript item and queued like any other (#2997).
         importFilesWithTranscriptRule(
             urls: files.map { folderURL.appending(path: $0.relativePath) },
-            route: TranscriptPickRoute(
-                securityScopedURLs: [folderURL],
-                refreshQuickFolderWhenFinished: true,
-                navigatesWhenFinished: false,
-                confirmationOverride: queuedWords,
-                onFinished: { [weak self] outcome in
-                    // The ids keep the order of `files`. A failed file was already reported by the import.
-                    guard let self, !outcome.itemIds.isEmpty else { return }
-                    PlayQueueController.update(self) { queue in outcome.itemIds.forEach { queue.append($0) } }
-                    files.forEach { self.dismissQuickAccessFile($0) }
-                    self.diagnostics["quickFolderInboxQueued"] = "\(outcome.itemIds.count)"
-                    // A pick that held a transcript ended with the transcript banner; the queue's words replace it.
-                    if outcome.handledTranscript { self.reportConfirmation(queuedWords(outcome.itemIds.count)) }
-                }))
+            route: quickFolderInboxRoute(files: files, folderURL: folderURL))
+    }
+
+    /// How the inbox imports its new files: no navigation, "Queued N new Quick Folder files." for text files, and every
+    /// item the pick saved appended to the queue in the order of `files`, with the files dismissed. A failed file was
+    /// already reported by the import.
+    func quickFolderInboxRoute(files: [QuickAccessFile], folderURL: URL) -> TranscriptPickRoute {
+        TranscriptPickRoute(
+            securityScopedURLs: [folderURL],
+            refreshQuickFolderWhenFinished: true,
+            navigatesWhenFinished: false,
+            confirmationOverride: { "Queued \($0) new Quick Folder file\($0 == 1 ? "" : "s")." },
+            onFinished: { [weak self] outcome in
+                guard let self, !outcome.itemIds.isEmpty else { return }
+                PlayQueueController.update(self) { queue in outcome.itemIds.forEach { queue.append($0) } }
+                files.forEach { self.dismissQuickAccessFile($0) }
+                self.diagnostics["quickFolderInboxQueued"] = "\(outcome.itemIds.count)"
+            })
     }
 }

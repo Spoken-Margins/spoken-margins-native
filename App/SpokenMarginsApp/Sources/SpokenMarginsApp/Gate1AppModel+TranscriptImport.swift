@@ -20,12 +20,10 @@ extension Gate1AppModel {
         var onFinished: ((TranscriptPickOutcome) -> Void)?
     }
 
-    /// What a pick saved: the items' ids in the order the files were picked (a transcript picked twice is one id), and
-    /// whether the pick held a file the transcript rule handled, which means its banner is the transcript banner.
+    /// What a pick saved: the items' ids in the order the files were picked (a transcript picked twice is one id).
     struct TranscriptPickOutcome {
         var itemIds: [String]
-        var handledTranscript: Bool
-        static let nothing = TranscriptPickOutcome(itemIds: [], handledTranscript: false)
+        static let nothing = TranscriptPickOutcome(itemIds: [])
     }
 
     /// Imports a pick of document files. A `.vtt`, `.srt`, `.docx` or `.txt` goes through the transcript rule first;
@@ -35,13 +33,19 @@ extension Gate1AppModel {
     /// The whole pick runs as one import task under `sourceImportTask`, so a second pick while it runs gets today's
     /// "Another source is already importing." Nothing here navigates, except the Quick Folder's "Add and open".
     func importFilesWithTranscriptRule(urls: [URL], route: TranscriptPickRoute) {
-        guard urls.contains(where: TranscriptPickImport.isCandidate) else {
-            importPickAsText(urls, route: route, summary: nil, picked: urls, added: [], handledTranscript: false)
+        // A pick that cannot start ends here for every kind of file, so the route always hears an end (#2997).
+        guard !urls.isEmpty else {
+            reportFailure("Choose at least one Markdown, text, or PDF file to import.")
+            route.onFinished?(.nothing)
             return
         }
         guard sourceImportTask == nil else {
             reportFailure("Another source is already importing. You can keep using playback while it finishes.")
             route.onFinished?(.nothing)
+            return
+        }
+        guard urls.contains(where: TranscriptPickImport.isCandidate) else {
+            importPickAsText(urls, route: route, summary: nil, picked: urls, added: [])
             return
         }
         let store: SQLiteSessionStore
@@ -87,15 +91,14 @@ extension Gate1AppModel {
     /// added, so the route's `onFinished` hears every item the pick saved, in the order picked.
     private func importPickAsText(
         _ files: [URL], route: TranscriptPickRoute, summary: ((Int, [String]) -> Void)?,
-        picked: [URL], added: [TranscriptPickImport.Added], handledTranscript: Bool
+        picked: [URL], added: [TranscriptPickImport.Added]
     ) {
         var onFinished: (([Item]) -> Void)?
         if let finished = route.onFinished {
             onFinished = { (textItems: [Item]) in
                 finished(TranscriptPickOutcome(
                     itemIds: TranscriptPickImport.itemIdsInPickOrder(
-                        picked: picked, added: added, passthrough: files, textItemIds: textItems.map(\.id)),
-                    handledTranscript: handledTranscript))
+                        picked: picked, added: added, passthrough: files, textItemIds: textItems.map(\.id))))
             }
         }
         beginObsidianMarkdownImport(
@@ -128,8 +131,7 @@ extension Gate1AppModel {
             guard result.handledAnyTranscript else {
                 // No file was a transcript: today's import, with today's words.
                 releaseImportSlot()
-                importPickAsText(
-                    result.passthrough, route: route, summary: nil, picked: pickedURLs, added: [], handledTranscript: false)
+                importPickAsText(result.passthrough, route: route, summary: nil, picked: pickedURLs, added: [])
                 return nil
             }
             if let reloadError { throw reloadError }
@@ -148,8 +150,7 @@ extension Gate1AppModel {
                 releaseImportSlot()
                 route.onFinished?(TranscriptPickOutcome(
                     itemIds: TranscriptPickImport.itemIdsInPickOrder(
-                        picked: pickedURLs, added: result.added, passthrough: [], textItemIds: []),
-                    handledTranscript: true))
+                        picked: pickedURLs, added: result.added, passthrough: [], textItemIds: [])))
             } else {
                 // The rest of the pick goes to the text import, which tells this banner how many it added and what failed.
                 releaseImportSlot()
@@ -160,7 +161,7 @@ extension Gate1AppModel {
                             added: added, refusals: result.refusals, documentsImported: imported,
                             documentFailureNames: failedNames, pickedCount: pickedURLs.count)
                     },
-                    picked: pickedURLs, added: result.added, handledTranscript: true)
+                    picked: pickedURLs, added: result.added)
             }
             return route.openImportedItemWhenFinished ? result.added.first?.itemId : nil
         } catch {
