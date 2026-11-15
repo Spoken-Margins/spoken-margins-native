@@ -20,7 +20,7 @@ extension Gate1AppModel {
         }
         switch route {
         case .unsupported(let message):
-            reportFailure(message.errorDescription ?? "Spoken Margins can't add this file.")
+            reportFailure(message)
         case .transcriptRule, .text:
             importOpenedDocument(url)
         }
@@ -49,7 +49,7 @@ extension Gate1AppModel {
             case .failure:
                 // An iCloud file that has not downloaded, or one that was moved away, reads the same way to the listener.
                 self.diagnostics["lastOpenedDocument"] = "could_not_read"
-                self.reportFailure(TranscriptImportMessage(.couldNotRead, fileName: fileName).errorDescription ?? "")
+                self.reportFailure(TranscriptImportMessage(.couldNotRead, fileName: fileName))
             case .success(let copy):
                 self.diagnostics["lastOpenedDocument"] = "staged:\(copy.pathExtension.lowercased())"
                 let ended = OnceSignal()
