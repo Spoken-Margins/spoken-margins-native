@@ -36,6 +36,9 @@ final class LiveSessionController: ObservableObject {
     /// Finish tapped on the Lock Screen card while a spoken Margin records (#3499); lives only while one records.
 
     init(sessionId: String? = nil, files: LiveSessionFileWorker = .shared, spokenCapture: LiveSessionSpokenCapture = .shared) {
+        #if DEBUG
+        ScreenRedrawProbe.record("liveSessionController.init") // one per screen built: a rebuilt screen shows here (#4091)
+        #endif
         requestedSessionId = sessionId
         self.files = files
         self.spokenCapture = spokenCapture
