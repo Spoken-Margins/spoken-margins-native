@@ -7,6 +7,7 @@ import { shortDate } from '../format.ts';
 import { useMarginFilePicker, type OpenMarginFile, type OpenShareLink } from '../import.tsx';
 import { parseShareLink } from '../logic/share-link.ts';
 import { marginGroups, newestMarginId } from '../logic/library.ts';
+import { threadedRows } from '../logic/margin-threads.ts';
 import { plainError } from '../logic/messages.ts';
 import { firesByItself } from '../logic/margin-autoplay.ts';
 import { parentOf, resumeReplying, stopReplying } from '../logic/reply-choice.ts';
@@ -93,8 +94,8 @@ export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void
               </h2>
             </header>
             <ol className="margin-list">
-              {group.margins.map((margin) => (
-                <MarginRow key={margin.id} margin={margin} parent={parentOf(margin, data.margins)} newest={margin.id === newestId} onPlay={onPlay} />
+              {threadedRows(group.margins, data.margins).map(({ margin, indented, line }) => (
+                <MarginRow key={margin.id} margin={margin} parent={parentOf(margin, data.margins)} newest={margin.id === newestId} onPlay={onPlay} indented={indented} threadLine={line} />
               ))}
             </ol>
           </section>
@@ -109,7 +110,8 @@ export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void
  * stops the reply and puts it back (#4107, B5). A friend's row gets a "Reply" button when the list passes `onReply`
  * (Now Playing's does; the Margins tab stays a list to play from). `parent` is the Margin a reply answers, found by the
  * caller among all the Margins. The listener's own Margins end with a star: "Star for sharing", which Share starts ticked
- * (#4172). It is the last control, after the Reply buttons.
+ * (#4172). It is the last control, after the Reply buttons. On the Margins screen a reply sits under the Margin it answers
+ * (`indented`), and a friend's reply says which on a first line (`threadLine`, #4174).
  */
 export function MarginRow({
   margin,
@@ -119,6 +121,8 @@ export function MarginRow({
   parent,
   onReply,
   replyDisabled,
+  indented,
+  threadLine,
 }: {
   margin: Margin;
   newest?: boolean;
@@ -128,6 +132,10 @@ export function MarginRow({
   onReply?: (friend: Margin) => void;
   /** A composer is open: a second reply can't begin, and a saved reply can't change under the composer's own copy of it, until it closes. */
   replyDisabled?: boolean;
+  /** The Margins screen lists this reply under the Margin it answers. */
+  indented?: boolean;
+  /** A friend's reply on the Margins screen: "Reply to your Margin at 12:34", or that this browser can't find it. Shown first. */
+  threadLine?: string;
 }) {
   const player = usePlayer();
   const data = useData();
@@ -166,11 +174,11 @@ export function MarginRow({
     }
   };
   return (
-    <li className={`margin${newest ? ' is-newest' : ''}`}>
+    <li className={`margin${newest ? ' is-newest' : ''}${indented ? ' is-reply' : ''}`}>
       <button
         type="button"
         className="margin-open"
-        aria-label={`Play from ${formatClock(margin.atSeconds)}: ${label}${details ? `. ${details}` : ''}`}
+        aria-label={`${threadLine ? `${threadLine}. ` : ''}Play from ${formatClock(margin.atSeconds)}: ${label}${details ? `. ${details}` : ''}`}
         onClick={() => {
           void player.open(margin.episodeId, { at: margin.atSeconds });
           onPlay?.();
@@ -178,6 +186,7 @@ export function MarginRow({
       >
         <span className="margin-time">{formatClock(margin.atSeconds)}</span>
         <span className="margin-body">
+          {threadLine !== undefined && <span className="row-meta reply-meta">{threadLine}</span>}
           {margin.text ? <span className="margin-text">{margin.text}</span> : <span className="margin-text margin-voice-label">Voice Margin, {formatClock(margin.voice?.durationSeconds ?? 0)}</span>}
           {!compact && (
             <span className="row-meta">

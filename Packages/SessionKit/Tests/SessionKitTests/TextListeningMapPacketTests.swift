@@ -196,18 +196,27 @@ final class TextListeningMapPacketTests: XCTestCase {
         }
     }
 
+    // The text goes in under an embedded-text transport that is consistent on its own, so the transport check passes
+    // and only the map packet rule is left to refuse it (#4316).
     func testTheReaderRefusesAMapPacketThatCarriesTheText() throws {
-        let one = try packet()
-        var manifest = one.manifest
+        let one = try packet(article(url: nil))
         var data = one.artifactData
-        let embedded = EmbeddedTextItemArtifact(originalMediaType: "text", text: text)
+        let embedded = EmbeddedTextItemArtifact(originalMediaType: SharedItemType.text.rawValue, text: text)
         data["artifacts/embedded-item.json"] = try JSONEncoder().encode(embedded)
-        manifest.artifacts.append(SpokenMarginsArtifactDescriptor(
-            id: embedded.id, kind: SpokenMarginsArtifactKind.embeddedTextItem,
-            schemaVersion: embedded.schemaVersion, path: "artifacts/embedded-item.json", required: true))
+        let manifest = SpokenMarginsPackageManifest(
+            packageId: one.manifest.packageId, createdAt: one.manifest.createdAt, item: one.manifest.item,
+            itemTransport: SharedItemTransport(kind: .embeddedText, embeddedArtifactId: embedded.id, rightsBasis: .senderConfirmedPrivateRights),
+            senderDisplayLabel: one.manifest.senderDisplayLabel, requiredCapabilities: one.manifest.requiredCapabilities,
+            artifacts: one.manifest.artifacts + [SpokenMarginsArtifactDescriptor(
+                id: embedded.id, kind: SpokenMarginsArtifactKind.embeddedTextItem,
+                schemaVersion: embedded.schemaVersion, path: "artifacts/embedded-item.json", required: true)],
+            redactions: InterjectionPackageRedactions(fullItemOmitted: false))
         XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(
             PreparedSpokenMarginsPackage(manifest: manifest, artifactData: data, assetFiles: [:]),
-            to: root.appendingPathComponent("with-text.spokenmargins")))
+            to: root.appendingPathComponent("with-text.spokenmargins"))) {
+            guard case .invalidManifest(let reason) = $0 as? SpokenMarginsPackageArchiveError else { return XCTFail("\($0)") }
+            XCTAssertTrue(reason.contains("listening map packet"), reason)
+        }
     }
 
     func testTheBuilderRefusesAPodcast() throws {

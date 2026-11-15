@@ -97,6 +97,8 @@ final class LiveSessionPhotoEncoderTests: XCTestCase {
         let exif: [CFString: Any] = [kCGImagePropertyExifUserComment: "taken at the library"]
         let source = try data(pageImage(width: 800, height: 600), properties: [kCGImagePropertyGPSDictionary: gps, kCGImagePropertyExifDictionary: exif])
         XCTAssertNotNil(try properties(of: source)[kCGImagePropertyGPSDictionary], "fixture must carry a location")
+        let sourceExif = try properties(of: source)[kCGImagePropertyExifDictionary] as? [CFString: Any]
+        XCTAssertNotNil(sourceExif?[kCGImagePropertyExifUserComment], "fixture must carry a comment")
         let encoded = try LiveSessionPhotoEncoder.encode(source)
         let kept = try properties(of: encoded.data)
         XCTAssertNil(kept[kCGImagePropertyGPSDictionary])

@@ -764,6 +764,8 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_podcast_anchor_benchmark.FilterNameTests',
                        # The poll-loop guard scans the app test sources (#4131).
                        'test_app_test_poll_loops',
+                       # The negative-sleep guard scans the app and UI test sources (#4313).
+                       'test_app_test_negative_sleeps',
                        # The tracked-presentation guard scans App/ Swift files for a raw sheet or cover (#4337).
                        'test_tracked_presentations')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
@@ -998,6 +1000,8 @@ READ_METER_SKIPS = frozenset(f'SessionKitCoreTests/StoreReadMeterTests/{test}' f
 MEASURE_ON_REQUEST_SKIPS = frozenset({
     'SessionKitCoreTests/EngineCompletionCostTests/testTheCostOfEachCompletionCall',
     'SessionKitCoreTests/PlayAndRecordStartCostTests/testPrintTheStartCostsAtLibrarySize',
+    # Writes the transcript fixture files for the journey only when WRITE_TRANSCRIPT_FIXTURES=1 (#2997).
+    'SessionKitCoreTests/TranscriptFixtureFilesTests/testWriteTheFixtureFilesForTheJourney',
 })
 CORE_ALLOWED_SKIPS = HANG_PROBE_TIMING_TESTS | READ_METER_SKIPS | MEASURE_ON_REQUEST_SKIPS
 

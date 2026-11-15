@@ -134,19 +134,26 @@ extension Gate1AppModel {
         }
         quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union(plan.newSeenKeys)
         let files = plan.toImport
-        beginObsidianMarkdownImport(
+        // A `.txt` that reads as a meeting transcript is saved as a transcript item and queued like any other (#2997).
+        importFilesWithTranscriptRule(
             urls: files.map { folderURL.appending(path: $0.relativePath) },
+            route: quickFolderInboxRoute(files: files, folderURL: folderURL))
+    }
+
+    /// How the inbox imports its new files: no navigation, "Queued N new Quick Folder files." for text files, and every
+    /// item the pick saved appended to the queue in the order of `files`, with the files dismissed. A failed file was
+    /// already reported by the import.
+    func quickFolderInboxRoute(files: [QuickAccessFile], folderURL: URL) -> TranscriptPickRoute {
+        TranscriptPickRoute(
             securityScopedURLs: [folderURL],
             refreshQuickFolderWhenFinished: true,
-            onImported: { [weak self] items in
-                guard let self else { return }
-                // Imported items keep the order of `files`. A failed file was already reported by the import.
-                PlayQueueController.update(self) { queue in items.forEach { queue.append($0.id) } }
-                files.forEach { self.dismissQuickAccessFile($0) }
-                self.diagnostics["quickFolderInboxQueued"] = "\(items.count)"
-            },
             navigatesWhenFinished: false,
-            confirmationOverride: { "Queued \($0) new Quick Folder file\($0 == 1 ? "" : "s")." }
-        )
+            confirmationOverride: { "Queued \($0) new Quick Folder file\($0 == 1 ? "" : "s")." },
+            onFinished: { [weak self] outcome in
+                guard let self, !outcome.itemIds.isEmpty else { return }
+                PlayQueueController.update(self) { queue in outcome.itemIds.forEach { queue.append($0) } }
+                files.forEach { self.dismissQuickAccessFile($0) }
+                self.diagnostics["quickFolderInboxQueued"] = "\(outcome.itemIds.count)"
+            })
     }
 }

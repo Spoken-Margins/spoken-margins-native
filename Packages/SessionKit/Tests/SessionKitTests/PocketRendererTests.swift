@@ -88,10 +88,45 @@ final class PocketRendererTests: XCTestCase {
         try Data(PocketBoolModel.trueConstantModel).write(to: url)
         let session = try ORTSession(env: try ORTEnv(loggingLevel: .warning), modelPath: url.path, sessionOptions: nil)
         let flag = try XCTUnwrap(try session.run(withInputs: [:], outputNames: ["flag"], runOptions: nil)["flag"])
-        // The bindings can't read a boolean tensor back, so this checks the model ran and made a value.
-        // The render tests below feed it to the decoder, which refuses anything but a true boolean.
-        XCTAssertNotNil(flag)
+        // The bindings can't read a boolean tensor back either, so a second model casts it to an Int32 that they
+        // can (#4316). The render tests that feed it to the decoder skip when the weights aren't fetched.
+        let castURL = directory.appending(path: "cast.onnx")
+        try Data(Self.boolToInt32Model).write(to: castURL)
+        let cast = try ORTSession(env: try ORTEnv(loggingLevel: .warning), modelPath: castURL.path, sessionOptions: nil)
+        let value = try XCTUnwrap(try cast.run(withInputs: ["flag": flag], outputNames: ["value"], runOptions: nil)["value"])
+        let read = try value.tensorData() as Data
+        XCTAssertEqual(read.withUnsafeBytes { Array($0.bindMemory(to: Int32.self)) }, [1], "the flag is true")
     }
+
+    /// An ONNX model with a boolean input `flag` of shape [1] and one Cast node to an Int32 output `value`.
+    private static let boolToInt32Model: [UInt8] = {
+        func varint(_ value: UInt64) -> [UInt8] {
+            var value = value
+            var bytes: [UInt8] = []
+            repeat {
+                var byte = UInt8(value & 0x7F)
+                value >>= 7
+                if value != 0 { byte |= 0x80 }
+                bytes.append(byte)
+            } while value != 0
+            return bytes
+        }
+        func number(_ field: UInt64, _ value: UInt64) -> [UInt8] { varint(field << 3) + varint(value) }
+        func bytes(_ field: UInt64, _ payload: [UInt8]) -> [UInt8] { varint(field << 3 | 2) + varint(UInt64(payload.count)) + payload }
+        func string(_ field: UInt64, _ text: String) -> [UInt8] { bytes(field, Array(text.utf8)) }
+        func valueInfo(_ name: String, _ elementType: UInt64) -> [UInt8] {
+            // ValueInfoProto { name, type: tensor_type { elem_type, shape: [1] } }
+            string(1, name) + bytes(2, bytes(1, number(1, elementType) + bytes(2, bytes(1, number(1, 1)))))
+        }
+        let boolType: UInt64 = 9, int32Type: UInt64 = 6
+        // AttributeProto { name: "to", i: INT32, type: INT }
+        let to = string(1, "to") + number(3, int32Type) + number(20, 2)
+        // NodeProto { input: ["flag"], output: ["value"], op_type: "Cast", attribute }
+        let node = string(1, "flag") + string(2, "value") + string(4, "Cast") + bytes(5, to)
+        let graph = bytes(1, node) + string(2, "bool_to_int32") + bytes(11, valueInfo("flag", boolType)) + bytes(12, valueInfo("value", int32Type))
+        // ModelProto { ir_version: 8, opset_import: [{version: 13}], graph }
+        return number(1, 8) + bytes(8, number(2, 13)) + bytes(7, graph)
+    }()
 
     // MARK: With the downloaded weights
 

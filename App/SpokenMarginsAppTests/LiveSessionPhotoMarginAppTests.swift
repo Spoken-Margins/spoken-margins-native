@@ -88,6 +88,34 @@ final class LiveSessionPhotoMarginAppTests: XCTestCase {
         screen.stopPolling()
     }
 
+    /// #3847: a written Margin with a photo, begun while the session ran, is kept with its picture after the session ended
+    /// somewhere else (the Watch's End). On `main` the photo path returned early and deleted the picture.
+    func testAWrittenMarginWithAPhotoIsKeptAfterTheSessionEnded() async throws {
+        let files = LiveSessionFileWorker(root: root)
+        var session = LiveSession(id: "live-photo", kind: .paper, title: "Book", startedAt: Date().addingTimeInterval(-300))
+        session.endedAt = Date().addingTimeInterval(-5)
+        session.endReason = LiveSessionWatchSessions.EndReason.watch.rawValue
+        try await files.save(session, generation: 1)
+        let screen = LiveSessionController(sessionId: "live-photo", files: files)
+        screen.load()
+        try await waitUntil("the ended session to load") { screen.session?.id == "live-photo" }
+        XCTAssertTrue(screen.hasEnded)
+        let picture = try await staged()
+
+        await screen.addMargin(text: "Words with a picture", whereNote: nil, adjustmentMs: 0, markedAt: Date(), photo: picture)
+
+        let margin = try XCTUnwrap(screen.session?.margins.first)
+        let photo = try XCTUnwrap(margin.validPhoto)
+        let kept = try XCTUnwrap(store.fileURL(for: photo))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: kept.path), "the committed file exists")
+        XCTAssertEqual(margin.filingNote, LiveSessionFiling.afterEndNote, "marked after the stop time")
+        try await waitUntil("the Margin to be saved") { await files.session(id: "live-photo")?.margins.first?.photo == photo }
+        let stored = await files.session(id: "live-photo")
+        XCTAssertNotNil(stored?.endedAt, "the End is untouched")
+        XCTAssertFalse(screen.isRunning)
+        screen.stopPolling()
+    }
+
     func testDeletingTheMarginDeletesItsPhotoFile() async throws {
         let files = LiveSessionFileWorker(root: root)
         let screen = try await openScreen(files)

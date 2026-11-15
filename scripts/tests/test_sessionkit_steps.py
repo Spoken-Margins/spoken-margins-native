@@ -204,7 +204,7 @@ class ParallelCoreTests(unittest.TestCase):
         # files has to be named, and a renamed one has to follow.
         tests = SCRIPTS.parent / 'Packages/SessionKit/Tests/SessionKitCoreTests'
         skipping = set()
-        for name in ('EngineCompletionCostTests', 'PlayAndRecordStartCostTests'):
+        for name in ('EngineCompletionCostTests', 'PlayAndRecordStartCostTests', 'TranscriptFixtureFilesTests'):
             source = (tests / f'{name}.swift').read_text()
             skipping |= {f'SessionKitCoreTests/{name}/{test}'
                          for test, body in re.findall(r'func (test\w+)\(\)[^{]*\{(.*?)(?=\n    func |\n    private func |\Z)', source, re.S)

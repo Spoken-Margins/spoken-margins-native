@@ -113,6 +113,8 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
 
     /// #3219: the item screen of an item with a friend's unheard Margin offers two labelled choices, and the big one
     /// starts the episode at once, without the "New Margins to hear" question.
+    /// "At once" is read off the episode: it reaches the playing state and its clock moves. Only then is the question's
+    /// absence checked, because the question would have stopped it from playing (#4315).
     func testItemScreenOffersTwoChoicesForAFriendsNewMargin() throws {
         XCTContext.runActivity(named: "J9 item screen, step 1: The episode is in the Library (offline seed)") { _ in
             app.launch()
@@ -129,7 +131,7 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
             XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
         }
 
-        XCTContext.runActivity(named: "J9 item screen, step 3: Two choices, and the big one plays at once") { _ in
+        try XCTContext.runActivity(named: "J9 item screen, step 3: Two choices, and the big one plays at once") { _ in
             let play = app.buttons["item.start.button"].firstMatch
             XCTAssertTrue(play.waitForExistence(timeout: 5), "The big button is missing")
             XCTAssertEqual(play.label, "Play")
@@ -144,6 +146,10 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
             )
             play.tap()
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "The episode did not start")
+            XCTAssertEqual(app.buttons["playback.itemTitle.button"].label, episodeTitle, "A different item is playing")
+            try waitUntilPlaying("The big button opened the episode but it never reached the playing state")
+            let start = try position()
+            waitUntil("The episode clock is stuck after the big button", timeout: 8) { self.currentPosition().map { $0 > start } ?? false }
             XCTAssertFalse(app.buttons["newMarginsOffer.review"].exists, "The big button asked a question before playing")
             XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
         }
@@ -217,6 +223,9 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
             XCTAssertLessThanOrEqual(frame.maxY - lowest, 32, "A blank row sits under the \(stage) card's last button: \(frame.maxY - lowest) pt")
         }
         XCTAssertTrue(playReachable, "The dock's play button is out of reach under the \(stage) card")
+        // A card that exposes no text or button labels would pass the check below without reading anything (#4315).
+        XCTAssertFalse(words.replacingOccurrences(of: "|", with: "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                       "The \(stage) card exposes no text or button labels to read for \"item\" or \"review\"")
         XCTAssertNil(words.lowercased().range(of: #"\b(item|review)\b"#, options: .regularExpression), "The \(stage) card says item or review: \(words)")
         let note = XCTAttachment(string: "\(stage): card \(Int(frame.height)) pt of \(Int(window.height)) pt; words: \(words)")
         note.name = "J9 large text, \(stage) card"

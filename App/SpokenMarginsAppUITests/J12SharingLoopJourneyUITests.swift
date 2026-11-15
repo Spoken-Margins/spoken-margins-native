@@ -61,6 +61,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             try recordAMargin(seconds: 3)
             try recordAMargin(seconds: 3)
             endStep("two Margins recorded")
+            assertOwnMargins(2) // checking, not listening: step 3 counts its own taps
         }
 
         XCTContext.runActivity(named: "J12 step 3: Send them: the packet is built and its size is shown") { _ in
@@ -179,6 +180,23 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
         tap("recording.finish.button")
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Did not return to Now Playing")
         XCTAssertTrue(playPause.waitForExistence(timeout: 5), "Playback control is missing")
+    }
+
+    /// The Margins tab, on Mine, lists exactly `expected` of the listener's own Margins, by its count and by its rows
+    /// (#4315: the step that recorded two never counted them). Back to Now afterwards, where Share is.
+    private func assertOwnMargins(_ expected: Int) {
+        tap("playback.margins.button")
+        tap("playback.margins.filter.mine")
+        let count = element("playback.margins.count")
+        XCTAssertTrue(count.waitForExistence(timeout: 5), "The Margins count is missing")
+        waitUntil("The Margins tab does not count \(expected) of your Margins") { count.label == "Margins: \(expected)" }
+        XCTAssertEqual(count.label, "Margins: \(expected)", "The Margins tab miscounts your Margins")
+        let ownRows = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND NOT (identifier ENDSWITH %@)", "margins.row.", ".play"
+        ))
+        XCTAssertEqual(ownRows.count, expected, "The Margins tab lists \(ownRows.count) of your Margins, not \(expected)")
+        note("Margins tab after recording: \(count.label)")
+        tap("playback.now.button")
     }
 
     private func beginStep() { tapsAtStepStart = taps }
