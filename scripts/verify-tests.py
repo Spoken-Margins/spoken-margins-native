@@ -764,6 +764,8 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_podcast_anchor_benchmark.FilterNameTests',
                        # The poll-loop guard scans the app test sources (#4131).
                        'test_app_test_poll_loops',
+                       # The negative-sleep guard scans the app and UI test sources (#4313).
+                       'test_app_test_negative_sleeps',
                        # The tracked-presentation guard scans App/ Swift files for a raw sheet or cover (#4337).
                        'test_tracked_presentations')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
