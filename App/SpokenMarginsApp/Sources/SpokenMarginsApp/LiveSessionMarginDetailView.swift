@@ -111,7 +111,7 @@ struct LiveSessionMarginDetailView: View {
                         }
                         .accessibilityIdentifier("marginDetail.edit.button")
                     }
-                    Button("Delete", systemImage: "trash", role: .destructive) { asksToDelete = true }
+                    Button("Delete", systemImage: "trash", role: .destructive) { delete(); dismiss() } // MUTANT M4 (#4311)
                         .accessibilityIdentifier("marginDetail.delete.button")
                 }
             }

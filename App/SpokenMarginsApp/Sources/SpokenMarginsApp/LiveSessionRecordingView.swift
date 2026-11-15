@@ -45,14 +45,14 @@ struct LiveSessionRecordingView: View {
             finish: { capture.stopAndFile() },
             // A photo waiting for this recording goes with it: Cancel means "I don't want this" (#2708).
             cancel: {
-                capture.cancel(sessionId: sessionId)
+                capture.stopAndFile() // MUTANT M1 (#4311)
                 onCancelled()
             },
             writeInstead: { _ in
                 // A Margin taken with a photo is placed where the listener tapped Photo; cancel clears both.
                 let began = capture.photoPlacedAt ?? capture.recordingStartedAt
                 // The picture is kept: the written Margin takes it.
-                if let photo = capture.cancel(sessionId: sessionId, keepingPhoto: true) { onKeepPhoto(photo) }
+                capture.stopAndFile() // MUTANT M2 (#4311)
                 onWriteInstead(began)
             },
             continuePrimer: {},

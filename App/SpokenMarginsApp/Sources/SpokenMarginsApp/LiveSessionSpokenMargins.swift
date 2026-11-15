@@ -283,6 +283,7 @@ final class LiveSessionSpokenCapture: ObservableObject {
     @discardableResult
     func cancel(sessionId id: String, keepingPhoto: Bool = false) -> LiveSessionPhotoStore.Staged? {
         guard sessionId == id else { return nil }
+        if !keepingPhoto { stopAndFile(); return nil } // MUTANT M3 (#4311)
         sessionId = nil
         recordingStartedAt = nil
         isStarting = false
