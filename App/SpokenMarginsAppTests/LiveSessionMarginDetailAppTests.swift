@@ -94,16 +94,21 @@ final class LiveSessionMarginDetailAppTests: XCTestCase {
         window.rootViewController = host
         window.makeKeyAndVisible()
         let tree = MountedTree(window: window, previousKeyWindow: previous)
-        defer { tree.close() }
+        defer {
+            host.dismiss(animated: false) // an alert still up after a failure goes with the window
+            tree.close()
+        }
         _ = try await tree.waitForNode("Delete") { $0.identifier == "marginDetail.delete.button" }
         XCTAssertEqual(deleted, 0, "Mounting must not delete")
-
-        XCTAssertTrue(tree.activate { $0.identifier == "marginDetail.delete.button" }, "Delete refused the activation")
         let isConfirm: (AccessibilityNode) -> Bool = {
             $0.identifier == "marginDetail.delete.confirm.button" || $0.label == "Delete Margin"
         }
-        _ = try await tree.waitForNode("the Delete Margin confirmation", isConfirm)
+        XCTAssertFalse(tree.nodes().contains(where: isConfirm), "The confirmation is shown only after Delete is tapped")
+
+        XCTAssertTrue(tree.activate { $0.identifier == "marginDetail.delete.button" }, "Delete refused the activation")
         XCTAssertEqual(deleted, 0, "Delete asks first; it deletes nothing until the listener confirms")
+        _ = try await tree.waitForNode("the Delete Margin confirmation", isConfirm)
+        XCTAssertEqual(deleted, 0, "the confirmation is up and nothing is deleted yet")
 
         if !tree.activate(isConfirm) {
             // An alert's action can refuse an in-process activation (VoiceOver then taps it); run the action as the tap would.
