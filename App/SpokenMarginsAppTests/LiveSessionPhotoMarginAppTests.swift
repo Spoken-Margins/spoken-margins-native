@@ -118,7 +118,12 @@ final class LiveSessionPhotoMarginAppTests: XCTestCase {
     }
 
     func testCancellingARecordingThrowsItsPhotoAwayButWritingInsteadKeepsIt() async throws {
-        let capture = LiveSessionSpokenCapture(files: LiveSessionFileWorker(root: root))
+        let files = LiveSessionFileWorker(root: root)
+        try await files.save(LiveSession(id: "s1", startedAt: Date().addingTimeInterval(-60)), generation: 1)
+        // A stand-in recorder, so a recording filed by mistake has a session to land in and can be told apart (#4311):
+        // Finish also takes the staged picture away, by moving it into place.
+        let recorder = StandInMarginRecorder()
+        let capture = LiveSessionSpokenCapture(files: files, recorder: recorder, transcribe: { _ in nil })
 
         let thrownAway = try await staged()
         capture.start(sessionId: "s1", photo: thrownAway)
@@ -126,6 +131,12 @@ final class LiveSessionPhotoMarginAppTests: XCTestCase {
         XCTAssertNil(capture.cancel(sessionId: "s1"))
         XCTAssertNil(capture.photo)
         try await waitUntil("Cancel to delete the picture with the recording") { !FileManager.default.fileExists(atPath: thrownAway.url.path) }
+        try await pollUntil(timeout: .seconds(10)) { await recorder.stops + recorder.cancels > 0 }
+        let ended = (stops: await recorder.stops, cancels: await recorder.cancels)
+        XCTAssertEqual(ended.cancels, 1, "Cancel throws the recording away")
+        XCTAssertEqual(ended.stops, 0, "Cancel never stops and files the recording")
+        let margins = await files.session(id: "s1")?.margins
+        XCTAssertEqual(margins?.count, 0, "Cancel files nothing, photo or words")
 
         let kept = try await staged()
         // Another session id, so the first recording's late start can't be mistaken for this one.
