@@ -419,6 +419,21 @@ public enum AppColorContrastAudit {
         onTint("current sentence text", foreground: AppSemanticColorRGB.white, tint: "listeningAccent", tintColor: AppSemanticColorRGB.listeningAccent, alpha: 0.18, over: AppSemanticColorRGB.listeningBackground, baseName: "listening background")
     ]
 
+    /// The Source Text reader's current-sentence mark (#3736): a fill and a thick underline over the reader's surface
+    /// (`inputBackground`), from `ReaderSentenceHighlight`. The words are read on the fill (4.5:1); the underline is a
+    /// mark, so 3:1 against the page and against the fill it runs through.
+    public static let readerHighlightPairs: [Pair] = {
+        let fill = ReaderSentenceHighlight.fill
+        let alpha = ReaderSentenceHighlight.fillAlpha
+        let page = AppSemanticColorRGB.inputBackground
+        let composited = fill.composited(over: page, alpha: alpha)
+        return [
+            .init(name: "reader text on current sentence fill", foreground: AppSystemColorRGB.label, background: composited, minimumRatio: 4.5),
+            .init(name: "reader sentence underline on reader surface", foreground: ReaderSentenceHighlight.underline, background: page, minimumRatio: 3),
+            .init(name: "reader sentence underline on its fill", foreground: ReaderSentenceHighlight.underline, background: composited, minimumRatio: 3)
+        ]
+    }()
+
     /// The button and card fills drawn at a lower alpha, which is how a pressed state or a dimmed card is drawn (#3739):
     /// each is read as the fill over the surface it sits on, with the label the button draws. The pressed state is the
     /// alpha, so a button label has to hold up on the dimmed fill too. The playback screen is always dark, so its
@@ -516,7 +531,7 @@ public enum AppColorContrastAudit {
     }()
 
     public static var allPairs: [Pair] {
-        textBackgroundPairs + nonTextPairs + increasedContrastEdgePairs + timelineRowPairs + watchPlatePairs + tintedFillPairs + pressedFillPairs + liveActivityPairs
+        textBackgroundPairs + nonTextPairs + increasedContrastEdgePairs + timelineRowPairs + watchPlatePairs + tintedFillPairs + readerHighlightPairs + pressedFillPairs + liveActivityPairs
             + shareExtensionPairs + safariPopupPairs
     }
 
