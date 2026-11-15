@@ -13,6 +13,7 @@ final class UITestingLaunchSeedTests: XCTestCase {
         "SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE": "Title",
         "SPOKEN_MARGINS_UI_TEST_PODCAST_PLACE": "1490",
         "SPOKEN_MARGINS_UI_TEST_PODCAST_COMPLETED": "1",
+        "SPOKEN_MARGINS_UI_TEST_LIBRARY_FILLER": "12",
     ]
 
     func testANormalLaunchSeedsNothingWhateverTheEnvironmentHolds() {
@@ -26,7 +27,9 @@ final class UITestingLaunchSeedTests: XCTestCase {
             XCTAssertFalse(UITestingLaunchSeed.marksListenerMarginShared(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
             XCTAssertNil(UITestingLaunchSeed.podcastPlaceSeconds(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
             XCTAssertFalse(UITestingLaunchSeed.podcastStartsCompleted(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
+            XCTAssertEqual(UITestingLaunchSeed.libraryFillerCount(arguments: ["SpokenMarginsApp"], environment: [key: value]), 0, key)
         }
+        XCTAssertEqual(UITestingLaunchSeed.libraryFillerCount(arguments: ["SpokenMarginsApp"], environment: everySeedVariable), 0)
         XCTAssertNil(UITestingLaunchSeed.podcastPlaceSeconds(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
         XCTAssertFalse(UITestingLaunchSeed.podcastStartsCompleted(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
         XCTAssertEqual(UITestingLaunchSeed(arguments: ["SpokenMarginsApp"], environment: everySeedVariable), .none)
@@ -342,5 +345,31 @@ final class UITestingLaunchSeedTests: XCTestCase {
         XCTAssertEqual(percent(10, of: 10), 100)
         XCTAssertEqual(percent(5, of: 0), 100, "A zero-length episode is over at once, not a divide by zero")
         XCTAssertEqual(percent(-3, of: 1_500), 0, "A negative place is the start")
+    }
+
+    /// #4314: the seeded flow's mini-player check needs a Library longer than the screen, under the fixture article.
+    func testLibraryFillerComesOnlyWithTheFixtureSeedAndIsBounded() {
+        let ui = ["SpokenMarginsApp", "--ui-testing"]
+        let filler = "SPOKEN_MARGINS_UI_TEST_LIBRARY_FILLER"
+        XCTAssertEqual(UITestingLaunchSeed.libraryFillerCount(arguments: ui, environment: [filler: "12"]), 12)
+        XCTAssertEqual(UITestingLaunchSeed.libraryFillerCount(arguments: ui, environment: [filler: "500"]), 40)
+        for raw in ["0", "-3", "", "twelve", "1.5"] {
+            XCTAssertEqual(UITestingLaunchSeed.libraryFillerCount(arguments: ui, environment: [filler: raw]), 0, raw)
+        }
+        XCTAssertEqual(UITestingLaunchSeed.libraryFillerCount(arguments: ui, environment: [:]), 0)
+        XCTAssertEqual(UITestingLaunchSeed.libraryFillerCount(arguments: ui, environment: [filler: "12", "SPOKEN_MARGINS_UI_TEST_PODCAST": "1"]), 0)
+        XCTAssertEqual(UITestingLaunchSeed.libraryFillerCount(arguments: ui, environment: [filler: "12", "SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY": "1"]), 0)
+    }
+
+    func testLibraryFillerSortsBelowTheFixtureArticleUnderRecentlyAdded() {
+        let fixtureAddedAt = Date(timeIntervalSince1970: 1_781_179_200)
+        let items = UITestingLaunchSeed.libraryFillerItems(count: 3, fixtureAddedAt: fixtureAddedAt)
+        XCTAssertEqual(items.map(\.id), ["item-ui-filler-1", "item-ui-filler-2", "item-ui-filler-3"])
+        let added = items.compactMap { ItemFinishedRule.addedAt($0) }
+        XCTAssertEqual(added.count, 3)
+        XCTAssertTrue(added.allSatisfy { $0 < fixtureAddedAt }, "Fillers must sort below the fixture article")
+        XCTAssertEqual(added, added.sorted(by: >), "Each filler is added before the one above it")
+        XCTAssertTrue(UITestingLaunchSeed.libraryFillerItems(count: 0, fixtureAddedAt: fixtureAddedAt).isEmpty)
+        XCTAssertTrue(UITestingLaunchSeed.libraryFillerItems(count: -1, fixtureAddedAt: fixtureAddedAt).isEmpty)
     }
 }
