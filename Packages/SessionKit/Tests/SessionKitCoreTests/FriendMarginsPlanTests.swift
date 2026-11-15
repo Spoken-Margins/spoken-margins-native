@@ -100,6 +100,24 @@ final class FriendMarginsPlanTests: XCTestCase {
         XCTAssertNil(again)
     }
 
+    /// A card or a Margin voice holds the slot when the episode ends: the Margins that wait for the end are queued,
+    /// not dropped with the tick, and are offered once the slot is free.
+    func testTheEndOfTheEpisodeWhileACardIsUpQueuesWhatWaitsForIt() {
+        let all = prompts(unplaced: ["a"], durationMs: end)
+        var queue = SharedMarginOfferQueue()
+        let held = queue.nextOffer(
+            previous: snapshot(percent: 99), current: snapshot(percent: 100), selectedItemID: "item", canOffer: false, prompts: all)
+        XCTAssertNil(held)
+        XCTAssertEqual(queue.waitingIDs, ["a"])
+        let later = queue.nextOffer(
+            previous: snapshot(percent: 100), current: snapshot(percent: 100), selectedItemID: "item", canOffer: true, prompts: all)
+        XCTAssertEqual(later?.interjection.id, "a", "offered when the slot is free")
+        var otherItem = SharedMarginOfferQueue()
+        _ = otherItem.nextOffer(
+            previous: snapshot(percent: 99), current: snapshot(percent: 100), selectedItemID: "elsewhere", canOffer: false, prompts: all)
+        XCTAssertTrue(otherItem.isEmpty, "the open item isn't the one that ended")
+    }
+
     func testAFriendsMarginInPlaceStillPlaysWhereItIsAndNotAtTheEnd() {
         let all = prompts(placed: ["early": 60_000], unplaced: ["none"], durationMs: end)
         let midway = SharedMarginPrompts.crossed(
@@ -133,6 +151,17 @@ final class FriendMarginsPlanTests: XCTestCase {
             XCTAssertEqual(FriendMarginsPlan.episodeEndReached(previous: snapshot(percent: from), current: snapshot(percent: to)), expected, name)
         }
         XCTAssertFalse(FriendMarginsPlan.episodeEndReached(previous: SessionSnapshot(), current: snapshot(percent: 100)), "no item before")
+        // A seek writes the snapshot at 100% before the next tick, which then sees the source stop.
+        var playing = snapshot(percent: 100)
+        playing.status = .playing
+        var stopped = snapshot(percent: 100)
+        stopped.status = .paused
+        XCTAssertTrue(FriendMarginsPlan.episodeEndReached(previous: playing, current: stopped), "the source stops at the end")
+        XCTAssertFalse(FriendMarginsPlan.episodeEndReached(previous: stopped, current: stopped), "already stopped: once only")
+        XCTAssertFalse(FriendMarginsPlan.episodeEndReached(previous: playing, current: playing), "still playing at 100%")
+        var elsewhere = stopped
+        elsewhere.sessionId = "t"
+        XCTAssertFalse(FriendMarginsPlan.episodeEndReached(previous: playing, current: elsewhere), "another session")
     }
 
     // MARK: helpers

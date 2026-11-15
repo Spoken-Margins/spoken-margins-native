@@ -53,12 +53,16 @@ public enum FriendMarginsPlan {
         entries.filter { isBehind($0, place: place) }
     }
 
-    /// The tick on which the episode's playback reaches its end: the same item and session, progress below the end
-    /// before and at it after (`ItemFinishedRule.atEndPercent`, the percent the app calls "completed current audio").
-    /// A different item or session says nothing: opening a finished item must not play its Margins that wait for the end.
+    /// The tick on which the episode's playback reaches its end, for the same item and session. Two ways to say so, the
+    /// ones the app already uses for "completed current audio": progress goes from below the end to the end, or the
+    /// source stops at the end after playing (`previous` playing, `current` paused, at `ItemFinishedRule.atEndPercent`).
+    /// The second matters because a seek or a lifecycle sync writes the snapshot itself, so the next tick can see
+    /// progress already at the end before it sees the source stop. A different item or session says nothing:
+    /// opening a finished item must not play its Margins that wait for the end.
     public static func episodeEndReached(previous: SessionSnapshot, current: SessionSnapshot) -> Bool {
-        guard previous.itemId != nil, previous.itemId == current.itemId, previous.sessionId == current.sessionId else { return false }
+        guard previous.itemId != nil, previous.itemId == current.itemId, previous.sessionId == current.sessionId,
+              current.currentPlaybackProgressPercent >= ItemFinishedRule.atEndPercent else { return false }
         return previous.currentPlaybackProgressPercent < ItemFinishedRule.atEndPercent
-            && current.currentPlaybackProgressPercent >= ItemFinishedRule.atEndPercent
+            || (previous.status.isPlaybackActive && current.status == .paused)
     }
 }

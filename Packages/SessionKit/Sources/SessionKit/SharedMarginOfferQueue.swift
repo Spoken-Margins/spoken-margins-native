@@ -36,6 +36,17 @@ public struct SharedMarginOfferQueue: Equatable {
         if current.itemId != selectedItemID || Self.isPlayheadJump(previous: previous, current: current) {
             waitingIDs.removeAll()
         }
+        // The end of the episode is a moment, not a place: a Margin that plays after the others has no later chance. So
+        // when the end is reached while a card or a Margin voice holds the slot, those Margins are queued to wait their
+        // turn instead of being dropped with the tick (#4347).
+        if !(canOffer || canReplaceCard), current.itemId == selectedItemID,
+           FriendMarginsPlan.episodeEndReached(previous: previous, current: current) {
+            let waitingForTheEnd = prompts().filter {
+                !announcedIDs.contains($0.id) && $0.plan == .afterOthers && $0.layer.revealMode != .fresh
+            }
+            announcedIDs.formUnion(waitingForTheEnd.map(\.id))
+            append(waitingForTheEnd)
+        }
         guard canOffer || canReplaceCard, current.itemId == selectedItemID else { return nil }
         let all = prompts()
         let crossed = SharedMarginPrompts.crossed(
