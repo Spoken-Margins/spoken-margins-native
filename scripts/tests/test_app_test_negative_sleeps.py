@@ -46,6 +46,16 @@ class WhichSleepsAreFlagged(unittest.TestCase):
             'comments and blanks between': 'try await Task.sleep(for: .milliseconds(400))\n\n// the review must not start\nXCTAssertNil(model.marginMoment)',
             'a message that says never': 'try await Task.sleep(for: .milliseconds(400))\nXCTAssertEqual(count, 1, "the second tap never plays")',
             'tabs': '\ttry await Task.sleep(for: .milliseconds(400))\n\tXCTAssertNil(x)',
+            '_ = try? in front': '_ = try? await Task.sleep(for: .milliseconds(300))\nXCTAssertNil(x)',
+            'a clock': 'try await ContinuousClock().sleep(for: .milliseconds(300))\nXCTAssertNil(x)',
+            'C sleep': 'sleep(1)\nXCTAssertNil(x)',
+            'a run loop': 'RunLoop.main.run(until: Date().addingTimeInterval(1.5))\nXCTAssertNil(record.firstHeardAt)',
+            'an XCTWaiter wait': '_ = XCTWaiter().wait(for: [XCTestExpectation(description: "pause")], timeout: 1)\nXCTAssertFalse(sheet.exists)',
+            'an empty dictionary': 'try await Task.sleep(for: .milliseconds(300))\nXCTAssertEqual(model.drafts, [:])',
+            'empty first': 'try await Task.sleep(for: .milliseconds(300))\nXCTAssertEqual([], log.values)',
+            'XCTAssert isEmpty': 'try await Task.sleep(for: .milliseconds(300))\nXCTAssert(log.values.isEmpty)',
+            "a message with n't": 'try await Task.sleep(for: .milliseconds(300))\nXCTAssertEqual(starts, 1, "the voice didn\'t start again")',
+            'a message with not': 'try await Task.sleep(for: .milliseconds(300))\nXCTAssertEqual(state, .playing, "a citation list is not a stall")',
         }
         for name, source in cases.items():
             with self.subTest(name):
@@ -106,6 +116,18 @@ class TheBaseline(unittest.TestCase):
     def test_an_unlisted_sleep_fails(self):
         self.assertEqual(self.run_scan(self.SOURCE, {}), 1)
 
+    def test_update_only_shrinks_the_baseline(self):
+        two = self.SOURCE.replace('    }\n', '        try await Task.sleep(for: .milliseconds(300))\n'
+                                           '        XCTAssertFalse(done)\n    }\n')
+        with tempfile.TemporaryDirectory() as folder:
+            name = Path(folder).name
+            (Path(folder) / 'NewTests.swift').write_text(two)
+            listed = Path(folder) / 'baseline.json'
+            listed.write_text(json.dumps({f'{name}/NewTests.swift::testOne': 1, f'{name}/Gone.swift::testGone': 2}))
+            self.assertEqual(sleeps.main(['--folder', folder, '--baseline', str(listed), '--update']), 1,
+                             'the second sleep is still new after an update')
+            self.assertEqual(json.loads(listed.read_text()), {f'{name}/NewTests.swift::testOne': 1})
+
     def test_a_fixed_listed_test_must_be_dropped_from_the_baseline(self):
         fixed = self.SOURCE.replace('try await Task.sleep(for: .milliseconds(300))', 'try await pollUntil { done }')
         with tempfile.TemporaryDirectory() as folder:
@@ -132,6 +154,13 @@ class TheAppTests(unittest.TestCase):
                  'SpokenMarginsAppUITests/Gate1FlowUITests.swift'}
         listed = {key.split('::')[0] for key in sleeps.load_baseline()}
         self.assertEqual(sorted(named & listed), [], 'the files #4313 names keep no unexplained sleep in the baseline')
+        tests = {f'SpokenMarginsAppTests/SupertonicSpeechTests.swift::{name}' for name in (
+            'testPauseInsideASplitCitationResumesTheCurrentChunk', 'testPlayAndRateChangeWhilePlayingKeepTheLiveAudio',
+            'testASeekWhileTheIOSVoiceHasNotBegunEndsTheWaitAndPlaysOn',
+            'testAPlayWhileTheIOSVoiceHasNotBegunStaysWithItWhenTheChosenVoiceMayNotRender',
+            'testAStallSampledBeforeTheListenerPlaysTheIOSVoiceAgainLeavesItAlone', 'testAStopDuringAnUncachedRenderDeletesItsFile')}
+        tests.add('SpokenMarginsAppTests/WatchContractAppTests.swift::testTheBoardGoesOutOnceMoreAfterATransportCommandEvenWhenNothingChanged')
+        self.assertEqual(sorted(tests & set(sleeps.load_baseline())), [], 'the tests #4313 names keep no unexplained sleep')
 
 
 if __name__ == '__main__':
