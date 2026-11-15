@@ -143,7 +143,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             // its own: `PlayRule` asks only about Margins behind a saved place (`PlayRuleTests`, "not open, a row with no
             // session"; J14 row 3). The offer belongs to an episode with a place past the Margin, which step 4 of the
             // other test covers, so here it is taken if it shows and is not required (#4253).
-            let skip = app.buttons["newMarginsOffer.skip"].firstMatch
+            let skip = app.buttons.matching(NSPredicate(format: "identifier == %@ OR label == %@", "newMarginsOffer.skip", "Listen without them")).firstMatch
             let nowPlaying = element("playback.screen")
             waitUntil("Continue neither offered the friend's Margin nor opened Now Playing", timeout: 10) { skip.exists || nowPlaying.exists }
             if skip.exists { skip.tap() } // listen on: the answer below is made on the friend's item either way
