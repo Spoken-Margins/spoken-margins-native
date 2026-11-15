@@ -218,6 +218,57 @@ final class NarrationFootnotePlanTests: XCTestCase {
         XCTAssertEqual(plan.chunks[position + 1].footnote, .definition("1"))
     }
 
+    /// The player maps an offset to the chunk that holds it, so an aside's offset must be where a chunk ends and the
+    /// next one starts, and the body chunks must still tile the text.
+    private func assertAsidesSitOnChunkEdges(_ plan: Planner.ArticlePlan, _ text: String, file: StaticString = #filePath, line: UInt = #line) {
+        let body = bodyChunks(plan)
+        for aside in asideChunks(plan) {
+            XCTAssertTrue(body.contains { $0.startOffset + $0.sourceLength == aside.startOffset }, "no chunk ends at the aside's offset in: \(text)", file: file, line: line)
+            XCTAssertTrue(body.contains { $0.startOffset == aside.startOffset } || aside.startOffset == plan.normalizedText.count,
+                          "no chunk starts at the aside's offset in: \(text)", file: file, line: line)
+            XCTAssertFalse(body.contains { $0.startOffset < aside.startOffset && aside.startOffset < $0.startOffset + $0.sourceLength },
+                           "a body chunk crosses the aside in: \(text)", file: file, line: line)
+        }
+        for pair in zip(body, body.dropFirst()) {
+            XCTAssertEqual(pair.0.startOffset + pair.0.sourceLength, pair.1.startOffset, "gap in: \(text)", file: file, line: line)
+        }
+    }
+
+    func testAnAsideSitsOnAChunkEdgeWhenTheNotesFollowRightAfterTheCitingSentence() {
+        for text in [
+            "Only one sentence.[^1]\n[^1]: The note.",
+            "Claim one.[^1] Claim two.[^2]\n\n[^1]: N1.\n[^2]: N2.",
+            "Claim one.[^1] Claim two.[^2]\n[^1]: N1.\n[^2]: N2.",
+            "A claim.[^1]   \n\n  [^1]: The note.",
+            "A first claim.[^1] A second claim.[^2] A third.\n\n## Notes\n\n[^1]: N1.\n[^2]: N2."
+        ] {
+            assertAsidesSitOnChunkEdges(Planner.articlePlan(text, asides: true), text)
+        }
+    }
+
+    func testAMarkerOnAHeadingOrListLineStopsAtTheEndOfThatLine() throws {
+        let cases: [(text: String, before: String)] = [
+            ("## Title[^1]\nBody text. More.\n\n[^1]: Note.", "## Title"),
+            ("- item one[^1]\n- item two is here.\n\n[^1]: Note.", "- item one"),
+            ("1. item one[^1]\n2. item two is here.\n\n[^1]: Note.", "1. item one"),
+            ("> a quote[^1]\nBody text. More.\n\n[^1]: Note.", "> a quote"),
+            ("A line that is not finished[^1]\n## Next heading\nBody.\n\n[^1]: Note.", "A line that is not finished")
+        ]
+        for (text, before) in cases {
+            let plan = Planner.articlePlan(text, asides: true)
+            let aside = try XCTUnwrap(asideChunks(plan).first, text)
+            XCTAssertEqual(String(Array(plan.normalizedText)[..<aside.startOffset]), before, text)
+            assertAsidesSitOnChunkEdges(plan, text)
+        }
+    }
+
+    func testAHardWrappedSentenceKeepsItsNoteUntilItsFullStop() throws {
+        let text = "A sentence wrapped[^1]\nacross two lines. Then more.\n\n[^1]: Note."
+        let plan = Planner.articlePlan(text, asides: true)
+        let aside = try XCTUnwrap(asideChunks(plan).first)
+        XCTAssertEqual(String(Array(plan.normalizedText)[..<aside.startOffset]), "A sentence wrapped across two lines.")
+    }
+
     // MARK: - The player's plan
 
     func testThePlayersPlanCarriesTheAsidesAfterAPrefaceAndMatchesTheArticlePlan() throws {

@@ -240,20 +240,32 @@ extension NarrationChunkPlanner {
             }
         }
         appendAsides(at: 0)
+        // Whitespace the chunker leaves uncovered between pieces, waiting for the chunk that will start it.
+        var carriedFrom: Int?
         for (from, to) in zip(edges, edges.dropFirst()) where from < to {
             let tag = definitions.first(where: { $0.range.contains(from) }).map { FootnoteTag.definition($0.label) }
+            let first = chunks.count
             for planned in RenderedSpeechChunker.sourceSlices(from: String(characters[from..<to]), maxCharacters: budget) {
                 chunks.append(Chunk(index: chunks.count, startOffset: from + planned.startOffset,
                                     sourceLength: planned.slice.sourceLength, text: planned.slice.text,
                                     boundary: planned.slice.boundary, footnote: tag))
             }
-            // The chunker leaves a piece's trailing whitespace uncovered. Inside the text that made the next chunk
-            // start late, off the plan, so the last body chunk so far takes it (a piece of only whitespace gives it
-            // all to the chunk before). The end of the text stays as it is without asides.
-            if to < length,
-               let last = chunks.lastIndex(where: { if case .aside = $0.footnote { false } else { true } }),
-               chunks[last].startOffset + chunks[last].sourceLength < to {
-                chunks[last].sourceLength = to - chunks[last].startOffset
+            if chunks.count == first {
+                // A piece of only whitespace (a cut, a space, then a definition). It goes to the chunk after any aside
+                // at this cut, never to the chunk before: that one would then cross the aside's offset.
+                carriedFrom = carriedFrom ?? from
+            } else {
+                if let start = carriedFrom {
+                    chunks[first].sourceLength += chunks[first].startOffset - start
+                    chunks[first].startOffset = start
+                    carriedFrom = nil
+                }
+                // The chunker leaves a piece's own trailing whitespace uncovered. Inside the text that made the next
+                // chunk start late, off the plan, so the piece's last chunk takes it, up to the piece's end and no
+                // further. The end of the text stays as it is without asides.
+                if to < length, chunks[chunks.count - 1].startOffset + chunks[chunks.count - 1].sourceLength < to {
+                    chunks[chunks.count - 1].sourceLength = to - chunks[chunks.count - 1].startOffset
+                }
             }
             appendAsides(at: to)
         }
@@ -297,17 +309,38 @@ extension NarrationChunkPlanner {
         return characters.count
     }
 
-    /// The source offset where the paragraph that holds `offset` ends: a line break followed by a blank line, by the
+    /// The source offset where the paragraph that holds `offset` ends: the end of its line when the line is a heading,
+    /// a list item or a quote, else a line break followed by a blank line, by a heading, list item or quote, or by the
     /// start of a footnote definition line, or the end of the text. An aside never crosses it, so a citing sentence
-    /// with no full stop does not carry its note into the next paragraph, a heading or the notes.
+    /// with no full stop does not carry its note into the next block, a heading or the notes.
     fileprivate static func paragraphEnd(after offset: Int, in source: [Character]) -> Int {
+        func startsBlock(at start: Int) -> Bool {
+            var index = start
+            while index < source.count, source[index] == " " || source[index] == "\t" { index += 1 }
+            guard index < source.count, !source[index].isNewline else { return false }
+            let first = source[index]
+            let second: Character? = index + 1 < source.count ? source[index + 1] : nil
+            if first == "#" || first == ">" { return true }
+            if first == "[", second == "^" { return true }
+            if "-*+".contains(first), second == " " { return true }
+            if first.isNumber {
+                var digits = index
+                while digits < source.count, source[digits].isNumber { digits += 1 }
+                return digits < source.count - 1 && (source[digits] == "." || source[digits] == ")") && source[digits + 1] == " "
+            }
+            return false
+        }
+        var lineStart = max(0, min(offset, source.count))
+        while lineStart > 0, !source[lineStart - 1].isNewline { lineStart -= 1 }
+        let ownLineIsBlock = startsBlock(at: lineStart) && !(source[lineStart...].first(where: { $0 != " " && $0 != "\t" }) == "[")
         var index = max(0, offset)
         while index < source.count {
             if source[index].isNewline {
+                if ownLineIsBlock { return index }
                 var next = index + 1
                 while next < source.count, source[next] == " " || source[next] == "\t" { next += 1 }
                 if next >= source.count || source[next].isNewline { return index }
-                if source[next] == "[", next + 1 < source.count, source[next + 1] == "^" { return index }
+                if startsBlock(at: index + 1) { return index }
             }
             index += 1
         }
