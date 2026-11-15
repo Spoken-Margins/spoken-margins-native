@@ -5,8 +5,9 @@ import Foundation
 ///
 /// The name is the packet's sender label (`ImportedCommentaryLayer.displayLabel`), which comes from the sender's app
 /// and isn't proven, so rows group on what a listener would read as the same name: spaces at the ends and doubled
-/// inside don't count, nor do letter case or how an accent was typed. A packet with no name has no row; its Margins
-/// still show on their item. Only Margins on items in the Library count, so each row has something to open.
+/// inside don't count, nor do letter case or how an accent was typed. A packet with no name, or one carrying a stand-in
+/// ("Unsigned sender", "Someone", "Your friend"), still gets a row (#4104): all of them form one "A friend" row, never
+/// merged with a real name. Only Margins on items in the Library count, so each row has something to open.
 public enum FollowingFriends {
     public struct Friend: Identifiable, Hashable, Sendable {
         /// The grouping key, stable while the name reads the same.
@@ -23,6 +24,8 @@ public enum FollowingFriends {
         public let items: [Item]
         /// "3 Margins on 1 episode".
         public let summary: String
+        /// "2 new" when any of their Margins are unheard; nil otherwise. Words carry it, never a colour alone.
+        public var newLabel: String? { newCount > 0 ? "\(newCount) new" : nil }
 
         public struct Item: Identifiable, Hashable, Sendable {
             public let id: String
@@ -39,6 +42,11 @@ public enum FollowingFriends {
         }
     }
 
+    /// What the row for packets that carry no usable sender name is called.
+    public static let unnamedFriendName = "A friend"
+    /// The grouping key of that row: empty, which no real name produces, so a sender literally named "A friend" stays apart.
+    static let unnamedKey = ""
+
     public static func friends(from entries: [MarginCollection.SharedEntry]) -> [Friend] {
         struct Group {
             var name: String
@@ -49,8 +57,16 @@ public enum FollowingFriends {
         }
         var groups: [String: Group] = [:]
         for entry in entries {
-            guard let itemId = entry.layer.itemId, let name = displayName(entry.layer.displayLabel) else { continue }
-            let key = groupingKey(name)
+            guard let itemId = entry.layer.itemId else { continue }
+            let name: String
+            let key: String
+            if let usable = FriendName.usable(entry.layer.displayLabel).flatMap(displayName) {
+                name = usable
+                key = groupingKey(usable)
+            } else {
+                name = unnamedFriendName
+                key = unnamedKey
+            }
             let date = activityDate(entry)
             var group = groups[key] ?? Group(name: name, newest: date)
             if date > group.newest { group.newest = date; group.name = name }
@@ -66,7 +82,12 @@ public enum FollowingFriends {
             groups[key] = group
         }
         return groups
-            .sorted { $0.value.newest != $1.value.newest ? $0.value.newest > $1.value.newest : $0.key < $1.key }
+            .sorted {
+                // A friend with Margins the listener hasn't heard comes first (#4104), then the newest activity.
+                let (a, b) = ($0.value.newIds.isEmpty, $1.value.newIds.isEmpty)
+                if a != b { return !a }
+                return $0.value.newest != $1.value.newest ? $0.value.newest > $1.value.newest : $0.key < $1.key
+            }
             .map { key, group in
                 let items = group.items
                     .sorted { $0.value.newest != $1.value.newest ? $0.value.newest > $1.value.newest : $0.key < $1.key }

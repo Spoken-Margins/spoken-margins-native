@@ -15,7 +15,7 @@ extension Gate1AppModel {
         if isMediaPlaybackSnapshot {
             // A Margin still waiting for its placement pass plays at the sender's time (#3059), so it counts too.
             func place(_ prompt: ImportedCommentaryPrompt) -> Int? {
-                SharedMarginPrompts.mediaTimeMs(prompt.interjection, in: prompt.layer)
+                prompt.mediaTimeMs
             }
             guard let ms = NextMarginPress.nextMarginMs(after: snapshot.currentMediaTimeMs, among: prompts.compactMap(place)),
                   let prompt = prompts.first(where: { place($0) == ms }) else { return nil }

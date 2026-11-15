@@ -19,9 +19,12 @@ import PDFKit
 
 /// Background source-link import and its persistence (#979), moved unchanged out of the central model.
 extension Gate1AppModel {
+    /// `listenerAdded` is stated by each caller: false when the listener did not ask for this episode (a packet's
+    /// podcast, #4241), so an episode they finished stays finished.
     func persistResolvedSourceLinkInBackground(
         request: LinkResolutionRequest,
         result: LinkResolutionResult,
+        listenerAdded: Bool,
         readsLibraryOffMain: Bool = false
     ) throws -> Item? {
         let store = try requireStore()
@@ -29,7 +32,7 @@ extension Gate1AppModel {
             installEngine(try makeEngine(store: store))
         }
         guard let engine,
-              let item = try engine.importResolvedSourceLinkInBackground(request, result: result) else {
+              let item = try engine.importResolvedSourceLinkInBackground(request, result: result, listenerAdded: listenerAdded) else {
             return nil
         }
         if readsLibraryOffMain {

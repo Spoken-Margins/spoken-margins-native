@@ -126,8 +126,8 @@ enum WrittenMarginReadings {
             guard model.selectedItem.id == prompt.layer.itemId, !model.recordingNavigationIsLocked else { return } // the listener left
             if wasPending, model.pendingImportedCommentary?.id != prompt.id { return } // the card was dismissed or replaced
             guard rendered else {
-                if wasPending { model.dismissPendingImportedCommentary() }
                 model.reportWarning("That Margin couldn't be read aloud, so listening continues.")
+                if wasPending { model.skipPendingImportedCommentary() } // finished with: the next Margin waiting for the end is offered (#4347)
                 return
             }
             if !wasPending, model.pendingImportedCommentary != nil || model.playingImportedCommentary != nil || model.marginMoment != nil {

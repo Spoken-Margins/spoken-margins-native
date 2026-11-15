@@ -123,4 +123,29 @@ final class FriendMarginsIntroTests: XCTestCase {
         ]))
         XCTAssertEqual(two.senderLine, "Replies from friends")
     }
+
+    // MARK: Replies whose Margin is not on this phone (#4174)
+
+    private func orphan(_ name: String = "Sam") -> ItemListeningChoices.WaitingMargin {
+        .init(senderName: name, audioDurationMs: 30_000, transcript: "", replyToYouParentId: nil, parentMissing: true)
+    }
+
+    /// The design's two sentences, one and several; nothing when every parent resolves.
+    func testRepliesToMarginsNotOnThisPhoneSayWhy() throws {
+        let one = try XCTUnwrap(FriendMarginsIntro(unheardFriendMargins: [orphan(), reply()]))
+        XCTAssertEqual(one.missingParentLine, "1 answers a Margin that isn't on this phone. Replies don't carry the Margin they answer.")
+        let two = try XCTUnwrap(FriendMarginsIntro(unheardFriendMargins: [orphan(), orphan(), reply()]))
+        XCTAssertEqual(two.missingParentLine, "2 answer Margins that aren't on this phone. Replies don't carry the Margins they answer.")
+        let none = try XCTUnwrap(FriendMarginsIntro(unheardFriendMargins: [reply(), spoken(30, from: "Sam")]))
+        XCTAssertNil(none.missingParentLine)
+    }
+
+    /// An orphan reply still counts as a new Margin here (its parent is not the listener's own), so the count and the
+    /// first-time explanation are unchanged; only the extra line is added.
+    func testAnOrphanReplyKeepsTheCountAndAddsTheLine() throws {
+        let intro = try XCTUnwrap(FriendMarginsIntro(unheardFriendMargins: [orphan()]))
+        XCTAssertEqual(intro.countLine, "1 Margin · about 1 min")
+        XCTAssertNotNil(intro.explanation)
+        XCTAssertNotNil(intro.missingParentLine)
+    }
 }

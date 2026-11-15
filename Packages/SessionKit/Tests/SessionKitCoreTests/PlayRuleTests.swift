@@ -360,6 +360,22 @@ final class PlayRuleTests: XCTestCase {
         }
     }
 
+    /// The item screen shows its two choices only for Margins the listener hasn't turned down in this run (#4125).
+    func testTheItemScreenDropsMarginsTheListenerAlreadyTurnedDown() {
+        let all = margins()
+        let sessions = [session("a", percent: 99, mediaTimeMs: end)]
+        let behind = { (declined: NewMarginsOfferMemory) in
+            PlayRule.itemScreenMarginsBehind(all, itemId: "item", sessions: sessions, addedAgainAt: nil, declined: declined).map(\.marginId)
+        }
+        XCTAssertEqual(behind(NewMarginsOfferMemory()), all.map(\.marginId), "nothing turned down: all three are behind")
+        var declined = NewMarginsOfferMemory()
+        declined.decline(itemId: "item", margins: all.map(\.marginId))
+        XCTAssertEqual(behind(declined), [], "turned down: the screen is back to Play and Skip")
+        var other = NewMarginsOfferMemory()
+        other.decline(itemId: "other", margins: all.map(\.marginId))
+        XCTAssertEqual(behind(other), all.map(\.marginId), "a decline on another item does not hide this one")
+    }
+
     /// The Library row keeps asking about every Margin it can't place, as before: the new function is for a surface
     /// that holds the sessions, and `decide` is unchanged.
     func testTheLibraryRowStillAsksAboutEveryMarginItCannotPlace() throws {

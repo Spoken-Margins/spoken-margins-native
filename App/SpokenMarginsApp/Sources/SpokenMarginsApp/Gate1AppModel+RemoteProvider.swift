@@ -94,7 +94,7 @@ extension Gate1AppModel {
             return previousStatus.isPlaybackActive &&
                 updated.status == .paused &&
                 previousTargetId == updated.targetId &&
-                updated.currentPlaybackProgressPercent >= 100
+                updated.currentPlaybackProgressPercent >= ItemFinishedRule.atEndPercent
         } catch {
             diagnostics["playbackProgressSyncError"] = SafeErrorText.describe(error)
             return false

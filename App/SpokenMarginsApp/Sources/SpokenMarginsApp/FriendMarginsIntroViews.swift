@@ -23,6 +23,13 @@ struct FriendMarginsSummary: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(AppColors.text)
                 .accessibilityIdentifier("item.friendIntro.count")
+            if let line = intro.missingParentLine {
+                Text(line)
+                    .font(.footnote)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("item.friendIntro.missingParent")
+            }
             // Replies come back to the person who made the Margins, who needs no explanation of them (#3889).
             if let explanation = intro.explanation {
                 Text(explanation)

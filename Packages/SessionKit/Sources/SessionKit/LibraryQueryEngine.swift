@@ -17,12 +17,21 @@ public protocol LibraryQueryRow {
     var lastListenedAt: Date? { get }
     var storageRecencyRank: Int { get }
     var sharedMargins: SharedMarginTally { get }
+    /// When the newest friend's Margins that count (`SharedMarginTally.total`) arrived on this item: the newest
+    /// `ImportedCommentaryLayer.importedAt`, never the sender's own clock (#4101).
+    var friendMarginsArrivedAt: Date? { get }
 }
 
 extension LibraryQueryRow {
     /// Rows that don't track shared Margins have none.
     public var sharedMargins: SharedMarginTally { .none }
     public var publishedAt: Date? { nil }
+    public var friendMarginsArrivedAt: Date? { nil }
+
+    /// Where Recently Added places the row: the later of when the listener added it (first add or latest add again) and
+    /// when a friend's Margins last arrived on it, so an old item a friend just replied on comes forward (#4101).
+    /// Nil only when neither is known; the sort then falls back to storage order.
+    var recentlyAddedDate: Date? { [addedAt, friendMarginsArrivedAt].compactMap { $0 }.max() }
 
     /// Whether the default "Unfinished" view lists the row: it isn't finished, or it is but a friend's Margins on it
     /// are still new to the listener (#4103). Without this, a friend's reply packet imported into an episode the
@@ -66,12 +75,13 @@ public enum LibraryQueryEngine {
             let ordered: ComparisonResult
             switch libraryQuery.sort {
             case .recentlyAdded:
-                if lhs.addedAt != nil, rhs.addedAt != nil {
-                    ordered = compareDates(lhs.addedAt, rhs.addedAt)
+                let (left, right) = (lhs.recentlyAddedDate, rhs.recentlyAddedDate)
+                if left != nil, right != nil {
+                    ordered = compareDates(left, right)
                 } else if lhs.storageRecencyRank != rhs.storageRecencyRank {
                     ordered = lhs.storageRecencyRank < rhs.storageRecencyRank ? .orderedAscending : .orderedDescending
                 } else {
-                    ordered = compareDates(lhs.addedAt, rhs.addedAt)
+                    ordered = compareDates(left, right)
                 }
             case .recentlyListened:
                 ordered = compareDates(lhs.lastListenedAt, rhs.lastListenedAt)

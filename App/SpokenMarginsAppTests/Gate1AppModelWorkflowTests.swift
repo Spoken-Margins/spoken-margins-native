@@ -1052,18 +1052,21 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let afterPass = layer(passDigest: String(repeating: "a", count: 64))
         let beforePass = layer(passDigest: nil)
 
+        // #3789: a podcast Margin with the sender's time plays there whatever the pass did, and says so in plain words.
         let bare = row(bareAnchor, in: afterPass)
         XCTAssertEqual(bare.placementStatus, .noPositionSent)
-        XCTAssertEqual(bare.positionDescription, "Sent without a position")
+        XCTAssertEqual(bare.positionDescription, "Placed roughly here")
         let fingerprinted = row(fingerprintedAnchor, in: afterPass)
         XCTAssertEqual(fingerprinted.placementStatus, .settled)
-        XCTAssertEqual(fingerprinted.positionDescription, SharedMarginPlacementWording.couldntPlace)
+        XCTAssertEqual(fingerprinted.positionDescription, "Placed roughly here")
+        let noTime = row(PortableAnchorEvidence(anchorType: .media), in: afterPass)
+        XCTAssertEqual(noTime.positionDescription, "Plays after the others")
 
         // The state a packet is in right after import into a podcast whose download hasn't finished.
         for anchor in [bareAnchor, fingerprintedAnchor] {
             let imported = row(anchor, in: beforePass)
             XCTAssertEqual(imported.placementStatus, .notPlacedYet)
-            XCTAssertEqual(imported.positionDescription, "Not placed yet")
+            XCTAssertEqual(imported.positionDescription, "Placed roughly here")
         }
     }
 

@@ -914,7 +914,7 @@ final class Gate1AppModel: ObservableObject {
             let completedCurrentAudio = previousStatus.isPlaybackActive &&
                 updated.status == .paused &&
                 previousTargetId == updated.targetId &&
-                updated.currentPlaybackProgressPercent >= 100
+                updated.currentPlaybackProgressPercent >= ItemFinishedRule.atEndPercent
             if updated != self.snapshot {
                 self.snapshot = updated
             }
@@ -958,7 +958,7 @@ final class Gate1AppModel: ObservableObject {
             let completedCurrentAudio = previousStatus.isPlaybackActive &&
                 updated.status == .paused &&
                 previousTargetId == updated.targetId &&
-                updated.currentPlaybackProgressPercent >= 100
+                updated.currentPlaybackProgressPercent >= ItemFinishedRule.atEndPercent
             if updated != snapshot {
                 snapshot = updated
             }
@@ -1665,7 +1665,7 @@ final class Gate1AppModel: ObservableObject {
             try prepareSourceMediaPlayback(itemId: session.itemId)
             let completion = (try? store.loadSession(id: session.id))?.completionPercent ?? session.completionPercent // the row on screen can lag a skip (#2102)
             do {
-                if completion >= 100 {
+                if completion >= ItemFinishedRule.atEndPercent {
                     let inspected = try engine.inspectSession(sessionId: session.id)
                     snapshot = try applyPreferredPlaybackRate(to: inspected, engine: engine)
                 } else {
@@ -1678,7 +1678,7 @@ final class Gate1AppModel: ObservableObject {
             selectedItem = try loadItemDetail(id: session.itemId, store: store)
             refreshLibraryRowsInBackground(mustPublish: true) // #2505
             screen = .playback
-            reportSuccess(completion >= 100
+            reportSuccess(completion >= ItemFinishedRule.atEndPercent
                 ? "Opened completed session. Use Play from Beginning to restart."
                 : "Resumed session at \(completion)% complete.")
         } catch {
@@ -1831,8 +1831,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func closeCompletedSessionIfReady() {
-        guard snapshot.sourceProgressPercent >= 100,
-              snapshot.currentPlaybackProgressPercent >= 100,
+        guard snapshot.sourceProgressPercent >= ItemFinishedRule.atEndPercent,
+              snapshot.currentPlaybackProgressPercent >= ItemFinishedRule.atEndPercent,
               pendingAutoPlayQueue.count == 0,
               !selectedItem.turns.contains(where: { $0.status == "pending" || $0.status == "streaming" }) else {
             return
@@ -1875,7 +1875,7 @@ final class Gate1AppModel: ObservableObject {
             layers: selectedItem.importedCommentaryLayers,
             recordsByLayerID: selectedItem.importedCommentaryInterjections,
             announcedIDs: includeAnnounced ? [] : sharedMarginOffers.announcedIDs, // nextOffer's autoclosure runs inside its modify of sharedMarginOffers
-            includeAnnounced: includeAnnounced
+            includeAnnounced: includeAnnounced, durationMs: selectedItem.mediaDurationMs
         )
     }
 

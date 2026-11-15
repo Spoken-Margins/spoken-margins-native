@@ -77,16 +77,12 @@ public enum FriendArrivalWords {
     /// The name of the control that picks the play mode.
     public static let playModeTitle = "When Margins play"
 
-    /// A plain sentence about where Margins were placed, only when something is not as it should be; nil when all is
-    /// well, so a passing check says nothing.
+    /// A plain sentence for the one placement problem a listener can act on: the file isn't this episode or article.
+    /// Every other state says nothing here; each Margin's own row says where it plays (#3789).
     public static func placementProblem(_ status: ImportedSourceResolutionStatus) -> String? {
         switch status {
-        case .resolved: nil
-        case .pending: "Matching positions in your episode"
-        case .contextOnly: "These Margins can't be tied to exact places in your copy."
-        case .ambiguous: "Some of these Margins could fit more than one place in your copy."
         case .wrongSource: "This may not be the same episode or article these Margins were made on."
-        case .unavailable: "These Margins can't be placed in your copy right now."
+        case .resolved, .pending, .contextOnly, .ambiguous, .unavailable: nil
         }
     }
 

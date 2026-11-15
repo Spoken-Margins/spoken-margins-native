@@ -32,6 +32,8 @@ struct ExperienceMarginsScreen: View, Equatable {
     @State private var isPreparingExportAll = false
     @State private var preparingMarkdownItemID: String?
     @State private var collections: [ItemCollection] = []
+    /// The first read of the Margin rows has finished, so an empty Shared list is empty and not still loading (#4105).
+    @State private var rowsLoaded = false
 
     init(model: Gate1AppModel) {
         self.model = model
@@ -58,7 +60,9 @@ struct ExperienceMarginsScreen: View, Equatable {
         var replyBackOffers: [String: ReplyBackOffer]
         var sharedRowCount: Int
         /// Read only while the Shared filter is on; empty otherwise.
-        fileprivate var sharedEntries: [SharedListEntry]
+        fileprivate var sharedGroups: [SharedListGroup]
+        /// Friends' unheard Margins in the current scope; search text does not change it (#4105).
+        var newFromFriends: SharedMarginGroups.NewFromFriends?
 
         @MainActor init(_ model: Gate1AppModel) {
             query = model.marginCollectionQuery
@@ -73,7 +77,12 @@ struct ExperienceMarginsScreen: View, Equatable {
             replyBackOffers = offers
             let visibleShared = model.visibleSharedMarginRows
             sharedRowCount = visibleShared.count
-            sharedEntries = query.filter == .shared ? ExperienceMarginsScreen.sharedEntries(visibleShared, model: model) : []
+            let scopeQuery = model.marginCollectionQuery
+            let scoped = model.sharedMarginRows.filter { scopeQuery.includes(itemID: $0.layer.itemId) }
+            newFromFriends = SharedMarginGroups.newFromFriends(
+                scoped.map { MarginCollection.SharedEntry(interjection: $0.interjection, layer: $0.layer, itemTitle: $0.itemTitle) },
+                libraryItemIDs: Set(scoped.compactMap(\.layer.itemId)))
+            sharedGroups = query.filter == .shared ? ExperienceMarginsScreen.sharedGroups(visibleShared, model: model) : []
         }
     }
 
@@ -90,6 +99,7 @@ struct ExperienceMarginsScreen: View, Equatable {
                     scopeRow(inputs)
                     filterBar(inputs)
                         .padding(.bottom, 8)
+                    orderCaption(inputs)
                     if inputs.query.filter == .shared { sharedCollection(inputs) } else { collection(inputs) }
                 }
                 .padding(.horizontal, horizontalSizeClass == .regular ? 28 : 16)
@@ -137,6 +147,7 @@ struct ExperienceMarginsScreen: View, Equatable {
             .task {
                 loadCollections() // first, so the menu's collections don't wait for the Margins read (#4022)
                 await model.refreshMarginRowsAsync() // off the main thread (#2505)
+                rowsLoaded = true
             }
             .refreshable { await model.refreshMarginRowsAsync() }
             .scrollDismissesKeyboard(.interactively)
@@ -206,13 +217,67 @@ struct ExperienceMarginsScreen: View, Equatable {
             HStack(spacing: 8) {
                 ForEach(MarginCollectionFilter.allCases.filter { $0 != .attention }, id: \.self) { option in
                     Button { model.marginCollectionQuery.filter = option } label: {
-                        ExperienceFilterChip(isActive: inputs.query.filter == option) { Text(option.title) }
+                        ExperienceFilterChip(isActive: inputs.query.filter == option) {
+                            Text(option.title)
+                            if option == .shared, let news = inputs.newFromFriends {
+                                // An outlined capsule with the count in words, so it shows on the active chip too (#4105).
+                                Text(news.chipText)
+                                    .font(.caption2.weight(.bold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1)
+                                    .overlay(Capsule().stroke(lineWidth: 1))
+                            }
+                        }
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(option == .shared && inputs.newFromFriends != nil ? "\(option.title), \(inputs.newFromFriends?.chipText ?? "")" : option.title)
                     .accessibilityIdentifier("margins.filter.\(option.rawValue)")
                 }
             }
         }
+    }
+
+    /// Says how the list is ordered (#4105): Mine and Starred run by the newest Margin, Shared by the newest arrival.
+    @ViewBuilder
+    private func orderCaption(_ inputs: Inputs) -> some View {
+        let isShared = inputs.query.filter == .shared
+        if (isShared ? inputs.sharedRowCount : inputs.privateRowCount) > 0 {
+            Text(isShared ? "Newest arrivals first · Margins in play order" : "Newest first · Margins in play order")
+                .font(.footnote)
+                .foregroundStyle(AppColors.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, 8)
+                .accessibilityIdentifier("margins.orderCaption")
+        }
+    }
+
+    /// The one-row shortcut to a friend's unheard Margins (#4105): to their item when they are on one, else to Shared.
+    private func newFromFriendsRow(_ news: SharedMarginGroups.NewFromFriends) -> some View {
+        Button {
+            if let itemID = news.itemID { model.openItemFromTap(id: itemID) } else { model.marginCollectionQuery.filter = .shared }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "person.2.fill").foregroundStyle(AppColors.evergreen)
+                Text("\(news.text) \(Text(Image(systemName: "chevron.right")).font(.caption.weight(.bold)).foregroundStyle(AppColors.secondaryText))")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.text)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+                NewMarginBadge()
+            }
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(news.accessibilityLabel)
+        .accessibilityHint(news.accessibilityHint)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("margins.newFromFriends")
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     /// The item heading, then Share and Export as Markdown. At accessibility sizes the buttons take their own
@@ -317,6 +382,7 @@ struct ExperienceMarginsScreen: View, Equatable {
 
     @ViewBuilder
     private func collection(_ inputs: Inputs) -> some View {
+        if inputs.query.filter == .all, let news = inputs.newFromFriends { newFromFriendsRow(news) }
         if inputs.privateRowCount == 0 {
             SMExperienceEmptyState(
                 systemImage: "quote.bubble",
@@ -421,20 +487,79 @@ struct ExperienceMarginsScreen: View, Equatable {
     @ViewBuilder
     private func sharedCollection(_ inputs: Inputs) -> some View {
         if inputs.sharedRowCount == 0 {
-            ContentUnavailableView(
-                inputs.query.text.isEmpty ? "No shared Margins" : "No matches",
-                systemImage: "person.2",
-                description: Text("Imported Margins appear here separately from your own notes.")
-            )
+            // Blank until the first read of the Margin rows finishes, so a returning listener never sees
+            // "No shared Margins" flash before their friends' Margins load (#4105).
+            if rowsLoaded {
+                ContentUnavailableView(
+                    inputs.query.text.isEmpty ? "No shared Margins" : "No matches",
+                    systemImage: "person.2",
+                    description: Text(inputs.query.text.isEmpty
+                        ? "When a friend sends you Margins, they show here under the episode or article they're on."
+                        : "Try a different search.")
+                )
+            }
         } else {
-            ForEach(inputs.sharedEntries) { entry in
-                if let row = entry.shared {
-                    sharedRowButton(row, depth: entry.depth, note: entry.note)
-                } else if let own = entry.own {
-                    ownReplyRowButton(own, depth: entry.depth, note: entry.note)
+            ForEach(inputs.sharedGroups) { group in
+                sharedGroupHeading(group)
+                ForEach(group.entries) { entry in
+                    if let row = entry.shared {
+                        sharedRowButton(row, depth: entry.depth, note: entry.note)
+                    } else if let own = entry.own {
+                        ownReplyRowButton(own, depth: entry.depth, note: entry.note)
+                    }
                 }
             }
         }
+    }
+
+    /// One item's heading on the Shared list (#4098, #4105): the item, how many Margins and how many are new. It opens
+    /// the item as Mine's heading does. No Share or export here: those act on the listener's own Margins. A group
+    /// whose item is not in the Library has nothing to open, so it is plain words.
+    @ViewBuilder
+    private func sharedGroupHeading(_ group: SharedListGroup) -> some View {
+        let title = group.title ?? "From a friend"
+        let line = group.inLibrary ? group.line : "Not in your Library"
+        if let itemID = group.itemID {
+            Button { model.openItemFromTap(id: itemID) } label: {
+                sharedGroupHeadingLabel(title: title, line: line, opens: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(group.isNewest ? "Newest. " : "")\(title), \(group.countAndNew)")
+            .accessibilityHint("Opens it.")
+            .accessibilityAddTraits([.isButton, .isHeader])
+            .accessibilityIdentifier("margins.shared.openItem.\(itemID)")
+        } else {
+            sharedGroupHeadingLabel(title: title, line: line, opens: false)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(title), not in your Library")
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("margins.shared.missingItem")
+        }
+    }
+
+    private func sharedGroupHeadingLabel(title: String, line: String, opens: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if opens {
+                Text("\(title) \(Text(Image(systemName: "chevron.right")).font(.caption.weight(.bold)).foregroundStyle(AppColors.secondaryText))")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.text)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.text)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(line)
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
+        .contentShape(Rectangle())
+        .padding(.top, 12)
     }
 
     /// One row of the Shared list: a friend's Margin, or the listener's own Margin in a conversation with it.
@@ -448,74 +573,139 @@ struct ExperienceMarginsScreen: View, Equatable {
 
     /// The shared Margins the filters keep, in conversations: replies indented under the Margin they answer, the
     /// listener's own replies among them, and every conversation kept whole when one of its Margins matches (#473).
-    fileprivate static func sharedEntries(_ visible: [SharedMarginRow], model: Gate1AppModel) -> [SharedListEntry] {
+    fileprivate static func sharedGroups(_ visible: [SharedMarginRow], model: Gate1AppModel) -> [SharedListGroup] {
         let visibleIDs = Set(visible.map(\.interjection.id))
+        let visibleByID = Dictionary(visible.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let sharedByID = Dictionary(model.sharedMarginRows.map { ($0.interjection.id, $0) }, uniquingKeysWith: { first, _ in first })
         let ownByID = Dictionary(model.marginRows.map { ($0.interjection.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var itemIDs: [String] = []
-        for itemID in visible.compactMap(\.layer.itemId) where !itemIDs.contains(itemID) { itemIDs.append(itemID) }
-        var entries: [SharedListEntry] = []
-        var placed = Set<String>()
-        for itemID in itemIDs {
-            let rows = model.marginThreadRows(itemId: itemID)
-            let kept = MarginThreadPresentation.threads(in: rows) {
-                if case .imported(let id) = $0.reference { return visibleIDs.contains(id) }
-                return false
-            }
-            for threadRow in kept {
-                switch threadRow.reference {
-                case .imported(let id):
-                    guard let row = sharedByID[id] else { continue }
-                    placed.insert(id)
-                    entries.append(SharedListEntry(id: threadRow.id, depth: threadRow.depth, note: threadRow.note, shared: row))
-                case .local(let id):
-                    guard let row = ownByID[id] else { continue }
-                    entries.append(SharedListEntry(id: threadRow.id, depth: threadRow.depth, note: threadRow.note, own: row))
+        // A layer with an item id has its item: `MarginCollection.build` drops the layers of deleted items.
+        let libraryIDs = Set(visible.compactMap(\.layer.itemId))
+        let groups = SharedMarginGroups.groups(
+            from: visible.map { MarginCollection.SharedEntry(interjection: $0.interjection, layer: $0.layer, itemTitle: $0.itemTitle) },
+            libraryItemIDs: libraryIDs)
+        return groups.map { group in
+            var entries: [SharedListEntry] = []
+            var placed = Set<String>()
+            if let itemID = group.itemID {
+                let kept = MarginThreadPresentation.threads(in: model.marginThreadRows(itemId: itemID)) {
+                    if case .imported(let id) = $0.reference { return visibleIDs.contains(id) }
+                    return false
+                }
+                for threadRow in kept {
+                    switch threadRow.reference {
+                    case .imported(let id):
+                        guard let row = sharedByID[id] else { continue }
+                        placed.insert(id)
+                        entries.append(SharedListEntry(id: threadRow.id, depth: threadRow.depth, note: threadRow.note, shared: row))
+                    case .local(let id):
+                        guard let row = ownByID[id] else { continue }
+                        entries.append(SharedListEntry(id: threadRow.id, depth: threadRow.depth, note: threadRow.note, own: row))
+                    }
                 }
             }
+            // A Margin the conversation view didn't list, or one whose source isn't in the Library, keeps its play order.
+            for entry in group.entries where !placed.contains(entry.interjection.id) {
+                guard let row = visibleByID[entry.id] else { continue }
+                entries.append(SharedListEntry(id: "unplaced-\(row.id)", depth: 0, note: nil, shared: row))
+            }
+            let count = MarginCountText.count(group.count)
+            return SharedListGroup(
+                itemID: group.itemID, title: group.title, line: group.line,
+                countAndNew: group.newCount > 0 ? "\(count), \(group.newCount) new" : count,
+                isNewest: group.isNewest, inLibrary: group.inLibrary, entries: entries)
         }
-        // A shared Margin whose source isn't in the Library has no conversation to sit in.
-        for row in visible where !placed.contains(row.interjection.id) {
-            entries.append(SharedListEntry(id: "unplaced-\(row.id)", depth: 0, note: nil, shared: row))
-        }
-        return entries
+    }
+
+    /// One item's heading and rows on the Shared list.
+    fileprivate struct SharedListGroup: Identifiable, Equatable {
+        let itemID: String?
+        let title: String?
+        let line: String
+        let countAndNew: String
+        let isNewest: Bool
+        let inLibrary: Bool
+        let entries: [SharedListEntry]
+
+        var id: String { itemID ?? "not-in-library" }
     }
 
     private func threadIndent(_ depth: Int) -> CGFloat { CGFloat(min(depth, 3)) * 20 }
 
     private func sharedRowButton(_ row: SharedMarginRow, depth: Int, note: String?) -> some View {
         VStack(spacing: 0) {
-            Button { selectedSharedMargin = row } label: {
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack(spacing: 8) {
-                        Label(depth > 0 ? "Reply · \(row.collectionLabel)" : "Shared · \(row.collectionLabel)", systemImage: depth > 0 ? "arrowshape.turn.up.left" : "person.2")
+            HStack(spacing: 0) {
+                Button { tapSharedRow(row) } label: {
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack(spacing: 8) {
+                            Label(sharedRowTopLine(row, isReply: depth > 0), systemImage: depth > 0 ? "arrowshape.turn.up.left" : "person.2")
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                            if row.isNew { NewMarginBadge() }
+                        }
+                        if let note {
+                            Text(note)
+                                .font(.caption.italic())
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                        Text(row.interjection.approvedTranscript)
+                            .font(.system(.body, design: .serif))
+                            .foregroundStyle(AppColors.text)
+                            .lineLimit(3)
+                        // The item is the group's heading, so the row says only where in it the Margin is.
+                        Text(row.positionDescription)
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
-                        if row.isNew { NewMarginBadge() }
                     }
-                    if let note {
-                        Text(note)
-                            .font(.caption.italic())
-                            .foregroundStyle(AppColors.secondaryText)
-                    }
-                    Text(row.interjection.approvedTranscript)
-                        .font(.system(.body, design: .serif))
-                        .foregroundStyle(AppColors.text)
-                        .lineLimit(3)
-                    Text("\(row.itemTitle) · \(row.positionDescription)")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
+                    .multilineTextAlignment(.leading)
+                    .padding(.vertical, 14)
+                    .padding(.leading, threadIndent(depth))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .multilineTextAlignment(.leading)
-                .padding(.vertical, 14)
-                .padding(.leading, threadIndent(depth))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("margins.shared.row.\(row.id)")
+                .accessibilityActions {
+                    if sharedRowPlays(row) { Button("Play this moment") { model.playSharedMarginMoment(row) } }
+                    Button("Details") { selectedSharedMargin = row }
+                }
+                .contextMenu {
+                    if sharedRowPlays(row) {
+                        Button("Play this moment", systemImage: "play.fill") { model.playSharedMarginMoment(row) }
+                    }
+                    Button("Details", systemImage: "info.circle") { selectedSharedMargin = row }
+                }
+                Button { selectedSharedMargin = row } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(AppColors.secondaryText)
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Details")
+                .accessibilityIdentifier("margins.shared.rowDetails.\(row.id)")
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("margins.shared.row.\(row.id)")
             Divider()
         }
+    }
+
+    /// "Sam · 12:40": the friend, then where the Margin plays in the listener's copy when it is placed (#4105).
+    private func sharedRowTopLine(_ row: SharedMarginRow, isReply: Bool) -> String {
+        let name = FriendName.usable(row.layer.displayLabel) ?? "A friend"
+        let who = isReply ? "Reply · \(name)" : name
+        guard row.layer.itemId != nil, let position = SharedMarginPlaybackPosition(row.interjection) else { return who }
+        return "\(who) · \(MarginReplyWords.clock(milliseconds: position.mediaTimeMs))"
+    }
+
+    /// The Timeline's rule (#158): a Margin with a place in the item plays its moment; one with no place, no item in the
+    /// Library, or words the phone can't read aloud opens its details, where its words and Reply are.
+    private func tapSharedRow(_ row: SharedMarginRow) {
+        if sharedRowPlays(row) { model.playSharedMarginMoment(row) } else { selectedSharedMargin = row }
+    }
+
+    private func sharedRowPlays(_ row: SharedMarginRow) -> Bool {
+        row.layer.itemId != nil
+            && SharedMarginPlaybackPosition(row.interjection) != nil
+            && !(row.interjection.isWritten && !SharedMarginAudio.canOffer(row.interjection))
     }
 
     /// The listener's own reply, shown in the conversation it belongs to.

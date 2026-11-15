@@ -20,6 +20,7 @@ final class LibraryQueryEngineTests: XCTestCase {
         var lastListenedAt: Date?
         var storageRecencyRank = Int.max
         var sharedMargins = SharedMarginTally.none
+        var friendMarginsArrivedAt: Date?
     }
 
     private let listeningRows = [
@@ -141,6 +142,69 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(ids(rows, .init(sort: .published)), ["new", "old", "undated-a", "undated-b"])
         XCTAssertEqual(ids(rows, .init(sort: .recentlyAdded)), ["old", "new", "undated-a", "undated-b"],
                        "the Added sort is untouched by publication dates")
+    }
+
+    // MARK: Recently Added counts a friend's Margins arriving (#4101)
+
+    private func t(_ seconds: Double) -> Date { Date(timeIntervalSince1970: seconds) }
+
+    func testFriendMarginsArrivingBringAnOldItemForwardUnderRecentlyAdded() {
+        let rows = [Row(id: "fresh", addedAt: t(50)),
+                    Row(id: "october", addedAt: t(10), friendMarginsArrivedAt: t(90)),
+                    Row(id: "middle", addedAt: t(30))]
+        XCTAssertEqual(ids(rows, .init(sort: .recentlyAdded)), ["october", "fresh", "middle"])
+    }
+
+    func testAnArrivalOlderThanTheAddDoesNotMoveTheItem() {
+        let rows = [Row(id: "added-later", addedAt: t(80), friendMarginsArrivedAt: t(20)), Row(id: "other", addedAt: t(50))]
+        XCTAssertEqual(ids(rows, .init(sort: .recentlyAdded)), ["added-later", "other"])
+    }
+
+    func testAddingAgainAfterAnArrivalStillCountsAsTheLaterOfTheTwo() {
+        let rows = [Row(id: "re-added", addedAt: t(100), friendMarginsArrivedAt: t(60)),
+                    Row(id: "arrived", addedAt: t(10), friendMarginsArrivedAt: t(80))]
+        XCTAssertEqual(ids(rows, .init(sort: .recentlyAdded)), ["re-added", "arrived"])
+    }
+
+    func testTwoFriendsOnTwoItemsOrderByTheNewestArrival() {
+        let rows = [Row(id: "a", addedAt: t(1), friendMarginsArrivedAt: t(70)),
+                    Row(id: "b", addedAt: t(2), friendMarginsArrivedAt: t(90))]
+        XCTAssertEqual(ids(rows, .init(sort: .recentlyAdded)), ["b", "a"])
+    }
+
+    func testAnArrivalAndAnAddAtTheSameTimeTieByID() {
+        let rows = [Row(id: "b", addedAt: t(40), friendMarginsArrivedAt: t(40)), Row(id: "a", addedAt: t(40))]
+        XCTAssertEqual(ids(rows, .init(sort: .recentlyAdded)), ["a", "b"])
+    }
+
+    func testAnItemWithNoAddDateAndAnArrivalSortsByTheArrival() {
+        let rows = [Row(id: "dated", addedAt: t(50), storageRecencyRank: 5),
+                    Row(id: "arrival-only", storageRecencyRank: 9, friendMarginsArrivedAt: t(70)),
+                    Row(id: "older-arrival-only", storageRecencyRank: 9, friendMarginsArrivedAt: t(20))]
+        XCTAssertEqual(ids(rows, .init(sort: .recentlyAdded)), ["arrival-only", "dated", "older-arrival-only"],
+                       "an arrival stands in for the missing add date, not the storage rank")
+    }
+
+    func testNoArrivalsLeavesTheOrderAsItWas() {
+        XCTAssertEqual(ids([Row(id: "old", addedAt: t(10)), Row(id: "new", addedAt: t(20))],
+                           .init(sort: .recentlyAdded)), ["new", "old"])
+        XCTAssertEqual(ids([Row(id: "b", storageRecencyRank: 3), Row(id: "a", storageRecencyRank: 1)],
+                           .init(sort: .recentlyAdded)), ["a", "b"], "with no dates at all, storage order decides as before")
+        XCTAssertEqual(ids([], .init(sort: .recentlyAdded)), [])
+    }
+
+    func testOtherSortsIgnoreArrivals() {
+        let rows = [Row(id: "b", title: "Beta", lastListenedAt: t(5), friendMarginsArrivedAt: t(99)),
+                    Row(id: "a", title: "Alpha", lastListenedAt: t(9))]
+        XCTAssertEqual(ids(rows, .init(sort: .title)), ["a", "b"])
+        XCTAssertEqual(ids(rows, .init(sort: .recentlyListened)), ["a", "b"])
+    }
+
+    func testAFinishedItemWithNewFriendMarginsIsListedFirstInTheDefaultView() {
+        let rows = [Row(id: "fresh", addedAt: t(50)),
+                    Row(id: "finished-october", isCompleted: true, addedAt: t(10),
+                        sharedMargins: SharedMarginTally(total: 2, new: 2), friendMarginsArrivedAt: t(90))]
+        XCTAssertEqual(ids(rows, .init(listeningState: .unfinished, sort: .recentlyAdded)), ["finished-october", "fresh"])
     }
 
     func testEverySortBreaksTiesByID() {
