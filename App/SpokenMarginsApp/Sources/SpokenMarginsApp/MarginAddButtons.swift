@@ -30,7 +30,6 @@ struct MarginAddButtons: View {
             }
             .buttonStyle(InterjectButtonStyle())
             .accessibilityLabel(MarginRecordNames.spoken)
-            .accessibilityInputLabels(MarginRecordNames.inputLabels)
             .accessibilityIdentifier(recordIdentifier)
             Button(action: write) {
                 Image(systemName: "square.and.pencil")

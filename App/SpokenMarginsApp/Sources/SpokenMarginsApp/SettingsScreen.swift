@@ -31,6 +31,7 @@ struct SettingsScreen: View, Equatable {
     @State private var showsAllRecentlyDeleted = false
     @State private var isResetConfirmationPresented = false
     @State private var isPreparingDiagnostics = false
+    @State private var mutationShareURL: URL? // MUTATION #4312
     @State private var isExportingListeningSignals = false
     @State private var hasNoListeningSignals = false
     @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
@@ -477,7 +478,7 @@ struct SettingsScreen: View, Equatable {
                         Task {
                             defer { isPreparingDiagnostics = false }
                             if let url = await model.prepareDiagnosticsExportFileURL() {
-                                ShareFilePresenter.present(fileURL: url)
+                                mutationShareURL = url
                             }
                         }
                     } label: {
@@ -496,6 +497,9 @@ struct SettingsScreen: View, Equatable {
                     .buttonStyle(.borderless)
                     .disabled(isPreparingDiagnostics)
                     .accessibilityIdentifier("settings.shareDiagnostics.button")
+                    .sheet(isPresented: Binding(get: { mutationShareURL != nil }, set: { if !$0 { mutationShareURL = nil } })) {
+                        MutationActivityView(url: mutationShareURL)
+                    }
                     Text("App state and recent playback events, as a file for a bug report. It includes the titles and links of what is in your Library. It stays on this device unless you share it.")
                         .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
@@ -694,3 +698,14 @@ private extension View {
             .contentShape(Rectangle())
     }
 }
+
+#if canImport(UIKit)
+/// MUTATION #4312: the arrangement #4026 replaced, a share view hosted in a SwiftUI sheet.
+private struct MutationActivityView: UIViewControllerRepresentable {
+    let url: URL?
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: url.map { [$0] } ?? [], applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+#endif

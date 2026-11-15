@@ -96,6 +96,7 @@ enum AddMarginShortcutAction {
                 return try await fileAsQuick()
             }
         case let .liveSession(name):
+            if model.writtenMarginDraft != nil { return name } // MUTATION #4312
             guard await files.addWrittenMargin(text: words, markedAt: now) != nil else {
                 throw AddMarginShortcutError.notSaved(nil)
             }
