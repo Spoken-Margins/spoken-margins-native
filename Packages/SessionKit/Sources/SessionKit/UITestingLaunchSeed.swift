@@ -203,7 +203,32 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         )
     }
 
+    /// Plain articles that make a fixture Library longer than the screen, so a script can scroll to its last row (#4314).
+    /// Each is added an hour before the one above it, all before `fixtureAddedAt`, so Recently Added keeps the fixture
+    /// article first and puts these below it.
+    public static func libraryFillerItems(count: Int, fixtureAddedAt: Date) -> [Item] {
+        (0..<max(count, 0)).map { index in
+            Item(
+                id: "item-ui-filler-\(index + 1)",
+                title: "Filler article \(index + 1)",
+                mediaType: "text",
+                text: "A short article that only makes the Library long enough to scroll.",
+                externalReference: "ui-test-filler-\(index + 1)",
+                status: "ready",
+                createdAt: fixtureAddedAt.addingTimeInterval(-3_600 * Double(index + 1))
+            )
+        }
+    }
+
     #if DEBUG
+    /// How many filler articles a fixture launch adds below the fixture article: `SPOKEN_MARGINS_UI_TEST_LIBRARY_FILLER`
+    /// (#4314), at most 40. Zero for any other seed, and for anything but a whole number above 0.
+    public static func libraryFillerCount(arguments: [String], environment: [String: String]) -> Int {
+        guard UITestingLaunchSeed(arguments: arguments, environment: environment) == .fixture,
+              let count = environment["SPOKEN_MARGINS_UI_TEST_LIBRARY_FILLER"].flatMap(Int.init), count > 0 else { return 0 }
+        return min(count, 40)
+    }
+
     /// Where a fresh podcast launch starts the listener, in seconds: `SPOKEN_MARGINS_UI_TEST_PODCAST_PLACE` (J14, #4100).
     /// Only the launch that seeds the podcast sets it, so a kept-Library relaunch never moves a place the script reached.
     /// Nil for anything but a whole number of seconds above 0, which is "not started".

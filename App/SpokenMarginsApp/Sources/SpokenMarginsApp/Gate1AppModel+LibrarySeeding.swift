@@ -182,6 +182,10 @@ extension Gate1AppModel {
             let map = try loadFixtureMap(name: "valid-listening-map")
             try store.seed(item: item)
             try store.seed(map: map)
+            let fillers = UITestingLaunchSeed.libraryFillerItems(
+                count: UITestingHooks.libraryFillerCount, fixtureAddedAt: item.createdAt ?? Date()
+            )
+            for filler in fillers { try store.seed(item: filler) }
             self.store = store
             try configurePodcastDownloads(store: store)
             installEngine(try makeEngine(store: store))
@@ -193,7 +197,7 @@ extension Gate1AppModel {
             selectedItem = try loadItemDetail(id: item.id, store: store)
             diagnostics = [
                 "runtimeProfile": selectedProfileId,
-                "seededItems": "1",
+                "seededItems": String(1 + fillers.count),
                 "database": databaseURL.lastPathComponent
             ]
             exportPreview = ""
