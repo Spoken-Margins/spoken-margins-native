@@ -43,7 +43,7 @@ public struct PresentationLedger: Equatable, Sendable {
             case .whileShowing: what = "built a second time while the first was still showing"
             case .afterDismissal: what = "built again within \(Int(PresentationLedger.rebuildWindow)) s of the first going"
             }
-            return "\(place)\(item.map { " (item \($0))" } ?? ""): \(what)"
+            return "\(place)\(item.map { " for \($0)" } ?? ""): \(what)"
         }
     }
 

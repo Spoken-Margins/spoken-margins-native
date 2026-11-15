@@ -148,7 +148,7 @@ final class PresentationLedgerTests: XCTestCase {
         ledger.appeared(place: place, item: "margin-a", instance: UUID(), at: 0)
         let rebuild = try XCTUnwrap(ledger.appeared(place: place, item: "margin-a", instance: UUID(), at: 0))
 
-        XCTAssertEqual(rebuild.description, "PlaybackScreen:229 (item margin-a): built a second time while the first was still showing")
+        XCTAssertEqual(rebuild.description, "PlaybackScreen:229 for margin-a: built a second time while the first was still showing")
     }
 
     func testBuildsThatWentLongAgoAreForgotten() {
