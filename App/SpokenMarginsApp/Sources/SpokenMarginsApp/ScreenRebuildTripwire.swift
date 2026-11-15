@@ -8,7 +8,7 @@ import SwiftUI
 /// open on it. The rules live in `PresentationRebuildLedger`; this feeds it from every presented screen.
 ///
 /// Every `.sheet` and `.fullScreenCover` in the app goes through `trackedSheet` / `trackedFullScreenCover` below
-/// (`scripts/check_tracked_presentations.py` refuses the raw ones). A rebuild is logged and counted on the Diagnostics
+/// (`scripts/tests/test_tracked_presentations.py` refuses the raw ones). A rebuild is logged and counted on the Diagnostics
 /// line `screenRebuilds` in every build. In a Debug build under UI tests (the scripted journeys) it stops the app with
 /// the presentation named, and the app-hosted test bundle fails the running test on one.
 @MainActor

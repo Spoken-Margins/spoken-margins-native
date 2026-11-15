@@ -6,12 +6,13 @@ import XCTest
 @testable import SpokenMarginsApp
 
 /// #4337: the tripwire sees a real rebuild. A tracked cover on a list row, the shape the Live row had in #4091, is
-/// presented and the list is churned underneath it (rows come and go above it, the model publishes). The cover is
-/// built again each time the list re-hosts the row, and the tripwire must count it. The same churn against the same
-/// cover presented from outside the list must count nothing, so the tripwire does not cry wolf on an ordinary redraw.
+/// presented and the row is given a new identity again and again, which always tears it down and builds it again (list
+/// churn alone does not re-host a row in a test harness; see `LiveSessionCoverRehostTests`). The cover goes and comes
+/// back as a new screen each time, and the tripwire must count it. The same rebuilds with the cover presented from
+/// outside the list must count nothing, so the tripwire does not cry wolf on an ordinary redraw.
 @MainActor
 final class ScreenRebuildTripwireAppTests: XCTestCase {
-    private static let churnSteps = 40
+    private static let rowRebuilds = 8
     private var caught: [PresentationRebuildLedger.Rebuild] = []
 
     override func setUp() async throws {
@@ -27,7 +28,7 @@ final class ScreenRebuildTripwireAppTests: XCTestCase {
         defer { mounted.close() }
         try await waitForTheCover()
         try await churnTheList(churn)
-        XCTAssertFalse(caught.isEmpty, "A cover on a list row went through \(Self.churnSteps) list changes and the tripwire "
+        XCTAssertFalse(caught.isEmpty, "A cover on a list row was rebuilt with its row \(Self.rowRebuilds) times and the tripwire "
                            + "counted no rebuild; ledger summary: \(ScreenRebuildTripwire.shared.ledger.summary)")
         XCTAssertTrue(caught.allSatisfy { $0.presentation.hasPrefix("ScreenRebuildTripwireAppTests.swift:") },
                       "Rebuilds named another presentation: \(caught.map(\.presentation))")
@@ -46,8 +47,7 @@ final class ScreenRebuildTripwireAppTests: XCTestCase {
 
     @MainActor
     private final class Churn: ObservableObject {
-        @Published var showsRowAbove = false
-        @Published var items = (0..<12).map { "Item \($0)" }
+        @Published var rowGeneration = 0
     }
 
     private struct ChurnedList: View {
@@ -65,9 +65,8 @@ final class ScreenRebuildTripwireAppTests: XCTestCase {
 
         private func list(row: some View) -> some View {
             List {
-                if churn.showsRowAbove { Text("A copied link") }
-                row
-                ForEach(churn.items, id: \.self) { Text($0) }
+                row.id(churn.rowGeneration)
+                ForEach(0..<12, id: \.self) { Text("Item \($0)") }
             }
         }
     }
@@ -77,13 +76,9 @@ final class ScreenRebuildTripwireAppTests: XCTestCase {
     }
 
     private func churnTheList(_ churn: Churn) async throws {
-        for step in 0..<Self.churnSteps {
-            switch step % 3 {
-            case 0: churn.showsRowAbove.toggle()
-            case 1: churn.items.insert("Item \(1_000 + step)", at: 0)
-            default: churn.items.removeLast()
-            }
-            try await Task.sleep(for: .milliseconds(100))
+        for _ in 0..<Self.rowRebuilds {
+            churn.rowGeneration += 1
+            try await Task.sleep(for: .milliseconds(700))
         }
         try await Task.sleep(for: .milliseconds(500))
     }
