@@ -185,6 +185,13 @@ struct ExperienceItemDetailScreen: View {
                 .screenTitle()
                 .foregroundStyle(AppColors.text)
                 .fixedSize(horizontal: false, vertical: true)
+            // A meeting transcript's start, length and speakers (#2997). Read in `ItemDetailLoader`, off the main actor.
+            if let meetingLine = model.selectedItem.meetingLine {
+                Text(meetingLine)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityIdentifier("item.meetingLine")
+            }
             if let published = model.selectedItem.publishedDateText {
                 Text("Published \(published)")
                     .font(.subheadline)

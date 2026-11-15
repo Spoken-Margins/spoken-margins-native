@@ -129,7 +129,7 @@ enum AddSourceRoute: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .linkOrPodcast: "Podcast episode, RSS feed, public audio, or readable web link"
         case .pastedText: "Make something to listen to from text already on your clipboard"
-        case .importFromFiles: "A document, book, audiobook, or Margins packet from Files"
+        case .importFromFiles: "A document, book, transcript, audiobook or Margins packet from Files"
         case .quickFolder: "Choose a folder whose eligible files appear in Following"
         }
     }
@@ -181,7 +181,7 @@ enum AddSourceTile: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .linkOrPodcast: "A web article, podcast episode, feed, or public audio link"
         case .findPodcast: "Search podcasts by name"
         case .pastedText: "Words already copied to your clipboard"
-        case .importFromFiles: "A document, book, audiobook, or Margins packet"
+        case .importFromFiles: "A document, book, transcript, audiobook or Margins packet"
         case .quickFolder: "A folder of eligible local files"
         case .liveSession: "Margins on a meeting or book"
         case .spokenNote: "Dictate an idea, then read it back"
@@ -390,6 +390,7 @@ struct MarginRow: Identifiable, Equatable, Sendable {
         guard interjection.targetType == .item else { return "\(targetDescription) · \(interjection.roughPercent)%" }
         return MarginRowWording.placeLine(
             placeName: place?.chapterName, mediaTimeMs: interjection.anchor.mediaTimeMs,
+            meetingClockMs: place?.meetingClockMs,
             paragraph: place?.paragraph, roughPercent: interjection.roughPercent,
             createdAt: interjection.createdAt, now: now)
     }

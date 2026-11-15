@@ -479,6 +479,11 @@ struct ExperienceAddSourceFlow: View {
     private static let filesContentTypes: [UTType] = [
         // Documents and books, and Listening Edition collections (`.json`) and folders of them.
         UTType(filenameExtension: "md") ?? .plainText, .plainText, .pdf, UTType(filenameExtension: "epub") ?? .data, .json, .folder,
+        // Meeting transcripts (#2997): WebVTT, SubRip (declared in Info.plist; the system has no type for it) and Word.
+        // `.txt` is plain text above. The fallbacks keep each pickable if a type ever failed to register.
+        UTType("org.w3.webvtt") ?? UTType(filenameExtension: "vtt") ?? .plainText,
+        UTType("com.spokenmargins.subrip") ?? UTType(filenameExtension: "srt") ?? .plainText,
+        UTType("org.openxmlformats.wordprocessingml.document") ?? UTType(filenameExtension: "docx") ?? .data,
         // Audiobooks.
         .mp3, .mpeg4Audio, .mpeg4Movie, UTType(filenameExtension: "m4b") ?? .audio,
         // A Margins packet. The app exports this type; the fallback keeps the picker usable if it ever failed to register.
@@ -551,7 +556,8 @@ struct ExperienceAddSourceFlow: View {
         var closes = closes
         let epubURLs = urls.filter { $0.pathExtension.lowercased() == "epub" }
         if epubURLs.isEmpty, !urls.isEmpty {
-            model.importObsidianMarkdownFiles(urls: urls)
+            // A transcript file is read by its own rule first; the rest of the pick is imported as before (#2997).
+            model.importFilesWithTranscriptRule(urls: urls, route: .init(securityScopedURLs: urls))
         } else if urls.count == 1, let epubURL = epubURLs.first {
             model.importEPUBFile(url: epubURL, openWhenFinished: false)
         } else if !urls.isEmpty {

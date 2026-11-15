@@ -194,6 +194,18 @@ targets:
                 - spokenmargins
               public.mime-type:
                 - application/vnd.spokenmargins.package+zip
+        # SubRip (.srt): the system declares WebVTT but not this one, so the Files picker can't allow it without a
+        # declaration of ours (#2997). It conforms to plain text, so the share extension's `public.text` rule takes it.
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: com.spokenmargins.subrip
+            UTTypeDescription: SubRip subtitles
+            UTTypeConformsTo:
+              - public.text
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - srt
+              public.mime-type:
+                - application/x-subrip
         LSRequiresIPhoneOS: true
         LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false
