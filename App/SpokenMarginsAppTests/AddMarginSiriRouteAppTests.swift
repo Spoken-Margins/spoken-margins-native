@@ -62,6 +62,7 @@ final class AddMarginSiriRouteAppTests: XCTestCase {
         let model = makeModel()
         model.startItem(id: "item-pill")
         model.beginWrittenMargin()
+        defer { model.cancelWrittenMargin() }  // the draft is journaled; a throw must not leave it for the next test
         model.updateWrittenMarginText("half written")
         model.refreshMarginRows()
         let before = model.marginRows.count
@@ -73,7 +74,6 @@ final class AddMarginSiriRouteAppTests: XCTestCase {
         XCTAssertEqual(model.writtenMarginDraft?.text, "half written")
         model.refreshMarginRows()
         XCTAssertEqual(model.marginRows.count, before, "Siri's Margin also landed on the item in the player")
-        model.cancelWrittenMargin()
     }
 
     func testWithNoLiveSessionThePlayerStillTakesIt() async throws {

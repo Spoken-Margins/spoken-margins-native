@@ -72,7 +72,9 @@ final class ShareFilePresenterTests: XCTestCase {
     ///
     /// The sheet comes from activating the Share Diagnostics button itself, as VoiceOver does (#4312). An earlier version
     /// called `ShareFilePresenter.present` directly, so it still passed with Settings hosting the sheet in a `.sheet`; that
-    /// sheet is not a `UIActivityViewController` presented over the window, so this finds none and fails.
+    /// sheet is not a `UIActivityViewController` presented over the window, so this finds none and fails. Export Listening
+    /// Signals is not driven (it shares only once signals exist); it calls `ShareFilePresenter.present` too, and a
+    /// reviewer must keep it so.
     func testTheSheetOverSettingsIsNotReloadedByModelPublishes() async throws {
         let automationWasEnabled = AccessibilityAutomation.enable()
         defer { if let automationWasEnabled { AccessibilityAutomation.set(automationWasEnabled) } }
@@ -80,10 +82,11 @@ final class ShareFilePresenterTests: XCTestCase {
         let mounted = try mount(settingsInTheTabBar(model: model))
         defer { mounted.close() }
         try await waitUntilQuiet { ScreenRedrawProbe.count("settings") }
-        let shareDiagnostics = try await scrollToNode("the Share Diagnostics button", in: mounted.window) {
-            $0.identifier == "settings.shareDiagnostics.button"
-        }
+        let isShareDiagnostics = { (node: AccessibilityNode) in node.identifier == "settings.shareDiagnostics.button" }
+        _ = try await scrollToNode("the Share Diagnostics button", in: mounted.window, isShareDiagnostics)
         try await waitUntilQuiet { ScreenRedrawProbe.count("settings") }
+        // Found again after the screen settles: a list cell rebuilt meanwhile would leave the first element dead.
+        let shareDiagnostics = try await scrollToNode("the Share Diagnostics button", in: mounted.window, isShareDiagnostics)
         var modelPublishes = 0
         let watch = model.objectWillChange.sink { modelPublishes += 1 }
         defer { watch.cancel() }
