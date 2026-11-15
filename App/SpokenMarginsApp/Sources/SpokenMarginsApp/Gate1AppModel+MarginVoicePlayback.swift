@@ -158,8 +158,8 @@ extension Gate1AppModel {
         case .voiceFile(let url), .readingReady(_, let url): audioURL = url
         case .readingRendering: return WrittenMarginReadings.waitThenListen(prompt, model: self) // not rendered yet
         case .cannotBeRead:
-            dismissPendingImportedCommentary()
             reportFailure(SharedMarginAudio.unavailableWords(for: prompt.interjection))
+            skipPendingImportedCommentary() // finished with, and the listener stays: the next waiting Margin is offered (#4347)
             return
         }
         importedCommentaryAutoPlayTask?.cancel()
@@ -192,6 +192,7 @@ extension Gate1AppModel {
         } catch {
             stopImportedCommentaryPlayback(resumeSource: false)
             reportFailure(error, context: "Shared Margin playback failed")
+            offerNextMarginWaitingForTheEnd() // as above: a Margin that can't play is finished with (#4347)
         }
         #else
         reportFailure("Shared Margin playback is unavailable on this device.")
