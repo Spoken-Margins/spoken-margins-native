@@ -90,8 +90,7 @@ struct ShowUpNextCard: View {
             Button { model.importFollowedSourceEntry(entry) } label: {
                 Text(isImporting ? "Adding…" : "Add to Library").frame(minHeight: 44)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(AppColors.evergreen)
+            .filledActionButton()
             .disabled(isImporting)
             .accessibilityIdentifier("show.upNext.add")
         }
