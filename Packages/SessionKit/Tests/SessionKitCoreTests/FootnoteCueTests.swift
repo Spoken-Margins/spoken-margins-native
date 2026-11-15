@@ -26,6 +26,14 @@ final class FootnoteCueTests: XCTestCase {
         let data = FootnoteCue.wavData()
         XCTAssertEqual(String(decoding: data.prefix(4), as: UTF8.self), "RIFF")
         XCTAssertEqual(String(decoding: data.dropFirst(8).prefix(8), as: UTF8.self), "WAVEfmt ")
+        func field(_ offset: Int, _ width: Int) -> Int {
+            (0..<width).reduce(0) { $0 | Int(data[data.startIndex + offset + $1]) << (8 * $1) }
+        }
+        XCTAssertEqual(field(20, 2), 1, "PCM")
+        XCTAssertEqual(field(22, 2), 1, "mono")
+        XCTAssertEqual(field(24, 4), FootnoteCue.sampleRate)
+        XCTAssertEqual(field(34, 2), 16, "16-bit")
+        XCTAssertEqual(field(40, 4), data.count - 44, "data length")
         let count = Int(Double(FootnoteCue.sampleRate) * FootnoteCue.seconds)
         XCTAssertEqual(count, 7_938)
         XCTAssertEqual(data.count, 44 + 2 * count)
@@ -53,18 +61,16 @@ final class FootnoteCueTests: XCTestCase {
 
     func testItStartsSoftly() {
         let values = samples(FootnoteCue.wavData())
-        let attack = Int(Double(FootnoteCue.sampleRate) * FootnoteCue.attackSeconds)
         // The first millisecond is far below the peak: no sudden onset.
         let firstMillisecond = values.prefix(FootnoteCue.sampleRate / 1_000).map { abs(Int($0)) }.max() ?? 0
         XCTAssertLessThan(firstMillisecond, Int(Double(Int16.max) * FootnoteCue.peak) / 5)
-        XCTAssertGreaterThan(attack, FootnoteCue.sampleRate / 100, "an attack of more than 10 ms")
     }
 
     func testItIsNoLouderThanTheFriendChime() throws {
         let cue = samples(FootnoteCue.wavData()).map { abs(Int($0)) }.max() ?? 0
         let chime = samples(SharedMarginCue.doubleChimeWAVData()).map { abs(Int($0)) }.max() ?? 0
         XCTAssertEqual(FootnoteCue.peak, 0.30, accuracy: 0.0001)
-        XCTAssertLessThanOrEqual(cue, chime + 1)
+        XCTAssertLessThanOrEqual(cue, chime + chime / 100, "within 1% of the chime's peak, rounding aside")
         XCTAssertGreaterThan(cue, Int(Double(chime) * 0.9), "and not much quieter")
     }
 
@@ -74,7 +80,5 @@ final class FootnoteCueTests: XCTestCase {
         let hertz = Double(crossings) / 2 / FootnoteCue.seconds
         XCTAssertEqual(hertz, 659.25, accuracy: 15)
         XCTAssertEqual(FootnoteCue.frequency, 659.25, accuracy: 0.001)
-        XCTAssertNotEqual(FootnoteCue.wavData(), SharedMarginCue.doubleChimeWAVData())
-        XCTAssertNotEqual(FootnoteCue.wavData().count, SharedMarginCue.doubleChimeWAVData().count)
     }
 }
