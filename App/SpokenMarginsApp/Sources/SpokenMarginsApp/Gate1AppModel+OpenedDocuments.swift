@@ -52,33 +52,34 @@ extension Gate1AppModel {
                 self.reportFailure(TranscriptImportMessage(.couldNotRead, fileName: fileName).errorDescription ?? "")
             case .success(let copy):
                 self.diagnostics["lastOpenedDocument"] = "staged:\(copy.pathExtension.lowercased())"
-                await self.importStagedDocument(copy)
+                let ended = OnceSignal()
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    ended.onSignal = { continuation.resume() }
+                    self.hangTelemetry.labels.scoped("openedDocument.import") { self.beginStagedImport(copy, ended: ended) }
+                }
             }
         }
     }
 
-    /// Runs the import and returns when it ends, so the next opened file starts after it. Nothing navigates. The copy's
+    /// Starts the import; `ended` fires when it ends, so the next opened file starts after it. Nothing navigates. The copy's
     /// folder goes when the import ends, whatever the import did; a pause of two minutes frees the queue if an import
     /// never reports an end.
-    private func importStagedDocument(_ copy: URL) async {
+    private func beginStagedImport(_ copy: URL, ended: OnceSignal) {
         let folder = copy.deletingLastPathComponent()
-        let ended = OnceSignal()
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            ended.onSignal = { continuation.resume() }
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 120_000_000_000)
-                ended.signal()
-            }
-            importFilesWithTranscriptRule(
-                urls: [copy],
-                route: TranscriptPickRoute(
-                    securityScopedURLs: [],
-                    navigatesWhenFinished: false,
-                    onFinished: { _ in
-                        try? FileManager.default.removeItem(at: folder)
-                        ended.signal()
-                    }))
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 120_000_000_000)
+            ended.signal()
         }
+        importFilesWithTranscriptRule(
+            urls: [copy],
+            route: TranscriptPickRoute(
+                securityScopedURLs: [],
+                navigatesWhenFinished: false,
+                onFinished: { _ in
+                    // Off the main actor, as every file removal is (#2256).
+                    Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: folder) }
+                    ended.signal()
+                }))
     }
 
     /// Resumes a continuation once, whichever of the import's end and the timeout comes first.
