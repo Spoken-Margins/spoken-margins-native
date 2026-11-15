@@ -102,7 +102,7 @@ test.describe('installed app', () => {
     const two: Margin = { id: 'b1', episodeId: second.id, atSeconds: 4, createdAt: '2026-10-30T11:00:00Z', text: 'From the second episode.' };
     const backup = await buildBackup({ episodes: [episode, second], shows: [show], margins: [...writtenMargins(), two] }, async (ep, margins, sh) => {
       const w = await writePacket(ep, margins, sh ? { show: sh, sender: 'Sam' } : { sender: 'Sam' });
-      return { bytes: w.bytes, fileName: w.fileName, mimeType: w.mimeType, included: w.included };
+      return { bytes: w.bytes, fileName: w.fileName, mimeType: w.mimeType, contentDigest: w.contentDigest, included: w.included };
     });
     expect(backup.file?.name).toMatch(/\.zip$/);
 

@@ -464,6 +464,9 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
       // The typed name goes on this file whether or not the browser could keep it; a failed save has already said so.
       void keepName();
       const written = await services.packets.writePacket(episode, toWrite, show, senderForPacket(name));
+      // Remember which Margin went out under which packet name, so a reply to it can be found later (#4174). Hidden, and
+      // never a reason to hold the file back: if the browser can't save it, the link is simply missing.
+      data.addSharedAs(written).catch((error: unknown) => console.warn('Could not keep which packet a Margin was shared in.', error));
       if (bridge) {
         if ((await shareNativePacket(bridge, written.bytes, written.fileName, episode.title)) === 'cancelled') return;
         const count = written.included.length === 1 ? '1 Margin' : `${written.included.length} Margins`;
