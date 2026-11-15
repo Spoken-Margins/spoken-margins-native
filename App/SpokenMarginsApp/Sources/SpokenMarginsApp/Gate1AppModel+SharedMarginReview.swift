@@ -8,6 +8,9 @@ import SessionKitAudio
 struct NewMarginsOfferRequest: Equatable {
     let itemId: String
     let entries: [SharedMarginReview.Entry]
+    /// The saved place is the very end of the episode, so the way past the question is "Play from the start", not
+    /// "Listen without them" (`PlayRule.askedPlaceIsAtEnd`, #4125). False for the item screen's own requests.
+    var placeIsAtEnd = false
 }
 
 /// "Review new Margins" (#474): plays an item's shared Margins that the listener hasn't heard, one after another,
@@ -74,17 +77,18 @@ extension Gate1AppModel {
     /// Margins. An offer the listener already turned down isn't made again until another Margin arrives. This reads
     /// only what the model already holds (no store read on the main thread); `startItem` reads the sessions.
     func continueListening(itemId: String, surface: PlayRule.Surface = .libraryRow, offer: (NewMarginsOfferRequest) -> Void) {
-        let outcome = PlayRule.decide(PlayRule.Context(
+        let context = PlayRule.Context(
             itemId: itemId, surface: surface,
             nowPlaying: hasActiveSession ? snapshot.itemId.map { PlayRule.NowPlaying(itemId: $0, mediaTimeMs: snapshot.currentMediaTimeMs) } : nil,
             openItem: PlayRule.OpenItem(id: selectedItem.id, sessions: selectedItem.sessions, addedAgainAt: addedAgainAt(forItem: selectedItem.id)),
             libraryRow: libraryItems.first(where: { $0.id == itemId }),
             // Only the Library row asks about Margins, so the item screen skips the read.
             newMargins: surface == .libraryRow ? newSharedMargins(itemId: itemId) : [],
-            declined: Self.declinedNewMargins))
-        switch outcome {
+            declined: Self.declinedNewMargins)
+        switch PlayRule.decide(context) {
         case .play: startItem(id: itemId)
-        case .askFirst(let entries): offer(NewMarginsOfferRequest(itemId: itemId, entries: entries))
+        case .askFirst(let entries):
+            offer(NewMarginsOfferRequest(itemId: itemId, entries: entries, placeIsAtEnd: PlayRule.askedPlaceIsAtEnd(context)))
         }
     }
 

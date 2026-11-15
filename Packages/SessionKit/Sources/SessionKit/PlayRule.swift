@@ -151,6 +151,21 @@ public enum PlayRule {
         (resumedSession(in: ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions))?.completionPercent ?? 0) >= ItemFinishedRule.listenedPercent
     }
 
+    /// Whether the question the Library row asks (`decide` returning `.askFirst`) is about a saved place at the very
+    /// end of the episode: 99% up to, not including, 100%. Then "Listen without them" would resume for the last few
+    /// seconds and finish, so the question offers "Play from the start" instead, as the item screen's second button
+    /// does (#4125, state D). The open item says it from its sessions; an item that is not open, from its Library row's
+    /// percentage (the row's own session already leaves out an item added again, #4183). The playhead of what is
+    /// playing now is not the end: the episode's end plays its own Margins.
+    public static func askedPlaceIsAtEnd(_ context: Context) -> Bool {
+        if context.nowPlaying?.itemId == context.itemId { return false }
+        if let open = context.openItem, open.id == context.itemId {
+            return savedPlaceIsAtEnd(sessions: open.sessions, addedAgainAt: open.addedAgainAt)
+        }
+        guard let row = context.libraryRow, row.hasContinuationSession, let percent = row.continuationProgressPercent else { return false }
+        return percent >= ItemFinishedRule.listenedPercent && percent < ItemFinishedRule.atEndPercent
+    }
+
     private static func resumedSession(in sessions: [Session]) -> Session? {
         guard let session = SessionContinuation.preferredContinuationSession(in: sessions),
               SessionContinuation.continueResumes(session) else { return nil }
