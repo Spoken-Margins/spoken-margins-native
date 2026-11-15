@@ -80,23 +80,46 @@ final class LiveSessionMarginDetailAppTests: XCTestCase {
         XCTAssertFalse(tree.nodes().contains { $0.identifier == "marginDetail.playRecording.button" })
     }
 
+    /// #4311: the confirmation is absent until presented, so only tapping Delete can show that it asks first.
     func testDeleteAsksBeforeDeleting() async throws {
-        var deleted = false
+        var deleted = 0
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first { $0.isKeyWindow }
         let view = LiveSessionMarginDetailView(
             margin: written(), sessionTitle: "Staff meeting", position: "1:05 in",
-            keepHeardPlace: {}, declineHeardPlace: {}, saveText: { _ in }, delete: { deleted = true })
+            keepHeardPlace: {}, declineHeardPlace: {}, saveText: { _ in }, delete: { deleted += 1 })
+        let host = UIHostingController(rootView: view)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        window.rootViewController = UIHostingController(rootView: view)
+        window.rootViewController = host
         window.makeKeyAndVisible()
         let tree = MountedTree(window: window, previousKeyWindow: previous)
         defer { tree.close() }
         _ = try await tree.waitForNode("Delete") { $0.identifier == "marginDetail.delete.button" }
-        XCTAssertFalse(deleted, "Mounting must not delete")
-        XCTAssertFalse(tree.nodes().contains { $0.identifier == "marginDetail.delete.confirm.button" },
-                       "The confirmation is shown only after Delete is tapped")
+        XCTAssertEqual(deleted, 0, "Mounting must not delete")
+
+        XCTAssertTrue(tree.activate { $0.identifier == "marginDetail.delete.button" }, "Delete refused the activation")
+        let isConfirm: (AccessibilityNode) -> Bool = {
+            $0.identifier == "marginDetail.delete.confirm.button" || $0.label == "Delete Margin"
+        }
+        _ = try await tree.waitForNode("the Delete Margin confirmation", isConfirm)
+        XCTAssertEqual(deleted, 0, "Delete asks first; it deletes nothing until the listener confirms")
+
+        if !tree.activate(isConfirm) {
+            // An alert's action can refuse an in-process activation (VoiceOver then taps it); run the action as the tap would.
+            let alert = try XCTUnwrap(host.presentedViewController as? UIAlertController,
+                                      "the confirmation refused the activation and is not an alert")
+            try Self.tap("Delete Margin", in: alert)
+        }
+        try await pollUntil { deleted > 0 }
+        XCTAssertEqual(deleted, 1, "Delete Margin deletes, once")
+    }
+
+    private static func tap(_ title: String, in alert: UIAlertController) throws {
+        typealias Handler = @convention(block) (UIAlertAction) -> Void
+        let action = try XCTUnwrap(alert.actions.first { $0.title == title }, "no \(title) in \(alert.actions.compactMap(\.title))")
+        let block = try XCTUnwrap(action.value(forKey: "handler") as AnyObject?, "\(title) has no handler")
+        unsafeBitCast(block, to: Handler.self)(action)
     }
 
     func testAudioModelSaysSoWhenTheRecordingIsMissing() async throws {
