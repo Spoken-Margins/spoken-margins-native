@@ -53,6 +53,8 @@
 		907083EA86D05BC58D2D3A79 /* SessionKitAI in Frameworks */ = {isa = PBXBuildFile; productRef = E7C7184F382A54BFB372015B /* SessionKitAI */; };
 		93BDBE3759E50512647FCCB2 /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */; };
 		A2D0366161FA302E7139746D /* SharedTextIntake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45170E0354730F22BB2E258A /* SharedTextIntake.swift */; };
+		DE10276319BC2315FDDC9F11 /* TranscriptImportMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040F14FA5C0B613C39949353 /* TranscriptImportMessage.swift */; };
+		3E908C9EBFDFF8134FFDC297 /* TranscriptHandoffFolder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F4BFF846A501862EAD141F /* TranscriptHandoffFolder.swift */; };
 		A391E3C44188F2FE5A49C93B /* KokoroPipeline in Frameworks */ = {isa = PBXBuildFile; productRef = 54900B4C14FBCE4EEBA05420 /* KokoroPipeline */; };
 		A5242E161454F038B466BAE4 /* Gate2LiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7145068260B70B5F88F4D76 /* Gate2LiveActivityWidget.swift */; };
 		A978B4713391C8A80029DD08 /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = 857D6087011D0775305B56B7 /* SessionKit */; };
@@ -169,6 +171,8 @@
 		3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Defuddle-LICENSE.txt"; sourceTree = "<group>"; };
 		3DFB70895F5471D1B12C9AFC /* WatchDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchDiagnostics.swift; sourceTree = "<group>"; };
 		45170E0354730F22BB2E258A /* SharedTextIntake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedTextIntake.swift; sourceTree = "<group>"; };
+		040F14FA5C0B613C39949353 /* TranscriptImportMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptImportMessage.swift; sourceTree = "<group>"; };
+		60F4BFF846A501862EAD141F /* TranscriptHandoffFolder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptHandoffFolder.swift; sourceTree = "<group>"; };
 		454A82B2CAACCCAED5C33E03 /* catalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = catalog.json; sourceTree = "<group>"; };
 		466DDA96AB529FEFB23D4BEE /* BundledJavaScript-NOTICES.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "BundledJavaScript-NOTICES.txt"; sourceTree = "<group>"; };
 		4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveSessionMarkInbox.swift; sourceTree = "<group>"; };
@@ -459,6 +463,8 @@
 				554AB90C8F67E25771B27AE9 /* ListenerErrorText.swift */,
 				4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */,
 				45170E0354730F22BB2E258A /* SharedTextIntake.swift */,
+				040F14FA5C0B613C39949353 /* TranscriptImportMessage.swift */,
+				60F4BFF846A501862EAD141F /* TranscriptHandoffFolder.swift */,
 				319720F5D1C48499C77B9EE3 /* WatchContract.swift */,
 				C35CC3A6D5622D241C4A34DB /* WatchContractState.swift */,
 				3DFB70895F5471D1B12C9AFC /* WatchDiagnostics.swift */,
@@ -970,6 +976,8 @@
 				76005D25F3CFA0070E96DA24 /* ClipboardIntakeClassifier.swift in Sources */,
 				EDDCF26F9D6C48C4A0082CFC /* ListenerErrorText.swift in Sources */,
 				A2D0366161FA302E7139746D /* SharedTextIntake.swift in Sources */,
+				DE10276319BC2315FDDC9F11 /* TranscriptImportMessage.swift in Sources */,
+				3E908C9EBFDFF8134FFDC297 /* TranscriptHandoffFolder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
