@@ -1047,29 +1047,3 @@ private struct ItemLinksRow: View {
         }
     }
 }
-
-/// The publisher's description under the title: its first three lines, with More to read the rest in place (#1322).
-/// The text is whole to VoiceOver either way; only the sighted preview is cut.
-private struct ItemDescriptionPreview: View {
-    let text: String
-    @State private var expanded = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(text)
-                .font(.subheadline)
-                .foregroundStyle(AppColors.secondaryText)
-                .lineLimit(expanded ? nil : 3)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("item.description.text")
-            if ItemMetadata.needsExpansion(text) {
-                Button { expanded.toggle() } label: {
-                    Text(expanded ? "Less" : "More").frame(minHeight: 44, alignment: .leading).contentShape(Rectangle())
-                }
-                    .font(.subheadline.weight(.semibold))
-                    .accessibilityHint(expanded ? "Shows fewer lines of the description." : "Shows the whole description.")
-                    .accessibilityIdentifier("item.description.more")
-            }
-        }
-    }
-}

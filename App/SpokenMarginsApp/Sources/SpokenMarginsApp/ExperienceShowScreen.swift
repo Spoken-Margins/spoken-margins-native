@@ -14,6 +14,8 @@ struct ExperienceShowScreen: View {
     @State private var lookedAtOnOpen: Date?
     /// Built off the main thread when the entries reload; `body` only reads it.
     @State private var episodes: [FollowingShowEpisode] = []
+    /// The Up next card (#3863): `FollowingUpNext.pick`, the episode the Following row's ▶ plays. Built with `episodes`.
+    @State private var upNext: ShowUpNext?
 
     init(subscriptionID: String, lookedAtOnOpen: Date?, artwork: FollowingArtworkCache) {
         self.subscriptionID = subscriptionID
@@ -40,50 +42,68 @@ struct ExperienceShowScreen: View {
         .onDisappear { if subscription != nil { model.markShowLooked(id: subscriptionID) } }
         .task(id: model.followingShowRevision) {
             guard let subscription else { return }
+            // The library state is read here with the entries: both are set together, under the revision this task keys on.
             let entries = model.followingShowEntries, looked = lookedAtOnOpen
-            episodes = await Task.detached(priority: .userInitiated) {
-                FollowingShowRows.episodes(of: subscription, in: entries, lookedAt: looked)
+            let library = model.followingLibraryEpisodes, rate = model.speechPlaybackRateMultiplier
+            let built = await Task.detached(priority: .userInitiated) { () -> ([FollowingShowEpisode], ShowUpNext?) in
+                let card = FollowingUpNext.card(
+                    entries: entries.filter { $0.subscriptionId == subscription.id }, libraryEpisodes: library)
+                return (
+                    FollowingShowRows.episodes(of: subscription, in: entries, lookedAt: looked),
+                    card.map { ShowUpNext(card: $0, rate: rate) })
             }.value
+            episodes = built.0
+            upNext = built.1
         }
     }
 
     private func content(for subscription: FeedSubscription) -> some View {
         let title = FollowingShowRows.displayTitle(of: subscription)
         let newCount = subscription.state == .muted ? 0 : episodes.filter(\.isNew).count
+        // The Up next episode is on the card, so the list leaves it out; "N new" still counts it.
+        let listed = episodes.filter { $0.id != upNext?.card.entry.id }
         return List {
-            headerRows(for: subscription, title: title)
-            Section {
-                if episodes.isEmpty {
-                    Text("No episodes yet. Pull down on Following to look for new ones.")
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
-                }
-                ForEach(episodes) { episode in
-                    episodeRow(episode)
-                        .listRowInsets(EdgeInsets(
-                            top: 0,
-                            leading: horizontalSizeClass == .regular ? 28 : 16,
-                            bottom: 0,
-                            trailing: horizontalSizeClass == .regular ? 28 : 16
-                        ))
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(AppColors.bone)
-                }
-            } header: {
-                HStack {
-                    Text("Episodes")
-                        .font(.headline)
-                        .foregroundStyle(AppColors.text)
-                    Spacer()
-                    if newCount > 0 {
-                        Text("\(newCount) new")
-                            .font(.subheadline.weight(.semibold))
+            headerRow(for: subscription, title: title)
+            if let upNext {
+                ShowUpNextCard(upNext: upNext)
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
+            }
+            settingsRows(for: subscription)
+            // When the card holds the show's only episode there is nothing left to list, so no empty Episodes header.
+            if !listed.isEmpty || upNext == nil {
+                Section {
+                    if episodes.isEmpty {
+                        Text("No episodes yet. Pull down on Following to look for new ones.")
+                            .font(.subheadline)
                             .foregroundStyle(AppColors.secondaryText)
+                            .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
                     }
+                    ForEach(listed) { episode in
+                        episodeRow(episode)
+                            .listRowInsets(EdgeInsets(
+                                top: 0,
+                                leading: horizontalSizeClass == .regular ? 28 : 16,
+                                bottom: 0,
+                                trailing: horizontalSizeClass == .regular ? 28 : 16
+                            ))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(AppColors.bone)
+                    }
+                } header: {
+                    HStack {
+                        Text("Episodes")
+                            .font(.headline)
+                            .foregroundStyle(AppColors.text)
+                        Spacer()
+                        if newCount > 0 {
+                            Text("\(newCount) new")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                    }
+                    .textCase(nil)
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
                 }
-                .textCase(nil)
-                .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
             }
         }
         .scrollContentBackground(.hidden)
@@ -93,9 +113,8 @@ struct ExperienceShowScreen: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    /// Each control is its own list row, so a tap on one can never reach another (Unfollow in particular).
     @ViewBuilder
-    private func headerRows(for subscription: FeedSubscription, title: String) -> some View {
+    private func headerRow(for subscription: FeedSubscription, title: String) -> some View {
         HStack(spacing: 14) {
             ShowArtworkView(url: artwork.artworkURL(for: subscription.id), title: title, size: 72)
             VStack(alignment: .leading, spacing: 4) {
@@ -110,6 +129,11 @@ struct ExperienceShowScreen: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
+    }
+
+    /// Each control is its own list row, so a tap on one can never reach another (Unfollow in particular).
+    @ViewBuilder
+    private func settingsRows(for subscription: FeedSubscription) -> some View {
         // Quiet: the show sinks to Following's collapsed group, stops counting new episodes and stops
         // appearing in the New list. It is still followed and its episodes are still listed here.
         Toggle(isOn: Binding(
