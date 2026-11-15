@@ -203,7 +203,7 @@ struct ShareLinkPresentation: ViewModifier {
             } message: {
                 Text(ShareLinkConsentCopy.message)
             }
-            .sheet(isPresented: Binding(
+            .trackedSheet(isPresented: Binding(
                 get: { if case .ready = sender.state { return true } else { return false } },
                 set: { if !$0 { sender.reset() } }
             )) {

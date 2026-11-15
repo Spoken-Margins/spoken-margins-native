@@ -87,7 +87,7 @@ struct BatchExportScreen: View {
                 isShareSheetPresented = files != nil
             }
             #if canImport(UIKit)
-            .sheet(isPresented: $isShareSheetPresented, onDismiss: model.batchShareSheetDismissed) {
+            .trackedSheet(isPresented: $isShareSheetPresented, onDismiss: model.batchShareSheetDismissed) {
                 BatchShareActivityView(fileURLs: sharedFileURLs) { completed, activityType in
                     model.batchShareSheetFinished(completed: completed, activityType: activityType)
                 }

@@ -199,7 +199,7 @@ struct LiveSessionView: View, Equatable {
         .onChange(of: controller.isRecordingSpoken) { _, recording in
             if !recording && cover == .liveRecording { cover = nil }
         }
-        .fullScreenCover(item: $cover) { cover in
+        .trackedFullScreenCover(item: $cover) { cover in
             switch cover {
             case .liveRecording: recordingScreen
             case .liveWriting: writingScreen
@@ -212,7 +212,7 @@ struct LiveSessionView: View, Equatable {
             Button(LiveSessionPhotoMargin.withoutPhotoTitle) { beginRecording() }
             Button("Cancel", role: .cancel) {}
         }
-        .sheet(isPresented: $showsLineUp) {
+        .trackedSheet(isPresented: $showsLineUp) {
             if let session = controller.session {
                 LiveSessionLineUpView(session: session) { saved in
                     showsLineUp = false
@@ -223,8 +223,8 @@ struct LiveSessionView: View, Equatable {
         }
         // Ending asks "when did it end?" in a sheet on this stable root, which nothing redraws: the sheet once closed
         // by itself before the listener could answer (#2831). Only its own End and Cancel close it.
-        .sheet(isPresented: $showsEndCard) { endSheet }
-        .sheet(item: $openMargin) { target in marginScreen(target) }
+        .trackedSheet(isPresented: $showsEndCard) { endSheet }
+        .trackedSheet(item: $openMargin) { target in marginScreen(target) }
         .alert("Live session", isPresented: Binding(get: { controller.errorMessage != nil }, set: { if !$0 { controller.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {

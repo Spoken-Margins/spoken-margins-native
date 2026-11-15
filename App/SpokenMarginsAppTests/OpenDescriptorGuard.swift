@@ -30,6 +30,7 @@ final class OpenDescriptorGuard: NSObject, XCTestObservation, @unchecked Sendabl
         Self.shared = self
         XCTestObservationCenter.shared.addTestObserver(self)
         TermsAnsweredBeforeEachTest.install() // the bundle has one principal class, so it also starts the Terms observer (#3329)
+        ScreenRebuildFailsTheTest.install() // and the screen-rebuild tripwire's observer (#4337)
     }
 
     /// Both streams: the test app's stdout is not always forwarded into xcode-tests.log, and the unified log is.

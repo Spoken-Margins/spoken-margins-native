@@ -274,7 +274,7 @@ struct ExperienceMarginDetailView: View {
                     Button("Done") { dismiss() }.accessibilityIdentifier("marginDetail.done.button")
                 }
             }
-            .sheet(isPresented: $showsManagement) {
+            .trackedSheet(isPresented: $showsManagement) {
                 InterjectionDetailView(interjection: current.interjection).environmentObject(model)
             }
             .onDisappear {

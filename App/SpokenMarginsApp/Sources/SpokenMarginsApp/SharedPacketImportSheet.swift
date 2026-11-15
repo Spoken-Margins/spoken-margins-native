@@ -22,7 +22,7 @@ struct SharedPacketImportSheet<Sheet: View>: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .sheet(item: sheetReview) { _ in sheet() }
+            .trackedSheet(item: sheetReview) { _ in sheet() }
             .onChange(of: model.spokenMarginsPackageImportReview?.id, initial: true) {
                 model.openSharedPacketDirectlyIfReady()
             }

@@ -69,7 +69,7 @@ struct SupertonicDownloadNoticePresentation: ViewModifier {
                         || model.spokenMarginsPackageImportReview != nil
                 )
             }
-            .sheet(isPresented: $notice.isPresented) {
+            .trackedSheet(isPresented: $notice.isPresented) {
                 SupertonicDownloadNoticeCard(
                     openVoices: {
                         notice.openVoices()

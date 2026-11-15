@@ -736,6 +736,8 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_listener_words', 'test_recorder_failed_start',
                        'test_starter_catalog',
                        # The accessibility source scans read App/ Swift files (#2041).
+                       # Every sheet and cover goes through the screen-rebuild tripwire (#4337).
+                       'test_tracked_presentations',
                        'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
                        'test_row_accessibility_actions', 'test_voiceover_label_nits',
                        'test_increase_contrast_wiring', 'test_reduce_motion', 'test_tap_target_styles',

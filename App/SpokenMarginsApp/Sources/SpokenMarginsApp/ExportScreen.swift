@@ -93,7 +93,7 @@ struct ExportScreen: View {
                             }
                             .buttonStyle(PrimaryButtonStyle())
                             .accessibilityIdentifier("export.share.button")
-                            .sheet(isPresented: $isSharePresented) {
+                            .trackedSheet(isPresented: $isSharePresented) {
                                 SessionActivityView(
                                     activityItems: exportActivityItems,
                                     onSuccessfulCompletion: model.recordSessionExported

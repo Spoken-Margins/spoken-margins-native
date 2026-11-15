@@ -90,6 +90,8 @@ struct SpokenMarginsApp: App {
         // Memory use and memory kills, in Diagnostics (#122). Unit tests keep nothing on disk.
         let pinnedDiagnostics = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)
         LaunchRecorder.shared?.attach { key, value in pinnedDiagnostics.set(key, value) }
+        // A sheet or cover built again while open, by presentation (#4337).
+        ScreenRebuildTripwire.shared.attach { key, value in pinnedDiagnostics.set(key, value) }
         let memoryFootprint = MemoryFootprintRecorder(diagnostics: pinnedDiagnostics,
                                                       fileURL: runningTests ? nil : MemoryFootprintRecorder.defaultFileURL)
         memoryFootprint.start(observing: model)
