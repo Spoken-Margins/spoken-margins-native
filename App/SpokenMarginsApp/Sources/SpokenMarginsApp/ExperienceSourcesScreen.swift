@@ -169,7 +169,7 @@ struct ExperienceSourcesScreen: View, Equatable {
                 )
                 .miniPlayerKeepOut()
             }
-            .sheet(isPresented: $isShowingFollowSheet, onDismiss: {
+            .trackedSheet(isPresented: $isShowingFollowSheet, onDismiss: {
                 guard opensCatalogAfterFollowSheet else { return }
                 opensCatalogAfterFollowSheet = false
                 catalogDrawer.present()

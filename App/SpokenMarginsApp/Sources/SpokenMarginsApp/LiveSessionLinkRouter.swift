@@ -80,7 +80,7 @@ private struct LiveSessionLinkCover: ViewModifier {
     let model: Gate1AppModel
 
     func body(content: Content) -> some View {
-        content.fullScreenCover(item: $links.cover) { cover in
+        content.trackedFullScreenCover(item: $links.cover) { cover in
             // `.equatable()` so the root's redraw on each model publish stops here (#4091).
             LiveSessionView(model: model, sessionId: cover.sessionId).equatable()
         }

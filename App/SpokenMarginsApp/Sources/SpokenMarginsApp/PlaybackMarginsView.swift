@@ -63,10 +63,10 @@ struct PlaybackMarginsView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("margins.screen")
-        .sheet(item: $selectedMargin) { row in
+        .trackedSheet(item: $selectedMargin) { row in
             ExperienceMarginDetailView(row: row).environmentObject(model)
         }
-        .sheet(item: $selectedSharedMargin) { row in
+        .trackedSheet(item: $selectedSharedMargin) { row in
             SharedMarginDetailView(row: row).environmentObject(model)
         }
     }

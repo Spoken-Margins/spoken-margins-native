@@ -763,7 +763,9 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        # The benchmark's filter must name a test in SharingTests.swift (#2133).
                        'test_podcast_anchor_benchmark.FilterNameTests',
                        # The poll-loop guard scans the app test sources (#4131).
-                       'test_app_test_poll_loops')
+                       'test_app_test_poll_loops',
+                       # The tracked-presentation guard scans App/ Swift files for a raw sheet or cover (#4337).
+                       'test_tracked_presentations')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/', 'docs/task-cost-map.json', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).

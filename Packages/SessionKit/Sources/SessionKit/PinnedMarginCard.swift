@@ -114,11 +114,20 @@ public struct PinnedMarginCard: Equatable, Sendable {
         /// What happens when the source reaches a Margin, from the same rules the offer uses: a Fresh layer is never
         /// offered, an announced Margin is not offered again, and otherwise the layer's own reveal mode decides
         /// (`SharedMarginPromptStyle`). Per Margin, never per item: layers on one source can differ.
-        public static func forMargin(announced: Bool, heard: Bool = true, revealMode: ImportedCommentaryRevealMode?) -> Arrival {
+        public static func forMargin(announced: Bool, heard: Bool, revealMode: ImportedCommentaryRevealMode?) -> Arrival {
             if revealMode == .fresh { return .waitsForYou }
             if announced { return heard ? .onRequest : .announcedUnheard }
             let style = SharedMarginPromptStyle.style(revealMode: revealMode, arrival: .crossed)
             return style.autoPlayAfterMs != nil ? .playsByItself : .toneThenTap
+        }
+
+        /// What happens when the source reaches `prompt`, from that Margin's own layer and the offer queue's memory, the
+        /// same facts the offer uses. Announced is not heard: the tone sounded or the card was dismissed, and the voice may
+        /// never have played. Only `firstHeardAt` says the listener heard it (#4310).
+        public static func forMargin(_ prompt: ImportedCommentaryPrompt, offers: SharedMarginOfferQueue) -> Arrival {
+            forMargin(
+                announced: offers.announcedIDs.contains(prompt.id), heard: !prompt.interjection.isNewToListener,
+                revealMode: prompt.layer.revealMode)
         }
     }
 

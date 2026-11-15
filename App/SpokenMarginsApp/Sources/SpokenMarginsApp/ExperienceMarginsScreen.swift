@@ -140,10 +140,10 @@ struct ExperienceMarginsScreen: View, Equatable {
             }
             .refreshable { await model.refreshMarginRowsAsync() }
             .scrollDismissesKeyboard(.interactively)
-            .sheet(item: $selectedMargin) { row in
+            .trackedSheet(item: $selectedMargin) { row in
                 ExperienceMarginDetailView(row: row).environmentObject(model)
             }
-            .sheet(item: $selectedSharedMargin) { row in
+            .trackedSheet(item: $selectedSharedMargin) { row in
                 SharedMarginDetailView(row: row).environmentObject(model)
             }
             .miniPlayerKeepOut()
