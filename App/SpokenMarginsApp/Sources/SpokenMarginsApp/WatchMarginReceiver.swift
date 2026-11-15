@@ -215,7 +215,7 @@ final class WatchMarginReceiver: NSObject {
         // The sure lane repeats every message and may deliver a late copy, so only the fast lane runs one (#3494).
         if fastLane, let transport = envelope.transportToRun(now: now()) {
             runTransport(transport)
-            republishAfterTransport()
+            // MUTATION (#4313 proof): republishAfterTransport() removed
         }
         // The Watch's own record (#3506) goes to a file for the Diagnostics export; it is small and not a session change.
         if case .diagnostics(let report) = envelope.message, let file = WatchDiagnosticsStore.defaultFileURL {
