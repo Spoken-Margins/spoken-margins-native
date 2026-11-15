@@ -20,7 +20,7 @@ const write: WritePacket = async (ep, margins, sh) => {
     packageId: 'package-web-fixture-written',
     createdAt: new Date('2026-10-30T12:00:00.000Z'),
   });
-  return { bytes: written.bytes, fileName: written.fileName, mimeType: written.mimeType, included: written.included, ...(written.notice && { notice: written.notice }) };
+  return { bytes: written.bytes, fileName: written.fileName, mimeType: written.mimeType, contentDigest: written.contentDigest, included: written.included, ...(written.notice && { notice: written.notice }) };
 };
 
 const second: Episode = { ...episode, id: 'episode-two', title: 'Episode 2', guid: 'example-episode-guid-2', audioUrl: 'https://example.com/podcast/episode-2.mp3' };
@@ -173,7 +173,7 @@ test('a backup never carries the name typed for sharing: it is written with the 
     argumentCounts.push(args.length);
     const [ep, margins, sh, sender] = args as [Episode, Margin[], typeof show | undefined, string | undefined];
     const written = await writePacket(ep, margins, { ...(sh && { show: sh }), ...(sender && { sender }) });
-    return { bytes: written.bytes, fileName: written.fileName, mimeType: written.mimeType, included: written.included };
+    return { bytes: written.bytes, fileName: written.fileName, mimeType: written.mimeType, contentDigest: written.contentDigest, included: written.included };
   };
   const result = await buildBackup({ episodes: [episode], shows: [show], margins: writtenMargins() }, wired as WritePacket);
   assert.deepEqual(argumentCounts, [3]);

@@ -452,20 +452,34 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     /// recording, or a note the phone's voice reads), never the recording's path alone (#3412).
     static func importedMarginSnapshot(
         _ margin: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer,
-        placementPass: SharedMarginPlacementPasses.Pass?, paragraphs: MarginPlaceIndex?
+        placementPass: SharedMarginPlacementPasses.Pass?, paragraphs: MarginPlaceIndex?, durationMs: Int? = nil
     ) -> Build23ImportedMarginSnapshot {
         let placement = SharedMarginPlacementStatus(resolution: margin.resolution, marginId: margin.id,
             layerStatus: layer.sourceResolutionStatus, pass: placementPass,
             hasPositionEvidence: margin.carriesPositionEvidence(in: layer),
             awaitingPlacementPass: layer.awaitsPlacementPass)
+        // A podcast Margin shows the time it plays at, then one of three plain phrases for where that came from; one
+        // with no usable time shows only the phrase (#3789). Other items keep the older wording.
+        var position = placement.positionDescription ?? positionDescription(for: margin.resolution, paragraphs: paragraphs)
+        var label = placement.label
+        if let words = SharedMarginPlacementWording.line(for: margin, in: layer, durationMs: durationMs) {
+            let plan = SharedMarginPrompts.plan(margin, in: layer, durationMs: durationMs)
+            if let clock = SharedMarginPlacementWording.clock(for: plan) {
+                position = clock
+                label = words
+            } else {
+                position = words
+                label = nil
+            }
+        }
         return Build23ImportedMarginSnapshot(
             id: margin.id,
             reviewedText: margin.approvedTranscript,
             resolution: margin.resolution.evidenceClass,
-            positionDescription: placement.positionDescription ?? positionDescription(for: margin.resolution, paragraphs: paragraphs),
+            positionDescription: position,
             isPlayable: Gate1AppModel.isPlayableImportedCommentaryResolution(margin.resolution),
             canListen: SharedMarginAudio.canOffer(margin),
-            placementLabel: placement.label
+            placementLabel: label
         )
     }
 
@@ -477,7 +491,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             .filter { $0.deletedAt == nil }
             .map { layer in
                 let margins = item.importedCommentaryInterjections[layer.id, default: []]
-                    .map { Self.importedMarginSnapshot($0, in: layer, placementPass: item.sharedMarginPlacement, paragraphs: paragraphs) }
+                    .map { Self.importedMarginSnapshot($0, in: layer, placementPass: item.sharedMarginPlacement, paragraphs: paragraphs, durationMs: item.mediaDurationMs) }
                 return Build23ImportedLayerSnapshot(
                     id: layer.id,
                     senderLabel: SharedPacketArrival.snapshotSenderLabel(layer.displayLabel),

@@ -194,6 +194,57 @@ final class AddedAgainLibraryTests: XCTestCase {
         XCTAssertFalse(try visibleRows().contains { $0.id == heard.id })
     }
 
+    private func podcastImport(_ request: LinkResolutionRequest, listenerAdded: Bool? = nil) throws -> Item {
+        let url = "https://audio.example/shows/episode-9.mp3"
+        let candidate = LinkResolutionCandidate(sourceLink: SourceLink(url: url, role: "audio_file"), title: "Episode 9", audioURL: url, confidence: 1)
+        let result = LinkResolutionResult(requestId: request.id, status: .playable, originalLink: candidate.sourceLink, selectedCandidate: candidate)
+        if let listenerAdded {
+            return try XCTUnwrap(engine.importResolvedSourceLinkInBackground(request, result: result, listenerAdded: listenerAdded))
+        }
+        return try XCTUnwrap(engine.importResolvedSourceLinkInBackground(request, result: result))
+    }
+
+    /// A podcast episode marked complete, with one finished session at the end of the audio.
+    private func finishedEpisode() throws -> (request: LinkResolutionRequest, item: Item) {
+        let request = LinkResolutionRequest(id: "req", inputURL: "https://audio.example/shows/episode-9.mp3",
+                                            sourceSurface: "test", createdAt: Date(timeIntervalSince1970: 100))
+        var item = try podcastImport(request)
+        let tenDaysAgo = Date(timeIntervalSinceNow: -86_400 * 10)
+        item.sourceCompletedAt = tenDaysAgo
+        try store.saveItem(item)
+        try store.saveSession(Session(
+            id: "episode-heard", itemId: item.id, createdAt: tenDaysAgo, updatedAt: tenDaysAgo, completedAt: tenDaysAgo,
+            status: "finished", phase: .finished, currentTargetType: .itemTextTTS, currentTargetId: item.id,
+            position: Position(charOffset: 60), completionPercent: 100, playbackRate: 1))
+        return (request, item)
+    }
+
+    /// #4241: a friend's packet fetches an episode the listener already finished. That is not the listener adding it.
+    func testAPacketFetchingAFinishedEpisodeKeepsItMarkedCompleteAndItsPlace() throws {
+        let (request, episode) = try finishedEpisode()
+
+        let again = try podcastImport(request, listenerAdded: false)
+
+        XCTAssertEqual(again.id, episode.id)
+        let kept = try store.loadItem(id: episode.id)
+        XCTAssertNotNil(kept.sourceCompletedAt, "marked complete stays marked")
+        XCTAssertNil(kept.addedAgainAt)
+        XCTAssertEqual(ItemFinishedRule.continuationSessions(kept, sessions: try store.loadSessions(itemId: episode.id)).map(\.id),
+                       ["episode-heard"], "the finished place is kept")
+    }
+
+    /// The listener's own add of the same episode is still an add again (the default path).
+    func testTheListenerAddingAFinishedEpisodeAgainStillClearsTheMark() throws {
+        let (request, episode) = try finishedEpisode()
+
+        _ = try podcastImport(request)
+
+        let kept = try store.loadItem(id: episode.id)
+        XCTAssertNil(kept.sourceCompletedAt)
+        XCTAssertNotNil(kept.addedAgainAt)
+        XCTAssertTrue(ItemFinishedRule.continuationSessions(kept, sessions: try store.loadSessions(itemId: episode.id)).isEmpty)
+    }
+
     /// Heard again to the end after the re-add: finished again, as any item.
     func testAnItemAddedAgainAndHeardToTheEndIsFinishedAgain() throws {
         let heard = try essayHeardTenDaysAgo()

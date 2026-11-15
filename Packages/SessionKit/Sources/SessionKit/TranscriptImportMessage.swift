@@ -29,7 +29,10 @@ public struct TranscriptImportMessage: Error, LocalizedError, Equatable, Sendabl
     }
 
     /// The name as a listener reads it inside curly quotes: one line, no control characters, at most 60.
-    public var displayName: String {
+    public var displayName: String { Self.displayName(for: fileName) }
+
+    /// The same cleaning for any file name a banner lists.
+    public static func displayName(for fileName: String) -> String {
         let cleaned = fileName.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : String($0) }.joined()
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)

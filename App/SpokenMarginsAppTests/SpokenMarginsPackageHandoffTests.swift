@@ -245,14 +245,23 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let first = try XCTUnwrap(ShareLinkURL(url: try XCTUnwrap(ShareLinkSealing.linkURL(base: URL(string: base + firstID)!, key: .random()))))
         let second = try XCTUnwrap(ShareLinkURL(url: try XCTUnwrap(ShareLinkSealing.linkURL(base: URL(string: base + secondID)!, key: .random()))))
 
-        opener.open(first, stage: { _ in XCTFail("the first link has no packet") }, fail: { message, _ in failures.first.append(message) })
+        // The first link's task holds `alive` through its `fail` closure and lets go only when it has finished, after any
+        // fail() it makes. Waiting for that, not a fixed 200 ms, is what makes "no error" mean something: a replaced link
+        // that reported "expired" more slowly than the sleep used to pass (#4313).
+        final class TaskAlive {}
+        var alive: TaskAlive? = TaskAlive()
+        weak let firstTaskAlive = alive
+        opener.open(first, stage: { _ in XCTFail("the first link has no packet") }, fail: { [alive] message, _ in
+            withExtendedLifetime(alive) { failures.first.append(message) }
+        })
+        alive = nil
         try await pollUntil { firstAnswer.isWaiting }
         XCTAssertTrue(firstAnswer.isWaiting, "the first link's download never started")
         opener.open(second, stage: { _ in XCTFail("the second link has no packet") }, fail: { message, _ in failures.second.append(message) })
+        XCTAssertNotNil(firstTaskAlive, "the first link's task is still waiting on its server")
         firstAnswer.answer()
-        try await pollUntil { !(failures.second.isEmpty || !firstAnswer.answered) }
-        // Give the replaced task time to reach its catch on the main actor.
-        try await Task.sleep(for: .milliseconds(200))
+        try await pollUntil { !failures.second.isEmpty && firstTaskAlive == nil }
+        XCTAssertNil(firstTaskAlive, "the replaced link's task never finished")
 
         XCTAssertEqual(failures.second, ["This link has expired. Ask your friend to share it again."])
         XCTAssertEqual(failures.first, [], "the replaced link must not show an error over the link the listener tapped next")
@@ -395,6 +404,66 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertGreaterThan(timeline, 0, "the packet should carry Margins")
         let shared = model.sharedMarginRows.filter { $0.layer.itemId == itemID }
         XCTAssertEqual(shared.count, timeline, "the Margins tab should list what the Timeline shows")
+    }
+
+    /// #4098: a Shared group's heading opens its item through `openItemFromTap`, the call the heading's button makes.
+    @MainActor
+    func testImportedPacketsSharedGroupHeadingOpensItsItem() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-import-shared-group-open")
+        let packageURL = root.appendingPathComponent("group.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-shared-group-open")
+        let model = Gate1AppModel(
+            sourceLinkResolver: FailingPackagePodcastLinkResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: root.appendingPathComponent("recipient.sqlite")
+        )
+        model.resetAndSeed()
+        await model.settleMarginRows()
+
+        model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+        await model.settleMarginRows()
+        let importedID = model.selectedItem.id
+
+        model.openLibrary()
+        XCTAssertNotEqual(model.screen, .item, "the listener is off the item before tapping the heading")
+
+        let entries = model.sharedMarginRows.map {
+            MarginCollection.SharedEntry(interjection: $0.interjection, layer: $0.layer, itemTitle: $0.itemTitle)
+        }
+        let groups = SharedMarginGroups.groups(from: entries, libraryItemIDs: Set(entries.compactMap(\.layer.itemId)))
+        let group = try XCTUnwrap(groups.first { $0.itemID == importedID }, "the packet's Margins form one group under their item")
+        XCTAssertTrue(group.inLibrary)
+        XCTAssertGreaterThan(group.count, 0)
+
+        model.openItemFromTap(id: try XCTUnwrap(group.itemID))
+        await model.settleItemOpen()
+        XCTAssertEqual(model.screen, .item)
+        XCTAssertEqual(model.selectedItem.id, importedID, "the heading opened the item the Margins belong to")
+    }
+
+    @MainActor
+    func testANamelessPacketImportGivesAnAFriendFollowingRow() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-import-nameless-following")
+        let packageURL = root.appendingPathComponent("nameless.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-nameless-following", sender: "Someone")
+        let model = Gate1AppModel(
+            sourceLinkResolver: FailingPackagePodcastLinkResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: root.appendingPathComponent("recipient.sqlite")
+        )
+        model.resetAndSeed()
+        await model.settleMarginRows()
+
+        model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+        await model.settleMarginRows()
+
+        XCTAssertEqual(model.followingFriends.first?.name, "A friend", "a packet with no usable sender name still has a Following row, first")
     }
 
     @MainActor
@@ -748,9 +817,20 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             layer,
             records: [resolved, absent]
         ))
-        XCTAssertFalse(Gate1AppModel.isImportedCommentaryLayerPlaybackEligible(
+        // A passage missing from this copy still has a Margin to play, after the others (#3789).
+        XCTAssertTrue(Gate1AppModel.isImportedCommentaryLayerPlaybackEligible(
             layer,
             records: [absent]
+        ))
+        XCTAssertFalse(Gate1AppModel.isImportedCommentaryLayerPlaybackEligible(
+            layer,
+            records: []
+        ))
+        var wrongSource = layer
+        wrongSource.sourceResolutionStatus = .wrongSource
+        XCTAssertFalse(Gate1AppModel.isImportedCommentaryLayerPlaybackEligible(
+            wrongSource,
+            records: [resolved, absent]
         ))
     }
 

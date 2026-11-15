@@ -374,11 +374,13 @@ final class SupertonicSpeechTests: XCTestCase {
         let renderer = TextRecordingSupertonicRenderer(template: try silentTemplate(root))
         let starts = ResumeStartCounter()
         let progress = GenerationProgressLog()
+        let decisions = ResumeDecisionLog()
         let client = SupertonicSpeechPlaybackClient(
             renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionActivator: {}, audioPlayerStarter: { _, _ in starts.bump() },
             observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
-            onGenerationProgress: { progress.append($0.completedChunks) }
+            onGenerationProgress: { progress.append($0.completedChunks) },
+            onResumeDecision: { decisions.add($0) }
         )
         // Sized so the chunk boundary falls between " citation" and "1": the first chunk ends after
         // "citation", and the second starts at "1", which maps back to "[".
@@ -392,8 +394,13 @@ final class SupertonicSpeechTests: XCTestCase {
         let progressBefore = progress.completed.count
         let paused = try XCTUnwrap(client.currentCharOffset())
         try client.pause()
+        let decisionsBefore = decisions.values.count
         try client.play(targetId: "rank2", from: paused)
-        try? await Task.sleep(for: .milliseconds(300))
+        // play() picks its path before it returns, so the decision a wrong mapping would change is already made; a fixed
+        // 300 ms passed for a restart whose first render was slower than that (#4313).
+        let paths = decisions.values.dropFirst(decisionsBefore).map { $0["path"] ?? "" }
+        XCTAssertEqual(paths.count, 1, "\(decisions.values)")
+        XCTAssertTrue(paths.allSatisfy { ["resume_player", "seek_player"].contains($0) }, "the play kept the current chunk's player: \(paths)")
         XCTAssertFalse(progress.completed.dropFirst(progressBefore).contains(0),
                        "no restart: progress never went back to 0 (\(progress.completed))")
         let renders = await renderer.renders
@@ -512,12 +519,14 @@ final class SupertonicSpeechTests: XCTestCase {
         let renderer = TextRecordingSupertonicRenderer(template: template)
         let starts = ResumeStartCounter()
         let progress = GenerationProgressLog()
+        let decisions = ResumeDecisionLog()
         let client = SupertonicSpeechPlaybackClient(
             renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionActivator: {},
             audioPlayerStarter: { player, rate in starts.bump(); player.volume = 0; player.playImmediately(atRate: rate) },
             observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
-            onGenerationProgress: { progress.append($0.completedChunks) }
+            onGenerationProgress: { progress.append($0.completedChunks) },
+            onResumeDecision: { decisions.add($0) }
         )
         let text = (1...10).map { "Sentence \($0) contains enough ordinary words to keep the narration moving through several chunks." }
             .joined(separator: " ")
@@ -527,12 +536,19 @@ final class SupertonicSpeechTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(400))
         let progressBefore = progress.completed.count
         let rendersBefore = await renderer.renders
+        let decisionsBefore = decisions.values.count
 
         try client.play(targetId: "item", from: try XCTUnwrap(client.currentCharOffset()))
         try client.play(targetId: "item", from: try XCTUnwrap(client.currentCharOffset()))
         try client.setPlaybackRate(1.5)
         try client.play(targetId: "item", from: max(0, try XCTUnwrap(client.currentCharOffset()) + 20))
-        try await Task.sleep(for: .milliseconds(400))
+        // Each play picks its path before it returns and a rate change never renders, so the restart #303 was is
+        // already decided here; a fixed 400 ms passed for a restart whose render was slower than that (#4313).
+        let paths = decisions.values.dropFirst(decisionsBefore).map { $0["path"] ?? "" }
+        // Only the live player's own paths: a restart, a planned or awaited render or a cached chunk would each start a
+        // render or a player the checks below could only see later.
+        XCTAssertEqual(paths.count, 3, "\(decisions.values)")
+        XCTAssertTrue(paths.allSatisfy { ["resume_player", "seek_player"].contains($0) }, "every play kept the live audio: \(paths)")
 
         XCTAssertFalse(progress.completed.dropFirst(progressBefore).contains(0),
                        "no new generation: progress never went back to 0 (\(progress.completed))")
@@ -574,6 +590,9 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(starts.value, 1, "in the same player")
         try client.stop()
     }
+
+    /// Stall-monitor samples that span stallClient's 400 ms stall threshold at one per 100 ms, with one to spare (#4313).
+    private let samplesPastTheStallThreshold = 6
 
     private func stallClient(
         _ log: StallEventLog, template: URL, plays: Bool,
@@ -851,9 +870,10 @@ final class SupertonicSpeechTests: XCTestCase {
         let fallback = RecordingFallbackAudioClient()
         fallback.startStatus = .pending
         let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let clockReads = ResumeStartCounter()
         let client = stallClient(
             log, template: template, plays: false, playsFromStart: 3, fallback: fallback, renderer: renderer,
-            renderingAllowed: { true }
+            renderingAllowed: { true }, playerClock: { player in clockReads.bump(); return player.currentTime().seconds }
         )
         _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
         try client.play(targetId: "seek", from: 0)
@@ -866,8 +886,13 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(log.startCount, 3, "the seek plays the kept chunk in a new player")
         XCTAssertFalse(client.isSystemVoiceActive, "the chosen voice is back")
 
-        // Past the time the old wait had left: nothing from it may land on the new play.
-        try await Task.sleep(for: .milliseconds(900))
+        // Nothing from the old wait may land on the new play. The stall monitor waits out a hand-over before it reads the
+        // player's clock again, so clock reads after the seek mean the old wait has returned. A sample can read the clock
+        // twice (once more to see whether a hand-over is over), so twice the samples still span the 400 ms stall
+        // threshold; a fixed 900 ms passed for a wait slower than that (#4313).
+        let readsAtSeek = clockReads.value
+        try await pollUntil { clockReads.value >= readsAtSeek + 2 * samplesPastTheStallThreshold }
+        XCTAssertGreaterThanOrEqual(clockReads.value, readsAtSeek + 2 * samplesPastTheStallThreshold, "the stall monitor kept sampling")
         XCTAssertFalse(log.values.contains("supertonic.stall_handover_failed"), "\(log.values)")
         XCTAssertFalse(log.values.contains("supertonic.stall_paused"), "\(log.values)")
         XCTAssertEqual(client.playbackTransportState(targetId: "seek"), .playing, "the seek is still playing")
@@ -900,7 +925,11 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(fallback.playedOffsets.count, 2, "the iOS voice is asked again from the new place")
         XCTAssertEqual(log.fallbackReasons, ["supertonic_player_stalled"], "the app is told the voice changed")
         XCTAssertTrue(client.isSystemVoiceActive)
-        try await Task.sleep(for: .milliseconds(700))
+        // The stall monitor waits out a hand-over before it reads the iOS voice's place again, so reads after the play
+        // mean the old wait has returned; a fixed 700 ms passed for a wait slower than that (#4313).
+        let readsAtPlay = fallback.progressReads
+        try await pollUntil { fallback.progressReads >= readsAtPlay + samplesPastTheStallThreshold }
+        XCTAssertGreaterThanOrEqual(fallback.progressReads, readsAtPlay + samplesPastTheStallThreshold, "the stall monitor kept sampling")
         XCTAssertFalse(log.values.contains("supertonic.stall_paused"), "\(log.values)")
         XCTAssertEqual(log.startCount, 2, "no Supertonic player starts")
         try client.stop()
@@ -1385,6 +1414,8 @@ final class SupertonicSpeechTests: XCTestCase {
         replay.client = client
         replay.fallback = fallback
         client.debugStallWillBeHandled = { replay.run() }
+        let staleHandled = CompletionFlag()
+        client.debugStallWasHandled = { if replay.didRun { staleHandled.set() } }
         _ = try client.prepareSpeechText("A long response that must remain playable when generation does not finish promptly.")
         try client.play(targetId: "replayed", from: 17)
         try await pollUntil { log.values.contains("fallback") }
@@ -1392,7 +1423,9 @@ final class SupertonicSpeechTests: XCTestCase {
         fallback.advancesPerRead = 0
         try await pollUntil { replay.didRun }
         XCTAssertTrue(replay.didRun, "the voice went silent and a stall was sampled: \(log.values)")
-        try await Task.sleep(for: .milliseconds(900))
+        // The stale stall's handling has finished, whatever it did; a fixed 900 ms passed for handling slower than that (#4313).
+        try await pollUntil { staleHandled.isSet }
+        XCTAssertTrue(staleHandled.isSet, "the stale stall was handled")
         XCTAssertEqual(fallback.playedOffsets, [17, 40], "only the listener's play started the voice: \(log.values)")
         XCTAssertFalse(log.values.contains { $0.hasPrefix("supertonic.stall") }, "\(log.values)")
         XCTAssertEqual(client.playbackTransportState(targetId: "replayed"), .playing)
@@ -1909,7 +1942,9 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.play(targetId: "item", from: 0)
         try await pollUntil { !renderer.made.isEmpty }
         try client.stop()
-        try await Task.sleep(for: .milliseconds(700))
+        // The render ignores the cancel and hands its file back later; wait for that file to go rather than a fixed 700 ms,
+        // which a slow runner turned into a failure and a slower stand-in into an unchecked leak (#4313).
+        try await pollUntil { !renderer.made.contains { FileManager.default.fileExists(atPath: $0.path) } }
         let made = renderer.made
         XCTAssertEqual(made.count, 1)
         XCTAssertFalse(made.contains { FileManager.default.fileExists(atPath: $0.path) }, "the stand-in file was deleted")
@@ -6407,6 +6442,8 @@ final class RecordingFallbackAudioClient: AudioPlaybackClient, SpokenProgressRep
     /// Words started, as the iOS voice counts them; nil for a voice that can't count them.
     var spokenWords: Int?
     var wordsPerRead = 0
+    /// How many times the place was asked for: the stall monitor asks once per sample (#4313).
+    private(set) var progressReads = 0
     /// Set to make the iOS voice refuse to start, as a session that can't be activated would.
     var playError: Error?
     /// What the iOS voice says about having begun: `.pending` is speech queued that never started.
@@ -6447,6 +6484,7 @@ final class RecordingFallbackAudioClient: AudioPlaybackClient, SpokenProgressRep
     }
 
     func spokenProgress() -> Int? {
+        progressReads += 1
         defer { spokenWords = spokenWords.map { $0 + wordsPerRead } }
         return spokenWords
     }

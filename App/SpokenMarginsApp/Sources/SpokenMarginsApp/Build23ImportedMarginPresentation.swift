@@ -51,10 +51,14 @@ struct Build23ImportedMarginPresentation: View {
     @ObservedObject var coordinator: Build23SharingCoordinator
 
     var showsMargins = true
+    /// The friend's intro above already names the sender, so the section's own "From Cole" heading is dropped (#3788).
+    var hidesHeading = false
 
     var body: some View {
-        Build23ImportedLayerList(layers: coordinator.importedLayers, coordinator: coordinator, showsMargins: showsMargins)
-            .equatable()
+        Build23ImportedLayerList(
+            layers: coordinator.importedLayers, coordinator: coordinator, showsMargins: showsMargins, hidesHeading: hidesHeading
+        )
+        .equatable()
     }
 }
 
@@ -62,6 +66,7 @@ private struct Build23ImportedLayerList: View, Equatable {
     let layers: [Build23ImportedLayerSnapshot]
     let coordinator: Build23SharingCoordinator
     let showsMargins: Bool
+    let hidesHeading: Bool
     /// The card whose "Hide this sender" was tapped, until the listener confirms or cancels (#2846).
     @State private var pendingHide: Build23ImportedLayerSnapshot?
     /// The layer and Margin ids of the Margin the listener is being asked to hide (#2846).
@@ -75,14 +80,17 @@ private struct Build23ImportedLayerList: View, Equatable {
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.layers == rhs.layers && lhs.coordinator === rhs.coordinator && lhs.showsMargins == rhs.showsMargins
+            && lhs.hidesHeading == rhs.hidesHeading
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(FriendArrivalWords.sectionTitle(senderLabels: layers.map(\.senderLabel)))
-                .font(.title3.weight(.bold))
-                .screenTitle()
-                .foregroundStyle(AppColors.text)
+            if !hidesHeading {
+                Text(FriendArrivalWords.sectionTitle(senderLabels: layers.map(\.senderLabel)))
+                    .font(.title3.weight(.bold))
+                    .screenTitle()
+                    .foregroundStyle(AppColors.text)
+            }
 
             if layers.isEmpty {
                 emptyState
@@ -248,7 +256,7 @@ private struct Build23ImportedLayerList: View, Equatable {
     @ViewBuilder
     private func marginRail(_ layer: Build23ImportedLayerSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Margin placement")
+            Text("Where they play")
                 .font(.headline)
                 .foregroundStyle(AppColors.text)
 
@@ -275,13 +283,13 @@ private struct Build23ImportedLayerList: View, Equatable {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(AppColors.text)
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("Margin placement. \(margin.positionDescription)")
+                .accessibilityLabel(margin.positionDescription)
 
             if let label = resolutionLabel(margin) {
                 Label(label, systemImage: "scope")
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
-                    .accessibilityLabel(Text("Placement resolution. \(label)"))
+                    .accessibilityLabel(Text(label))
             }
 
             if margin.canListen {

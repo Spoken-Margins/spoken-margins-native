@@ -66,6 +66,13 @@ final class AddFromFilesPlanTests: XCTestCase {
         XCTAssertEqual(plan([]).documentsAndCollections, [])
     }
 
+    /// #2997: transcript files take the document route; `TranscriptPickImport` then reads them by their own rule.
+    func testTranscriptFilesAreDocumentsSoOneRuleSeesThemInOrder() {
+        let result = plan(["a.vtt", "b.SRT", "c.docx", "d.txt", "e.md"])
+        XCTAssertEqual(result.documents.map(\.lastPathComponent), ["a.vtt", "b.SRT", "c.docx", "d.txt", "e.md"])
+        XCTAssertTrue(result.packets.isEmpty && result.audio.isEmpty && result.collections.isEmpty)
+    }
+
     func testThePacketExtensionIsTheOneThePacketArchiveWrites() {
         XCTAssertEqual(AddFromFilesPlan.packetExtension, "spokenmargins")
     }

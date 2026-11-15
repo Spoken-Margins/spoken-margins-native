@@ -1117,7 +1117,7 @@ public final class SessionEngine {
     /// What a re-add leaves as it is (#4178): the item the engine holds with its session still going, which is on
     /// screen or in Now Playing. One whose session has finished is held too, until the next item, but shows nowhere,
     /// so sharing it again marks it added again; `keepHeldItemInStep` then gives the held copy the same stamp.
-    private var itemIdsStillListening: Set<String> {
+    public var itemIdsStillListening: Set<String> {
         // The phase, not the status: Play from the beginning and Back reopen a finished session without changing it.
         if currentSession?.phase == .finished { return [] }
         return Set([currentSession?.itemId, currentItem?.id].compactMap { $0 })
@@ -6385,7 +6385,7 @@ public final class SessionEngine {
         lastSavedMediaTimeMs[stamped.id] = stamped.position.mediaTimeMs
         lastProgressWriteAt[stamped.id] = timestamp
         if unsavedProgressSessionId == stamped.id { unsavedProgressSessionId = nil }
-        if stamped.completionPercent > 98,
+        if stamped.completionPercent >= ItemFinishedRule.listenedPercent,
            completionPercentIsMeasured(stamped),
            var item = try? repository.loadItem(id: stamped.itemId),
            item.sourceCompletedAt == nil,

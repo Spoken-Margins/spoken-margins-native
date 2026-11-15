@@ -75,7 +75,9 @@ public enum SharedMarginExport {
             return .reference
         }
         let text = item.text ?? ""
-        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        // A meeting transcript is never embedded, whatever the sender confirms (#2997).
+        if SharedItemTransportRule.allowsEmbeddedText(item),
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            isAppAuthored || confirmsPrivateRights {
             return .embeddedText(
                 text: text,

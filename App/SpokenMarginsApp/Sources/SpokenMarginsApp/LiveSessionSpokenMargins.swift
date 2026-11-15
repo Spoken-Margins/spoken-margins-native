@@ -63,12 +63,23 @@ enum LiveSessionSpokenMargins {
     #endif
 }
 
+/// What `LiveSessionSpokenCapture` records with: the phone's recorder, or in a test a stand-in that hands back a
+/// recording without the microphone, so a test can tell a recording filed from one thrown away (#4311).
+protocol LiveSessionMarginRecorder: Sendable {
+    /// Throws when the recording can't start: a call holds the microphone, or the listener hasn't allowed it.
+    func checkCanRecord() async throws
+    func start() async throws
+    func stop() async throws -> LiveSessionPhoneRecorder.Recording?
+    func cancel() async
+    func isCapturing() async -> Bool
+}
+
 /// Records a spoken Margin on the phone during a live session with the app's Margin recorder (`SystemRecordingClient`),
 /// so the file is made and named exactly as an ordinary spoken Margin's. It is an actor: activating and deactivating
 /// the audio session and finalizing the file block, so they run off the main thread, one call at a time. The caller
 /// checks for a call and the microphone permission (`checkCanRecord`) first, so `start` has no suspension point a
 /// `stop` could slip into.
-actor LiveSessionPhoneRecorder {
+actor LiveSessionPhoneRecorder: LiveSessionMarginRecorder {
     enum Failure: LocalizedError {
         case onACall
         case microphoneDenied
@@ -95,6 +106,10 @@ actor LiveSessionPhoneRecorder {
     static func checkCanRecord() async throws {
         guard !LiveSessionSpokenMargins.isOnACall else { throw Failure.onACall }
         guard await SystemRecordingClient.requestRecordPermission() else { throw Failure.microphoneDenied }
+    }
+
+    nonisolated func checkCanRecord() async throws {
+        try await Self.checkCanRecord()
     }
 
     func start() throws {
@@ -160,15 +175,22 @@ final class LiveSessionSpokenCapture: ObservableObject {
         let startedAt: Date
     }
 
-    private let recorder = LiveSessionPhoneRecorder()
+    private let recorder: any LiveSessionMarginRecorder
     private let files: LiveSessionFileWorker
+    /// The on-device transcript of a filed recording; a test passes one that asks for no speech permission.
+    private let transcribe: @Sendable (String) async -> String?
     private var starting: Task<Void, Never>?
     private var watcher: Task<Void, Never>?
     private var cardUpdate: Task<Void, Never>?
     private var finishObserver: NSObjectProtocol?
 
-    init(files: LiveSessionFileWorker = .shared) {
+    init(
+        files: LiveSessionFileWorker = .shared, recorder: any LiveSessionMarginRecorder = LiveSessionPhoneRecorder(),
+        transcribe: @escaping @Sendable (String) async -> String? = { await LiveSessionSpokenMargins.transcribe(audioPath: $0) }
+    ) {
         self.files = files
+        self.recorder = recorder
+        self.transcribe = transcribe
         // Finish on the Lock Screen card matters most when no screen is open, so it is heard here, not by a screen (#3499).
         finishObserver = NotificationCenter.default.addObserver(
             forName: LiveSessionFinishMargin.requested, object: nil, queue: .main
@@ -193,7 +215,7 @@ final class LiveSessionSpokenCapture: ObservableObject {
         isStarting = true
         starting = Task { [weak self, recorder] in
             do {
-                try await LiveSessionPhoneRecorder.checkCanRecord()
+                try await recorder.checkCanRecord()
                 try await recorder.start()
                 if self?.sessionId == id { self?.isStarting = false }
                 self?.watchRecorder(for: id)
@@ -230,7 +252,7 @@ final class LiveSessionSpokenCapture: ObservableObject {
         let placedAt = photoPlacedAt
         photo = nil
         photoPlacedAt = nil
-        return Task { [weak self, recorder, files] in
+        return Task { [weak self, recorder, files, transcribe] in
             await started?.value // a stop tapped while the start was still opening the microphone waits for it
             self?.syncCard(for: id)
             do {
@@ -238,7 +260,9 @@ final class LiveSessionSpokenCapture: ObservableObject {
                     if let staged { await files.discardStaged(staged) }
                     return
                 }
-                await Self.file(recording, into: id, photo: staged, placedAt: placedAt, files: files) { [weak self] in
+                await Self.file(
+                    recording, into: id, photo: staged, placedAt: placedAt, files: files, transcribe: transcribe
+                ) { [weak self] in
                     self?.notice = LiveSessionPhotoMargin.couldNotKeepLine
                 }
             } catch {
@@ -304,7 +328,8 @@ final class LiveSessionSpokenCapture: ObservableObject {
 
     private static func file(
         _ recording: LiveSessionPhoneRecorder.Recording, into sessionId: String, photo staged: LiveSessionPhotoStore.Staged? = nil,
-        placedAt: Date? = nil, files: LiveSessionFileWorker, photoCouldNotBeKept: @MainActor () -> Void = {}
+        placedAt: Date? = nil, files: LiveSessionFileWorker, transcribe: @Sendable (String) async -> String?,
+        photoCouldNotBeKept: @MainActor () -> Void = {}
     ) async {
         let marginId = "phone-\(UUID().uuidString.lowercased())"
         let filed: LiveSession?
@@ -325,7 +350,7 @@ final class LiveSessionSpokenCapture: ObservableObject {
         }
         guard filed != nil else { return }
         NotificationCenter.default.post(name: LiveSessionSpokenMargins.changedOnDisk, object: nil)
-        guard let text = await LiveSessionSpokenMargins.transcribe(audioPath: recording.audioPath) else { return }
+        guard let text = await transcribe(recording.audioPath) else { return }
         await LiveSessionSpokenMargins.updateStored(in: files, marginId: marginId) { $0.setTranscript(text, forMarginId: marginId) }
     }
 }

@@ -140,23 +140,33 @@ final class WatchContractAppTests: XCTestCase {
     func testTheBoardGoesOutOnceMoreAfterATransportCommandEvenWhenNothingChanged() async throws {
         let receiver = makeReceiver(LiveSessionFileWorker(root: root))
         // #4058: the reply's own board and this settle board come from different tasks and can publish in either order.
-        // The test used to note the reply's board and wait for a newer one, so a reply slower than the settle (a loaded
-        // runner) left the settle board already published and nothing newer ever came. It now waits for a board computed
-        // at least one settle after the command, which only the settle board (or a reply that slow) can be.
-        let settle = Duration.milliseconds(300)
-        receiver.transportSettle = settle
+        // #4313: telling them apart by clock ("a board computed one settle after the command") also passed for a reply that
+        // slow, so a build without the settle board went green on a loaded runner. The reply is now held behind a filing
+        // pass stuck in transcription (a command that arrives mid-pass, which the settle must not wait for), so while it is
+        // held the settle board is the only board that can go out, however slow the runner.
+        receiver.transportSettle = .milliseconds(300)
         receiver.runTransport = { _ in } // the player refuses it
         let paused = WatchNowPlaying(itemId: "ep", title: "Episode", isPlaying: false, positionMs: 5_000, positionAt: Date())
         receiver.nowPlayingChanged(paused)
+        // That board comes from a task of its own; it must be out before `before` is read, or it could pass for the settle.
+        try await pollUntil { receiver.lastBoard?.nowPlaying == paused }
+        XCTAssertEqual(receiver.lastBoard?.nowPlaying, paused)
+        let held = TranscriptionGate()
+        receiver.transcribe = { _ in await held.wait(); return nil }
+        try deliver(receiver, WatchMarginTransfer(id: "w-hold", wallStart: Date(), durationMs: 1_000), bytes: "aac-hold")
+        receiver.processInbox()
+        try await pollUntil { held.isWaiting }
+        XCTAssertTrue(held.isWaiting, "the filing pass never reached transcription")
+        let before = try XCTUnwrap(receiver.lastBoard)
 
-        let commandAt = Date()
-        let settledAfter = commandAt.addingTimeInterval(0.3)
-        _ = try await receiver.handle(try overTheWire(envelope(.transport(.play), sentAt: commandAt))).value
+        let reply = receiver.handle(try overTheWire(envelope(.transport(.play), sentAt: Date())))
 
-        try await pollUntil { (receiver.lastBoard?.phoneTime ?? .distantPast) >= settledAfter }
+        try await pollUntil(timeout: .seconds(10)) { receiver.lastBoard != before }
         let settled = try XCTUnwrap(receiver.lastBoard)
-        XCTAssertGreaterThanOrEqual(settled.phoneTime, settledAfter, "a board goes out after the command, with nothing changed")
+        XCTAssertNotEqual(settled, before, "a board goes out after the command, with nothing changed, while the reply is held")
         XCTAssertEqual(settled.nowPlaying?.isPlaying, false, "and it says the item is still paused")
+        held.answer()
+        _ = await reply.value
     }
 
     /// Hello after a lost answer: the reply answers what the phone filed; the rest gets nothing and is sent again.
@@ -247,5 +257,38 @@ final class WatchContractAppTests: XCTestCase {
             }
             try await Task.sleep(for: .milliseconds(50))
         }
+    }
+}
+
+/// Holds a transcription until `answer()`, so a filing pass stays under way for as long as a test needs (#4313).
+private final class TranscriptionGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var waiting = false
+    private var released = false
+
+    var isWaiting: Bool { lock.lock(); defer { lock.unlock() }; return waiting }
+
+    func wait() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            if released {
+                lock.unlock()
+                continuation.resume()
+                return
+            }
+            self.continuation = continuation
+            waiting = true
+            lock.unlock()
+        }
+    }
+
+    func answer() {
+        lock.lock()
+        released = true
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume()
     }
 }

@@ -68,7 +68,9 @@ export interface PacketWritten {
   bytes: Uint8Array;
   fileName: string;
   mimeType: string;
-  /** Ids of the Margins in the file. */
+  /** The packet's content digest: the `<digest>` in the `packet:<digest>:margin-000N` id its Margins have in a reply. */
+  contentDigest: string;
+  /** Ids of the Margins in the file, in the order the writer named them `margin-0001`, `margin-0002`, ... */
   included: string[];
   /** The app's words for Margins left out (no words to share), when any were. */
   notice?: string;
