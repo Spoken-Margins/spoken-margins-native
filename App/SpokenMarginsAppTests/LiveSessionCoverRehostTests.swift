@@ -82,6 +82,7 @@ final class LiveSessionCoverRehostTests: XCTestCase {
     /// Gives the row a new identity, so SwiftUI tears it down and builds it again, with the model publishing in between
     /// the way it does while audio renders. The pause lets a cover dismissed with the old row present again.
     private func rebuildTheRow(_ churn: ListChurn, model: Gate1AppModel) async throws {
+        // fixed-count ok: it makes `rowRebuilds` row rebuilds, one per pass, and waits for no condition; the pause is a settle, not a deadline
         for _ in 0..<Self.rowRebuilds {
             churn.rowGeneration += 1
             model.objectWillChange.send()
