@@ -4985,8 +4985,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         defer { mounted.close() }
 
         for tap in 1...2 {
-            let timeline = try await mounted.waitForNode("the Timeline pane button") { $0.identifier == PlaybackPane.timeline.accessibilityIdentifier }
-            XCTAssertTrue(timeline.activate(), "the Timeline pane button refused activation")
+            _ = try await mounted.waitForNode("the Timeline pane button") { $0.identifier == PlaybackPane.timeline.accessibilityIdentifier }
+            XCTAssertTrue(mounted.activate { $0.identifier == PlaybackPane.timeline.accessibilityIdentifier },
+                          "the Timeline pane button refused activation")
             _ = try await mounted.waitForNode("the Timeline selected before tap \(tap)") {
                 $0.identifier == PlaybackPane.timeline.accessibilityIdentifier && $0.traits.contains(.selected)
             }

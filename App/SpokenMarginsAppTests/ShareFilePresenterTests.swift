@@ -85,13 +85,13 @@ final class ShareFilePresenterTests: XCTestCase {
         let isShareDiagnostics = { (node: AccessibilityNode) in node.identifier == "settings.shareDiagnostics.button" }
         _ = try await scrollToNode("the Share Diagnostics button", in: mounted.window, isShareDiagnostics)
         try await waitUntilQuiet { ScreenRedrawProbe.count("settings") }
-        // Found again after the screen settles: a list cell rebuilt meanwhile would leave the first element dead.
-        let shareDiagnostics = try await scrollToNode("the Share Diagnostics button", in: mounted.window, isShareDiagnostics)
         var modelPublishes = 0
         let watch = model.objectWillChange.sink { modelPublishes += 1 }
         defer { watch.cancel() }
 
-        XCTAssertTrue(shareDiagnostics.activate(), "the Share Diagnostics button refused activation")
+        // Activation finds the element afresh, so a list cell rebuilt while the screen settled is not a dead one.
+        XCTAssertTrue(MountedTree(window: mounted.window, previousKeyWindow: nil).activate(isShareDiagnostics),
+                      "the Share Diagnostics button refused activation")
         let sheet = try await presentedActivitySheet(in: mounted.window)
         // Let the sheet finish coming up, so the looks below are of a settled sheet, not one still animating in.
         try await Task.sleep(for: .milliseconds(500))

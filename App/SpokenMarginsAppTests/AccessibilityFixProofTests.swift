@@ -452,11 +452,6 @@ struct AccessibilityNode {
     let frame: CGRect
     /// What Voice Control matches a spoken name against (#4312).
     let inputLabels: [String]
-    /// The element itself, so a test can activate it the way VoiceOver or Voice Control does.
-    let element: NSObject
-
-    /// Activates the element as a double-tap in VoiceOver does. False when it refused.
-    func activate() -> Bool { element.accessibilityActivate() }
 }
 
 @MainActor
@@ -500,15 +495,24 @@ struct MountedTree {
 
     private struct NodeNotFound: Error {}
 
-    private static func collect(_ node: NSObject, into found: inout [AccessibilityNode], visited: inout Set<ObjectIdentifier>) {
-        guard visited.insert(ObjectIdentifier(node)).inserted else { return }
-        let identifier = Self.identifier(of: node)
-        let label = node.accessibilityLabel
-        if label?.isEmpty == false || identifier?.isEmpty == false {
-            found.append(AccessibilityNode(label: label, identifier: identifier, traits: node.accessibilityTraits,
-                                           frame: node.accessibilityFrame,
-                                           inputLabels: node.accessibilityUserInputLabels ?? [], element: node))
-        }
+    /// Activates the first node `matches` picks, as a VoiceOver double tap does. False when none matched or the element
+    /// refused the activation.
+    func activate(_ matches: (AccessibilityNode) -> Bool) -> Bool {
+        window.layoutIfNeeded()
+        var visited = Set<ObjectIdentifier>()
+        guard let element = Self.firstElement(in: window, matching: matches, visited: &visited) else { return false }
+        return element.accessibilityActivate()
+    }
+
+    private static func node(for element: NSObject) -> AccessibilityNode? {
+        let identifier = Self.identifier(of: element)
+        let label = element.accessibilityLabel
+        guard label?.isEmpty == false || identifier?.isEmpty == false else { return nil }
+        return AccessibilityNode(label: label, identifier: identifier, traits: element.accessibilityTraits,
+                                 frame: element.accessibilityFrame, inputLabels: element.accessibilityUserInputLabels ?? [])
+    }
+
+    private static func children(of node: NSObject) -> [NSObject] {
         var children: [NSObject] = []
         if let view = node as? UIView { children += view.subviews }
         children += (node.accessibilityElements ?? []).compactMap { $0 as? NSObject }
@@ -516,7 +520,23 @@ struct MountedTree {
         if count != NSNotFound, count > 0 {
             children += (0..<count).compactMap { node.accessibilityElement(at: $0) as? NSObject }
         }
-        for child in children { collect(child, into: &found, visited: &visited) }
+        return children
+    }
+
+    private static func collect(_ node: NSObject, into found: inout [AccessibilityNode], visited: inout Set<ObjectIdentifier>) {
+        guard visited.insert(ObjectIdentifier(node)).inserted else { return }
+        if let described = Self.node(for: node) { found.append(described) }
+        for child in children(of: node) { collect(child, into: &found, visited: &visited) }
+    }
+
+    private static func firstElement(in node: NSObject, matching matches: (AccessibilityNode) -> Bool,
+                                     visited: inout Set<ObjectIdentifier>) -> NSObject? {
+        guard visited.insert(ObjectIdentifier(node)).inserted else { return nil }
+        if let described = Self.node(for: node), matches(described) { return node }
+        for child in children(of: node) {
+            if let found = firstElement(in: child, matching: matches, visited: &visited) { return found }
+        }
+        return nil
     }
 
     /// SwiftUI's vended elements answer `accessibilityIdentifier` without declaring `UIAccessibilityIdentification`,

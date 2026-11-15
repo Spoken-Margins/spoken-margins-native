@@ -22,6 +22,7 @@ final class NativeTextReaderViewTests: XCTestCase {
         let position = try XCTUnwrap(view.position(from: view.beginningOfDocument, offset: sentence.location))
         XCTAssertTrue(view.bounds.intersects(view.caretRect(for: position)), "Opening must show the beginning even when the sentence exceeds the viewport")
         XCTAssertNotNil(view.attributedText.attribute(.backgroundColor, at: sentence.location + sentence.length - 1, effectiveRange: nil), "The complete sentence stays highlighted")
+        assertUnderlined(view, sentence)
     }
 
     func testReaderScrollsToTheLateSentenceAfterLayoutAndKeepsUserSelectionOnUpdates() throws {
@@ -45,6 +46,7 @@ final class NativeTextReaderViewTests: XCTestCase {
         let caret = view.caretRect(for: position)
         XCTAssertTrue(view.bounds.intersects(caret), "The highlighted sentence start should be visible after layout")
         XCTAssertNotNil(view.attributedText.attribute(.backgroundColor, at: sentence.location, effectiveRange: nil))
+        assertUnderlined(view, sentence)
 
         let selection = NSRange(location: 0, length: 120)
         view.selectedRange = selection
@@ -54,6 +56,52 @@ final class NativeTextReaderViewTests: XCTestCase {
         view.layoutIfNeeded()
         XCTAssertEqual(view.selectedRange, selection, "A normal SwiftUI update must preserve a multi-sentence selection")
         XCTAssertEqual(view.contentOffset, scrolled, "The initial scroll must not run again after the listener browses")
+    }
+
+    /// The mark is a fill and a thick underline, so it does not rest on hue (#3736). Both cover exactly the sentence.
+    private func assertUnderlined(_ view: NativeTextReaderView, _ sentence: NSRange, file: StaticString = #filePath, line: UInt = #line) {
+        let thick = NSUnderlineStyle.thick.rawValue
+        for location in [sentence.location, sentence.location + sentence.length - 1] {
+            XCTAssertEqual(view.attributedText.attribute(.underlineStyle, at: location, effectiveRange: nil) as? Int, thick,
+                           "The sentence is underlined at \(location)", file: file, line: line)
+            XCTAssertNotNil(view.attributedText.attribute(.underlineColor, at: location, effectiveRange: nil),
+                            "The underline has its own colour at \(location)", file: file, line: line)
+        }
+        if sentence.location > 0 {
+            XCTAssertNil(view.attributedText.attribute(.underlineStyle, at: sentence.location - 1, effectiveRange: nil),
+                         "The text before the sentence is not underlined", file: file, line: line)
+        }
+        let after = sentence.location + sentence.length
+        if after < view.attributedText.length {
+            XCTAssertNil(view.attributedText.attribute(.underlineStyle, at: after, effectiveRange: nil),
+                         "The text after the sentence is not underlined", file: file, line: line)
+        }
+    }
+
+    /// A finished item's playhead sits at 99 or 100 percent of the text: the reader marks the sentence it is given
+    /// (the last one) and nothing else, never crashes, and shows nothing marked when it is given none (#3736).
+    func testAFinishedItemMarksTheLastSentenceOrNothing() throws {
+        let text = (1...12).map { "Sentence \($0) is here." }.joined(separator: " ")
+        let length = text.count
+        for offset in [length * 99 / 100, length] {
+            var index = PlaybackLivePassage.Index(text: text)
+            index.update(offset: offset)
+            let reader = try XCTUnwrap(index.chapter).reader(at: offset)
+            let view = NativeTextReaderView()
+            view.frame = CGRect(x: 0, y: 0, width: 320, height: 240)
+            view.display(reader, font: .systemFont(ofSize: 18))
+            view.layoutIfNeeded()
+            if let sentence = reader.currentSentenceRange, sentence.length > 0 {
+                XCTAssertNotNil(view.attributedText.attribute(.backgroundColor, at: sentence.location, effectiveRange: nil), "offset \(offset)")
+                assertUnderlined(view, sentence)
+            } else {
+                var marked = false
+                view.attributedText.enumerateAttribute(.underlineStyle, in: NSRange(location: 0, length: view.attributedText.length)) { value, _, _ in
+                    if value != nil { marked = true }
+                }
+                XCTAssertFalse(marked, "No sentence, no underline (offset \(offset))")
+            }
+        }
     }
 
     /// Mounts the whole sheet: the reader tests above build the UITextView alone and cannot see
