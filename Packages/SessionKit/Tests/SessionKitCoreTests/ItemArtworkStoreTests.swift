@@ -266,6 +266,37 @@ final class ItemArtworkStoreTests: XCTestCase {
     }
 }
 
+extension ItemArtworkStoreTests {
+    /// An item from before this build, opened before any feed has refreshed: the show comes from the entries the
+    /// app already stored, and the show image from the Following cache it already kept.
+    func testAnItemFromBeforeThisBuildFindsItsShowFromStoredEntriesWithNoRefresh() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "item-artwork-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = InMemorySessionRepository()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ImageFeedURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        // The earlier build: it followed the show and kept the show image, and knew nothing of item pictures.
+        let earlier = FollowedSourceCoordinator(
+            repository: repository, session: session,
+            artworkFile: directory.appending(path: FollowingArtworkCache.fileName), signals: nil)
+        _ = try await earlier.follow(urlString: "https://images.example/feed.xml")
+        var episode = Item(id: "item-old", title: "Old", mediaType: "audio", text: nil, externalReference: nil, status: "ready")
+        episode.episodeGUID = "guid-2"
+        try repository.saveItem(episode)
+
+        // This build, relaunched offline: no feed is fetched, and the item file does not exist yet.
+        let offline = URLSessionConfiguration.ephemeral
+        offline.protocolClasses = []
+        let current = FollowedSourceCoordinator(
+            repository: repository, session: URLSession(configuration: offline),
+            artworkFile: directory.appending(path: FollowingArtworkCache.fileName),
+            itemArtworkFile: directory.appending(path: ItemArtworkStore.fileName), signals: nil)
+        let store = await current.itemArtwork()
+        XCTAssertEqual(store.recordedArtworkURL(forItem: "item-old")?.absoluteString, "https://images.example/show.jpg")
+    }
+}
+
 private final class ImageFeedURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "images.example" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
