@@ -29,6 +29,11 @@ public struct LaunchHistory: Codable, Sendable, Equatable {
         public var libraryReadyMs: Int?
         /// `App.init` to the root view showing the loaded Library: the first usable screen.
         public var usableMs: Int?
+        /// `App.init` to the launch's feed refresh finishing: Following is up to date (#4388). Nil until then, and for a
+        /// launch whose refresh never ran or never finished. Older builds ignore the key.
+        public var followingFreshMs: Int?
+        /// True when that refresh covered only Following's first screen (Low Power Mode), so the other feeds are still stale.
+        public var followingFirstScreenOnly: Bool?
         public var libraryItems: Int?
         /// Set when the Library could not be opened, in place of `libraryReadyMs`.
         public var libraryFailed: Bool?
@@ -44,7 +49,7 @@ public struct LaunchHistory: Codable, Sendable, Equatable {
     }
 
     public enum Stage: String, Sendable {
-        case rootAppear, libraryReady, usable
+        case rootAppear, libraryReady, usable, followingFresh
     }
 
     public static let launchCapacity = 10
@@ -76,7 +81,7 @@ public struct LaunchHistory: Codable, Sendable, Equatable {
 
     /// Marks a stage of the newest launch. A negative elapsed time (the clock moved) is dropped, a stage
     /// already marked keeps its first time, and the first usable screen can't come before the Library is ready.
-    public mutating func mark(_ stage: Stage, elapsedMs: Int, libraryItems: Int? = nil, libraryFailed: Bool = false) {
+    public mutating func mark(_ stage: Stage, elapsedMs: Int, libraryItems: Int? = nil, libraryFailed: Bool = false, firstScreenOnly: Bool = false) {
         guard var launch = launches.last, elapsedMs >= 0 else { return }
         switch stage {
         case .rootAppear: launch.rootAppearMs = launch.rootAppearMs ?? elapsedMs
@@ -90,6 +95,10 @@ public struct LaunchHistory: Codable, Sendable, Equatable {
         case .usable:
             guard launch.libraryReadyMs != nil else { return }
             launch.usableMs = launch.usableMs ?? elapsedMs
+        case .followingFresh:
+            guard launch.followingFreshMs == nil else { return }
+            launch.followingFreshMs = elapsedMs
+            launch.followingFirstScreenOnly = firstScreenOnly ? true : nil
         }
         launches[launches.count - 1] = launch
     }
@@ -134,6 +143,9 @@ public struct LaunchHistory: Codable, Sendable, Equatable {
                 parts.append("usable \(value)ms")
             } else if !isNewest {
                 parts.append(launch.rootAppearMs == nil ? "no_ui" : "no_usable_screen")
+            }
+            if let value = launch.followingFreshMs {
+                parts.append("following_fresh \(value)ms" + (launch.followingFirstScreenOnly == true ? " first_screen_only" : ""))
             }
             return parts.joined(separator: " ")
         }

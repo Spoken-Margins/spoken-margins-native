@@ -482,6 +482,69 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
+    // MARK: #4186 PR 1: the length the item screen and the Library row both read
+
+    func testDetailLengthIsTheMediaLengthNotTheTimelinesAndMatchesTheLibraryRow() throws {
+        try withFixture { fixture, store, _ in
+            var timelineOnly = item("T")
+            timelineOnly.media = ItemMedia(sourceType: .nativeMediaFile, url: "file:///T.mp3")
+            try store.saveItem(timelineOnly)
+            try store.saveTranscriptTimeline(SourceTranscriptTimeline(id: "tt", itemId: "T", createdAt: Date(timeIntervalSince1970: 5),
+                timeline: TranscriptTimeline(segments: [MediaTimelineSegment(id: "s", startMs: 0, endMs: 1000, text: "Hi.")],
+                                             chapters: [], durationMs: 900_000)))
+            var both = item("B")
+            both.media = ItemMedia(sourceType: .nativeMediaFile, url: "file:///B.mp3", durationMs: 3_725_000)
+            try store.saveItem(both)
+            try store.saveTranscriptTimeline(SourceTranscriptTimeline(id: "tb", itemId: "B", createdAt: Date(timeIntervalSince1970: 5),
+                timeline: TranscriptTimeline(segments: [MediaTimelineSegment(id: "s", startMs: 0, endMs: 1000, text: "Hi.")],
+                                             chapters: [], durationMs: 900_000)))
+
+            let onlyTimeline = try fixture.load("T", store)
+            XCTAssertNil(onlyTimeline.lengthMs, "the transcript timeline's length is never the shown length")
+            XCTAssertEqual(onlyTimeline.mediaDurationMs, 900_000, "the rail and Margin placement keep their fallback")
+            XCTAssertTrue(onlyTimeline.isNativeAudio)
+            XCTAssertNil(onlyTimeline.lengthTextCharacterCount)
+
+            let bothDetail = try fixture.load("B", store)
+            XCTAssertEqual(bothDetail.lengthMs, 3_725_000)
+            XCTAssertEqual(bothDetail.mediaDurationMs, 3_725_000)
+
+            // One value on both screens, saved through the store: the row and the detail state agree.
+            let summaries = try store.listItemSummaries()
+            let snapshot = LibraryReadSnapshot(items: summaries, sessions: [], manifests: [], jobs: [], downloads: [])
+            let rows = LibraryRowBuilder.rows(from: snapshot, context: StartupAudioContext(
+                hasAcceptedCurrentTerms: true, hasSupertonicVoice: true, suppressedItemIds: [], liveSpeechFallbackItemIds: [],
+                failedItemIds: [], preparingItemId: nil, playingItemId: nil, renderSignature: nil, allowsRendering: true))
+            XCTAssertEqual(rows.first { $0.id == "B" }?.mediaDurationMs, bothDetail.lengthMs)
+            XCTAssertEqual(rows.first { $0.id == "T" }?.mediaDurationMs, onlyTimeline.lengthMs)
+        }
+    }
+
+    func testDetailOfTextCarriesItsCharacterCountAndNoLengthAndPreparedNarrationStaysText() throws {
+        try withFixture { fixture, store, _ in
+            try store.saveItem(item("A"))
+            var narrated = item("N")
+            narrated.media = ItemMedia(sourceType: .generatedTTSPrerendered, durationMs: 900_000)
+            try store.saveItem(narrated)
+            var episode = item("E")
+            episode.media = ItemMedia(sourceType: .remoteStream, url: "https://example.com/e.mp3", durationMs: 600_000)
+            try store.saveItem(episode)
+
+            let text = try fixture.load("A", store)
+            XCTAssertNil(text.lengthMs)
+            XCTAssertEqual(text.lengthTextCharacterCount, ListeningTimeEstimator.characterCount(of: "One.\n\nTwo."))
+            XCTAssertFalse(text.isNativeAudio)
+
+            let narration = try fixture.load("N", store)
+            XCTAssertNil(narration.lengthMs, "prepared narration is text")
+            XCTAssertNotNil(narration.lengthTextCharacterCount)
+
+            let audio = try fixture.load("E", store)
+            XCTAssertEqual(audio.lengthMs, 600_000)
+            XCTAssertNil(audio.lengthTextCharacterCount, "recorded audio is never counted by its transcript's characters")
+        }
+    }
+
     /// What the app model passes in beside the id: the snapshot's selected item and session.
     private final class Fixture {
         var snapshotItemId: String?
