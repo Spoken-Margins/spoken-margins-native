@@ -26,6 +26,7 @@ extension Gate1AppModel {
         playbackRate: Double? = nil,
         origin: String = "app_ui"
     ) {
+        compactBeginContext.noteCommand(command, origin: origin) // before any guard below, so a dropped command still counts (#4414)
         // Every Now Playing command that reaches here while a Margin records, before a guard below can drop it, so
         // the export tells "never arrived" from "arrived and ignored" (#3650).
         if snapshot.isRecording, origin.hasPrefix("now_playing") {
