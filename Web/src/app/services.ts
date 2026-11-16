@@ -47,6 +47,7 @@ const packets: PacketPort = {
       episode,
       margins: read.margins,
       textMarginCount: read.textMargins.length,
+      percentMargins: read.percentMargins,
     };
   },
   async writePacket(episode, margins, show, sender) {

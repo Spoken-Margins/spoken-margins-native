@@ -6,6 +6,8 @@
 // Seeded links, all under the test vector's key (research/B4/contracts/fixtures/share-link-sealing-vector.json):
 //   AbCdEf123456   the vector's own sealed packet and preview, byte for byte (its packet is not a real packet)
 //   vectorvoice01  Contracts/fixtures/web-packets/web-voice.spokenmargins sealed under the vector's key
+//   vectorpost01   a Substack post's Margins: the web-written packet's Margins moved onto the post's words, each with
+//                  only how far through the post it sits (what the iPhone app writes for an article; #4421)
 //   expired00001   answers 410, as an expired link does
 //   switchedoff1   answers 503 `disabled`, as the server does while links are switched off
 // Run: node e2e/link-stub-server.ts (Node 24 strips the types). Port 4174, or SM_LINK_STUB_PORT.
@@ -15,6 +17,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { keyFromFragment, PART } from '../src/packet/share-link.ts';
 import { sealPart } from '../src/cli/link-sealing.ts';
+import { withLayer } from '../src/packet/resign.ts';
 
 const web = fileURLToPath(new URL('../', import.meta.url));
 const repo = fileURLToPath(new URL('../../', import.meta.url));
@@ -38,6 +41,30 @@ const voicePacket = new Uint8Array(readFileSync(join(repo, 'Contracts/fixtures/w
 links.set('vectorvoice01', {
   preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
   packet: await sealPart(voicePacket, PART.packet, vectorKey),
+});
+
+const writtenPacket = new Uint8Array(readFileSync(join(repo, 'Contracts/fixtures/web-packets/web-written.spokenmargins')));
+const articlePacket = await withLayer(
+  writtenPacket,
+  (records) => {
+    // 20% and 60% of the way through the post, on its words, with no time: the app's anchor for a Margin on an article.
+    records.forEach((record, i) => {
+      record.anchor = { anchorType: 'text', startChar: 400 + 1000 * i, endChar: 460 + 1000 * i, exactText: 'A sentence in the post.', prefix: 'Before.', suffix: 'After.', roughPercent: [20, 60][i], machineEvidenceAssetIds: [] };
+    });
+  },
+  (manifest) => {
+    manifest.item = {
+      canonicalURL: 'https://thezvi.substack.com/p/leaked-anthropic-draft-ai-regulatory',
+      itemType: 'text',
+      title: 'Leaked Anthropic Draft AI Regulatory Bill Is Unacceptable and Troubling',
+      publisher: 'Zvi Mowshowitz',
+      source: { sourceType: 'newsletter', canonicalURL: 'https://thezvi.substack.com/p/leaked-anthropic-draft-ai-regulatory' },
+    };
+  },
+);
+links.set('vectorpost01', {
+  preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
+  packet: await sealPart(articlePacket, PART.packet, vectorKey),
 });
 
 const TYPES: Record<string, string> = {
