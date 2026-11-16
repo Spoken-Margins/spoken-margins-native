@@ -18,54 +18,6 @@ struct WrittenMarginDraft: Equatable {
     var lockedTargetID: String { capture.targetId }
 }
 
-enum AppRoot: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case library
-    case sources
-    case margins
-    case settings
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .library: "Library"
-        case .sources: "Following"
-        case .margins: "Margins"
-        case .settings: "Settings"
-        }
-    }
-
-    /// What the Item screen's back button says: the tab it returns to (#3214). Settings has no items, so it
-    /// reads just "Back".
-    var itemBackTitle: String {
-        switch self {
-        case .library, .sources, .margins: title
-        case .settings: "Back"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .library: "books.vertical"
-        case .sources: "dot.radiowaves.left.and.right"
-        case .margins: "quote.bubble"
-        case .settings: "gearshape"
-        }
-    }
-}
-
-enum AppRoute: Hashable, Sendable {
-    case item(String)
-    case nowPlaying
-    case timeline(String?)
-    case marginDetail(String)
-    case settings
-    case offlineStorage
-    case export(String?)
-    case batchExport
-    case help
-}
-
 enum TimelinePullPresentation {
     static let activationDistance: CGFloat = 72
 
@@ -103,44 +55,6 @@ enum TimelineTextPresentation {
             return String(prefix[..<wordBoundary]) + "…"
         }
         return String(prefix) + "…"
-    }
-}
-
-enum AddSourceRoute: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case linkOrPodcast
-    case pastedText
-    /// One tile for everything that comes from Files: documents, books, audiobooks and `.spokenmargins` packets.
-    /// The file's own type picks the import after the pick (`AddFromFilesPlan`, #3217).
-    case importFromFiles
-    case quickFolder
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .linkOrPodcast: "Link or Podcast"
-        case .pastedText: "Paste Text"
-        case .importFromFiles: "Import from Files"
-        case .quickFolder: "Quick Folder"
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .linkOrPodcast: "Podcast episode, RSS feed, public audio, or readable web link"
-        case .pastedText: "Make something to listen to from text already on your clipboard"
-        case .importFromFiles: "A document, book, transcript, audiobook or Margins packet from Files"
-        case .quickFolder: "Choose a folder whose eligible files appear in Following"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .linkOrPodcast: "link"
-        case .pastedText: "text.quote"
-        case .importFromFiles: "folder.badge.plus"
-        case .quickFolder: "folder"
-        }
     }
 }
 
@@ -210,71 +124,6 @@ enum AddSourcePresentation {
     /// Find a Podcast needs the catalog to open from the sheet; without that, the tile is left out.
     static func tiles(canSearchPodcasts: Bool) -> [AddSourceTile] {
         canSearchPodcasts ? tiles : tiles.filter { $0 != .findPodcast }
-    }
-}
-
-/// Scene-local presentation state. Playback and persistence remain in
-/// `Gate1AppModel`; switching roots must not replace an active session.
-struct AppNavigationState: Equatable, Sendable {
-    var selectedRoot: AppRoot = .library
-    var paths: [AppRoot: [AppRoute]] = [
-        .library: [],
-        .sources: [],
-        .margins: [],
-        .settings: []
-    ]
-    var taskRoute: AppRoute?
-    var addSourceRoute: AddSourceRoute?
-    /// "Search podcasts by name" in the add sheet: the sheet closes first, then the catalog opens (#1784).
-    var opensCatalogAfterAddSheet = false
-    /// Where Following was scrolled to, kept across the screen switches that destroy its list (#479).
-    var followingScroll = FollowingScrollMemory()
-    /// The same for the Library list, whose rows are also destroyed when an item opens (#2395).
-    var libraryScroll = FollowingScrollMemory()
-
-    /// Where the listener is, without the scroll memory: scrolling the list while a tapped item is read keeps the
-    /// tap; a change of place drops it (#2505).
-    struct Place: Equatable {
-        let root: AppRoot
-        let paths: [AppRoot: [AppRoute]]
-        let taskRoute: AppRoute?
-        let addSourceRoute: AddSourceRoute?
-    }
-
-    var place: Place {
-        Place(root: selectedRoot, paths: paths, taskRoute: taskRoute, addSourceRoute: addSourceRoute)
-    }
-
-    mutating func select(_ root: AppRoot, recordingIsLocked: Bool) {
-        guard !recordingIsLocked else { return }
-        selectedRoot = root
-    }
-
-    mutating func push(_ route: AppRoute, in root: AppRoot? = nil, recordingIsLocked: Bool) {
-        guard !recordingIsLocked else { return }
-        let destination = root ?? selectedRoot
-        paths[destination, default: []].append(route)
-    }
-
-    mutating func present(_ route: AppRoute, recordingIsLocked: Bool) {
-        guard !recordingIsLocked else { return }
-        taskRoute = route
-    }
-
-    mutating func searchPodcastsFromAddSheet() {
-        addSourceRoute = nil
-        opensCatalogAfterAddSheet = true
-    }
-
-    /// True once per request, so a later dismissal of the sheet doesn't open the catalog again.
-    mutating func takeCatalogRequest() -> Bool {
-        defer { opensCatalogAfterAddSheet = false }
-        return opensCatalogAfterAddSheet
-    }
-
-    mutating func dismissTask(recordingIsLocked: Bool) {
-        guard !recordingIsLocked else { return }
-        taskRoute = nil
     }
 }
 

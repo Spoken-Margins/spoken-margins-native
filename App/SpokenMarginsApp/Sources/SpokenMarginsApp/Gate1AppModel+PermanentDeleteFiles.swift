@@ -106,6 +106,11 @@ extension Gate1AppModel {
         let launchBegan = Date()
         Task.detached(priority: .utility) { [weak self] in
             let outcome = purge.resumePending(recordsBefore: launchBegan, store: store)
+            // Whatever the journal had to do, a queued id with no item behind it goes (#4227). A read that fails keeps the queue.
+            if let storedIds = try? store.loadAllItemIds() {
+                let stored = Set(storedIds)
+                await MainActor.run { self?.pruneQueueOfDeletedItems(storedIds: stored) }
+            }
             guard outcome.removed.count + outcome.kept.count + outcome.abandonedRecords > 0 else { return }
             let line = "removed:\(outcome.removed.count):kept:\(outcome.kept.count):abandoned:\(outcome.abandonedRecords)"
             await MainActor.run { self?.diagnostics["lastPermanentDeleteResume"] = line }

@@ -30,6 +30,14 @@ public struct PlayQueue: Codable, Equatable, Sendable {
         itemIds.removeAll { $0 == itemId }
     }
 
+    /// Takes every one of `itemIds` out, as a permanent delete does for the items it removes (#4227). Order of the rest
+    /// is kept.
+    public mutating func removeAll(in itemIds: some Collection<String>) {
+        let gone = Set(itemIds)
+        guard !gone.isEmpty else { return }
+        self.itemIds.removeAll { gone.contains($0) }
+    }
+
     public mutating func move(fromOffsets source: IndexSet, toOffset destination: Int) {
         let moving = source.compactMap { itemIds.indices.contains($0) ? itemIds[$0] : nil }
         let before = source.filter { $0 < destination }.count
@@ -57,6 +65,18 @@ public struct PlayQueue: Codable, Equatable, Sendable {
             if isAvailable(next) { return next }
         }
         return nil
+    }
+}
+
+/// Which queued ids belong to no item at all, so a delete that was interrupted (the app quit after the rows went and
+/// before the queue was written) is made good at the next launch (#4227). An id stays unless it is missing from both
+/// the stored ids and what the app knows right now: an item added or imported after the stored ids were read has no
+/// stored id in this answer but is on the app's lists, and is never dropped.
+public enum PlayQueueOrphans {
+    /// `storedIds` is every item id in the Library, trashed and quarantined ones included (an item in Recently Deleted
+    /// can still be restored, so its place stays). `knownNow` is the ids the app's lists hold at the moment of the check.
+    public static func orphans(in queue: PlayQueue, storedIds: Set<String>, knownNow: Set<String>) -> [String] {
+        queue.itemIds.filter { !storedIds.contains($0) && !knownNow.contains($0) }
     }
 }
 
