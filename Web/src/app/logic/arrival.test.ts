@@ -12,6 +12,7 @@ import {
   friendMargins,
   cueFor,
   marginsSeconds,
+  playableArticleMargins,
   playHint,
   readsAloud,
   senderInitial,
@@ -207,7 +208,7 @@ test('the countdown and its Skip pass a Margin that is not read aloud (#3445)', 
 
 // #3798: the Arrival's hint and the Library row said two different places for the same episode.
 const own: Episode = { id: 'e1', showId: 's', title: 'T', guid: 'g-1', audioUrl: 'https://media.example.com/1.mp3', durationSeconds: 600 };
-const packet = (episode: PacketRead['episode']): PacketRead => ({ contentDigest: 'd'.repeat(64), episode, margins: [], textMarginCount: 0 });
+const packet = (episode: PacketRead['episode']): PacketRead => ({ contentDigest: 'd'.repeat(64), episode, margins: [], textMarginCount: 0, percentMargins: [] });
 const at = (seconds: number, episodeId = 'e1'): PlaybackPosition => ({ episodeId, seconds, updatedAt: '2026-11-08T10:00:00Z' });
 
 test('Play starts where the Library says Resume at, and the hint says so', () => {
@@ -226,4 +227,17 @@ test('Play starts at the beginning for a new, unmatched, finished or zero-positi
   assert.equal(arrivalResumeAt(packet({ title: 'New', guid: 'g-9' }), [own], [at(4)]), undefined, 'not in the Library');
   assert.equal(arrivalResumeAt(packet({ title: 'T', audioUrl: own.audioUrl }), [own], [at(4)]), 4, 'matched by audio address');
   assert.equal(playHint('Cole'), 'Starts at the beginning. Cole’s Margins play when the episode reaches them.');
+});
+
+// #4421: article Margins play on the post's voice, which only a Substack post (or an episode with its own audio) has.
+test('article Margins are playable for a Substack post and for an episode with audio, and for nothing else', () => {
+  const percentMargins = [{ percent: 30, margin: { id: 'm', episodeId: 'e', atSeconds: 0, createdAt: 'T' } }];
+  const read = (episode: PacketRead['episode']): PacketRead => ({ ...packet(episode), percentMargins });
+  assert.equal(playableArticleMargins(read({ title: 'T', pageUrl: 'https://writer.substack.com/p/a-post' })).length, 1);
+  assert.equal(playableArticleMargins(read({ title: 'T', pageUrl: 'https://open.substack.com/pub/writer/p/a-post?r=x' })).length, 1);
+  assert.equal(playableArticleMargins(read({ title: 'T', pageUrl: 'https://writer.example.com/p/a-post' })).length, 1, 'a publication on its own domain keeps /p/');
+  assert.equal(playableArticleMargins(read({ title: 'T', audioUrl: 'https://media.example.com/1.mp3' })).length, 1);
+  assert.equal(playableArticleMargins(read({ title: 'T', pageUrl: 'https://example.com/essays/on-listening' })).length, 0, 'an ordinary article has no voice to look up');
+  assert.equal(playableArticleMargins(read({ title: 'T' })).length, 0);
+  assert.equal(playableArticleMargins(packet({ title: 'T', pageUrl: 'https://writer.substack.com/p/a-post' })).length, 0, 'no Margins to play');
 });
