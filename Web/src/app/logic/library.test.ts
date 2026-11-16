@@ -7,6 +7,7 @@ import {
   marginGroups,
   newestFirst,
   newestMarginId,
+  startsCollapsed,
   nextSpeed,
   stableId,
   timelineFraction,
@@ -120,4 +121,12 @@ test('timelinePosts shares a post between Margins closer than the gap, and keeps
   assert.equal(timelinePosts(ms, 600, 0.001).length, 4);
   // Unknown duration: everything sits at the start, on one post.
   assert.equal(timelinePosts(ms, undefined, 0.1).length, 1);
+});
+
+test('a few Margins groups all start open; a long list opens on the newest only (#4423)', () => {
+  for (const total of [0, 1, 2, 3]) {
+    for (let index = 0; index < total; index += 1) assert.equal(startsCollapsed(index, total), false, `${index} of ${total}`);
+  }
+  assert.equal(startsCollapsed(0, 4), false, 'the newest group is always open');
+  for (const index of [1, 2, 3, 49]) assert.equal(startsCollapsed(index, 50), true, `group ${index} of 50`);
 });

@@ -2,11 +2,11 @@ import { useRef, useState } from 'react';
 import { formatClock } from '../../shared/clock.ts';
 import type { Margin } from '../../shared/model.ts';
 import { useData } from '../data.tsx';
-import { StarIcon } from '../icons.tsx';
+import { ChevronIcon, StarIcon } from '../icons.tsx';
 import { shortDate } from '../format.ts';
 import { useMarginFilePicker, type OpenMarginFile, type OpenShareLink } from '../import.tsx';
 import { parseShareLink } from '../logic/share-link.ts';
-import { marginGroups, newestMarginId } from '../logic/library.ts';
+import { marginGroups, newestMarginId, startsCollapsed } from '../logic/library.ts';
 import { threadedRows } from '../logic/margin-threads.ts';
 import { plainError } from '../logic/messages.ts';
 import { firesByItself } from '../logic/margin-autoplay.ts';
@@ -25,6 +25,8 @@ export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void
   const [linkText, setLinkText] = useState('');
   const [opening, setOpening] = useState(false);
   const groups = marginGroups(data.margins, data.episodes);
+  // The listener's own taps on a group's title; a group never tapped follows `startsCollapsed`.
+  const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const newestId = newestMarginId(data.margins);
   const showTitle = (showId: string | undefined) => data.shows.find((s) => s.id === showId)?.title;
 
@@ -82,24 +84,41 @@ export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void
           <p>A friend’s Margins arrive as a file ending in .spokenmargins. Open it here, or drop it on this page.</p>
         </div>
       ) : (
-        groups.map((group) => (
-          // Not labelled regions: one landmark per episode would bury the four tabs in a long list.
-          // Headings are the way through. The newest Margin carries its own "Newest" tag, so the group
-          // doesn't repeat it.
-          <section key={group.episodeId} className="margin-group">
-            <header className="margin-group-header">
-              <h2>
-                <span className="row-kicker">{showTitle(group.episode?.showId) ?? 'Unfollowed show'}</span>
-                <span className="group-title">{group.episode?.title ?? 'An episode no longer in your Library'}</span>
+        groups.map((group, index) => {
+          const collapsed = toggled[group.episodeId] ?? startsCollapsed(index, groups.length);
+          const listId = `margin-list-${group.episodeId.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+          const count = group.margins.length === 1 ? '1 Margin' : `${group.margins.length} Margins`;
+          return (
+            // Not labelled regions: one landmark per episode would bury the four tabs in a long list.
+            // Headings are the way through. The newest Margin carries its own "Newest" tag, so the group
+            // doesn't repeat it. A group's title is a button that folds its Margins away, with their count (#4423).
+            <section key={group.episodeId} className="margin-group">
+              <h2 className="margin-group-header">
+                <button
+                  type="button"
+                  className="margin-group-toggle"
+                  aria-expanded={!collapsed}
+                  aria-controls={listId}
+                  onClick={() => setToggled((current) => ({ ...current, [group.episodeId]: !collapsed }))}
+                >
+                  <span className="margin-group-title">
+                    <span className="row-kicker">{showTitle(group.episode?.showId) ?? 'Unfollowed show'}</span>
+                    <span className="group-title">{group.episode?.title ?? 'An episode no longer in your Library'}</span>
+                    <span className="row-meta">{count}</span>
+                  </span>
+                  <span className={`margin-group-chevron${collapsed ? '' : ' is-open'}`} aria-hidden="true">
+                    <ChevronIcon />
+                  </span>
+                </button>
               </h2>
-            </header>
-            <ol className="margin-list">
-              {threadedRows(group.margins, data.margins).map(({ margin, indented, line }) => (
-                <MarginRow key={margin.id} margin={margin} parent={parentOf(margin, data.margins)} newest={margin.id === newestId} onPlay={onPlay} indented={indented} threadLine={line} />
-              ))}
-            </ol>
-          </section>
-        ))
+              <ol id={listId} className="margin-list" hidden={collapsed}>
+                {threadedRows(group.margins, data.margins).map(({ margin, indented, line }) => (
+                  <MarginRow key={margin.id} margin={margin} parent={parentOf(margin, data.margins)} newest={margin.id === newestId} onPlay={onPlay} indented={indented} threadLine={line} />
+                ))}
+              </ol>
+            </section>
+          );
+        })
       )}
     </div>
   );
