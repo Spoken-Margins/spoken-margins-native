@@ -5,6 +5,7 @@ struct ExperienceTimelineRailScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @EnvironmentObject private var sharingCoordinator: Build23SharingCoordinator
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.openURL) private var openURL
 
     /// A playback pane reuses the rail and sheets, without a second player or navigation stack.
     var onReturnToPlayback: (() -> Void)? = nil
@@ -536,7 +537,12 @@ struct ExperienceTimelineRailScreen: View {
         case .sourceText(let entry):
             selectedSource = .init(entry: entry, sourceReference: model.selectedItem.externalReference)
         case .sourceElement(let element):
-            selectedElement = element
+            // A link row is the link: one tap opens it (owner, 2026-11-14). Its details stay on long-press.
+            if let url = element.linkDestination {
+                openURL(url)
+            } else {
+                selectedElement = element
+            }
         case .beginning:
             if let first = model.selectedItem.chapters.first {
                 model.jumpToChapter(first, fromTimeline: true)
@@ -573,6 +579,10 @@ struct ExperienceTimelineRailScreen: View {
     private func details(for action: TimelineRailEntry.Action) -> some View {
         if case .sharedMargin(let row) = action {
             Button("Shared Margin details", systemImage: "info.circle") { selectedSharedMargin = row }
+        }
+        if case .sourceElement(let element) = action, let url = element.linkDestination {
+            Button("Link details", systemImage: "info.circle") { selectedElement = element }
+            Button("Copy link", systemImage: "doc.on.doc") { UIPasteboard.general.url = url }
         }
     }
 

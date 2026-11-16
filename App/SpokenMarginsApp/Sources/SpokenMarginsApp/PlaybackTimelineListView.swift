@@ -84,6 +84,9 @@ private struct TimelineRailRow: View, Equatable {
                         .foregroundStyle(AppColors.secondaryText)
                         .multilineTextAlignment(.leading)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 4)
+                    if case .sourceElement(let element) = entry.action {
+                        TimelineSourceElementPreview(element: element)
+                    }
                 }
                 .padding(15)
                 .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
@@ -138,6 +141,23 @@ private struct TimelineRailRow: View, Equatable {
         case .myMargin: AppColors.coral.opacity(0.08)
         case .userResponse: AppColors.ochre.opacity(0.08)
         case .sharedMargin, .assistantResponse: AppColors.plum.opacity(0.07)
+        }
+    }
+}
+
+/// What a picture, embed or table row shows under its words: the page's own picture (a GIF plays), a video's still,
+/// or the first rows of the table (owner, 2026-11-14). A link row has no preview; tapping it opens the link.
+private struct TimelineSourceElementPreview: View {
+    let element: SourceElement
+
+    var body: some View {
+        if let url = element.previewImageURL {
+            SourcePictureView(url: url, accessibilityText: element.altText ?? element.label, maxPixelSize: 900)
+                .frame(maxHeight: 260)
+                .padding(.top, 4)
+        } else if element.kind == .table, let rows = element.rows {
+            SourceTableView(rows: rows, bodyRowLimit: 4)
+                .padding(.top, 4)
         }
     }
 }

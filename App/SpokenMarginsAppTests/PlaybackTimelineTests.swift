@@ -79,6 +79,59 @@ final class PlaybackTimelineTests: XCTestCase {
         XCTAssertEqual(item.timelineSource.entries.map(\.role), roles, "Now and the reader still receive every retained role")
     }
 
+    /// 2026-11-14: a table is a Timeline row named by its columns; a link row's tap goes straight to its address; a
+    /// picture and a YouTube embed have a picture to draw, a link and a table don't.
+    func testTableRowsLinkTapsAndPreviewPictures() throws {
+        let text = "Intro paragraph.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nSee the study here."
+        let tableStart = try XCTUnwrap(text.range(of: "| A")).lowerBound.utf16Offset(in: text)
+        let record = SourceElementsRecord(text: text, elements: [
+            SourceElement(id: "t0", kind: .table, start: tableStart, label: "A · B", url: "", rows: [["A", "B"], ["1", "2"]]),
+            SourceElement(id: "l0", kind: .link, start: text.count - 10, label: "the study", url: "https://example.com/study")
+        ])
+        let item = ItemDetailState(id: "web", title: "Post", text: text).includingTimelineSource(nil, elements: record)
+        let rows = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil).filter {
+            if case .sourceElement = $0.action { return true } else { return false }
+        }
+        XCTAssertEqual(rows.map(\.title), ["A · B", "the study"])
+        XCTAssertEqual(rows.map(\.detail), ["Table", "Link · example.com"])
+        XCTAssertEqual(rows.map(\.provenanceLabel), ["Table", "Link"])
+
+        let link = record.elements[1]
+        XCTAssertEqual(link.linkDestination?.absoluteString, "https://example.com/study")
+        XCTAssertNil(record.elements[0].linkDestination)
+        XCTAssertNil(SourceElement(id: "x", kind: .link, start: 0, label: "x", url: "javascript:alert(1)").linkDestination)
+        XCTAssertNil(SourceElement(id: "p", kind: .picture, start: 0, label: "p", url: "https://x.example/p.gif").linkDestination,
+                     "a picture opens its sheet, not the address")
+
+        XCTAssertEqual(SourceElement(id: "p", kind: .picture, start: 0, label: "p", url: "https://x.example/p.gif").previewImageURL?.absoluteString,
+                       "https://x.example/p.gif")
+        XCTAssertNil(link.previewImageURL)
+        XCTAssertNil(record.elements[0].previewImageURL)
+    }
+
+    /// Neighbouring inputs for the YouTube still: each address form, lookalike hosts, and ids that aren't ids.
+    func testYouTubeStillAddresses() {
+        let cases: [(String, String?)] = [
+            ("https://www.youtube.com/watch?v=abc123XYZ_-", "abc123XYZ_-"),
+            ("https://m.youtube.com/watch?v=abc123XYZ&t=10", "abc123XYZ"),
+            ("https://youtu.be/abc123XYZ?si=share", "abc123XYZ"),
+            ("https://www.youtube.com/embed/abc123XYZ", "abc123XYZ"),
+            ("https://www.youtube-nocookie.com/embed/abc123XYZ", "abc123XYZ"),
+            ("https://youtube.com/shorts/abc123XYZ", "abc123XYZ"),
+            ("https://www.youtube.com/channel/UCxyz", nil),
+            ("https://www.youtube.com/watch", nil),
+            ("https://notyoutube.com/watch?v=abc123XYZ", nil),
+            ("https://youtube.com.evil.example/watch?v=abc123XYZ", nil),
+            ("https://www.youtube.com/watch?v=../../x", nil),
+            ("https://vimeo.com/12345678", nil)
+        ]
+        for (address, id) in cases {
+            XCTAssertEqual(SourceElement.youTubeID(address), id, address)
+        }
+        XCTAssertEqual(SourceElement(id: "e", kind: .embed, start: 0, label: "YouTube video", url: "https://youtu.be/abc123XYZ").previewImageURL?.absoluteString,
+                       "https://i.ytimg.com/vi/abc123XYZ/hqdefault.jpg")
+    }
+
     /// #2032: pictures, embeds and links an imported Substack page kept are Timeline rows, in text order and
     /// labelled; a page that kept none shows none, and ordinary paragraphs still get no row of their own.
     func testTimelineShowsKeptPicturesEmbedsAndLinksAndNoEmptyRows() throws {
