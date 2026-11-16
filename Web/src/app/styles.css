@@ -1838,7 +1838,9 @@ body:not(:has(.mini-player)) .toasts {
 
 .search {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
+  min-width: 0;
   padding: 0 0 12px;
 }
 
@@ -1869,6 +1871,7 @@ body:not(:has(.mini-player)) .toasts {
 
 .search-box input {
   flex: 1;
+  width: 100%;
   min-width: 0;
   min-height: 44px;
   border: 0;
