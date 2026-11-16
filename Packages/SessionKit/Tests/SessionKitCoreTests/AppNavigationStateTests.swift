@@ -1,6 +1,5 @@
 import XCTest
-import SessionKit
-@testable import SpokenMarginsApp
+@testable import SessionKit
 
 final class AppNavigationStateTests: XCTestCase {
     func testEachRootRetainsAnIndependentNavigationPath() {
