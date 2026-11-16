@@ -424,24 +424,28 @@ extension Gate1AppModel {
         Task { [weak self] in await self?.performFollowedSourceRefresh(force: force) }
     }
 
-    func performFollowedSourceRefresh(force: Bool) async {
+    /// `scope` narrows only this request's own round. A request made during the pass goes round again over every feed, so
+    /// a listener's action never gets less than a full refresh (#4388).
+    func performFollowedSourceRefresh(force: Bool, scope: FeedRefreshScope = .allFeeds) async {
         // A request made during a running pass is not dropped: the pass goes round once more, as strong as the
         // strongest request (#2136).
         guard followedSourceRefreshGate.request(forced: force) else { return }
         isRefreshingFollowedSources = true
         defer { isRefreshingFollowedSources = false }
         var nextForce: Bool? = force
+        var roundScope = scope
         while let roundForce = nextForce {
-            await runFollowedSourceRefreshRound(force: roundForce)
+            await runFollowedSourceRefreshRound(force: roundForce, scope: roundScope)
+            roundScope = .allFeeds
             nextForce = followedSourceRefreshGate.finishPass()
         }
     }
 
-    private func runFollowedSourceRefreshRound(force: Bool) async {
+    private func runFollowedSourceRefreshRound(force: Bool, scope: FeedRefreshScope) async {
         do {
             let store = try requireStore()
             let coordinator = requireFollowedSourceCoordinator(store: store)
-            for entry in await coordinator.refreshStale(force: force) { importFollowedSourceEntry(entry, startedByListener: false) } // "Add every new item" (#466)
+            for entry in await coordinator.refreshStale(force: force, scope: scope) { importFollowedSourceEntry(entry, startedByListener: false) } // "Add every new item" (#466)
             let subscriptions = try await publishFeedSubscriptions(store: store)
             followedSourceEntries = try await coordinator.entries()
             diagnostics["followedSourceCount"] = "\(subscriptions.count)"
