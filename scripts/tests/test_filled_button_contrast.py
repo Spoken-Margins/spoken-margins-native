@@ -16,8 +16,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "App/SpokenMarginsApp/Sources/SpokenMarginsApp"
 SESSIONKIT = ROOT / "Packages/SessionKit/Sources/SessionKit"
-# The audit reads palettes that live in their own files (#3736); the probe compiles them together, Foundation only.
-AUDIT = [SESSIONKIT / "ExperienceColorContrast.swift", SESSIONKIT / "ReaderSentenceHighlight.swift"]
+# The audit reads palettes that live in their own files (#3736, #3735); the probe compiles them together, Foundation only.
+AUDIT = [SESSIONKIT / "ExperienceColorContrast.swift", SESSIONKIT / "ReaderSentenceHighlight.swift",
+         SESSIONKIT / "PlaybackSegmentPalette.swift"]
 DESIGN_SYSTEM = APP / "ExperienceDesignSystem.swift"
 
 PROBE = """
