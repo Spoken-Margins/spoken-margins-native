@@ -205,14 +205,13 @@ final class EpisodeMapPreparer {
                     try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
                 }.value
                 try Task.checkCancellation()
-                let durationMs: Int
-                if let declaredDurationMs = item.media?.durationMs {
-                    durationMs = declaredDurationMs
-                } else if let duration = try? await AVURLAsset(url: localURL).load(.duration) {
-                    durationMs = Int((CMTimeGetSeconds(duration) * 1_000).rounded())
-                } else {
-                    durationMs = 0
+                // The downloaded file's own length first; the stored one can be the feed's provisional length (#4186).
+                var fileDurationMs: Int?
+                if let duration = try? await AVURLAsset(url: localURL).load(.duration) {
+                    let seconds = CMTimeGetSeconds(duration)
+                    if seconds.isFinite, seconds > 0 { fileDurationMs = Int((seconds * 1_000).rounded()) }
                 }
+                let durationMs = EpisodeMapDuration.choose(fileMs: fileDurationMs, storedMs: item.media?.durationMs)
                 let resumed = EpisodeMapAssembly.resumeFingerprints(
                     safeItemComponent: host.safePodcastEvidenceComponent(item.id),
                     nextUnitIndex: job.nextUnitIndex,
