@@ -141,7 +141,7 @@ final class ArtworkThumbnailState: ObservableObject {
     private var imageURL: URL?
 
     init(url: URL?, loader: ArtworkThumbnailLoader) {
-        image = url.flatMap(loader.cachedThumbnail(for:))
+        image = url.flatMap { loader.cachedThumbnail(for: $0) }
         imageURL = image == nil ? nil : url
     }
 
@@ -153,7 +153,7 @@ final class ArtworkThumbnailState: ObservableObject {
     /// picture), then the loaded image. A cancelled call, which means the cell moved to another url, leaves the
     /// image to the call that replaced it.
     func show(_ url: URL?, loader: ArtworkThumbnailLoader) async {
-        image = url.flatMap(loader.cachedThumbnail(for:))
+        image = url.flatMap { loader.cachedThumbnail(for: $0) }
         imageURL = image == nil ? nil : url
         guard let url else { return }
         let loaded = await loader.thumbnail(for: url)
