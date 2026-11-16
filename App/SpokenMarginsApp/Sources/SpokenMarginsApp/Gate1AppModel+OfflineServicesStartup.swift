@@ -73,8 +73,10 @@ extension Gate1AppModel {
                 },
                 refresh: {
                     guard !Task.isCancelled else { return }
-                    await self?.performFollowedSourceRefresh(
-                        force: false, scope: .atLaunch(lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled))
+                    let scope = FeedRefreshScope.atLaunch(lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled)
+                    await self?.performFollowedSourceRefresh(force: false, scope: scope)
+                    guard !Task.isCancelled else { return }
+                    LaunchRecorder.shared?.markFollowingFresh(firstScreenOnly: scope == .firstScreen)
                 }
             )
             // A model built by a test must not ask the production server for the tour: on a runner with a network
