@@ -411,6 +411,15 @@ extension Gate1AppModel {
         storedSourceFollowSuggestionCandidates = []
     }
 
+    /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
+    func reloadFollowedSourceEntries() async {
+        // Subscriptions first: New hides a back catalogue by them (#1589). The entries are read last, so a refresh that lands
+        // while the subscriptions publish is never overwritten by an older read (#4387).
+        guard let coordinator = followedSourceCoordinator else { return }
+        await publishFeedSubscriptionsAfterChange()
+        if let entries = try? await coordinator.entries() { followedSourceEntries = entries }
+    }
+
     func refreshFollowedSources(force: Bool = true) {
         Task { [weak self] in await self?.performFollowedSourceRefresh(force: force) }
     }

@@ -2916,11 +2916,6 @@ final class Gate1AppModel: ObservableObject {
 
     var followCandidateDiscoveryHandler: ((LibraryItemSummary, URL) async throws -> [SourceCandidateEvidence])?
 
-    /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
-    func reloadFollowedSourceEntries() async {
-        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { await publishFeedSubscriptionsAfterChange(); followedSourceEntries = entries } // subscriptions first: New hides a back catalogue by them (#1589)
-    }
-
     func requireLocalSourceImporter() throws -> LocalSourceImporter {
         if let localSourceImporter { return localSourceImporter }
         let store = try requireStore()
