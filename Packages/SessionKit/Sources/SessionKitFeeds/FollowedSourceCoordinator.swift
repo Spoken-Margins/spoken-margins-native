@@ -458,8 +458,21 @@ public actor FollowedSourceCoordinator {
     /// changes. Run after launch, off the main thread; an actor call is.
     public func itemArtwork(catalog: SourceCatalog? = nil) -> ItemArtworkStore {
         _ = followingArtwork(catalog: catalog)
+        recordStoredEntries()
         reconcileItemArtwork()
         return itemArtworkRecord.store
+    }
+
+    /// Which show each stored entry belongs to, from the entries already saved (their GUID and address), so an item
+    /// from before this build finds its show before any feed has refreshed, offline, or after its episode left the
+    /// feed's current items. Images are not known here (the entry rows keep none), so this adds the mapping only.
+    private func recordStoredEntries() {
+        guard let subscriptions = try? repository.loadFeedSubscriptions() else { return }
+        for subscription in subscriptions {
+            guard let stored = try? repository.loadFeedEntries(subscriptionId: subscription.id) else { continue }
+            let entries = stored.map { ItemArtworkStore.EntryImage(guid: $0.episodeGUID, url: $0.canonicalURL, imageURL: nil) }
+            itemArtworkRecord.update { $0.recordEntries(entries, subscriptionID: subscription.id) }
+        }
     }
 
     private func recordItemArtwork(_ parsed: ParsedFeed, subscriptionID: String) {
