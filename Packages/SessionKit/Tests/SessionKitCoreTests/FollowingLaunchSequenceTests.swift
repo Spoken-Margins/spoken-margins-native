@@ -2,7 +2,8 @@ import Foundation
 import XCTest
 @testable import SessionKit
 
-/// The Following tab shows its saved items before the storage audit or any feed fetch has finished (#4387).
+/// The Following tab shows its saved items before the storage audit or any feed fetch has finished (#4387), and the feed
+/// refresh doesn't wait for the audit (#4388).
 final class FollowingLaunchSequenceTests: XCTestCase {
     /// Records the order things happened in, and holds a step open until the test lets it go.
     private actor Journal {
@@ -55,12 +56,26 @@ final class FollowingLaunchSequenceTests: XCTestCase {
 
         XCTAssertTrue(published, "saved items must publish with the audit still running")
         XCTAssertFalse(eventsAtPublish.contains("audit finished"))
-        XCTAssertFalse(eventsAtPublish.contains("refresh started"))
-        let final = await journal.events
-        XCTAssertEqual(final.last, "refresh finished")
+        XCTAssertFalse(eventsAtPublish.contains("refresh finished"))
     }
 
-    func testTheRefreshStartsOnlyAfterTheAuditAndAfterTheSavedItemsPublished() async {
+    /// Fails without the fix: the refresh used to start only after the audit had finished (#4388).
+    func testTheFeedRefreshStartsWhileTheStorageAuditIsStalled() async {
+        let journal = Journal()
+        let launch = start(journal)
+
+        let refreshStarted = await journal.waitFor("refresh started")
+        let eventsAtRefresh = await journal.events
+        await journal.release("audit")
+        await journal.release("fetch")
+        await launch.value
+
+        XCTAssertTrue(refreshStarted, "the refresh must start with the audit still running")
+        XCTAssertTrue(eventsAtRefresh.contains("audit started"))
+        XCTAssertFalse(eventsAtRefresh.contains("audit finished"))
+    }
+
+    func testTheRefreshStartsOnlyAfterTheSavedItemsPublished() async {
         let journal = Journal()
         let launch = start(journal)
 
@@ -70,6 +85,20 @@ final class FollowingLaunchSequenceTests: XCTestCase {
 
         let events = await journal.events
         XCTAssertEqual(events.firstIndex(of: "refresh started").map { $0 > events.firstIndex(of: "published")! }, true)
-        XCTAssertEqual(events.firstIndex(of: "refresh started").map { $0 > events.firstIndex(of: "audit finished")! }, true)
+    }
+
+    func testTheLaunchReturnsOnlyWhenTheAuditAndTheRefreshHaveBothFinished() async {
+        let journal = Journal()
+        let launch = start(journal)
+
+        _ = await journal.waitFor("refresh started")
+        await journal.release("fetch")
+        _ = await journal.waitFor("refresh finished")
+        await journal.release("audit")
+        await launch.value
+
+        let events = await journal.events
+        XCTAssertTrue(events.contains("audit finished"))
+        XCTAssertTrue(events.contains("refresh finished"))
     }
 }

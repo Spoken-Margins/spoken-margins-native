@@ -213,6 +213,24 @@ public struct PinnedMarginCard: Equatable, Sendable {
         return ms.map { "Next Margin \(Self.friendCountdown($0))" } ?? "Next Margin is ahead"
     }
 
+    /// The word of `detail` that names a control drawn as an icon, so the card can draw that icon inline before it (#3905).
+    /// The saved-answer card says "tap Share below" while the player's Share is an icon until three quarters through the
+    /// item, so the sentence shows the icon it points at. The words never change: this only says where the icon goes.
+    /// Every other stage names no control.
+    public var detailSymbolBefore: String? {
+        if case .answerSaved = stage { return "Share" }
+        return nil
+    }
+
+    /// `detail` cut in two where `detailSymbolBefore` sits, for a view that draws the icon between the halves. The
+    /// last occurrence is the one that counts: the friend's name comes earlier in the sentence and could be "Share".
+    /// Nil when this stage names no control, or the word is missing from the line.
+    public var detailAroundSymbol: (before: String, after: String)? {
+        let line = detail
+        guard let word = detailSymbolBefore, let found = line.range(of: word, options: .backwards) else { return nil }
+        return (String(line[..<found.lowerBound]), String(line[found.lowerBound...]))
+    }
+
     /// The second line, which says what the source is doing, so the card keeps one shape in every stage.
     public var detail: String {
         let heading = self.noun.capitalized

@@ -3560,6 +3560,57 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(model.trashUndo)
     }
 
+    /// #4227: the EPUB and the audiobook the app copied in from Files go with their item, single and bulk, and a live
+    /// item's own copies stay. The host tests cover the rule (`ItemOwnedFiles.copiedSourceTarget`); this ties the model to it.
+    func testPermanentDeleteRemovesTheCopiedEPUBAndAudiobookAndKeepsALiveItemsOwn() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "permanent-delete-copied-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        model.importTitle = "Second Item"
+        model.importText = "A second item that stays in the Library."
+        model.importTextItem()
+        let liveID = model.selectedItem.id
+        model.importTitle = "Third Item"
+        model.importText = "A third item, deleted in the bulk delete."
+        model.importTextItem()
+        let bulkID = model.selectedItem.id
+
+        let support = try model.applicationSupportDirectory()
+        func giveCopiedFile(itemId: String, category: OfflineAssetCategory, folder: String, ext: String) throws -> URL {
+            let file = support.appending(path: "\(folder)/\(itemId).\(ext)")
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("copied".utf8).write(to: file)
+            addTeardownBlock { try? FileManager.default.removeItem(at: file) }
+            try store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+                id: "copied-\(itemId)", itemId: itemId, category: category, relativePath: "\(folder)/\(file.lastPathComponent)",
+                byteCount: 6, isReproducible: false))
+            return file
+        }
+        let doomedEPUB = try giveCopiedFile(itemId: "item-pill", category: .sourceDocument, folder: "SourceDocuments", ext: "epub")
+        let liveEPUB = try giveCopiedFile(itemId: liveID, category: .sourceDocument, folder: "SourceDocuments", ext: "epub")
+        let bulkBook = try giveCopiedFile(itemId: bulkID, category: .audiobook, folder: "Audiobooks", ext: "m4b")
+
+        model.moveItemToTrash(id: "item-pill")
+        model.permanentlyDeleteItem(id: "item-pill")
+        try await waitFor("the deleted item's copied EPUB to be removed", timeoutNanoseconds: 5_000_000_000) {
+            !FileManager.default.fileExists(atPath: doomedEPUB.path)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: liveEPUB.path), "a live item's copy is never touched")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: bulkBook.path), "an item still in the Library keeps its audiobook")
+
+        model.moveItemToTrash(id: bulkID)
+        model.permanentlyDeleteRecentlyDeletedItems()
+        try await waitFor("the bulk-deleted item's copied audiobook to be removed", timeoutNanoseconds: 5_000_000_000) {
+            !FileManager.default.fileExists(atPath: bulkBook.path)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: liveEPUB.path), "the live item's copy still stays")
+    }
+
     /// #1035: "Permanently deleted" has to take the item's spoken Margin recordings off the phone, not
     /// only their database rows. The recordings are real files in the app's own Application Support folder.
     func testPermanentDeleteRemovesTheItemsMarginRecordingsAndKeepsALiveItemsOwn() async throws {
