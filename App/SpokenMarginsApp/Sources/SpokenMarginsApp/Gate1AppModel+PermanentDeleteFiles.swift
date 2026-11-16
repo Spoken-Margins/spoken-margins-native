@@ -92,19 +92,21 @@ extension Gate1AppModel {
 
     /// Runs `delete`, the call that removes the items' rows, and then removes the files only those items owned (their
     /// prepared narration chunks, saved Listening Edition, episode-map folder, and the EPUB or audiobook the app copied in
-    /// from Files) off the main thread. The copied files are named by the items' ledger rows, read here before the delete
-    /// takes them (`ItemOwnedFiles.copiedSourceTarget` keeps only the file the importer writes for the item); a read that
-    /// fails stops the delete, as the Margin reads above it do, so no copied file is left with no row to name it. A record of the files is written
+    /// from Files) off the main thread. The copied files are named by the items' ledger rows (`ledgerRows`), which the
+    /// caller reads before it removes anything, next to the Margin reads, because the rows go with the items
+    /// (`ItemOwnedFiles.copiedSourceTarget` keeps only the file the importer writes for the item). A read that fails
+    /// stops the delete there, before any file has been touched. A record of the files is written
     /// first, so a quit or a failed removal is finished at the next launch. If `delete` throws, no file is touched.
     ///
     /// Just before each file goes, on that background task, the Library is asked again whether the file is still free: an
     /// item imported again under the same id keeps its Edition, and a prepared-narration folder that another item's id
     /// maps to keeps its chunks (`ItemOwnedFiles.stillFree`). The store is read there, never on the main thread.
-    func purgingItemFiles(ofItems itemIds: [String], store: SQLiteSessionStore, delete: () throws -> Void) throws {
+    func purgingItemFiles(
+        ofItems itemIds: [String], ledgerRows: [OwnedOfflineAsset], store: SQLiteSessionStore, delete: () throws -> Void
+    ) throws {
         guard let purge = permanentDeletePurge() else { return try delete() }
-        let assets = try itemIds.flatMap { try store.loadOwnedOfflineAssets(itemId: $0) }
         try purge.deleting(
-            itemIds: itemIds, targets: ItemOwnedFiles.targets(forItems: itemIds, assets: assets),
+            itemIds: itemIds, targets: ItemOwnedFiles.targets(forItems: itemIds, assets: ledgerRows),
             recheck: purge.storeRecheck(store: store), delete: delete)
     }
 

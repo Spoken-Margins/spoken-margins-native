@@ -246,6 +246,17 @@ final class PermanentDeleteCopiedSourcesTests: XCTestCase {
             .unknown)
     }
 
+    /// An empty id writes the folder `unknown` (the writers use `safeComponent` alone), so deleting an item whose id is
+    /// literally `unknown` must not take it.
+    func testAnItemNamedUnknownKeepsTheFolderAnEmptyIdWrites() {
+        let target = ItemOwnedFiles.targets(forItem: "unknown").first { $0.root == ItemOwnedFiles.episodeMapsRoot }!
+        XCTAssertEqual(target.relativePath, "unknown")
+        XCTAssertEqual(
+            ItemOwnedFiles.stillFree(target, rowState: { _ in .absent }, allItemIds: { [""] }), .present,
+            "an item with an empty id writes into `unknown`")
+        XCTAssertEqual(ItemOwnedFiles.stillFree(target, rowState: { _ in .absent }, allItemIds: { ["other"] }), .absent)
+    }
+
     func testARootThatCannotLeaveItsFolderEvenWithAForgedRecord() throws {
         try write(support.appending(path: "SpokenMargins/library.sqlite"))
         let purge = purge()

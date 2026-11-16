@@ -100,8 +100,9 @@ public enum ItemOwnedFiles {
         let key = caseSensitiveNames ? target.relativePath : target.relativePath.lowercased()
         let episodeMaps = target.root == episodeMapsRoot
         return ids.contains {
-            let name = episodeMaps ? episodeMapDirectoryName(itemId: $0) : preparedAudioDirectoryName(itemId: $0)
-            guard let name else { return false }
+            // The writers name a map folder with `safeComponent` alone, so an empty id still writes `unknown`: it counts
+            // here, though it never gets a target of its own.
+            let name = episodeMaps ? PodcastAnchorEvidencePaths.safeComponent($0) : preparedAudioDirectoryName(itemId: $0)
             return (caseSensitiveNames ? name : name.lowercased()) == key
         } ? .present : .absent
     }
