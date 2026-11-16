@@ -64,6 +64,6 @@ final class NowPlayingArtworkFeeder {
     /// Built outside the main actor's isolation: the system calls the image handler on its own queue, and a closure made
     /// inside a main-actor method would assert that it runs on main.
     nonisolated private static func makeArtwork(_ image: UIImage) -> MPMediaItemArtwork {
-        MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        MPMediaItemArtwork(boundsSize: image.size) { @Sendable _ in image }
     }
 }
