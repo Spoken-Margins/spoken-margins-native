@@ -101,9 +101,31 @@ class MacChecksRequiredTests(unittest.TestCase):
                 self.assertEqual(why, 'Mac checks not required: no Swift inputs')
 
     def test_a_swift_input_still_needs_them(self):
-        for path in ('Packages/SessionKit/Sources/SessionKit/X.swift', 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/A.swift',
+        for path in ('Packages/SessionKit/Sources/SessionKit/X.swift', 'App/TestFixtures/a.spokenmargins',
                      'project.yml', 'Package.resolved', 'TestPlans/fast.json', 'Contracts/schemas/x.json',
                      'Elsewhere/Thing.swift', 'SpokenMarginsNative.xcodeproj/project.pbxproj'):
+            with self.subTest(path=path):
+                self.assertTrue(self.required(path)[0])
+
+    def test_an_app_only_diff_needs_no_mac_check_unless_a_mac_only_test_reads_a_path(self):
+        # #3540: the Linux portable job runs the core tests that read App/, and the runner waits for the app build.
+        for paths in (('App/SpokenMarginsApp/Sources/SpokenMarginsApp/A.swift',),
+                      ('App/SpokenMarginsAppTests/XTests.swift', 'docs/y.md'),
+                      ('App/SpokenMarginsApp/Info.plist', 'App/SpokenMarginsApp/Resources/Assets.xcassets/x.json'),
+                      ('App/SharedSources/B.swift', 'App/SpokenMarginsWatch/C.swift', 'App/Foo.xcodeproj'),
+                      ('App/SpokenMarginsApp/Resources/Kitten2/x.onnx',), ('App/SpokenMarginsApp/Resources/Kitt/x',),
+                      ('App/TestFixtures2/a.json',)):
+            with self.subTest(paths=paths):
+                self.assertEqual(self.required(*paths), (False, 'Mac checks not required: no Swift inputs'))
+        for path in ('App/TestFixtures/a.spokenmargins', 'App/SpokenMarginsApp/Resources/Kitten/model.onnx',
+                     'App/SpokenMarginsApp/Resources/Supertonic/asset-manifest.json',
+                     'App/SpokenMarginsApp/Resources/VoiceCatalog/catalog.json'):
+            with self.subTest(path=path):
+                self.assertTrue(self.required('App/SpokenMarginsApp/Sources/SpokenMarginsApp/A.swift', path)[0])
+
+    def test_app_lookalikes_outside_the_folder_are_not_exempt(self):
+        # The exemption is the folder prefix alone: a Swift file or an unlisted path elsewhere still needs the Mac.
+        for path in ('app/A.swift', 'Apps/A.swift', 'Web/ios/App/AppDelegate.swift', 'docs/App/A.swift', 'App', 'A.swift'):
             with self.subTest(path=path):
                 self.assertTrue(self.required(path)[0])
 
@@ -123,12 +145,14 @@ class MacChecksRequiredTests(unittest.TestCase):
         self.assertTrue(self.required()[0])
         self.assertTrue(self.required('SomeNewTopLevelFolder/file.dat')[0])
 
-    def test_everything_the_sessionkit_tests_read_by_path_needs_them(self):
+    def test_everything_the_sessionkit_tests_read_by_path_needs_them_but_the_app_reads_a_mac_does_not(self):
+        # sessionkit_pass.READS stays whole, since the pass key covers the core tests too (#3540); only App/ reads leave
+        # the Mac checks, and only the ones no Mac-only test reads (MAC_APP_READS, kept honest by the guard above).
         import sessionkit_pass
         for read in sessionkit_pass.READS:
             path = read + 'x' if read.endswith('/') else read
             with self.subTest(read=read):
-                self.assertTrue(self.required(path)[0])
+                self.assertEqual(self.required(path)[0], not read.startswith('App/') or read.startswith(scope.MAC_APP_READS))
 
     def test_a_web_diff_needs_no_mac_check(self):
         # #3389's own paths, and the rest of what lives in the folder.
@@ -142,7 +166,7 @@ class MacChecksRequiredTests(unittest.TestCase):
     def test_a_swift_input_or_a_lookalike_of_web_still_needs_them(self):
         for paths in (('Web/ios/App/AppDelegate.swift',), ('Web/a.swift',), ('Web/ios/App.xcodeproj',),
                       ('Web/src/a.ts', 'Web/ios/App/AppDelegate.swift'), ('Web/src/a.ts', 'project.yml'),
-                      ('Web/src/a.ts', 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/A.tsx'),
+                      ('Web/src/a.ts', 'Packages/SessionKit/Sources/SessionKit/A.tsx'),
                       ('Web/src/a.ts', 'Contracts/fixtures/web-packets/a.spokenmargins'),
                       ('web/src/a.ts',), ('WEB/src/a.ts',), ('Web',), ('Webby/a.ts',), ('WebKit/a.ts',), (' Web/a.ts',)):
             with self.subTest(paths=paths):
@@ -328,10 +352,18 @@ class HostedCheckSetTests(unittest.TestCase):
     def test_a_swift_diff_still_requires_all_three(self):
         self.assertEqual(self.check_set(['Packages/SessionKit/Sources/SessionKit/X.swift']), (self.FULL, None))
 
-    def test_a_diff_under_app_also_waits_for_the_app_build(self):
+    def test_a_diff_under_app_waits_for_the_app_build_and_not_the_mac_checks(self):
+        # #3540: the portable job (core tests on Linux) and the app build stand in for the Mac checks.
+        app_only = {**lane.HOSTED_PORTABLE_CHECK, **lane.HOSTED_APP_CHECK}
+        self.assertEqual(self.check_set(['App/SpokenMarginsApp/Sources/SpokenMarginsApp/X.swift']),
+                         (app_only, 'Mac checks not required: no Swift inputs'))
+        self.assertEqual(self.check_set(['App/SpokenMarginsAppTests/XTests.swift', 'docs/y.md']),
+                         (app_only, 'Mac checks not required: no Swift inputs'))
+
+    def test_a_diff_under_app_that_a_mac_only_test_reads_waits_for_both(self):
         with_app = {**self.FULL, **lane.HOSTED_APP_CHECK}
-        self.assertEqual(self.check_set(['App/SpokenMarginsApp/Sources/SpokenMarginsApp/X.swift']), (with_app, None))
-        self.assertEqual(self.check_set(['App/SpokenMarginsAppTests/XTests.swift', 'docs/y.md']), (with_app, None))
+        self.assertEqual(self.check_set(['App/SpokenMarginsApp/Resources/Kitten/x.bin', 'App/A.swift']), (with_app, None))
+        self.assertEqual(self.check_set(['App/TestFixtures/a.spokenmargins']), (with_app, None))
 
     def test_a_diff_outside_app_does_not_wait_for_the_app_build(self):
         self.assertEqual(self.check_set(['project.yml'])[0], self.FULL)
@@ -345,7 +377,7 @@ class HostedCheckSetTests(unittest.TestCase):
 
     def test_a_base_without_the_app_build_rule_keeps_the_checks_it_had(self):
         policy = mock.Mock(spec=['mac_checks_required'], mac_checks_required=scope.mac_checks_required)
-        self.assertEqual(self.check_set(['App/x.swift'], policy=policy), (self.FULL, None))
+        self.assertEqual(self.check_set(['Packages/SessionKit/x.swift'], policy=policy), (self.FULL, None))
 
     def test_the_app_build_check_is_the_one_the_workflow_names(self):
         workflow = (ROOT / '.github/workflows/hosted-app-macos.yml').read_text()
