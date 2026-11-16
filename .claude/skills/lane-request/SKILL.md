@@ -39,7 +39,7 @@ It compares your branch (uncommitted files included) with `origin/main`, prints 
    /lane T3
    commit: 1bc676d
    changed: the Library remembers each tab's navigation
-   tests: AppNavigationStateTests, Gate1AppModelWorkflowTests/testRestoresSelection
+   tests: ExperiencePresentationTests, Gate1AppModelWorkflowTests/testRestoresSelection
    watch for: tab switch resets the path
    not needed: T2 green on 1bc676d
    ```
