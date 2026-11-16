@@ -17,6 +17,8 @@ test('the Library search filters the list as you type, and clearing it brings ev
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Library' }).click();
 
   const list = page.getByRole('list', { name: 'Episodes, newest first' });
+  // Nothing is said about matches before anyone searches.
+  await expect(page.getByRole('status').filter({ hasText: 'matches' })).toHaveCount(0);
   const all = await list.getByRole('listitem').count();
   expect(all).toBeGreaterThan(1);
 
@@ -32,5 +34,6 @@ test('the Library search filters the list as you type, and clearing it brings ev
 
   await page.getByRole('button', { name: 'Clear search' }).click();
   await expect(search).toHaveValue('');
+  await expect(search).toBeFocused();
   await expect(list.getByRole('listitem')).toHaveCount(all);
 });

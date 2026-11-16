@@ -180,8 +180,19 @@ export function timelinePosts(margins: readonly Margin[], durationSeconds: numbe
  * Whether a Library row answers a search (#4422): the query is in the episode's title, its show or publication, or the
  * name of someone who left a Margin on it, so a friend's items are found by the friend's name. Same rules as the app's.
  */
-export function libraryRowMatches(query: string, row: LibraryRow, margins: readonly Margin[]): boolean {
+export function libraryRowMatches(query: string, row: LibraryRow, authors: ReadonlyMap<string, readonly string[]>): boolean {
   if (query.trim() === '') return true;
-  const authors = margins.filter((m) => m.episodeId === row.episode.id).map((m) => m.author);
-  return matchesSearch(query, [row.episode.title, row.show?.title, ...authors]);
+  return matchesSearch(query, [row.episode.title, row.show?.title, row.show?.author, ...(authors.get(row.episode.id) ?? [])]);
+}
+
+/** The names on each episode's Margins, by episode id: built once per change of Margins, not once per row per keystroke. */
+export function marginAuthors(margins: readonly Margin[]): Map<string, string[]> {
+  const byEpisode = new Map<string, string[]>();
+  for (const m of margins) {
+    if (!m.author) continue;
+    const names = byEpisode.get(m.episodeId) ?? [];
+    if (!names.includes(m.author)) names.push(m.author);
+    byEpisode.set(m.episodeId, names);
+  }
+  return byEpisode;
 }

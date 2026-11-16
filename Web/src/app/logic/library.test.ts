@@ -4,6 +4,7 @@ import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model
 import {
   followingRows,
   libraryRowMatches,
+  marginAuthors,
   libraryRows,
   marginGroups,
   newestFirst,
@@ -128,7 +129,8 @@ test('a Library search finds an item by its title, its show, or the friend who l
   const episodes = [ep('1', 'lemon'), { ...ep('2', 'shared:Priya'), title: 'A friend’s find' }];
   const margins: Margin[] = [{ ...margin('m', '2', 5, '2026-11-01T00:00:00Z'), author: 'Priya' }];
   const rows = libraryRows(episodes, shows, []);
-  const found = (query: string) => rows.filter((r) => libraryRowMatches(query, r, margins)).map((r) => r.episode.id);
+  const authors = marginAuthors(margins);
+  const found = (query: string) => rows.filter((r) => libraryRowMatches(query, r, authors)).map((r) => r.episode.id);
   assert.equal(found('').length, 2, 'no query shows everything');
   assert.deepEqual(found('lemonade'), ['1'], 'by show');
   assert.deepEqual(found('ep 1'), ['1'], 'by title');

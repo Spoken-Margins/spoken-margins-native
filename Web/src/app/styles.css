@@ -1888,3 +1888,7 @@ body:not(:has(.mini-player)) .toasts {
   display: none;
   -webkit-appearance: none;
 }
+
+.empty {
+  overflow-wrap: anywhere;
+}

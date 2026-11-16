@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { formatClock } from '../../shared/clock.ts';
 import { useData } from '../data.tsx';
 import { minutes, shortDate } from '../format.ts';
 import { PauseIcon, PlayIcon } from '../icons.tsx';
 import { useMarginFilePicker, type OpenMarginFile } from '../import.tsx';
-import { libraryRows, libraryRowMatches, type LibraryRow } from '../logic/library.ts';
+import { libraryRows, libraryRowMatches, marginAuthors, type LibraryRow } from '../logic/library.ts';
 import { usePlayer } from '../player.tsx';
 import { SearchField } from '../search.tsx';
 
@@ -15,8 +15,10 @@ export function Library({ onPlay, onFindShows, onOpenFile }: { onPlay: () => voi
   // import margins"). The Margins tab keeps the same button.
   const picker = useMarginFilePicker(onOpenFile);
   const [query, setQuery] = useState('');
-  const allRows = libraryRows(data.episodes, data.shows, data.positions);
-  const rows = allRows.filter((row) => libraryRowMatches(query, row, data.margins));
+  const allRows = useMemo(() => libraryRows(data.episodes, data.shows, data.positions), [data.episodes, data.shows, data.positions]);
+  const authors = useMemo(() => marginAuthors(data.margins), [data.margins]);
+  const rows = useMemo(() => allRows.filter((row) => libraryRowMatches(query, row, authors)), [allRows, authors, query]);
+  const searching = query.trim() !== '';
 
   return (
     <div className="screen">
@@ -42,11 +44,10 @@ export function Library({ onPlay, onFindShows, onOpenFile }: { onPlay: () => voi
         </div>
       ) : (
         <>
-          {rows.length === 0 && (
-            <p className="empty" role="status">
-              Nothing in the Library matches “{query.trim()}”.
-            </p>
-          )}
+          {/* Always on the page, so a screen reader hears the words arrive. */}
+          <p className={searching && rows.length === 0 ? 'empty' : 'visually-hidden'} role="status">
+            {searching && rows.length === 0 ? `Nothing in the Library matches “${query.trim()}”.` : ''}
+          </p>
           <ul className="rows" aria-label="Episodes, newest first">
           {rows.map((row) => {
             const current = player.episode?.id === row.episode.id;
