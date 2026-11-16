@@ -1163,9 +1163,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertFalse(second.hasSessionForTesting)
 
         first.shutdown()
-        for _ in 0..<500 where BackgroundSessionGate.shared.isHeld(identifier) {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await pollUntil(timeout: .seconds(5)) { !BackgroundSessionGate.shared.isHeld(identifier) }
         XCTAssertFalse(BackgroundSessionGate.shared.isHeld(identifier), "invalidation gives the identifier back")
         second.retry(itemId: "episode")
         await second.preparationTasks["episode"]?.value
