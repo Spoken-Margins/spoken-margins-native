@@ -3,7 +3,7 @@
 The asset's values and the filled-button rule are host-tested in SessionKit's AccentColorGuardTests; the contrast
 numbers are in ExperienceColorContrastTests. This scan guards the wiring they can't see: the app target names the
 accent asset (the global accent reaches alerts, menus and sheets), the generated project says the same, the asset
-exists, and the root view sets the same token as a tint, because toggles follow SwiftUI's tint, not the asset.
+exists, and the scene's root view sets the same token as a tint, because toggles follow SwiftUI's tint, not the asset.
 """
 import re
 import unittest
@@ -39,7 +39,7 @@ class AccentColorWiringTests(unittest.TestCase):
         self.assertTrue((SOURCES / "Assets.xcassets" / "AccentColor.colorset" / "Contents.json").is_file())
 
     def test_the_root_view_sets_the_same_token_as_a_tint(self):
-        text = re.sub(r"//[^\n]*", "", (SOURCES / "Gate1RootView.swift").read_text())
+        text = re.sub(r"//[^\n]*", "", (SOURCES / "SpokenMarginsApp.swift").read_text())
         self.assertIn(".tint(AppColors.evergreen)", text)
 
 

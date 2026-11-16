@@ -195,6 +195,9 @@ struct SpokenMarginsApp: App {
     var body: some Scene {
         WindowGroup {
             Gate1RootView()
+                // The app's one tint (#3733): toggles follow SwiftUI's tint, not the asset catalog's accent, so both read the same token.
+                // Set here rather than in Gate1RootView, a hot file at its line ceiling; the effect is the same, this is the root.
+                .tint(AppColors.evergreen)
                 .presentationSceneToken()
                 .environmentObject(model)
                 .environmentObject(sharingCoordinator)
