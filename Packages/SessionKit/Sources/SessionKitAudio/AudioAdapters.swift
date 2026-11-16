@@ -3152,7 +3152,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
            url.scheme?.isEmpty == false {
             info[MPNowPlayingInfoPropertyAssetURL] = url
         }
-        NowPlayingInfoOwnership.shared.write(info, as: .mediaPlayer, detail: nowPlayingLedgerDetail())
+        NowPlayingInfoOwnership.shared.write(info, as: .mediaPlayer, itemId: context?.itemId, detail: nowPlayingLedgerDetail())
         configureRemoteCommandAvailability(canSeek: durationSeconds != nil)
         #if canImport(UIKit)
         Task { @MainActor in

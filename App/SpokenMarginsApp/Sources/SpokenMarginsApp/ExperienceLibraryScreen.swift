@@ -17,6 +17,8 @@ struct ExperienceLibraryScreen: View {
     @State private var isAudioPreparationQueuePresented = false
     @State private var isPlayQueuePresented = false
     @ObservedObject private var playQueue = PlayQueueState.shared
+    /// The thumbnail each row shows in place of its icon, when the item's feed or page gave one (#3864).
+    @ObservedObject private var itemArtwork = ItemArtworkModel.shared
     /// The item whose Continue is waiting on the "hear new Margins first?" question (#474).
     @State private var pendingNewMarginsOffer: NewMarginsOfferRequest?
     @State private var collectionItem: LibraryItemRow?
@@ -131,6 +133,8 @@ struct ExperienceLibraryScreen: View {
         }
         .newMarginsOffer($pendingNewMarginsOffer)
         .task { if !isEdgeSwipePreview { await clipboardLink.refresh() } } // the swipe's preview reads nothing (#106)
+        // Pictures of items from followed feeds: recorded off the main thread, and again whenever the Library's items change (#3864).
+        .task(id: model.libraryItems.map(\.id)) { if !isEdgeSwipePreview { await itemArtwork.refresh(using: model.followedSourceCoordinator) } }
         .onCompatibleChange(of: scenePhase) { phase in
             if phase == .active { Task { await clipboardLink.refresh() } }
         }
@@ -432,6 +436,7 @@ struct ExperienceLibraryScreen: View {
                 let row = entry.row
                 ExperienceLibraryCompactRow(
                     row: row,
+                    artworkURL: itemArtwork.url(forItem: row.id),
                     isCurrentItem: entry.isCurrent,
                     playbackSpeed: model.speechPlaybackRateMultiplier,
                     spokenNoteFolders: model.marginOutput.spokenNotes,
@@ -511,6 +516,8 @@ private struct ExperienceLibraryCompactRow: View {
     @ScaledMetric(relativeTo: .body) private var iconHeight: CGFloat = 44
 
     let row: LibraryItemRow
+    /// The item's thumbnail, from its own feed entry or its show; nil keeps the icon (#3864).
+    var artworkURL: URL?
     var isCurrentItem = false
     /// The listener's speech speed, for a text item's estimated length (#305).
     var playbackSpeed: Double = 1
@@ -558,11 +565,27 @@ private struct ExperienceLibraryCompactRow: View {
         }
     }
 
-    private var iconTile: some View {
+    @ViewBuilder private var iconTile: some View {
+        let width = min(max(iconWidth, 38), 76)
+        let height = min(max(iconHeight, 44), 88)
+        if let artworkURL {
+            // The item's thumbnail in the icon's place: a square the tile's width, centred in the tile's height, so the
+            // row's height rules are unchanged. While it loads, or when it can't, the icon shows in the same square (#3864).
+            ArtworkThumbnail(url: artworkURL, fallback: AnyView(symbolTile(width: width, height: width)))
+                .frame(width: width, height: width)
+                .clipShape(RoundedRectangle(cornerRadius: width * 0.22, style: .continuous))
+                .frame(width: width, height: height)
+                .accessibilityHidden(true)
+        } else {
+            symbolTile(width: width, height: height)
+        }
+    }
+
+    private func symbolTile(width: CGFloat, height: CGFloat) -> some View {
         Image(systemName: mediaSymbol)
             .font(.body.weight(.semibold))
             .foregroundStyle(AppColors.evergreen)
-            .frame(width: min(max(iconWidth, 38), 76), height: min(max(iconHeight, 44), 88))
+            .frame(width: width, height: height)
             .background(AppColors.softGreen.opacity(isCurrentItem ? 0.85 : 0.55))
             // The row's own text already says the kind (`LibraryRowDetail`), so the icon is not a third stop per row.
             .accessibilityHidden(true)
