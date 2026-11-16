@@ -2,9 +2,65 @@ import Foundation
 import SessionKit
 import SessionKitPersistence
 
+/// Lets one `URLSession` at a time hold a background identifier (#4392).
+///
+/// CFNetwork throws an uncaught exception ("A background URLSession with identifier ... already exists!") from
+/// `downloadTask(with:)` when a second session shares an identifier with one that has not finished
+/// invalidating. `invalidateAndCancel()` is asynchronous, so a coordinator built right after `shutdown()` of
+/// the old one used to land in exactly that window. A coordinator takes the identifier here before it makes a
+/// session and gives it back from `didBecomeInvalidWithError`, so the second one waits for the first.
+@MainActor
+final class BackgroundSessionGate {
+    static let shared = BackgroundSessionGate()
+
+    private var held: Set<String> = []
+    private var waiters: [String: [UUID: CheckedContinuation<Bool, Never>]] = [:]
+
+    func isHeld(_ identifier: String) -> Bool { held.contains(identifier) }
+
+    /// Takes `identifier` if no live session holds it.
+    func claim(_ identifier: String) -> Bool { held.insert(identifier).inserted }
+
+    /// Gives `identifier` back and wakes whoever is waiting for it. Does nothing if it was not held.
+    func release(_ identifier: String) {
+        guard held.remove(identifier) != nil else { return }
+        let pending = waiters.removeValue(forKey: identifier) ?? [:]
+        for continuation in pending.values { continuation.resume(returning: true) }
+    }
+
+    /// Waits until `identifier` is free and takes it. False when it stayed held for `timeout`, so the caller
+    /// can fail visibly instead of making a second session.
+    func claim(_ identifier: String, waitingUpTo timeout: Duration) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while !claim(identifier) {
+            let remaining = deadline - ContinuousClock.now
+            if remaining <= .zero { return false }
+            _ = await waitForRelease(identifier, timeout: remaining)
+        }
+        return true
+    }
+
+    private func waitForRelease(_ identifier: String, timeout: Duration) async -> Bool {
+        let token = UUID()
+        return await withCheckedContinuation { continuation in
+            waiters[identifier, default: [:]][token] = continuation
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: timeout)
+                self?.expire(identifier, token: token)
+            }
+        }
+    }
+
+    private func expire(_ identifier: String, token: UUID) {
+        guard let continuation = waiters[identifier]?.removeValue(forKey: token) else { return }
+        if waiters[identifier]?.isEmpty == true { waiters[identifier] = nil }
+        continuation.resume(returning: false)
+    }
+}
+
 @MainActor
 final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked Sendable {
-    static let backgroundSessionIdentifier = "com.spokenmargins.podcast-downloads"
+    nonisolated static let backgroundSessionIdentifier = "com.spokenmargins.podcast-downloads"
     @Published private(set) var recordsByItemId: [String: PodcastDownloadRecord] = [:]
     @Published private(set) var networkTransport: PodcastNetworkTransport = .other
 
@@ -40,7 +96,15 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     /// while the app runs; the row only has to catch up before the next launch. Deletes go through the same
     /// queue so a queued save can't bring back a row that was just removed.
     private let rowWriter = DispatchQueue(label: "spoken-margins.podcast-download-rows", qos: .utility)
-    private var session: URLSession!
+    private var session: URLSession?
+    /// Set when the session could not be made at init because an older session still held the identifier.
+    private var sessionTask: Task<URLSession?, Never>?
+    private let usesBackgroundSession: Bool
+    private let sessionIdentifier: String
+    private let foregroundSessionConfiguration: URLSessionConfiguration?
+    private let monitorsNetwork: Bool
+    /// How long a new coordinator waits for the old session to finish invalidating.
+    private let sessionHandoffTimeout: Duration
 
     init(
         store: SQLiteSessionStore,
@@ -53,8 +117,19 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         contentLength: (@Sendable (URL, Bool) async throws -> Int64)? = nil,
         startDownload: ((URLRequest, String) -> Void)? = nil,
         preflightSession: URLSession = .shared,
-        foregroundSessionConfiguration: URLSessionConfiguration? = nil
+        foregroundSessionConfiguration: URLSessionConfiguration? = nil,
+        sessionIdentifier: String = PodcastDownloadCoordinator.backgroundSessionIdentifier,
+        sessionHandoffTimeout: Duration = .seconds(20)
     ) throws {
+        #if os(iOS)
+        self.usesBackgroundSession = usesBackgroundSession
+        #else
+        self.usesBackgroundSession = false
+        #endif
+        self.sessionIdentifier = sessionIdentifier
+        self.foregroundSessionConfiguration = foregroundSessionConfiguration
+        self.monitorsNetwork = monitorsNetwork
+        self.sessionHandoffTimeout = sessionHandoffTimeout
         self.store = store
         self.connectivity = connectivity ?? ConnectivityMonitor()
         self.contentLength = contentLength
@@ -73,12 +148,23 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         try mutableDirectory.setResourceValues(values)
         super.init()
 
+        try restoreRecords()
+        // A background session whose identifier an older session still holds is made as soon as that one has
+        // invalidated (#4392); everything else is made now.
+        if !self.usesBackgroundSession || BackgroundSessionGate.shared.claim(sessionIdentifier) {
+            makeSession()
+        } else {
+            Task { @MainActor [weak self] in _ = await self?.ensureSession() }
+        }
+    }
+
+    /// Makes the session. A background session's identifier must already be claimed from `BackgroundSessionGate`.
+    @discardableResult
+    private func makeSession() -> URLSession {
         #if os(iOS)
         let configuration: URLSessionConfiguration
         if usesBackgroundSession {
-            configuration = URLSessionConfiguration.background(
-                withIdentifier: Self.backgroundSessionIdentifier
-            )
+            configuration = URLSessionConfiguration.background(withIdentifier: sessionIdentifier)
             configuration.sessionSendsLaunchEvents = true
             configuration.isDiscretionary = false
         } else {
@@ -88,10 +174,10 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         let configuration = foregroundSessionConfiguration ?? URLSessionConfiguration.default
         #endif
         configuration.waitsForConnectivity = true
-        session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-        try restoreRecords()
+        let made = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+        session = made
         if monitorsNetwork {
-            session.getAllTasks { [weak self] tasks in
+            made.getAllTasks { [weak self] tasks in
                 Task { @MainActor in
                     guard let self else { return }
                     for task in tasks {
@@ -114,6 +200,32 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                 }
             }
         }
+        return made
+    }
+
+    /// The session, once it exists: now, or after the older session on the same background identifier has
+    /// invalidated. Nil when this coordinator was shut down, or the older session never let go within
+    /// `sessionHandoffTimeout`; the caller then fails the download so the row shows a retry.
+    private func ensureSession() async -> URLSession? {
+        // A shut-down coordinator's session is invalidated; a task made on it raises too.
+        if isShutDown { return nil }
+        if let session { return session }
+        if let sessionTask { return await sessionTask.value }
+        let task = Task { @MainActor [weak self] () -> URLSession? in
+            guard let self else { return nil }
+            defer { self.sessionTask = nil }
+            if self.isShutDown { return nil }
+            guard await BackgroundSessionGate.shared.claim(
+                self.sessionIdentifier, waitingUpTo: self.sessionHandoffTimeout
+            ) else { return nil }
+            if self.isShutDown {
+                BackgroundSessionGate.shared.release(self.sessionIdentifier)
+                return nil
+            }
+            return self.makeSession()
+        }
+        sessionTask = task
+        return await task.value
     }
 
     deinit {
@@ -126,7 +238,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         isShutDown = true
         if let connectivityObserver { connectivity.removeObserver(connectivityObserver) }
         connectivityObserver = nil
-        session.invalidateAndCancel()
+        session?.invalidateAndCancel()
         for itemId in Array(generations.keys) { invalidateAttempt(itemId: itemId) }
         // A coordinator made next restores from the store, so queued row writes land first.
         rowWriter.sync {}
@@ -145,7 +257,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             // `shutdown` waits for it, so the reservation is gone before anything reads the budget again.
             rowWriter.async { [store] in try? store.deleteOfflineStorageReservation(id: attempt.reservationId) }
         }
-        session.getAllTasks { tasks in
+        session?.getAllTasks { tasks in
             for task in tasks {
                 let attempt = PodcastDownloadAttempt.decode(task.taskDescription)
                 if (attempt?.itemId == itemId && attempt?.generation == generation)
@@ -328,6 +440,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         rowWriter.sync {}
     }
 
+    var hasSessionForTesting: Bool { session != nil }
+
     func setNetworkTransportForTesting(_ transport: PodcastNetworkTransport) {
         networkChanged(to: transport)
     }
@@ -421,6 +535,18 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             do {
                 let announced = try await self.announcedContentLength(at: url, userInitiated: userInitiated)
                 guard self.generations[record.itemId] == generation else { return }
+                // Waits out an older session on the same background identifier; making a task on a second one
+                // aborts the app (#4392).
+                var taskSession: URLSession?
+                if self.startDownload == nil {
+                    taskSession = await self.ensureSession()
+                    guard self.generations[record.itemId] == generation else { return }
+                    guard taskSession != nil else {
+                        self.invalidateAttempt(itemId: record.itemId)
+                        self.fail(updated, reason: "Downloads are restarting. Try again in a moment.")
+                        return
+                    }
+                }
                 // A delete queued by `removeItem` or `evict` must land before the ledger counts bytes, or it would
                 // count a file that is already gone and evict another episode to make room.
                 await self.drainRowWrites()
@@ -454,8 +580,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                 self.persist(reserved)
                 if let startDownload = self.startDownload {
                     startDownload(request, attempt.taskDescription)
-                } else {
-                    let task = self.session.downloadTask(with: request)
+                } else if let taskSession {
+                    let task = taskSession.downloadTask(with: request)
                     task.taskDescription = attempt.taskDescription
                     if userInitiated { self.userInitiatedTaskIds.insert(task.taskIdentifier) }
                     task.resume()
@@ -738,6 +864,12 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
 }
 
 extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
+    /// Gives a background identifier back once its session is gone, so the next coordinator can take it (#4392).
+    nonisolated func urlSession(_ session: URLSession, didBecomeInvalidWithError error: Error?) {
+        guard let identifier = session.configuration.identifier else { return }
+        Task { @MainActor in BackgroundSessionGate.shared.release(identifier) }
+    }
+
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
                                totalBytesExpectedToWrite: Int64) {
