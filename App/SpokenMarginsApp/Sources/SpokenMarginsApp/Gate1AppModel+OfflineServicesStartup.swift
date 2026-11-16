@@ -51,7 +51,8 @@ extension Gate1AppModel {
         offlineServicesStartupTasks.append(Task { [weak self] in
             guard !Task.isCancelled else { return }
             // The saved Following items go on screen first and on their own; the audit and the feed refresh no longer
-            // stand in front of them (#4387). The refresh still starts only after both, so it can't be overwritten.
+            // stand in front of them (#4387). The refresh starts once they are out, so it can't be overwritten, and
+            // doesn't wait for the audit (#4388). In Low Power Mode it covers only the first screen of Following.
             await FollowingLaunchSequence.run(
                 publishSaved: { await self?.reloadFollowedSourceEntries() },
                 audit: {
@@ -72,7 +73,12 @@ extension Gate1AppModel {
                 },
                 refresh: {
                     guard !Task.isCancelled else { return }
-                    await self?.performFollowedSourceRefresh(force: false)
+                    let scope = FeedRefreshScope.atLaunch(lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled)
+                    // Marked only for a pass that ran, and as wide as it really was: a request that landed during the pass
+                    // widens it to every feed (#4388).
+                    guard let covered = await self?.performFollowedSourceRefresh(force: false, scope: scope),
+                          !Task.isCancelled else { return }
+                    LaunchRecorder.shared?.markFollowingFresh(firstScreenOnly: covered == .firstScreen)
                 }
             )
             // A model built by a test must not ask the production server for the tour: on a runner with a network

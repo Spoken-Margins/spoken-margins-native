@@ -250,18 +250,31 @@ public actor FollowedSourceCoordinator {
         )
     }
 
+    /// How many feeds `refreshStale` fetches at once (#4388). The default session also allows two connections per host.
+    public static let maximumConcurrentRefreshes = 4
+
     /// Returns the entries that feeds set to "Add every new item" want added to the Library (#466).
     /// They stay unseen here; the caller imports them, which marks them imported.
+    /// Stale feeds are fetched `maximumConcurrentRefreshes` at a time; the saves still happen one after another on this
+    /// actor, and the entries come back in the feeds' order (#4388). `scope` can leave feeds out of this pass, and they
+    /// stay stale.
     @discardableResult
-    public func refreshStale(now: Date = Date(), minimumAge: TimeInterval = 6 * 60 * 60, force: Bool = false) async -> [FeedEntry] {
-        var toAdd: [FeedEntry] = []
-        for subscription in (try? repository.loadFeedSubscriptions()) ?? [] {
-            // A background refresh that iOS cuts short stops here, not by failing every feed left (#170).
-            if Task.isCancelled { break }
-            guard force || subscription.lastRefreshAt.map({ now.timeIntervalSince($0) >= minimumAge }) ?? true else { continue }
-            toAdd += await refresh(subscription, now: now)
+    public func refreshStale(now: Date = Date(), minimumAge: TimeInterval = 6 * 60 * 60, force: Bool = false,
+                             scope: FeedRefreshScope = .allFeeds,
+                             maximumConcurrent: Int = FollowedSourceCoordinator.maximumConcurrentRefreshes) async -> [FeedEntry] {
+        let subscriptions = (try? repository.loadFeedSubscriptions()) ?? []
+        // The entries are read only for a scope that ranks shows by them; the full pass never needs them.
+        let inScope = scope == .allFeeds ? nil
+            : scope.subscriptionIDs(subscriptions: subscriptions, entries: (try? repository.loadFeedEntries(subscriptionId: nil)) ?? [])
+        let due = subscriptions.filter { subscription in
+            if let inScope, !inScope.contains(subscription.id) { return false }
+            return force || subscription.lastRefreshAt.map({ now.timeIntervalSince($0) >= minimumAge }) ?? true
         }
-        return toAdd
+        // A background refresh that iOS cuts short starts no more feeds, instead of failing every feed left (#170).
+        let added = await BoundedConcurrency.map(due, limit: maximumConcurrent) { [self] subscription in
+            await refresh(subscription, now: now)
+        }
+        return added.flatMap { $0 ?? [] }
     }
 
     public func entries() throws -> [FeedEntry] {
