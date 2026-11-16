@@ -9,6 +9,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
     private var base: URL!
     private var prepared: URL { base.appending(path: "PreparedAudio", directoryHint: .isDirectory) }
     private var editions: URL { base.appending(path: "ListeningEditions", directoryHint: .isDirectory) }
+    private var maps: URL { base.appending(path: "EpisodeMaps", directoryHint: .isDirectory) }
     private var journal: URL { base.appending(path: "PurgeJournal", directoryHint: .isDirectory) }
     private let manager = FileManager.default
 
@@ -24,6 +25,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
         let roots = [
             PermanentDeletePurge.Root(name: ItemOwnedFiles.preparedAudioRoot, url: prepared),
             PermanentDeletePurge.Root(name: ItemOwnedFiles.listeningEditionsRoot, url: editions),
+            PermanentDeletePurge.Root(name: ItemOwnedFiles.episodeMapsRoot, url: maps),
         ]
         if let removeFile { return PermanentDeletePurge(journalDirectory: journal, roots: roots, removeFile: removeFile) }
         return PermanentDeletePurge(journalDirectory: journal, roots: roots)
@@ -46,6 +48,16 @@ final class PermanentDeletePurgeTests: XCTestCase {
         ((try? manager.contentsOfDirectory(atPath: journal.path)) ?? []).filter { $0.hasSuffix(".json") }.count
     }
 
+    /// These tests are about the journal's order and its checks on the narration chunks and Editions; the copied
+    /// source files and the episode-map folder are in `PermanentDeleteCopiedSourcesTests`.
+    private func narrationTargets(forItems ids: [String]) -> [PermanentDeletePurge.Target] {
+        ItemOwnedFiles.targets(forItems: ids).filter {
+            $0.root == ItemOwnedFiles.preparedAudioRoot || $0.root == ItemOwnedFiles.listeningEditionsRoot
+        }
+    }
+
+    private func narrationTargets(forItem id: String) -> [PermanentDeletePurge.Target] { narrationTargets(forItems: [id]) }
+
     private var later: Date { Date().addingTimeInterval(60) }
     private let gone = "item-6f1c2d3e-0000-4000-8000-000000000001"
     private let kept = "item-6f1c2d3e-0000-4000-8000-000000000002"
@@ -55,7 +67,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
     func testADeleteRemovesTheItemsFilesAndOnlyThose() async throws {
         try seedFiles(of: gone); try seedFiles(of: kept)
         var deleted = false
-        let task = try purge().deleting(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone)) { deleted = true }
+        let task = try purge().deleting(itemIds: [gone], targets: narrationTargets(forItem: gone)) { deleted = true }
         let outcome = await task.value
         XCTAssertTrue(deleted)
         XCTAssertEqual(outcome.removed.count, 2)
@@ -71,7 +83,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
         try seedFiles(of: gone)
         var recordsDuringDelete = -1
         let purge = purge()
-        let task = try purge.deleting(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone)) {
+        let task = try purge.deleting(itemIds: [gone], targets: narrationTargets(forItem: gone)) {
             recordsDuringDelete = journalCount()
         }
         _ = task
@@ -81,7 +93,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
     func testAFailedDeleteTouchesNoFileAndItsRecordIsDroppedAtLaunch() throws {
         try seedFiles(of: gone)
         struct DeleteFailed: Error {}
-        XCTAssertThrowsError(try purge().deleting(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone)) {
+        XCTAssertThrowsError(try purge().deleting(itemIds: [gone], targets: narrationTargets(forItem: gone)) {
             throw DeleteFailed()
         }) { XCTAssertTrue($0 is DeleteFailed) }
         XCTAssertEqual(filesExist(of: gone).chunks, true)
@@ -97,7 +109,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
         try seedFiles(of: gone)
         try Data("a file where the journal folder should be".utf8).write(to: journal)
         var deleted = false
-        let outcome = await (try purge().deleting(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone)) {
+        let outcome = await (try purge().deleting(itemIds: [gone], targets: narrationTargets(forItem: gone)) {
             deleted = true
         }).value
         XCTAssertTrue(deleted, "the listener's delete goes ahead")
@@ -118,7 +130,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
     func testAKilledDeleteIsFinishedAtTheNextLaunchOnceTheRowsAreGone() throws {
         try seedFiles(of: gone); try seedFiles(of: kept)
         // The app is killed after the rows went and before the files did: the record is all that is left.
-        _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
+        _ = try purge().begin(itemIds: [gone], targets: narrationTargets(forItem: gone))
         XCTAssertEqual(filesExist(of: gone).chunks, true)
 
         let outcome = purge().resumePending(recordsBefore: later, rowState: { _ in .absent })
@@ -131,7 +143,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
 
     func testAKillBeforeTheRowsWentRemovesNothing() throws {
         try seedFiles(of: gone)
-        _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
+        _ = try purge().begin(itemIds: [gone], targets: narrationTargets(forItem: gone))
         let outcome = purge().resumePending(recordsBefore: later, rowState: { $0 == self.gone ? .present : .absent })
         XCTAssertEqual(outcome.abandonedRecords, 1)
         XCTAssertTrue(outcome.removed.isEmpty)
@@ -149,7 +161,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
             }
             try FileManager.default.removeItem(at: url)
         })
-        let outcome = await (try stuck.deleting(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone)) {}).value
+        let outcome = await (try stuck.deleting(itemIds: [gone], targets: narrationTargets(forItem: gone)) {}).value
         XCTAssertEqual(outcome.removed.map(\.root), [ItemOwnedFiles.preparedAudioRoot], "only the chunks went")
         XCTAssertEqual(outcome.kept.map(\.root), [ItemOwnedFiles.listeningEditionsRoot])
         XCTAssertEqual(filesExist(of: gone).chunks, false)
@@ -165,7 +177,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
 
     func testARowThatCannotBeReadKeepsTheRecordForTheNextLaunch() throws {
         try seedFiles(of: gone)
-        _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
+        _ = try purge().begin(itemIds: [gone], targets: narrationTargets(forItem: gone))
         let busy = purge().resumePending(recordsBefore: later, rowState: { _ in .unknown })
         XCTAssertEqual(busy.deferredRecords, 1)
         XCTAssertTrue(busy.removed.isEmpty)
@@ -179,7 +191,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
     func testARecordMadeAfterTheLaunchBeganIsLeftToItsOwnDelete() throws {
         try seedFiles(of: gone)
         let launchBegan = Date().addingTimeInterval(-1)
-        _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
+        _ = try purge().begin(itemIds: [gone], targets: narrationTargets(forItem: gone))
         // This process's own delete wrote it, rows still present at the moment resume looks.
         let outcome = purge().resumePending(recordsBefore: launchBegan, rowState: { _ in .present })
         XCTAssertEqual(outcome, PermanentDeletePurge.Outcome())
@@ -188,7 +200,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
     }
 
     func testAFileAlreadyGoneCountsAsRemoved() throws {
-        let record = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
+        let record = try purge().begin(itemIds: [gone], targets: narrationTargets(forItem: gone))
         let outcome = purge().finish(record)
         XCTAssertEqual(outcome.removed.count, 2)
         XCTAssertEqual(journalCount(), 0)
@@ -196,7 +208,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
 
     func testAnUnreadableRecordIsDroppedAndTheRestStillRun() throws {
         try seedFiles(of: gone)
-        _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
+        _ = try purge().begin(itemIds: [gone], targets: narrationTargets(forItem: gone))
         try Data("not json".utf8).write(to: journal.appending(path: "broken.json"))
         let outcome = purge().resumePending(recordsBefore: later, rowState: { _ in .absent })
         XCTAssertEqual(outcome.unreadableRecords, 1)
@@ -256,12 +268,12 @@ final class PermanentDeletePurgeTests: XCTestCase {
         try seedFiles(of: gone); try seedFiles(of: kept)
 
         // Killed before the delete: the row is still there.
-        _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
+        _ = try purge().begin(itemIds: [gone], targets: narrationTargets(forItem: gone))
         XCTAssertEqual(purge().resumePending(recordsBefore: later, store: store).abandonedRecords, 1)
         XCTAssertTrue(filesExist(of: gone).chunks)
 
         // Killed after it: the row is gone, the files go.
-        _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
+        _ = try purge().begin(itemIds: [gone], targets: narrationTargets(forItem: gone))
         try store.deleteItem(id: gone)
         XCTAssertEqual(purge().resumePending(recordsBefore: later, store: store).removed.count, 2)
         XCTAssertFalse(filesExist(of: gone).chunks)
@@ -285,7 +297,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
             ("a\u{0301}", true, "a combining mark"),
         ]
         for row in table {
-            let targets = ItemOwnedFiles.targets(forItem: row.id)
+            let targets = narrationTargets(forItem: row.id)
             XCTAssertEqual(targets.contains { $0.root == ItemOwnedFiles.preparedAudioRoot }, row.prepared, row.note)
             XCTAssertEqual(targets.filter { $0.root == ItemOwnedFiles.listeningEditionsRoot }.count, 1, row.note)
             for target in targets {
@@ -303,7 +315,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
         // a_b and a-b map to one folder name; A-B maps to another (they are one directory only on a case-insensitive
         // volume, where removing the second finds the folder already gone). On a case-sensitive volume every folder
         // is in the record, so none is left behind with no record to retry it.
-        let targets = ItemOwnedFiles.targets(forItems: ["a_b", "a-b", "A-B"])
+        let targets = narrationTargets(forItems: ["a_b", "a-b", "A-B"])
         XCTAssertEqual(
             targets.filter { $0.root == ItemOwnedFiles.preparedAudioRoot }.map(\.relativePath), ["a-b", "A-B"])
         XCTAssertEqual(targets.filter { $0.root == ItemOwnedFiles.listeningEditionsRoot }.count, 3)
@@ -311,7 +323,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
 
     /// The same ids on both kinds of volume: `A-1` going while `a-1` stays.
     func testCaseSensitiveVolumesKeepTwoCasesApart() {
-        let target = ItemOwnedFiles.targets(forItem: "A-1").first { $0.root == ItemOwnedFiles.preparedAudioRoot }!
+        let target = narrationTargets(forItem: "A-1").first { $0.root == ItemOwnedFiles.preparedAudioRoot }!
         XCTAssertEqual(
             ItemOwnedFiles.stillFree(target, rowState: { _ in .absent }, allItemIds: { ["a-1"] }, caseSensitiveNames: true),
             .absent, "two different folders: A-1's own is free, so its chunks go")
@@ -330,7 +342,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
     /// Just before a folder goes, is it still free? A table of the ids that map to the same folder, and ones that don't.
     func testWhichIdsKeepAPreparedAudioFolder() {
         let gone = "a_b"
-        let target = ItemOwnedFiles.targets(forItem: gone).first { $0.root == ItemOwnedFiles.preparedAudioRoot }!
+        let target = narrationTargets(forItem: gone).first { $0.root == ItemOwnedFiles.preparedAudioRoot }!
         let table: [(others: [String], free: Bool, note: String)] = [
             ([], true, "no other item"),
             (["other", "a-c", "a--b"], true, "neighbours that map elsewhere"),
@@ -344,7 +356,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
             XCTAssertEqual(state, row.free ? .absent : .present, row.note)
         }
         let long = String(repeating: "x", count: 81)
-        let longTarget = ItemOwnedFiles.targets(forItem: long).first { $0.root == ItemOwnedFiles.preparedAudioRoot }!
+        let longTarget = narrationTargets(forItem: long).first { $0.root == ItemOwnedFiles.preparedAudioRoot }!
         XCTAssertEqual(
             ItemOwnedFiles.stillFree(longTarget, rowState: { _ in .absent }, allItemIds: { [long + "y"] }), .present,
             "an 80-character cut shared with a longer id")
@@ -364,7 +376,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
         XCTAssertEqual(Set(try store.loadAllItemIds()), ["a-b", "a_b", "other"])
         try seedFiles(of: "a-b")   // the folder a_b maps to as well
         let outcome = await (try purge().deleting(
-            itemIds: ["a_b"], targets: ItemOwnedFiles.targets(forItem: "a_b"), recheck: purge().storeRecheck(store: store)
+            itemIds: ["a_b"], targets: narrationTargets(forItem: "a_b"), recheck: purge().storeRecheck(store: store)
         ) { try store.deleteItem(id: "a_b") }).value
         XCTAssertEqual(outcome.removed.map(\.root), [ItemOwnedFiles.listeningEditionsRoot], "a_b's edition only")
         XCTAssertEqual(outcome.reappeared.map(\.root), [ItemOwnedFiles.preparedAudioRoot])
@@ -379,7 +391,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
         }
         try seedFiles(of: gone); try seedFiles(of: kept)
         let outcome = await (try purge().deleting(
-            itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone), recheck: purge().storeRecheck(store: store)
+            itemIds: [gone], targets: narrationTargets(forItem: gone), recheck: purge().storeRecheck(store: store)
         ) { try store.deleteItem(id: gone) }).value
         XCTAssertEqual(outcome.removed.count, 2)
         XCTAssertFalse(filesExist(of: gone).chunks)
@@ -390,7 +402,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
 
     func testAnItemThatComesBackWhileARecordIsFinishedKeepsItsFiles() throws {
         try seedFiles(of: gone); try seedFiles(of: kept)
-        _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
+        _ = try purge().begin(itemIds: [gone], targets: narrationTargets(forItem: gone))
         // Absent when the record is read; imported again (same id) before the first removal.
         var lookups = 0
         let outcome = purge().resumePending(recordsBefore: later, rowState: { _ in
@@ -406,7 +418,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
 
     func testAnItemWhoseRowCannotBeReadAtTheSecondLookKeepsItsTarget() throws {
         try seedFiles(of: gone)
-        _ = try purge().begin(itemIds: [gone], targets: ItemOwnedFiles.targets(forItem: gone))
+        _ = try purge().begin(itemIds: [gone], targets: narrationTargets(forItem: gone))
         var lookups = 0
         let outcome = purge().resumePending(recordsBefore: later, rowState: { _ in
             lookups += 1
@@ -424,7 +436,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
             try store.saveItem(Item(id: id, title: id, mediaType: "text", text: "Body", externalReference: nil, status: "ready"))
         }
         try seedFiles(of: "a_b")                                   // the folder a-b maps to as well
-        _ = try purge().begin(itemIds: ["a_b"], targets: ItemOwnedFiles.targets(forItem: "a_b"))
+        _ = try purge().begin(itemIds: ["a_b"], targets: narrationTargets(forItem: "a_b"))
         try store.deleteItem(id: "a_b")                            // the delete went through; the app was killed
         // Before the launch finishes the record, a friend's packet brings in a-b.
         try store.saveItem(Item(id: "a-b", title: "a-b", mediaType: "text", text: "Body", externalReference: nil, status: "ready"))
@@ -444,7 +456,7 @@ final class PermanentDeletePurgeTests: XCTestCase {
         XCTAssertEqual(try store.loadAllItemIds(), ["a-b"])
         XCTAssertTrue(try store.hasItemRow(id: "a-b"))
         XCTAssertFalse(try store.hasItemRow(id: "a_b"))
-        let target = ItemOwnedFiles.targets(forItem: "a_b").first { $0.root == ItemOwnedFiles.preparedAudioRoot }!
+        let target = narrationTargets(forItem: "a_b").first { $0.root == ItemOwnedFiles.preparedAudioRoot }!
         XCTAssertEqual(purge().storeRecheck(store: store)(target), .present, "a-b's folder is not free")
     }
 

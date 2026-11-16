@@ -131,10 +131,11 @@ extension Gate1AppModel {
             }
             let recordings = try store.loadInterjections(itemId: id)
             let quarantinedRecordings = try store.quarantinedMarginAudioPaths(itemId: id)
+            let ledgerRows = try store.loadOwnedOfflineAssets(itemId: id) // named before any file goes (#4227)
             podcastDownloadCoordinator?.queueRemoval(id)
             removeDurableGeneratedAudio(for: item)
             removeEpisodeMapArtifacts(itemId: id)
-            try purgingItemFiles(ofItems: [id], store: store) {
+            try purgingItemFiles(ofItems: [id], ledgerRows: ledgerRows, store: store) {
                 try deletingFriendRecordings(ofItems: [id], store: store) { try store.deleteItem(id: id) }
             }
             removeLiveSessionRecord(itemId: id)
@@ -176,10 +177,11 @@ extension Gate1AppModel {
             }
             let recordings = try ids.flatMap { try store.loadInterjections(itemId: $0) }
             let quarantinedRecordings = try ids.flatMap { try store.quarantinedMarginAudioPaths(itemId: $0) }
+            let ledgerRows = try ids.flatMap { try store.loadOwnedOfflineAssets(itemId: $0) } // named before any file goes (#4227)
             ids.forEach { podcastDownloadCoordinator?.queueRemoval($0) }
             items.forEach { removeDurableGeneratedAudio(for: $0) }
             ids.forEach(removeEpisodeMapArtifacts)
-            try purgingItemFiles(ofItems: ids, store: store) {
+            try purgingItemFiles(ofItems: ids, ledgerRows: ledgerRows, store: store) {
                 try deletingFriendRecordings(ofItems: ids, store: store) { try store.deleteItems(ids: ids) }
             }
             ids.forEach(removeLiveSessionRecord)
