@@ -263,7 +263,9 @@ public actor FollowedSourceCoordinator {
                              scope: FeedRefreshScope = .allFeeds,
                              maximumConcurrent: Int = FollowedSourceCoordinator.maximumConcurrentRefreshes) async -> [FeedEntry] {
         let subscriptions = (try? repository.loadFeedSubscriptions()) ?? []
-        let inScope = scope.subscriptionIDs(subscriptions: subscriptions, entries: (try? repository.loadFeedEntries(subscriptionId: nil)) ?? [])
+        // The entries are read only for a scope that ranks shows by them; the full pass never needs them.
+        let inScope = scope == .allFeeds ? nil
+            : scope.subscriptionIDs(subscriptions: subscriptions, entries: (try? repository.loadFeedEntries(subscriptionId: nil)) ?? [])
         let due = subscriptions.filter { subscription in
             if let inScope, !inScope.contains(subscription.id) { return false }
             return force || subscription.lastRefreshAt.map({ now.timeIntervalSince($0) >= minimumAge }) ?? true

@@ -74,9 +74,11 @@ extension Gate1AppModel {
                 refresh: {
                     guard !Task.isCancelled else { return }
                     let scope = FeedRefreshScope.atLaunch(lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled)
-                    await self?.performFollowedSourceRefresh(force: false, scope: scope)
-                    guard !Task.isCancelled else { return }
-                    LaunchRecorder.shared?.markFollowingFresh(firstScreenOnly: scope == .firstScreen)
+                    // Marked only for a pass that ran, and as wide as it really was: a request that landed during the pass
+                    // widens it to every feed (#4388).
+                    guard let covered = await self?.performFollowedSourceRefresh(force: false, scope: scope),
+                          !Task.isCancelled else { return }
+                    LaunchRecorder.shared?.markFollowingFresh(firstScreenOnly: covered == .firstScreen)
                 }
             )
             // A model built by a test must not ask the production server for the tour: on a runner with a network
