@@ -1,6 +1,7 @@
 // Ordering and grouping for the Library, Following and Margins tabs. Plain TypeScript with no DOM, so
 // `npm run test:web` covers it (library.test.ts).
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
+import { matchesSearch } from './search.ts';
 
 /** Seconds from the end at which an episode counts as finished. */
 export const FINISHED_WITHIN_SECONDS = 15;
@@ -173,4 +174,14 @@ export function timelinePosts(margins: readonly Margin[], durationSeconds: numbe
     else posts.push({ atSeconds: margin.atSeconds, fraction, margins: [margin] });
   }
   return posts;
+}
+
+/**
+ * Whether a Library row answers a search (#4422): the query is in the episode's title, its show or publication, or the
+ * name of someone who left a Margin on it, so a friend's items are found by the friend's name. Same rules as the app's.
+ */
+export function libraryRowMatches(query: string, row: LibraryRow, margins: readonly Margin[]): boolean {
+  if (query.trim() === '') return true;
+  const authors = margins.filter((m) => m.episodeId === row.episode.id).map((m) => m.author);
+  return matchesSearch(query, [row.episode.title, row.show?.title, ...authors]);
 }
