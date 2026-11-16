@@ -471,13 +471,13 @@ public actor FollowedSourceCoordinator {
         for subscription in subscriptions {
             guard let stored = try? repository.loadFeedEntries(subscriptionId: subscription.id) else { continue }
             let entries = stored.map { ItemArtworkStore.EntryImage(guid: $0.episodeGUID, url: $0.canonicalURL, imageURL: nil) }
-            itemArtworkRecord.update { $0.recordEntries(entries, subscriptionID: subscription.id) }
+            itemArtworkRecord.update { $0.recordEntries(entries, subscriptionID: subscription.id, showTitle: subscription.source.title) }
         }
     }
 
     private func recordItemArtwork(_ parsed: ParsedFeed, subscriptionID: String) {
         let entries = parsed.items.map { ItemArtworkStore.EntryImage(guid: $0.guid, url: $0.url, imageURL: $0.imageURL) }
-        itemArtworkRecord.update { $0.recordEntries(entries, subscriptionID: subscriptionID) }
+        itemArtworkRecord.update { $0.recordEntries(entries, subscriptionID: subscriptionID, showTitle: parsed.title) }
         reconcileItemArtwork()
     }
 
@@ -486,7 +486,7 @@ public actor FollowedSourceCoordinator {
         if let lister = repository as? any ItemArtworkKeyListing {
             keys = try? lister.listItemArtworkKeys()
         } else {
-            keys = (try? repository.listItems(includeDeleted: false))?.map(ItemArtworkStore.ItemKey.init)
+            keys = (try? repository.listItems(includeDeleted: true))?.map(ItemArtworkStore.ItemKey.init)
         }
         guard let items = keys else { return }
         let following = artwork.cache

@@ -251,13 +251,14 @@ extension SQLiteSessionStore {
 
     // MARK: Artwork keys
 
-    /// Every live item's id, feed GUID and page address, for matching items to followed-feed entries (#3864). It
-    /// reads the same kept cuts as `listItemSummaries`, so no item's text is decoded.
+    /// Every stored item's id, feed GUID, show and page address, trashed items included, for matching items to
+    /// followed-feed entries (#3864). Trashed items are kept so that restoring one finds its picture record still
+    /// there. It reads the same kept cuts as `listItemSummaries`, so no item's text is decoded.
     public func listItemArtworkKeys() throws -> [ItemArtworkStore.ItemKey] {
         guard let slices = try itemSlices(onlyId: nil, method: #function) else {
-            return try listItems().map(ItemArtworkStore.ItemKey.init)
+            return try listItems(includeDeleted: true).map(ItemArtworkStore.ItemKey.init)
         }
-        return slices.filter { $0.item.deletedAt == nil }.map { ItemArtworkStore.ItemKey($0.item) }
+        return slices.map { ItemArtworkStore.ItemKey($0.item) }
     }
 
     // MARK: Text digests

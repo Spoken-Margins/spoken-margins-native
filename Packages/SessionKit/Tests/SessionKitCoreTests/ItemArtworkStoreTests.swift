@@ -18,13 +18,15 @@ final class ItemArtworkStoreTests: XCTestCase {
         return cache
     }
 
-    private func key(_ id: String = "item", guid: String? = nil, url: String? = nil) -> ItemArtworkStore.ItemKey {
-        ItemArtworkStore.ItemKey(id: id, episodeGUID: guid, sourceURL: url)
+    private let showName = "Test Show"
+
+    private func key(_ id: String = "item", guid: String? = nil, url: String? = nil, show: String? = "Test Show") -> ItemArtworkStore.ItemKey {
+        ItemArtworkStore.ItemKey(id: id, episodeGUID: guid, sourceURL: url, showTitle: show)
     }
 
     private func recorded(_ entries: [ItemArtworkStore.EntryImage]) -> ItemArtworkStore {
         var store = ItemArtworkStore()
-        store.recordEntries(entries, subscriptionID: show)
+        store.recordEntries(entries, subscriptionID: show, showTitle: showName)
         return store
     }
 
@@ -63,7 +65,7 @@ final class ItemArtworkStoreTests: XCTestCase {
 
     func testOnlyHttpsLinksAreKept() {
         var store = recorded([.init(guid: "g1", url: "https://example.com/e1", imageURL: "http://example.com/plain.jpg")])
-        XCTAssertNil(store.entries["guid:g1"]?.imageURL)
+        XCTAssertTrue(store.entries.values.allSatisfy { $0.imageURL == nil }, "an http link is not kept")
         store.recordItem(id: "item", itemImageURL: "http://example.com/a.jpg", sourceImageURL: "/relative.jpg")
         XCTAssertNil(store.items["item"], "nothing usable, so nothing is recorded")
         XCTAssertNil(store.artworkURL(for: key(guid: "g1"), following: following(nil)))
@@ -121,9 +123,9 @@ final class ItemArtworkStoreTests: XCTestCase {
 
     func testARefreshThatStopsRepeatingAnImageDoesNotEraseIt() {
         var store = recorded([.init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/e1.jpg")])
-        store.recordEntries([.init(guid: "g1", url: "https://example.com/e1", imageURL: nil)], subscriptionID: show)
+        store.recordEntries([.init(guid: "g1", url: "https://example.com/e1", imageURL: nil)], subscriptionID: show, showTitle: showName)
         XCTAssertEqual(store.artworkURL(for: key(guid: "g1"), following: following())?.absoluteString, "https://example.com/e1.jpg")
-        store.recordEntries([.init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/new.jpg")], subscriptionID: show)
+        store.recordEntries([.init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/new.jpg")], subscriptionID: show, showTitle: showName)
         XCTAssertEqual(store.artworkURL(for: key(guid: "g1"), following: following())?.absoluteString, "https://example.com/new.jpg", "a new image replaces it")
     }
 
@@ -131,20 +133,20 @@ final class ItemArtworkStoreTests: XCTestCase {
         // A store written without the side file: nothing recorded at all.
         var store = ItemArtworkStore()
         let library = [
-            ItemArtworkStore.ItemKey(id: "ep", episodeGUID: "g1", sourceURL: nil),
+            ItemArtworkStore.ItemKey(id: "ep", episodeGUID: "g1", sourceURL: nil, showTitle: showName),
             ItemArtworkStore.ItemKey(id: "post", episodeGUID: nil, sourceURL: "https://example.com/p"),
-            ItemArtworkStore.ItemKey(id: "plain-ep", episodeGUID: "g2", sourceURL: nil),
+            ItemArtworkStore.ItemKey(id: "plain-ep", episodeGUID: "g2", sourceURL: nil, showTitle: showName),
             ItemArtworkStore.ItemKey(id: "pasted", episodeGUID: nil, sourceURL: "https://elsewhere.net/x"),
         ]
         store.recordEntries([
             .init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/e1.jpg"),
             .init(guid: nil, url: "https://example.com/p", imageURL: "https://example.com/p.jpg"),
             .init(guid: "g2", url: "https://example.com/e2", imageURL: nil),
-        ], subscriptionID: show)
+        ], subscriptionID: show, showTitle: showName)
         store.reconcile(items: library, following: following())
-        XCTAssertEqual(store.items["ep"], .init(itemImageURL: "https://example.com/e1.jpg", sourceImageURL: showImage))
-        XCTAssertEqual(store.items["post"]?.itemImageURL, "https://example.com/p.jpg")
-        XCTAssertEqual(store.items["plain-ep"], .init(itemImageURL: nil, sourceImageURL: showImage), "an entry with no image of its own takes the show's")
+        XCTAssertEqual(store.items["ep"], .init(feedItemImageURL: "https://example.com/e1.jpg", feedSourceImageURL: showImage))
+        XCTAssertEqual(store.items["post"]?.feedItemImageURL, "https://example.com/p.jpg")
+        XCTAssertEqual(store.items["plain-ep"], .init(feedItemImageURL: nil, feedSourceImageURL: showImage), "an entry with no image of its own takes the show's")
         XCTAssertNil(store.items["pasted"], "an item no followed feed lists stays on the icon: stated, not hidden")
     }
 
@@ -179,8 +181,111 @@ final class ItemArtworkStoreTests: XCTestCase {
         var store = recorded([.init(guid: "g1", url: "https://example.com/e1", imageURL: nil)])
         store.recordEntries([.init(guid: "x", url: "https://other.net/x", imageURL: nil)], subscriptionID: "subscription-gone")
         store.keepEntries(forSubscriptions: [show])
-        XCTAssertNotNil(store.entries["guid:g1"])
-        XCTAssertNil(store.entries["guid:x"])
+        XCTAssertTrue(store.entries.values.contains { $0.subscriptionId == show })
+        XCTAssertFalse(store.entries.values.contains { $0.subscriptionId == "subscription-gone" })
+    }
+
+    // MARK: Audit findings on the first version of the rule (#4418)
+
+    /// Short numeric GUIDs are common, so two shows can share one. An item names its show, and only that show's
+    /// entry can match it, whichever show refreshed last.
+    func testAGUIDTwoShowsShareMatchesOnlyTheItemsOwnShow() {
+        var store = ItemArtworkStore()
+        store.recordEntries([.init(guid: "42", url: "https://a.example/42", imageURL: "https://a.example/42.jpg")],
+                            subscriptionID: "sub-a", showTitle: "Show A")
+        store.recordEntries([.init(guid: "42", url: "https://b.example/42", imageURL: "https://b.example/42.jpg")],
+                            subscriptionID: "sub-b", showTitle: "Show B")
+        var cache = FollowingArtworkCache()
+        cache.record(feedURL: "https://a.example/show.jpg", for: "sub-a")
+        cache.record(feedURL: "https://b.example/show.jpg", for: "sub-b")
+
+        let itemA = key("a", guid: "42", show: "Show A")
+        let itemB = key("b", guid: "42", show: "Show B")
+        XCTAssertEqual(store.artworkURL(for: itemA, following: cache)?.absoluteString, "https://a.example/42.jpg")
+        XCTAssertEqual(store.artworkURL(for: itemB, following: cache)?.absoluteString, "https://b.example/42.jpg")
+        store.reconcile(items: [itemA, itemB], following: cache)
+        XCTAssertEqual(store.recordedArtworkURL(forItem: "a")?.absoluteString, "https://a.example/42.jpg")
+        XCTAssertEqual(store.items["a"]?.feedSourceImageURL, "https://a.example/show.jpg", "Show A's show image, not Show B's")
+        XCTAssertEqual(store.recordedArtworkURL(forItem: "b")?.absoluteString, "https://b.example/42.jpg")
+
+        // Show B is the only one followed: an item of Show A with the same GUID still takes nothing from it.
+        var onlyB = ItemArtworkStore()
+        onlyB.recordEntries([.init(guid: "42", url: "https://b.example/42", imageURL: "https://b.example/42.jpg")],
+                            subscriptionID: "sub-b", showTitle: "Show B")
+        XCTAssertNil(onlyB.artworkURL(for: itemA, following: cache))
+    }
+
+    func testAShowTitleMatchesAcrossTheWaysImportPathsWriteIt() {
+        let store = recorded([.init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/e1.jpg")])
+        for title in ["test show", "  Test   Show ", "TEST SHOW", "<b>Test Show</b>", "Tést Show"] {
+            XCTAssertEqual(store.artworkURL(for: key(guid: "g1", show: title), following: following(nil))?.absoluteString,
+                           "https://example.com/e1.jpg", "\(title.debugDescription) is the same show")
+        }
+        for title in ["Test Show 2", "Another Show", "Test"] {
+            XCTAssertNil(store.artworkURL(for: key(guid: "g1", show: title), following: following(nil)), "\(title) is another show")
+        }
+        var entities = ItemArtworkStore()
+        entities.recordEntries([.init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/e1.jpg")],
+                               subscriptionID: show, showTitle: "Q&amp;A with Ann")
+        XCTAssertNotNil(entities.artworkURL(for: key(guid: "g1", show: "Q&A with Ann"), following: following(nil)))
+    }
+
+    func testAnItemOrFeedWithNoShowTitleMatchesByAddressOnly() {
+        let store = recorded([.init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/e1.jpg")])
+        XCTAssertNil(store.artworkURL(for: key(guid: "g1", show: nil), following: following(nil)), "a GUID alone is not an episode")
+        XCTAssertNil(store.artworkURL(for: key(guid: "g1", show: ""), following: following(nil)))
+        XCTAssertEqual(store.artworkURL(for: key(guid: "g1", url: "https://example.com/e1", show: nil), following: following(nil))?.absoluteString,
+                       "https://example.com/e1.jpg", "its page address still finds the entry")
+        var untitled = ItemArtworkStore()
+        untitled.recordEntries([.init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/e1.jpg")], subscriptionID: show)
+        XCTAssertNil(untitled.artworkURL(for: key(guid: "g1"), following: following(nil)), "a feed with no title records no GUID key")
+        XCTAssertNotNil(untitled.artworkURL(for: key(url: "https://example.com/e1"), following: following(nil)))
+    }
+
+    /// The Library keys include trashed items, so a record survives the Trash and the show being unfollowed.
+    func testATrashedItemKeepsItsPictureThroughAnUnfollowAndComesBackOnRestore() {
+        var store = recorded([.init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/e1.jpg")])
+        let item = key("ep", guid: "g1")
+        store.reconcile(items: [item], following: following())
+        store.removeEntries(subscriptionID: show)
+        // While trashed the item is still listed (trashed items are in the keys), and another feed refreshes.
+        store.reconcile(items: [item], following: FollowingArtworkCache())
+        XCTAssertEqual(store.recordedArtworkURL(forItem: "ep")?.absoluteString, "https://example.com/e1.jpg")
+        // Only an item gone for good loses its record.
+        store.reconcile(items: [], following: FollowingArtworkCache())
+        XCTAssertNil(store.recordedArtworkURL(forItem: "ep"))
+    }
+
+    /// A link recorded for an item directly is never replaced by what its feed knows; the feed's fill what is missing.
+    func testReconcileNeverReplacesALinkRecordedForTheItem() {
+        var store = recorded([.init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/feed.jpg")])
+        store.recordItem(id: "ep", itemImageURL: "https://example.com/own.jpg", sourceImageURL: "https://example.com/src.jpg")
+        let item = key("ep", guid: "g1")
+        store.reconcile(items: [item], following: following())
+        XCTAssertEqual(store.items["ep"]?.itemImageURL, "https://example.com/own.jpg")
+        XCTAssertEqual(store.items["ep"]?.sourceImageURL, "https://example.com/src.jpg")
+        XCTAssertEqual(store.items["ep"]?.feedItemImageURL, "https://example.com/feed.jpg")
+        XCTAssertEqual(store.recordedArtworkURL(forItem: "ep")?.absoluteString, "https://example.com/own.jpg")
+        XCTAssertEqual(store.artworkURL(for: item, following: following())?.absoluteString, "https://example.com/own.jpg")
+
+        // The read order: recorded own, feed own, recorded source, feed source.
+        var onlySource = recorded([.init(guid: "g1", url: "https://example.com/e1", imageURL: nil)])
+        onlySource.recordItem(id: "ep", sourceImageURL: "https://example.com/src.jpg")
+        onlySource.reconcile(items: [item], following: following())
+        XCTAssertEqual(onlySource.recordedArtworkURL(forItem: "ep")?.absoluteString, "https://example.com/src.jpg", "recorded source beats the feed's show image")
+        var feedOwn = recorded([.init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/feed.jpg")])
+        feedOwn.recordItem(id: "ep", sourceImageURL: "https://example.com/src.jpg")
+        feedOwn.reconcile(items: [item], following: following())
+        XCTAssertEqual(feedOwn.recordedArtworkURL(forItem: "ep")?.absoluteString, "https://example.com/feed.jpg", "the feed's own image beats a recorded source")
+    }
+
+    func testAFeedImageIsKeptWhenALaterRefreshHasNone() {
+        var store = recorded([.init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/e1.jpg")])
+        let item = key("ep", guid: "g1")
+        store.reconcile(items: [item], following: following())
+        store.removeEntries(subscriptionID: show)
+        store.reconcile(items: [item], following: FollowingArtworkCache())
+        XCTAssertEqual(store.recordedArtworkURL(forItem: "ep")?.absoluteString, "https://example.com/e1.jpg")
     }
 
     // MARK: The file
@@ -192,7 +297,7 @@ final class ItemArtworkStoreTests: XCTestCase {
         XCTAssertEqual(ItemArtworkStore.fileName, "item-artwork.json")
 
         var artwork = ItemArtworkFile(file: file)
-        artwork.update { $0.recordEntries([.init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/e1.jpg")], subscriptionID: show) }
+        artwork.update { $0.recordEntries([.init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/e1.jpg")], subscriptionID: show, showTitle: showName) }
         artwork.update { $0.recordItem(id: "typed", itemImageURL: "https://example.com/typed.jpg") }
         let written = try Data(contentsOf: file)
         XCTAssertTrue(String(decoding: written, as: UTF8.self).contains("item-artwork.v1"))
@@ -235,6 +340,7 @@ final class ItemArtworkStoreTests: XCTestCase {
         for (id, guid) in [("item-ep-1", "guid-1"), ("item-ep-2", "guid-2")] {
             var episode = Item(id: id, title: id == "item-ep-1" ? "One" : "Two", mediaType: "audio", text: nil, externalReference: nil, status: "ready")
             episode.episodeGUID = guid
+            episode.showTitle = "Image Show"
             try repository.saveItem(episode)
         }
         try repository.saveItem(Item(id: "item-other", title: "Other", mediaType: "text", text: "x", externalReference: nil, status: "ready",
@@ -249,8 +355,8 @@ final class ItemArtworkStoreTests: XCTestCase {
         let subscription = try await coordinator.follow(urlString: "https://images.example/feed.xml")
         let following = await coordinator.followingArtwork()
         let store = await coordinator.itemArtwork()
-        XCTAssertEqual(store.artworkURL(for: key("item-ep-1", guid: "guid-1"), following: following)?.absoluteString, "https://images.example/ep1.jpg")
-        XCTAssertEqual(store.artworkURL(for: key("item-ep-2", guid: "guid-2"), following: following)?.absoluteString, "https://images.example/show.jpg",
+        XCTAssertEqual(store.artworkURL(for: key("item-ep-1", guid: "guid-1", show: "Image Show"), following: following)?.absoluteString, "https://images.example/ep1.jpg")
+        XCTAssertEqual(store.artworkURL(for: key("item-ep-2", guid: "guid-2", show: "Image Show"), following: following)?.absoluteString, "https://images.example/show.jpg",
                        "an episode with no image of its own shows the show's")
         XCTAssertNil(store.artworkURL(for: key("item-other", url: "https://elsewhere.net/post"), following: following))
         XCTAssertEqual(Set(store.items.keys), ["item-ep-1", "item-ep-2"], "the recorded picture is per Library item")
@@ -258,9 +364,9 @@ final class ItemArtworkStoreTests: XCTestCase {
         try await coordinator.unfollow(subscriptionId: subscription.id)
         let after = ItemArtworkFile(file: directory.appending(path: ItemArtworkStore.fileName)).store
         XCTAssertTrue(after.entries.isEmpty, "the show's entries go with the follow")
-        XCTAssertEqual(after.artworkURL(for: key("item-ep-1", guid: "guid-1"), following: FollowingArtworkCache())?.absoluteString,
+        XCTAssertEqual(after.artworkURL(for: key("item-ep-1", guid: "guid-1", show: "Image Show"), following: FollowingArtworkCache())?.absoluteString,
                        "https://images.example/ep1.jpg", "the item keeps its picture after unfollowing, read back from the file")
-        XCTAssertEqual(after.artworkURL(for: key("item-ep-2", guid: "guid-2"), following: FollowingArtworkCache())?.absoluteString,
+        XCTAssertEqual(after.artworkURL(for: key("item-ep-2", guid: "guid-2", show: "Image Show"), following: FollowingArtworkCache())?.absoluteString,
                        "https://images.example/show.jpg")
         XCTAssertEqual(try repository.loadItem(id: "item-ep-1").title, "One", "no item changed")
     }
@@ -283,6 +389,7 @@ extension ItemArtworkStoreTests {
         _ = try await earlier.follow(urlString: "https://images.example/feed.xml")
         var episode = Item(id: "item-old", title: "Old", mediaType: "audio", text: nil, externalReference: nil, status: "ready")
         episode.episodeGUID = "guid-2"
+        episode.showTitle = "Image Show"
         try repository.saveItem(episode)
 
         // This build, relaunched offline: no feed is fetched, and the item file does not exist yet.
