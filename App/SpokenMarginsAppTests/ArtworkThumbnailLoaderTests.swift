@@ -89,18 +89,21 @@ final class ArtworkThumbnailLoaderTests: XCTestCase {
         let log = ReadLog()
         let loader = makeLoader(diskDirectory: thumbnails, log: log)
 
-        let large = try XCTUnwrap(await loader.thumbnail(for: source, maxPixelSize: ArtworkThumbnailLoader.nowPlayingPixelSize)?.cgImage)
+        let largeLoaded = await loader.thumbnail(for: source, maxPixelSize: ArtworkThumbnailLoader.nowPlayingPixelSize)
+        let large = try XCTUnwrap(largeLoaded?.cgImage)
         XCTAssertLessThanOrEqual(max(large.width, large.height), ArtworkThumbnailLoader.nowPlayingPixelSize)
         XCTAssertGreaterThan(max(large.width, large.height), ArtworkThumbnailLoader.maxPixelSize, "bigger than a row's thumbnail")
         XCTAssertNil(loader.cachedThumbnail(for: source), "the row's thumbnail was not made by the large load")
         XCTAssertNotNil(loader.cachedThumbnail(for: source, maxPixelSize: ArtworkThumbnailLoader.nowPlayingPixelSize))
 
-        let small = try XCTUnwrap(await loader.thumbnail(for: source)?.cgImage)
+        let smallLoaded = await loader.thumbnail(for: source)
+        let small = try XCTUnwrap(smallLoaded?.cgImage)
         XCTAssertLessThanOrEqual(max(small.width, small.height), ArtworkThumbnailLoader.maxPixelSize, "a row still gets the small one")
         XCTAssertEqual(log.count, 2, "each size is its own load")
 
         let relaunched = makeLoader(diskDirectory: thumbnails, log: log)
-        let fromDisk = try XCTUnwrap(await relaunched.thumbnail(for: source, maxPixelSize: ArtworkThumbnailLoader.nowPlayingPixelSize)?.cgImage)
+        let diskLoaded = await relaunched.thumbnail(for: source, maxPixelSize: ArtworkThumbnailLoader.nowPlayingPixelSize)
+        let fromDisk = try XCTUnwrap(diskLoaded?.cgImage)
         XCTAssertGreaterThan(max(fromDisk.width, fromDisk.height), ArtworkThumbnailLoader.maxPixelSize, "the large copy on disk is used after a relaunch")
         XCTAssertEqual(log.count, 2)
     }
