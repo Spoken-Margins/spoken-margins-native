@@ -359,8 +359,8 @@ public enum ObsidianMarkdownParser {
         let explicitTitle = firstNonEmpty([titleOverride, parsed.metadata["title"], firstMarkdownHeading(in: parsed.body)])
         let givenTitle = explicitTitle == nil ? firstNonEmpty([fallbackTitle]) : nil
         let title = explicitTitle.map(unquote) ?? givenTitle ?? fileNameTitle(fileName)
-        // Only a Substack page pays for finding its pictures, embeds and links (#2032).
-        let keepsElements = sourceURL.map { SourceElementCapture.isSubstackPage(sourceURL: $0, markdown: parsed.body) } ?? false
+        // A web page's pictures, embeds, links and tables are kept for Timeline (#2032); a file from disk has none.
+        let keepsElements = sourceURL.map(SourceElementCapture.capturesElements(sourceURL:)) ?? false
         let cleaned = cleanBody(parsed.body, capturingElements: keepsElements)
         guard !cleaned.text.isEmpty else {
             throw SessionKitError.persistenceFailed("obsidian_import_empty_text")
@@ -426,6 +426,7 @@ public enum ObsidianMarkdownParser {
         var url: String
         var outputIndex: Int
         var offsetInLine = 0
+        var rows: [[String]]? = nil
     }
 
     private static func pendingImage(_ image: SourceElementCapture.Image, caption: String?, outputIndex: Int) -> PendingElement {
@@ -480,6 +481,15 @@ public enum ObsidianMarkdownParser {
             if capturingElements, let image = SourceElementCapture.linkedImage(line) {
                 pendingElements.append(pendingImage(image, caption: SourceElementCapture.caption(followingLine: lineIndex, in: lines),
                                                     outputIndex: output.count))
+            }
+            // A table's lines stay in the text as they always did; its cells are kept apart, anchored on its first line.
+            if capturingElements, !(lineIndex > 0 && SourceElementCapture.isTableRow(lines[lineIndex - 1])),
+               SourceElementCapture.opensTable(at: lineIndex, in: lines) {
+                let rawRows = lines[lineIndex...].prefix { SourceElementCapture.isTableRow($0) }
+                if let table = SourceElementCapture.table(Array(rawRows)) {
+                    pendingElements.append(PendingElement(kind: .table, label: table.label, altText: nil, url: "",
+                                                          outputIndex: output.count, rows: table.rows))
+                }
             }
             let linksInLine = capturingElements ? SourceElementCapture.inlineLinks(in: line) : []
 
@@ -574,11 +584,11 @@ public enum ObsidianMarkdownParser {
             elements = SourceElementCapture.finalized(pendingElements.map { pending in
                 // A picture or embed belongs to the next passage, so it skips the blank separator after it.
                 var index = pending.outputIndex
-                if pending.kind != .link { while index < output.count, output[index].isEmpty { index += 1 } }
+                if pending.kind == .picture || pending.kind == .embed { while index < output.count, output[index].isEmpty { index += 1 } }
                 let lineStart = index < output.count ? lineStarts[index] : text.count
                 return SourceElement(
                     id: "", kind: pending.kind, start: lineStart + pending.offsetInLine,
-                    label: pending.label, altText: pending.altText, url: pending.url)
+                    label: pending.label, altText: pending.altText, url: pending.url, rows: pending.rows)
             }, textLength: text.count)
         }
         return (text, resolvedHeadings, notesStart, elements)
