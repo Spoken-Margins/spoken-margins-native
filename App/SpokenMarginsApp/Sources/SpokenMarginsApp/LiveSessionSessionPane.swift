@@ -81,7 +81,8 @@ struct LiveSessionSessionPane<Header: View>: View {
                     if session.kind != .paper && isRunning {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Where are you now?").font(.subheadline.weight(.semibold))
-                            HStack {
+                            // The field keeps focus while it is typed in, so the row doesn't go through `ViewThatFits`; it is a column at the accessibility sizes (#3721).
+                            AdaptiveStack(spacing: 8, wrapsText: true) {
                                 AppTextField(
                                     session.kind == .meeting ? "What the meeting's clock shows, like 12:30" : "Time in the book, like 1:23:10",
                                     text: $clockDraft
