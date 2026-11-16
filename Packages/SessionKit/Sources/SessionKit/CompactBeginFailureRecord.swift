@@ -11,13 +11,20 @@ public struct CompactBeginFailureRecord: Equatable, Sendable {
     public var origin: String
     public var error: String
     public var cue: String
+    /// The recorder's route, category and session-switch details at the refusal, and what happened just before
+    /// (`CompactBeginContext`). Kept in the developer event only, so the one-line diagnostics stay short (#4414).
+    public var details: [String: String]
 
-    public init(appState: String, protectedDataAvailable: Tristate, origin: String, error: String, cue: String) {
+    public init(
+        appState: String, protectedDataAvailable: Tristate, origin: String, error: String, cue: String,
+        details: [String: String] = [:]
+    ) {
         self.appState = appState
         self.protectedDataAvailable = protectedDataAvailable
         self.origin = origin
         self.error = error
         self.cue = cue
+        self.details = details
     }
 
     /// Field names shared by the diagnostics line and the developer event.
@@ -28,7 +35,10 @@ public struct CompactBeginFailureRecord: Equatable, Sendable {
 
     public var diagnosticsLine: String { fields.map { "\($0.key)=\($0.value)" }.joined(separator: ";") }
 
-    public var eventFields: [String: String] { Dictionary(uniqueKeysWithValues: fields.map { ($0.key, $0.value) }) }
+    /// The record's own fields win over a detail of the same name.
+    public var eventFields: [String: String] {
+        details.merging(Dictionary(uniqueKeysWithValues: fields.map { ($0.key, $0.value) })) { _, own in own }
+    }
 
     /// One line, no `;` or `=`, and bounded, so a long error cannot break the line's shape.
     static func clean(_ text: String) -> String {

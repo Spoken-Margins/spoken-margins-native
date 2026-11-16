@@ -76,6 +76,7 @@ extension Gate1AppModel {
         let labels = hangTelemetry.labels
         labels.scoped("snapshot.playbackEvents") { recordPlaybackEventState(previous: oldValue) }
         if oldValue.sessionId != snapshot.sessionId { resumeDeferredPodcastPlacements() }
+        compactBeginContext.snapshotChanged(from: oldValue, to: snapshot, at: Date())
         labels.scoped("snapshot.captureWatch") {
             if oldValue.isRecording, !snapshot.isRecording {
                 endCaptureWatch()
