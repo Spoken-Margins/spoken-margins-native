@@ -883,7 +883,7 @@ class LaneSimTests(unittest.TestCase):
                 mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}), \
                 mock.patch.object(lane_sim, 'clone_temporary', side_effect=AssertionError('made a simulator')), \
                 lane_slots.simulator_slot('the Test Desk', out=self.quiet), mock.patch('sys.stdout', self.quiet):
-            verdict, _, _, details, _, _ = runner.run_t3(['AppNavigationStateTests'], 'r1', Path(self.temporary.name))
+            verdict, _, _, details, _, _ = runner.run_t3(['ExperiencePresentationTests'], 'r1', Path(self.temporary.name))
         self.assertEqual(verdict, 'INCONCLUSIVE')
         self.assertIn('simulator slots stayed busy', details[0])
         self.assertIn('memory pressure is warn', details[0])
