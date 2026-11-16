@@ -100,29 +100,11 @@ public struct LibraryRowLines: Equatable, Sendable {
         guard let duration = row.mediaDurationMs, let place = row.continuationMediaTimeMs else { return nil }
         let seconds = Double(max(0, duration - max(0, place))) / 1000
         guard seconds >= 60 else { return ("under 1 min left", "less than a minute left") }
-        return ("\(ListeningTimeEstimate.shortDuration(seconds)) left", "\(spokenDuration(seconds)) left")
+        return ("\(ListeningTimeEstimate.shortDuration(seconds)) left", "\(ItemLengthWords.spokenDuration(seconds)) left")
     }
 
     /// Not started: "about 41 min" for text at the listener's speed, "41 min" for audio of known length.
     private static func length(row: LibraryItemRow, playbackSpeed: Double) -> (visible: String, spoken: String)? {
-        if let characters = row.textCharacterCount {
-            guard let estimate = ListeningTimeEstimator.estimate(totalCharacters: characters, charactersHeard: 0, playbackSpeed: playbackSpeed)
-            else { return nil }
-            let spoken = estimate.totalSeconds < 60 ? "less than a minute" : "about \(spokenDuration(estimate.totalSeconds))"
-            return (estimate.totalText, spoken)
-        }
-        guard let duration = row.mediaDurationMs else { return nil }
-        let seconds = Double(duration) / 1000
-        guard seconds >= 60 else { return ("under 1 min", "less than a minute") }
-        return (ListeningTimeEstimate.shortDuration(seconds), spokenDuration(seconds))
-    }
-
-    /// "5 minutes", "1 hour 5 minutes": the words `ListeningTimeEstimate.remainingSpokenText` uses.
-    private static func spokenDuration(_ seconds: Double) -> String {
-        let (hours, minutes) = ListeningTimeEstimate.hoursAndMinutes(seconds)
-        var parts: [String] = []
-        if hours > 0 { parts.append(hours == 1 ? "1 hour" : "\(hours) hours") }
-        if minutes > 0 { parts.append(minutes == 1 ? "1 minute" : "\(minutes) minutes") }
-        return parts.joined(separator: " ")
+        ItemLengthWords.total(textCharacterCount: row.textCharacterCount, mediaDurationMs: row.mediaDurationMs, playbackSpeed: playbackSpeed)
     }
 }

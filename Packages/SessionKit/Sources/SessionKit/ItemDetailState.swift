@@ -27,6 +27,11 @@ public struct ItemDetailState: Equatable, Sendable {
     /// The same scenes with their end times and summaries, for the podcast Now view (#1629).
     public var listeningMapSummarySpans: [SceneSummarySpan] = []
     public var mediaDurationMs: Int?
+    /// The recorded audio's own length for the item's length pill and the Library's words (#4186): the media's
+    /// `durationMs`, never the transcript timeline's (that stays in `mediaDurationMs` for the rail). Nil when unknown.
+    public var lengthMs: Int?
+    /// A text item's character count for its "about N min" estimate; nil for recorded audio (#4186).
+    public var lengthTextCharacterCount: Int?
     /// The scenes came from the server's community map (#553), not this phone or the publisher.
     public var listeningMapIsCommunity: Bool { listeningMapScenes.first.map { CommunityMapConverter.isCommunitySceneId($0.id) } ?? false }
     public var listeningMapAvailabilityDescription: String {
@@ -92,6 +97,8 @@ public struct ItemDetailState: Equatable, Sendable {
         listeningMapSummarySpans: [SceneSummarySpan] = [],
         mediaDurationMs: Int? = nil,
         isNativeAudio: Bool = false,
+        lengthMs: Int? = nil,
+        lengthTextCharacterCount: Int? = nil,
         timelineSource: TimelineSourceContent = TimelineSourceContent(text: ""),
         documentStructure: PDFDocumentStructure? = nil,
         sessions: [Session] = [],
@@ -124,6 +131,8 @@ public struct ItemDetailState: Equatable, Sendable {
         self.listeningMapSummarySpans = listeningMapSummarySpans
         self.mediaDurationMs = mediaDurationMs
         self.isNativeAudio = isNativeAudio
+        self.lengthMs = lengthMs
+        self.lengthTextCharacterCount = lengthTextCharacterCount
         self.timelineSource = timelineSource
         self.documentStructure = documentStructure
         self.sessions = sessions
