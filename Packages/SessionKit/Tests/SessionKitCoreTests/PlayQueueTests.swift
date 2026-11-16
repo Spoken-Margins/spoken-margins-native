@@ -42,6 +42,51 @@ final class PlayQueueTests: XCTestCase {
         XCTAssertTrue(queue.isEmpty)
     }
 
+    // MARK: permanent delete (#4227)
+
+    func testRemoveAllInTakesOutOnlyTheNamedItemsAndKeepsTheOrder() {
+        var queue = PlayQueue(itemIds: ["a", "b", "c", "d", "e"])
+        queue.removeAll(in: ["d", "b", "not-queued"])
+        XCTAssertEqual(queue.itemIds, ["a", "c", "e"])
+        queue.removeAll(in: [String]())
+        XCTAssertEqual(queue.itemIds, ["a", "c", "e"])
+        queue.removeAll(in: ["a", "c", "e"])
+        XCTAssertTrue(queue.isEmpty)
+    }
+
+    /// The queue's file keeps an id until something rewrites it, so a deleted item that is imported again under the same
+    /// id (a packet's id is deterministic) came back into the queue it had been deleted from.
+    func testRemovingDeletedItemsRewritesTheQueueFile() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PlayQueueStore(fileURL: directory.appendingPathComponent("play-queue.json"))
+        try store.save(PlayQueue(itemIds: ["a", "gone", "b"]))
+        var queue = store.load()
+        queue.removeAll(in: ["gone"])
+        try store.save(queue)
+        XCTAssertEqual(PlayQueueStore(fileURL: store.fileURL).load().itemIds, ["a", "b"])
+        // Removing the last queued item leaves no file, as the store always has.
+        var last = store.load()
+        last.removeAll(in: ["a", "b"])
+        try store.save(last)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.fileURL.path))
+    }
+
+    /// A table of neighbouring cases for which queued ids count as orphans.
+    func testOrphansAreIdsInNeitherTheLibraryNorTheAppsLists() {
+        let queue = PlayQueue(itemIds: ["stored", "trashed", "just-imported", "gone", "Gone", "gone "])
+        // `trashed` is a stored row (Recently Deleted keeps it); `just-imported` is on the app's lists but was added
+        // after the stored ids were read.
+        let orphans = PlayQueueOrphans.orphans(
+            in: queue, storedIds: ["stored", "trashed"], knownNow: ["just-imported", "stored"])
+        // Ids are compared exactly: a different case or a trailing space is a different item.
+        XCTAssertEqual(orphans, ["gone", "Gone", "gone "])
+        XCTAssertEqual(PlayQueueOrphans.orphans(in: PlayQueue(), storedIds: [], knownNow: []), [])
+        // An empty answer from the store removes nothing it should keep: the app's lists still protect their items.
+        XCTAssertEqual(
+            PlayQueueOrphans.orphans(in: PlayQueue(itemIds: ["a", "b"]), storedIds: [], knownNow: ["a"]), ["b"])
+    }
+
     // MARK: when the queue moves on
 
     private func snapshot(session: String?, item: String?, phase: SessionPhase) -> SessionSnapshot {

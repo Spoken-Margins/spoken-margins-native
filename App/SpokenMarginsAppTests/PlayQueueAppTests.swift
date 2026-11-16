@@ -83,6 +83,34 @@ final class PlayQueueAppTests: XCTestCase {
         XCTAssertEqual(model.snapshot.itemId, third)
     }
 
+    /// #4227: permanent delete took the item's rows and files but left its id in the queue's file until the next reorder or
+    /// advance, so the same item imported again (a packet's id is deterministic) came back into the queue. Single and
+    /// bulk delete both take the id out of the queue and its file; an item that is not deleted keeps its place.
+    func testPermanentDeleteTakesTheItemOutOfTheQueueAndItsFile() throws {
+        let model = makeModel()
+        model.queueAppend(itemId: "item-pill")
+        model.queueAppend(itemId: Gate1AppModel.welcomeSampleItemId)
+        model.moveItemToTrash(id: "item-pill")
+        XCTAssertEqual(PlayQueueController.current(model).itemIds, ["item-pill", Gate1AppModel.welcomeSampleItemId])
+
+        model.permanentlyDeleteItem(id: "item-pill")
+
+        XCTAssertEqual(PlayQueueController.current(model).itemIds, [Gate1AppModel.welcomeSampleItemId])
+        let file = try model.applicationSupportDirectory().appending(path: "play-queue.json")
+        XCTAssertEqual(PlayQueueStore(fileURL: file).load().itemIds, [Gate1AppModel.welcomeSampleItemId])
+    }
+
+    func testEmptyRecentlyDeletedTakesEveryDeletedItemOutOfTheQueue() {
+        let model = makeModel()
+        model.queueAppend(itemId: "item-pill")
+        model.queueAppend(itemId: Gate1AppModel.welcomeSampleItemId)
+        model.moveItemToTrash(id: "item-pill")
+
+        model.permanentlyDeleteRecentlyDeletedItems()
+
+        XCTAssertEqual(PlayQueueController.current(model).itemIds, [Gate1AppModel.welcomeSampleItemId])
+    }
+
     /// The sleep timer ends the whole run (the Default taken on #1990): a finish while it runs starts nothing and the
     /// queue keeps its items.
     func testAFinishWhileTheSleepTimerRunsStartsNothingAndKeepsTheQueue() async throws {
