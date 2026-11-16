@@ -152,7 +152,7 @@ struct SupertonicDownloadNoticeCard: View {
             Button(action: openVoices) {
                 Text("Open Voices").frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .filledActionButton()
             .controlSize(.large)
             .accessibilityIdentifier("supertonicNotice.openVoices")
             Button("Not Now", action: notNow)

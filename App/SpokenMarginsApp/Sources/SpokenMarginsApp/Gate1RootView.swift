@@ -96,6 +96,8 @@ struct Gate1RootView: View {
                 .environmentObject(model)
                 .interactiveDismissDisabled()
         })
+        // The app's one tint (#3733): toggles follow SwiftUI's tint, not the asset catalog's accent, so both read the same token.
+        .tint(AppColors.evergreen)
     }
 }
 

@@ -419,6 +419,21 @@ public enum AppColorContrastAudit {
         onTint("current sentence text", foreground: AppSemanticColorRGB.white, tint: "listeningAccent", tintColor: AppSemanticColorRGB.listeningAccent, alpha: 0.18, over: AppSemanticColorRGB.listeningBackground, baseName: "listening background")
     ]
 
+    /// The app's one tint (#3733). `evergreen` is the asset catalog's global accent and the root `.tint`, so every
+    /// default-tinted link, bordered button label, toggle and dialog button is drawn in it, on bone, the panel, the soft
+    /// green and the app background. A system `.bordered` button draws that label over a tint of the same colour; 0.25 is an
+    /// assumed upper bound for the system's fill, not a measured value. The default-tinted controls on the always-dark
+    /// listening plate take `listeningAccent` instead.
+    public static let accentPairs: [Pair] = [
+        .init(name: "app accent text on bone", foreground: AppSemanticColorRGB.evergreen, background: AppSemanticColorRGB.bone, minimumRatio: 4.5),
+        .init(name: "app accent text on panel", foreground: AppSemanticColorRGB.evergreen, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
+        .init(name: "app accent text on soft green", foreground: AppSemanticColorRGB.evergreen, background: AppSemanticColorRGB.softGreen, minimumRatio: 4.5),
+        .init(name: "app accent text on app background", foreground: AppSemanticColorRGB.evergreen, background: AppSemanticColorRGB.background, minimumRatio: 4.5),
+        onTint("bordered button label", foreground: AppSemanticColorRGB.evergreen, tint: "app accent", tintColor: AppSemanticColorRGB.evergreen, alpha: 0.25, over: AppSemanticColorRGB.bone, baseName: "bone"),
+        onTint("bordered button label", foreground: AppSemanticColorRGB.evergreen, tint: "app accent", tintColor: AppSemanticColorRGB.evergreen, alpha: 0.25, over: AppSemanticColorRGB.panel, baseName: "panel"),
+        .init(name: "plate accent on listening background", foreground: AppSemanticColorRGB.listeningAccent, background: AppSemanticColorRGB.listeningBackground, minimumRatio: 4.5)
+    ]
+
     /// The Source Text reader's current-sentence mark (#3736): a fill and a thick underline over the reader's surface
     /// (`inputBackground`), from `ReaderSentenceHighlight`. The words are read on the fill (4.5:1); the underline is a
     /// mark, so 3:1 against the page and against the fill it runs through.
@@ -531,7 +546,7 @@ public enum AppColorContrastAudit {
     }()
 
     public static var allPairs: [Pair] {
-        textBackgroundPairs + nonTextPairs + increasedContrastEdgePairs + timelineRowPairs + watchPlatePairs + tintedFillPairs + readerHighlightPairs + pressedFillPairs + liveActivityPairs
+        textBackgroundPairs + nonTextPairs + increasedContrastEdgePairs + timelineRowPairs + watchPlatePairs + tintedFillPairs + accentPairs + readerHighlightPairs + pressedFillPairs + liveActivityPairs
             + shareExtensionPairs + safariPopupPairs
     }
 

@@ -384,7 +384,7 @@ final class AppColorUsageGuardTests: XCTestCase {
         "PinnedMarginCardView.swift": 4, "PlaybackFeedbackTagView.swift": 3, "PlaybackLivePassageView.swift": 1,
         "PlaybackMarginRowView.swift": 1, "PlaybackMarginTranscriptionStatusView.swift": 1, "PlaybackMarginsFilterView.swift": 2,
         "PlaybackPaneSwitchView.swift": 2, "PlaybackPositionSlider.swift": 1,
-        "PlaybackScreen.swift": 6, "SpokenMarginsWatchApp.swift": 5, "VoicesSettingsScreen.swift": 2,
+        "PlaybackScreen.swift": 6, "SpokenMarginsWatchApp.swift": 5,
         "WatchUntetheredView.swift": 28
     ]
 
