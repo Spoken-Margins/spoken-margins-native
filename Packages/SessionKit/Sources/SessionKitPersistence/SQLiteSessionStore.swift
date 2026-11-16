@@ -2383,6 +2383,7 @@ extension SQLiteSessionStore: InterjectionByIdReading {
 
 extension SQLiteSessionStore: ItemRevisionReading {}
 extension SQLiteSessionStore: ItemAddressLookup {}
+extension SQLiteSessionStore: ItemArtworkKeyListing {}
 
 /// The pictures, embeds and links an imported Substack page carries (#2032), in the existing records table as kind
 /// "source_elements", one row per item. No table or column changes and schema_version stays 5: an older build
