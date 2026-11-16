@@ -11,7 +11,13 @@ import Foundation
 /// plays and iOS no longer hints that secondary audio should be silenced, and that stays true for a short settle
 /// time within a short announcement window, it activates the session and runs the same resume an "ended, should
 /// resume" would. These signals can't distinguish an announcement from another app being paused; the window
-/// limits that ambiguity, but cannot eliminate it. A real end, the
+/// limits that ambiguity, but cannot eliminate it.
+///
+/// The watch resumes only after it has seen the other audio playing, or the silence hint on, at least once since
+/// the interruption began (#4412). An announcement does that first. Another app starting its microphone for
+/// dictation, or starting its audio a moment after our pause, never shows either: "clear" there means the other
+/// app hasn't started yet, and taking the session back would interrupt it, so its first press would fail. With
+/// nothing seen, only a real end resumes. A real end, the
 /// listener's own Play, Pause or Stop, or the system taking the time back all stop the watch, and a session that
 /// can't be activated (a phone call) leaves playback paused. A failed activation or watch timeout stops the watch
 /// but keeps the background time, so the app can still receive a real interruption end.
@@ -92,6 +98,8 @@ public final class InterruptionBackgroundHold {
     private var holdCount = 0
     private var resume: (@MainActor () -> Void)?
     private var clearSince: Date?
+    /// Whether the watch has seen other audio playing, or the silence hint on, since this interruption began.
+    private var sawOtherAudio = false
 
     public private(set) var outcome: Outcome?
     public var isHolding: Bool { release != nil }
@@ -117,9 +125,15 @@ public final class InterruptionBackgroundHold {
     }
 
     /// An interruption paused narration and asked to resume when it ends. With `resume`, the hold also resumes
-    /// once the other audio stops (see the type's notes). A second call while holding does nothing.
+    /// once the other audio stops (see the type's notes). A second call while holding asks for nothing more, but
+    /// restarts the settle time: another interruption beginning is another sound taking the floor, so a clear
+    /// reading taken before it can't count towards the end. Today neither player forwards a second `began` (both
+    /// return early once paused), so only the hold's own tests reach this; it states the hold's rule for when they do.
     public func interruptionBegan(resumeWhenOtherAudioStops resume: (@MainActor () -> Void)? = nil) {
-        guard release == nil else { return }
+        guard release == nil else {
+            clearSince = nil
+            return
+        }
         let started = now()
         let hold = holdCount + 1
         let granted = begin("Audio interruption wait") { [weak self] in
@@ -137,6 +151,7 @@ public final class InterruptionBackgroundHold {
         release = granted
         outcome = .held
         clearSince = nil
+        sawOtherAudio = false
         self.resume = resume
         if resume != nil, let watch { scheduleCheck(hold: hold, after: watch.pollInterval) }
     }
@@ -164,7 +179,9 @@ public final class InterruptionBackgroundHold {
             stopWatching(as: .otherAudioStillPlaying)
             return
         }
-        if watch.probe().isClear {
+        let audio = watch.probe()
+        if !audio.isClear { sawOtherAudio = true }
+        if audio.isClear, sawOtherAudio {
             let since = clearSince ?? time
             clearSince = since
             if time.timeIntervalSince(since) >= watch.settle {
@@ -178,6 +195,7 @@ public final class InterruptionBackgroundHold {
                 return
             }
         } else {
+            // Not clear, or clear before any other audio was ever seen (see the type's notes): keep waiting.
             clearSince = nil
         }
         scheduleCheck(hold: hold, after: watch.pollInterval)
