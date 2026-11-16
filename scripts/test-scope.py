@@ -597,15 +597,15 @@ def hosted_merge_routing(result, env=None):
 # Mac checks unless EVERY changed path is on the not-needed list below; a path nobody listed is needed (fail safe).
 # The workflow's `scope` job and lane-runner.py both ask mac_checks_required, so the checks that run and the checks
 # the runner waits for cannot disagree about a diff (the runner reads this file from the base branch).
-# What the SessionKit tests read by path (scripts/sessionkit_pass.py READS; test_mac_checks_scope.py keeps them equal).
-MAC_READS = ('Packages/SessionKit/', 'Contracts/', 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/',
-             'App/SpokenMarginsAppTests/', 'App/SpokenMarginsApp/Resources/Kitten/',
-             'App/SpokenMarginsApp/Resources/Supertonic/', 'App/SpokenMarginsApp/Resources/VoiceCatalog/',
-             'research/C2/frontend/', 'research/B2/', 'research/B4/', 'research/C2/pocket/',
-             'research/C2/passages.json', 'research/C2/results/darwin/', 'Site/onboarding/catalog/',
-             'Site/onboarding/v1/', 'README.md', 'traces/', 'fixtures/')
+# What the SessionKit tests read by path outside App/ (scripts/sessionkit_pass.py READS holds these and the App/ reads;
+# test_mac_checks_scope.py checks that every READS entry needs the Mac, App/ ones only when MAC_APP_READS names them).
+MAC_READS = ('Packages/SessionKit/', 'Contracts/', 'research/C2/frontend/', 'research/B2/', 'research/B4/',
+             'research/C2/pocket/', 'research/C2/passages.json', 'research/C2/results/darwin/',
+             'Site/onboarding/catalog/', 'Site/onboarding/v1/', 'README.md', 'traces/', 'fixtures/')
 # The App/ paths that tests only a Mac runs still read (#3538). test_mac_checks_scope.py fails on any other, so a text-only
-# read goes to SessionKitCoreTests, which also runs on Linux, instead of keeping App/ diffs on the Mac.
+# read goes to SessionKitCoreTests, which also runs on Linux, instead of keeping App/ diffs on the Mac. Every other App/
+# path needs no Mac check (#3540): the Linux portable job runs the core tests that read it, and the runner waits for
+# the app build (app_build_required) so an App-only diff never merges without a compile.
 MAC_APP_READS = (
     # SharingLoopTourFixtureTests: reads its packets with SessionKitSharing, which imports ShazamKit and AudioToolbox.
     'App/TestFixtures/',
@@ -617,7 +617,7 @@ MAC_APP_READS = (
     'App/SpokenMarginsApp/Resources/VoiceCatalog/',
 )
 # Swift inputs and the machinery of the Mac jobs. Every workflow counts: they are the jobs' own definitions.
-MAC_PREFIXES = MAC_READS + ('Packages/', 'App/', 'Config/', 'TestPlans/', 'SpokenMarginsNative.xcodeproj/',
+MAC_PREFIXES = MAC_READS + ('Packages/', 'Config/', 'TestPlans/', 'SpokenMarginsNative.xcodeproj/',
                             '.github/workflows/', '.github/actions/', 'ops/disk/', 'ops/power/')
 MAC_FILES = {'project.yml', 'Package.swift', 'Package.resolved', 'requirements-dev.txt', '.nvmrc'}
 # scripts/ files that drive the Mac jobs, or that the Apple-tool runner tests (verify-tests.py
@@ -640,6 +640,8 @@ HOSTED_WEB_PREFIXES = WEB_PREFIXES + ('research/B4/server/internal/links/', '.gi
 
 def mac_check_reason(path):
     """Why <path> needs the hosted Mac checks, or None when it does not."""
+    if path.startswith('App/'):  # #3540: only the paths a Mac-only test still reads; the app build covers the rest
+        return f'{path} is read by a test only a Mac runs' if path.startswith(MAC_APP_READS) else None
     if path.startswith(MAC_PREFIXES) or path in MAC_FILES or path.endswith(('.swift', '.xcodeproj')):
         return f'{path} is a Swift input or part of the Mac jobs'
     if path.startswith('scripts/'):
