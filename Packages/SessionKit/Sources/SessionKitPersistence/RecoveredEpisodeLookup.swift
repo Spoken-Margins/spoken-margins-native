@@ -52,7 +52,6 @@ extension SQLiteSessionStore {
         var item = before
         entry.fillEpisodeIdentity(of: &item, showTitle: showTitle)
         if item.sourceTitle == nil { item.sourceTitle = item.showTitle }
-        if item.media?.durationMs == nil, let feedDuration = entry.audioDurationMs { item.media?.durationMs = feedDuration }
         guard item != before else { return false }
         try saveItem(item)
         return true
