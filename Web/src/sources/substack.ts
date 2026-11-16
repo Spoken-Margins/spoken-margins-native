@@ -90,12 +90,17 @@ function completedRecording(post: Json, type: 'voiceover' | 'tts', requiresVoice
   return voice;
 }
 
+const PAID_AUDIENCES = new Set(['only_paid', 'founding']);
+
 /**
  * A podcast post's own episode: Substack gives the audio as `podcast_url` and its length as `podcast_duration`. This is
  * the episode itself, so it is the same kind of audio as a feed's enclosure (`podcast-enclosure`).
  */
 function podcastEpisode(post: Json): SubstackVoice | undefined {
   if (post.type !== 'podcast') return undefined;
+  // A paid episode's audio address is on its page, but fetching it without the subscriber's sign-in fails: say it is
+  // for paid subscribers instead of starting audio that cannot play.
+  if (typeof post.audience === 'string' && PAID_AUDIENCES.has(post.audience)) return undefined;
   const canonicalUrl = post.canonical_url;
   const audio = post.podcast_url;
   if (typeof canonicalUrl !== 'string' || typeof audio !== 'string') return undefined;
@@ -143,8 +148,6 @@ export interface SubstackPostVoice {
    */
   paidOnly: boolean;
 }
-
-const PAID_AUDIENCES = new Set(['only_paid', 'founding']);
 
 /** `findSubstackVoice`, and whether a missing voice is because the post is for paid subscribers. */
 export function inspectSubstackPost(html: string, options: FindVoiceOptions = {}): SubstackPostVoice {

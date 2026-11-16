@@ -190,8 +190,12 @@ test('a podcast post plays its own episode audio (the friend\u2019s Paul Christi
   await t.test('a newsletter that merely carries a podcast_url is not treated as a podcast', () => {
     assert.equal(findSubstackVoice(page({ ...base, type: 'newsletter', podcast_url: episode, audio_items: [] })), null);
   });
-  await t.test('a paid podcast with no audio on the page says paid, not "no voice"', () => {
-    assert.deepEqual(inspectSubstackPost(page({ ...base, audience: 'only_paid', podcast_url: null })), { voice: null, paidOnly: true });
+  await t.test('a paid podcast says paid, not "no voice", with or without an audio address on its page', () => {
+    for (const audience of ['only_paid', 'founding']) {
+      for (const podcast_url of [null, episode]) {
+        assert.deepEqual(inspectSubstackPost(page({ ...base, audience, podcast_url })), { voice: null, paidOnly: true }, `${audience} ${podcast_url}`);
+      }
+    }
   });
 });
 
