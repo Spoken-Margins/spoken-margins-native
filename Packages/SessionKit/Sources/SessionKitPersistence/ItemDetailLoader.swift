@@ -143,6 +143,8 @@ public struct ItemDetailLoader {
             listeningMapSummarySpans: sceneStarts.summarySpans,
             mediaDurationMs: item.media?.durationMs ?? timelineSummary?.durationMs,
             isNativeAudio: isNativeAudio,
+            lengthMs: PlayableLength.ms(media: item.media),
+            lengthTextCharacterCount: isNativeAudio ? nil : item.textCharacterCount,
             documentStructure: item.documentStructure,
             sessions: sessions,
             addedAgainAt: item.addedAgainAt,
