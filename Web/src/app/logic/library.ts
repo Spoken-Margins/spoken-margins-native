@@ -174,3 +174,15 @@ export function timelinePosts(margins: readonly Margin[], durationSeconds: numbe
   }
   return posts;
 }
+
+/** With this many groups or fewer, every group starts open; with more, only the one holding the newest Margin does (#4423). */
+export const GROUPS_OPEN_UP_TO = 3;
+
+/**
+ * Whether a Margins group starts collapsed (#4423): a few groups are all shown, but a long list opens on the newest
+ * group only, so reaching another item's Margins is a tap on its title, not a scroll past every Margin above it.
+ * `index` is the group's place in `marginGroups` order, newest first.
+ */
+export function startsCollapsed(index: number, total: number): boolean {
+  return total > GROUPS_OPEN_UP_TO && index > 0;
+}
