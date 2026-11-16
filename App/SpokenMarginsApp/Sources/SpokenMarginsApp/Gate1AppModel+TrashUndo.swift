@@ -139,6 +139,7 @@ extension Gate1AppModel {
             }
             removeLiveSessionRecord(itemId: id)
             removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
+            removeFromQueue(deletedItemIds: [id])
             dropPermanentlyDeletedRows(ids: [id])
             guard !libraryItems.contains(where: { $0.id == id }),
                   !recentlyDeletedItems.contains(where: { $0.id == id }),
@@ -183,6 +184,7 @@ extension Gate1AppModel {
             }
             ids.forEach(removeLiveSessionRecord)
             removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
+            removeFromQueue(deletedItemIds: ids)
             dropPermanentlyDeletedRows(ids: Set(ids))
             guard recentlyDeletedItems.isEmpty,
                   ids.allSatisfy({ (try? store.loadItemSummary(id: $0)) == nil }) else {

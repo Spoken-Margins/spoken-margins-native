@@ -24,6 +24,14 @@ enum PlayQueueController {
         do { try store(model)?.save(value) } catch { model.diagnostics["playQueueSave"] = "failed: \(SafeErrorText.describe(error))" }
     }
 
+    /// Takes deleted items out of the queue and its file, so one imported again under the same id (a packet's id is
+    /// deterministic) does not come back into a queue it had been deleted from (#4227). Writes nothing when none is queued.
+    static func forget(_ model: Gate1AppModel, itemIds: [String]) {
+        let queued = current(model)
+        guard itemIds.contains(where: { queued.contains($0) }) else { return }
+        update(model) { $0.removeAll(in: itemIds) }
+    }
+
     private static func store(_ model: Gate1AppModel) -> PlayQueueStore? {
         guard let directory = try? model.applicationSupportDirectory() else { return nil }
         return PlayQueueStore(fileURL: directory.appending(path: "play-queue.json"))
@@ -61,6 +69,23 @@ extension Gate1AppModel {
             $0.prune(isAvailable: { available.contains($0) }) // the rows on screen are the queue, with no hidden items
             $0.move(fromOffsets: source, toOffset: destination)
         }
+    }
+
+    /// Permanent delete takes the items' ids out of the play queue's file (#4227); until now the file kept them until the
+    /// next reorder or advance.
+    func removeFromQueue(deletedItemIds ids: [String]) {
+        PlayQueueController.forget(self, itemIds: ids)
+    }
+
+    /// At launch, after the interrupted deletes are finished: queued ids that belong to no item are taken out. A delete
+    /// that was killed after the rows went and before `removeFromQueue(deletedItemIds:)` ran leaves such ids. The store is
+    /// read by the caller, off the main thread; here, on the main actor, an id the app's own lists hold is never taken
+    /// out, so an item added while the read ran keeps its place.
+    func pruneQueueOfDeletedItems(storedIds: Set<String>) {
+        let known = Set(libraryItems.map(\.id)).union(recentlyDeletedItems.map(\.id))
+        let orphans = PlayQueueOrphans.orphans(in: PlayQueueController.current(self), storedIds: storedIds, knownNow: known)
+        guard !orphans.isEmpty else { return }
+        PlayQueueController.forget(self, itemIds: orphans)
     }
 
     func clearPlayQueue() {
