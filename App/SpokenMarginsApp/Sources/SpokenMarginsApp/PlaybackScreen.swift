@@ -65,6 +65,8 @@ struct PlaybackScreen: View {
         Button(action: model.openLibrary) {
             Image(systemName: "chevron.left").font(.body.weight(.semibold)).minimumTapTarget()
         }
+        // On the always-dark plate the default tint is too dark in light mode (#3733); the tint is set on the button, never a container.
+        .tint(AppColors.listeningAccent)
         .accessibilityLabel("Library")
         .accessibilityHint("Leaves this screen. Playback keeps going.")
         .accessibilityIdentifier("playback.exit.button")
@@ -217,6 +219,7 @@ struct PlaybackScreen: View {
                         Button { selectedPane = .now } label: {
                             Label("Now Playing", systemImage: "arrow.left")
                         }
+                        .tint(AppColors.listeningAccent)
                         .accessibilityIdentifier("timeline.nowPlaying.button")
                     }
                 }

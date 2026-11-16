@@ -165,6 +165,8 @@ struct ExperienceTimelineRailScreen: View {
                     Image(systemName: "doc.text")
                         .frame(width: 44, height: 44)
                 }
+                // On the always-dark plate (embedded in Now Playing) the default tint is too dark in light mode (#3733).
+                .tint(onReturnToPlayback != nil ? AppColors.listeningAccent : AppColors.evergreen)
                 .accessibilityLabel("Export session")
             }
             ToolbarItemGroup(placement: .keyboard) {

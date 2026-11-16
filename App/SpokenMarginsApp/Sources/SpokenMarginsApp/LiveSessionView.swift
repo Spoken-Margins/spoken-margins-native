@@ -127,6 +127,8 @@ struct LiveSessionView: View, Equatable {
                     Button(action: leave) {
                         Image(systemName: "chevron.left").font(.body.weight(.semibold)).minimumTapTarget()
                     }
+                    // Lime on the dark plate, evergreen on the bone setup screen (#3733). Set on the button, not the stack, so a sheet it presents stays evergreen.
+                    .tint(isRunningScreen ? AppColors.listeningAccent : AppColors.evergreen)
                     .accessibilityLabel("Back")
                     .accessibilityHint("Leaves this screen. The session keeps running.")
                     .accessibilityIdentifier("liveSession.back.button")
