@@ -3,7 +3,7 @@
 // controls work. Positions are saved every few seconds while playing, and on pause, seek and leaving.
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Episode, Margin, PlaybackPosition } from '../shared/model.ts';
-import { useData } from './data.tsx';
+import { useData, type DataApi } from './data.tsx';
 import { friendMargins, readsAloud } from './logic/arrival.ts';
 import { clipRejection, EPISODE_FAILED, failureNoticeShown, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
 import { CrossingClock } from './logic/margin-autoplay.ts';
@@ -40,7 +40,7 @@ export interface OpenOptions {
    * length. A Margin left on a post's words has only a percent of the way through, so it can be placed only on the
    * length of the voice that plays the post, and a Substack post's page often gives none (#4421).
    */
-  placeMargins?: (episode: Episode) => Promise<void>;
+  placeMargins?: (episode: Episode, data: Pick<DataApi, 'margins' | 'addMargin'>) => Promise<void>;
 }
 
 export interface PlayerApi {
@@ -103,7 +103,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const lastMirror = useRef(0);
   const pendingSeek = useRef<number | undefined>(undefined);
   // Margins waiting for the loaded audio's length, to be placed on it (OpenOptions.placeMargins).
-  const placement = useRef<{ id: string; episode: Episode; place: (episode: Episode) => Promise<void> } | undefined>(undefined);
+  const placement = useRef<{ id: string; episode: Episode; place: NonNullable<OpenOptions['placeMargins']> } | undefined>(undefined);
   const [arrived, setArrived] = useState<Arrived>();
   // Whether the episode failed to load, as a ref (events must see it at once) and as state (the screen shows it).
   const failedRef = useRef(false);
@@ -161,7 +161,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const waiting = placement.current;
       if (!waiting || waiting.id !== loadedId.current || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
       placement.current = undefined;
-      waiting.place({ ...waiting.episode, durationSeconds: audio.duration }).catch((error: unknown) => {
+      waiting.place({ ...waiting.episode, durationSeconds: audio.duration }, dataRef.current).catch((error: unknown) => {
         // A write that failed has already said what wasn't saved.
         if (!(error instanceof NotSavedError)) toast(`The Margins on this post weren’t saved. ${plainError(error)}`, 'problem');
       });
@@ -403,6 +403,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       let target = options.episode?.id === id ? options.episode : dataRef.current.episodes.find((e) => e.id === id);
       if (!audio || !target) return 'stopped';
       if (id === loadedId.current && audio.src) {
+        // Already loaded: its length is known (or arrives with the metadata), so the Margins are placed all the same.
+        placement.current = options.placeMargins ? { id, episode: target, place: options.placeMargins } : undefined;
+        placeWhenLengthKnown(audio);
         if (failedRef.current) {
           retry(audio);
           return 'played';
@@ -452,7 +455,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       await audio.play().catch(onPlayRejected);
       return 'played';
     },
-    [relay, save, toast, stopClip, apply, retry, onPlayRejected],
+    [relay, save, toast, stopClip, apply, retry, onPlayRejected, placeWhenLengthKnown],
   );
 
   const open = useCallback(

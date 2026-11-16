@@ -43,7 +43,8 @@ test('a share link for a Substack post plays its voice and puts the sender’s M
   await expect(arrival.getByRole('heading', { name: TITLE })).toBeVisible();
   await expect(arrival.getByText('2 Margins', { exact: false })).toBeVisible();
   await expect(arrival.getByText('which the browser can’t play yet')).toHaveCount(0);
-  await expect(arrival.getByRole('link', { name: 'Open the article' })).toHaveCount(0);
+  // The article stays one tap away, for a post whose voice turns out not to be there.
+  await expect(arrival.getByRole('link', { name: 'Open the article' })).toHaveAttribute('href', POST);
   expect(pageReads).toHaveLength(0);
 
   // 2. Play finds the post's voice (the one page read) and plays it from the beginning.
@@ -69,4 +70,10 @@ test('a share link for a Substack post plays its voice and puts the sender’s M
   await expect(arrived).toContainText('A written Margin from the web, 1:05 in.');
   expect(await audioTime(page)).toBeGreaterThanOrEqual(FIRST_AT - 1);
   expect(await audioTime(page)).toBeLessThan(FIRST_AT + 5);
+
+  // 5. Both Margins were kept, the second at 60% of the audio, and are in the Margins tab for later.
+  await playing.getByRole('button', { name: 'Close Now Playing' }).click();
+  await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
+  await expect(page.getByText('A written Margin from the web, 1:05 in.')).toBeVisible();
+  await expect(page.getByText('Another at ten minutes.')).toBeVisible();
 });

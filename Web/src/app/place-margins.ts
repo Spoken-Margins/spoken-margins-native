@@ -13,12 +13,12 @@ import type { Episode } from '../shared/model.ts';
 export function placeMarginsOnAudio(
   placed: Pick<PlacedImport, 'pending'>,
   saved: Promise<void>,
-  data: () => Pick<DataApi, 'margins' | 'addMargin'>,
-): ((episode: Episode) => Promise<void>) | undefined {
+): ((episode: Episode, data: Pick<DataApi, 'margins' | 'addMargin'>) => Promise<void>) | undefined {
   if (placed.pending.length === 0) return undefined;
-  return async (episode) => {
-    await saved.catch(() => undefined);
-    const current = data();
-    for (const margin of placeByPercent(placed.pending, episode, current.margins)) await current.addMargin(margin);
+  // `data` comes from the player, which outlives the arrival page, so the Margins already here are today's.
+  return async (episode, data) => {
+    // A packet whose episode wasn't stored has said so already; no Margin goes in for an episode that isn't there.
+    if (!(await saved.then(() => true, () => false))) return;
+    for (const margin of placeByPercent(placed.pending, episode, data.margins)) await data.addMargin(margin);
   };
 }

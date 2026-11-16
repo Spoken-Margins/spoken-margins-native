@@ -145,7 +145,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
         // Started inside the tap, before any wait: a browser lets sound start only from the friend's own tap. Now
         // Playing opens as soon as the Margins are stored; it shows "Loading audio…" while the episode buffers.
         // A Margin on the article's words has no time of its own: the player places it on the voice once the audio says how long it is (#4421).
-        const placeMargins = placeMarginsOnAudio(placed, saved, () => dataRef.current);
+        const placeMargins = placeMarginsOnAudio(placed, saved);
         void player.open(placed.episode.id, {
           at: arrivalResumeAt(read, current.episodes, current.positions) ?? 0,
           episode: placed.episode,
@@ -267,6 +267,14 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
               {unplayable ? `Keep ${possessive(who)} Margins` : 'Play'}
             </button>
             {!unplayable && <p className="arrival-hint">{playHint(who, arrivalResumeAt(read, data.episodes, data.positions))}</p>}
+            {/* A post whose voice can't be found (a paid post, none offered) leaves the friend the article itself (#4421). */}
+            {read.margins.length === 0 && articleAddress && (
+              <p className="arrival-hint">
+                <a href={articleAddress} target="_blank" rel="noopener noreferrer">
+                  Open the article
+                </a>
+              </p>
+            )}
           </>
         )}
         <footer className="arrival-foot">
