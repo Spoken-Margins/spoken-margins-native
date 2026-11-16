@@ -7,7 +7,8 @@ import XCTest
 /// #2997 PR 4, the Design's `already-heard` row: a friend's Margins made on a transcript item arrive on the listener's
 /// own import of the same file. The friend's file and the listener's differ in layout (a `.vtt` and an `.srt` of one
 /// meeting), so only the words are shared. Both sides are real imports into real SQLite stores; the match, the anchor and
-/// its placement are the same code a packet goes through.
+/// its placement are the same code a packet goes through. The two copies read as identical text, so placement takes the
+/// exact-edition offsets; placement in text that differs is covered by the article anchor tests.
 final class TranscriptAlreadyHeardTests: XCTestCase {
     private var root: URL!
     private let utc = TimeZone(identifier: "UTC")!
