@@ -157,6 +157,16 @@ final class ItemArtworkStoreTests: XCTestCase {
         XCTAssertEqual(store.artworkURL(for: key("ep", guid: "g1"), following: FollowingArtworkCache())?.absoluteString, showImage)
     }
 
+    func testARowReadsOnlyWhatReconcileRecorded() {
+        var store = recorded([.init(guid: "g1", url: "https://example.com/e1", imageURL: nil), .init(guid: "g2", url: "https://example.com/e2", imageURL: "https://example.com/e2.jpg")])
+        XCTAssertNil(store.recordedArtworkURL(forItem: "a"), "nothing is recorded for an item until reconcile or recordItem")
+        store.reconcile(items: [key("a", guid: "g1"), key("b", guid: "g2"), key("c")], following: following())
+        XCTAssertEqual(store.recordedArtworkURL(forItem: "a")?.absoluteString, showImage)
+        XCTAssertEqual(store.recordedArtworkURL(forItem: "b")?.absoluteString, "https://example.com/e2.jpg")
+        XCTAssertNil(store.recordedArtworkURL(forItem: "c"))
+        XCTAssertNil(store.recordedArtworkURL(forItem: "missing"))
+    }
+
     func testDeletingAnItemRemovesItsRecord() {
         var store = recorded([.init(guid: "g1", url: "https://example.com/e1", imageURL: "https://example.com/e1.jpg")])
         store.reconcile(items: [key("a", guid: "g1"), key("b", guid: "g1")], following: following())

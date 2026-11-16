@@ -101,6 +101,13 @@ public struct ItemArtworkStore: Codable, Equatable, Sendable {
         return (own + source).lazy.compactMap { $0.flatMap(Self.httpsURL) }.first
     }
 
+    /// The link recorded for an item id: its own image, else its source's. A Library row reads this at every draw, so it
+    /// does only a dictionary lookup; `reconcile` is what recorded what its feed knows. Precedence is `artworkURL`'s.
+    public func recordedArtworkURL(forItem id: String) -> URL? {
+        guard let art = items[id] else { return nil }
+        return [art.itemImageURL, art.sourceImageURL].lazy.compactMap { $0.flatMap(Self.httpsURL) }.first
+    }
+
     // MARK: Recording
 
     /// A follow or refresh parsed these entries of `subscriptionID`. An entry with no image is still recorded,
