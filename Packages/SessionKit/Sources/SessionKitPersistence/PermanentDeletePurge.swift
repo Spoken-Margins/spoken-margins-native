@@ -176,7 +176,7 @@ public struct PermanentDeletePurge: Sendable {
             ItemOwnedFiles.stillFree(
                 target, rowState: { ItemOwnedFiles.rowState(ofItem: $0, in: store) },
                 allItemIds: { try store.loadAllItemIds() },
-                caseSensitiveNames: target.root == ItemOwnedFiles.preparedAudioRoot && purge.rootIsCaseSensitive(target.root))
+                caseSensitiveNames: ItemOwnedFiles.isSharedFolderRoot(target.root) && purge.rootIsCaseSensitive(target.root))
         }
     }
 

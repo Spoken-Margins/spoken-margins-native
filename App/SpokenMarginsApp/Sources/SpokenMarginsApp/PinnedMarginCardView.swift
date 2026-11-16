@@ -180,16 +180,28 @@ struct PinnedMarginCardBody: View {
                         .accessibilityIdentifier(isReview ? "review.progress" : "marginCard.position")
                 }
             }
-            Text(detail)
+            detailText
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.85))
                 // The transcript of a Margin waiting for a tap is capped at every size, so Listen and Dismiss stay on the screen.
                 .lineLimit(card.stage == .waitingForTap ? (isLargeText ? 4 : 2) : (isLargeText ? nil : 2))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
+                // VoiceOver reads the plain words. The inline icon (`detailText`) is only a picture of the control the words name.
+                .accessibilityLabel(detail)
                 .accessibilityFocused($focusedPart, equals: .detail)
                 .accessibilityIdentifier("marginCard.detail")
         }
+    }
+
+    /// The detail line. When the card's own words name a control that is drawn as an icon (the saved-answer card's
+    /// "tap Share below"), the icon is drawn inline before that word, so the listener can match the sentence to the
+    /// control. A detail the view replaced (a placement note, a transcript) is drawn as plain text. It is `Text`, not a
+    /// view, so the icon scales with the text and the line limit still applies (#3905).
+    private var detailText: Text {
+        guard detail == card.detail, let parts = card.detailAroundSymbol else { return Text(detail) }
+        // A no-break space after the icon keeps it on the line with the word it points at.
+        return Text("\(parts.before)\(Image(systemName: "square.and.arrow.up"))\u{00A0}\(parts.after)")
     }
 
     private var icon: String {
