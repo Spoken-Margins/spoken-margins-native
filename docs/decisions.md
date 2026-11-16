@@ -567,6 +567,14 @@ How it is used:
 - **Haiku 5.5 may sort and label handed-in text; helpers stay on Sonnet (#4187, 2026-11-12).** Asked to "please reword" the 2026-10-20 "No Haiku helpers" call after a backlog comb that night: 32 Haiku 5.5 agents sorted 203 of 210 issues in about ten minutes, every file name they reported was real and about four in five quotes were exact, but 7 issues a batch overran the 100k window in half the agents, and one "startable" call (#2997) was wrong because its parsers were already merged.
   - The rule now: Helpers run on Sonnet. Haiku 5.5 at low effort may sort or label text handed to it (at most 3 issues or about 4,000 words a batch); it never makes a claim about code or GitHub state, and its output is checked before anyone acts on it. Never Haiku 4.5. It replaces the 2026-10-20 entry above.
 
+## 2026-11-16
+
+- **An imported page's pictures load from their own host when Timeline draws them (#2032, #4411, 2026-11-16).** #2032 said "No new network request beyond the page the listener already asked to import", and #4411 breaks that: Timeline rows now show the page's pictures, GIFs and a YouTube still. Asked whether to keep that, or to prefetch at import (on the link paths only, or on every path), he answered: "yes please merge as is".
+  - Chosen: the import fetches nothing but the page. A picture is fetched when Timeline first draws its row, with no cookies, a 16 MB cap and the copy kept in Caches; a picture that can't load says so and tries again on the next open.
+  - Why not at import, from the code on `main` (2026-11-16): the Safari share sheet and the Safari extension hand the app the article as Markdown and make no request, so there is no page fetch to attach pictures to. A link from another app, Paste and Go, a packet's article and Following load the page in a web view that blocks images. Fetching at import would add a first request to a Safari import that works offline today, could download GIFs of up to 16 MB when an article is added, would leave an article added offline without pictures, and would fetch in the background for Following's automatic adds, which the 2026-10-21 call rules out.
+  - Where the pictures come from: usually a CDN such as Substack's, not the article's own host; a YouTube row contacts i.ytimg.com (Google), a host the page itself never touches.
+  - Not changed: pages are still fetched only on a listener's action (2026-10-21); the import adds no request.
+
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
   - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.
