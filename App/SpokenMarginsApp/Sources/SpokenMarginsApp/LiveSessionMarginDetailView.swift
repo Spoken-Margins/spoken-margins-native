@@ -79,7 +79,7 @@ struct LiveSessionMarginDetailView: View {
                     Section {
                         Text("Heard \u{201C}\(heard.label)\u{201D}. Keep it as a checkpoint?")
                             .font(.subheadline)
-                        HStack(spacing: 8) {
+                        AdaptiveStack(spacing: 8) {
                             Button("Keep") { keepHeardPlace(); dismiss() }
                                 .accessibilityIdentifier("marginDetail.keepPlace.button")
                             Button("No") { declineHeardPlace(); dismiss() }
@@ -95,7 +95,7 @@ struct LiveSessionMarginDetailView: View {
                             .frame(minHeight: 120)
                             .accessibilityLabel("Margin words")
                             .accessibilityIdentifier("marginDetail.edit.text")
-                        HStack(spacing: 8) {
+                        AdaptiveStack(spacing: 8) {
                             Button("Save") {
                                 saveText(draft)
                                 isEditing = false
