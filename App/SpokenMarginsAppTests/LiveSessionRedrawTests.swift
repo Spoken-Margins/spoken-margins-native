@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import UIKit
 import XCTest
@@ -21,9 +22,14 @@ final class LiveSessionRedrawTests: XCTestCase {
     private static let allowedRuns = 3
     /// A session id the store doesn't hold: the screen opens on its setup card and writes nothing to the store.
     private static let sessionId = "live-redraw-4091-not-stored"
+    /// How many 40 ms polls the screen's body-run count must stay still before the publishes are counted. 1 s, not 0.4 s:
+    /// the first attempt of this test in a fresh process failed with 13 body runs and passed on its retry (#4379), and
+    /// that attempt took 6.0 s against 2.4 s, so the screen's cold-start work comes in bursts with gaps longer than 0.4 s.
+    private static let quietPolls = 25
 
     func testTheLiveSessionScreenIsNotRedrawnByModelPublishes() async throws {
         let model = try makeModel()
+        let modelPublishes = PublishCounter(model)
         let presented = ScreenRedrawProbe.count("liveSession")
         let presentersWindow = LiveSessionWindowProbe.Seen()
         let mounted = try mount(AnyView(LiveRowLikePresenter(model: model, seen: presentersWindow)))
@@ -37,15 +43,20 @@ final class LiveSessionRedrawTests: XCTestCase {
         try await waitUntilQuiet("liveSession")
         let screenBefore = ScreenRedrawProbe.count("liveSession")
         let checksBefore = ScreenRedrawProbe.equalityCheckCount("liveSession")
+        let modelBefore = modelPublishes.count
 
-        try await publish(on: model)
+        let runsAtEachPublish = try await publish(on: model, watching: "liveSession")
 
         try await waitUntilQuiet("liveSession")
         let screenRuns = ScreenRedrawProbe.count("liveSession") - screenBefore
         let checks = ScreenRedrawProbe.equalityCheckCount("liveSession") - checksBefore
+        // The runs so far after each publish, so a failure says whether the runs follow the publishes (a redraw by each one)
+        // or arrive in a burst of their own (the screen's late work), which the first failure in #4379 could not say.
         XCTAssertLessThanOrEqual(screenRuns, Self.allowedRuns,
                                  "\(Self.publishes) model publishes ran the live session screen's body \(screenRuns) times "
-                                     + "(SwiftUI asked the screen's == \(checks) times)")
+                                     + "(SwiftUI asked the screen's == \(checks) times; the model published "
+                                     + "\(modelPublishes.count - modelBefore) times; runs after each publish: "
+                                     + "\(runsAtEachPublish.map { $0 - screenBefore }))")
     }
 
     func testControlAScreenThatWatchesTheModelIsRedrawnByTheSamePublishes() async throws {
@@ -57,7 +68,7 @@ final class LiveSessionRedrawTests: XCTestCase {
         try await waitUntilQuiet("liveSessionControl")
         let before = ScreenRedrawProbe.count("liveSessionControl")
 
-        try await publish(on: model)
+        _ = try await publish(on: model, watching: "liveSessionControl")
 
         try await waitUntilQuiet("liveSessionControl")
         let runs = ScreenRedrawProbe.count("liveSessionControl") - before
@@ -69,7 +80,9 @@ final class LiveSessionRedrawTests: XCTestCase {
     // MARK: - Publishing
 
     /// What the model sends while an item renders and plays: bare publishes and a new rendered-chunk count.
-    private func publish(on model: Gate1AppModel) async throws {
+    /// Returns the screen's body-run count after each publish.
+    private func publish(on model: Gate1AppModel, watching screen: String) async throws -> [Int] {
+        var runsAfterEach: [Int] = []
         for index in 0..<Self.publishes {
             if index.isMultiple(of: 2) {
                 model.objectWillChange.send()
@@ -77,10 +90,24 @@ final class LiveSessionRedrawTests: XCTestCase {
                 model.updateOnDeviceSpeechGenerationProgress(RenderedSpeechGenerationProgress(completedChunks: 100 + index, totalChunks: 959))
             }
             try await Task.sleep(for: .milliseconds(25))
+            runsAfterEach.append(ScreenRedrawProbe.count(screen))
         }
+        return runsAfterEach
     }
 
     // MARK: - Fixtures
+
+    /// Counts the model's own publishes, for the failure message: the seeded model starts work of its own that could change
+    /// what the screen shows (its mini player) while the test is counting, and a count says whether it did.
+    @MainActor
+    private final class PublishCounter {
+        private(set) var count = 0
+        private var subscription: AnyCancellable?
+
+        init(_ model: Gate1AppModel) {
+            subscription = model.objectWillChange.sink { [weak self] _ in self?.count += 1 }
+        }
+    }
 
     private func makeModel() throws -> Gate1AppModel {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
@@ -166,8 +193,9 @@ final class LiveSessionRedrawTests: XCTestCase {
         XCTFail("\(screen) was never presented")
     }
 
-    /// The body-run count once it has not moved for 10 polls (0.4 s): the screen's own first-appearance work is over, so
-    /// what is counted next is the publishes.
+    /// Returns once the screen's body-run count has not moved for `quietPolls` polls (1 s): the screen's own first-appearance
+    /// work is over, so what is counted next is the publishes. The model's publishes are not part of this wait: if the seeded
+    /// model ever publishes on a timer, waiting for it to go quiet would fail the test for good.
     private func waitUntilQuiet(_ screen: String) async throws {
         var last = ScreenRedrawProbe.count(screen)
         var quiet = 0
@@ -177,7 +205,7 @@ final class LiveSessionRedrawTests: XCTestCase {
             let now = ScreenRedrawProbe.count(screen)
             quiet = now == last ? quiet + 1 : 0
             last = now
-            if quiet >= 10 { return }
+            if quiet >= Self.quietPolls { return }
         }
         XCTFail("\(screen) kept redrawing with nothing changing (\(last) body runs)")
     }
