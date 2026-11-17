@@ -109,6 +109,30 @@ final class WrittenMarginSkimAppTests: XCTestCase {
         XCTAssertFalse(model.snapshot.canSkimForward, "with the Margins gone there is nowhere to Skim to again")
     }
 
+    /// The same staleness through the other input: whether a friend's layer counts as playable is read from the open
+    /// item's own copy of its Margins, which also loads after the item opens (#4447).
+    func testSkimArrowsAppearWhenTheItemsFriendLayerLoadsWhileTheSourceIsPaused() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.sharedMarginRows = [SharedMarginRow(interjection: fixture.record, layer: fixture.layer, itemTitle: "Real source")]
+        model.pause()
+        model.seekMedia(toMediaTimeMs: 100)
+        try await fixture.waitUntil("the source is paused before the Margin") {
+            model.snapshot.status != .playing && (model.snapshot.currentMediaTimeMs ?? Int.max) < 900
+        }
+        var item = model.selectedItem
+        item.importedCommentaryInterjections = [:]
+        model.selectedItem = item
+        XCTAssertFalse(model.snapshot.canSkimForward, "precondition: the open item holds no records of the layer, so it is not playable")
+
+        item.importedCommentaryInterjections = [fixture.layer.id: [fixture.record]]
+        model.selectedItem = item
+
+        XCTAssertTrue(model.snapshot.canSkimForward, "the layer arrived, so its Margin is a stop ahead and forward Skim is offered")
+        XCTAssertEqual(model.chapterRowForwardControl, .skim)
+    }
+
     // Skim forward lands on the friend's written Margin and the reading plays, as a voice Margin's recording does.
     func testSkimForwardStopsAtAFriendsWrittenMarginAndItsReadingPlays() async throws {
         let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: uniqueWords())
