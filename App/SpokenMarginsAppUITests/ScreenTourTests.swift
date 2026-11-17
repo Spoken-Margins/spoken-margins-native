@@ -236,7 +236,8 @@ final class ScreenTourTests: XCTestCase {
         // and the second choice is "Listen without them". The old "Skip to …" pair appears only when nothing of
         // Sam's sits behind the place, which this story never is (#4298).
         let hearFirst = scrollTo("item.start.button")
-        XCTAssertTrue(hearFirst.label.hasPrefix("Hear "), "The big button should offer to hear Sam's Margins first, not \(hearFirst.label)")
+        let hearFirstLabel = app.buttons["item.start.button"].firstMatch.label
+        XCTAssertTrue(hearFirstLabel.hasPrefix("Hear "), "The big button should offer to hear Sam's Margins first, not \(hearFirstLabel)")
         XCTAssertTrue(element("item.listenWithout.button").exists, "The item has no \"Listen without them\" choice")
         capture("25-item-two-choices", "The item's two choices: Hear Sam's Margins first, and Listen without them")
         hearFirst.tap()
@@ -248,7 +249,7 @@ final class ScreenTourTests: XCTestCase {
         // and the reply step below fails unless this Margin was heard, because then it would count two new Margins.
         captureRequired(element("review.comingUp"), timeout: 12, "26-now-review-lead-in",
                         "Now tab during the review's lead-in, the pinned card above the title (#3220)",
-                        failure: "The review never started after Skip to Sam's new Margin")
+                        failure: "The review never started after Hear Sam's Margins first")
         captureWhenPresent(element("review.playing"), timeout: 40, "27-now-review-sam",
                            "Now tab while Sam's Margin plays in the review, the pinned card above the title (#3220)")
         XCTAssertTrue(waitForDisappearance(element("review.comingUp"), timeout: 40), "The review's lead-in never ended")
