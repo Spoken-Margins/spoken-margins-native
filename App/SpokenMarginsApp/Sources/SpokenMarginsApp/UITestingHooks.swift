@@ -63,6 +63,12 @@ enum UITestingHooks {
         UITestingLaunchSeed.importsCoopLayer(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
     }
 
+    /// A fresh podcast launch also writes the Margins tab fixture (`MarginsTabUITestSeed`, #3216), with silent audio.
+    static var seedsMarginsTab: Bool {
+        guard case .offlinePodcast = seed else { return false }
+        return ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_MARGINS_TAB"] == "1"
+    }
+
     /// A fresh podcast launch starts with the listener part way, or at the end, of the episode (J14, #4100).
     static var podcastPlaceSeconds: Int? {
         UITestingLaunchSeed.podcastPlaceSeconds(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
@@ -158,6 +164,7 @@ enum UITestingHooks {
     static let seed = UITestingLaunchSeed.none
     static var usesStandInAudioServices: Bool { false }
     static var importsCoopLayer: Bool { false }
+    static var seedsMarginsTab: Bool { false }
     static var podcastPlaceSeconds: Int? { nil }
     static var podcastStartsCompleted: Bool { false }
     static var fetchesGuidedTour: Bool { true }
