@@ -206,7 +206,7 @@ final class ScreenTourTests: XCTestCase {
         capture("15-share-action", "The Margins tab with the episode's Share action")
         share.tap()
         XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 5), "Share Margins did not open")
-        let cleanUp = app.alerts["Clean selected Margins automatically?"]
+        let cleanUp = app.alerts["Remove ums and long pauses?"]
         if cleanUp.waitForExistence(timeout: 2) {
             capture("16-share-clean-up-question", "First share only: the clean-up question")
             cleanUp.buttons["Not now"].tap()

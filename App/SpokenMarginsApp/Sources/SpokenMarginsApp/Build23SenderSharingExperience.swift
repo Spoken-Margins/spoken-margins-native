@@ -151,15 +151,15 @@ struct Build23SenderSharingExperience: View {
             dropStaleShareRequests(stage: stage, previewState: coordinator.snapshot.previewState)
             announceStage(stage)
         }
-        .alert("Clean selected Margins automatically?", isPresented: $isAutoCleanChoicePresented) {
-            Button("Clean selected") {
+        .alert(ShareCleanupWords.alertTitle, isPresented: $isAutoCleanChoicePresented) {
+            Button(ShareCleanupWords.alertAccept) {
                 coordinator.send(.setAutoCleanSelectedEnabled(true))
             }
-            Button("Not now", role: .cancel) {
+            Button(ShareCleanupWords.alertDecline, role: .cancel) {
                 coordinator.send(.setAutoCleanSelectedEnabled(false))
             }
         } message: {
-            Text("Spoken Margins can remove filler words and tighten pauses for the Margins you include. You can review every change, undo it, or turn this off later.")
+            Text(ShareCleanupWords.alertMessage)
         }
         .trackedSheet(isPresented: $isSystemSharePresented, onDismiss: finishSystemShare) {
             if let packageURL = verifiedShareURLForPresentation {
@@ -372,7 +372,7 @@ struct Build23SenderSharingExperience: View {
                 Divider()
 
                 Toggle(
-                    "Clean selected automatically",
+                    ShareCleanupWords.switchLabel,
                     isOn: Binding(
                         get: { snapshot.autoCleanSelectedEnabled },
                         set: { coordinator.send(.setAutoCleanSelectedEnabled($0)) }
@@ -381,9 +381,7 @@ struct Build23SenderSharingExperience: View {
                 .font(.headline)
                 .accessibilityIdentifier("build23.sender.auto-clean")
 
-                Text(snapshot.autoCleanSelectedEnabled
-                    ? "On for this and future shares. Turn it off to undo cleanup applied automatically to this draft."
-                    : "Off. You can still clean individual Margins during review.")
+                Text(ShareCleanupWords.switchCaption(isOn: snapshot.autoCleanSelectedEnabled))
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
 
@@ -394,7 +392,7 @@ struct Build23SenderSharingExperience: View {
                     )
                     .tint(AppColors.evergreen)
                     AdaptiveStack {
-                        Text("Cleaning \(snapshot.preparationCompleted) of \(snapshot.preparationTotal)")
+                        Text(ShareCleanupWords.running(completed: snapshot.preparationCompleted, total: snapshot.preparationTotal))
                             .font(.subheadline)
                         AdaptiveSpacer()
                         Button("Cancel", role: .cancel) {
@@ -405,11 +403,11 @@ struct Build23SenderSharingExperience: View {
                     if snapshot.preparationFailures == 0 {
                         Build23StatusLabel(
                             icon: "checkmark.circle.fill",
-                            title: "Cleaned \(snapshot.preparationCompleted) selected Margins",
+                            title: ShareCleanupWords.bulkResult(completed: snapshot.preparationCompleted, failed: 0),
                             tint: AppColors.evergreen
                         )
                     } else {
-                        FailureMessageLabel("Cleaned \(snapshot.preparationCompleted - snapshot.preparationFailures); \(snapshot.preparationFailures) kept their available Original or Text version.")
+                        FailureMessageLabel(ShareCleanupWords.bulkResult(completed: snapshot.preparationCompleted, failed: snapshot.preparationFailures))
                             .font(.subheadline)
                     }
                 }
