@@ -180,6 +180,41 @@ final class PDFClipLocatorTests: XCTestCase {
         XCTAssertEqual(document.segments.first?.floatId, document.floats.first?.id)
     }
 
+    func testReimportThatOnlyAddsClipRegionsKeepsOneItemEvenWhileItIsOpenAndPlaying() throws {
+        func document(withBounds: Bool) -> StructuredDocument {
+            StructuredDocumentBuilder.build(lines: [
+                .init(text: "Paper", role: .title, pageIndex: 0),
+                .init(text: "Cell A | Cell B", role: .table, pageIndex: 0, bounds: withBounds ? rect(0.2, 0.60, 0.5, 0.02) : nil),
+                .init(text: "1 | 2", role: .table, pageIndex: 0, bounds: withBounds ? rect(0.2, 0.57, 0.5, 0.02) : nil),
+                .init(text: "We measured sleep in adults.", role: .body, pageIndex: 0),
+            ], engine: "test", version: 2, pageCount: 1)
+        }
+        let old = document(withBounds: false), placed = document(withBounds: true)
+        XCTAssertEqual(old.text, placed.text)
+        XCTAssertEqual(old.floats, [])
+        XCTAssertFalse(placed.floats.isEmpty)
+        XCTAssertEqual(old.withoutClipGeometry, placed.withoutClipGeometry)
+
+        let repository = InMemorySessionRepository()
+        let handoff = BrowserTextHandoff(
+            captureMode: .markdownFile, source: .init(url: "shared-file://share-sheet/Paper.pdf", title: "Paper"),
+            text: old.text, contentFormat: .plainText)
+        let first = BrowserTextImporter(repository: repository, openItemIds: [], isPlaybackActive: false, publisherPlayback: [:])
+        guard case .records(let item, _, _, _) = try first.outcomeAndPersist(handoff, structuredDocument: old, upgrade: .skip) else {
+            return XCTFail("expected records")
+        }
+
+        // The listener has the paper open and playing when they add it again: it must stay the one item.
+        let held = BrowserTextImporter(repository: repository, openItemIds: [item.id], isPlaybackActive: true, publisherPlayback: [:])
+        guard case .records(let again, _, _, _) = try held.outcomeAndPersist(handoff, structuredDocument: placed, upgrade: .skip) else {
+            return XCTFail("expected records")
+        }
+
+        XCTAssertEqual(again.id, item.id, "no -edition- copy for the same words")
+        XCTAssertEqual(try repository.listItems().count, 1)
+        XCTAssertEqual(try repository.loadStructuredDocument(itemId: item.id), placed, "the regions are saved")
+    }
+
     func testADocumentSavedBeforeTextSegmentIdExistedStillDecodes() throws {
         let old = """
         {"id":"f1","kind":"figure","label":"Figure 1","pageIndex":2,"bounds":{"x":0.1,"y":0.2,"width":0.3,"height":0.4},"captionSegmentId":"s4"}

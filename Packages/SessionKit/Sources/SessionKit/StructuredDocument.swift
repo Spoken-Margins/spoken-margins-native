@@ -150,6 +150,20 @@ public struct StructuredDocument: Codable, Equatable, Sendable {
         self.floats = floats
         self.outline = outline
     }
+
+    /// The document without the page regions of table and figure text (#3895): those floats, and the segment
+    /// links to them. A re-import compares documents with this, so an extraction that only added regions to a PDF
+    /// already in the Library is not taken for a changed paper (which would make a second copy of the item).
+    public var withoutClipGeometry: StructuredDocument {
+        var copy = self
+        let removed = Set(floats.filter { $0.textSegmentId != nil }.map(\.id))
+        guard !removed.isEmpty else { return copy }
+        copy.floats = floats.filter { $0.textSegmentId == nil }
+        for index in copy.segments.indices {
+            if let id = copy.segments[index].floatId, removed.contains(id) { copy.segments[index].floatId = nil }
+        }
+        return copy
+    }
 }
 
 /// One line of extracted text with the role the extractor gave it.
