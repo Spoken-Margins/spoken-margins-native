@@ -952,8 +952,8 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
             try fixture.storedRecord("end-1")?.firstHeardAt != nil && fixture.storedRecord("end-2")?.firstHeardAt != nil
         }
         XCTAssertEqual(seen, ["end-1", "end-2"], "one at a time, in order, each once")
+        // The next offer is made in the same main-actor call that ends a voice, so there is nothing to wait for after it.
         try waitUntil("the second voice ends", timeout: 10) { model.playingImportedCommentary == nil }
-        RunLoop.main.run(until: Date().addingTimeInterval(1))
         XCTAssertNil(model.pendingImportedCommentary, "nothing is left to offer")
         XCTAssertNil(model.playingImportedCommentary)
     }
@@ -974,7 +974,9 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         model.hideSender(senderID, label: "Reviewer")
         XCTAssertNil(model.playingImportedCommentary, "hiding the sender stops their voice")
         XCTAssertNil(model.pendingImportedCommentary, "and does not offer their next Margin")
-        RunLoop.main.run(until: Date().addingTimeInterval(3)) // longer than a voice, so a late offer or a play would show
+        // fixed-sleep ok: the claim is that nothing of theirs is offered or played, and no signal marks a Margin that never
+        // comes. Three seconds is longer than the two-second voice a late play would have to finish.
+        RunLoop.main.run(until: Date().addingTimeInterval(3))
         XCTAssertNil(model.pendingImportedCommentary, "still nothing offered")
         XCTAssertNil(model.playingImportedCommentary, "nothing of theirs plays")
         XCTAssertNil(try fixture.storedRecord("end-2")?.firstHeardAt, "the second Margin was never heard")
