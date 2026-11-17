@@ -49,7 +49,7 @@ struct InterjectionSharingState {
     var isExporting = false
     var errorMessage: String?
     var draftFilter: ShareMarginDraftFilter = .all
-    /// "Send replies to Ana" when the sheet was opened to send replies back (#3221); nil for an ordinary share.
+    /// "Share replies with Ana" when the sheet was opened to share replies back (#3221, #3906); nil for an ordinary share.
     var replyBackTitle: String?
     var autoCleanSelectedEnabled = ShareAutoCleanPreference.isEnabled
     var needsAutoCleanDecision = !ShareAutoCleanPreference.hasRecordedDecision

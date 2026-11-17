@@ -236,7 +236,7 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
 
         let snapshot = coordinator.snapshot
         XCTAssertTrue(snapshot.isReplyBack)
-        XCTAssertEqual(coordinator.senderHeading, "Send replies to Cole")
+        XCTAssertEqual(coordinator.senderHeading, "Share replies with Cole")
         XCTAssertEqual(snapshot.stage, .review, "two taps from the player: Share, then Share link")
         XCTAssertEqual(snapshot.margins.filter(\.isIncluded).count, 2)
         XCTAssertNil(snapshot.selectedMarginID)

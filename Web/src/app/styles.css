@@ -1333,7 +1333,7 @@ button:disabled {
   padding-top: 6px;
 }
 
-/* "Send replies to <friend>": the listener's Margins to pick from (#2168). */
+/* "Share replies with <friend>": the listener's Margins to pick from (#2168). */
 .reply-back {
   margin: 0;
   padding: 0;

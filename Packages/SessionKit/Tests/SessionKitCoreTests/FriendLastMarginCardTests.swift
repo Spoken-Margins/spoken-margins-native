@@ -81,7 +81,7 @@ final class FriendLastMarginCardTests: XCTestCase {
         XCTAssertTrue(offer.isPreselected(reply))
         XCTAssertFalse(offer.isPreselected(other), "the other new Margin is listed and left out, changeable")
         XCTAssertEqual(Set(offer.candidates.map(\.id)), ["reply", "other"])
-        XCTAssertEqual(offer.title, "Send replies to Cole")
+        XCTAssertEqual(offer.title, "Share replies with Cole")
     }
 
     func testShareIsUnchangedWhereThereIsNoAnswerToPick() {
@@ -102,7 +102,7 @@ final class FriendLastMarginCardTests: XCTestCase {
         guard case .friendAnswersPicked(let offer) = PlaybackShareStart.start(localMargins: [mine], layers: [layer("cole", label: "Cole")]) else {
             return XCTFail("a friend's item with a Margin made since the packet arrived must open the reply sheet")
         }
-        XCTAssertEqual(offer.title, "Send replies to Cole")
+        XCTAssertEqual(offer.title, "Share your Margins with Cole")
         XCTAssertEqual(offer.candidates.map(offer.isPreselected), [true], "the sheet never opens with nothing picked")
     }
 }

@@ -5,7 +5,7 @@ import SessionKit
 /// decided in SessionKit (`ReplyBackOffer`); this file reads what the Margins screen already holds and opens the
 /// share sheet on it.
 extension Gate1AppModel {
-    /// The "Send replies to <friend>" offer for an item, or nil when the listener has made no Margin on it since
+    /// The "Share replies with <friend>" offer for an item, or nil when the listener has made no Margin on it since
     /// they imported a friend's packet. Read from the rows the Margins screen already published, so it adds no
     /// store read to the screen.
     func replyBackOffer(itemID: String) -> ReplyBackOffer? {
@@ -18,7 +18,7 @@ extension Gate1AppModel {
         )
     }
 
-    /// Opens the Share sheet as "Send replies to <friend>", on its review step: the replies are included (with no
+    /// Opens the Share sheet as "Share replies with <friend>", on its review step: the replies are included (with no
     /// linked reply, the Margins the ordinary Share would pick), the listener's other new Margins are listed and left
     /// out, and nothing the friend sent is in it.
     func openReplyBackExport(itemID: String) {

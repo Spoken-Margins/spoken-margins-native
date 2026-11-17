@@ -56,7 +56,7 @@ struct ExperienceMarginsScreen: View, Equatable {
         var scopeItemChoices: [MarginScopeChoice]
         var privateRowCount: Int
         fileprivate var groups: [MarginGroup]
-        /// "Send replies to Ana" for each group whose item has a friend's Margins (#3221).
+        /// "Share replies with Ana" for each group whose item has a friend's Margins (#3221).
         var replyBackOffers: [String: ReplyBackOffer]
         var sharedRowCount: Int
         /// Read only while the Shared filter is on; empty otherwise.
@@ -290,13 +290,13 @@ struct ExperienceMarginsScreen: View, Equatable {
         }
     }
 
-    /// "Send replies to Ana" under an item whose Margins the listener has answered or added since they opened a
+    /// "Share replies with Ana" (or "Share your Margins with Ana") under an item whose Margins the listener has answered or added since they opened a
     /// friend's (#3221): the two-tap way back to the person who shared.
     @ViewBuilder
     private func sendRepliesButton(_ group: MarginGroup, offer: ReplyBackOffer?) -> some View {
         if let offer {
             Button { model.openReplyBackExport(itemID: group.itemID) } label: {
-                Label(offer.title, systemImage: "arrowshape.turn.up.left")
+                Label(offer.title, systemImage: "square.and.arrow.up") // the same icon as every other Share (#3906)
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(SecondaryButtonStyle())

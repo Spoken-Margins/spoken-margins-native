@@ -37,10 +37,10 @@ extension PinnedMarginCard {
 }
 
 /// How the player's Share opens (#3247, 2026-11-03; #3792): on a friend's item where the listener has made a Margin
-/// since the friend's packet arrived, "Send replies to <friend>" with the answers already picked and changeable, as the
-/// Margins screen's "Send replies" does; anywhere else as it always has.
+/// since the friend's packet arrived, "Share replies with <friend>" with the answers already picked and changeable, as the
+/// Margins screen's row does; anywhere else as it always has.
 public enum PlaybackShareStart: Equatable, Sendable {
-    /// Open "Send replies to <friend>": the answers are chosen, the listener's other new Margins are listed and left out.
+    /// Open "Share replies with <friend>": the answers are chosen, the listener's other new Margins are listed and left out.
     case friendAnswersPicked(ReplyBackOffer)
     /// Open the ordinary share sheet with the default Margins.
     case defaults
