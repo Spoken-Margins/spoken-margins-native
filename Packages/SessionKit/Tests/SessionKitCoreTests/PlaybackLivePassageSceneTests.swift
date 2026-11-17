@@ -104,6 +104,37 @@ final class PlaybackLivePassageSceneTests: XCTestCase {
         XCTAssertEqual(index.chapter?.rowBuildCount, 1, "the rows were not built again for the Margins")
     }
 
+    /// Found by the review: a chapter with no sentence and a Margin inside it trapped on `rows[0]`.
+    func testAChapterWithNoSentenceHasAnEmptySceneEvenWithAMarginInIt() throws {
+        let text = "Intro sentence one. Intro sentence two.   \n\n   "
+        let blankStart = "Intro sentence one. Intro sentence two.".count
+        let chapters = [
+            Chapter(id: "a", title: "Words", startChar: 0, endChar: blankStart, percent: 0),
+            Chapter(id: "b", title: "Blank", startChar: blankStart, endChar: text.count, percent: 0),
+            Chapter(id: "c", title: "Empty end", startChar: text.count, endChar: text.count, percent: 0)
+        ]
+        var index = Passage.Index(text: text, chapters: chapters)
+        for offset in [blankStart + 2, text.count] {
+            let margins = [Passage.Margin(id: "m", offset: offset, origin: .own)]
+            index.updateScene(offset: offset, margins: margins)
+            XCTAssertEqual(index.scene.sentences, [], "offset \(offset)")
+            XCTAssertNil(index.currentSentence)
+        }
+        let blank = Passage.Index(text: "   \n  ")
+        var whitespaceOnly = blank
+        whitespaceOnly.updateScene(offset: 2, margins: [.init(id: "m", offset: 2, origin: .own)])
+        XCTAssertEqual(whitespaceOnly.scene.sentences, [])
+    }
+
+    func testAMarginInAnotherChapterLeavesTheSceneAlone() {
+        let (text, chapters, middleStart) = threeChapters()
+        var index = Passage.Index(text: text, chapters: chapters)
+        index.updateScene(offset: middleStart + 1)
+        let elsewhere = [Passage.Margin(id: "x", offset: 3, origin: .own)]
+        XCTAssertEqual(index.updateScene(offset: middleStart + 1, margins: elsewhere), .none)
+        XCTAssertEqual(index.updateScene(offset: middleStart + 1, margins: []), .none)
+    }
+
     func testAnOffsetBeforeAndAfterTheTextLightsTheFirstAndLastSentence() {
         let text = sentences(4, prefix: "Short")
         var index = Passage.Index(text: text)

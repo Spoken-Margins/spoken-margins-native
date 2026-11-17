@@ -172,6 +172,8 @@ public enum PlaybackLivePassage {
 
         /// The whole chapter as a scene. Rows are built once; Margins only replace the rows they sit on.
         public func scene(margins: [Margin] = []) -> Scene {
+            // A chapter with no sentence (whitespace only, or empty at the end of the text) has no row for a Margin to sit on.
+            guard !ranges.isEmpty else { return Scene(chapterTitle: title, chapterStart: bounds.lowerBound, sentences: []) }
             var rows = baseRows()
             var anchored: [Int: [Margin]] = [:]
             for margin in margins where isInChapter(margin.offset, bounds: bounds, textLength: characters.count) {
@@ -300,11 +302,13 @@ public enum PlaybackLivePassage {
             cache[key] = parsed
             chapter = parsed
             let lit = parsed.currentSentence(at: offset)
-            let next = SceneSelection(chapter: key, margins: margins)
+            // Only the Margins in this chapter: one added or removed elsewhere leaves the scene as it is.
+            let inScene = margins.filter { isInChapter($0.offset, bounds: key.bounds, textLength: characters.count) }
+            let next = SceneSelection(chapter: key, margins: inScene)
             var change = SceneChange.none
             if next != sceneSelection {
                 sceneSelection = next
-                scene = parsed.scene(margins: margins)
+                scene = parsed.scene(margins: inScene)
                 change = .scene
             }
             if lit != currentSentence {

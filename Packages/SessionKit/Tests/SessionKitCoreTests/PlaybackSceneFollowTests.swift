@@ -48,6 +48,25 @@ final class PlaybackSceneFollowTests: XCTestCase {
         }
     }
 
+    /// By the design a move that is not the same sentence, the next one or a later scene's first is a jump, whether or not
+    /// the listener's control made it, so the app calls `playheadMoved` once per sentence change and never samples slower.
+    /// A tick that skips a sentence, or goes back, takes the page back (found by the review of #4453's first piece).
+    func testAnUnflaggedMoveThatSkipsASentenceOrGoesBackIsStillAJump() {
+        for jump in [at(5), at(2), at(1, scene: 500, title: "Two")] {
+            var follow = following()
+            follow.listenerScrolled()
+            follow.playheadMoved(to: jump, byListenerControl: false)
+            XCTAssertTrue(follow.isFollowing, "\(jump)")
+        }
+    }
+
+    func testBackToPlayingBeforeAnyPlayheadChangesNothingToShow() {
+        var follow = PlaybackSceneFollow()
+        follow.backToPlayingTapped()
+        XCTAssertTrue(follow.isFollowing)
+        XCTAssertNil(follow.shownChapterStart)
+    }
+
     func testAListenersControlStartsFollowingEvenToTheNextSentence() {
         var follow = following()
         follow.listenerScrolled()
