@@ -166,6 +166,49 @@ final class NextChapterSummaryTests: XCTestCase {
         XCTAssertEqual(Rule.backwardControl(skimRowShown: false, canSkimBackward: false), .hidden)
         XCTAssertEqual(Rule.backwardControl(skimRowShown: false, canSkimBackward: true), .hidden)
     }
+    // MARK: two or more chapters always show the chapter row (#3865)
+
+    /// The owner's text item at 47% had chapters ahead at 56%, 65% and 74% and no arrows. Whatever Skim's inputs said
+    /// (no store, no map, nothing to Skim to), an item with two or more chapters keeps the row, for every item kind.
+    func testTwoOrMoreChaptersShowTheChapterRowWhateverSkimSays() {
+        for chapters in 2...6 {
+            XCTAssertTrue(Rule.showsChapterRow(isSkimSource: true, hasSkimAffordance: false, chapterCount: chapters),
+                          "\(chapters) chapters, Skim has nowhere to go")
+            XCTAssertTrue(Rule.showsChapterRow(isSkimSource: true, hasSkimAffordance: true, chapterCount: chapters))
+        }
+    }
+
+    func testRowStillFollowsSkimOrAMapWhereTheItemHasFewerChapters() {
+        for chapters in 0...1 {
+            XCTAssertFalse(Rule.showsChapterRow(isSkimSource: true, hasSkimAffordance: false, chapterCount: chapters),
+                           "\(chapters) chapters and no Skim: the row is the title only, as before")
+            XCTAssertTrue(Rule.showsChapterRow(isSkimSource: true, hasSkimAffordance: true, chapterCount: chapters),
+                          "\(chapters) chapters with Skim or a map keeps the row")
+        }
+    }
+
+    func testChapterRowIsNeverShownForSomethingThatIsNotASkimSource() {
+        for affordance in [false, true] {
+            for chapters in [0, 1, 2, 9] {
+                XCTAssertFalse(Rule.showsChapterRow(isSkimSource: false, hasSkimAffordance: affordance, chapterCount: chapters))
+            }
+        }
+    }
+
+    /// With the row guaranteed, the controls on a chapter-bearing item with Skim's inputs empty (the state the owner's
+    /// screenshot suggests): forward is never hidden, and back is drawn, dimmed until a stop is behind the playhead.
+    func testControlsOnAnItemWithChaptersAndNoSkimInputs() {
+        let row = Rule.showsChapterRow(isSkimSource: true, hasSkimAffordance: false, chapterCount: 3)
+        // a middle chapter: Next chapter takes the Skim slot, back is dimmed until Skim has a stop behind the playhead
+        XCTAssertEqual(Rule.forwardControl(isAvailable: true, skimRowShown: row, canSkimForward: false), .nextChapterInSkimSlot)
+        XCTAssertEqual(Rule.backwardControl(skimRowShown: row, canSkimBackward: false), .skimDisabled)
+        // once Skim's stops arrive, both are Skim
+        XCTAssertEqual(Rule.forwardControl(isAvailable: true, skimRowShown: row, canSkimForward: true), .skim)
+        XCTAssertEqual(Rule.backwardControl(skimRowShown: row, canSkimBackward: true), .skim)
+        // the last chapter, nothing ahead: forward is dimmed, never hidden
+        XCTAssertEqual(Rule.forwardControl(isAvailable: false, skimRowShown: row, canSkimForward: false), .skimDisabled)
+    }
+
     // MARK: text chapters count characters (#1471)
 
     func testTextChapterSummaryLandsOnTheChapterStartWithinACharacterTolerance() {
