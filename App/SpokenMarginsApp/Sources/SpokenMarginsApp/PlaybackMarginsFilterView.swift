@@ -12,7 +12,7 @@ struct PlaybackMarginsFilterView: View {
         layout {
             ForEach(PlaybackMarginsList.Filter.allCases, id: \.self) { option in
                 Button { selection = option } label: {
-                    // Selected is told by a checkmark as well as a fill that reaches 3:1 against the tray (#1923).
+                    // Selected is told by a checkmark as well as an opaque pill, the same one the pane switch draws (#1923, #3735).
                     HStack(spacing: 4) {
                         if selection == option {
                             Image(systemName: "checkmark").font(.caption.weight(.bold))
