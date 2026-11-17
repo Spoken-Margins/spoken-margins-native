@@ -2,7 +2,7 @@ import Foundation
 import SessionKit
 import XCTest
 
-/// The Margins tab and arrival preview list (owner's design 2026-11-17, part of #3216), and "Skip to next Margin".
+/// The Margins tab and arrival preview list (owner's design 2026-11-17, part of #3216), and "Next Margin".
 final class MarginsControlCenterTests: XCTestCase {
     private let t0 = Date(timeIntervalSince1970: 1_777_000_000)
 
@@ -92,10 +92,34 @@ final class MarginsControlCenterTests: XCTestCase {
         XCTAssertEqual(times.count, 10)
         // At 13:00 (the fixture's place) the next is the walk Margin at 15:30, lead-in from 15:10.
         let skip = NextMarginSkip.next(playheadMs: 780_000, marginTimesMs: times)
-        XCTAssertEqual(skip, NextMarginSkip(marginTimeMs: 930_000, leadInStartMs: 910_000, msUntilMargin: 150_000))
-        XCTAssertEqual(skip?.countdown, "in 3 min")
-        // Inside the conversation: at 3:15 the 3:32 and 3:34 Margins' lead-ins are behind, so it goes on to 7:45.
-        XCTAssertEqual(NextMarginSkip.next(playheadMs: 195_000, marginTimesMs: times)?.marginTimeMs, 465_000)
+        XCTAssertEqual(skip, NextMarginSkip(
+            marginTimeMs: 930_000, leadInStartMs: 910_000, msUntilMargin: 150_000, action: .seekToLeadIn))
+        XCTAssertEqual(skip?.destinationMs, 910_000)
+        XCTAssertEqual(skip?.countdown, "2:30")
+        // Inside the conversation: at 3:15 the reply at 3:20 is 5 s ahead, inside its lead-in, so the press goes
+        // straight into it, not on to 7:45.
+        let inside = NextMarginSkip.next(playheadMs: 195_000, marginTimesMs: times)
+        XCTAssertEqual(inside?.marginTimeMs, 200_000)
+        XCTAssertEqual(inside?.action, .playMargin)
+        XCTAssertEqual(inside?.destinationMs, 200_000)
+    }
+
+    // MARK: Start controls
+
+    func testRowStartLabelsDifferOnArrivalAndDuringPlayback() {
+        XCTAssertEqual(MarginsControlCenter.RowStartContext.arrival.label, "Start with this Margin")
+        XCTAssertEqual(MarginsControlCenter.RowStartContext.playback.label, "Jump to this Margin")
+        XCTAssertEqual(MarginsControlCenter.startWithUnheardLabel, "Start with unheard Margins")
+        XCTAssertEqual(MarginsControlCenter.startFromBeginningLabel, "Start from the beginning")
+        XCTAssertEqual(MarginsControlCenter.startFromBeginningMs, 0)
+    }
+
+    func testStartWithUnheardGoesToTheLeadInOfTheFirstThreadWithAnUnheardMargin() {
+        let rows = seedRows()
+        // Rae's 1:40 is heard; the 3:10 thread holds Sam's unheard reply, so it starts at the thread root's lead-in.
+        XCTAssertEqual(MarginsControlCenter.startWithUnheardMs(rows), 170_000)
+        let heard = rows.filter { $0.hearing != .unheard }
+        XCTAssertNil(MarginsControlCenter.startWithUnheardMs(heard))
     }
 
     // MARK: Opening on the Margins tab
@@ -138,32 +162,46 @@ final class MarginsControlCenterTests: XCTestCase {
         XCTAssertEqual(MarginsControlCenter.leadInExcerpt("café crème", maxCharacters: 80), "café crème")
     }
 
-    // MARK: Skip to next Margin
+    // MARK: Next Margin
 
     func testSkipGoesToTheNextMarginsLeadInAndCountsDownToTheMargin() {
         let skip = NextMarginSkip.next(playheadMs: 60_000, marginTimesMs: [400_000, 190_000, 100_000])
-        XCTAssertEqual(skip, NextMarginSkip(marginTimeMs: 100_000, leadInStartMs: 80_000, msUntilMargin: 40_000))
-        XCTAssertEqual(skip?.countdown, "in under 1 min")
+        XCTAssertEqual(skip, NextMarginSkip(
+            marginTimeMs: 100_000, leadInStartMs: 80_000, msUntilMargin: 40_000, action: .seekToLeadIn))
+        XCTAssertEqual(skip?.countdown, "0:40")
     }
 
-    func testInsideALeadInTheSkipGoesOnToTheMarginAfterNeverBack() {
+    func testInsideALeadInThePressGoesStraightIntoThatMarginNeverBackNeverPast() {
+        // 10 s before the 1:40 Margin, inside its lead-in (1:20 to 1:40).
         let skip = NextMarginSkip.next(playheadMs: 90_000, marginTimesMs: [100_000, 190_000])
-        XCTAssertEqual(skip?.marginTimeMs, 190_000)
-        XCTAssertEqual(skip?.leadInStartMs, 170_000)
-        XCTAssertNil(NextMarginSkip.next(playheadMs: 180_000, marginTimesMs: [100_000, 190_000]), "nothing ahead of the lead-in")
+        XCTAssertEqual(skip, NextMarginSkip(
+            marginTimeMs: 100_000, leadInStartMs: 80_000, msUntilMargin: 10_000, action: .playMargin))
+        XCTAssertEqual(skip?.destinationMs, 100_000, "forward into the Margin, not back to 1:20, not on to 3:10")
+        // Exactly at the lead-in's start counts as inside it.
+        XCTAssertEqual(NextMarginSkip.next(playheadMs: 80_000, marginTimesMs: [100_000])?.action, .playMargin)
+        // Exactly at a Margin: that one is behind, the next is ahead.
+        XCTAssertEqual(NextMarginSkip.next(playheadMs: 100_000, marginTimesMs: [100_000, 190_000])?.marginTimeMs, 190_000)
+        XCTAssertNil(NextMarginSkip.next(playheadMs: 190_000, marginTimesMs: [100_000, 190_000]), "nothing ahead")
     }
 
     func testAMarginNearTheStartLeadsInFromZero() {
         let skip = NextMarginSkip.next(playheadMs: -1, marginTimesMs: [5_000])
         XCTAssertEqual(skip?.leadInStartMs, 0)
-        XCTAssertNil(NextMarginSkip.next(playheadMs: 0, marginTimesMs: [5_000]), "already at that lead-in")
+        XCTAssertEqual(skip?.action, .seekToLeadIn)
+        XCTAssertEqual(NextMarginSkip.next(playheadMs: 0, marginTimesMs: [5_000])?.destinationMs, 5_000,
+                       "at 0:00 the lead-in has begun, so the press goes into the Margin")
         XCTAssertNil(NextMarginSkip.next(playheadMs: 0, marginTimesMs: []))
         XCTAssertNil(NextMarginSkip.next(playheadMs: 0, marginTimesMs: [-4]))
     }
 
-    func testCountdownWordsMatchTheCard() {
-        XCTAssertEqual(NextMarginSkip(marginTimeMs: 0, leadInStartMs: 0, msUntilMargin: 12_000).countdown, "in 12 sec")
-        XCTAssertEqual(NextMarginSkip(marginTimeMs: 0, leadInStartMs: 0, msUntilMargin: 240_000).countdown, "in 4 min")
-        XCTAssertEqual(NextMarginSkip(marginTimeMs: 0, leadInStartMs: 0, msUntilMargin: 241_000).countdown, "in 5 min")
+    func testCountdownIsAnMinutesSecondsClockRoundedUp() {
+        func clock(_ ms: Int) -> String {
+            NextMarginSkip(marginTimeMs: 0, leadInStartMs: 0, msUntilMargin: ms, action: .seekToLeadIn).countdown
+        }
+        XCTAssertEqual(clock(328_000), "5:28")
+        XCTAssertEqual(clock(12_000), "0:12")
+        XCTAssertEqual(clock(240_000), "4:00")
+        XCTAssertEqual(clock(240_001), "4:01", "rounded up, so it never promises an early arrival")
+        XCTAssertEqual(clock(3_725_000), "62:05", "minutes keep counting past an hour")
     }
 }

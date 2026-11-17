@@ -11,8 +11,41 @@ import Foundation
 /// - A voice Margin recorded without words carries placeholder words (#3025). It shows as "words coming", never as
 ///   if the placeholder were the friend's words.
 public enum MarginsControlCenter {
-    /// The lead-in before a Margin that "Start here" and "Skip to next Margin" jump to (owner, 2026-11-17: 20 s).
+    /// The lead-in before a Margin that a row's start control and "Next Margin" jump to (owner, 2026-11-17: 20 s).
     public static let leadInMs = 20_000
+    /// "Start from the beginning" on the arrival preview starts at 0:00 (owner, prototype v3).
+    public static let startFromBeginningMs = 0
+
+    /// Where a row's start control is shown, which decides its words (owner, prototype v3).
+    public enum RowStartContext: String, CaseIterable, Equatable, Sendable {
+        /// The arrival preview, before listening starts.
+        case arrival
+        /// The Margins tab during playback.
+        case playback
+
+        /// "Start with this Margin" on arrival, "Jump to this Margin" during playback.
+        public var label: String {
+            switch self {
+            case .arrival: "Start with this Margin"
+            case .playback: "Jump to this Margin"
+            }
+        }
+    }
+
+    /// The arrival preview's two start controls (see `startWithUnheardMs` and `startFromBeginningMs`).
+    public static let startWithUnheardLabel = "Start with unheard Margins"
+    public static let startFromBeginningLabel = "Start from the beginning"
+
+    /// Where "Start with unheard Margins" begins: the lead-in of the first thread holding a friend's Margin the
+    /// listener hasn't heard, as in prototype v3. Nil when every Margin is heard (or the thread isn't placed).
+    public static func startWithUnheardMs(_ rows: [Row]) -> Int? {
+        var root: Row?
+        for row in rows {
+            if row.depth == 0 { root = row }
+            if row.hearing == .unheard { return (root ?? row).startHereMs }
+        }
+        return nil
+    }
     /// How much of the source text before a Margin the row quotes, in characters.
     public static let leadInExcerptCharacters = 110
 
@@ -55,7 +88,7 @@ public enum MarginsControlCenter {
 
         public var isYours: Bool { hearing == .yours }
 
-        /// Where "Start here" puts the listener: the lead-in before the Margin, never before the start.
+        /// Where the row's start control ("Start with this Margin" / "Jump to this Margin") puts the listener: the lead-in before the Margin, never before the start.
         public var startHereMs: Int? { timeMs.map { max(0, $0 - MarginsControlCenter.leadInMs) } }
     }
 
@@ -166,7 +199,7 @@ public enum MarginsControlCenter {
         rows.filter { arrival(for: $0, autoplay: autoplay) == .plays }
     }
 
-    /// The source times "Skip to next Margin" steps through: every placed Margin, own and friends', replies too.
+    /// The source times "Next Margin" steps through: every placed Margin, own and friends', replies too.
     public static func skipTimes(_ rows: [Row]) -> [Int] { rows.compactMap(\.timeMs) }
 
     /// How many friends' Margins the listener hasn't heard.
@@ -178,33 +211,51 @@ public enum MarginsControlCenter {
     public static func opensOnMarginsTab(_ rows: [Row]) -> Bool { unheardCount(rows) > 0 }
 }
 
-/// "Skip to next Margin" on the Margins tab (owner, 2026-11-17): the time until the next Margin, and where the skip
-/// goes. The skip always goes to the next Margin's lead-in, never backwards: a Margin whose lead-in the listener is
-/// already inside is not the target, the one after it is. The app does the seek; nothing here moves the player.
+/// "Next Margin" on the Margins tab (owner, 2026-11-17; prototype v3): the time until the next Margin, and where the
+/// press goes. It only ever moves forward, and never past the next Margin:
+/// - before that Margin's lead-in, it goes to the lead-in (`leadInMs` before the Margin, never before the start);
+/// - inside the lead-in, it goes straight into the Margin, not back to the lead-in's start.
+/// The app does the seek and the playing; nothing here moves the player.
 public struct NextMarginSkip: Equatable, Sendable {
-    /// The Margin the skip goes to, in source milliseconds.
+    public enum Action: String, Equatable, Sendable {
+        /// Seek forward to the lead-in before the Margin.
+        case seekToLeadIn
+        /// Already inside the lead-in: go straight into the Margin.
+        case playMargin
+    }
+
+    /// The Margin the press goes to, in source milliseconds.
     public let marginTimeMs: Int
-    /// Where the skip puts the listener: `leadInMs` before the Margin, never before the start.
+    /// The start of that Margin's lead-in: `leadInMs` before it, never before the start.
     public let leadInStartMs: Int
     /// From the playhead to the Margin.
     public let msUntilMargin: Int
+    public let action: Action
 
-    public init(marginTimeMs: Int, leadInStartMs: Int, msUntilMargin: Int) {
+    public init(marginTimeMs: Int, leadInStartMs: Int, msUntilMargin: Int, action: Action) {
         self.marginTimeMs = marginTimeMs
         self.leadInStartMs = leadInStartMs
         self.msUntilMargin = msUntilMargin
+        self.action = action
     }
 
+    /// Where the press puts the playhead: the lead-in's start, or the Margin itself. Never behind the playhead.
+    public var destinationMs: Int { action == .playMargin ? marginTimeMs : leadInStartMs }
+
+    /// The first Margin strictly after the playhead, or nil when none is left.
     public static func next(playheadMs: Int, marginTimesMs: [Int], leadInMs: Int = MarginsControlCenter.leadInMs) -> NextMarginSkip? {
         let target = marginTimesMs
             .filter { $0 >= 0 }
             .sorted()
-            .first { max(0, $0 - leadInMs) > playheadMs }
+            .first { $0 > playheadMs }
         guard let target else { return nil }
-        return NextMarginSkip(marginTimeMs: target, leadInStartMs: max(0, target - leadInMs), msUntilMargin: target - playheadMs)
+        let leadInStart = max(0, target - leadInMs)
+        return NextMarginSkip(
+            marginTimeMs: target, leadInStartMs: leadInStart, msUntilMargin: target - playheadMs,
+            action: playheadMs >= leadInStart ? .playMargin : .seekToLeadIn)
     }
 
-    /// "in 4 min", "in 12 sec": the card's countdown wording (`PinnedMarginCard.friendCountdown`), whole minutes with
-    /// no clock and seconds in the last 20 s.
-    public var countdown: String { PinnedMarginCard.friendCountdown(msUntilMargin) }
+    /// The floating "Next Margin" pill's countdown: an `m:ss` clock such as "5:28", rounded up
+    /// (`PinnedMarginCard.countdown`).
+    public var countdown: String { PinnedMarginCard.countdown(msUntilMargin) }
 }
