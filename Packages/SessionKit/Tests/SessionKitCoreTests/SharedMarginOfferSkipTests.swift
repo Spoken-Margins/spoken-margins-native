@@ -12,8 +12,47 @@ final class SharedMarginOfferSkipTests: XCTestCase {
         XCTAssertEqual(count([], from: 0, to: 500), 0)
     }
 
-    func testAPlayheadJumpIsNotACrossing() {
-        XCTAssertEqual(count(prompts(["a": 100_000]), from: 0, to: 200_000), 0, "a seek is not listening past the Margin")
+    /// The queue still finds a Margin on a forward jump (a Lock Screen skip, a long gap between ticks), and loses it when
+    /// the slot is busy, so the event counts it (#4109 audit).
+    func testAForwardJumpAcrossAMarginIsStillACrossing() {
+        XCTAssertEqual(count(prompts(["a": 100_000]), from: 95_000, to: 125_000), 1, "a 30 s skip passes the Margin at 100 s")
+    }
+
+    func testARewindCrossesNothing() {
+        XCTAssertEqual(count(prompts(["a": 100]), from: 200, to: 50), 0)
+    }
+
+    /// A Margin that plays after the others is queued for the end of the episode, not dropped, so it is not reported.
+    func testAMarginThatPlaysAfterTheOthersIsNotCountedAtTheEndOfTheEpisode() {
+        let late = afterOthersPrompt("late")
+        XCTAssertEqual(late.plan, .afterOthers)
+        var previous = snapshot(0), current = snapshot(0)
+        previous.sessionId = "s"; current.sessionId = "s"
+        previous.currentPlaybackProgressPercent = 90; current.currentPlaybackProgressPercent = 100
+        XCTAssertEqual(
+            SharedMarginOfferSkip.crossedCount(previous: previous, current: current, selectedItemID: "item", prompts: [late]), 0)
+        var queue = SharedMarginOfferQueue()
+        _ = queue.nextOffer(previous: previous, current: current, selectedItemID: "item", canOffer: false, prompts: [late])
+        XCTAssertEqual(queue.waitingIDs, ["late"], "the busy-slot queue keeps it, as the count assumes")
+    }
+
+    /// The class of finding: the count and the queue must agree on every tick. For each pair of positions, the count
+    /// equals the number of Margins the queue offers or queues when the slot is free, and when the slot is busy it
+    /// is exactly the number of Margins the queue announces nothing for and loses.
+    func testTheCountAgreesWithTheQueueOnEveryTick() {
+        let all = prompts(["a": 100, "b": 5_000, "c": 40_000, "d": 90_000])
+        let positions = [0, 50, 100, 4_000, 5_000, 20_000, 39_000, 40_000, 95_000, 120_000]
+        for from in positions {
+            for to in positions {
+                var free = SharedMarginOfferQueue()
+                let first = free.nextOffer(previous: snapshot(from), current: snapshot(to), selectedItemID: "item", canOffer: true, prompts: all)
+                let offered = (first == nil ? 0 : 1) + free.waitingIDs.count
+                var busy = SharedMarginOfferQueue()
+                _ = busy.nextOffer(previous: snapshot(from), current: snapshot(to), selectedItemID: "item", canOffer: false, prompts: all)
+                XCTAssertEqual(count(all, from: from, to: to), offered, "\(from) to \(to)")
+                XCTAssertTrue(busy.announcedIDs.isEmpty && busy.waitingIDs.isEmpty, "a busy slot loses them: \(from) to \(to)")
+            }
+        }
     }
 
     func testAnotherItemThanTheSelectedOneCountsNothing() {
@@ -79,6 +118,18 @@ final class SharedMarginOfferSkipTests: XCTestCase {
             id: id, layerId: layer.id, packageScopedId: "packet-\(id)", createdAt: Date(timeIntervalSince1970: 0),
             anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: "Words",
             resolution: ImportedAnchorResolution(evidenceClass: .exactEdition, localMediaTimeMs: media))
+        return ImportedCommentaryPrompt(layer: layer, interjection: record, index: 1, count: 1)
+    }
+
+    private func afterOthersPrompt(_ id: String) -> ImportedCommentaryPrompt {
+        let layer = ImportedCommentaryLayer(id: "layer", itemId: "item", packageDigest: "digest", packageId: "package",
+                                            itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),
+                                            importedAt: Date(timeIntervalSince1970: 0),
+                                            sourceResolutionStatus: .resolved, isEnabled: true)
+        let record = ImportedCommentaryInterjection(
+            id: id, layerId: layer.id, packageScopedId: "packet-\(id)", createdAt: Date(timeIntervalSince1970: 0),
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: "Words",
+            resolution: ImportedAnchorResolution(evidenceClass: .absentFromRecipientEdition))
         return ImportedCommentaryPrompt(layer: layer, interjection: record, index: 1, count: 1)
     }
 

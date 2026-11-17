@@ -23,14 +23,22 @@ public enum SharedMarginOfferSkip {
         }
     }
 
-    /// How many not-yet-announced Margins this tick crossed. Counted by the rule `nextOffer` uses, and a Margin in
-    /// `fresh` reveal mode is never offered, so it is not counted. Zero for another item than the selected one.
+    /// How many not-yet-announced Margins this tick crossed that `nextOffer` would have lost: the Margins it would
+    /// have offered had the slot been free. It follows that rule exactly, so the event never names a Margin the queue
+    /// still holds, and never misses one the queue drops (#4109 audit):
+    /// - A forward jump still crosses a Margin. `nextOffer` only clears the Margins already waiting on a jump and then
+    ///   looks for crossings without a step limit (a Lock Screen skip, or a long gap between ticks while locked), so
+    ///   this does not filter jumps either.
+    /// - A Margin in `fresh` reveal mode is never offered, so it is not counted.
+    /// - A Margin that plays after the others crosses at the end of the episode, and `nextOffer` queues it for later
+    ///   when the slot is busy (#4347) instead of dropping it, so it is not counted.
+    /// Zero for another item than the selected one.
     public static func crossedCount(
         previous: SessionSnapshot, current: SessionSnapshot, selectedItemID: String, prompts: [ImportedCommentaryPrompt]
     ) -> Int {
-        guard current.itemId == selectedItemID, !SharedMarginOfferQueue.isPlayheadJump(previous: previous, current: current) else { return 0 }
+        guard current.itemId == selectedItemID else { return 0 }
         return SharedMarginPrompts.crossed(prompts: prompts, previous: previous, current: current)
-            .filter { $0.layer.revealMode != .fresh }.count
+            .filter { $0.layer.revealMode != .fresh && $0.plan != .afterOthers }.count
     }
 
     /// The developer event `margin.shared_offer_skipped`. Field names are pinned by a host test.
