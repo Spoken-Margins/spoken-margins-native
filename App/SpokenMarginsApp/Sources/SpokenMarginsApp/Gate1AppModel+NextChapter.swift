@@ -26,10 +26,23 @@ extension Gate1AppModel {
     /// row draws them either side of the title and keeps both in place, dimmed when there is nowhere to go (#1666).
     /// A mapped item keeps them even where neither direction can be pressed, so Next chapter is never mistaken for
     /// Skim there (#2185).
+    ///
+    /// An item with two or more chapters always shows the row, whatever Skim's inputs say, so an article, a PDF or a
+    /// podcast gets the same arrows and a missing store or map can't hide them (#3865, `showsChapterRow`).
     var showsSkimRow: Bool {
-        (isMediaPlaybackSnapshot || isTextReadingSnapshot)
-            && (snapshot.canSkimBackward || snapshot.canSkimForward || snapshot.skimBridgeState != nil
-                || skimBridge.itemHasMap)
+        NextChapterSummaryRule.showsChapterRow(
+            isSkimSource: isMediaPlaybackSnapshot || isTextReadingSnapshot,
+            hasSkimAffordance: snapshot.canSkimBackward || snapshot.canSkimForward || snapshot.skimBridgeState != nil
+                || skimBridge.itemHasMap,
+            chapterCount: playingItemChapterCount)
+    }
+
+    /// The playing item's chapters, counted the way Skim's stops are built: text chapters on a text item read aloud, the
+    /// media chapters on a media item, or its Listening Map scenes where it has none (`skimStopList`).
+    private var playingItemChapterCount: Int {
+        guard snapshot.itemId == selectedItem.id else { return 0 }
+        if isTextReadingSnapshot { return selectedItem.chapters.count }
+        return (selectedItem.mediaChapters.isEmpty ? selectedItem.listeningMapScenes : selectedItem.mediaChapters).count
     }
 
     /// What the chapter row draws right of the title: forward Skim when it can be pressed, else Next chapter, else a

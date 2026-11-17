@@ -136,28 +136,77 @@ final class PlaybackDockLayoutTests: XCTestCase {
     // truth table in NextChapterSummaryTests. It can't be set up here: the snapshot observer recomputes the Skim
     // flags from the store on every change, so a hand-set `canSkimBackward` without a real map is reset at once.
 
-    func testNextChapterStaysWhenThereIsNoForwardSkim() {
+    /// #3865: two or more chapters always draw the chapter row with both arrows, on every item kind. Here there is no
+    /// store, so Skim has no stops: Next chapter stands in for forward Skim and back is drawn dimmed, never hidden.
+    func testNextChapterStandsInForSkimWhenThereIsNoForwardSkim() {
         let model = makePodcastModel(withChapters: true)
         XCTAssertFalse(model.snapshot.canSkimForward, "precondition: no map, so no forward Skim")
-        XCTAssertFalse(model.showsSkimRow)
+        XCTAssertTrue(model.showsSkimRow, "two chapters: the row shows")
         XCTAssertTrue(model.canJumpToNextChapter)
-        XCTAssertEqual(model.chapterRowForwardControl, .nextChapter)
-        XCTAssertEqual(model.chapterRowBackwardControl, .hidden)
+        XCTAssertEqual(model.chapterRowForwardControl, .nextChapterInSkimSlot)
+        XCTAssertEqual(model.chapterRowBackwardControl, .skimDisabled)
     }
 
-    func testNextChapterStaysInAnArticleWithChapters() {
+    func testAnArticleWithChaptersGetsTheSameChapterRowAsAPodcast() {
         let model = makeArticleModel(withChapters: true)
         XCTAssertTrue(model.canJumpToNextChapter, "precondition: the article has a chapter after this one")
-        XCTAssertFalse(model.showsSkimRow, "an article has no Skim row")
-        XCTAssertEqual(model.chapterRowForwardControl, .nextChapter)
-        XCTAssertEqual(model.chapterRowBackwardControl, .hidden)
+        XCTAssertTrue(model.showsSkimRow, "an article with two chapters shows the chapter row, as a podcast does")
+        XCTAssertEqual(model.chapterRowForwardControl, .nextChapterInSkimSlot)
+        XCTAssertEqual(model.chapterRowBackwardControl, .skimDisabled)
+        let podcast = makePodcastModel(withChapters: true)
+        XCTAssertEqual(model.chapterRowForwardControl, podcast.chapterRowForwardControl)
+        XCTAssertEqual(model.chapterRowBackwardControl, podcast.chapterRowBackwardControl)
     }
 
-    func testNoNextChapterButtonAtTheLastChapter() {
+    /// The owner's text item: chapters ahead at 56%, 65% and 74%, playing at 47%, and no arrows (#3865). Each item
+    /// kind with two or more chapters, at 0%, 47%, the last chapter past its start and 99%, never hides either arrow.
+    func testNoItemWithTwoOrMoreChaptersHidesEitherChapterArrow() {
+        func article(chapterCount: Int, atPercent percent: Int) -> Gate1AppModel {
+            let model = makeArticleModel(withChapters: true)
+            let length = model.selectedItem.text.count
+            let starts = [0, 56, 65, 74].prefix(max(chapterCount, 0))
+            model.selectedItem.chapters = starts.enumerated().map { index, start in
+                let end = index + 1 < starts.count ? Array(starts)[index + 1] : 100
+                return Chapter(id: "c\(index)", title: "Chapter \(index)", startChar: length * start / 100,
+                               endChar: length * end / 100, percent: start)
+            }
+            model.snapshot.chapterTitle = nil // the position, not a stale title, says which chapter this is
+            model.snapshot.currentTextStart = length * percent / 100
+            return model
+        }
+        func podcast(atPercent percent: Int) -> Gate1AppModel {
+            let model = makePodcastModel(withChapters: true)
+            model.selectedItem.mediaChapters = [0, 56, 65, 74].enumerated().map { index, start in
+                MediaTimelineChapter(id: "c\(index)", title: "Chapter \(index)", startMs: 36_000 * start,
+                                     transcriptSegmentId: "segment-\(index)")
+            }
+            model.snapshot.currentMediaTimeMs = 36_000 * percent
+            return model
+        }
+        for percent in [0, 47, 70, 99] {
+            for (name, model) in [("article", article(chapterCount: 4, atPercent: percent)), ("podcast", podcast(atPercent: percent))] {
+                XCTAssertTrue(model.showsSkimRow, "\(name) at \(percent)%: the row shows")
+                XCTAssertNotEqual(model.chapterRowForwardControl, .hidden, "\(name) at \(percent)%: forward is never hidden")
+                XCTAssertNotEqual(model.chapterRowBackwardControl, .hidden, "\(name) at \(percent)%: back is never hidden")
+            }
+        }
+        // Forward is Next chapter wherever a chapter is ahead, and dimmed in the last chapter.
+        XCTAssertEqual(article(chapterCount: 4, atPercent: 47).chapterRowForwardControl, .nextChapterInSkimSlot)
+        XCTAssertEqual(article(chapterCount: 4, atPercent: 99).chapterRowForwardControl, .skimDisabled)
+        // One chapter, or none, keeps the title-only row, as before.
+        for count in [0, 1] {
+            let model = article(chapterCount: count, atPercent: 47)
+            XCTAssertFalse(model.showsSkimRow, "\(count) chapters: no row")
+            XCTAssertEqual(model.chapterRowBackwardControl, .hidden)
+            XCTAssertEqual(model.chapterRowForwardControl, .hidden)
+        }
+    }
+
+    func testTheLastChapterDimsForwardInsteadOfHidingIt() {
         let model = makePodcastModel(withChapters: true)
         model.snapshot.currentMediaTimeMs = 2_000_000
         XCTAssertFalse(model.canJumpToNextChapter, "precondition: nothing after the last chapter")
-        XCTAssertEqual(model.chapterRowForwardControl, .hidden)
+        XCTAssertEqual(model.chapterRowForwardControl, .skimDisabled)
     }
 
     /// The real chapter row, laid out: each control asked for makes the row a button (44-point minimum) wider, and a
