@@ -119,7 +119,7 @@ extension Gate1AppModel {
         // `firstHeardAt` says the listener heard it.
         .forMargin(
             announced: sharedMarginOffers.announcedIDs.contains(prompt.id), heard: !prompt.interjection.isNewToListener,
-            revealMode: prompt.layer.revealMode)
+            revealMode: effectiveRevealMode(prompt))
     }
 
     private var nextMarginContext: NextMarginPress.Context? {
