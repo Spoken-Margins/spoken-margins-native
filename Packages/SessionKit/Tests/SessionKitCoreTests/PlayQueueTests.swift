@@ -191,6 +191,32 @@ final class PlayQueueTests: XCTestCase {
         XCTAssertEqual(rows.map(\.id), ["a", "b"])
     }
 
+    /// #3914: the playback screen's Next in queue looks at the head of the queue without taking it.
+    func testPeekNextIsThePopNextAnswerWithoutTakingIt() {
+        let queue = PlayQueue(itemIds: ["gone", "here", "later"])
+        XCTAssertEqual(queue.peekNext { $0 != "gone" }, "here")
+        XCTAssertEqual(queue.itemIds, ["gone", "here", "later"], "peeking takes nothing out")
+        var popped = queue
+        XCTAssertEqual(popped.popNext { $0 != "gone" }, queue.peekNext { $0 != "gone" })
+        XCTAssertNil(PlayQueue().peekNext { _ in true })
+        XCTAssertNil(PlayQueue(itemIds: ["gone"]).peekNext { _ in false })
+    }
+
+    /// #3914: Next in queue is offered only for an item that isn't the one playing or being started, and the same
+    /// answer is what a tap is checked against, so a second tap or a tap at the queue's own advance starts nothing.
+    func testNextToStartSkipsTheItemAlreadyPlayingOrStarting() {
+        let all: (String) -> Bool = { _ in true }
+        var queue = PlayQueue(itemIds: ["b", "c"])
+        XCTAssertEqual(queue.nextToStart(playing: "a", starting: "a", isAvailable: all), "b")
+        XCTAssertNil(queue.nextToStart(playing: "b", starting: "a", isAvailable: all), "the head is already playing")
+        XCTAssertNil(queue.nextToStart(playing: "a", starting: "b", isAvailable: all), "the head is already being started")
+        XCTAssertNil(PlayQueue().nextToStart(playing: "a", starting: "a", isAvailable: all), "an empty queue offers nothing")
+        // After b has started it left the queue: a second tap, drawn for b, finds c and so does not match b.
+        queue.remove("b")
+        XCTAssertEqual(queue.nextToStart(playing: "b", starting: "b", isAvailable: all), "c")
+        XCTAssertNotEqual(queue.nextToStart(playing: "b", starting: "b", isAvailable: all), "b")
+    }
+
     func testPruneMakesTheQueueTheSameListAsTheRowsSoAReorderHitsTheRightItem() {
         var queue = PlayQueue(itemIds: ["gone", "a", "b", "c"])
         let items = [item("a"), item("b"), item("c")]
