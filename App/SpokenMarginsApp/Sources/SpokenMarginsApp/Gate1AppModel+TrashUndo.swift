@@ -135,11 +135,13 @@ extension Gate1AppModel {
             podcastDownloadCoordinator?.queueRemoval(id)
             removeDurableGeneratedAudio(for: item)
             removeEpisodeMapArtifacts(itemId: id)
-            try purgingItemFiles(ofItems: [id], ledgerRows: ledgerRows, store: store) {
+            try purgingItemFiles(
+                ofItems: [id], ledgerRows: ledgerRows,
+                recordingPaths: recordings.compactMap(\.audioPath) + quarantinedRecordings, store: store
+            ) {
                 try deletingFriendRecordings(ofItems: [id], store: store) { try store.deleteItem(id: id) }
             }
             removeLiveSessionRecord(itemId: id)
-            removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
             removeFromQueue(deletedItemIds: [id])
             dropPermanentlyDeletedRows(ids: [id])
             guard !libraryItems.contains(where: { $0.id == id }),
@@ -181,11 +183,13 @@ extension Gate1AppModel {
             ids.forEach { podcastDownloadCoordinator?.queueRemoval($0) }
             items.forEach { removeDurableGeneratedAudio(for: $0) }
             ids.forEach(removeEpisodeMapArtifacts)
-            try purgingItemFiles(ofItems: ids, ledgerRows: ledgerRows, store: store) {
+            try purgingItemFiles(
+                ofItems: ids, ledgerRows: ledgerRows,
+                recordingPaths: recordings.compactMap(\.audioPath) + quarantinedRecordings, store: store
+            ) {
                 try deletingFriendRecordings(ofItems: ids, store: store) { try store.deleteItems(ids: ids) }
             }
             ids.forEach(removeLiveSessionRecord)
-            removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
             removeFromQueue(deletedItemIds: ids)
             dropPermanentlyDeletedRows(ids: Set(ids))
             guard recentlyDeletedItems.isEmpty,

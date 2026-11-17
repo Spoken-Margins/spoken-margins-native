@@ -20,7 +20,36 @@ import SessionKit
 /// A record names a file by a root's name and a path under it, never an absolute path: the app's container path can
 /// change, and an absolute path read back from disk should not be trusted to point inside the app's own folders.
 /// Only files strictly inside a registered root are ever removed, and a name with `..` in it is refused.
+///
+/// The listener's own spoken Margin recordings go through the same journal, by the audio paths their rows named
+/// (`MarginRecordings`): a recording is a file only the Margin row names, so the rule is "remove it once no Margin that
+/// stays names it", asked just before it goes.
 public struct PermanentDeletePurge: Sendable {
+    /// How the journal finds and removes the recordings of the Margins a delete took away (#4227). The app supplies the
+    /// pieces that need its own layout; the rule is `MarginRecordingCleanup`'s.
+    public struct MarginRecordings: Sendable {
+        /// The folder recordings live under. A file outside it is never removed.
+        public let directory: URL
+        /// Turns a stored audio path into the file's current location, or nil when there is no such file.
+        public let resolve: @Sendable (String) -> URL?
+        /// Every audio path the Margins that stay name, live and quarantined. Throws when it can't be read; nothing is
+        /// removed then, and the record is kept.
+        public let survivingAudioPaths: @Sendable () throws -> [String]
+        /// Called with each recording just before it goes (the leveled playback copies are found by the recording's
+        /// content, so they must go first).
+        public let beforeRemoving: @Sendable (URL) -> Void
+        public init(
+            directory: URL, resolve: @escaping @Sendable (String) -> URL?,
+            survivingAudioPaths: @escaping @Sendable () throws -> [String],
+            beforeRemoving: @escaping @Sendable (URL) -> Void = { _ in }
+        ) {
+            self.directory = directory
+            self.resolve = resolve
+            self.survivingAudioPaths = survivingAudioPaths
+            self.beforeRemoving = beforeRemoving
+        }
+    }
+
     /// A folder the purge may remove things from. `name` is what a record stores.
     public struct Root: Sendable {
         public let name: String
@@ -45,6 +74,9 @@ public struct PermanentDeletePurge: Sendable {
         public let id: String
         public let itemIds: [String]
         public var targets: [Target]
+        /// The audio paths of the Margin recordings the delete took away, as their rows stored them. Nil in a record
+        /// from a build that kept none, which decodes the same.
+        public var recordingPaths: [String]?
         public let createdAt: Date
     }
 
@@ -63,20 +95,28 @@ public struct PermanentDeletePurge: Sendable {
         public var unreadableRecords = 0
         /// Records left untouched because an item's row could not be read.
         public var deferredRecords = 0
+        /// Margin recordings removed now, or already gone or kept by a Margin that stays.
+        public var recordingsDone = 0
+        /// Margin recordings left in their record: a removal failed, the Margins that stay couldn't be read, or this
+        /// build has no way to find recordings.
+        public var recordingsKept = 0
         public init() {}
     }
 
     public let journalDirectory: URL
     public let roots: [Root]
+    public let marginRecordings: MarginRecordings?
     private let removeFile: @Sendable (URL) throws -> Void
 
     /// `removeFile` is the one call that deletes anything; tests pass one that fails to show a half-finished delete.
+    /// Without `marginRecordings`, a record's recording paths are kept for a launch that has them.
     public init(
-        journalDirectory: URL, roots: [Root],
+        journalDirectory: URL, roots: [Root], marginRecordings: MarginRecordings? = nil,
         removeFile: @escaping @Sendable (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }
     ) {
         self.journalDirectory = journalDirectory
         self.roots = roots
+        self.marginRecordings = marginRecordings
         self.removeFile = removeFile
     }
 
@@ -89,20 +129,29 @@ public struct PermanentDeletePurge: Sendable {
     ///
     /// `recheck`, if given, runs on the background task just before each file is removed (see `finish`), so a read of
     /// the store for it never waits on the calling thread.
+    ///
+    /// `recordingPaths` are the audio paths of the Margins the delete takes away, read before it. They are not resolved
+    /// here, so the calling thread does no file work for them; the removal step resolves them.
     @discardableResult
     public func deleting(
-        itemIds: [String], targets: [Target], recheck: (@Sendable (Target) -> RowState)? = nil,
-        delete: () throws -> Void
+        itemIds: [String], targets: [Target], recordingPaths: [String] = [],
+        recheck: (@Sendable (Target) -> RowState)? = nil, delete: () throws -> Void
     ) throws -> Task<Outcome, Never> {
-        guard !targets.isEmpty else {
+        let recordingPaths = Self.distinct(recordingPaths)
+        guard !targets.isEmpty || !recordingPaths.isEmpty else {
             try delete()
             return Task { Outcome() }
         }
-        // A journal that can't be written must not stop the delete: the files then stay, as they did before the
-        // journal, and nothing the listener asked for is refused.
-        guard let record = try? begin(itemIds: itemIds, targets: targets) else {
+        // A journal that can't be written must not stop the delete. The item's files then stay, as they did before the
+        // journal. The recordings are still removed, with no record behind them, as they were before it: nothing the
+        // listener asked for is refused, and their removal never waited on a record.
+        guard let record = try? begin(itemIds: itemIds, targets: targets, recordingPaths: recordingPaths) else {
             try delete()
-            return Task { Outcome() }
+            guard !recordingPaths.isEmpty else { return Task { Outcome() } }
+            let unwritten = Record(
+                id: UUID().uuidString, itemIds: itemIds, targets: [], recordingPaths: recordingPaths, createdAt: Date())
+            let purge = self
+            return Task.detached(priority: .utility) { purge.finish(unwritten) }
         }
         try delete()
         let purge = self
@@ -145,6 +194,7 @@ public struct PermanentDeletePurge: Sendable {
             }
             if states.contains(where: { if case .unknown = $0 { true } else { false } }) {
                 outcome.kept += record.targets
+                outcome.recordingsKept += record.recordingPaths?.count ?? 0
                 outcome.deferredRecords += 1
                 continue
             }
@@ -152,6 +202,8 @@ public struct PermanentDeletePurge: Sendable {
             outcome.removed += finished.removed
             outcome.kept += finished.kept
             outcome.reappeared += finished.reappeared
+            outcome.recordingsDone += finished.recordingsDone
+            outcome.recordingsKept += finished.recordingsKept
         }
         return outcome
     }
@@ -188,8 +240,10 @@ public struct PermanentDeletePurge: Sendable {
     // MARK: Steps
 
     /// Writes the intent. The record is on disk when this returns.
-    public func begin(itemIds: [String], targets: [Target]) throws -> Record {
-        let record = Record(id: UUID().uuidString, itemIds: itemIds, targets: targets, createdAt: Date())
+    public func begin(itemIds: [String], targets: [Target], recordingPaths: [String] = []) throws -> Record {
+        let record = Record(
+            id: UUID().uuidString, itemIds: itemIds, targets: targets,
+            recordingPaths: recordingPaths.isEmpty ? nil : Self.distinct(recordingPaths), createdAt: Date())
         try FileManager.default.createDirectory(at: journalDirectory, withIntermediateDirectories: true)
         try Self.encoder.encode(record).write(to: file(of: record), options: .atomic)
         return record
@@ -220,14 +274,45 @@ public struct PermanentDeletePurge: Sendable {
             }
             if remove(target) { outcome.removed.append(target) } else { outcome.kept.append(target) }
         }
-        if outcome.kept.isEmpty {
+        let recordings = record.recordingPaths ?? []
+        let keptRecordings = finishRecordings(recordings)
+        outcome.recordingsDone = recordings.count - keptRecordings.count
+        outcome.recordingsKept = keptRecordings.count
+        if outcome.kept.isEmpty && keptRecordings.isEmpty {
             abandon(record)
         } else {
             var rest = record
             rest.targets = outcome.kept
+            rest.recordingPaths = keptRecordings.isEmpty ? nil : keptRecordings
             try? Self.encoder.encode(rest).write(to: file(of: rest), options: .atomic)
         }
         return outcome
+    }
+
+    /// Removes the recordings the Margins that stay don't name, and returns the paths to keep in the record. A path
+    /// with no file, one outside the recordings folder, and one a surviving Margin names are finished: nothing is
+    /// removed for them (`MarginRecordingCleanup`'s rule). A recording that can't be removed is kept for the next
+    /// launch; so is every path when the Margins that stay can't be read, or when this build can't find recordings.
+    private func finishRecordings(_ paths: [String]) -> [String] {
+        guard !paths.isEmpty else { return [] }
+        guard let config = marginRecordings, let surviving = try? config.survivingAudioPaths() else { return paths }
+        var stuck: Set<String> = []
+        for file in MarginRecordingCleanup.filesToRemove(
+            deletedAudioPaths: paths, survivingAudioPaths: surviving, within: config.directory, resolve: config.resolve
+        ) {
+            config.beforeRemoving(file)
+            do { try removeFile(file) } catch { stuck.insert(file.path) }
+        }
+        guard !stuck.isEmpty else { return [] }
+        return paths.filter { path in
+            guard let url = config.resolve(path) else { return false }
+            return stuck.contains(url.resolvingSymlinksInPath().standardizedFileURL.path)
+        }
+    }
+
+    private static func distinct(_ paths: [String]) -> [String] {
+        var seen: Set<String> = []
+        return paths.filter { seen.insert($0).inserted }
     }
 
     // MARK: Files

@@ -3660,6 +3660,42 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(try store.loadInterjections(itemId: liveID).count, 1)
     }
 
+    /// #4227: a permanent delete the app was quit in the middle of (rows gone, recording still on disk) is finished at the
+    /// next launch, and a recording a surviving Margin still names is left. The host tests cover `PermanentDeletePurge`;
+    /// this ties the model's launch step to it, with the app's own recording folder and path rule.
+    func testALaunchFinishesAPermanentDeleteThatLeftTheRecordingBehind() async throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "permanent-delete-resume-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let liveSession = try startAndEndSession(model, itemId: "item-pill")
+        let live = try saveSpokenMargin(store: store, itemId: "item-pill", sessionId: liveSession)
+
+        let support = try model.applicationSupportDirectory()
+        let folder = support.appending(path: "SpokenMargins/interjections", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let left = folder.appending(path: "left-behind-\(UUID().uuidString).m4a")
+        try Data("voice".utf8).write(to: left)
+        addTeardownBlock { try? FileManager.default.removeItem(at: left) }
+        // The record a delete wrote before the rows went; the item has no row now, and the app was killed.
+        let journal = support.appending(path: "SpokenMargins/PurgeJournal", directoryHint: .isDirectory)
+        _ = try PermanentDeletePurge(journalDirectory: journal, roots: []).begin(
+            itemIds: ["item-gone-\(UUID().uuidString)"], targets: [],
+            recordingPaths: ["SpokenMargins/interjections/\(left.lastPathComponent)", live.path])
+
+        model.finishInterruptedPermanentDeletes(store: store)
+        try await waitFor("the recording the interrupted delete left to be removed", timeoutNanoseconds: 5_000_000_000) {
+            !FileManager.default.fileExists(atPath: left.path)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: live.path), "a recording a Margin that stays names is never removed")
+    }
+
     /// #3406: the model's permanent delete, single and bulk, takes a friend's imported packet folder off the phone
     /// at that moment, and only that item's. The host tests cover `FriendPacketFolders`; this ties the model to it.
     private func giveFriendRecording(
