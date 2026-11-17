@@ -242,6 +242,22 @@ test('readSubstackVoice: a redirect to another post\'s paid page neither plays n
   assert.equal(await readSubstackVoice(url, { fetch, consent: false }).catch((e: unknown) => e), null);
 });
 
+// The post a friend could not play in the web app (#4433): a Substack podcast on a publication's own domain, whose
+// page has no audio_items and no narration, only the episode in podcast_url.
+test('readSubstackVoice plays the captured dwarkesh.com podcast post, asked for directly or by a shared link', async () => {
+  const canonical = 'https://www.dwarkesh.com/p/paul-christiano-2';
+  const body = feedFixture('substack-podcast-post-page.html');
+  for (const asked of [canonical, 'https://open.substack.com/pub/dwarkesh/p/paul-christiano-2']) {
+    const voice = await readSubstackVoice(asked, { fetch: stubFetch({ [asked]: { body, url: canonical } }) });
+    assert.deepEqual(voice, {
+      origin: 'podcast-enclosure',
+      audioUrl: 'https://api.substack.com/api/v1/audio/upload/063f6737-dbc8-4498-b073-dd462d504c39/src',
+      durationSeconds: 5925.4336,
+      canonicalUrl: canonical,
+    }, asked);
+  }
+});
+
 test('readSubstackVoice still asks consent before the relay', async () => {
   await assert.rejects(readSubstackVoice(POST_URL, { fetch: stubFetch({}), relayBase: RELAY }), NeedsRelayConsent);
 });

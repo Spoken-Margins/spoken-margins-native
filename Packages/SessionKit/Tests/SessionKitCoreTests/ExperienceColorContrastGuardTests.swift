@@ -512,7 +512,10 @@ final class AppColorUsageGuardTests: XCTestCase {
     /// mode) is invisible to the token list test, which proves only that each token is in some pair. Here a pair is taken
     /// out of the real list, so the lookup has to say it is missing, and the whole list has to have it.
     func testAPairNobodyListedIsSeen() {
-        let withoutIt = AppColorContrastAudit.allPairs.filter { $0.name != "secondary on panel" }
+        // Every pair that measures it, not one by name: the Timeline rows' generated pairs measure it too (#3734).
+        let withoutIt = AppColorContrastAudit.allPairs.filter {
+            !($0.foreground == AppSemanticColorRGB.secondaryText && $0.background == AppSemanticColorRGB.panel)
+        }
         XCTAssertLessThan(withoutIt.count, AppColorContrastAudit.allPairs.count)
         XCTAssertFalse(Self.auditHasPair(foreground: "secondaryText", background: "panel", in: withoutIt))
         XCTAssertTrue(Self.auditHasPair(foreground: "secondaryText", background: "panel"))

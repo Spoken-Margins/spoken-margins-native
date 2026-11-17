@@ -74,11 +74,14 @@ public actor FollowedSourceCoordinator {
     private let signals: ListeningSignalRecorder?
     /// Each followed show's artwork, in a side file beside the database (#773).
     private var artwork: FollowingArtworkStore
+    /// The picture of each Library item that came from a followed feed, in a second side file (#3864).
+    private var itemArtworkRecord: ItemArtworkFile
 
     public init(repository: any SessionRepository, session: URLSession? = nil, artworkFile: URL? = nil,
-                signals: ListeningSignalRecorder?) {
+                itemArtworkFile: URL? = nil, signals: ListeningSignalRecorder?) {
         self.repository = repository
         self.artwork = FollowingArtworkStore(file: artworkFile)
+        self.itemArtworkRecord = ItemArtworkFile(file: itemArtworkFile)
         self.signals = signals
         if let session {
             self.session = session
@@ -229,6 +232,7 @@ public actor FollowedSourceCoordinator {
         // publishes after this moment are New (#1589). The entries are kept, stamped with it.
         try save(entries: parsed.items, subscription: subscription, followMoment: previous == nil ? subscription.createdAt : nil)
         artwork.recordFeedArtwork(parsed.imageURL, for: subscription.id)
+        recordItemArtwork(parsed, subscriptionID: subscription.id)
         return subscription
     }
 
@@ -442,7 +446,51 @@ public actor FollowedSourceCoordinator {
             try repository.deleteFeedEntry(id: entry.id)
         }
         try repository.deleteFeedSubscription(id: subscriptionId)
+        // Library items from this show take their pictures before the show's entries and image go.
+        reconcileItemArtwork()
+        itemArtworkRecord.update { $0.removeEntries(subscriptionID: subscriptionId) }
         artwork.remove(subscriptionID: subscriptionId)
+    }
+
+    /// The Library's item pictures (#3864). Gives Library items that came from a followed feed their entry's own
+    /// image and the show's image, which also covers items added before this build, and drops records of items
+    /// no longer in the Library. Reads the item list and writes one small file; nothing is fetched and no item
+    /// changes. Run after launch, off the main thread; an actor call is.
+    public func itemArtwork(catalog: SourceCatalog? = nil) -> ItemArtworkStore {
+        _ = followingArtwork(catalog: catalog)
+        recordStoredEntries()
+        reconcileItemArtwork()
+        return itemArtworkRecord.store
+    }
+
+    /// Which show each stored entry belongs to, from the entries already saved (their GUID and address), so an item
+    /// from before this build finds its show before any feed has refreshed, offline, or after its episode left the
+    /// feed's current items. Images are not known here (the entry rows keep none), so this adds the mapping only.
+    private func recordStoredEntries() {
+        guard let subscriptions = try? repository.loadFeedSubscriptions() else { return }
+        for subscription in subscriptions {
+            guard let stored = try? repository.loadFeedEntries(subscriptionId: subscription.id) else { continue }
+            let entries = stored.map { ItemArtworkStore.EntryImage(guid: $0.episodeGUID, url: $0.canonicalURL, imageURL: nil) }
+            itemArtworkRecord.update { $0.recordEntries(entries, subscriptionID: subscription.id, showTitle: subscription.source.title) }
+        }
+    }
+
+    private func recordItemArtwork(_ parsed: ParsedFeed, subscriptionID: String) {
+        let entries = parsed.items.map { ItemArtworkStore.EntryImage(guid: $0.guid, url: $0.url, imageURL: $0.imageURL) }
+        itemArtworkRecord.update { $0.recordEntries(entries, subscriptionID: subscriptionID, showTitle: parsed.title) }
+        reconcileItemArtwork()
+    }
+
+    private func reconcileItemArtwork() {
+        let keys: [ItemArtworkStore.ItemKey]?
+        if let lister = repository as? any ItemArtworkKeyListing {
+            keys = try? lister.listItemArtworkKeys()
+        } else {
+            keys = (try? repository.listItems(includeDeleted: true))?.map(ItemArtworkStore.ItemKey.init)
+        }
+        guard let items = keys else { return }
+        let following = artwork.cache
+        itemArtworkRecord.update { $0.reconcile(items: items, following: following) }
     }
 
     /// Following rows' artwork (#773): drops shows no longer followed and records the catalog's
@@ -466,6 +514,7 @@ public actor FollowedSourceCoordinator {
             subscription.newItemPolicy = current.newItemPolicy
             let saved = try save(entries: parsed.items, subscription: subscription)
             artwork.recordFeedArtwork(parsed.imageURL, for: subscription.id)
+            recordItemArtwork(parsed, subscriptionID: subscription.id)
             // A muted feed adds nothing on its own.
             toAdd = FeedNewItemPolicy.entriesToAdd(
                 new: saved.entries, existing: saved.previous,
