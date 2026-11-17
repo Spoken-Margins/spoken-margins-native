@@ -533,12 +533,12 @@ struct ExperienceMarginsScreen: View, Equatable {
     /// It leaves the row the moment the retry starts, because the model's running sets feed `Inputs`.
     private func marginRowRetryButton(_ row: MarginRow, repair: MarginRowRepair) -> some View {
         Button { retry(row, repair: repair) } label: {
-            Label("Retry", systemImage: "arrow.clockwise")
+            // Inside the label, where the frame grows the tappable area (#3727).
+            Label("Retry", systemImage: "arrow.clockwise").minimumTapTarget()
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
         .tint(AppColors.primaryAction)
-        .minimumTapTarget()
         .accessibilityLabel(Self.retryLabel(repair))
         .accessibilityHint(repair == .retryContext
             ? "Tries again to find the words around this Margin."
