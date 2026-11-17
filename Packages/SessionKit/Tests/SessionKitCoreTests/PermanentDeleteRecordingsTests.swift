@@ -39,12 +39,39 @@ final class PermanentDeleteRecordingsTests: XCTestCase {
         var allWereThere: Bool { lock.withLock { present.allSatisfy { $0 } } }
     }
 
-    private final class ThreadFlag: @unchecked Sendable {
-        private let lock = NSLock()
-        private var value = false
-        private let caller = Thread.current
-        func noteIfCaller() { if Thread.current == caller { lock.withLock { value = true } } }
-        var isSet: Bool { lock.withLock { value } }
+    /// Holds the work of a delete until the caller has got `deleting` back. A hook that runs while the caller is still
+    /// inside `deleting` (the work done inline, or the caller waiting on it) can never be released, so it times out and
+    /// says so. Nothing here compares threads: on Swift's cooperative pool a background task may well land on the thread
+    /// the caller just gave up, which proves nothing about whether the caller waited.
+    private final class CallerHold: @unchecked Sendable {
+        private let condition = NSCondition()
+        private var released = false
+        private var timeouts = 0
+        private var arrivals = 0
+        /// How long a hook waits for the caller to release it. Long enough to never fire on a loaded runner when the
+        /// work is off the caller; the wait only runs to its end when the work is wrongly on the caller.
+        private let patience: TimeInterval = 5
+
+        /// Called by a hook, wherever it runs. Returns once the caller has released it, or after `patience`.
+        func waitForCaller() {
+            condition.lock(); defer { condition.unlock() }
+            arrivals += 1
+            let deadline = Date(timeIntervalSinceNow: patience)
+            while !released {
+                if !condition.wait(until: deadline), !released { timeouts += 1; return }
+            }
+        }
+
+        /// Called by the caller once `deleting` has returned.
+        func release() {
+            condition.lock(); defer { condition.unlock() }
+            released = true
+            condition.broadcast()
+        }
+
+        /// How many times a hook ran, and how many of those ran to the end of their wait with no release.
+        var hookRuns: Int { condition.lock(); defer { condition.unlock() }; return arrivals }
+        var hooksNeverReleased: Int { condition.lock(); defer { condition.unlock() }; return timeouts }
     }
 
     private func store() throws -> SQLiteSessionStore {
@@ -129,28 +156,32 @@ final class PermanentDeleteRecordingsTests: XCTestCase {
         XCTAssertEqual(journalCount(), 0, "the record goes when every recording is gone")
     }
 
-    /// Starts a delete from a synchronous scope (`Thread.current` is unavailable in async ones) and says whether any of
-    /// the work ran on the thread that called `deleting`.
-    private func deleteNoting(
+    /// Starts a delete whose survivors read and file removal each wait for the caller to get `deleting` back, then
+    /// releases them. The caller is not suspended between the two, so only work that waits on the caller (or runs inline
+    /// on it) can be left waiting.
+    private func deleteHeldUntilCallerReturns(
         _ paths: [String], in store: SQLiteSessionStore
-    ) throws -> (task: Task<PermanentDeletePurge.Outcome, Never>, ranOnCaller: ThreadFlag) {
-        let flag = ThreadFlag()
+    ) throws -> (task: Task<PermanentDeletePurge.Outcome, Never>, hold: CallerHold) {
+        let hold = CallerHold()
         let task = try purge(
             store: store,
-            surviving: { flag.noteIfCaller(); return try store.allMarginAudioPaths() },
-            removeFile: { url in flag.noteIfCaller(); try FileManager.default.removeItem(at: url) }
+            surviving: { hold.waitForCaller(); return try store.allMarginAudioPaths() },
+            removeFile: { url in hold.waitForCaller(); try FileManager.default.removeItem(at: url) }
         ).deleting(itemIds: [gone], targets: [], recordingPaths: paths) { try store.deleteItem(id: gone) }
-        return (task, flag)
+        hold.release()
+        return (task, hold)
     }
 
-    func testTheSurvivorsReadAndTheRemovalNeverRunOnTheCallingThread() async throws {
+    func testTheSurvivorsReadAndTheRemovalNeverWaitOnTheCaller() async throws {
         let store = try store()
         try store.saveInterjection(margin("g1", item: gone, audioPath: try record("g1.m4a")))
-        let (task, ranOnCaller) = try deleteNoting(try pathsOf(gone, in: store), in: store)
+        let (task, hold) = try deleteHeldUntilCallerReturns(try pathsOf(gone, in: store), in: store)
         let outcome = await task.value
 
         XCTAssertEqual(outcome.recordingsDone, 1)
-        XCTAssertFalse(ranOnCaller.isSet, "the read of every remaining Margin and the file work never wait on the calling thread")
+        XCTAssertFalse(exists("g1.m4a"))
+        XCTAssertGreaterThanOrEqual(hold.hookRuns, 2, "both the survivors read and the removal ran, so the check is not vacuous")
+        XCTAssertEqual(hold.hooksNeverReleased, 0, "the read of every remaining Margin and the file work never wait on the caller")
     }
 
     func testTheRecordNamesTheRecordingsBeforeTheRowsGo() throws {
