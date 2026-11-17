@@ -1022,6 +1022,21 @@ class T3SetupTimeoutRerunTests(unittest.TestCase):
                          ('INCONCLUSIVE', 'nothing', 0, 1, 1))
         self.assertIn("'shutdown', 'U1'", details[-1])
 
+    def test_a_template_crash_whose_shutdown_hangs_is_not_rerun(self):
+        # Audit on b3e9167: clone_temporary first-boots a missing template under the crash rules; lane_sim.stop()
+        # marks the device unsafe, and a hang in its shutdown (the #4411 symptom) must not clone again.
+        import lane_sim
+        calls = []
+
+        def clone(name, runtime, out=None):
+            calls.append(name)
+            lane_sim.mark_unsafe('TEMPLATE', 'late crash report for template boot: SpringBoard-x.ips')
+            raise subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'TEMPLATE'], 120)
+
+        (verdict, where, ran, details, _, _), runs = self.run_real_job([None], [self.PASSED_PLAN], clone=clone)
+        self.assertEqual((verdict, ran, runs, len(calls)), ('INCONCLUSIVE', 'nothing', 0, 1))
+        self.assertIn("'shutdown', 'TEMPLATE'", details[-1])
+
     def test_a_release_that_hangs_after_a_boot_problem_keeps_the_boot_verdict_and_is_not_rerun(self):
         # Audit on a0f3cc3, route B: the boot failed normally, then the job's own release timed out.
         (verdict, where, ran, details, crashes, _), runs = self.run_real_job(

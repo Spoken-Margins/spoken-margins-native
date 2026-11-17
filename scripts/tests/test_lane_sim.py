@@ -233,6 +233,19 @@ class RuntimePairTests(unittest.TestCase):
         self.assertIn('iOS-27-1: iPhone-Duo', message)
 
 
+class StopTests(unittest.TestCase):
+    """#4438: stop() records the crash before the shutdown that can hang."""
+
+    def test_a_shutdown_that_times_out_still_leaves_the_unsafe_mark(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
+                mock.patch.object(lane_sim.subprocess, 'run',
+                                  side_effect=subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', UDID], 120)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                lane_sim.stop(UDID, 'a crash during boot')
+            self.assertEqual(lane_sim.unsafe_devices()[UDID]['reason'], 'a crash during boot')
+
+
 class CrashPolicyTests(unittest.TestCase):
     """AGENTS.md: a lone system-process crash is noted and work continues; a flood (three or more crashes of the
     same process within a minute) stops the run; a crash of our own app or extensions always fails."""

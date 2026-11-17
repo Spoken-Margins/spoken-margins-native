@@ -773,8 +773,11 @@ def back_to_one_simulator(reason: str, by_hand: bool = False) -> bool:
 
 
 def stop(udid: str, reason: str) -> None:
-    subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+    """Stop a device that crashed or was changed under the watcher, and mark it unsafe. The mark comes first: the
+    shutdown can hang under load (120 s, #4438), and a hang must not leave the crash unrecorded, for the lane
+    would then treat the timeout as a setup hiccup and clone again past a crash (AGENTS.md)."""
     mark_unsafe(udid, reason)
+    subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
 
 
 def quiet_marker(udid: str) -> Path:

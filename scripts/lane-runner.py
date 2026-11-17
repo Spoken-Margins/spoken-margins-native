@@ -3242,18 +3242,23 @@ def setup_fault_note(error: BaseException) -> str:
 
 
 def _t3_on_fresh_device_with_one_rerun(grouped, request_id, evidence, runtime):
-    """#4438: a `simctl` call (clone, boot, shutdown) that times out before any test ran is rerun once, on a fresh
-    clone, in this job (no new `/lane T3` comment). Only a timeout is rerun: a clone that failed outright, a boot
-    that stalled and every test result keep their own verdicts, so no real failure is retried away. The first
-    attempt's error and the load stay in the report. INCONCLUSIVE needs two faults.
-    The caller holds the simulator slot throughout."""
+    """#4438: a `simctl` call that times out while the simulator is being cloned is rerun once, on a fresh clone, in
+    this job (no new `/lane T3` comment). The clone step includes the template's own first boot, so a timeout is
+    rerun only with no evidence of a crash: nothing past the clone (`past_clone`), and no device newly marked
+    unsafe during the attempt (a crash handler's shutdown can be the call that hung; `lane_sim.stop` marks first).
+    A clone that failed outright, a boot that stalled and every test result keep their own verdicts, so no real
+    failure is retried away and no device is switched past a crash. The first attempt's error and the load stay in
+    the report. INCONCLUSIVE needs two faults. The caller holds the simulator slot throughout."""
     import lane_sim
     progress = {'past_clone': False}
+    unsafe_before = set(lane_sim.unsafe_devices())
     try:
         return _t3_on_fresh_device(grouped, request_id, evidence, runtime, progress)
     except subprocess.TimeoutExpired as first:
         if progress['past_clone']:  # booted: a stall or crash there is not rerun (no getting around a flood), and
             raise  # once tests ran a verdict may exist, which a second run could hide
+        if set(lane_sim.unsafe_devices()) - unsafe_before:  # a crash was recorded: cloning again would get around it
+            raise
         first_note = setup_fault_note(first)
         rerun = {'first': str(first), 'first_note': first_note, 'line': overload_line()}
         waited, after = wait_for_quiet_runner(rerun['line'])
