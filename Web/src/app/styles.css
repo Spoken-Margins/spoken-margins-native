@@ -2095,7 +2095,7 @@ body:not(:has(.mini-player)) .toasts {
   position: absolute;
   right: var(--gutter);
   bottom: calc(100% + 10px);
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 14px 0 10px;
   border-radius: 20px;
   display: inline-flex;
@@ -2121,10 +2121,12 @@ body:not(:has(.mini-player)) .toasts {
 /* The list: filters and Autoplay on one line, then threads. */
 .mc-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .mc-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
@@ -2309,7 +2311,7 @@ body:not(:has(.mini-player)) .toasts {
 .mc-star {
   width: 44px;
   height: 44px;
-  margin: -11px -10px -11px 0;
+  margin: -11px 0;
   display: grid;
   place-items: center;
   color: var(--listening-secondary);
@@ -2504,4 +2506,11 @@ body:not(:has(.mini-player)) .toasts {
   background: var(--listening-accent);
   color: #141a14;
   box-shadow: none;
+}
+
+/* A 375-point phone fits the filters and Autoplay on one line, as the prototype does. */
+@media (max-width: 380px) {
+  .mc-filter button {
+    padding: 0 9px;
+  }
 }

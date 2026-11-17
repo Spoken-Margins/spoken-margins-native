@@ -260,7 +260,7 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
   }, [composer, onClose]);
 
   // Which of the two tabs shows, per episode (part of #3216): an episode with a friend's Margin still unheard opens on
-  // Margins, any other on Now. It is settled once, the first time the episode's Margins are in, so hearing the last
+  // Margins, any other on Now. It is settled once, early, so hearing the last
   // unheard Margin doesn't move the listener off the tab they are on; after that only their own tap changes it.
   const [pinnedTab, setPinnedTab] = useState<{ episodeId: string; tab: PlaybackTab }>();
 
@@ -270,7 +270,8 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
   const rows = marginRows(margins);
   let tab: PlaybackTab = opensOnMarginsTab(rows) ? 'margins' : 'now';
   if (pinnedTab?.episodeId === episode.id) tab = pinnedTab.tab;
-  else if (margins.length > 0) setPinnedTab({ episodeId: episode.id, tab });
+  // Settled once the Margins are in, or once the episode plays (an episode with none, or an article's placed later).
+  else if (margins.length > 0 || player.playing) setPinnedTab({ episodeId: episode.id, tab });
   const chooseTab = (next: PlaybackTab) => setPinnedTab({ episodeId: episode.id, tab: next });
   const autoplay = data.settings.marginAutoplay;
   const playheadMs = player.time * 1000;
