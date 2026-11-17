@@ -413,6 +413,13 @@ public enum AppColorContrastAudit {
                 }
             }
         }
+        // The current row's outline marks a state, so it reaches 3:1 against what is behind the list. The other rows'
+        // outlines only echo the kind, which the label already says, and need no pair.
+        let currentStroke = TimelineRowPalette.currentStrokeColor
+        pairs.append(.init(name: "current row stroke on bone", foreground: currentStroke,
+                           background: AppSemanticColorRGB.bone, minimumRatio: 3))
+        pairs.append(.init(name: "current row stroke on listening background", foreground: darkOnly(currentStroke),
+                           background: darkOnly(AppSemanticColorRGB.listeningBackground), minimumRatio: 3))
         return pairs
     }()
 
@@ -620,14 +627,6 @@ public enum AppColorContrastAudit {
         .init(pair: "input fill on panel", appearance: "dark", since: "2026-10-17", fixedBy: "#1922"),
         .init(pair: "input fill on app background", appearance: "light", since: "2026-10-17", fixedBy: "#1922"),
         .init(pair: "input fill on app background", appearance: "dark", since: "2026-10-17", fixedBy: "#1922"),
-        // Found by hand in the 2026-11-08 audit, and measured here once the audit could composite a tint (#3739).
-        // The Timeline rows' tints are too strong for the secondary text on them in light mode (#3734).
-        .init(pair: "row detail on evergreen at 0.12 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
-        .init(pair: "row detail on evergreen at 0.07 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
-        .init(pair: "row detail on coral at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
-        .init(pair: "my Margin row label on coral at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
-        .init(pair: "row detail on ochre at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
-        .init(pair: "row detail on plum at 0.07 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
         // The selected pane's pill is 1.69:1 against its tray, and the selected filter's white words are 3.41:1 on its
         // pill (#3735). Both appearances are the same: the plate is fixed.
         .init(pair: "pane switch selected fill against tray", appearance: "light", since: "2026-11-13", fixedBy: "#3735"),
