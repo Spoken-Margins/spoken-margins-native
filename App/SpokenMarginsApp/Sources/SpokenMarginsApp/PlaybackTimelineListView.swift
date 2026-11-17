@@ -2,28 +2,78 @@ import SwiftUI
 import SessionKit
 
 /// The canonical row list for standalone Timeline and its playback window (#448).
+/// A chapter row folds and unfolds the rows under it (#3895); `folding` says which are folded.
 struct PlaybackTimelineListView<Details: View>: View {
     let entries: [TimelineRailEntry]
     let currentIDs: Set<String>
+    var folding = TimelineChapterFolding()
+    var toggleChapter: (String) -> Void = { _ in }
     let perform: (TimelineRailEntry.Action) -> Void
     @ViewBuilder var details: (TimelineRailEntry.Action) -> Details
 
     var body: some View {
+        let rows = entries.map(\.foldingRow)
+        let foldable = Set(TimelineChapterFolding.members(in: rows).keys)
+        let visibleIDs = Set(folding.visibleRows(in: rows).map(\.id))
+        let visible = entries.filter { visibleIDs.contains($0.id) }
         LazyVStack(spacing: 0) {
-            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                TimelineRailRow(entry: entry, isCurrent: currentIDs.contains(entry.id),
-                                isFirst: index == 0, isLast: index == entries.count - 1,
-                                action: { perform(entry.action) })
-                    .equatable()
-                    .contextMenu { details(entry.action) }
-                    // The same actions for VoiceOver and Switch Control, which can't long-press (#1917).
-                    .accessibilityActions { details(entry.action) }
-                    .id(entry.id)
-                    .accessibilityIdentifier(entry.accessibilityIdentifier)
+            ForEach(Array(visible.enumerated()), id: \.element.id) { index, entry in
+                let summary = folding.summary(forChapter: entry.id, in: rows, currentIDs: currentIDs)
+                HStack(alignment: .top, spacing: 0) {
+                    TimelineRailRow(entry: entry, isCurrent: currentIDs.contains(entry.id),
+                                    isFirst: index == 0, isLast: index == visible.count - 1,
+                                    hidden: summary,
+                                    action: { perform(entry.action) })
+                        .equatable()
+                        .contextMenu { details(entry.action) }
+                        // The same actions for VoiceOver and Switch Control, which can't long-press (#1917).
+                        .accessibilityActions { details(entry.action) }
+                        .accessibilityIdentifier(entry.accessibilityIdentifier)
+                    if foldable.contains(entry.id) {
+                        ChapterFoldButton(title: entry.title, summary: summary) { toggleChapter(entry.id) }
+                            .accessibilityIdentifier("timeline.chapter.fold.\(entry.id)")
+                    }
+                }
+                .id(entry.id)
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("timeline.rail")
+    }
+}
+
+/// The chevron that folds a chapter. The chapter row itself still jumps there when tapped.
+private struct ChapterFoldButton: View {
+    let title: String
+    /// Non-nil when the chapter is folded.
+    let summary: TimelineChapterFolding.HiddenSummary?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: summary == nil ? "chevron.down" : "chevron.right")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(AppColors.secondaryText)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 24)
+        .accessibilityLabel(summary == nil ? "Collapse chapter \(title)" : "Expand chapter \(title)")
+        .accessibilityValue(summary?.text ?? "Expanded")
+    }
+}
+
+extension TimelineRailEntry {
+    /// What chapter folding needs to know about this row. Chapters, from the source or from a podcast's own
+    /// chapter list, open a section; scenes, Margins, figures and the rest sit inside the chapter they fall in.
+    var foldingRow: TimelineChapterFolding.Row {
+        let isChapter: Bool
+        switch action {
+        case .chapter, .mediaChapter: isChapter = true
+        default: isChapter = false
+        }
+        return .init(id: id, isChapter: isChapter, isNew: isNew)
     }
 }
 
@@ -33,10 +83,13 @@ private struct TimelineRailRow: View, Equatable {
     let isCurrent: Bool
     let isFirst: Bool
     let isLast: Bool
+    /// Set when this chapter is folded: what its hidden rows hold (#3895).
+    var hidden: TimelineChapterFolding.HiddenSummary? = nil
     let action: () -> Void
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.entry == rhs.entry && lhs.isCurrent == rhs.isCurrent && lhs.isFirst == rhs.isFirst && lhs.isLast == rhs.isLast
+            && lhs.hidden == rhs.hidden
     }
 
     var body: some View {
@@ -73,6 +126,11 @@ private struct TimelineRailRow: View, Equatable {
                         Label(entry.currentLabel, systemImage: "speaker.wave.2.fill")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(AppColors.dynamicColor(TimelineRowPalette.currentLabelColor))
+                    } else if hidden?.containsCurrent == true {
+                        // The playing row is folded away under this chapter: say so, so the listener isn't lost.
+                        Label("Playing in this chapter", systemImage: "speaker.wave.2.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AppColors.dynamicColor(TimelineRowPalette.currentLabelColor))
                     }
                     Text(entry.title)
                         .font(.headline)
@@ -84,6 +142,11 @@ private struct TimelineRailRow: View, Equatable {
                         .foregroundStyle(AppColors.secondaryText)
                         .multilineTextAlignment(.leading)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 4)
+                    if let hidden {
+                        Text(hidden.text)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
                 }
                 .padding(15)
                 .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
@@ -100,9 +163,15 @@ private struct TimelineRailRow: View, Equatable {
             .padding(.bottom, 12)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(isCurrent ? "\(entry.currentLabel). " : "")\(entry.isNew ? "New to you. " : "")\(entry.provenanceLabel), \(entry.position) percent. \(entry.title). \(entry.detail)")
+        .accessibilityLabel("\(isCurrent ? "\(entry.currentLabel). " : "")\(entry.isNew ? "New to you. " : "")\(entry.provenanceLabel), \(entry.position) percent. \(entry.title). \(entry.detail)\(hiddenSpoken)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { action() }
+    }
+
+    /// What VoiceOver adds after a folded chapter's own words: what is hidden, and whether the playhead is in it.
+    private var hiddenSpoken: String {
+        guard let hidden else { return "" }
+        return ". \(hidden.text)" + (hidden.containsCurrent && !isCurrent ? ", playing here" : "")
     }
 
     @ViewBuilder
