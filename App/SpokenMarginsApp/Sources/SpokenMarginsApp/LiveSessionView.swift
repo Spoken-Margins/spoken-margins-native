@@ -514,7 +514,7 @@ struct LiveSessionView: View, Equatable {
             switch wanted {
             case .liveRecording: controller.isRecordingSpoken
             case .camera: isTakingPhoto && controller.isRunning && !controller.isRecordingSpoken
-            case .liveWriting: controller.isRunning && !controller.isRecordingSpoken
+            case .liveWriting: !controller.isRecordingSpoken && (controller.isRunning || keepsBegunPhoto())
             }
         }
         Task {
@@ -608,14 +608,32 @@ struct LiveSessionView: View, Equatable {
 
     private func openRecorder(with staged: LiveSessionPhotoStore.Staged) {
         isTakingPhoto = false
-        // The session may have ended or started a recording while the camera was open.
-        guard controller.isRunning, !controller.isRecordingSpoken else {
+        // The session may have ended or started a recording while the camera was open. A photo taken as it ended is
+        // kept: the microphone must not start past the End, so the Margin is written, in the ended session (#3847).
+        switch LiveSessionBegunMargin.afterPhoto(
+            isRunning: controller.isRunning, isRecordingSpoken: controller.isRecordingSpoken,
+            photoAt: photoTappedAt, in: controller.session
+        ) {
+        case .record:
+            controller.startSpokenMargin(photo: staged, placedAt: photoTappedAt)
+            cover = .liveRecording
+        case .write:
+            // A direct swap from the camera cover, as the recording branch does. `present` would give up with the
+            // camera cover still set and drop the photo.
+            writingPhoto = staged
+            writingNotice = nil
+            writingStartedAt = photoTappedAt
+            cover = .liveWriting
+        case .discard:
             controller.discardPhoto(staged)
             cover = nil
-            return
         }
-        controller.startSpokenMargin(photo: staged, placedAt: photoTappedAt)
-        cover = .liveRecording
+    }
+
+    /// Whether a photo is waiting for words and the session still takes a Margin begun at `writingStartedAt`: it has
+    /// ended, but is not saved to the Library (#3847).
+    private func keepsBegunPhoto() -> Bool {
+        writingPhoto != nil && controller.checkBegunMargin(markedAt: writingStartedAt) != .refused
     }
 
     /// Throws away a photo that was waiting for a written Margin that can no longer be opened.
@@ -638,7 +656,7 @@ struct LiveSessionView: View, Equatable {
     private func beginWriting(startedAt: Date? = nil) {
         // A spoken Margin still recording keeps its screen; a Write link can't swap it for the writing sheet and
         // leave the microphone on.
-        guard controller.isRunning, !controller.isRecordingSpoken, cover != .camera else {
+        guard controller.isRunning || keepsBegunPhoto(), !controller.isRecordingSpoken, cover != .camera else {
             dropWaitingPhoto() // nothing will take it now, so it is not left to the next launch's sweep
             return
         }
