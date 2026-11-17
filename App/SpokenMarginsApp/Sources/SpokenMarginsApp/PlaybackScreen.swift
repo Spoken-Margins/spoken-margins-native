@@ -40,6 +40,8 @@ struct PlaybackScrubState: Equatable {
 
 struct PlaybackScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    /// The chapter row's Next in queue follows the queue (#3914).
+    @ObservedObject private var playQueue = PlayQueueState.shared
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var selectedPane: PlaybackPane = .now
@@ -301,7 +303,10 @@ struct PlaybackScreen: View {
                 showItem: model.openCurrentPlaybackItem,
                 nextChapter: model.nextChapterFromChapterRow,
                 skimBackward: model.skimBackward,
-                skimForward: model.skimForward
+                skimForward: model.skimForward,
+                playNextItem: { [queuedNext = model.chapterRowForwardControl == .playNextItem ? model.chapterRowQueuedNextId : nil] in
+                    if let queuedNext { model.playNextQueuedItem(expectedId: queuedNext) }
+                }
             )
             playbackPosition
             playbackTransport

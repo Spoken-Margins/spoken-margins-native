@@ -21,6 +21,8 @@ struct PlaybackChapterRowView: View {
     let nextChapter: () -> Void
     var skimBackward: () -> Void = {}
     var skimForward: () -> Void = {}
+    /// Starts the queued item the forward slot offers (#3914), when it is `.playNextItem`.
+    var playNextItem: () -> Void = {}
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -29,6 +31,9 @@ struct PlaybackChapterRowView: View {
     static let nextChapterSymbol = "forward.end"
     /// An arrow to a line, unlike Skim's filled triangle and bar, so the plain jump never passes for Skim (#2185).
     static let nextChapterInSkimSlotSymbol = "arrow.right.to.line"
+    /// A stack that plays: no other control uses it, and it is neither Skim's bar nor the chapter arrows, so starting
+    /// another item never passes for a move inside this one (#3914). Not the menu's "Play Next" glyphs.
+    static let nextInQueueSymbol = "rectangle.stack.badge.play"
 
     var body: some View {
         Group {
@@ -94,9 +99,18 @@ struct PlaybackChapterRowView: View {
 
     @ViewBuilder private var forwardControl: some View {
         switch forward {
-        case .skim, .skimDisabled, .playNextItem:
-            // `.playNextItem` is never produced until the app passes the queue to the rule (#3914 PR 2 draws it).
+        case .skim, .skimDisabled:
             skimButton(backward: false, enabled: forward == .skim)
+        case .playNextItem:
+            // Leaves this item where it is and starts the next queued one. It says so in its label and in its symbol, so
+            // it is never taken for a Skim (#3914).
+            Button(action: playNextItem) {
+                Image(systemName: Self.nextInQueueSymbol)
+                    .minimumTapTarget()
+            }
+            .accessibilityLabel(forwardSpeech?.label ?? "Next in queue")
+            .accessibilityValue(forwardSpeech?.value ?? "")
+            .accessibilityIdentifier("playback.nextInQueue.button")
         case .nextChapter:
             Button(action: nextChapter) {
                 Image(systemName: Self.nextChapterSymbol)

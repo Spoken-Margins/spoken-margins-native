@@ -63,7 +63,9 @@ extension Gate1AppModel {
     /// and the second press of #569 still works through Skim, which ends the playing summary the same way (#1666).
     var chapterRowForwardControl: NextChapterSummaryRule.ChapterRowControl {
         NextChapterSummaryRule.forwardControl(
-            isAvailable: canJumpToNextChapter, skimRowShown: showsSkimRow, canSkimForward: snapshot.canSkimForward)
+            isAvailable: canJumpToNextChapter, skimRowShown: showsSkimRow, canSkimForward: snapshot.canSkimForward,
+            hasQueuedNext: chapterRowQueuedNextId != nil, stopsLoading: skimBridge.forwardUnavailableReason == .loading,
+            navigationLocked: recordingNavigationIsLocked || playingImportedCommentary != nil)
     }
 
     /// What the chapter row draws left of the title: Skim back, dimmed when there is nowhere to go.
