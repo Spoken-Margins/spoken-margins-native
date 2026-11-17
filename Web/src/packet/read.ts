@@ -549,6 +549,8 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
     }
     if (sender) margin.author = sender;
     if (replyToId) margin.replyToId = replyToId;
+    // The source text before it, for the Margins tab's "After …" line (part of #3216). Kept in this browser only.
+    if (anchor.prefix != null && anchor.prefix.trim() !== '') margin.leadIn = anchor.prefix;
     // The sender's "don't read this aloud" holds for a written Margin only; a voice Margin is the sender's own voice.
     if (record.readAloud === false && !margin.voice) margin.readAloud = false;
     if (textAnchored) percentMargins.push({ margin, percent: anchor.roughPercent as number });
