@@ -448,6 +448,7 @@ def manifest_failures(*outputs: Path) -> tuple[list[str], bool, list[str]]:
 STALL_ISSUE = 1802  # the evidence log for app startup stalls and simulator boot stalls (#705 is closed)
 BOOT_STALLS = 'boot-stalls.json'  # a T3 boot's stalls (boot_t3_device), for log_recovered_stalls
 FRESH_RERUNS = 'fresh-clone-reruns.json'  # plans rerun on a fresh clone after two startup stalls (#2176)
+SETUP_RERUNS = 'setup-reruns.json'  # a simulator clone or boot that timed out, rerun once on a fresh clone (#4438)
 OVERLOAD_RERUNS = 'overload-reruns.json'  # plans rerun once after their test run hit its budget on an overloaded runner (#3374)
 # The runner is overloaded when its 1-minute load average is above this many per CPU. On 2026-11-04 a T3 test run
 # hit its budget at load 293.6 (#3374). The Mac's launches ran at load 100-200 on busy days and 14% above 200
@@ -3216,20 +3217,59 @@ def _run_t3_grouped(grouped, request_id, evidence):
         return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The Mac\'s simulator slots stayed busy (a Test Desk job or '
                 f'another run, and no room for a second simulator), so this run did not start one: {error}'], 'none', '')
     try:
-        verdict, where, ran, details, crashes, cc = _t3_on_fresh_device(grouped, request_id, evidence, runtime)
+        verdict, where, ran, details, crashes, cc = _t3_on_fresh_device_with_one_rerun(grouped, request_id, evidence,
+                                                                                         runtime)
         return verdict, where, ran, build_details + details, crashes, cc
     except (lane_sim.BootError, OSError, subprocess.SubprocessError) as error:
-        note = f'Template or clone failed: {error}'
-        if isinstance(error, subprocess.TimeoutExpired):  # a simctl call that never answered (#3374: shutdown, 120 s)
-            try:
-                load, line = os.getloadavg()[0], overload_line()
-            except OSError:
-                load = line = 0
-            if load > line:
-                note += f'. Runner overloaded: the {overload_text(load, line)}; this is the machine, not this PR'
-        return 'INCONCLUSIVE', 'no simulator', 'nothing', build_details + [note], 'none', ''
+        return 'INCONCLUSIVE', 'no simulator', 'nothing', build_details + [setup_fault_note(error)], 'none', ''
     finally:
         release_handle(slot)
+
+
+def setup_fault_note(error: BaseException) -> str:
+    """The report line for a simulator clone or boot that failed before any test ran. A `simctl` call that never
+    answered (#3374: shutdown, 120 s) while the load is over the line also says the machine was too loaded."""
+    note = f'Template or clone failed: {error}'
+    if isinstance(error, subprocess.TimeoutExpired):
+        try:
+            load, line = os.getloadavg()[0], overload_line()
+        except OSError:
+            load = line = 0
+        if load > line:
+            note += f'. Runner overloaded: the {overload_text(load, line)}; this is the machine, not this PR'
+    return note
+
+
+def _t3_on_fresh_device_with_one_rerun(grouped, request_id, evidence, runtime):
+    """#4438: a `simctl` call (clone, boot, shutdown) that times out before any test ran is rerun once, on a fresh
+    clone, in this job (no new `/lane T3` comment). Only a timeout is rerun: a clone that failed outright, a boot
+    that stalled and every test result keep their own verdicts, so no real failure is retried away. The first
+    attempt's error and the load stay in the report. INCONCLUSIVE needs two faults.
+    The caller holds the simulator slot throughout."""
+    import lane_sim
+    try:
+        return _t3_on_fresh_device(grouped, request_id, evidence, runtime)
+    except subprocess.TimeoutExpired as first:
+        first_note = setup_fault_note(first)
+        rerun = {'first': str(first), 'first_note': first_note, 'line': overload_line()}
+        waited, after = wait_for_quiet_runner(rerun['line'])
+        rerun.update(waited_seconds=waited, load_after=after)
+        try:
+            result = _t3_on_fresh_device(grouped, request_id, evidence, runtime)
+        except (lane_sim.BootError, OSError, subprocess.SubprocessError) as second:
+            rerun.update(status='faulted again', second=str(second))
+            (evidence / SETUP_RERUNS).write_text(json.dumps([rerun], indent=2) + '\n')
+            return ('INCONCLUSIVE', 'no simulator', 'nothing',
+                    [f'{first_note}. The lane waited {duration(waited)} for the load to fall and ran the job once more on '
+                     f'a fresh clone; that attempt failed too: {setup_fault_note(second)}. Evidence: '
+                     f'{evidence}/{SETUP_RERUNS}'], 'none', '')
+        rerun.update(status='ran')
+        (evidence / SETUP_RERUNS).write_text(json.dumps([rerun], indent=2) + '\n')
+        verdict, where, ran, details, crashes, cc = result
+        note = (f'Simulator setup: {first_note}. The lane waited {duration(waited)} (load average then '
+                f'{"unknown" if after is None else f"{after:g}"}) and ran the job once more on a fresh clone, with no new '
+                f'request; the result below is that second attempt\'s. Evidence: {evidence}/{SETUP_RERUNS}')
+        return verdict, where, ran, [note, *details], crashes, cc
 
 
 def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
