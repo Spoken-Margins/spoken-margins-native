@@ -36,8 +36,10 @@ class RowAccessibilityActionTests(unittest.TestCase):
     def test_timeline_and_margin_rows_reuse_their_menu_content(self):
         self.assertIn(".accessibilityActions { details(entry.action) }", _read("PlaybackTimelineListView.swift"))
         margins = _read("ExperienceMarginsScreen.swift")
-        self.assertIn(".contextMenu { ownMarginActions(row) }", margins)
-        self.assertIn(".accessibilityActions { ownMarginActions(row) }", margins)
+        self.assertIn(".contextMenu { ownMarginActions(row, repair: repair) }", margins)
+        self.assertIn(".accessibilityActions { ownMarginActions(row, repair: repair) }", margins)
+        # The Retry beside a "needs retry" status is also a row action, under the button's label (#3856).
+        self.assertIn('Button(Self.retryLabel(repair), systemImage: "arrow.clockwise")', margins)
         self.assertIn('Button("Play this moment") { model.playSharedMarginMoment(row) }', margins)
         self.assertIn('Button("Details") { selectedSharedMargin = row }', margins)
 
