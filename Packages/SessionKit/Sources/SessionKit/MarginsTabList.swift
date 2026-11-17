@@ -69,10 +69,11 @@ public enum MarginsTabList {
 /// list as the Margins tab, and the two start choices pinned at the bottom.
 public enum MarginsArrivalPreview {
     /// Shown when an item has friends' Margins the listener hasn't heard and they haven't started it yet: no place to
-    /// carry on from (`resumePlaceMs` nil or 0) and no finished listen. A listener with a place keeps Continue, and the
-    /// item opens on the playback screen's Margins tab instead: the preview only offers 0:00 or the Margins.
-    public static func shows(_ rows: [MarginsControlCenter.Row], resumePlaceMs: Int?, hasFinishedSession: Bool) -> Bool {
-        MarginsControlCenter.opensOnMarginsTab(rows) && !hasFinishedSession && (resumePlaceMs ?? 0) <= 0
+    /// carry on from and no finished listen. A listener with a place keeps Continue, and the item opens on the playback
+    /// screen's Margins tab instead: the preview only offers 0:00 or the Margins.
+    public static func shows(_ rows: [MarginsControlCenter.Row], resumePlace: Position?, hasFinishedSession: Bool) -> Bool {
+        let hasPlace = resumePlace.map { ($0.mediaTimeMs ?? 0) > 0 || $0.charOffset > 0 } ?? false
+        return MarginsControlCenter.opensOnMarginsTab(rows) && !hasFinishedSession && !hasPlace
     }
 
     /// "Sam and Priya left 5 Margins": every friend with an unheard Margin, in list order, and how many are unheard.

@@ -64,12 +64,13 @@ final class MarginsTabListTests: XCTestCase {
 
     func testArrivalPreviewOnlyBeforeTheListenerHasAPlace() {
         let rows = seedRows()
-        XCTAssertTrue(MarginsArrivalPreview.shows(rows, resumePlaceMs: nil, hasFinishedSession: false))
-        XCTAssertTrue(MarginsArrivalPreview.shows(rows, resumePlaceMs: 0, hasFinishedSession: false))
-        XCTAssertFalse(MarginsArrivalPreview.shows(rows, resumePlaceMs: 780_000, hasFinishedSession: false), "Continue stays")
-        XCTAssertFalse(MarginsArrivalPreview.shows(rows, resumePlaceMs: nil, hasFinishedSession: true))
+        XCTAssertTrue(MarginsArrivalPreview.shows(rows, resumePlace: nil, hasFinishedSession: false))
+        XCTAssertTrue(MarginsArrivalPreview.shows(rows, resumePlace: Position(charOffset: 0, mediaTimeMs: 0), hasFinishedSession: false))
+        XCTAssertFalse(MarginsArrivalPreview.shows(rows, resumePlace: Position(charOffset: 0, mediaTimeMs: 780_000), hasFinishedSession: false), "Continue stays")
+        XCTAssertFalse(MarginsArrivalPreview.shows(rows, resumePlace: Position(charOffset: 120), hasFinishedSession: false), "a text place counts")
+        XCTAssertFalse(MarginsArrivalPreview.shows(rows, resumePlace: nil, hasFinishedSession: true))
         let allHeardOrMine = rows.filter { $0.hearing != .unheard }
-        XCTAssertFalse(MarginsArrivalPreview.shows(allHeardOrMine, resumePlaceMs: nil, hasFinishedSession: false))
+        XCTAssertFalse(MarginsArrivalPreview.shows(allHeardOrMine, resumePlace: nil, hasFinishedSession: false))
     }
 
     func testWelcomeNamesEveryFriendWithSomethingUnheardAndCountsIt() {
