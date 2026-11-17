@@ -202,6 +202,17 @@ final class PlaybackDockLayoutTests: XCTestCase {
         }
     }
 
+    /// The transcript's own sections are not chapters the listener sees, so an episode with only those keeps the plain
+    /// row (#3865).
+    func testTranscriptSectionsAreNotChaptersForTheChapterRow() {
+        let model = makePodcastModel(withChapters: true)
+        model.selectedItem.mediaChapters = ["ch-transcript-0", "ch-transcript-1", "ch-transcript-2"].enumerated().map { index, id in
+            MediaTimelineChapter(id: id, title: "Section \(index)", startMs: index * 1_000_000, transcriptSegmentId: "segment-\(index)")
+        }
+        XCTAssertFalse(model.showsSkimRow)
+        XCTAssertEqual(model.chapterRowBackwardControl, .hidden)
+    }
+
     func testTheLastChapterDimsForwardInsteadOfHidingIt() {
         let model = makePodcastModel(withChapters: true)
         model.snapshot.currentMediaTimeMs = 2_000_000

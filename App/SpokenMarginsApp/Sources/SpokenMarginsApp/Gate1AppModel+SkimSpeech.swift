@@ -51,7 +51,7 @@ extension Gate1AppModel {
         case .nextChapter, .nextChapterInSkimSlot:
             let next = nextChapterStop
             return skimDescriber.nextChapterSpeech(
-                standingInFor: control == .nextChapterInSkimSlot ? skimBridge.forwardUnavailableReason : nil,
+                standingInFor: control == .nextChapterInSkimSlot ? chapterRowSkimReason : nil,
                 chapterId: next?.id, start: next?.start, inSkimSlot: control == .nextChapterInSkimSlot)
         }
     }

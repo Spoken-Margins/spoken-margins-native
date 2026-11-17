@@ -32,17 +32,30 @@ extension Gate1AppModel {
     var showsSkimRow: Bool {
         NextChapterSummaryRule.showsChapterRow(
             isSkimSource: isMediaPlaybackSnapshot || isTextReadingSnapshot,
-            hasSkimAffordance: snapshot.canSkimBackward || snapshot.canSkimForward || snapshot.skimBridgeState != nil
-                || skimBridge.itemHasMap,
+            hasSkimAffordance: itemHasSkim,
             chapterCount: playingItemChapterCount)
     }
+
+    /// Skim can go somewhere, a summary is playing, or the item has a map. Where it is false but the chapter row shows
+    /// anyway (two or more chapters, #3865), Next chapter in Skim's slot is a plain chapter jump on an item with no Skim,
+    /// so it never speaks or logs a Skim reason (`skimBridge.forwardUnavailableReason`) for a control that works.
+    private var itemHasSkim: Bool {
+        snapshot.canSkimBackward || snapshot.canSkimForward || snapshot.skimBridgeState != nil || skimBridge.itemHasMap
+    }
+
+    /// Why forward Skim can't be pressed, for the item that has Skim; nil on an item with none, where Next chapter in
+    /// the slot has nothing to explain.
+    var chapterRowSkimReason: SkimUnavailableReason? { itemHasSkim ? skimBridge.forwardUnavailableReason : nil }
 
     /// The playing item's chapters, counted the way Skim's stops are built: text chapters on a text item read aloud, the
     /// media chapters on a media item, or its Listening Map scenes where it has none (`skimStopList`).
     private var playingItemChapterCount: Int {
         guard snapshot.itemId == selectedItem.id else { return 0 }
         if isTextReadingSnapshot { return selectedItem.chapters.count }
-        return (selectedItem.mediaChapters.isEmpty ? selectedItem.listeningMapScenes : selectedItem.mediaChapters).count
+        // The transcript's own sections are not chapters the listener sees (the chapter title, the bar and the locator
+        // all leave them out), so an episode with only those gets no chapter row from this rule.
+        let chapters = selectedItem.mediaChapters.isEmpty ? selectedItem.listeningMapScenes : selectedItem.mediaChapters
+        return chapters.filter { !$0.id.hasPrefix("ch-transcript-") && !$0.id.contains("-ch-transcript-") }.count
     }
 
     /// What the chapter row draws right of the title: forward Skim when it can be pressed, else Next chapter, else a
@@ -65,7 +78,7 @@ extension Gate1AppModel {
     /// The chapter row's Next chapter button. Where it stands in for a Skim that can't be pressed, the press is logged
     /// as Skim's fallback with the reason, and the listener is told why it was a plain jump (#2185).
     func nextChapterFromChapterRow() {
-        let standsInForSkim = chapterRowForwardControl == .nextChapterInSkimSlot
+        let standsInForSkim = chapterRowForwardControl == .nextChapterInSkimSlot && itemHasSkim
         let reason = skimBridge.forwardUnavailableReason ?? .noSceneSummary
         let title = nextChapterAnnouncementTitle
         jumpToNextChapter()
