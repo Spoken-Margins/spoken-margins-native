@@ -327,7 +327,10 @@ final class AppColorContrastCoverageTests: XCTestCase {
     private static let liveSessionDarkSurface: Set<String> = [
         "LiveSessionDock.swift", "LiveSessionMarginsPane.swift", "LiveSessionSessionPane.swift", "LiveSessionView.swift",
         // The photo thumbnail beside a row and above the recorder; the Margin screen's photo is in LiveSessionPhotoViews.
-        "LiveSessionPhotoThumbnail.swift"
+        "LiveSessionPhotoThumbnail.swift",
+        // The Margins tab's rows and Next Margin pill sit on the playback screen; the arrival preview is drawn on the
+        // same always-dark listening background (#3216).
+        "MarginsTabRowView.swift", "MarginsThreadListView.swift", "NextMarginPill.swift", "MarginsArrivalPreviewView.swift"
     ]
 
     func testWatchColoursStayOnTheAlwaysDarkPlaybackSurface() throws {

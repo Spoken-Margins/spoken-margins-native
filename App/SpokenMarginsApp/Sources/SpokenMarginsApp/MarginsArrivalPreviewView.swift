@@ -26,7 +26,7 @@ struct MarginsArrivalPreviewView: View {
                             .foregroundStyle(AppColors.watchSecondary)
                     }
                     .padding(.bottom, 10)
-                    .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.16)).frame(height: 1) }
+                    .overlay(alignment: .bottom) { Rectangle().fill(AppColors.watchSecondary.opacity(0.24)).frame(height: 1) }
                     .padding(.bottom, 4)
                     controlsLine
                     if threads.isEmpty {
@@ -98,8 +98,8 @@ struct MarginsArrivalPreviewView: View {
                     .font(.body.weight(.semibold))
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .foregroundStyle(.white)
-                    .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.22)))
+                    .background(AppColors.watchControl, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(AppColors.watchSecondary.opacity(0.24)))
             }
             .accessibilityIdentifier("arrival.startBeginning")
         }
@@ -110,6 +110,6 @@ struct MarginsArrivalPreviewView: View {
         .frame(maxWidth: 620)
         .frame(maxWidth: .infinity)
         .background(AppColors.listeningBackground)
-        .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.18)).frame(height: 1) }
+        .overlay(alignment: .top) { Rectangle().fill(AppColors.watchSecondary.opacity(0.24)).frame(height: 1) }
     }
 }

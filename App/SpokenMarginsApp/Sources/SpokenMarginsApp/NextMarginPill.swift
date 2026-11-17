@@ -30,9 +30,9 @@ struct NextMarginPill: View {
                     .padding(.leading, 10)
                     .padding(.trailing, 12)
                     .frame(minHeight: 36)
-                    .background(AppColors.watchControl.opacity(0.94), in: Capsule())
-                    .overlay(Capsule().strokeBorder(.white.opacity(0.22)))
-                    .shadow(color: .black.opacity(0.35), radius: 7, y: 4)
+                    .background(AppColors.watchControl.opacity(0.8), in: Capsule())
+                    .overlay(Capsule().strokeBorder(AppColors.watchSecondary.opacity(0.24)))
+                    .shadow(radius: 7, y: 4)
                     .frame(minHeight: 44) // a 44 pt target around the 36 pt pill
                     .contentShape(Rectangle())
                 }

@@ -26,12 +26,12 @@ struct MarginsThreadListView: View {
                         ForEach(replies) { row($0) }
                     }
                     .padding(.leading, 10)
-                    .overlay(alignment: .leading) { Rectangle().fill(.white.opacity(0.22)).frame(width: 1) }
+                    .overlay(alignment: .leading) { Rectangle().fill(AppColors.watchSecondary.opacity(0.24)).frame(width: 1) }
                     .padding(.leading, 14)
                 }
             }
             .padding(.vertical, 4)
-            .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.16)).frame(height: 1) }
+            .overlay(alignment: .bottom) { Rectangle().fill(AppColors.watchSecondary.opacity(0.24)).frame(height: 1) }
             .accessibilityElement(children: .contain)
         }
         .sheet(item: $selectedMargin) { row in

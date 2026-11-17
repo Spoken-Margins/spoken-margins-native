@@ -534,6 +534,7 @@ enum AppColors {
     static let plum = dynamicColor(AppSemanticColorRGB.plum)
     static let star = dynamicColor(AppSemanticColorRGB.star)
     static let watchDanger = dynamicColor(AppSemanticColorRGB.watchDanger)
+    static let unheard = dynamicColor(AppSemanticColorRGB.unheard)
 
     static func dynamicColor(_ colors: AppDynamicRGB) -> Color {
         #if canImport(UIKit)

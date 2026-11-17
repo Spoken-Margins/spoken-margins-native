@@ -23,9 +23,9 @@ struct MarginsTabRowView: View {
     @State private var isTruncated = false
 
     /// Okabe-Ito sky blue, as in the prototype: unheard, always with the dot, the bar and the spoken "Unheard".
-    static let unheardBlue = Color(red: 0x56 / 255, green: 0xB4 / 255, blue: 0xE9 / 255)
+    static let unheardBlue = AppColors.unheard
     /// The star on the always-dark plate (`AppSemanticColorRGB.star`'s dark value).
-    static let starYellow = Color(red: 1, green: 0.82, blue: 0.30)
+    static let starYellow = AppColors.star
 
     private var row: MarginsControlCenter.Row { entry.row }
     private var isHeard: Bool { row.hearing == .heard && !isPlaying }
@@ -65,8 +65,8 @@ struct MarginsTabRowView: View {
         .background {
             if isPlaying {
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(AppColors.listeningAccent.opacity(0.10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(AppColors.listeningAccent.opacity(0.55)))
+                    .fill(AppColors.listeningAccent.opacity(0.18))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(AppColors.listeningAccent))
             }
         }
         .foregroundStyle(.white)
@@ -79,7 +79,7 @@ struct MarginsTabRowView: View {
             }
             Text(row.shownName)
                 .font(isHeard ? .subheadline.weight(.semibold) : .body.weight(.semibold))
-                .foregroundStyle(isHeard ? .white.opacity(0.7) : .white)
+                .foregroundStyle(isHeard ? AppColors.watchSecondary : .white)
             if let replyTo = entry.replyTo { Text("to \(replyTo)") }
             if let ms = row.timeMs { Text(MarginReplyWords.clock(milliseconds: ms)) }
             if isPlaying {
@@ -97,7 +97,7 @@ struct MarginsTabRowView: View {
     private func leadInLine(_ leadIn: String) -> some View {
         Text("After \(Text("“\(leadIn)”").italic())")
             .font(.footnote)
-            .foregroundStyle(AppColors.watchSecondary.opacity(isHeard ? 0.8 : 1))
+            .foregroundStyle(AppColors.watchSecondary)
             .lineLimit(1)
     }
 
@@ -107,7 +107,7 @@ struct MarginsTabRowView: View {
         case .text(let text):
             Text(text)
                 .font(.system(isHeard ? .subheadline : .body, design: .serif))
-                .foregroundStyle(isHeard ? .white.opacity(0.62) : .white)
+                .foregroundStyle(isHeard ? AppColors.watchSecondary : .white)
                 .lineLimit(isExpanded ? nil : 2)
                 .fixedSize(horizontal: false, vertical: true)
                 .background {
@@ -139,7 +139,7 @@ struct MarginsTabRowView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(AppColors.watchSecondary, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
                 .padding(.top, 2)
                 .accessibilityIdentifier("\(identifier).noTranscript")
         }
