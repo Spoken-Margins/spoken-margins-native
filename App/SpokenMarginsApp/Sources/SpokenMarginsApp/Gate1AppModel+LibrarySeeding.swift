@@ -41,11 +41,14 @@ extension Gate1AppModel {
             case .keepLibrary:
                 try UITestingLaunchSeedWriter.importCoopLayerIfRequested(into: store)
                 try UITestingLaunchSeedWriter.markListenerMarginSharedIfRequested(into: store)
+                try UITestingLaunchSeedWriter.seedFollowedShowIfRequested(into: store)
             case .firstRun: try store.reset() // then the launch goes on as a new install's does
             case .fixture: resetAndSeed(); return
             case .importedPDF: resetAndSeed(); try importObsidianMarkdownFiles(urls: [UITestingLaunchSeedWriter.writePDF()]); return
             case .text, .offlinePodcast:
-                try seedUITesting(store: store, item: UITestingLaunchSeedWriter.write(seed, into: store)); return
+                let seeded = try UITestingLaunchSeedWriter.write(seed, into: store)
+                try UITestingLaunchSeedWriter.seedFollowedShowIfRequested(into: store)
+                try seedUITesting(store: store, item: seeded); return
             }
             var rows = try loadLibraryRows(store: store)
             libraryWasEmptyAtLaunch = rows.isEmpty

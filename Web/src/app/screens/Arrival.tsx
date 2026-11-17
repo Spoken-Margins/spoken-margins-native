@@ -6,6 +6,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { PlayIcon } from '../icons.tsx';
 import { arrivalResumeAt, playHint, playableArticleMargins, ARRIVAL_WORDS, GET_APP_LINK, arrivalFacts, possessive, type ArrivalFacts } from '../logic/arrival.ts';
 import { placeImport, unnamedAuthorFor } from '../logic/import.ts';
+import { playability } from '../logic/playability.ts';
+import { messageForFailure, messageForOpened, reportPlayCheck, type PlayCheckMessage } from '../play-check.ts';
 import { placeMarginsOnAudio } from '../place-margins.ts';
 import { plainError } from '../logic/messages.ts';
 import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkRef } from '../logic/share-link.ts';
@@ -78,22 +80,36 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
   const dataRef = useRef(data);
   dataRef.current = data;
 
+  // Inside the sender's hidden check (#4454) this says the page is running; anywhere else it does nothing.
+  const announced = useRef(false);
+  useEffect(() => {
+    if (announced.current) return;
+    announced.current = true;
+    reportPlayCheck({ type: 'started' });
+  }, []);
+
   // Open the packet once storage is ready (so the episode can match the listener's own copy).
   useEffect(() => {
     if (started.current || !data.ready) return;
     started.current = true;
     if (link.kind !== 'link') {
       setState({ status: 'failed', message: ARRIVAL_WORDS.cutOff });
+      reportPlayCheck({ type: 'failed', reason: 'link-broken' });
       return;
     }
     void (async () => {
+      let message: PlayCheckMessage;
       try {
         const { bytes, expires } = await openSharedPacketWithExpiry(serverFor(link.link));
         const read = await services.packets.readPacket(bytes, 'shared.spokenmargins');
         setState({ status: 'ready', read, facts: arrivalFacts(read.sender, [...read.margins, ...playableArticleMargins(read)]), ...(expires === undefined ? {} : { expires }) });
+        message = messageForOpened(read);
       } catch (error) {
         setState({ status: 'failed', message: failureWords(error) });
+        message = messageForFailure(error);
       }
+      // After the try, so nothing about the sender's check can turn a link that opened into the failed card.
+      reportPlayCheck(message);
     })();
   }, [data.ready, link]);
 
@@ -215,10 +231,11 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
   const { read, facts, expires } = state;
   const who = facts.who;
   const episode = read.episode;
-  // Only a packet with nothing to play is the text-only card: an article's Margins that carry a rough place play on its voice (#4421).
-  const article = read.margins.length === 0 && playableArticleMargins(read).length === 0;
+  // What the browser can do with this packet is one function's answer, so the sender's check says the same (#4454).
   // A Substack post has no audio address yet: its voice is looked up when the friend taps Play, as for a pasted link.
-  const unplayable = !article && !episode.audioUrl && !episode.pageUrl;
+  const can = playability(read);
+  const article = can.verdict === 'cannot' && can.reason === 'article';
+  const unplayable = can.verdict === 'cannot' && can.reason === 'no-episode-audio';
   const articleAddress = webAddress(episode.pageUrl);
   const minutes = episode.durationSeconds ? Math.max(1, Math.round(episode.durationSeconds / 60)) : undefined;
   const subtitle = [episode.showTitle, minutes ? `${minutes} min` : undefined].filter(Boolean).join(' · ');
