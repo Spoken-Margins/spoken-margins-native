@@ -73,6 +73,53 @@ final class ShareAsLinkRenderingTests: XCTestCase {
         }
     }
 
+    /// #4454: the play check's line goes under Share link, wraps at every text size, and a problem is taller than a pass
+    /// because it carries its remedy. A pass and a check that couldn't run each draw their one line.
+    func testThePlayCheckLineWrapsAtEveryTextSizeAndNeverRunsOffTheScreen() throws {
+        let lines: [(String, ShareLinkPlayCheck.Outcome)] = [
+            ("plays", .plays),
+            ("problem", .problem(.noPostVoice)),
+            ("not-checked", .notChecked(.didNotFinish)),
+        ]
+        for size in [DynamicTypeSize.large, .accessibility5] {
+            var heights: [String: CGFloat] = [:]
+            for (name, outcome) in lines {
+                let line = try XCTUnwrap(ShareLinkPlayCheck.line(for: outcome))
+                let rendered = try render(
+                    ShareLinkStatusLines(state: .idle, companionNote: nil, playCheckLine: line),
+                    name: "playcheck-\(name)", size: size
+                )
+                XCTAssertLessThanOrEqual(rendered.width, Self.narrowestWidth + 1, "\(size): \(name) ran off the screen")
+                XCTAssertGreaterThan(rendered.height, 15, "\(size): \(name) drew no line")
+                heights[name] = rendered.height
+            }
+            XCTAssertGreaterThan(heights["problem"] ?? 0, heights["plays"] ?? .infinity, "\(size): a problem carries its remedy")
+            XCTAssertTrue(ShareLinkStatusLines(state: .idle, companionNote: nil, playCheckLine: ShareLinkPlayCheck.line(for: .plays)).hasLines)
+            XCTAssertFalse(ShareLinkStatusLines(state: .idle, companionNote: nil, playCheckLine: nil).hasLines)
+        }
+    }
+
+    /// #4454: the hidden web view may load only the link's own host, and the rule list that says so must be valid JSON
+    /// with the host escaped, or WebKit refuses it and no check can run.
+    func testThePlayCheckWebViewBlocksEverythingButTheLinksHost() throws {
+        let rules = ShareLinkPlayCheckRunner.contentRules(host: "spokenmargins.com")
+        let parsed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(rules.utf8)) as? [[String: Any]])
+        XCTAssertEqual(parsed.count, 2)
+        let block = try XCTUnwrap(parsed.first)
+        XCTAssertEqual((block["action"] as? [String: Any])?["type"] as? String, "block")
+        XCTAssertEqual((block["trigger"] as? [String: Any])?["url-filter"] as? String, ".*")
+        let allow = try XCTUnwrap(parsed.last)
+        XCTAssertEqual((allow["action"] as? [String: Any])?["type"] as? String, "ignore-previous-rules")
+        let filter = try XCTUnwrap((allow["trigger"] as? [String: Any])?["url-filter"] as? String)
+        XCTAssertEqual(filter, "^https://spokenmargins\\.com/")
+        let expression = try NSRegularExpression(pattern: filter)
+        func matches(_ url: String) -> Bool { expression.firstMatch(in: url, range: NSRange(url.startIndex..., in: url)) != nil }
+        XCTAssertTrue(matches("https://spokenmargins.com/l/abc/packet"))
+        XCTAssertFalse(matches("https://spokenmarginsXcom/"), "the dot is escaped")
+        XCTAssertFalse(matches("https://spokenmargins.com.evil.example/"), "the host ends at its slash")
+        XCTAssertFalse(matches("http://spokenmargins.com/"))
+    }
+
     func testTheReviewStepButtonsFitAtEveryTextSize() throws {
         for size in [DynamicTypeSize.large, .xxxLarge, .accessibility5] {
             let back = try render(
