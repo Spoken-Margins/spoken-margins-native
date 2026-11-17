@@ -543,6 +543,9 @@ final class SpokenMarginsPackageImportCoordinator {
     /// The item an import finished while a Margin was being recorded or written. It opens once that Margin is saved or
     /// cancelled (`openDeferredItemIfReady`).
     private(set) var deferredItemId: String?
+    /// The Library refresh that ran while the Margin held the opening failed, so the item may not be in the rows yet.
+    /// The opening loads them first (#2256).
+    private var deferredRowsFailedToLoad = false
 
     /// The one place an import turns into navigation (the audits on PR #3298). A Margin being recorded or written holds
     /// the listener's position, and an import can finish at any moment, after a fetch that took seconds, so no import
@@ -561,7 +564,8 @@ final class SpokenMarginsPackageImportCoordinator {
             return false
         }
         // The import is saved; a Library refresh that fails must not bring an error sheet up over the Margin.
-        // The item opens when the lock lifts, with the rows this refresh loaded.
+        // The item opens when the lock lifts, with the rows this refresh loaded, or loads them then if it failed.
+        deferredRowsFailedToLoad = refreshFailure != nil
         deferredItemId = itemId
         environment.recordDiagnostic("lastSpokenMarginsPackageOpen", "waiting_for_margin:\(itemId)")
         return true
@@ -571,6 +575,16 @@ final class SpokenMarginsPackageImportCoordinator {
     /// whenever the lock changes.
     func openDeferredItemIfReady() {
         guard let itemId = deferredItemId, !environment.navigationIsLocked() else { return }
+        if deferredRowsFailedToLoad {
+            // The rows didn't load while the Margin was open: load them off the main thread, then ask again.
+            deferredRowsFailedToLoad = false
+            Task { @MainActor [weak self] in
+                guard let self, let store = try? self.environment.requireStore() else { return }
+                try? await self.environment.refreshImportedLibrary(store)
+                self.openDeferredItemIfReady()
+            }
+            return
+        }
         deferredItemId = nil
         do {
             let store = try environment.requireStore()
