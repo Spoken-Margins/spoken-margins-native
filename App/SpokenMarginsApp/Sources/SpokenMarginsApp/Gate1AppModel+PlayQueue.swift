@@ -59,6 +59,26 @@ extension Gate1AppModel {
         PlayQueueController.update(self) { $0.remove(itemId) }
     }
 
+    /// The queued item the chapter row's "Next in queue" starts, or nil where it isn't offered (#3914). Not while a Skim
+    /// summary plays: the slot is dimmed then even with a chapter ahead, and it must not turn into Next in queue
+    /// on an earlier chapter. Not once the item has finished either: the queue is advancing by itself then. It has already
+    /// taken the next item off the queue and starts it a moment later, and a tap in that gap would start the item
+    /// after it and lose it when the advance's own start replaced it.
+    var chapterRowQueuedNextId: String? {
+        guard snapshot.skimBridgeState == nil, snapshot.phase != .finished else { return nil }
+        return PlayQueueController.current(self).nextToStart(
+            playing: snapshot.itemId, starting: activeItemId, isAvailable: { id in libraryItems.contains { $0.id == id } })
+    }
+
+    /// Starts the item "Next in queue" was drawn for, through the queue screen's own path (#3914): the item's own place,
+    /// the sleep timer cancelled, the old session ended as for any new start (so it keeps its place and isn't finished),
+    /// and the item leaving the queue once it has started. `expectedId` is the item the button showed; if the queue has
+    /// moved on since (a second tap, or the queue advancing by itself at the end), nothing starts.
+    func playNextQueuedItem(expectedId: String) {
+        guard chapterRowQueuedNextId == expectedId else { return }
+        playQueuedItemNow(itemId: expectedId)
+    }
+
     func removeFromQueue(itemId: String) {
         PlayQueueController.update(self) { $0.remove(itemId) }
     }
