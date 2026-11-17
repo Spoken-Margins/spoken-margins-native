@@ -2455,8 +2455,12 @@ extension SQLiteSessionStore: MovedMarginOriginRepository {
             """, [MovedMarginOrigin.recordKind])
     }
 
+    /// Only a Margin that has an origin is deleted: a call with an ordinary Margin's id does nothing, so it can't destroy one.
     public func deleteMovedMargin(id: String, sessionId: String) throws {
         try withSessionTransaction {
+            let origin: MovedMarginOrigin? = try loadOptional(
+                kind: MovedMarginOrigin.recordKind, id: storageID(kind: MovedMarginOrigin.recordKind, id: id, sessionId: sessionId))
+            guard origin != nil else { return }
             try deleteRecord(kind: "interjection", id: storageID(kind: "interjection", id: id, sessionId: sessionId))
             try deleteRecord(kind: MovedMarginOrigin.recordKind, id: storageID(kind: MovedMarginOrigin.recordKind, id: id, sessionId: sessionId))
         }

@@ -201,6 +201,13 @@ final class MovedMarginOriginStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: recording.path), "the live session may still name the recording")
     }
 
+    func testDeletingAMovedMarginDoesNothingToAMarginWithNoOrigin() throws {
+        let ordinary = margin("made-on-item")
+        try store.saveInterjection(ordinary)
+        try store.deleteMovedMargin(id: ordinary.id, sessionId: ordinary.sessionId)
+        XCTAssertNotNil(try store.loadInterjection(id: ordinary.id, sessionId: ordinary.sessionId))
+    }
+
     func testDeletingTheOriginAloneLeavesTheMargin() throws {
         let moved = margin()
         _ = try saveMoved(moved)
