@@ -37,12 +37,7 @@ struct Build23SenderSharingExperience: View {
                 coordinator.recordSystemShareCompleted(packetURL: packet)
             })
             .task { isLinkOffered = await linkSender.isOffered() }
-            // The check's line is on a screen only while a sender screen shows it: a problem found with none goes to the banner (#4454).
-            .onAppear { ShareLinkPlayChecker.shared.lineScreenAppeared() }
-            .onDisappear {
-                linkSender.takedownNoticeWasShown()
-                ShareLinkPlayChecker.shared.lineScreenDisappeared()
-            }
+            .onDisappear { linkSender.takedownNoticeWasShown() }
         #else
         content
         #endif
@@ -256,7 +251,8 @@ struct Build23SenderSharingExperience: View {
             companionNote: linkSender.companionNote,
             showsTakedownNotice: linkSender.showsTakedownNotice,
             onTakedownNoticeDrawn: { linkSender.takedownNoticeWasDrawn() },
-            playCheckLine: linkSender.playCheckLine
+            playCheckLine: linkSender.playCheckLine,
+            playCheckLinkID: linkSender.playCheckLinkID
         )
         if sharesLink, lines.hasLines {
             lines

@@ -58,7 +58,7 @@ final class ShareLinkSender: ObservableObject {
     /// Only the newest request's answer reaches the screen; `reset` voids the one in flight (#3751 audit).
     private var requests = ShareLinkRequests()
     private let playChecker = ShareLinkPlayChecker.shared
-    private var playCheckLinkID: String?
+    private(set) var playCheckLinkID: String?
     private var playCheckObservation: AnyCancellable?
     /// A problem found while the share sheet was open is announced when the sheet closes, once.
     private var announcementWaitsForSheet = false
@@ -205,10 +205,10 @@ final class ShareLinkSender: ObservableObject {
         }
     }
 
-    /// Only a problem is announced, once, and only while a sender screen is showing: with none, the banner says it.
+    /// Only a problem is announced, once, and only while the line is drawn: with none drawn, the banner says it.
     private func announceProblemIfNeeded() {
         guard let id = playCheckLinkID, announcedLinkID != id, let line = playCheckLine, line.isAnnounced,
-              playChecker.isLineOnScreen else { return }
+              playChecker.isLineDrawn(for: id), !playChecker.bannerWasShown(for: id) else { return }
         announcedLinkID = id
         #if canImport(UIKit)
         UIAccessibility.post(notification: .announcement, argument: line.accessibilityLabel)
@@ -284,6 +284,8 @@ struct ShareLinkStatusLines: View {
     var onTakedownNoticeDrawn: () -> Void = {}
     /// What the background play check says about the link (#4454). It goes last, below the lines about the link itself.
     var playCheckLine: ShareLinkPlayCheck.Line?
+    /// The link that line is about, so the checker knows which link's line is on screen.
+    var playCheckLinkID: String?
 
     /// Whether there is anything to draw, so the screen leaves no gap above its button when there isn't.
     var hasLines: Bool {
@@ -318,7 +320,7 @@ struct ShareLinkStatusLines: View {
                     .accessibilityIdentifier("build23.sender.share.link.fallback")
             }
             if let playCheckLine {
-                ShareLinkPlayCheckLineView(line: playCheckLine)
+                ShareLinkPlayCheckLineView(line: playCheckLine, linkID: playCheckLinkID)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -344,12 +346,18 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
     private let link: URL
     private let onEvent: (ShareLinkPlayCheck.Event) -> Void
     private var webView: WKWebView?
-    private var budget = ShareLinkPlayCheck.ReadBudget()
+    /// Asks the checker's per-link budget, so a check run again for the same link has no second page or audio read.
+    private let allowRead: @MainActor (ShareLinkPlayCheck.ReadRequest) -> Bool
     private var isStopped = false
     private let probe = ShareLinkPlayCheckProbeHandler()
 
-    init(link: URL, onEvent: @escaping (ShareLinkPlayCheck.Event) -> Void) {
+    init(
+        link: URL,
+        allowRead: @escaping @MainActor (ShareLinkPlayCheck.ReadRequest) -> Bool,
+        onEvent: @escaping (ShareLinkPlayCheck.Event) -> Void
+    ) {
         self.link = link
+        self.allowRead = allowRead
         self.onEvent = onEvent
         super.init()
         probe.onMessage = { [weak self] message in self?.probeMessage(message) }
@@ -432,7 +440,7 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
     ) async -> (Any?, String?) {
         guard !isStopped, message.frameInfo.isMainFrame, isFromLink(message.frameInfo),
               let request = ShareLinkPlayCheck.ReadRequest(body: message.body),
-              budget.allow(request) else { return (nil, "This read is not allowed.") }
+              allowRead(request) else { return (nil, "This read is not allowed.") }
         do {
             switch request {
             case .page(let url): return (try await Self.readPage(url), nil)
@@ -450,7 +458,7 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
 
     // MARK: The reads: the app's own network stack, no cookies, no cache, a byte cap, https only
 
-    nonisolated private static func session() -> URLSession {
+    nonisolated private static func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
@@ -460,7 +468,7 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
         return URLSession(configuration: configuration)
     }
 
-    nonisolated private static func request(_ url: URL, accept: String) -> URLRequest {
+    nonisolated private static func makeRequest(_ url: URL, accept: String) -> URLRequest {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         request.httpShouldHandleCookies = false
         request.setValue(accept, forHTTPHeaderField: "Accept")
@@ -469,10 +477,10 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
 
     /// A post's page, as `{ status, url, body }`. The body is for a 2xx only, and never over `maximumPageBytes`.
     nonisolated static func readPage(_ url: URL) async throws -> [String: Any] {
-        let session = session()
+        let session = makeSession()
         defer { session.invalidateAndCancel() }
         let (bytes, response) = try await session.bytes(
-            for: request(url, accept: "text/html, application/xhtml+xml"), delegate: HTTPSOnlyRedirects()
+            for: makeRequest(url, accept: "text/html, application/xhtml+xml"), delegate: HTTPSOnlyRedirects()
         )
         guard let http = response as? HTTPURLResponse, let finalURL = http.url, finalURL.scheme?.lowercased() == "https" else {
             throw URLError(.badServerResponse)
@@ -499,9 +507,9 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
     /// The start of an episode's audio, as `{ status, contentType }`: a range read of the first bytes, which are read and
     /// dropped. No audio ever reaches the page.
     nonisolated static func readAudioStart(_ url: URL) async throws -> [String: Any] {
-        let session = session()
+        let session = makeSession()
         defer { session.invalidateAndCancel() }
-        var request = request(url, accept: "audio/*, video/*;q=0.9, */*;q=0.5")
+        var request = makeRequest(url, accept: "audio/*, video/*;q=0.9, */*;q=0.5")
         request.setValue("bytes=0-\(ShareLinkPlayCheck.audioStartBytes - 1)", forHTTPHeaderField: "Range")
         let (bytes, response) = try await session.bytes(for: request, delegate: HTTPSOnlyRedirects())
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
@@ -519,7 +527,11 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
         // The one load of the link. A later address (a Report link, an outside link, a pop-up) is never followed.
-        navigationAction.request.url?.absoluteString == link.absoluteString ? .allow : .cancel
+        guard let url = navigationAction.request.url else { return .cancel }
+        let sameAddress = url.scheme?.lowercased() == link.scheme?.lowercased()
+            && url.host?.lowercased() == link.host?.lowercased()
+            && url.path == link.path && url.query == link.query && url.fragment == link.fragment
+        return sameAddress ? .allow : .cancel
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
@@ -597,27 +609,60 @@ final class ShareLinkPlayChecker: ObservableObject {
     /// Where the Diagnostics line goes. Codes and counts only, never a URL, id or title.
     var recordDiagnostic: @MainActor (String, [String: String]) -> Void = { _, _ in }
 
-    private let connectivity = ConnectivityMonitor()
+    /// The app's own network view once `connect(to:)` has joined it; until then, one of its own.
+    fileprivate(set) var connectivity = ConnectivityMonitor()
+    private var readBudgets: [String: ShareLinkPlayCheck.ReadBudget] = [:]
+    private var drawnLines: [String: Int] = [:]
+    private var bannered: Set<String> = []
     private var queue = ShareLinkPlayCheck.Queue()
     private var jobs: [String: Job] = [:]
     private var runner: ShareLinkPlayCheckRunner?
     private var startedAt: ContinuousClock.Instant?
     private var timeLimit: Task<Void, Never>?
-    private var screensShowingTheLine = 0
     private var backgroundObserver: NSObjectProtocol?
 
-    /// Whether a sender screen is showing the check's line, so a problem needs no banner.
-    var isLineOnScreen: Bool { screensShowingTheLine > 0 }
+    /// A sender screen drew the line for this link, or took it away. A problem found while no screen draws its line goes
+    /// to the banner, so it is never lost; one found while the line is drawn is read there and announced.
+    func lineDrawn(_ id: String?) {
+        guard let id else { return }
+        drawnLines[id, default: 0] += 1
+    }
 
-    func lineScreenAppeared() { screensShowingTheLine += 1 }
-    func lineScreenDisappeared() { screensShowingTheLine = max(0, screensShowingTheLine - 1) }
+    func lineHidden(_ id: String?) {
+        guard let id, let count = drawnLines[id] else { return }
+        drawnLines[id] = count > 1 ? count - 1 : nil
+    }
 
-    /// Starts the check for a link just made, or asks for it to wait. Returns the link's key for its line.
+    func isLineDrawn(for id: String) -> Bool { drawnLines[id] != nil }
+
+    /// Whether the banner already said this link's problem, so the line is not announced as well.
+    func bannerWasShown(for id: String) -> Bool { bannered.contains(id) }
+
+    /// Starts the check for a link just made, or asks for it to wait. Returns the link's key for its line. The phone's
+    /// network state is read first: the monitor's first report can lag the first link by a moment, and a check must not
+    /// start on a guess that the phone is online.
     @discardableResult
     func check(link: URL, title: String, packetBytes: Int) -> String? {
         guard let id = ShareLinkPlayCheck.linkID(for: link) else { return nil }
         startWatchingTheNetworkAndTheBackground()
         jobs[id] = Job(link: link, title: title, packetBytes: packetBytes)
+        Task { [weak self] in
+            await self?.waitForFirstNetworkReport()
+            self?.admit(id)
+        }
+        return id
+    }
+
+    private func waitForFirstNetworkReport() async {
+        var waited = 0
+        while !connectivity.hasReported, waited < 20 {
+            try? await Task.sleep(for: .milliseconds(50))
+            waited += 1
+        }
+    }
+
+    private func admit(_ id: String) {
+        guard jobs[id] != nil else { return }
         let network = ShareLinkPlayCheck.Network(isOnline: !connectivity.isOffline, isLowDataMode: connectivity.isConstrained)
         switch queue.request(linkID: id, network: network) {
         case .start:
@@ -628,7 +673,6 @@ final class ShareLinkPlayChecker: ObservableObject {
             break
         }
         publish()
-        return id
     }
 
     private func startWatchingTheNetworkAndTheBackground() {
@@ -650,9 +694,12 @@ final class ShareLinkPlayChecker: ObservableObject {
     private func begin(_ id: String) {
         guard let job = jobs[id] else { return }
         startedAt = .now
-        let runner = ShareLinkPlayCheckRunner(link: job.link) { [weak self] event in
-            self?.handle(event, for: id)
-        }
+        // One page read and one audio read for each link, however many times its check runs.
+        let runner = ShareLinkPlayCheckRunner(
+            link: job.link,
+            allowRead: { [weak self] request in self?.allowRead(request, for: id) ?? false },
+            onEvent: { [weak self] event in self?.handle(event, for: id) }
+        )
         self.runner = runner
         timeLimit?.cancel()
         timeLimit = Task { [weak self] in
@@ -661,6 +708,10 @@ final class ShareLinkPlayChecker: ObservableObject {
             self?.handle(.timedOut, for: id)
         }
         Task { await runner.start() }
+    }
+
+    private func allowRead(_ request: ShareLinkPlayCheck.ReadRequest, for id: String) -> Bool {
+        readBudgets[id, default: ShareLinkPlayCheck.ReadBudget()].allow(request)
     }
 
     private func handle(_ event: ShareLinkPlayCheck.Event, for id: String) {
@@ -688,7 +739,8 @@ final class ShareLinkPlayChecker: ObservableObject {
         guard let job = jobs[id], let outcome = queue.outcome(for: id) else { return }
         let milliseconds = startedAt.map { Int($0.duration(to: .now) / .milliseconds(1)) } ?? 0
         recordDiagnostic("share.playcheck", ShareLinkPlayCheck.diagnosticFields(for: outcome, milliseconds: milliseconds, packetBytes: job.packetBytes))
-        if !isLineOnScreen, let text = ShareLinkPlayCheck.bannerText(for: outcome, title: job.title) {
+        if !isLineDrawn(for: id), let text = ShareLinkPlayCheck.bannerText(for: outcome, title: job.title) {
+            bannered.insert(id)
             showWarning(text)
         }
     }
@@ -698,6 +750,7 @@ extension ShareLinkPlayChecker {
     /// Joins the checker to the app: a problem found with no sender screen showing becomes a warning banner, and every
     /// finished check leaves one Diagnostics line. The model is held weakly.
     func connect(to model: Gate1AppModel) {
+        connectivity = model.connectivity
         showWarning = { [weak model] text in
             model?.presentFeedback(UserFeedbackEvent(kind: .warning, message: text))
         }
@@ -711,6 +764,7 @@ extension ShareLinkPlayChecker {
 /// signal. A problem has a heading and a remedy; every other line has only a heading.
 struct ShareLinkPlayCheckLineView: View {
     let line: ShareLinkPlayCheck.Line
+    let linkID: String?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -734,6 +788,13 @@ struct ShareLinkPlayCheckLineView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(line.accessibilityLabel)
         .accessibilityIdentifier("build23.sender.share.link.playcheck")
+        // The checker needs to know which link's line a screen is drawing, to send a problem to the banner when none is.
+        .onAppear { ShareLinkPlayChecker.shared.lineDrawn(linkID) }
+        .onChange(of: linkID) { old, new in
+            ShareLinkPlayChecker.shared.lineHidden(old)
+            ShareLinkPlayChecker.shared.lineDrawn(new)
+        }
+        .onDisappear { ShareLinkPlayChecker.shared.lineHidden(linkID) }
     }
 
     @ViewBuilder

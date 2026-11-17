@@ -49,7 +49,9 @@ extension ShareLinkPlayCheck {
             if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") || host.hasSuffix(".internal") { return false }
             // An address of the phone's own network is not a publisher: a name has a letter, an address has digits and dots or colons.
             if host.contains(":") { return false }
-            if host.allSatisfy({ $0.isNumber || $0 == "." }) { return false }
+            // Including the spellings CFNetwork also resolves as an address: `0x7f.0.0.1`, `2130706433`, `0177.0.0.1`.
+            let pieces = host.split(separator: ".", omittingEmptySubsequences: false)
+            if pieces.allSatisfy({ $0.hasPrefix("0x") || (!$0.isEmpty && $0.allSatisfy(\.isNumber)) }) { return false }
             return host.contains(".")
         }
 
