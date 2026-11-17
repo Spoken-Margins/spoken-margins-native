@@ -51,10 +51,12 @@ final class AppColorContrastAuditFindingsTests: XCTestCase {
         XCTAssertEqual(try ratio("my Margin row label on coral at 0.08 over bone", "light"), 4.44, accuracy: 0.01)
     }
 
-    /// #3731: white on the system orange and blue, from Apple's published values.
-    func testTheWatchPlateFindingsAreMeasured() throws {
-        XCTAssertEqual(try ratio("watch session plate label", "dark"), 2.06, accuracy: 0.01)
-        XCTAssertEqual(try ratio("watch episode and Record plate label", "dark"), 3.65, accuracy: 0.01)
+    /// #3731: the Watch's plates were white on the system orange (2.06:1) and blue (3.65:1). Now a dark label on the
+    /// orange and a deeper blue under white.
+    func testTheWatchPlatesAreReadable() throws {
+        XCTAssertGreaterThanOrEqual(try ratio("watch session plate label", "dark"), 8.0)
+        XCTAssertGreaterThanOrEqual(try ratio("watch episode plate label", "dark"), 5.7)
+        XCTAssertGreaterThanOrEqual(try ratio("watch record plate label", "dark"), 5.7)
     }
 
     /// Each finding is a known failure until its own issue fixes it, so a fix that works has to delete the entry.
@@ -383,8 +385,7 @@ final class AppColorUsageGuardTests: XCTestCase {
         "LiveActivityTourPreview.swift": 1, "LiveSessionActivityWidget.swift": 8, "MiniPlayer.swift": 1,
         "PinnedMarginCardView.swift": 4, "PlaybackFeedbackTagView.swift": 3, "PlaybackLivePassageView.swift": 1,
         "PlaybackMarginRowView.swift": 1, "PlaybackMarginTranscriptionStatusView.swift": 1, "PlaybackPositionSlider.swift": 1,
-        "PlaybackScreen.swift": 6, "SpokenMarginsWatchApp.swift": 5,
-        "WatchUntetheredView.swift": 28
+        "PlaybackScreen.swift": 6, "WatchUntetheredView.swift": 28
     ]
 
     private func systemColorUses() throws -> [String: Int] {
