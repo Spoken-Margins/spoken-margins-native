@@ -389,7 +389,8 @@ final class AppColorUsageGuardTests: XCTestCase {
     func testLiveSessionDestructiveButtonsUseTheDangerTokenAndKeepTheirIcon() throws {
         // Only `LiveSessionView.swift`: its cards are filled with `watchControl`. The Margin detail's Delete has its own
         // button style on its own surface.
-        let view = try XCTUnwrap(try appSwiftFiles().first { $0.lastPathComponent == "LiveSessionView.swift" })
+        let files = try appSwiftFiles()
+        let view = try XCTUnwrap(files.first { $0.lastPathComponent == "LiveSessionView.swift" })
         let text = try collapsedText(view)
         XCTAssertGreaterThan(text.components(separatedBy: "role: .destructive").count - 1, 1, "the scan must see Discard Session and its dialog")
         XCTAssertEqual(try Self.untintedDestructiveButtons(in: text), [], "tint it with AppColors.watchDanger")
