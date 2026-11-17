@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { devices, expect, test, type BrowserContext, type Page, type Request } from '@playwright/test';
 import { readPacket } from '../src/packet/read.ts';
 import { listZip } from '../src/packet/zip.ts';
-import { seconds, serveAudio, serveFixtures, shot } from './fixtures.ts';
+import { nowTab, seconds, serveAudio, serveFixtures, shot, startFromBeginning } from './fixtures.ts';
 
 const STUB = 'http://127.0.0.1:4174';
 const vector = JSON.parse(
@@ -68,12 +68,15 @@ async function journey(page: Page, info: { project: { name: string } } & Paramet
   await expect(arrival.getByText('2 Margins', { exact: false })).toBeVisible();
   // One of the two Margins is written, so "Margin" is explained in its second version (2026-11-02 call).
   await expect(arrival.getByText('A Margin is a note Web fixture left at a moment in this episode. You’ll hear each one there.')).toBeVisible();
-  await expect(arrival.getByText('Starts at the beginning. Web fixture’s Margins play when the episode reaches them.')).toBeVisible();
+  // The preview lists the Margins, each with its own start, and pins the two starts at the bottom (part of #3216).
+  await expect(arrival.getByTestId('mc-row')).toHaveCount(2);
+  await expect(arrival.getByRole('button', { name: 'Start with this Margin' })).toHaveCount(2);
+  await expect(arrival.getByRole('button', { name: 'Start with unheard Margins' })).toBeVisible();
   // One app link, to the join guide; nobody is told to ask for an invite (2026-11-09 call, #3783).
   await expect(arrival.getByRole('link', { name: 'Get Spoken Margins for iPhone' })).toHaveAttribute('href', 'https://spokenmargins.com/join');
   await expect(arrival.getByText('for an invite', { exact: false })).toHaveCount(0);
   await expect(arrival.getByRole('link', { name: 'Report this link' })).toHaveAttribute('href', new RegExp(`/l/vectorvoice01\\?report$`));
-  const play = arrival.getByRole('button', { name: 'Play' });
+  const play = arrival.getByRole('button', { name: 'Start from the beginning' });
   const box = await play.boundingBox();
   expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
   await shot(page, info as never, `${label}-1-arrival`);
@@ -83,6 +86,9 @@ async function journey(page: Page, info: { project: { name: string } } & Paramet
   await play.click();
   const playing = page.getByRole('dialog', { name: EPISODE });
   await expect(playing).toBeVisible();
+  // A friend's unheard Margins open Now Playing on its Margins tab; the countdown card is on Now.
+  await expect(playing.getByRole('tab', { name: /Margins/ })).toHaveAttribute('aria-selected', 'true');
+  await nowTab(page);
   await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThan(0.3);
   expect(await audioTime(page)).toBeLessThan(10);
   const cue = playing.getByTestId('margin-cue');
@@ -114,7 +120,7 @@ test('saving a Margin on a friend\u2019s item says what Share does with it, unti
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: EPISODE });
   await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
   await playing.getByRole('button', { name: 'Write a Margin' }).click();
@@ -159,7 +165,7 @@ test('the reply list has one Select all / Select none button, and none for a sin
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: EPISODE });
   const write = async (words: string) => {
     await playing.getByRole('button', { name: 'Write a Margin' }).click();
@@ -194,7 +200,7 @@ test('the name typed in Share goes on the file, is kept for next time, and a bla
   const page = await friendPage(context);
   const openShare = async () => {
     await page.goto(LINK);
-    await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+    await startFromBeginning(page);
     return page.getByRole('dialog', { name: EPISODE });
   };
   const savedFile = async (playing: Page) => {
@@ -241,7 +247,7 @@ test('a Margin written while a friend’s shows answers it: the row says so, the
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: EPISODE });
   // Nothing has played yet, so a Margin now answers nothing: no row.
   await playing.getByRole('button', { name: 'Write a Margin' }).click();
@@ -284,7 +290,7 @@ test('× before saving: the Margin is the listener’s own, the file has no repl
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: EPISODE });
   // The episode is playing and the countdown is up before the clock is moved, so the seek is not overwritten by the page's own resume.
   await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
@@ -327,7 +333,7 @@ test('Record stops the friend’s clip so the microphone does not hear it, names
   });
   const page = await friendPage(context);
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: EPISODE });
   // The friend's spoken Margin (2:05) is playing: the card says so, and the episode waits for the clip.
   // The episode is playing and the countdown is up before the clock is moved, so the seek is not overwritten by the page's own resume.
@@ -364,7 +370,7 @@ test('Record stops the friend’s clip so the microphone does not hear it, names
 /** Opens the link, waits for the friend's written Margin (0:30) to show, and writes `words` while it does: a saved reply. */
 async function saveReply(page: Page, words: string): Promise<Page> {
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: EPISODE });
   // The episode is playing and the countdown is up before the clock is moved, so the seek is not overwritten by the page's own resume.
   await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
@@ -413,7 +419,7 @@ test('a Margin saved after × is "Not a reply" in its row, with a way back (#410
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: EPISODE });
   await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
   await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 28; });
@@ -448,7 +454,7 @@ test('Reply on a friend’s row moves to its moment and opens the composer answe
   });
   const page = await friendPage(context);
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: EPISODE });
   await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
   // Far from either Margin and not in a reply window: Record would answer nothing. The row's Reply answers the 2:05 one.
@@ -480,7 +486,7 @@ test('Pause while the friend’s clip is playing holds it with its card; Play ca
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: EPISODE });
   // The episode is playing and the countdown is up before the clock is moved, so the seek is not overwritten by the page's own resume.
   await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
@@ -512,7 +518,7 @@ test('a browser that refuses the share sheet: Send goes, Save as a file stays, a
   });
   const page = await friendPage(context);
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: EPISODE });
   await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
   await playing.getByRole('button', { name: 'Write a Margin' }).click();
@@ -535,7 +541,7 @@ test('after the last Margin has been heard, the card stops saying the sender is 
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: EPISODE });
   await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
   // Just before the second Margin (spoken, at 2:05), rather than sitting through two minutes of playback.
@@ -600,7 +606,7 @@ test('when the episode can’t load: one problem toast, one sentence, and a butt
   // The enclosure answers 404, as a dead or geo-blocked episode address does.
   await page.route('https://example.com/podcast/**', (route) => route.fulfill({ status: 404, body: 'Not found', headers: { 'content-type': 'text/html' } }));
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
 
   const playing = page.getByRole('dialog', { name: EPISODE });
   const cue = playing.getByTestId('margin-cue');
@@ -655,7 +661,7 @@ test('when the episode can’t load and the browser refuses a clip that starts l
   await serveFixtures(page);
   await page.route('https://example.com/podcast/**', (route) => route.fulfill({ status: 404, body: 'Not found', headers: { 'content-type': 'text/html' } }));
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: EPISODE });
   await playing.getByTestId('margin-cue').getByRole('button', { name: 'Hear Web fixture’s Margins' }).click();
   const arrived = playing.getByTestId('arrived-margin');
@@ -670,7 +676,7 @@ test('a double tap on Select all and on a star ends where the buttons say, not w
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: EPISODE });
   await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture’s first Margin in');
   for (const words of ['First note.', 'Second note.', 'Third note.']) {
@@ -720,7 +726,7 @@ test('star two of four Margins and Share starts only those ticked and writes onl
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: EPISODE });
   await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture’s first Margin in');
   // Four Margins before the friend's first one at 0:30, so none answers it: the list is "others", and stars decide.

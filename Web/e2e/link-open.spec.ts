@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page, type Request } from '@playwright/test';
-import { FEED_ORIGIN, seconds, serveAudio, serveFixtures, shot } from './fixtures.ts';
+import { FEED_ORIGIN, seconds, serveAudio, serveFixtures, shot, startFromBeginning } from './fixtures.ts';
 
 const STUB = 'http://127.0.0.1:4174';
 const vector = JSON.parse(
@@ -65,7 +65,7 @@ test('a link opens on its arrival page; Play starts the episode at the beginning
   // Nothing plays and nothing is stored until the friend taps Play.
   await expect(page.locator('.now-playing')).toHaveCount(0);
 
-  await arrival.getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const playing = page.getByRole('dialog', { name: FIXTURE_EPISODE });
   await expect(playing).toBeVisible();
   // From the beginning, not from the first Margin (it sits at 0:30): the cue counts down to it.
