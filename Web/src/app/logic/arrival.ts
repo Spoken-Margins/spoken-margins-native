@@ -5,6 +5,7 @@
 import { formatClock } from '../../shared/clock.ts';
 import type { Episode, Margin, PlaybackPosition } from '../../shared/model.ts';
 import type { PacketRead } from '../ports.ts';
+import { isSubstackPostUrl } from '../../sources/substack.ts';
 import { findEpisode } from './import.ts';
 import { listenState } from './library.ts';
 import { senderNameOrNone } from './reply-words.ts';
@@ -59,6 +60,17 @@ export function possessive(name: string): string {
 export function senderInitial(sender: string | undefined): string {
   const first = Array.from(senderNameOrNone(sender) ?? '')[0];
   return first ? first.toUpperCase() : '•';
+}
+
+/**
+ * The Margins a friend left on an article's words that this browser can play (#4421): they need audio for the
+ * article, which is the episode's own address or, for a Substack post, the post's voice, looked up when the friend taps
+ * Play. On any other article there is no voice to play them on, so none counts and the page is the text-only card.
+ */
+export function playableArticleMargins(read: Pick<PacketRead, 'episode' | 'percentMargins'>): Margin[] {
+  const { audioUrl, pageUrl } = read.episode;
+  if (!audioUrl && !(pageUrl && isSubstackPostUrl(pageUrl))) return [];
+  return read.percentMargins.map((p) => p.margin);
 }
 
 export interface ArrivalFacts {

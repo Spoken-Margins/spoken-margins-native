@@ -72,7 +72,7 @@ private struct TimelineRailRow: View, Equatable {
                     if isCurrent {
                         Label(entry.currentLabel, systemImage: "speaker.wave.2.fill")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(AppColors.evergreen)
+                            .foregroundStyle(AppColors.dynamicColor(TimelineRowPalette.currentLabelColor))
                     }
                     Text(entry.title)
                         .font(.headline)
@@ -90,11 +90,12 @@ private struct TimelineRailRow: View, Equatable {
                 }
                 .padding(15)
                 .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
-                .background(isCurrent ? AppColors.evergreen.opacity(0.12) : surfaceColor)
+                .background(surfaceColor)
                 .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 17, style: .continuous)
-                        .stroke(provenanceColor.opacity(entry.provenance == .assistantResponse ? 0.55 : 0.24), style: StrokeStyle(lineWidth: 1, dash: entry.provenance == .assistantResponse ? [5, 4] : []))
+                        .stroke(AppColors.dynamicColor(stroke.color).opacity(stroke.alpha),
+                                style: StrokeStyle(lineWidth: CGFloat(stroke.width), dash: stroke.dashed ? [5, 4] : []))
                 }
             }
             .buttonStyle(.plain)
@@ -125,22 +126,32 @@ private struct TimelineRailRow: View, Equatable {
         }
     }
 
+    private var rowKind: TimelineRowKind { entry.provenance.rowKind }
+
+    private var stroke: TimelineRowPalette.Stroke {
+        TimelineRowPalette.stroke(kind: rowKind, isCurrent: isCurrent)
+    }
+
     private var provenanceColor: Color {
-        switch entry.provenance {
-        case .source, .listeningMap: AppColors.evergreen
-        case .myMargin: AppColors.coral
-        case .userResponse: AppColors.ochreText
-        case .sharedMargin, .assistantResponse: AppColors.plum
-        }
+        AppColors.dynamicColor(TimelineRowPalette.labelColor(kind: rowKind))
     }
 
     private var surfaceColor: Color {
-        switch entry.provenance {
-        case .source: AppColors.panel
-        case .listeningMap: AppColors.evergreen.opacity(0.07)
-        case .myMargin: AppColors.coral.opacity(0.08)
-        case .userResponse: AppColors.ochre.opacity(0.08)
-        case .sharedMargin, .assistantResponse: AppColors.plum.opacity(0.07)
+        let fill = TimelineRowPalette.fill(kind: rowKind, isCurrent: isCurrent)
+        return AppColors.dynamicColor(fill.color).opacity(fill.alpha)
+    }
+}
+
+extension TimelineProvenance {
+    /// The palette kind of this row. Exhaustive on purpose: a new provenance has no colours until it is mapped here.
+    var rowKind: TimelineRowKind {
+        switch self {
+        case .source: .source
+        case .listeningMap: .listeningMap
+        case .myMargin: .myMargin
+        case .userResponse: .userResponse
+        case .sharedMargin: .sharedMargin
+        case .assistantResponse: .assistantResponse
         }
     }
 }

@@ -66,7 +66,93 @@ final class FollowingLengthAndArtworkTests: XCTestCase {
         <item><title>A</title><link>https://example.com/a</link><itunes:image href="https://example.com/episode-a.jpg"/></item>
         </channel></rss>
         """)
-        XCTAssertNil(parsed.imageURL)
+        XCTAssertNil(parsed.imageURL, "the show image stays the show's")
+    }
+
+    // MARK: Item images (#3864)
+
+    private func firstItemImage(_ itemXML: String, namespaces: String = "") throws -> String? {
+        let parsed = try parse("""
+        <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" \(namespaces)><channel><title>Show</title>
+        <itunes:image href="https://example.com/show.jpg"/>
+        <item><title>A</title><link>https://example.com/a</link>\(itemXML)</item>
+        </channel></rss>
+        """)
+        XCTAssertEqual(parsed.imageURL, "https://example.com/show.jpg", "the show image is unchanged by any item image")
+        return parsed.items.first?.imageURL
+    }
+
+    func testAnEpisodeImageIsTheItemImage() throws {
+        XCTAssertEqual(try firstItemImage(#"<itunes:image href="https://example.com/ep-a.jpg"/>"#), "https://example.com/ep-a.jpg")
+    }
+
+    func testAnItemWithNoImageHasNone() throws {
+        XCTAssertNil(try firstItemImage(""))
+    }
+
+    func testMediaThumbnailAndMediaContentImagesAreRead() throws {
+        XCTAssertEqual(try firstItemImage(#"<media:thumbnail url="https://example.com/thumb.jpg"/>"#), "https://example.com/thumb.jpg")
+        XCTAssertEqual(try firstItemImage(#"<media:content url="https://example.com/m.jpg" medium="image"/>"#), "https://example.com/m.jpg")
+        XCTAssertEqual(try firstItemImage(#"<media:content url="https://example.com/m.png" type="image/png"/>"#), "https://example.com/m.png")
+        XCTAssertNil(try firstItemImage(#"<media:content url="https://example.com/m.mp4" medium="video"/>"#), "a video is not a picture")
+    }
+
+    func testAnImageEnclosureIsTheItemImageAndAudioIsUnchanged() throws {
+        let parsed = try parse("""
+        <rss version="2.0"><channel><title>Blog</title>
+        <item><title>Post</title><link>https://example.com/p</link><enclosure url="https://example.com/cover.jpg" type="image/jpeg" length="1"/></item>
+        <item><title>Ep</title><link>https://example.com/e</link><enclosure url="https://example.com/e.mp3" type="audio/mpeg" length="1"/></item>
+        </channel></rss>
+        """)
+        XCTAssertEqual(parsed.items[0].imageURL, "https://example.com/cover.jpg")
+        XCTAssertNil(parsed.items[0].audioURL, "an image is never the audio")
+        XCTAssertNil(parsed.items[1].imageURL)
+        XCTAssertEqual(parsed.items[1].audioURL, "https://example.com/e.mp3")
+    }
+
+    func testItemImagePrecedenceAndHttpsOnly() throws {
+        let all = #"""
+        <enclosure url="https://example.com/enc.jpg" type="image/jpeg"/><media:content url="https://example.com/content.jpg" medium="image"/>
+        <media:thumbnail url="https://example.com/thumb.jpg"/><itunes:image href="https://example.com/itunes.jpg"/>
+        """#
+        XCTAssertEqual(try firstItemImage(all), "https://example.com/itunes.jpg")
+        XCTAssertEqual(try firstItemImage(#"<itunes:image href="http://example.com/plain.jpg"/><media:thumbnail url="https://example.com/thumb.jpg"/>"#),
+                       "https://example.com/thumb.jpg", "an http image is dropped, so the next candidate wins")
+        XCTAssertNil(try firstItemImage(#"<itunes:image href="http://example.com/plain.jpg"/>"#))
+        XCTAssertNil(try firstItemImage(#"<itunes:image href="/relative.jpg"/>"#))
+        XCTAssertNil(try firstItemImage(#"<itunes:image href="  "/>"#))
+    }
+
+    func testAtomEntryImages() throws {
+        let parsed = try parse("""
+        <feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/"><title>Blog</title>
+        <entry><title>A</title><id>a</id><link href="https://example.com/a"/><content type="html">&lt;p&gt;hi&lt;/p&gt;</content>
+        <media:thumbnail url="https://example.com/a-thumb.jpg"/></entry>
+        <entry><title>B</title><id>b</id><link href="https://example.com/b"/><link rel="enclosure" type="image/png" href="https://example.com/b.png"/></entry>
+        <entry><title>C</title><id>c</id><link href="https://example.com/c"/><content type="html">text</content></entry></feed>
+        """)
+        XCTAssertEqual(parsed.items.map(\.imageURL), ["https://example.com/a-thumb.jpg", "https://example.com/b.png", nil])
+    }
+
+    func testAnImageIsNotLeakedToTheNextItem() throws {
+        let parsed = try parse("""
+        <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel><title>Show</title>
+        <item><title>A</title><link>https://example.com/a</link><itunes:image href="https://example.com/a.jpg"/></item>
+        <item><title>B</title><link>https://example.com/b</link></item></channel></rss>
+        """)
+        XCTAssertEqual(parsed.items.map(\.imageURL), ["https://example.com/a.jpg", nil])
+    }
+
+    func testJSONFeedItemImages() throws {
+        let parsed = try parse(#"""
+        {"version":"https://jsonfeed.org/version/1.1","title":"J","icon":"https://example.com/j.png","items":[
+        {"id":"1","url":"https://example.com/1","image":"https://example.com/1.jpg","banner_image":"https://example.com/1b.jpg"},
+        {"id":"2","url":"https://example.com/2","banner_image":"https://example.com/2b.jpg"},
+        {"id":"3","url":"https://example.com/3","image":"http://example.com/3.jpg"},
+        {"id":"4","url":"https://example.com/4"}]}
+        """#)
+        XCTAssertEqual(parsed.imageURL, "https://example.com/j.png")
+        XCTAssertEqual(parsed.items.map(\.imageURL), ["https://example.com/1.jpg", "https://example.com/2b.jpg", nil, nil])
     }
 
     func testAtomUsesTheLogoThenTheIcon() throws {

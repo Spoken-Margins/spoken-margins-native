@@ -80,6 +80,34 @@ final class ArtworkThumbnailLoaderTests: XCTestCase {
         XCTAssertEqual(log.count, 1, "after a relaunch the small copy on disk is used, not the original")
     }
 
+    /// #3864: the Lock Screen card shows the picture far larger than a row does. It asks for its own size, the two sizes
+    /// are cached apart, and a row's thumbnail is still the small one.
+    func testTheNowPlayingSizeIsLargerAndCachedApartFromTheRowsThumbnail() async throws {
+        let directory = try temporaryDirectory()
+        let source = try writeLargeJPEG(in: directory)
+        let thumbnails = directory.appending(path: "thumbnails", directoryHint: .isDirectory)
+        let log = ReadLog()
+        let loader = makeLoader(diskDirectory: thumbnails, log: log)
+
+        let largeLoaded = await loader.thumbnail(for: source, maxPixelSize: ArtworkThumbnailLoader.nowPlayingPixelSize)
+        let large = try XCTUnwrap(largeLoaded?.cgImage)
+        XCTAssertLessThanOrEqual(max(large.width, large.height), ArtworkThumbnailLoader.nowPlayingPixelSize)
+        XCTAssertGreaterThan(max(large.width, large.height), ArtworkThumbnailLoader.maxPixelSize, "bigger than a row's thumbnail")
+        XCTAssertNil(loader.cachedThumbnail(for: source), "the row's thumbnail was not made by the large load")
+        XCTAssertNotNil(loader.cachedThumbnail(for: source, maxPixelSize: ArtworkThumbnailLoader.nowPlayingPixelSize))
+
+        let smallLoaded = await loader.thumbnail(for: source)
+        let small = try XCTUnwrap(smallLoaded?.cgImage)
+        XCTAssertLessThanOrEqual(max(small.width, small.height), ArtworkThumbnailLoader.maxPixelSize, "a row still gets the small one")
+        XCTAssertEqual(log.count, 2, "each size is its own load")
+
+        let relaunched = makeLoader(diskDirectory: thumbnails, log: log)
+        let diskLoaded = await relaunched.thumbnail(for: source, maxPixelSize: ArtworkThumbnailLoader.nowPlayingPixelSize)
+        let fromDisk = try XCTUnwrap(diskLoaded?.cgImage)
+        XCTAssertGreaterThan(max(fromDisk.width, fromDisk.height), ArtworkThumbnailLoader.maxPixelSize, "the large copy on disk is used after a relaunch")
+        XCTAssertEqual(log.count, 2)
+    }
+
     func testRowsAskingForTheSameArtworkAtOnceShareOneLoad() async throws {
         let directory = try temporaryDirectory()
         let source = try writeLargeJPEG(in: directory)

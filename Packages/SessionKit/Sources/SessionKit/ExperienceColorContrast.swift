@@ -382,23 +382,42 @@ public enum AppColorContrastAudit {
         )
     }
 
-    /// The Timeline rail's rows, which sit on bone: each row is a tint over bone, and the row's own words are drawn
-    /// on it (`PlaybackTimelineListView.swift`). The tints are the row fills there (#3734).
+    /// The Timeline rail's rows (`PlaybackTimelineListView.swift`), from `TimelineRowPalette`: each row is a fill over
+    /// what is behind the list, and the row's own words are drawn on it (#3734). The standalone screen sits on bone and
+    /// follows light and dark. The playback pane forces dark over the fixed listening plate, so its pairs are the dark
+    /// values in both appearances. Every kind has a title, a detail and a label pair, and the current row (one fill for
+    /// every kind) has its own set. A pair that two rows share is measured once.
     public static let timelineRowPairs: [Pair] = {
-        let rows: [(tint: String, color: AppDynamicRGB, alpha: Double, label: (name: String, color: AppDynamicRGB))] = [
-            ("evergreen", AppSemanticColorRGB.evergreen, 0.12, ("current row label", AppSemanticColorRGB.evergreen)),
-            ("evergreen", AppSemanticColorRGB.evergreen, 0.07, ("map row label", AppSemanticColorRGB.evergreen)),
-            ("coral", AppSemanticColorRGB.coral, 0.08, ("my Margin row label", AppSemanticColorRGB.coral)),
-            ("ochre", AppSemanticColorRGB.ochre, 0.08, ("response row label", AppSemanticColorRGB.ochreText)),
-            ("plum", AppSemanticColorRGB.plum, 0.07, ("shared Margin row label", AppSemanticColorRGB.plum))
+        func darkOnly(_ color: AppDynamicRGB) -> AppDynamicRGB { AppDynamicRGB(light: color.dark, dark: color.dark) }
+        let labelNames: [TimelineRowKind: String] = [
+            .source: "chapter row label", .listeningMap: "map row label", .myMargin: "my Margin row label",
+            .userResponse: "response row label", .sharedMargin: "shared Margin row label",
+            .assistantResponse: "assistant row label"
         ]
-        return rows.flatMap { row in
-            [
-                onTint("row title", foreground: AppSemanticColorRGB.text, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone"),
-                onTint("row detail", foreground: AppSemanticColorRGB.secondaryText, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone"),
-                onTint(row.label.name, foreground: row.label.color, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone")
+        let surfaces: [(baseName: String, base: AppDynamicRGB, map: (AppDynamicRGB) -> AppDynamicRGB)] = [
+            ("bone", AppSemanticColorRGB.bone, { $0 }),
+            ("listening background", AppSemanticColorRGB.listeningBackground, darkOnly)
+        ]
+        var seen = Set<String>()
+        var pairs: [Pair] = []
+        for surface in surfaces {
+            var rows: [(fill: TimelineRowPalette.Fill, labelName: String, label: AppDynamicRGB)] = [
+                (TimelineRowPalette.fill(kind: .source, isCurrent: true), "current row label", TimelineRowPalette.currentLabelColor)
             ]
+            for kind in TimelineRowKind.allCases {
+                rows.append((TimelineRowPalette.fill(kind: kind, isCurrent: false), labelNames[kind] ?? "\(kind.rawValue) row label",
+                             TimelineRowPalette.labelColor(kind: kind)))
+            }
+            for row in rows {
+                for (name, color) in [("row title", AppSemanticColorRGB.text), ("row detail", AppSemanticColorRGB.secondaryText),
+                                      (row.labelName, row.label)] {
+                    let pair = onTint(name, foreground: surface.map(color), tint: row.fill.token, tintColor: surface.map(row.fill.color),
+                                      alpha: row.fill.alpha, over: surface.base, baseName: surface.baseName)
+                    if seen.insert(pair.name).inserted { pairs.append(pair) }
+                }
+            }
         }
+        return pairs
     }()
 
     /// The Watch's plates: white label text on the system orange and blue (`WatchPlateButtonStyle` forces `.white`).
@@ -417,6 +436,21 @@ public enum AppColorContrastAudit {
         onTint("library row icon", foreground: AppSemanticColorRGB.evergreen, tint: "softGreen", tintColor: AppSemanticColorRGB.softGreen, alpha: 0.55, over: AppSemanticColorRGB.bone, baseName: "bone", minimumRatio: 3),
         onTint("selected chip label", foreground: AppSemanticColorRGB.text, tint: "evergreen", tintColor: AppSemanticColorRGB.evergreen, alpha: 0.16, over: AppSemanticColorRGB.bone, baseName: "bone"),
         onTint("current sentence text", foreground: AppSemanticColorRGB.white, tint: "listeningAccent", tintColor: AppSemanticColorRGB.listeningAccent, alpha: 0.18, over: AppSemanticColorRGB.listeningBackground, baseName: "listening background")
+    ]
+
+    /// The playback plate's two segmented controls (#3735): the tray over the listening plate, the selected pill over
+    /// the tray, and the words on each. The pill must read against the tray (3:1) and its words against the pill (4.5:1).
+    public static let playbackSegmentPairs: [Pair] = [
+        .init(name: "pane switch selected fill against tray", foreground: PlaybackSegmentPalette.paneSelectedPill,
+              background: PlaybackSegmentPalette.tray, minimumRatio: 3),
+        .init(name: "pane switch selected label", foreground: PlaybackSegmentPalette.selectedLabel,
+              background: PlaybackSegmentPalette.paneSelectedPill, minimumRatio: 4.5),
+        .init(name: "filter selected fill against tray", foreground: PlaybackSegmentPalette.filterSelectedPill,
+              background: PlaybackSegmentPalette.tray, minimumRatio: 3),
+        .init(name: "filter selected label", foreground: PlaybackSegmentPalette.selectedLabel,
+              background: PlaybackSegmentPalette.filterSelectedPill, minimumRatio: 4.5),
+        .init(name: "segment unselected label on tray", foreground: PlaybackSegmentPalette.unselectedLabel,
+              background: PlaybackSegmentPalette.tray, minimumRatio: 4.5)
     ]
 
     /// The app's one tint (#3733). `evergreen` is the asset catalog's global accent and the root `.tint`, so every
@@ -547,7 +581,7 @@ public enum AppColorContrastAudit {
 
     public static var allPairs: [Pair] {
         textBackgroundPairs + nonTextPairs + increasedContrastEdgePairs + timelineRowPairs + watchPlatePairs + tintedFillPairs + accentPairs + readerHighlightPairs + pressedFillPairs + liveActivityPairs
-            + shareExtensionPairs + safariPopupPairs
+            + shareExtensionPairs + safariPopupPairs + playbackSegmentPairs
     }
 
     /// A pair that fails today, in an appearance, with the issue that fixes it. The audit prints these
@@ -580,7 +614,13 @@ public enum AppColorContrastAudit {
         .init(pair: "watch session plate label", appearance: "light", since: "2026-11-08", fixedBy: "#3731"),
         .init(pair: "watch session plate label", appearance: "dark", since: "2026-11-08", fixedBy: "#3731"),
         .init(pair: "watch episode and Record plate label", appearance: "light", since: "2026-11-08", fixedBy: "#3731"),
-        .init(pair: "watch episode and Record plate label", appearance: "dark", since: "2026-11-08", fixedBy: "#3731")
+        .init(pair: "watch episode and Record plate label", appearance: "dark", since: "2026-11-08", fixedBy: "#3731"),
+        // The selected pane's pill is 1.69:1 against its tray, and the selected filter's white words are 3.41:1 on its
+        // pill (#3735). Both appearances are the same: the plate is fixed.
+        .init(pair: "pane switch selected fill against tray", appearance: "light", since: "2026-11-13", fixedBy: "#3735"),
+        .init(pair: "pane switch selected fill against tray", appearance: "dark", since: "2026-11-13", fixedBy: "#3735"),
+        .init(pair: "filter selected label", appearance: "light", since: "2026-11-13", fixedBy: "#3735"),
+        .init(pair: "filter selected label", appearance: "dark", since: "2026-11-13", fixedBy: "#3735")
     ]
 
 

@@ -50,6 +50,27 @@ final class ItemDerivedRecordsTests: XCTestCase {
         XCTAssertEqual(cold, try store.listItems(includeDeleted: true).map(LibraryItemSummary.init), "what the whole items say")
     }
 
+    /// #3864: the item pictures match items to followed-feed entries by GUID and page address, read from the same kept
+    /// cuts as the Library list, so no item's text is decoded and trashed items are left out.
+    func testArtworkKeysAreEveryStoredItemsIdGuidShowAndAddressWithoutReadingText() throws {
+        let fixture = try build()
+        let store = try fixture.openStore()
+        var episode = try store.loadItem(id: fixture.articleItemId)
+        episode.episodeGUID = "guid-artwork"
+        episode.sourceURL = "https://example.com/artwork-post"
+        try store.saveItem(episode)
+        let keys = try store.listItemArtworkKeys()
+
+        XCTAssertEqual(keys, try store.listItems(includeDeleted: true).map(ItemArtworkStore.ItemKey.init), "every stored item, in the list's order")
+        XCTAssertEqual(keys.first { $0.id == episode.id }, .init(id: episode.id, episodeGUID: "guid-artwork", sourceURL: "https://example.com/artwork-post"))
+        let meter = StoreReadMeter()
+        _ = try fixture.openStore(meter: meter).listItemArtworkKeys()
+        XCTAssertEqual(meter.totals(for: "listItemArtworkKeys()").rows, keys.count)
+
+        try store.moveItemToTrash(id: episode.id)
+        XCTAssertNotNil(try store.listItemArtworkKeys().first { $0.id == episode.id }, "a trashed item keeps its key, so its picture record survives until it is gone for good")
+    }
+
     func testAWarmReadNeverTouchesTheItemPayloads() throws {
         let fixture = try build()
         let store = try fixture.openStore()

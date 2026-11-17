@@ -77,11 +77,30 @@ public final class NowPlayingInfoOwnership: @unchecked Sendable {
         #endif
     }()
 
+    /// `MPMediaItemPropertyArtwork`, the card's picture (#3864). Off iOS the constant may not exist, so the host tests
+    /// read the same name through the literal.
+    public static let artworkKey: String = {
+        #if canImport(MediaPlayer) && os(iOS)
+        return MPMediaItemPropertyArtwork
+        #else
+        return "artwork"
+        #endif
+    }()
+
     /// Every card written through the ledger carries the exclusion, so no writer can forget it.
     private static func excludingFromSuggestions(_ info: [String: Any]) -> [String: Any] {
         var info = info
         info[excludeFromSuggestionsKey] = true
         return info
+    }
+
+    /// What goes to the surface: the writer's dictionary, the exclusion, and the picture when the card is for the item
+    /// the picture was set for. A card for any other item, or for none, carries no picture, so the previous item's
+    /// picture is never shown for a new one (#3864).
+    private func surfaceInfo(_ info: [String: Any], itemId: String?) -> [String: Any] {
+        var surface = Self.excludingFromSuggestions(info)
+        if let itemId, let artwork, artwork.itemId == itemId { surface[Self.artworkKey] = artwork.value }
+        return surface
     }
 
     /// Transitions kept for Diagnostics. Writes by the holder that already has the card are counted, not listed: the
@@ -92,6 +111,13 @@ public final class NowPlayingInfoOwnership: @unchecked Sendable {
     private let now: @Sendable () -> Date
     private let lock = NSLock()
     private var holder: NowPlayingWriter?
+    /// The picture for one item, set by the app (an `MPMediaItemArtwork`, held as `Any` so this target builds off iOS).
+    /// One slot, so there is one owner of the card and an item change leaves no picture behind.
+    private var artwork: (itemId: String, value: Any)?
+    /// The card as the holder last wrote it, before the picture is added, and the item it is for: setting a picture
+    /// republishes it without waiting for the player's next tick.
+    private var lastInfo: [String: Any]?
+    private var lastItemId: String?
     private var events: [NowPlayingLedgerEvent] = []
     private var repeatedWrites: [NowPlayingWriter: Int] = [:]
 
@@ -107,12 +133,30 @@ public final class NowPlayingInfoOwnership: @unchecked Sendable {
         return holder
     }
 
-    /// Puts `info` on the surface and makes `writer` its holder.
-    public func write(_ info: [String: Any], as writer: NowPlayingWriter, detail: String = "") {
+    /// Sets the picture for `itemId`, or removes it with nil. Another item's picture is replaced, never kept. When the card
+    /// now on the surface is for this item, it is republished with the picture; the writer's other keys are unchanged
+    /// and the holder stays the same.
+    public func setArtwork(_ value: Any?, forItem itemId: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let value {
+            artwork = (itemId, value)
+        } else if artwork?.itemId == itemId {
+            artwork = nil
+        }
+        guard holder != nil, let lastInfo, lastItemId == itemId else { return }
+        sink.setNowPlayingInfo(surfaceInfo(lastInfo, itemId: itemId))
+    }
+
+    /// Puts `info` on the surface and makes `writer` its holder. `itemId` names the item the card is for, so its picture
+    /// can be added; a writer with no item (or a card that isn't an item's) leaves it nil.
+    public func write(_ info: [String: Any], as writer: NowPlayingWriter, itemId: String? = nil, detail: String = "") {
         lock.lock()
         defer { lock.unlock() }
         let before = holder
-        sink.setNowPlayingInfo(Self.excludingFromSuggestions(info))
+        lastInfo = info
+        lastItemId = itemId
+        sink.setNowPlayingInfo(surfaceInfo(info, itemId: itemId))
         holder = writer
         if before == writer {
             repeatedWrites[writer, default: 0] += 1
@@ -123,7 +167,7 @@ public final class NowPlayingInfoOwnership: @unchecked Sendable {
 
     /// Puts `info` on the surface only when nobody holds a card. Returns whether it was written.
     @discardableResult
-    public func writeIfUnheld(_ info: [String: Any], as writer: NowPlayingWriter, detail: String = "") -> Bool {
+    public func writeIfUnheld(_ info: [String: Any], as writer: NowPlayingWriter, itemId: String? = nil, detail: String = "") -> Bool {
         lock.lock()
         defer { lock.unlock() }
         let before = holder
@@ -131,7 +175,9 @@ public final class NowPlayingInfoOwnership: @unchecked Sendable {
             record(.writeSkipped, writer: writer, before: before, detail: detail)
             return false
         }
-        sink.setNowPlayingInfo(Self.excludingFromSuggestions(info))
+        lastInfo = info
+        lastItemId = itemId
+        sink.setNowPlayingInfo(surfaceInfo(info, itemId: itemId))
         holder = writer
         if before == writer {
             repeatedWrites[writer, default: 0] += 1
@@ -154,6 +200,8 @@ public final class NowPlayingInfoOwnership: @unchecked Sendable {
         }
         sink.setNowPlayingInfo(nil)
         holder = nil
+        lastInfo = nil
+        lastItemId = nil
         record(.clear, writer: writer, before: before, detail: detail)
         return true
     }

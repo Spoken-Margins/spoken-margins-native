@@ -4,7 +4,7 @@
 // Margins land in Following under the person who sent them (owner, 2026-10-17, #1507) and can play at once.
 // Plain TypeScript, so `npm run test:web` covers it (import.test.ts).
 import { formatClock } from '../../shared/clock.ts';
-import type { Episode, Margin, Show } from '../../shared/model.ts';
+import type { Episode, Margin, PercentMargin, Show } from '../../shared/model.ts';
 import { sharedWords } from '../../packet/write.ts';
 import { samePage } from '../../sources/substack.ts';
 import type { PacketRead } from '../ports.ts';
@@ -19,8 +19,13 @@ export interface PlacedImport {
   margins: Margin[];
   /** Where to start playing: the earliest Margin's moment. */
   landAt: number | undefined;
-  /** Margins on an article's text, which the web app can't place yet. */
+  /**
+   * Margins on an article's text that carry no rough place, so the web app can't place them. Those that do are in
+   * `pending`, to be placed once the audio that plays the article has a length (`placeByPercent`, #4421).
+   */
   skipped: number;
+  /** The article-text Margins with a rough place, aimed at `episode`, with the packet's unnamed sender named. */
+  pending: PercentMargin[];
   /** Margins already here (the same words at the same moment), left out so a backup opened twice adds nothing. */
   duplicates: number;
 }
@@ -110,7 +115,46 @@ export function placeImport(
   const placed = read.margins.map((m) => ({ ...m, episodeId: episode.id, ...(unnamedAuthor && !m.author?.trim() && { author: unnamedAuthor }) }));
   const margins = placed.filter((m) => !existing.some((e) => sameMargin(e, m, episode.title)));
   const landAt = placed.length ? Math.min(...placed.map((m) => m.atSeconds)) : undefined;
-  return { episode, newEpisode: !own, ...(show && { show }), margins, landAt, skipped: read.textMarginCount, duplicates: placed.length - margins.length };
+  const pending = read.percentMargins.map(({ margin, percent }) => ({
+    percent,
+    margin: { ...margin, episodeId: episode.id, ...(unnamedAuthor && !margin.author?.trim() && { author: unnamedAuthor }) },
+  }));
+  return {
+    episode,
+    newEpisode: !own,
+    ...(show && { show }),
+    margins,
+    landAt,
+    skipped: Math.max(0, read.textMarginCount - pending.length),
+    pending,
+    duplicates: placed.length - margins.length,
+  };
+}
+
+/** How near the end a Margin placed by percent may sit: a Margin on the very last moment would never be reached. */
+const END_ROOM_SECONDS = 1;
+
+/**
+ * Places a friend's article-text Margins on the audio that plays the article. The app's own Timeline puts a shared
+ * Margin it can't match at the sender's rough percent of its copy; this does the same on the audio's length, since the
+ * browser has no map from the article's words to the voice (#4421). `episode` is the one the audio belongs to, with its
+ * own `durationSeconds`: the length of the audio itself, never the sender's narration. A Margin already here (the same
+ * words at the same moment) is left out. With no usable length nothing can be placed.
+ */
+export function placeByPercent(
+  pending: readonly PercentMargin[],
+  episode: Pick<Episode, 'id' | 'title' | 'durationSeconds'>,
+  existing: readonly Margin[] = [],
+): Margin[] {
+  const length = episode.durationSeconds;
+  if (length === undefined || !Number.isFinite(length) || length <= 0) return [];
+  const last = Math.max(0, length - END_ROOM_SECONDS);
+  const placed = pending.map(({ margin, percent }) => ({
+    ...margin,
+    episodeId: episode.id,
+    atSeconds: Math.min(last, Math.max(0, (Math.min(100, Math.max(0, percent)) / 100) * length)),
+  }));
+  return placed.filter((m) => !existing.some((e) => sameMargin(e, m, episode.title))).sort((a, b) => a.atSeconds - b.atSeconds);
 }
 
 /** What the listener is told once the Margins are in. */
@@ -118,8 +162,11 @@ export function importSummary(placed: PlacedImport, sender: string | undefined):
   const count = placed.margins.length;
   const who = sender?.trim() ? ` from ${sender.trim()}` : '';
   const what = count === 1 ? '1 Margin' : `${count} Margins`;
-  const skipped = placed.skipped
-    ? ` ${placed.skipped === 1 ? '1 Margin is' : `${placed.skipped} Margins are`} on an article’s text, which the web app can’t open yet.`
+  // A Margin file opens no voice, so the Margins in it with a rough place stay unplaced here as well; only a share link
+  // looks the post's voice up when the friend taps Play (#4421).
+  const unopened = placed.skipped + placed.pending.length;
+  const skipped = unopened
+    ? ` ${unopened === 1 ? '1 Margin is' : `${unopened} Margins are`} on an article’s text, which the web app can’t open yet.`
     : '';
   const already = placed.duplicates
     ? ` ${placed.duplicates === 1 ? '1 Margin was' : `${placed.duplicates} Margins were`} already here.`
