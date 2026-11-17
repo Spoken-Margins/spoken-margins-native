@@ -79,6 +79,45 @@ final class PlaybackTimelineTests: XCTestCase {
         XCTAssertEqual(item.timelineSource.entries.map(\.role), roles, "Now and the reader still receive every retained role")
     }
 
+    /// #3895: a PDF's chapters fold. Folding the dense one hides its table and figure text, keeps every chapter row,
+    /// and a Margin the listener is taken to unfolds the chapter that held it.
+    func testFoldingAChapterHidesItsRowsAndKeepsTheNextChapterReachable() {
+        let text = "Intro.\n\nTable A | B\n\nText in figure\n\nSecond chapter body."
+        let tableStart = (text as NSString).range(of: "Table").location
+        let figureStart = (text as NSString).range(of: "Text in").location
+        let secondStart = (text as NSString).range(of: "Second").location
+        let document = StructuredDocument(
+            extraction: .init(engine: "test", version: 1, sourceSHA256: nil, pageCount: 2, textSHA256: nil),
+            text: text,
+            segments: [
+                .init(id: "table", role: .table, range: .init(start: tableStart, length: 9), pageIndex: 0),
+                .init(id: "figure", role: .figureText, range: .init(start: figureStart, length: 14), pageIndex: 0)
+            ], markers: [])
+        var item = ItemDetailState(id: "pdf", title: "Paper", text: text).includingTimelineSource(document)
+        item.chapters = [
+            Chapter(id: "c1", title: "1 Introduction", startChar: 0, endChar: secondStart, percent: 0),
+            Chapter(id: "c2", title: "2 Method", startChar: secondStart, endChar: text.count, percent: 70)
+        ]
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        let rows = entries.map(\.foldingRow)
+        XCTAssertEqual(entries.count, 4, "two chapters, the table and the figure text")
+        XCTAssertEqual([entries.first?.id, entries.last?.id], ["source.chapter.c1", "source.chapter.c2"])
+        XCTAssertEqual(rows.filter(\.isChapter).map(\.id), ["source.chapter.c1", "source.chapter.c2"],
+                       "only chapters open a section, not the rich source rows")
+
+        var folding = TimelineChapterFolding()
+        folding.toggle("source.chapter.c1", in: rows)
+        let visible = folding.visibleRows(in: rows).map(\.id)
+        XCTAssertTrue(visible.contains("source.chapter.c1") && visible.contains("source.chapter.c2"))
+        XCTAssertEqual(visible.count, 2, "the table and the figure text are folded under the first chapter")
+        XCTAssertEqual(folding.summary(forChapter: "source.chapter.c1", in: rows, currentIDs: [])?.hiddenCount, 2)
+
+        let tableRowID = entries.first { if case .sourceText(let e) = $0.action { return e.role == .table } else { return false } }?.id
+        XCTAssertNotNil(tableRowID)
+        XCTAssertTrue(folding.reveal(tableRowID ?? "", in: rows))
+        XCTAssertEqual(folding.visibleRows(in: rows).count, rows.count)
+    }
+
     /// #2032: pictures, embeds and links an imported Substack page kept are Timeline rows, in text order and
     /// labelled; a page that kept none shows none, and ordinary paragraphs still get no row of their own.
     func testTimelineShowsKeptPicturesEmbedsAndLinksAndNoEmptyRows() throws {
