@@ -976,26 +976,28 @@ class T3SetupTimeoutRerunTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def run_real_job(self, release, plans):
+    def run_real_job(self, release, plans, boot=None, clone=('U1', 'U2')):
         """The real wrapper and `_t3_on_claimed_device`; only lane_sim, the boot and the plans are mocked."""
         import lane_sim
         import lane_slots
         runs = mock.Mock(side_effect=plans)
+        boot = boot or (None, {'pressure': 'normal', 'pressure_waited': 0, 'boot_window': (0.0, 1.0)})
+        self.clones, self.boots = mock.Mock(side_effect=clone), mock.Mock(side_effect=boot if isinstance(boot, BaseException) else None, return_value=boot)
         with tempfile.TemporaryDirectory() as temporary, \
                 mock.patch.object(lane_sim, 'newest_runtime', return_value='com.apple.CoreSimulator.SimRuntime.iOS-26-5'), \
                 mock.patch.object(lane, 'prepare_t3_build', return_value=('PASS', [])), \
                 mock.patch.object(lane_slots, 'acquire_simulator_slot', return_value='slot'), \
                 mock.patch.object(lane_slots, 'release_handle'), \
                 mock.patch.object(lane, 'wait_for_quiet_runner', return_value=(0.0, 1.0)), \
-                mock.patch.object(lane_sim, 'clone_temporary', side_effect=['U1', 'U2']), \
+                mock.patch.object(lane_sim, 'clone_temporary', self.clones), \
                 mock.patch.object(lane_sim, 'start_watcher'), \
                 mock.patch.object(lane_sim, 'release', side_effect=release), \
                 mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
                 mock.patch.object(lane_sim, 'device_type', return_value='x.iPhone-17'), \
-                mock.patch.object(lane, 'boot_t3_device',
-                                  return_value=(None, {'pressure': 'normal', 'pressure_waited': 0, 'boot_window': (0.0, 1.0)})), \
+                mock.patch.object(lane, 'boot_t3_device', self.boots), \
                 mock.patch.object(lane, 'run_plans', runs):
             result = lane._run_t3_grouped({'app': ['T/A']}, 'pr4411-r2', Path(temporary))
+            self.logs = sorted(path.name for path in Path(temporary).iterdir())
         return result, runs.call_count
 
     FAILED_PLAN = ([lane.summarize_manifest({'steps': [{'name': 'xcode-tests', 'tests': {
@@ -1010,6 +1012,41 @@ class T3SetupTimeoutRerunTests(unittest.TestCase):
             [subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'U1'], 120)], [self.FAILED_PLAN, self.PASSED_PLAN])
         self.assertEqual((verdict, runs), ('FAIL', 1))
         self.assertTrue(any('could not be released' in line for line in details))
+
+    def test_a_boot_whose_own_shutdown_hangs_is_not_rerun(self):
+        # Audit on a0f3cc3, route A: lane_sim.stop() shuts the device down after a crash during boot; a hang there
+        # must not get around the flood by cloning again.
+        (verdict, where, ran, details, _, _), runs = self.run_real_job(
+            [None], [self.PASSED_PLAN], boot=subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'U1'], 120))
+        self.assertEqual((verdict, ran, runs, self.clones.call_count, self.boots.call_count),
+                         ('INCONCLUSIVE', 'nothing', 0, 1, 1))
+        self.assertIn("'shutdown', 'U1'", details[-1])
+
+    def test_a_release_that_hangs_after_a_boot_problem_keeps_the_boot_verdict_and_is_not_rerun(self):
+        # Audit on a0f3cc3, route B: the boot failed normally, then the job's own release timed out.
+        (verdict, where, ran, details, crashes, _), runs = self.run_real_job(
+            [subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'U1'], 120)], [self.PASSED_PLAN],
+            boot=('the device crashed during boot', {'pressure': 'normal', 'pressure_waited': 0}))
+        self.assertEqual((verdict, runs, self.clones.call_count, self.boots.call_count), ('INCONCLUSIVE', 0, 1, 1))
+        self.assertIn('did not boot: the device crashed during boot', details[-2])
+        self.assertIn('could not be released', details[-1])
+
+    def test_the_second_attempt_keeps_the_first_attempts_clone_log(self):
+        import lane_sim
+        calls = []
+
+        def clone(name, runtime, out=None):
+            calls.append(name)
+            out.write(f'attempt {len(calls)}\n')
+            if len(calls) == 1:
+                raise subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'U0'], 120)
+            return 'U2'
+
+        (verdict, *_), runs = self.run_real_job([None], [self.PASSED_PLAN], clone=clone)
+        self.assertEqual((verdict, runs), ('PASS', 1))
+        self.assertIn('simulator-clone.log', self.logs)
+        self.assertIn(f'simulator-clone{lane.SETUP_RERUN_SUFFIX}.log', self.logs)
+        self.assertIn(f'first-boot{lane.SETUP_RERUN_SUFFIX}.log', self.logs)
 
     def test_a_teardown_timeout_after_passing_tests_keeps_the_pass_and_does_not_rerun_them(self):
         (verdict, *_), runs = self.run_real_job(
