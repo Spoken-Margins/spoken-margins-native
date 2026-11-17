@@ -226,3 +226,8 @@ private struct ShownHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
+
+extension AppColors {
+    /// The unheard bar and dot (#3216), an audited token (`AppSemanticColorRGB.unheard`).
+    static let unheard = dynamicColor(AppSemanticColorRGB.unheard)
+}
