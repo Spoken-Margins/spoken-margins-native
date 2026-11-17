@@ -54,6 +54,7 @@ Paths are relative to the plan file.
 | `margins[].quote` | For an article: the words it's anchored to. |
 | `margins[].anchor` | A full `PortableAnchorEvidence`, used as is, for adversarial packets. |
 | `margins[].spoken` | `false` sends text only. Spoken is the default. |
+| `margins[].voiceFile` | A recording to send as the Margin's voice instead of `say` (any format AVFoundation reads, e.g. a WAV from another TTS engine). It is encoded as the app encodes a shared Margin: HE-AAC mono, 24 kbps, `.m4a`. |
 
 ## What it doesn't cover
 
