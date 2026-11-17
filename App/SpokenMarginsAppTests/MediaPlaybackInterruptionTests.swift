@@ -1018,10 +1018,17 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
             XCTAssertNil(model.pendingImportedCommentary, "nothing is offered while it plays")
             return false
         }
+        // The Margin that was waiting is not lost on the way: with the drain in the shared teardown it would be offered
+        // and dismissed during the jump, so the end of the voice would find nothing left.
+        XCTAssertEqual(model.pendingImportedCommentary?.interjection.id, "end-2",
+                       "the Margin that was waiting is offered once the one jumped to ends")
     }
 
     /// Done-when 4: a Margin that can't play at the end (its recording is gone from this phone) is finished with, and the
     /// next waiting Margin is offered, so the queue never stalls on one Margin. A Margin that can't play is not heard.
+    /// (This one and the skip test guard `skipPendingImportedCommentary` finishing a Margin and offering the next, the
+    /// path #4347's last audit fixed; the hide and jump tests are the ones that fail when the drain moves into the shared
+    /// teardown. The "reading fails" variant needs an audio-session failure and isn't covered here.)
     func testAMarginThatCantBePlayedAtTheEndIsFinishedWithAndTheNextIsOffered() throws {
         let fixture = try SharedMarginHearingFixture(
             itemID: "real-source", makeWAV: makeTestWAV, endMargins: [.recordingGone, .recordingGone, .playable])
