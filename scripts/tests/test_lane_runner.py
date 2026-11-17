@@ -969,6 +969,80 @@ class T3SetupTimeoutRerunTests(unittest.TestCase):
 
     PASS = ('PASS', 'cloned iPhone 17, iOS 26.5', '109 passed', ['109 tests'], 'none', '')
 
+    def setUp(self):
+        state = tempfile.TemporaryDirectory()
+        self.addCleanup(state.cleanup)
+        patcher = mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': state.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def run_real_job(self, release, plans):
+        """The real wrapper and `_t3_on_claimed_device`; only lane_sim, the boot and the plans are mocked."""
+        import lane_sim
+        import lane_slots
+        runs = mock.Mock(side_effect=plans)
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(lane_sim, 'newest_runtime', return_value='com.apple.CoreSimulator.SimRuntime.iOS-26-5'), \
+                mock.patch.object(lane, 'prepare_t3_build', return_value=('PASS', [])), \
+                mock.patch.object(lane_slots, 'acquire_simulator_slot', return_value='slot'), \
+                mock.patch.object(lane_slots, 'release_handle'), \
+                mock.patch.object(lane, 'wait_for_quiet_runner', return_value=(0.0, 1.0)), \
+                mock.patch.object(lane_sim, 'clone_temporary', side_effect=['U1', 'U2']), \
+                mock.patch.object(lane_sim, 'start_watcher'), \
+                mock.patch.object(lane_sim, 'release', side_effect=release), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane_sim, 'device_type', return_value='x.iPhone-17'), \
+                mock.patch.object(lane, 'boot_t3_device',
+                                  return_value=(None, {'pressure': 'normal', 'pressure_waited': 0, 'boot_window': (0.0, 1.0)})), \
+                mock.patch.object(lane, 'run_plans', runs):
+            result = lane._run_t3_grouped({'app': ['T/A']}, 'pr4411-r2', Path(temporary))
+        return result, runs.call_count
+
+    FAILED_PLAN = ([lane.summarize_manifest({'steps': [{'name': 'xcode-tests', 'tests': {
+        'T/A/testBad': {'status': 'failed'}}}]})], ['failed'], ['A (0 passed)'], [])
+    PASSED_PLAN = ([lane.summarize_manifest({'steps': [{'name': 'xcode-tests', 'tests': {
+        'T/A/test1': {'status': 'passed'}}}]})], ['verified'], ['A (1 passed)'], [])
+
+    def test_a_teardown_timeout_after_a_failing_test_keeps_the_fail_and_does_not_rerun_the_tests(self):
+        # #4438 review: release() shuts the clone down after the tests; its timeout must not replace the verdict
+        # with a second run that could pass.
+        (verdict, _, ran, details, _, _), runs = self.run_real_job(
+            [subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'U1'], 120)], [self.FAILED_PLAN, self.PASSED_PLAN])
+        self.assertEqual((verdict, runs), ('FAIL', 1))
+        self.assertTrue(any('could not be released' in line for line in details))
+
+    def test_a_teardown_timeout_after_passing_tests_keeps_the_pass_and_does_not_rerun_them(self):
+        (verdict, *_), runs = self.run_real_job(
+            [subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'U1'], 120)], [self.PASSED_PLAN, self.FAILED_PLAN])
+        self.assertEqual((verdict, runs), ('PASS', 1))
+
+    def test_a_clone_that_times_out_before_the_tests_is_rerun_through_the_real_job(self):
+        import lane_sim
+        calls = []
+
+        def clone(name, runtime, out=None):
+            calls.append(name)
+            if len(calls) == 1:
+                raise subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'U0'], 120)
+            return 'U2'
+
+        import lane_slots
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(lane_sim, 'newest_runtime', return_value='com.apple.CoreSimulator.SimRuntime.iOS-26-5'), \
+                mock.patch.object(lane, 'prepare_t3_build', return_value=('PASS', [])), \
+                mock.patch.object(lane_slots, 'acquire_simulator_slot', return_value='slot'), \
+                mock.patch.object(lane_slots, 'release_handle'), \
+                mock.patch.object(lane, 'wait_for_quiet_runner', return_value=(0.0, 1.0)), \
+                mock.patch.object(lane_sim, 'clone_temporary', side_effect=clone), \
+                mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release'), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane_sim, 'device_type', return_value='x.iPhone-17'), \
+                mock.patch.object(lane, 'boot_t3_device',
+                                  return_value=(None, {'pressure': 'normal', 'pressure_waited': 0, 'boot_window': (0.0, 1.0)})), \
+                mock.patch.object(lane, 'run_plans', return_value=self.PASSED_PLAN) as plans:
+            verdict_runs = (lane._run_t3_grouped({'app': ['T/A']}, 'pr4411-r3', Path(temporary))[0], plans.call_count)
+        self.assertEqual((verdict_runs, len(calls)), (('PASS', 1), 2))
+
     def shutdown_timeout(self, udid):
         return subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', udid], 120)
 

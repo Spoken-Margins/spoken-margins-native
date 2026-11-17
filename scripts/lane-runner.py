@@ -3247,15 +3247,18 @@ def _t3_on_fresh_device_with_one_rerun(grouped, request_id, evidence, runtime):
     attempt's error and the load stay in the report. INCONCLUSIVE needs two faults.
     The caller holds the simulator slot throughout."""
     import lane_sim
+    progress = {'tests_started': False}
     try:
-        return _t3_on_fresh_device(grouped, request_id, evidence, runtime)
+        return _t3_on_fresh_device(grouped, request_id, evidence, runtime, progress)
     except subprocess.TimeoutExpired as first:
+        if progress['tests_started']:  # a verdict may already exist; running the tests again could hide a FAIL
+            raise
         first_note = setup_fault_note(first)
         rerun = {'first': str(first), 'first_note': first_note, 'line': overload_line()}
         waited, after = wait_for_quiet_runner(rerun['line'])
         rerun.update(waited_seconds=waited, load_after=after)
         try:
-            result = _t3_on_fresh_device(grouped, request_id, evidence, runtime)
+            result = _t3_on_fresh_device(grouped, request_id, evidence, runtime, {'tests_started': False})
         except (lane_sim.BootError, OSError, subprocess.SubprocessError) as second:
             rerun.update(status='faulted again', second=str(second))
             (evidence / SETUP_RERUNS).write_text(json.dumps([rerun], indent=2) + '\n')
@@ -3272,16 +3275,17 @@ def _t3_on_fresh_device_with_one_rerun(grouped, request_id, evidence, runtime):
         return verdict, where, ran, [note, *details], crashes, cc
 
 
-def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
-    """The T3 job proper; the caller holds the simulator slot throughout."""
+def _t3_on_fresh_device(grouped, request_id, evidence, runtime, progress=None):
+    """The T3 job proper; the caller holds the simulator slot throughout. `progress`, where given, gets
+    `tests_started` set once the tests are about to run (#4438)."""
     claim = claim_runner_device(RUNNER_SIMULATOR_PREFIX + request_id)
     try:
-        return _t3_on_claimed_device(grouped, request_id, evidence, runtime)
+        return _t3_on_claimed_device(grouped, request_id, evidence, runtime, progress)
     finally:
         release_runner_device(claim)
 
 
-def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
+def _t3_on_claimed_device(grouped, request_id, evidence, runtime, progress=None):
     import lane_sim
     clone_started = time.monotonic()
     with (evidence / 'simulator-clone.log').open('w') as log:
@@ -3309,6 +3313,7 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
             return lane_sim.clone_temporary(RUNNER_SIMULATOR_PREFIX + request_id, runtime, out=log)
 
     reruns, overload_reruns = [], []
+    teardown_fault = None
     # Only a device with a SpringBoard watcher on it can be stopped by one. A clone marked unsafe for any other
     # reason (a fresh clone that never booted, say) is not a crash flood and pings nobody (audit on 484c63b).
     watched_devices = []
@@ -3407,6 +3412,8 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
         lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot',  # stops the device at a SpringBoard crash
                                crash_window=boot_info.get('boot_window'))
         watched_devices.append(udid)
+        if progress is not None:
+            progress['tests_started'] = True  # from here a timeout is never rerun by the setup rerun (#4438)
         summaries, statuses, ran, details = run_plans(grouped, run_plan_or_rerun_on_a_fresh_clone, evidence,
                                                       lambda: lane_sim.is_available(udid))
         details.insert(0, f'boot of the cloned simulator took {duration(boot_seconds)} (memory pressure at boot: '
@@ -3422,7 +3429,12 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
         details.append(f'template preparation and simulator clone took {duration(clone_seconds)}; '
                        f'evidence: {evidence}/simulator-clone.log')
     finally:
-        lane_sim.release(udid)
+        try:
+            lane_sim.release(udid)
+        except subprocess.TimeoutExpired as error:
+            if progress is None or not progress['tests_started']:
+                raise
+            teardown_fault = error  # the tests already ran: their verdict stands, the leftover clone is swept next job
     watched, unsafe = None, lane_sim.unsafe_devices()
     for device in dict.fromkeys(watched_devices):  # every clone a plan ran on under the watcher
         mark = unsafe.get(device)
@@ -3441,6 +3453,9 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
     elif flood:
         crashes += ' (simulator shut down, run stopped)'
     cc = '@uncomposed: SpringBoard crashed on the lane runner\'s simulator.' if flood else ''
+    if teardown_fault:
+        details.append(f'The tests finished, then the simulator clone could not be released: {teardown_fault}. The '
+                       f'verdict is the tests\'; the clone is swept at the next job (#4438).')
     verdict = 'INCONCLUSIVE' if watched else t3_verdict(summaries, statuses)  # a simulator crash, not the app
     timed_out = any(s['out_of_time'] for s in summaries) or 'timed out' in statuses
     if verdict == 'INCONCLUSIVE' and timed_out and boot_info.get('period') == 'two-simulator' \
