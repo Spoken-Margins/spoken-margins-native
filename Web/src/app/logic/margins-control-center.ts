@@ -297,5 +297,31 @@ export function centerMargins(margins: readonly Margin[]): CenterMargin[] {
     });
 }
 
+/** How the rules see one web Margin: your own, or a friend's heard or not. */
+export const hearingOf = (margin: Margin): Hearing => (ownMargin(margin) ? 'yours' : margin.heard === true ? 'heard' : 'unheard');
+
+/** How far past a started Margin's moment playback may be and still play it: one time update's worth (margin-autoplay.ts). */
+export const PENDING_GRACE_SECONDS = 3;
+
+/**
+ * A start the listener tapped (a row's start control, Next Margin, an arrival button) waits for playback to reach the
+ * Margin's moment, then plays. It is dropped when playback is already well past it: the listener moved on, and the
+ * player never plays a Margin they left behind.
+ */
+export function pendingStart(atSeconds: number, time: number): 'wait' | 'play' | 'drop' {
+  if (time < atSeconds - 0.05) return 'wait';
+  return time <= atSeconds + PENDING_GRACE_SECONDS ? 'play' : 'drop';
+}
+
+/**
+ * Where a start control goes and what it plays: a row's own lead-in, or straight into the Margin when the playhead is
+ * already inside that lead-in (never backwards inside it). `queue` is what plays when playback reaches it.
+ */
+export function startFor(row: Row, list: readonly Row[], autoplay: Autoplay, playheadMs: number): { seekToMs: number; atMs: number; queue: string[] } | null {
+  if (row.timeMs === null || row.startHereMs === null) return null;
+  const inside = playheadMs >= row.startHereMs && playheadMs < row.timeMs;
+  return { seekToMs: inside ? row.timeMs : row.startHereMs, atMs: row.timeMs, queue: playQueue(list, row.id, autoplay) };
+}
+
 /** The Margins tab's rows for one episode's Margins. */
 export const marginRows = (margins: readonly Margin[]): Row[] => rows(centerMargins(margins));

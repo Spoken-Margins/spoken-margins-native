@@ -7,7 +7,7 @@ import { writtenIntro } from './logic/arrival.ts';
 let context: AudioContext | undefined;
 
 /** A short, soft tone. Resolves when it ends, or at once where this browser won't make one. */
-function tone(): Promise<void> {
+export function tone(): Promise<void> {
   return new Promise((resolve) => {
     // A browser that keeps the audio context suspended never ends the tone; speech goes ahead without it.
     setTimeout(resolve, 600);

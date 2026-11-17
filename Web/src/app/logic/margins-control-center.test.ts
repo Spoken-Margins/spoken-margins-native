@@ -143,3 +143,31 @@ test('the play queue: the chosen Margin, then the rest of its thread Autoplay wo
   assert.deepEqual(mcc.playQueue(rows, 'c', 'none'), ['c']);
   assert.deepEqual(mcc.playQueue(rows, 'x', 'all'), []);
 });
+
+test('a tapped start waits for its Margin, plays on reaching it, and is dropped once playback is well past it', () => {
+  assert.equal(mcc.pendingStart(100, 80), 'wait');
+  assert.equal(mcc.pendingStart(100, 100), 'play');
+  assert.equal(mcc.pendingStart(100, 100.3), 'play');
+  assert.equal(mcc.pendingStart(100, 103), 'play');
+  assert.equal(mcc.pendingStart(100, 103.1), 'drop');
+});
+
+test('a row’s start control goes to its lead-in, or straight in from inside the lead-in, never back', () => {
+  const rows = mcc.rows([
+    { id: 'a', own: false, sender: 'Sam', parentId: null, timeMs: 60_000, heard: false, words: 'a', starred: false, sourceTextBefore: null },
+    { id: 'b', own: true, sender: 'you', parentId: 'a', timeMs: 70_000, heard: false, words: 'b', starred: false, sourceTextBefore: null },
+  ]);
+  assert.deepEqual(mcc.startFor(rows[0], rows, 'unheard', 10_000), { seekToMs: 40_000, atMs: 60_000, queue: ['a'] });
+  assert.deepEqual(mcc.startFor(rows[0], rows, 'all', 50_000), { seekToMs: 60_000, atMs: 60_000, queue: ['a', 'b'] });
+  // Behind the playhead: back to its lead-in.
+  assert.deepEqual(mcc.startFor(rows[0], rows, 'unheard', 300_000), { seekToMs: 40_000, atMs: 60_000, queue: ['a'] });
+  // A reply goes to its own lead-in, and plays even though Autoplay wouldn't play your own.
+  assert.deepEqual(mcc.startFor(rows[1], rows, 'unheard', 0), { seekToMs: 50_000, atMs: 70_000, queue: ['b'] });
+});
+
+test('hearing of a web Margin: yours, heard, unheard', () => {
+  const base = { episodeId: 'e', atSeconds: 1, createdAt: '2026-11-17T10:00:00Z' };
+  assert.equal(mcc.hearingOf({ ...base, id: 'o' }), 'yours');
+  assert.equal(mcc.hearingOf({ ...base, id: 'h', author: 'Sam', heard: true }), 'heard');
+  assert.equal(mcc.hearingOf({ ...base, id: 'u', author: 'Sam' }), 'unheard');
+});
