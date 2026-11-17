@@ -21,7 +21,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     public static let currentSchemaVersion = 5
     /// The Library read, audio preparation, the map preparer and the placement passes can read together, and the main thread beside them.
     private static let readConnectionLimit = 6
-    private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job"]
+    private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job", MovedMarginOrigin.recordKind]
     var db: OpaquePointer?
     let connectionLock = NSRecursiveLock()
     /// Test hook (#4308): called on a thread that finds `connectionLock` held, just before it waits, so a test that forces
@@ -305,6 +305,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         case "listening_map": return columns(ListeningMap.self, item: { $0.itemId })
         case "session": return columns(Session.self, session: { $0.id }, item: { $0.itemId })
         case "interjection": return columns(Interjection.self, session: { $0.sessionId }, item: { $0.itemId })
+        case MovedMarginOrigin.recordKind: return columns(MovedMarginOrigin.self, session: { $0.sessionId }, item: { $0.itemId })
         case "turn": return columns(ConversationTurn.self, session: { $0.sessionId }, item: { _ in nil })
         case "ai_job": return columns(AIJob.self, session: { $0.sessionId }, item: { $0.itemId })
         case "interjection_share_revision": return columns(InterjectionShareRevision.self, session: { $0.sessionId }, item: { $0.itemId })
@@ -409,7 +410,10 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     public func loadInterjections(sessionId: String) throws -> [Interjection] {
-        try loadBySession(kind: "interjection", sessionId: sessionId)
+        let rows: [StoredMarginRow] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind IN (?, ?) AND session_id = ? ORDER BY updated_at, id;",
+            ["interjection", MovedMarginOrigin.recordKind, sessionId])
+        return StoredMarginRow.margins(in: rows)
     }
 
     /// Makes a saved Margin a reply to `link`'s Margin, or independent when `link` is nil (#473). Only the link changes;
@@ -507,7 +511,10 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
 
     /// The Margin rows `deleteItem(id:)` removes with the item: every row filed under it.
     public func loadInterjections(itemId: String) throws -> [Interjection] {
-        try loadByItem(kind: "interjection", itemId: itemId)
+        let rows: [StoredMarginRow] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind IN (?, ?) AND item_id = ? ORDER BY updated_at, id;",
+            ["interjection", MovedMarginOrigin.recordKind, itemId])
+        return StoredMarginRow.margins(in: rows)
     }
 
     /// Settles the voice Margins left "pending" by an earlier run of the app as "failed", so they offer Retry
@@ -1724,7 +1731,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// The kinds whose live save path files the row under the item named in its payload (`item_id`). A kind
     /// that deliberately outlives its item, such as `community_map_upload`, is not here (#1466).
     private static let itemScopedQuarantineKinds = """
-        'item', 'listening_map', 'session', 'interjection', 'ai_job', 'interjection_share_revision', \
+        'item', 'listening_map', 'session', 'interjection', '\(MovedMarginOrigin.recordKind)', 'ai_job', 'interjection_share_revision', \
         'imported_commentary_layer', 'canonical_source', 'audio_asset', 'source_transcript_timeline', \
         'podcast_download', 'owned_offline_asset', 'episode_map_preparation_job', 'audio_preparation_job', \
         'prepared_audio_manifest', 'edition_fingerprint_spine', 'transcript_phrase_sketch', \
@@ -2339,6 +2346,44 @@ public struct MarginNoteChanges: Equatable, Sendable {
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
+/// A row of a Margin read: a Margin, or the origin record of a moved Margin (#4233). One read gets both, so a Margin read
+/// costs the queries it always did. The two are told apart by `liveMarginId`, which only an origin has; a row of either
+/// kind that doesn't decode is set aside by `query` under its own kind and id.
+private enum StoredMarginRow: Decodable {
+    case margin(Interjection)
+    case origin(MovedMarginOrigin)
+
+    private enum Probe: String, CodingKey { case liveMarginId }
+
+    init(from decoder: Decoder) throws {
+        if try decoder.container(keyedBy: Probe.self).contains(.liveMarginId) {
+            self = .origin(try MovedMarginOrigin(from: decoder))
+        } else {
+            self = .margin(try Interjection(from: decoder))
+        }
+    }
+
+    /// The Margins, in the order read, each with its origin when it has one. Nothing is attached when no origin was read,
+    /// which is every Library until the Move feature ships.
+    static func margins(in rows: [StoredMarginRow]) -> [Interjection] {
+        var margins: [Interjection] = []
+        var origins: [String: MovedMarginOrigin] = [:]
+        for row in rows {
+            switch row {
+            case .margin(let margin): margins.append(margin)
+            case .origin(let origin): origins["\(origin.sessionId)::\(origin.marginId)"] = origin
+            }
+        }
+        guard !origins.isEmpty else { return margins }
+        return margins.map { margin in
+            guard let origin = origins["\(margin.sessionId)::\(margin.id)"] else { return margin }
+            var attached = margin
+            attached.movedOrigin = origin
+            return attached
+        }
+    }
+}
+
 private struct ImportedWatchSyncEvent: Codable {
     var id: String
     var importedAt: Date
@@ -2376,8 +2421,45 @@ extension SQLiteSessionStore: SessionRecordCounting {
 extension SQLiteSessionStore: InterjectionByIdReading {
     /// A Margin row is keyed by its session and id (`storageID`), so this is one primary-key read.
     public func loadInterjection(id: String, sessionId: String) throws -> Interjection? {
-        let stored: Interjection? = try loadOptional(kind: "interjection", id: storageID(kind: "interjection", id: id, sessionId: sessionId))
-        return stored.flatMap { $0.id == id && $0.sessionId == sessionId ? $0 : nil }
+        // The Margin and its origin share one storage id, so one read gets both.
+        let rows: [StoredMarginRow] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind IN (?, ?) AND id = ?;",
+            ["interjection", MovedMarginOrigin.recordKind, storageID(kind: "interjection", id: id, sessionId: sessionId)])
+        return StoredMarginRow.margins(in: rows).first { $0.id == id && $0.sessionId == sessionId }
+    }
+}
+
+/// The origin records of Margins moved from a live session onto an item (#4233), in the existing records table as kind
+/// "moved_margin_origin", one row per moved Margin, filed under the Margin's session and item like the Margin. No table or
+/// column changes and schema_version stays 5: a build that predates the kind selects records by kind and never reads it,
+/// and `deleteItem` removes the row with the item's others. A Margin that is deleted keeps its origin, so Undo brings back
+/// "Moved from".
+extension SQLiteSessionStore: MovedMarginOriginRepository {
+    public func saveMovedMarginOrigin(_ origin: MovedMarginOrigin) throws {
+        try save(kind: MovedMarginOrigin.recordKind, id: origin.marginId, sessionId: origin.sessionId, itemId: origin.itemId, value: origin)
+    }
+
+    public func deleteMovedMarginOrigin(marginId: String, sessionId: String) throws {
+        try deleteRecord(kind: MovedMarginOrigin.recordKind, id: storageID(kind: MovedMarginOrigin.recordKind, id: marginId, sessionId: sessionId))
+    }
+
+    public func loadMovedMarginOrigins() throws -> [MovedMarginOrigin] {
+        // The Margin and its origin share one storage id, so the join is on `id`. A row that isn't valid JSON is left out.
+        try query("""
+            SELECT kind, id, payload FROM records AS origin
+            WHERE kind = ? AND EXISTS (
+                SELECT 1 FROM records AS margin
+                WHERE margin.kind = 'interjection' AND margin.id = origin.id
+                  AND CASE WHEN json_valid(margin.payload) THEN json_extract(margin.payload, '$.status') = 'active' ELSE 0 END
+            ) ORDER BY updated_at, id;
+            """, [MovedMarginOrigin.recordKind])
+    }
+
+    public func deleteMovedMargin(id: String, sessionId: String) throws {
+        try withSessionTransaction {
+            try deleteRecord(kind: "interjection", id: storageID(kind: "interjection", id: id, sessionId: sessionId))
+            try deleteRecord(kind: MovedMarginOrigin.recordKind, id: storageID(kind: MovedMarginOrigin.recordKind, id: id, sessionId: sessionId))
+        }
     }
 }
 
