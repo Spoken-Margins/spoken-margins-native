@@ -57,7 +57,15 @@ export interface PlayerApi {
   open(episodeId: string, options?: OpenOptions): Promise<void>;
   /** A show's play button: starts the newest of these (newest first) that can actually play, and says so if it isn't the first. */
   openNewestPlayable(newestFirst: readonly Episode[]): Promise<void>;
+  /** The main Play/Pause button: pauses whatever is sounding (the episode or a friend's Margin), or carries it on. */
   toggle(): void;
+  /**
+   * Play, never Pause: for a button that means start (a landing offer, a Skip, carrying on after recording). It checks
+   * what is sounding now rather than a render's `playing`, which can lag a clip that has just started (#4473).
+   */
+  play(): void;
+  /** Pause, never Play: for a caller that needs quiet (recording, hearing a voice Margin on its own). */
+  pause(): void;
   skip(seconds: number): void;
   seek(seconds: number): void;
   setRate(rate: number): void;
@@ -638,6 +646,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     else resumeSound();
   }, [anythingSounding, pauseSound, resumeSound, primeClip]);
 
+  const play = useCallback(() => {
+    primeClip();
+    if (!anythingSounding()) resumeSound();
+  }, [anythingSounding, resumeSound, primeClip]);
+
+  const pause = useCallback(() => {
+    if (anythingSounding()) pauseSound();
+  }, [anythingSounding, pauseSound]);
+
   const seek = useCallback((seconds: number) => {
     const audio = audioRef.current;
     if (!audio || !audio.src) return;
@@ -712,8 +729,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [episode, playing, duration, rate, time]);
 
   const api = useMemo<PlayerApi>(
-    () => ({ episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, skip, seek, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
-    [episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, skip, seek, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
+    () => ({ episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, play, pause, skip, seek, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
+    [episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, play, pause, skip, seek, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
   );
 
   return (

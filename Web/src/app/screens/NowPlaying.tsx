@@ -59,7 +59,7 @@ function LandingOffer({ landing }: { landing?: Landing }) {
         className="button button-primary"
         onClick={() => {
           player.seek(landing.at);
-          player.toggle();
+          player.play();
         }}
       >
         <PlayIcon size={18} />
@@ -183,7 +183,7 @@ function MarginCue({ margins, saved }: { margins: readonly Margin[]; /** The lis
         className="button button-primary margin-cue-skip"
         onClick={() => {
           player.seek(cue.skip.to);
-          if (!player.playing) player.toggle();
+          player.play();
         }}
       >
         <SkipIcon />
@@ -787,7 +787,7 @@ function RecordMargin({
     started.current = true;
     // The episode pauses while you speak, so the Margin records your voice, not the show.
     resumeAfter.current = player.playing || resumeAfterInterrupt;
-    if (player.playing) player.toggle();
+    player.pause();
     services.recorder
       .start()
       .then((r) => {
@@ -820,7 +820,7 @@ function RecordMargin({
   }, [recording]);
 
   const resume = () => {
-    if (resumeAfter.current && !player.playing) player.toggle();
+    if (resumeAfter.current) player.play();
     resumeAfter.current = false;
   };
 
@@ -929,7 +929,7 @@ function RecordMargin({
             type="button"
             className="button button-primary"
             onClick={() => {
-              if (resumeAfter.current && !player.playing) player.toggle();
+              if (resumeAfter.current) player.play();
               onWriteInstead();
             }}
           >
