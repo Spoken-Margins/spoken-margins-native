@@ -59,6 +59,9 @@ final class ShareReviewStepsTests: XCTestCase {
             "Play the episode for about 12 seconds so your friend hears your new Margin at the exact moment. Sharing now may put it a few seconds off.")
         XCTAssertEqual(ShareReviewSteps.pinnedLine([paused, paused]),
             "Play the episode for about 12 seconds so your friend hears 2 of these Margins at the exact moment. Sharing now may put them a few seconds off.")
+        // One waiting Margin not playing is enough for the "Play the episode" line.
+        XCTAssertEqual(ShareReviewSteps.pinnedLine([one, paused]),
+            "Play the episode for about 12 seconds so your friend hears 2 of these Margins at the exact moment. Sharing now may put them a few seconds off.")
         XCTAssertNil(ShareReviewSteps.pinnedLine([margin(), margin(status: .ready)]))
         XCTAssertNil(ShareReviewSteps.pinnedLine([]))
     }
