@@ -4,26 +4,36 @@
 // Probe mode is on only when the web view has the `smPlayCheck` message handler the app injects. No ordinary browser has
 // one, and a link can't switch it on: `parseShareLink` refuses any query string. So for a friend nothing here runs.
 //
-// The check reads nothing the page doesn't already read to draw the arrival card: the packet. It never starts the
-// player, never reads a publisher's page or audio, and never uses the relay. A post whose voice would have to be looked
-// up is reported `unverified`, because settling it takes a publisher read that waits on the owner's call (#4454, PR 1b).
+// With no `smPlayCheckRead` handler (play-check-reads.ts) the check reads nothing the page doesn't already read to draw
+// the arrival card: the packet. It never starts the player and never uses the relay. A post whose voice would have to be
+// looked up is then reported `unverified`.
+//
+// With the handler, the app lets the check settle what only the publisher can say, through the app's own network stack
+// (the owner agreed on 2026-11-17 that the Share link tap covers it): one read of a Substack post's page for its voice, and
+// the first 1 KB of the episode's audio. So the #4433 case (a post with no voice) and an episode whose audio a browser
+// can't play are caught before the friend meets them.
 //
 // The messages, all posted to `window.webkit.messageHandlers.smPlayCheck`:
 //   { type: 'started' }                                          the page is running the check; sent once
 //   { type: 'verdict', verdict: 'plays' }
-//   { type: 'verdict', verdict: 'cannot', reason: CannotPlayReason }
+//   { type: 'verdict', verdict: 'cannot', reason: CannotPlayReason | 'audio-refused' | 'audio-format' }
 //   { type: 'verdict', verdict: 'unverified', why: 'post-voice' }
 //   { type: 'failed', reason: 'link-broken' | 'links-off' | 'offline' | 'server' }   the link did not open
+import { PaidPostNoVoice, readSubstackVoice } from '../sources/read.ts';
 import type { PacketRead } from './ports.ts';
 import { playability, type CannotPlayReason } from './logic/playability.ts';
 import { ShareLinkError } from './logic/share-link.ts';
+import { browserCanPlayType, checkReadHandler, checkTransport, classifyAudioStart } from './play-check-reads.ts';
 
 export type PlayCheckFailure = 'link-broken' | 'links-off' | 'offline' | 'server';
+
+/** Why an episode's audio can't be played, which only a read of the audio can say. */
+export type AudioReason = 'audio-refused' | 'audio-format';
 
 export type PlayCheckMessage =
   | { type: 'started' }
   | { type: 'verdict'; verdict: 'plays' }
-  | { type: 'verdict'; verdict: 'cannot'; reason: CannotPlayReason }
+  | { type: 'verdict'; verdict: 'cannot'; reason: CannotPlayReason | AudioReason }
   | { type: 'verdict'; verdict: 'unverified'; why: 'post-voice' }
   | { type: 'failed'; reason: PlayCheckFailure };
 
@@ -73,5 +83,36 @@ export function reportPlayCheck(message: PlayCheckMessage, host: unknown = globa
     playCheckHandler(host)?.postMessage(message);
   } catch {
     // The check is a courtesy: a web view that refuses a message must not break the page a friend would see.
+  }
+}
+
+/**
+ * What the check says about an opened packet. With the app's read handler it settles the post's voice and the audio's
+ * start; without it, it is `messageForOpened`. Never throws, and a read that fails says `failed`, never a warning: the
+ * app words it "Not checked".
+ */
+export async function messageForOpenedSettled(
+  read: Pick<PacketRead, 'episode' | 'margins' | 'percentMargins'>,
+  host: unknown = globalThis,
+  canPlayType: (type: string) => string = browserCanPlayType,
+): Promise<PlayCheckMessage> {
+  const reads = checkReadHandler(host);
+  const first = playability(read);
+  if (!reads || first.verdict === 'cannot') return messageForOpened(read);
+  try {
+    let audioUrl = read.episode.audioUrl;
+    if (first.verdict === 'needs-voice-lookup') {
+      const voice = await readSubstackVoice(first.pageUrl, { transport: checkTransport(reads), reason: 'sender-share-check' });
+      const settled = playability(read, voice ? 'found' : 'none');
+      if (settled.verdict === 'cannot') return { type: 'verdict', verdict: 'cannot', reason: settled.reason };
+      audioUrl = voice?.audioUrl;
+    }
+    if (!audioUrl) return messageForOpened(read);
+    const audio = classifyAudioStart(await reads.postMessage({ kind: 'audio-start', url: audioUrl }), canPlayType);
+    if (audio === 'unreachable') return { type: 'failed', reason: 'server' };
+    return audio === 'plays' ? { type: 'verdict', verdict: 'plays' } : { type: 'verdict', verdict: 'cannot', reason: audio };
+  } catch (error) {
+    if (error instanceof PaidPostNoVoice) return { type: 'verdict', verdict: 'cannot', reason: 'paid-post' };
+    return { type: 'failed', reason: 'server' };
   }
 }
