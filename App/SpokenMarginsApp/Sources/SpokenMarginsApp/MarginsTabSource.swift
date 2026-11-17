@@ -66,16 +66,18 @@ struct MarginsTabSource {
         }
     }
 
-    /// Next Margin from the playhead, from `NextMarginSkip`: the Margin it goes to and the countdown.
-    func nextSkip(playheadMs: Int) -> NextMarginSkip? {
-        NextMarginSkip.next(playheadMs: playheadMs, marginTimesMs: MarginsControlCenter.skipTimes(rows))
+    /// Next Margin from the playhead, from `NextMarginSkip`: the next thread (the next one with something unheard
+    /// under Autoplay Unheard), the countdown to its first Margin, and the Margin that plays first there.
+    func nextSkip(playheadMs: Int, autoplay: MarginsControlCenter.Autoplay) -> NextMarginSkip? {
+        NextMarginSkip.next(playheadMs: playheadMs, rows: rows, autoplay: autoplay)
     }
 
     /// The Next Margin press. Before the lead-in it jumps to the lead-in, as a row does. Inside a friend's lead-in it
     /// plays the Margin straight away, never back to the lead-in's start. Your own Margin has no "play it now" path,
     /// so inside its lead-in the press starts its moment, which begins at the lead-in.
     func pressNext(_ skip: NextMarginSkip, model: Gate1AppModel) {
-        guard let row = rows.first(where: { $0.timeMs == skip.marginTimeMs }) else { return }
+        let target = skip.firstToPlay.flatMap { reference in rows.first { $0.reference == reference } }
+        guard let row = target ?? rows.first(where: { $0.depth == 0 && $0.timeMs == skip.marginTimeMs }) else { return }
         if skip.action == .playMargin, let shared = sharedRow(row),
            let prompt = model.importedCommentaryPrompts(includeAnnounced: true)
                .first(where: { $0.interjection.id == shared.interjection.id }) {

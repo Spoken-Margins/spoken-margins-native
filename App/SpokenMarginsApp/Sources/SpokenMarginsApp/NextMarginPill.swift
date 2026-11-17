@@ -15,7 +15,7 @@ struct NextMarginPill: View {
         let _ = playbackTick
         let source = MarginsTabSource(model: model)
         Group {
-            if !model.recordingNavigationIsLocked, let skip = source.nextSkip(playheadMs: model.snapshot.currentMediaTimeMs ?? 0) {
+            if !model.recordingNavigationIsLocked, let skip = source.nextSkip(playheadMs: model.snapshot.currentMediaTimeMs ?? 0, autoplay: model.marginsAutoplay) {
                 Button { source.pressNext(skip, model: model) } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "forward.fill")

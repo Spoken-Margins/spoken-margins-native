@@ -75,11 +75,11 @@ struct MarginsAutoplayMenu: View {
     var body: some View {
         let current = MarginsAutoplaySetting.current(autoPlayOn: model.importedCommentaryAutoPlayEnabled, includesHeard: includesHeard)
         Menu {
-            Picker("Play Margins by themselves", selection: Binding(
+            Picker(MarginsControlCenter.Autoplay.menuTitle, selection: Binding(
                 get: { current },
                 set: { model.setMarginsAutoplay($0) })) {
                 ForEach(MarginsControlCenter.Autoplay.allCases, id: \.self) { option in
-                    Text(option == .none ? "Off" : option.title).tag(option)
+                    Text(option.title).tag(option)
                 }
             }
             .pickerStyle(.inline)
@@ -94,7 +94,7 @@ struct MarginsAutoplayMenu: View {
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
-        .accessibilityLabel("Autoplay, \(current == .none ? "Off" : current.title)")
+        .accessibilityLabel("Autoplay, \(current.title)")
         .accessibilityIdentifier("playback.margins.autoplay")
     }
 }
