@@ -382,23 +382,42 @@ public enum AppColorContrastAudit {
         )
     }
 
-    /// The Timeline rail's rows, which sit on bone: each row is a tint over bone, and the row's own words are drawn
-    /// on it (`PlaybackTimelineListView.swift`). The tints are the row fills there (#3734).
+    /// The Timeline rail's rows (`PlaybackTimelineListView.swift`), from `TimelineRowPalette`: each row is a fill over
+    /// what is behind the list, and the row's own words are drawn on it (#3734). The standalone screen sits on bone and
+    /// follows light and dark. The playback pane forces dark over the fixed listening plate, so its pairs are the dark
+    /// values in both appearances. Every kind has a title, a detail and a label pair, and the current row (one fill for
+    /// every kind) has its own set. A pair that two rows share is measured once.
     public static let timelineRowPairs: [Pair] = {
-        let rows: [(tint: String, color: AppDynamicRGB, alpha: Double, label: (name: String, color: AppDynamicRGB))] = [
-            ("evergreen", AppSemanticColorRGB.evergreen, 0.12, ("current row label", AppSemanticColorRGB.evergreen)),
-            ("evergreen", AppSemanticColorRGB.evergreen, 0.07, ("map row label", AppSemanticColorRGB.evergreen)),
-            ("coral", AppSemanticColorRGB.coral, 0.08, ("my Margin row label", AppSemanticColorRGB.coral)),
-            ("ochre", AppSemanticColorRGB.ochre, 0.08, ("response row label", AppSemanticColorRGB.ochreText)),
-            ("plum", AppSemanticColorRGB.plum, 0.07, ("shared Margin row label", AppSemanticColorRGB.plum))
+        func darkOnly(_ color: AppDynamicRGB) -> AppDynamicRGB { AppDynamicRGB(light: color.dark, dark: color.dark) }
+        let labelNames: [TimelineRowKind: String] = [
+            .source: "chapter row label", .listeningMap: "map row label", .myMargin: "my Margin row label",
+            .userResponse: "response row label", .sharedMargin: "shared Margin row label",
+            .assistantResponse: "assistant row label"
         ]
-        return rows.flatMap { row in
-            [
-                onTint("row title", foreground: AppSemanticColorRGB.text, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone"),
-                onTint("row detail", foreground: AppSemanticColorRGB.secondaryText, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone"),
-                onTint(row.label.name, foreground: row.label.color, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone")
+        let surfaces: [(baseName: String, base: AppDynamicRGB, map: (AppDynamicRGB) -> AppDynamicRGB)] = [
+            ("bone", AppSemanticColorRGB.bone, { $0 }),
+            ("listening background", AppSemanticColorRGB.listeningBackground, darkOnly)
+        ]
+        var seen = Set<String>()
+        var pairs: [Pair] = []
+        for surface in surfaces {
+            var rows: [(fill: TimelineRowPalette.Fill, labelName: String, label: AppDynamicRGB)] = [
+                (TimelineRowPalette.fill(kind: .source, isCurrent: true), "current row label", TimelineRowPalette.currentLabelColor)
             ]
+            for kind in TimelineRowKind.allCases {
+                rows.append((TimelineRowPalette.fill(kind: kind, isCurrent: false), labelNames[kind] ?? "\(kind.rawValue) row label",
+                             TimelineRowPalette.labelColor(kind: kind)))
+            }
+            for row in rows {
+                for (name, color) in [("row title", AppSemanticColorRGB.text), ("row detail", AppSemanticColorRGB.secondaryText),
+                                      (row.labelName, row.label)] {
+                    let pair = onTint(name, foreground: surface.map(color), tint: row.fill.token, tintColor: surface.map(row.fill.color),
+                                      alpha: row.fill.alpha, over: surface.base, baseName: surface.baseName)
+                    if seen.insert(pair.name).inserted { pairs.append(pair) }
+                }
+            }
         }
+        return pairs
     }()
 
     /// The Watch's plates: white label text on the system orange and blue (`WatchPlateButtonStyle` forces `.white`).
