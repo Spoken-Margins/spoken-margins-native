@@ -64,19 +64,28 @@ export function checkTransport(handler: CheckReadHandler): ReadTransport {
 
 export type AudioVerdict = 'plays' | 'audio-refused' | 'audio-format' | 'unreachable';
 
+/** Audio and video types Chrome, Firefox or Safari play, even where the sender's own WebKit says no. */
+const PLAYS_IN_OTHER_BROWSERS = /^(audio|video)\/(mpeg|mp3|mp4|x-m4a|m4a|aac|x-aac|wav|x-wav|wave|ogg|opus|webm|flac|x-flac|3gpp|3gpp2)$/;
+
 /**
  * What the start of an episode's audio says about whether a browser can play it. A warning is only for what is clear: a
  * 4xx (the server turned the request away), a page where audio should be, an audio or video type this browser says it
  * can't play. Anything unclear passes, since a false warning on a link a friend then plays is worse than none.
- * A 5xx, a 429 or a redirect left over says only that the check couldn't tell (`unreachable`).
+ * A 5xx, a 429, another 4xx (a host may turn the app away and serve a browser) or a redirect left over says only that
+ * the check couldn't tell (`unreachable`).
  */
 export function classifyAudioStart(reply: Pick<CheckReadReply, 'status' | 'contentType'>, canPlayType: (type: string) => string): AudioVerdict {
   const { status } = reply;
   if (status >= 500 || status === 429 || (status >= 300 && status < 400) || status < 200) return 'unreachable';
-  if (status >= 400) return 'audio-refused';
+  // A host that turns the app's request away (401, 403, bot rules, hotlink rules) may serve a friend's browser: that is
+  // "couldn't tell". Only a missing file is clear.
+  if (status === 404 || status === 410) return 'audio-refused';
+  if (status >= 400) return 'unreachable';
   const type = (reply.contentType ?? '').split(';')[0].trim().toLowerCase();
   if (!type) return 'plays';
   if (type.startsWith('text/') || type === 'application/json' || type.endsWith('+xml') || type === 'application/xml') return 'audio-refused';
+  // This is the sender's WebKit asked about a friend's browser: formats other browsers play are never a warning.
+  if (PLAYS_IN_OTHER_BROWSERS.test(type)) return 'plays';
   if ((type.startsWith('audio/') || type.startsWith('video/')) && canPlayType(type) === '') return 'audio-format';
   return 'plays';
 }

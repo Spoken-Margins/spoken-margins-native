@@ -57,13 +57,17 @@ test('audio: only what is clear is a warning; anything unclear passes, and a ser
   assert.equal(verdict(200, 'binary/octet-stream'), 'plays');
   assert.equal(verdict(200, 'application/vnd.apple.mpegurl'), 'plays', 'not an audio or video type: unclear, so it passes');
   // The server turned the request away, or answered with a page where audio should be.
-  for (const status of [400, 401, 403, 404, 410, 451]) assert.equal(verdict(status, 'audio/mpeg'), 'audio-refused', String(status));
+  for (const status of [404, 410]) assert.equal(verdict(status, 'audio/mpeg'), 'audio-refused', String(status));
+  // A host may turn the app away and still serve a friend's browser: couldn't tell.
+  for (const status of [400, 401, 403, 451]) assert.equal(verdict(status, 'audio/mpeg'), 'unreachable', String(status));
   for (const type of ['text/html', 'text/html; charset=utf-8', 'application/json', 'application/xml', 'application/atom+xml']) {
     assert.equal(verdict(200, type), 'audio-refused', type);
   }
   // A type this browser says it can't play.
   assert.equal(verdict(200, 'audio/x-ms-wma'), 'audio-format');
   assert.equal(verdict(200, 'video/x-matroska'), 'audio-format');
+  // The sender's WebKit says no, but other browsers play these: never a warning.
+  for (const type of ['audio/ogg', 'audio/opus', 'audio/webm', 'video/webm', 'audio/flac']) assert.equal(verdict(200, type), 'plays', type);
   // The check couldn't tell.
   for (const status of [500, 502, 503, 429, 301, 302, 304, 199, 100]) assert.equal(verdict(status, 'audio/mpeg'), 'unreachable', String(status));
 });

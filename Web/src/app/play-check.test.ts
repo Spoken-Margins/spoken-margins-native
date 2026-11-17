@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ShareLinkError } from './logic/share-link.ts';
 import { messageForFailure, messageForOpened, messageForOpenedSettled, playCheckHandler, reportPlayCheck, type PlayCheckMessage } from './play-check.ts';
-import { PaidPostNoVoice } from '../sources/read.ts';
 import { feedFixture } from '../sources/fixtures.ts';
 import type { CheckReadReply, CheckReadRequest } from './play-check-reads.ts';
 
@@ -69,6 +68,7 @@ function appReads(pages: Record<string, CheckReadReply | Error>, audio: CheckRea
   const host = {
     webkit: {
       messageHandlers: {
+        smPlayCheck: { postMessage: () => undefined },
         smPlayCheckRead: {
           postMessage: async (request: CheckReadRequest) => {
             asked.push(request);
@@ -106,13 +106,13 @@ test('the #4433 case: a post whose page offers no voice says so before the frien
 test('a paid post says it is for paid subscribers', async () => {
   const { host } = appReads({ [PAID]: { status: 200, url: PAID, body: feedFixture('substack-paid-post-page.html').toString() } }, { status: 200 });
   assert.deepEqual(await messageForOpenedSettled(post(PAID), host, canPlay), { type: 'verdict', verdict: 'cannot', reason: 'paid-post' });
-  assert.ok(new PaidPostNoVoice(PAID));
 });
 
 test('an episode\'s own audio is read once, at its start, and its answer is the verdict', async () => {
   const run = async (reply: CheckReadReply | Error) => messageForOpenedSettled(episodeWithAudio, appReads({}, reply).host, canPlay);
   assert.deepEqual(await run({ status: 206, contentType: 'audio/mpeg' }), { type: 'verdict', verdict: 'plays' });
-  assert.deepEqual(await run({ status: 403, contentType: 'text/html' }), { type: 'verdict', verdict: 'cannot', reason: 'audio-refused' });
+  assert.deepEqual(await run({ status: 404, contentType: 'text/html' }), { type: 'verdict', verdict: 'cannot', reason: 'audio-refused' });
+  assert.deepEqual(await run({ status: 403, contentType: 'text/html' }), { type: 'failed', reason: 'server' }, 'a host may refuse the app and serve a browser');
   assert.deepEqual(await run({ status: 200, contentType: 'text/html' }), { type: 'verdict', verdict: 'cannot', reason: 'audio-refused' });
   assert.deepEqual(await run({ status: 200, contentType: 'audio/x-ms-wma' }), { type: 'verdict', verdict: 'cannot', reason: 'audio-format' });
   assert.deepEqual(await run({ status: 503 }), { type: 'failed', reason: 'server' });
@@ -136,4 +136,35 @@ test('a failed page read is "couldn\'t check", never a warning about the post', 
 test('without the read handler nothing is read: a post is `unverified` and an episode `plays` as before', async () => {
   assert.deepEqual(await messageForOpenedSettled(post(POST), {}, canPlay), { type: 'verdict', verdict: 'unverified', why: 'post-voice' });
   assert.deepEqual(await messageForOpenedSettled(episodeWithAudio, {}, canPlay), { type: 'verdict', verdict: 'plays' });
+});
+
+const preloadsPage = (post: object) => `<script>window._preloads = JSON.parse(${JSON.stringify(JSON.stringify({ post }))});</script>`;
+
+test('a page that is not this post\'s data can\'t say the post has no voice', async () => {
+  const url = 'https://captured.example/p/failed';
+  const failed = { type: 'newsletter', audience: 'everyone', id: 7, canonical_url: url, audio_items: [{ post_id: 7, type: 'tts', status: 'failed', audio_url: null }] };
+  const unclear = { type: 'verdict', verdict: 'unverified', why: 'post-voice' };
+  const run = async (reply: CheckReadReply) => messageForOpenedSettled(post(url), appReads({ [url]: reply }, { status: 200 }).host, canPlay);
+  // A bot-check page, an empty answer and a changed layout have no post data.
+  assert.deepEqual(await run({ status: 200, url, body: '<html>Just a moment...</html>' }), unclear);
+  assert.deepEqual(await run({ status: 204 }), unclear);
+  assert.deepEqual(await run({ status: 200, url, body: '<script>window._preloads = JSON.parse("{}");</script>' }), unclear);
+  // Another post's data, or an app that reports no final address while the page's own address differs.
+  assert.deepEqual(await run({ status: 200, url, body: preloadsPage({ ...failed, canonical_url: 'https://captured.example/p/other' }) }), unclear);
+  const elsewhere = 'https://open.example/pub/x/p/failed';
+  const moved = appReads({ [elsewhere]: { status: 200, body: preloadsPage(failed) } }, { status: 200 });
+  assert.deepEqual(await messageForOpenedSettled(post(elsewhere), moved.host, canPlay), unclear);
+  // The same page with its own address is the clear case.
+  assert.deepEqual(await run({ status: 200, url, body: preloadsPage(failed) }), { type: 'verdict', verdict: 'cannot', reason: 'no-post-voice' });
+});
+
+test('only a Substack post\'s page is read, and only with both of the app\'s handlers', async () => {
+  const other = appReads({}, { status: 200 });
+  const essay = post('https://example.com/essay');
+  assert.deepEqual(await messageForOpenedSettled(essay, other.host, canPlay), { type: 'verdict', verdict: 'unverified', why: 'post-voice' });
+  assert.deepEqual(other.asked, [], 'a page that is not a Substack post is never read');
+  const readOnly = appReads({ [POST]: { status: 200, url: POST, body: feedFixture('substack-voiceover-page.html').toString() } }, { status: 206, contentType: 'audio/mpeg' });
+  delete (readOnly.host.webkit.messageHandlers as { smPlayCheck?: unknown }).smPlayCheck;
+  assert.deepEqual(await messageForOpenedSettled(post(POST), readOnly.host, canPlay), { type: 'verdict', verdict: 'unverified', why: 'post-voice' });
+  assert.deepEqual(readOnly.asked, [], 'with no probe handler nobody would hear a verdict, so nothing is read');
 });

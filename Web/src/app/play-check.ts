@@ -20,6 +20,7 @@
 //   { type: 'verdict', verdict: 'unverified', why: 'post-voice' }
 //   { type: 'failed', reason: 'link-broken' | 'links-off' | 'offline' | 'server' }   the link did not open
 import { PaidPostNoVoice, readSubstackVoice } from '../sources/read.ts';
+import { isSubstackPostUrl, pageHoldsThisPost } from '../sources/substack.ts';
 import type { PacketRead } from './ports.ts';
 import { playability, type CannotPlayReason } from './logic/playability.ts';
 import { ShareLinkError } from './logic/share-link.ts';
@@ -96,13 +97,31 @@ export async function messageForOpenedSettled(
   host: unknown = globalThis,
   canPlayType: (type: string) => string = browserCanPlayType,
 ): Promise<PlayCheckMessage> {
-  const reads = checkReadHandler(host);
+  // The reads need both of the app's handlers: with only one of them nobody would hear the verdict.
+  const reads = playCheckHandler(host) ? checkReadHandler(host) : undefined;
   const first = playability(read);
   if (!reads || first.verdict === 'cannot') return messageForOpened(read);
+  // Only a Substack post's page is read (the agreed read); any other page stays `unverified`, as without the app.
+  if (first.verdict === 'needs-voice-lookup' && !isSubstackPostUrl(first.pageUrl)) return messageForOpened(read);
   try {
     let audioUrl = read.episode.audioUrl;
     if (first.verdict === 'needs-voice-lookup') {
-      const voice = await readSubstackVoice(first.pageUrl, { transport: checkTransport(reads), reason: 'sender-share-check' });
+      const page: { body?: string; url?: string } = {};
+      const transport = checkTransport(reads);
+      const recording: typeof transport = {
+        ...transport,
+        fetch: async (input, init) => {
+          const response = await transport.fetch(input, init);
+          page.url = response.url;
+          page.body = await response.clone().text();
+          return response;
+        },
+      };
+      const voice = await readSubstackVoice(first.pageUrl, { transport: recording, reason: 'sender-share-check' });
+      // "No voice" is said only when the page held this very post; anything else is "couldn't tell" (`unverified`).
+      if (!voice && !(page.body !== undefined && page.url !== undefined && pageHoldsThisPost(page.body, page.url))) {
+        return { type: 'verdict', verdict: 'unverified', why: 'post-voice' };
+      }
       const settled = playability(read, voice ? 'found' : 'none');
       if (settled.verdict === 'cannot') return { type: 'verdict', verdict: 'cannot', reason: settled.reason };
       audioUrl = voice?.audioUrl;

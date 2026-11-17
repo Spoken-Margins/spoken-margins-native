@@ -204,7 +204,7 @@ test('the #4433 case: a post whose page offers no voice is `no-post-voice` befor
 });
 
 test('a podcast episode whose audio the server turns away is `audio-refused`; a page that fails to read is "couldn\'t check", never a warning', async ({ page }) => {
-  const refused = await check(page, 'vectorvoice01', { pages: {}, audio: { status: 403, contentType: 'text/html' } });
+  const refused = await check(page, 'vectorvoice01', { pages: {}, audio: { status: 404, contentType: 'text/html' } });
   await expect.poll(async () => (await refused.messages()).length).toBeGreaterThanOrEqual(2);
   expect(await refused.messages()).toEqual([{ type: 'started' }, { type: 'verdict', verdict: 'cannot', reason: 'audio-refused' }]);
   expect(await refused.asked()).toEqual([{ kind: 'audio-start', url: PODCAST_AUDIO }]);
