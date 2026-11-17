@@ -1,22 +1,13 @@
 {
-  "originHash" : "f07217498b188b04d8737baaad5fc69519f8b9bc714a835e90fdb896d762fd13",
+  "originHash" : "d933ccd6305ac8613083ed33daa4a8f659a05709c935c514d4bfd9119a541cb3",
   "pins" : [
     {
-      "identity" : "swift-asn1",
+      "identity" : "onnxruntime-swift-package-manager",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-asn1.git",
+      "location" : "https://github.com/microsoft/onnxruntime-swift-package-manager.git",
       "state" : {
-        "revision" : "917b472dbe53ba699cbb0495f9a95a084bc6364d",
-        "version" : "1.7.4"
-      }
-    },
-    {
-      "identity" : "swift-crypto",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-crypto.git",
-      "state" : {
-        "revision" : "95ba0316a9b733e92bb6b071255ff46263bbe7dc",
-        "version" : "3.15.1"
+        "revision" : "b7fb7f7dea8a2469e6335d95a61b8f36d0dc83b2",
+        "version" : "1.24.2"
       }
     },
     {
