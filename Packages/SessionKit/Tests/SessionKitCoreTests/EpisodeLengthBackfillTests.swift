@@ -203,4 +203,24 @@ final class EpisodeLengthBackfillTests: XCTestCase {
         let store = try openStore()
         XCTAssertThrowsError(try store.fillMissingMediaDuration(itemId: "nope", durationMs: 60_000))
     }
+
+    /// A trash that lands between the fill's read and its save must not be undone by the fill's stale copy.
+    func testAFillRacingATrashNeverBringsTheItemBack() throws {
+        let store = try openStore()
+        let ids = (0..<300).map { "race-\($0)" }
+        for id in ids { try store.saveItem(episode(id, audio: "https://cdn.example/\(id).mp3")) }
+        DispatchQueue.concurrentPerform(iterations: ids.count * 2) { index in
+            let id = ids[index / 2]
+            if index % 2 == 0 {
+                _ = try? store.fillMissingMediaDuration(itemId: id, durationMs: 60_000)
+            } else {
+                try? store.moveItemToTrash(id: id)
+            }
+        }
+        for id in ids {
+            let item = try store.loadItem(id: id)
+            XCTAssertNotNil(item.deletedAt, "\(id) was trashed, and the fill put it back")
+            XCTAssertEqual(item.media?.durationMs, 60_000)
+        }
+    }
 }
