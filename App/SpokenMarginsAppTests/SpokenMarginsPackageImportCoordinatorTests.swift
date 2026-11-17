@@ -301,6 +301,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertNotNil(try h.store.loadImportedCommentaryLayer(packageDigest: packet.digest))
         XCTAssertEqual(try h.store.loadItem(id: itemId).text, Self.alphaText)
         XCTAssertEqual(h.shownItems, [itemId])
+        XCTAssertEqual(h.refreshesBeforeEachShow, [1], "the Library rows load off the main thread before the item opens (#2256)")
         XCTAssertEqual(h.packetImports, [PacketImport(itemId: itemId, packetId: "package-alpha", marginCount: 1)])
         XCTAssertTrue(h.diagnostics["lastSpokenMarginsPackageImport"]?.hasPrefix("imported:") == true)
         XCTAssertTrue(began.opensDirectly)
@@ -1005,6 +1006,8 @@ private final class ImportHarness {
     var navigationLocked = false
     var onPacketImport: (() -> Void)?
     var refreshedLibraries = 0
+    /// How many Library refreshes had run each time an item was shown: the rows come before the opening (#2256).
+    var refreshesBeforeEachShow: [Int] = []
 
     var incomingDirectory: URL {
         supportDirectory.appending(path: "SpokenMargins/IncomingPackages", directoryHint: .isDirectory)
@@ -1171,6 +1174,7 @@ private final class ImportHarness {
             openItem: { [unowned self] in self.openedItems.append($0) },
             showImportedItem: { [unowned self] itemId, _ in
                 if let failure = self.showImportedItemFailure { throw failure }
+                self.refreshesBeforeEachShow.append(self.refreshedLibraries)
                 self.shownItems.append(itemId)
             },
             recordPacketImport: { [unowned self] itemId, packetId, marginCount in
