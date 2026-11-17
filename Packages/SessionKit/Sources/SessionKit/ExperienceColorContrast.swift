@@ -68,10 +68,6 @@ public enum AppSystemColorRGB {
     public static let green = AppDynamicRGB(light: .init(red: 0.204, green: 0.78, blue: 0.349), dark: .init(red: 0.188, green: 0.82, blue: 0.345))
     public static let blue = AppDynamicRGB(light: .init(red: 0, green: 0.478, blue: 1), dark: .init(red: 0.039, green: 0.518, blue: 1))
 
-    /// watchOS has one appearance, and it draws the dark values.
-    public static let watchOrange = AppDynamicRGB(light: orange.dark, dark: orange.dark)
-    public static let watchBlue = AppDynamicRGB(light: blue.dark, dark: blue.dark)
-
     /// The Live Activity draws on one fixed dark plate in both appearances (`activityBackgroundTint`). The progress blue and the
     /// second green are literals in the widget.
     private static func fixed(_ red: Double, _ green: Double, _ blue: Double) -> AppDynamicRGB {
@@ -420,12 +416,34 @@ public enum AppColorContrastAudit {
         return pairs
     }()
 
-    /// The Watch's plates: white label text on the system orange and blue (`WatchPlateButtonStyle` forces `.white`).
-    /// The colours are not tokens, so these pairs name the system values (#3731).
-    public static let watchPlatePairs: [Pair] = [
-        .init(name: "watch session plate label", foreground: AppSemanticColorRGB.white, background: AppSystemColorRGB.watchOrange, minimumRatio: 4.5),
-        .init(name: "watch episode and Record plate label", foreground: AppSemanticColorRGB.white, background: AppSystemColorRGB.watchBlue, minimumRatio: 4.5)
-    ]
+    /// The Watch's plates, from `WatchPlatePalette` (#3731): each plate's label on its fill, and on the fill as pressed,
+    /// both over the Watch's black screen, and the two targets' header text on black. watchOS has one appearance, so each
+    /// colour is listed once for both. Stop draws the episode or session plate, so it has no pair of its own.
+    public static let watchPlatePairs: [Pair] = {
+        func color(_ c: WatchPlateColor) -> AppDynamicRGB {
+            let rgb = AppColorRGB(red: c.red, green: c.green, blue: c.blue)
+            return AppDynamicRGB(light: rgb, dark: rgb)
+        }
+        let black = color(WatchPlatePalette.watchBlack)
+        var pairs: [Pair] = []
+        for plate in WatchPlate.allCases {
+            let fill = WatchPlatePalette.fill(plate)
+            let label = color(WatchPlatePalette.label(plate))
+            pairs.append(.init(
+                name: "watch \(plate.rawValue) plate label", foreground: label,
+                background: color(fill.color).composited(over: black, alpha: fill.alpha), minimumRatio: 4.5))
+            pairs.append(.init(
+                name: "watch \(plate.rawValue) plate label, pressed", foreground: label,
+                background: color(fill.color).composited(over: black, alpha: fill.alpha * WatchPlatePalette.pressedMultiplier),
+                minimumRatio: 4.5))
+        }
+        for plate in [WatchPlate.episode, .session] {
+            pairs.append(.init(
+                name: "watch \(plate.rawValue) header text", foreground: color(WatchPlatePalette.headerText(plate)),
+                background: black, minimumRatio: 4.5))
+        }
+        return pairs
+    }()
 
     /// Fills that carry an icon or a label and are not Timeline rows (#3739): the round icon
     /// badges, the library row icon tiles, the selected subject chip and the live passage's current sentence. Each is a tint over the surface it is
@@ -610,11 +628,6 @@ public enum AppColorContrastAudit {
         .init(pair: "my Margin row label on coral at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
         .init(pair: "row detail on ochre at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
         .init(pair: "row detail on plum at 0.07 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
-        // The Watch's plates force white text on the system orange and blue (#3731). One appearance, listed twice.
-        .init(pair: "watch session plate label", appearance: "light", since: "2026-11-08", fixedBy: "#3731"),
-        .init(pair: "watch session plate label", appearance: "dark", since: "2026-11-08", fixedBy: "#3731"),
-        .init(pair: "watch episode and Record plate label", appearance: "light", since: "2026-11-08", fixedBy: "#3731"),
-        .init(pair: "watch episode and Record plate label", appearance: "dark", since: "2026-11-08", fixedBy: "#3731"),
         // The selected pane's pill is 1.69:1 against its tray, and the selected filter's white words are 3.41:1 on its
         // pill (#3735). Both appearances are the same: the plate is fixed.
         .init(pair: "pane switch selected fill against tray", appearance: "light", since: "2026-11-13", fixedBy: "#3735"),

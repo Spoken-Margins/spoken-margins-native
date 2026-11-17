@@ -57,6 +57,20 @@ public struct PlayQueue: Codable, Equatable, Sendable {
         itemIds.removeAll { !isAvailable($0) }
     }
 
+    /// The item `popNext(isAvailable:)` would take, without taking it (#3914).
+    public func peekNext(isAvailable: (String) -> Bool) -> String? {
+        itemIds.first(where: isAvailable)
+    }
+
+    /// The queued item the playback screen's "Next in queue" would start (#3914): the next one that still exists, unless it
+    /// is the item already playing or being started. It is drawn only while this is non-nil and it is the answer the tap is
+    /// checked against, so a second tap after the item started (it left the queue, so the peek is now the one after it)
+    /// and a tap in the moment the queue advanced by itself both find a different answer and do nothing.
+    public func nextToStart(playing: String?, starting: String?, isAvailable: (String) -> Bool) -> String? {
+        guard let next = peekNext(isAvailable: isAvailable), next != playing, next != starting else { return nil }
+        return next
+    }
+
     /// Takes the next item that still exists. Items that were deleted since they were queued are dropped on the way,
     /// so one of them never jams the queue.
     public mutating func popNext(isAvailable: (String) -> Bool) -> String? {

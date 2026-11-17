@@ -19,6 +19,8 @@ struct ExperienceTimelineRailScreen: View {
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var entries: [TimelineRailEntry] = []
+    /// Chapters the listener folded (#3895). Kept for this item while the screen is open.
+    @State private var folding = TimelineChapterFolding()
     @State private var playbackTick = 0 // bumped by each progress tick: the current row follows the playhead (#2074)
     @FocusState private var responseEditorFocused: Bool
     @State private var composerAnchor = TimelineComposerAnchor()
@@ -114,6 +116,7 @@ struct ExperienceTimelineRailScreen: View {
                 refreshEntries(from: item)
             }
             .onChange(of: model.selectedItem.id) { _, _ in
+                folding = TimelineChapterFolding()
                 followsPlayback = true
                 focusTimeline(using: proxy)
             }
@@ -196,7 +199,16 @@ struct ExperienceTimelineRailScreen: View {
 
     private var timelineRail: some View {
         PlaybackTimelineListView(entries: entries, currentIDs: currentEntryIDs,
+                                 folding: folding, toggleChapter: toggleChapter,
                                  perform: perform, details: details)
+    }
+
+    private var foldingRows: [TimelineChapterFolding.Row] { entries.map(\.foldingRow) }
+
+    private func toggleChapter(_ id: String) {
+        // The listener is working the rail by hand: don't pull it back to the playing row under their finger.
+        followsPlayback = false
+        withMotion(.snappy) { folding.toggle(id, in: foldingRows) }
     }
 
     private var reflectionComposer: some View {
@@ -436,6 +448,7 @@ struct ExperienceTimelineRailScreen: View {
 
     private func refreshEntries(from item: ItemDetailState) {
         entries = Self.makeEntries(from: item, sessionID: model.snapshot.sessionId, playbackDurationMs: model.snapshot.currentPlaybackDurationMs)
+        folding.prune(to: foldingRows)
     }
 
     /// Replies sit directly under the Margin they answer, indented, at that Margin's place on the rail (#473).
@@ -617,7 +630,10 @@ struct ExperienceTimelineRailScreen: View {
     }
 
     private var currentEntryIDs: Set<String> { playbackSelection.currentIDs }
-    private var currentEntryID: String? { playbackSelection.focusID }
+    /// The row to follow. A playing row folded away under a chapter is followed by showing that chapter (#3895).
+    private var currentEntryID: String? {
+        playbackSelection.focusID.map { folding.visibleID(for: $0, in: foldingRows) }
+    }
 
     private func scrollComposerIntoView(using proxy: ScrollViewProxy) {
         Task { @MainActor in
@@ -633,9 +649,14 @@ struct ExperienceTimelineRailScreen: View {
         let requested = model.requestedTimelineFocusMarginID
         guard requested != nil || followsPlayback,
               let id = requested ?? currentEntryID ?? entries.first?.id else { return }
-        if requested != nil { followsPlayback = false }
+        if requested != nil {
+            followsPlayback = false
+            // A Margin the listener was taken to must be on screen, not folded away.
+            if let requested { folding.reveal(requested, in: foldingRows) }
+        }
         Task { @MainActor in
             await Task.yield()
+            await Task.yield() // a row just unfolded needs a layout pass before it can be scrolled to
             guard !responseEditorFocused else { return }
             withMotion(.snappy) { proxy.scrollTo(id, anchor: .center) }
             if model.requestedTimelineFocusMarginID == requested {
