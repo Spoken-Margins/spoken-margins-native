@@ -27,6 +27,8 @@ struct ExperienceItemDetailScreen: View {
     @State private var episodeLinkText = ""
     @State private var showsReactions = false
     @State private var collectionItem: LibraryItemRow?
+    /// The arrival preview (#3216): Play on an item a friend's unheard Margins arrived on, before the listener has a place.
+    @State private var showsArrivalPreview = false
     private let episodeLinker = ImportedFileEpisodeLinker()
 
     var body: some View {
@@ -141,6 +143,9 @@ struct ExperienceItemDetailScreen: View {
                 }
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
+            .fullScreenCover(isPresented: $showsArrivalPreview) {
+                MarginsArrivalPreviewView().environmentObject(model)
+            }
             .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
             .onDisappear { WrittenMarginReadings.leftItemScreen(model.selectedItem.id) }
             .sheet(item: $collectionItem) { item in
@@ -393,6 +398,13 @@ struct ExperienceItemDetailScreen: View {
         Button {
             // Play on this screen asks nothing today: the friend's Margins play in place as the episode reaches them
             // (#3219). `PlayRule.Surface.itemScreen` is where that is decided.
+            if MarginsArrivalPreview.shows(
+                MarginsTabSource(model: model).rows,
+                resumePlace: model.selectedItemPreferredContinuationSession?.position,
+                hasFinishedSession: hasFinishedSession) {
+                showsArrivalPreview = true
+                return
+            }
             model.continueListening(itemId: model.selectedItem.id, surface: .itemScreen) { pendingNewMarginsOffer = $0 }
         } label: {
             Label(choices.primaryTitle, systemImage: "play.fill")
