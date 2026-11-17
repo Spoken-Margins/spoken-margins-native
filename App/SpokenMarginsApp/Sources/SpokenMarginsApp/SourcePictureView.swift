@@ -1,131 +1,10 @@
-import CryptoKit
 import Foundation
 import ImageIO
 import SessionKit
 import SwiftUI
 import UIKit
 
-/// The bytes of a picture an imported page shows, fetched when Timeline first draws its row and kept in Caches.
-///
-/// Rows show the page's own pictures, GIFs included, while the listener hears the article (owner, 2026-11-14). The
-/// import never fetches them, so an article with pictures costs nothing until its Timeline is opened. The request
-/// carries no cookies, so the picture's host learns no more than an address and that someone opened it.
-/// Unchecked Sendable: NSCache is thread-safe and every other stored property is immutable.
-final class SourcePictureLoader: @unchecked Sendable {
-    /// A picture larger than this is left on the web: its row says so and opens the page.
-    static let maximumBytes = 16 * 1_024 * 1_024
-
-    static let shared = SourcePictureLoader(
-        diskDirectory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-            .appending(path: "SourcePictures", directoryHint: .isDirectory),
-        fetch: { try await SourcePictureLoader.download($0) }
-    )
-
-    private let memory = NSCache<NSURL, NSData>()
-    private let diskDirectory: URL?
-    private let fetch: @Sendable (URL) async throws -> Data
-    private let inFlight = InFlight()
-
-    init(diskDirectory: URL?, fetch: @escaping @Sendable (URL) async throws -> Data) {
-        self.diskDirectory = diskDirectory
-        self.fetch = fetch
-        memory.totalCostLimit = 48 * 1_024 * 1_024
-    }
-
-    func cachedData(for url: URL) -> Data? {
-        memory.object(forKey: url as NSURL) as Data?
-    }
-
-    /// The picture's bytes from memory, then disk, then the network. Nil when it can't be fetched, is too large, or
-    /// isn't a picture ImageIO can read.
-    func data(for url: URL) async -> Data? {
-        if let cached = cachedData(for: url) { return cached }
-        let task = await inFlight.task(for: url) { [self] in await load(url) }
-        return await task.value
-    }
-
-    private func load(_ url: URL) async -> Data? {
-        let diskURL = diskFileURL(for: url)
-        if let diskURL, let data = try? Data(contentsOf: diskURL), SourcePicture.size(of: data) != nil {
-            remember(data, for: url)
-            return data
-        }
-        guard let data = try? await fetch(url), data.count <= Self.maximumBytes, SourcePicture.size(of: data) != nil else {
-            return nil
-        }
-        remember(data, for: url)
-        if let diskURL {
-            try? FileManager.default.createDirectory(at: diskURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? data.write(to: diskURL, options: .atomic)
-        }
-        return data
-    }
-
-    private func remember(_ data: Data, for url: URL) {
-        memory.setObject(data as NSData, forKey: url as NSURL, cost: data.count)
-    }
-
-    private func diskFileURL(for url: URL) -> URL? {
-        guard let diskDirectory else { return nil }
-        let name = SHA256.hash(data: Data(url.absoluteString.utf8)).map { String(format: "%02x", $0) }.joined()
-        return diskDirectory.appending(path: name, directoryHint: .notDirectory)
-    }
-
-    private static let session: URLSession = {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.urlCache = nil // the loader keeps its own copies
-        configuration.httpShouldSetCookies = false
-        configuration.httpCookieAcceptPolicy = .never
-        configuration.timeoutIntervalForRequest = 20
-        return URLSession(configuration: configuration)
-    }()
-
-    private static func download(_ url: URL) async throws -> Data {
-        guard ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { throw URLError(.unsupportedURL) }
-        let (data, response) = try await session.data(from: url)
-        if let http = response as? HTTPURLResponse {
-            guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-            if http.expectedContentLength > Int64(maximumBytes) { throw URLError(.dataLengthExceedsMaximum) }
-        }
-        return data
-    }
-
-    /// One load per address at a time: a row and its detail sheet share it.
-    private actor InFlight {
-        private var tasks: [URL: Task<Data?, Never>] = [:]
-
-        func task(for url: URL, _ work: @escaping @Sendable () async -> Data?) -> Task<Data?, Never> {
-            if let task = tasks[url] { return task }
-            let task = Task.detached(priority: .utility) { await work() }
-            tasks[url] = task
-            Task { [weak self] in
-                _ = await task.value
-                await self?.finish(url)
-            }
-            return task
-        }
-
-        private func finish(_ url: URL) { tasks[url] = nil }
-    }
-}
-
-/// Reading a picture's bytes with ImageIO.
-enum SourcePicture {
-    /// The picture's size in pixels, or nil when ImageIO can't read it.
-    static func size(of data: Data) -> CGSize? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(source) > 0,
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight] as? Int, width > 0, height > 0 else { return nil }
-        let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
-        return orientation >= 5 ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
-    }
-
-    static func isAnimated(_ data: Data) -> Bool {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
-        return CGImageSourceGetCount(source) > 1
-    }
-
+extension SourcePicture {
     /// The first frame, decoded no larger than `maxPixelSize` on its long side.
     static func still(_ data: Data, maxPixelSize: Int) -> UIImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else {
@@ -180,14 +59,18 @@ extension SourceElement {
 }
 
 /// A page's picture, drawn at its own shape: a still, or a GIF or animated PNG that plays while it's on screen.
+///
+/// With `.storedOnly` (a Timeline row) it draws a picture the listener already loaded and otherwise says where a tap
+/// would load it from: drawing a row makes no request (#2032). With `.network` (the sheet a tap opens) it fetches.
 struct SourcePictureView: View {
     let url: URL
     /// What VoiceOver reads for the picture.
     let accessibilityText: String
     var maxPixelSize = 1_200
+    var fetching: SourcePictureLoader.Fetching = .network
     private let loader = SourcePictureLoader.shared
 
-    private enum Phase: Equatable { case loading, loaded(Data, CGSize), failed }
+    private enum Phase: Equatable { case loading, loaded(Data, CGSize), notLoaded, failed }
     @State private var phase: Phase = .loading
 
     var body: some View {
@@ -201,6 +84,11 @@ struct SourcePictureView: View {
             case .loading:
                 placeholder { ProgressView() }
                     .accessibilityLabel("Loading picture")
+            case .notLoaded:
+                Label("Tap to load the picture from \(url.host() ?? "the web")", systemImage: "photo")
+                    .font(.footnote)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             case .failed:
                 placeholder {
                     Label("Picture didn't load", systemImage: "photo.badge.exclamationmark")
@@ -211,15 +99,27 @@ struct SourcePictureView: View {
         }
         .frame(maxWidth: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .task(id: url) {
-            if let data = loader.cachedData(for: url), let size = SourcePicture.size(of: data) {
-                phase = .loaded(data, size)
-                return
-            }
-            phase = .loading
-            let data = await loader.data(for: url)
-            guard !Task.isCancelled else { return }
-            if let data, let size = SourcePicture.size(of: data) { phase = .loaded(data, size) } else { phase = .failed }
+        .task(id: url) { await show() }
+        // A row that drew "Tap to load" draws the picture once its sheet has fetched it.
+        .onReceive(NotificationCenter.default.publisher(for: SourcePictureLoader.didStorePicture)) { note in
+            guard phase == .notLoaded, note.object as? URL == url,
+                  let data = loader.cachedData(for: url), let size = SourcePicture.size(of: data) else { return }
+            phase = .loaded(data, size)
+        }
+    }
+
+    private func show() async {
+        if let data = loader.cachedData(for: url), let size = SourcePicture.size(of: data) {
+            phase = .loaded(data, size)
+            return
+        }
+        if fetching == .network { phase = .loading }
+        let data = await loader.data(for: url, fetching: fetching)
+        guard !Task.isCancelled else { return }
+        if let data, let size = SourcePicture.size(of: data) {
+            phase = .loaded(data, size)
+        } else {
+            phase = fetching == .storedOnly ? .notLoaded : .failed
         }
     }
 
