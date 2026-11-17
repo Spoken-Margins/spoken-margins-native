@@ -7,7 +7,7 @@ import { PlayIcon } from '../icons.tsx';
 import { arrivalResumeAt, playHint, playableArticleMargins, ARRIVAL_WORDS, GET_APP_LINK, arrivalFacts, possessive, type ArrivalFacts } from '../logic/arrival.ts';
 import { placeImport, unnamedAuthorFor } from '../logic/import.ts';
 import { playability } from '../logic/playability.ts';
-import { messageForFailure, messageForOpened, reportPlayCheck } from '../play-check.ts';
+import { messageForFailure, messageForOpened, reportPlayCheck, type PlayCheckMessage } from '../play-check.ts';
 import { placeMarginsOnAudio } from '../place-margins.ts';
 import { plainError } from '../logic/messages.ts';
 import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkRef } from '../logic/share-link.ts';
@@ -98,15 +98,18 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
       return;
     }
     void (async () => {
+      let message: PlayCheckMessage;
       try {
         const { bytes, expires } = await openSharedPacketWithExpiry(serverFor(link.link));
         const read = await services.packets.readPacket(bytes, 'shared.spokenmargins');
         setState({ status: 'ready', read, facts: arrivalFacts(read.sender, [...read.margins, ...playableArticleMargins(read)]), ...(expires === undefined ? {} : { expires }) });
-        reportPlayCheck(messageForOpened(read));
+        message = messageForOpened(read);
       } catch (error) {
         setState({ status: 'failed', message: failureWords(error) });
-        reportPlayCheck(messageForFailure(error));
+        message = messageForFailure(error);
       }
+      // After the try, so nothing about the sender's check can turn a link that opened into the failed card.
+      reportPlayCheck(message);
     })();
   }, [data.ready, link]);
 
