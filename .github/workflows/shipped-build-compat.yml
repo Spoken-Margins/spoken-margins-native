@@ -36,7 +36,6 @@ on:
       - 'Packages/SessionKit/Sources/SessionKit/ListeningMoment.swift'
       - 'Packages/SessionKit/Sources/SessionKit/MarginConversation.swift'
       - 'Packages/SessionKit/Sources/SessionKit/MarginLayerSynthesis.swift'
-      - 'Packages/SessionKit/Sources/SessionKit/MovedMarginOrigin.swift'
       - 'Packages/SessionKit/Sources/SessionKit/PodcastDownloads.swift'
       - 'Packages/SessionKit/Sources/SessionKit/PortableListeningMapContract.swift'
       - 'Packages/SessionKit/Sources/SessionKit/PrivacyPassToken.swift'
