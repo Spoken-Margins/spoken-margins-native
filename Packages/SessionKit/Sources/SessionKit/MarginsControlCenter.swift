@@ -160,17 +160,21 @@ public enum MarginsControlCenter {
         return false
     }
 
-    /// The Margins tab's Autoplay setting (owner, 2026-11-17). With `.none` a tone marks each Margin.
+    /// The Margins tab's Autoplay setting (owner, 2026-11-17; prototype v3). With `.none` ("Off") a tone still marks
+    /// each Margin; that is behaviour (`arrival`), not part of the label.
     public enum Autoplay: String, CaseIterable, Equatable, Sendable {
         case unheard
         case all
         case none
 
+        /// The header of the Autoplay menu.
+        public static let menuTitle = "Play Margins by themselves"
+
         public var title: String {
             switch self {
             case .unheard: "Unheard Margins"
             case .all: "All Margins"
-            case .none: "None, a tone marks each"
+            case .none: "Off"
             }
         }
     }
@@ -199,8 +203,21 @@ public enum MarginsControlCenter {
         rows.filter { arrival(for: $0, autoplay: autoplay) == .plays }
     }
 
-    /// The source times "Next Margin" steps through: every placed Margin, own and friends', replies too.
-    public static func skipTimes(_ rows: [Row]) -> [Int] { rows.compactMap(\.timeMs) }
+    /// The threads in `rows` (a row at depth 0 and every row under it), in list order.
+    public static func threads(_ rows: [Row]) -> [[Row]] {
+        var threads: [[Row]] = []
+        for row in rows {
+            if row.depth == 0 || threads.isEmpty { threads.append([row]) } else { threads[threads.count - 1].append(row) }
+        }
+        return threads
+    }
+
+    /// The Margin that plays first when playback lands on `thread` (prototype v3's `firstToPlay`): its first unheard
+    /// friend's Margin unless Autoplay is All, otherwise the thread's first Margin.
+    public static func firstToPlay(in thread: [Row], autoplay: Autoplay) -> Row? {
+        if autoplay != .all, let unheard = thread.first(where: { $0.hearing == .unheard }) { return unheard }
+        return thread.first
+    }
 
     /// How many friends' Margins the listener hasn't heard.
     public static func unheardCount(_ rows: [Row]) -> Int { rows.filter { $0.hearing == .unheard }.count }
@@ -231,12 +248,35 @@ public struct NextMarginSkip: Equatable, Sendable {
     /// From the playhead to the Margin.
     public let msUntilMargin: Int
     public let action: Action
+    /// The Margin that plays first in the thread the press lands on (`MarginsControlCenter.firstToPlay`); nil from the
+    /// times-only `next(playheadMs:marginTimesMs:)`.
+    public let firstToPlay: MarginReference?
 
-    public init(marginTimeMs: Int, leadInStartMs: Int, msUntilMargin: Int, action: Action) {
+    public init(marginTimeMs: Int, leadInStartMs: Int, msUntilMargin: Int, action: Action, firstToPlay: MarginReference? = nil) {
         self.marginTimeMs = marginTimeMs
         self.leadInStartMs = leadInStartMs
         self.msUntilMargin = msUntilMargin
         self.action = action
+        self.firstToPlay = firstToPlay
+    }
+
+    /// Next Margin on the list (prototype v3's `nextTarget`): it stops only at a thread's first Margin, never at a
+    /// reply. Under Unheard it goes to the next thread holding an unheard friend's Margin, or the next thread when none
+    /// is ahead. The lead-in and countdown are measured to the thread's first Margin; `firstToPlay` names what plays.
+    public static func next(
+        playheadMs: Int, rows: [MarginsControlCenter.Row], autoplay: MarginsControlCenter.Autoplay,
+        leadInMs: Int = MarginsControlCenter.leadInMs
+    ) -> NextMarginSkip? {
+        let ahead = MarginsControlCenter.threads(rows).filter { thread in
+            guard let time = thread.first?.timeMs else { return false }
+            return time > playheadMs
+        }
+        let preferred = autoplay == .unheard ? ahead.first { $0.contains { $0.hearing == .unheard } } : nil
+        guard let thread = preferred ?? ahead.first, let rootTime = thread.first?.timeMs,
+              let skip = next(playheadMs: playheadMs, marginTimesMs: [rootTime], leadInMs: leadInMs) else { return nil }
+        return NextMarginSkip(
+            marginTimeMs: skip.marginTimeMs, leadInStartMs: skip.leadInStartMs, msUntilMargin: skip.msUntilMargin,
+            action: skip.action, firstToPlay: MarginsControlCenter.firstToPlay(in: thread, autoplay: autoplay)?.reference)
     }
 
     /// Where the press puts the playhead: the lead-in's start, or the Margin itself. Never behind the playhead.

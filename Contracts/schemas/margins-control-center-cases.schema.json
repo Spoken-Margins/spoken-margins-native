@@ -48,14 +48,15 @@
     "nextMargin": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["marginTimeMs", "leadInStartMs", "msUntilMargin", "action", "destinationMs", "countdown"],
+      "required": ["marginTimeMs", "leadInStartMs", "msUntilMargin", "action", "destinationMs", "countdown", "firstToPlayId"],
       "properties": {
         "marginTimeMs": { "$ref": "#/$defs/ms" },
         "leadInStartMs": { "$ref": "#/$defs/ms" },
         "msUntilMargin": { "type": "integer", "minimum": 1 },
         "action": { "description": "seekToLeadIn before the lead-in; playMargin inside it.", "enum": ["seekToLeadIn", "playMargin"] },
         "destinationMs": { "$ref": "#/$defs/ms" },
-        "countdown": { "description": "m:ss, rounded up.", "type": "string", "pattern": "^[0-9]+:[0-5][0-9]$" }
+        "countdown": { "description": "m:ss, rounded up.", "type": "string", "pattern": "^[0-9]+:[0-5][0-9]$" },
+        "firstToPlayId": { "description": "The Margin that plays first in the thread Next Margin lands on: its first unheard friend's Margin unless Autoplay is All, otherwise the thread's first Margin.", "$ref": "#/$defs/id" }
       }
     },
     "case": {
@@ -109,7 +110,7 @@
     "labels": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["rowStart", "startWithUnheard", "startFromBeginning", "autoplay"],
+      "required": ["rowStart", "startWithUnheard", "startFromBeginning", "autoplayMenuTitle", "autoplay"],
       "properties": {
         "rowStart": {
           "type": "object", "additionalProperties": false, "required": ["arrival", "playback"],
@@ -117,6 +118,7 @@
         },
         "startWithUnheard": { "type": "string" },
         "startFromBeginning": { "type": "string" },
+        "autoplayMenuTitle": { "type": "string" },
         "autoplay": {
           "type": "object", "additionalProperties": false, "required": ["unheard", "all", "none"],
           "properties": { "unheard": { "type": "string" }, "all": { "type": "string" }, "none": { "type": "string" } }

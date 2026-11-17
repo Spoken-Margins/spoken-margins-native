@@ -15,17 +15,18 @@
     },
     "startWithUnheard": "Start with unheard Margins",
     "startFromBeginning": "Start from the beginning",
+    "autoplayMenuTitle": "Play Margins by themselves",
     "autoplay": {
       "unheard": "Unheard Margins",
       "all": "All Margins",
-      "none": "None, a tone marks each"
+      "none": "Off"
     }
   },
   "cases": [
     {
       "id": "seed-thread-order-hearing-autoplay",
       "rule": "order",
-      "note": "The prototype's seed: two friends, a conversation of four under your 3:10 Margin, placeholder words, some heard. Threads by time, replies under their parent. At 13:00 the next Margin is your 15:30.",
+      "note": "The prototype's seed: two friends, a conversation of four under your 3:10 Margin, placeholder words, some heard. Threads by time, replies under their parent. At 13:00, under Unheard, Next Margin passes your 15:30 and heard 19:05 for the next thread with an unheard Margin, Rae's 22:40.",
       "input": {
         "autoplay": "unheard",
         "playheadMs": 780000,
@@ -276,12 +277,13 @@
           }
         ],
         "nextMargin": {
-          "marginTimeMs": 930000,
-          "leadInStartMs": 910000,
-          "msUntilMargin": 150000,
+          "marginTimeMs": 1360000,
+          "leadInStartMs": 1340000,
+          "msUntilMargin": 580000,
           "action": "seekToLeadIn",
-          "destinationMs": 910000,
-          "countdown": "2:30"
+          "destinationMs": 1340000,
+          "countdown": "9:40",
+          "firstToPlayId": "rae-ending"
         },
         "unheardCount": 5,
         "opensOnMarginsTab": true,
@@ -379,7 +381,8 @@
           "msUntilMargin": 40000,
           "action": "seekToLeadIn",
           "destinationMs": 80000,
-          "countdown": "0:40"
+          "countdown": "0:40",
+          "firstToPlayId": "sam-early"
         },
         "unheardCount": 2,
         "opensOnMarginsTab": true,
@@ -453,7 +456,8 @@
           "msUntilMargin": 10000,
           "action": "playMargin",
           "destinationMs": 100000,
-          "countdown": "0:10"
+          "countdown": "0:10",
+          "firstToPlayId": "sam-a"
         },
         "unheardCount": 1,
         "opensOnMarginsTab": true,
@@ -527,7 +531,8 @@
           "msUntilMargin": 20000,
           "action": "playMargin",
           "destinationMs": 100000,
-          "countdown": "0:20"
+          "countdown": "0:20",
+          "firstToPlayId": "sam-a"
         },
         "unheardCount": 1,
         "opensOnMarginsTab": true,
@@ -601,7 +606,8 @@
           "msUntilMargin": 90000,
           "action": "seekToLeadIn",
           "destinationMs": 170000,
-          "countdown": "1:30"
+          "countdown": "1:30",
+          "firstToPlayId": "own-b"
         },
         "unheardCount": 1,
         "opensOnMarginsTab": true,
@@ -718,7 +724,8 @@
           "msUntilMargin": 327400,
           "action": "seekToLeadIn",
           "destinationMs": 380000,
-          "countdown": "5:28"
+          "countdown": "5:28",
+          "firstToPlayId": "own-far"
         },
         "unheardCount": 0,
         "opensOnMarginsTab": false,
@@ -768,7 +775,8 @@
           "msUntilMargin": 3725000,
           "action": "seekToLeadIn",
           "destinationMs": 3705000,
-          "countdown": "62:05"
+          "countdown": "62:05",
+          "firstToPlayId": "own-hour"
         },
         "unheardCount": 0,
         "opensOnMarginsTab": false,
@@ -818,7 +826,8 @@
           "msUntilMargin": 5000,
           "action": "playMargin",
           "destinationMs": 5000,
-          "countdown": "0:05"
+          "countdown": "0:05",
+          "firstToPlayId": "sam-intro"
         },
         "unheardCount": 1,
         "opensOnMarginsTab": true,
@@ -826,9 +835,9 @@
       }
     },
     {
-      "id": "replies-included-in-next-margin",
+      "id": "replies-are-not-stops",
       "rule": "nextMargin",
-      "note": "Next Margin steps through every placed Margin, replies too: at 3:15 Sam's reply at 3:20 is 5 s ahead.",
+      "note": "Next Margin stops only at a thread's first Margin: at 3:15 the replies at 3:20 to 3:34 are passed for 7:45.",
       "input": {
         "autoplay": "unheard",
         "playheadMs": 195000,
@@ -1079,12 +1088,13 @@
           }
         ],
         "nextMargin": {
-          "marginTimeMs": 200000,
-          "leadInStartMs": 180000,
-          "msUntilMargin": 5000,
-          "action": "playMargin",
-          "destinationMs": 200000,
-          "countdown": "0:05"
+          "marginTimeMs": 465000,
+          "leadInStartMs": 445000,
+          "msUntilMargin": 270000,
+          "action": "seekToLeadIn",
+          "destinationMs": 445000,
+          "countdown": "4:30",
+          "firstToPlayId": "sam-placeholder"
         },
         "unheardCount": 5,
         "opensOnMarginsTab": true,
@@ -1175,7 +1185,8 @@
           "msUntilMargin": 30000,
           "action": "seekToLeadIn",
           "destinationMs": 10000,
-          "countdown": "0:30"
+          "countdown": "0:30",
+          "firstToPlayId": "sam-one"
         },
         "unheardCount": 0,
         "opensOnMarginsTab": false,
@@ -1225,7 +1236,8 @@
           "msUntilMargin": 30000,
           "action": "seekToLeadIn",
           "destinationMs": 10000,
-          "countdown": "0:30"
+          "countdown": "0:30",
+          "firstToPlayId": "own-one"
         },
         "unheardCount": 0,
         "opensOnMarginsTab": false,
@@ -1299,7 +1311,8 @@
           "msUntilMargin": 30000,
           "action": "seekToLeadIn",
           "destinationMs": 10000,
-          "countdown": "0:30"
+          "countdown": "0:30",
+          "firstToPlayId": "sam-read"
         },
         "unheardCount": 1,
         "opensOnMarginsTab": true,
@@ -1397,7 +1410,8 @@
           "msUntilMargin": 30000,
           "action": "seekToLeadIn",
           "destinationMs": 10000,
-          "countdown": "0:30"
+          "countdown": "0:30",
+          "firstToPlayId": "own-a"
         },
         "unheardCount": 1,
         "opensOnMarginsTab": true,
@@ -1495,7 +1509,8 @@
           "msUntilMargin": 30000,
           "action": "seekToLeadIn",
           "destinationMs": 10000,
-          "countdown": "0:30"
+          "countdown": "0:30",
+          "firstToPlayId": "own-a"
         },
         "unheardCount": 1,
         "opensOnMarginsTab": true,
@@ -1617,7 +1632,8 @@
           "msUntilMargin": 10000,
           "action": "playMargin",
           "destinationMs": 10000,
-          "countdown": "0:10"
+          "countdown": "0:10",
+          "firstToPlayId": "sam-blank"
         },
         "unheardCount": 4,
         "opensOnMarginsTab": true,
@@ -1715,7 +1731,8 @@
           "msUntilMargin": 30000,
           "action": "seekToLeadIn",
           "destinationMs": 10000,
-          "countdown": "0:30"
+          "countdown": "0:30",
+          "firstToPlayId": "sam-short"
         },
         "unheardCount": 2,
         "opensOnMarginsTab": true,
@@ -1725,7 +1742,7 @@
     {
       "id": "only-your-own-can-be-starred",
       "rule": "starred",
-      "note": "Starring is for your own Margins to share; a friend's Margin never shows as starred.",
+      "note": "Starring is for your own Margins to share; a friend's Margin never shows as starred. Under Unheard, Next Margin passes your starred 0:30 for the unheard 1:00.",
       "input": {
         "autoplay": "unheard",
         "playheadMs": 0,
@@ -1784,12 +1801,13 @@
           }
         ],
         "nextMargin": {
-          "marginTimeMs": 30000,
-          "leadInStartMs": 10000,
-          "msUntilMargin": 30000,
+          "marginTimeMs": 60000,
+          "leadInStartMs": 40000,
+          "msUntilMargin": 60000,
           "action": "seekToLeadIn",
-          "destinationMs": 10000,
-          "countdown": "0:30"
+          "destinationMs": 40000,
+          "countdown": "1:00",
+          "firstToPlayId": "sam-star"
         },
         "unheardCount": 1,
         "opensOnMarginsTab": true,
@@ -1839,7 +1857,8 @@
           "msUntilMargin": 50000,
           "action": "seekToLeadIn",
           "destinationMs": 30000,
-          "countdown": "0:50"
+          "countdown": "0:50",
+          "firstToPlayId": "sam-orphan"
         },
         "unheardCount": 1,
         "opensOnMarginsTab": true,
@@ -1849,7 +1868,7 @@
     {
       "id": "friend-replies-to-friend",
       "rule": "order",
-      "note": "One friend's reply to another friend's Margin threads under it.",
+      "note": "One friend's reply to another friend's Margin threads under it. Next Margin stops at the root and plays the unheard reply first.",
       "input": {
         "autoplay": "unheard",
         "playheadMs": 0,
@@ -1913,7 +1932,8 @@
           "msUntilMargin": 50000,
           "action": "seekToLeadIn",
           "destinationMs": 30000,
-          "countdown": "0:50"
+          "countdown": "0:50",
+          "firstToPlayId": "rae-answer"
         },
         "unheardCount": 1,
         "opensOnMarginsTab": true,
@@ -1987,7 +2007,8 @@
           "msUntilMargin": 40000,
           "action": "seekToLeadIn",
           "destinationMs": 20000,
-          "countdown": "0:40"
+          "countdown": "0:40",
+          "firstToPlayId": "own-placed"
         },
         "unheardCount": 1,
         "opensOnMarginsTab": true,
@@ -2061,7 +2082,8 @@
           "msUntilMargin": 40000,
           "action": "seekToLeadIn",
           "destinationMs": 20000,
-          "countdown": "0:40"
+          "countdown": "0:40",
+          "firstToPlayId": "rae-first"
         },
         "unheardCount": 2,
         "opensOnMarginsTab": true,
@@ -2154,16 +2176,1352 @@
           }
         ],
         "nextMargin": {
-          "marginTimeMs": 100000,
-          "leadInStartMs": 80000,
-          "msUntilMargin": 100000,
+          "marginTimeMs": 300000,
+          "leadInStartMs": 280000,
+          "msUntilMargin": 300000,
           "action": "seekToLeadIn",
-          "destinationMs": 80000,
-          "countdown": "1:40"
+          "destinationMs": 280000,
+          "countdown": "5:00",
+          "firstToPlayId": "rae-reply"
         },
         "unheardCount": 1,
         "opensOnMarginsTab": true,
         "startWithUnheardMs": 280000
+      }
+    },
+    {
+      "id": "all-mode-next-thread-plays-from-its-root",
+      "rule": "nextMargin",
+      "note": "Under All Margins, Next Margin goes to the next thread whatever its hearing, and plays from its first Margin: at 13:00 that is your 15:30.",
+      "input": {
+        "autoplay": "all",
+        "playheadMs": 780000,
+        "margins": [
+          {
+            "id": "rae-forty",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 100000,
+            "listenedMs": 6000,
+            "words": "Wait, only forty people?",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-sleep",
+            "sender": "you",
+            "parentId": null,
+            "timeMs": 190000,
+            "listenedMs": 0,
+            "words": "The bit about sleep debt.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-reply",
+            "sender": "Sam",
+            "parentId": "own-sleep",
+            "timeMs": 200000,
+            "listenedMs": 0,
+            "words": "I've been running on sleep debt.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-answer",
+            "sender": "you",
+            "parentId": "sam-reply",
+            "timeMs": 212000,
+            "listenedMs": 0,
+            "words": "Try the no-screens hour.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-tried",
+            "sender": "Sam",
+            "parentId": "own-answer",
+            "timeMs": 214000,
+            "listenedMs": 0,
+            "words": "Tried it. Slept like a rock.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-placeholder",
+            "sender": "Sam",
+            "parentId": null,
+            "timeMs": 465000,
+            "listenedMs": 0,
+            "words": "Voice Margin at 7:45 in “UI Test Episode”, recorded 12 Nov 2026",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "rae-guest",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 680000,
+            "listenedMs": 0,
+            "words": "This guest is great.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-walk",
+            "sender": "you",
+            "parentId": null,
+            "timeMs": 930000,
+            "listenedMs": 0,
+            "words": "Walk after lunch.",
+            "starred": true,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-naps",
+            "sender": "Sam",
+            "parentId": null,
+            "timeMs": 1145000,
+            "listenedMs": 3000,
+            "words": "Naps never worked for me.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "rae-ending",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 1360000,
+            "listenedMs": 0,
+            "words": "The ending got me.",
+            "starred": false,
+            "sourceTextBefore": null
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "id": "rae-forty",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "heard",
+            "words": "Wait, only forty people?",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 100000,
+            "startHereMs": 80000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "own-sleep",
+            "depth": 0,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "The bit about sleep debt.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 190000,
+            "startHereMs": 170000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "sam-reply",
+            "depth": 1,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": "I've been running on sleep debt.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 200000,
+            "startHereMs": 180000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "own-answer",
+            "depth": 2,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "Try the no-screens hour.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 212000,
+            "startHereMs": 192000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "sam-tried",
+            "depth": 3,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": "Tried it. Slept like a rock.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 214000,
+            "startHereMs": 194000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "sam-placeholder",
+            "depth": 0,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": null,
+            "wordsComing": true,
+            "leadIn": null,
+            "timeMs": 465000,
+            "startHereMs": 445000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "rae-guest",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "unheard",
+            "words": "This guest is great.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 680000,
+            "startHereMs": 660000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "own-walk",
+            "depth": 0,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "Walk after lunch.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 930000,
+            "startHereMs": 910000,
+            "starred": true,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "sam-naps",
+            "depth": 0,
+            "sender": "Sam",
+            "hearing": "heard",
+            "words": "Naps never worked for me.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 1145000,
+            "startHereMs": 1125000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "rae-ending",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "unheard",
+            "words": "The ending got me.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 1360000,
+            "startHereMs": 1340000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          }
+        ],
+        "nextMargin": {
+          "marginTimeMs": 930000,
+          "leadInStartMs": 910000,
+          "msUntilMargin": 150000,
+          "action": "seekToLeadIn",
+          "destinationMs": 910000,
+          "countdown": "2:30",
+          "firstToPlayId": "own-walk"
+        },
+        "unheardCount": 5,
+        "opensOnMarginsTab": true,
+        "startWithUnheardMs": 170000
+      }
+    },
+    {
+      "id": "unheard-mode-thread-plays-its-first-unheard-margin",
+      "rule": "nextMargin",
+      "note": "Under Unheard, landing on a thread plays its first unheard friend's Margin: at 1:40 the next thread is your 3:10, and Sam's 3:20 reply plays first.",
+      "input": {
+        "autoplay": "unheard",
+        "playheadMs": 100000,
+        "margins": [
+          {
+            "id": "rae-forty",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 100000,
+            "listenedMs": 6000,
+            "words": "Wait, only forty people?",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-sleep",
+            "sender": "you",
+            "parentId": null,
+            "timeMs": 190000,
+            "listenedMs": 0,
+            "words": "The bit about sleep debt.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-reply",
+            "sender": "Sam",
+            "parentId": "own-sleep",
+            "timeMs": 200000,
+            "listenedMs": 0,
+            "words": "I've been running on sleep debt.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-answer",
+            "sender": "you",
+            "parentId": "sam-reply",
+            "timeMs": 212000,
+            "listenedMs": 0,
+            "words": "Try the no-screens hour.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-tried",
+            "sender": "Sam",
+            "parentId": "own-answer",
+            "timeMs": 214000,
+            "listenedMs": 0,
+            "words": "Tried it. Slept like a rock.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-placeholder",
+            "sender": "Sam",
+            "parentId": null,
+            "timeMs": 465000,
+            "listenedMs": 0,
+            "words": "Voice Margin at 7:45 in “UI Test Episode”, recorded 12 Nov 2026",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "rae-guest",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 680000,
+            "listenedMs": 0,
+            "words": "This guest is great.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-walk",
+            "sender": "you",
+            "parentId": null,
+            "timeMs": 930000,
+            "listenedMs": 0,
+            "words": "Walk after lunch.",
+            "starred": true,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-naps",
+            "sender": "Sam",
+            "parentId": null,
+            "timeMs": 1145000,
+            "listenedMs": 3000,
+            "words": "Naps never worked for me.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "rae-ending",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 1360000,
+            "listenedMs": 0,
+            "words": "The ending got me.",
+            "starred": false,
+            "sourceTextBefore": null
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "id": "rae-forty",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "heard",
+            "words": "Wait, only forty people?",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 100000,
+            "startHereMs": 80000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "own-sleep",
+            "depth": 0,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "The bit about sleep debt.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 190000,
+            "startHereMs": 170000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "sam-reply",
+            "depth": 1,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": "I've been running on sleep debt.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 200000,
+            "startHereMs": 180000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "own-answer",
+            "depth": 2,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "Try the no-screens hour.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 212000,
+            "startHereMs": 192000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "sam-tried",
+            "depth": 3,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": "Tried it. Slept like a rock.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 214000,
+            "startHereMs": 194000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "sam-placeholder",
+            "depth": 0,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": null,
+            "wordsComing": true,
+            "leadIn": null,
+            "timeMs": 465000,
+            "startHereMs": 445000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "rae-guest",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "unheard",
+            "words": "This guest is great.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 680000,
+            "startHereMs": 660000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "own-walk",
+            "depth": 0,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "Walk after lunch.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 930000,
+            "startHereMs": 910000,
+            "starred": true,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "sam-naps",
+            "depth": 0,
+            "sender": "Sam",
+            "hearing": "heard",
+            "words": "Naps never worked for me.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 1145000,
+            "startHereMs": 1125000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "rae-ending",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "unheard",
+            "words": "The ending got me.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 1360000,
+            "startHereMs": 1340000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          }
+        ],
+        "nextMargin": {
+          "marginTimeMs": 190000,
+          "leadInStartMs": 170000,
+          "msUntilMargin": 90000,
+          "action": "seekToLeadIn",
+          "destinationMs": 170000,
+          "countdown": "1:30",
+          "firstToPlayId": "sam-reply"
+        },
+        "unheardCount": 5,
+        "opensOnMarginsTab": true,
+        "startWithUnheardMs": 170000
+      }
+    },
+    {
+      "id": "all-mode-thread-plays-its-root",
+      "rule": "nextMargin",
+      "note": "Under All Margins the same thread plays from its first Margin, your 3:10.",
+      "input": {
+        "autoplay": "all",
+        "playheadMs": 100000,
+        "margins": [
+          {
+            "id": "rae-forty",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 100000,
+            "listenedMs": 6000,
+            "words": "Wait, only forty people?",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-sleep",
+            "sender": "you",
+            "parentId": null,
+            "timeMs": 190000,
+            "listenedMs": 0,
+            "words": "The bit about sleep debt.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-reply",
+            "sender": "Sam",
+            "parentId": "own-sleep",
+            "timeMs": 200000,
+            "listenedMs": 0,
+            "words": "I've been running on sleep debt.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-answer",
+            "sender": "you",
+            "parentId": "sam-reply",
+            "timeMs": 212000,
+            "listenedMs": 0,
+            "words": "Try the no-screens hour.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-tried",
+            "sender": "Sam",
+            "parentId": "own-answer",
+            "timeMs": 214000,
+            "listenedMs": 0,
+            "words": "Tried it. Slept like a rock.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-placeholder",
+            "sender": "Sam",
+            "parentId": null,
+            "timeMs": 465000,
+            "listenedMs": 0,
+            "words": "Voice Margin at 7:45 in “UI Test Episode”, recorded 12 Nov 2026",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "rae-guest",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 680000,
+            "listenedMs": 0,
+            "words": "This guest is great.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-walk",
+            "sender": "you",
+            "parentId": null,
+            "timeMs": 930000,
+            "listenedMs": 0,
+            "words": "Walk after lunch.",
+            "starred": true,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-naps",
+            "sender": "Sam",
+            "parentId": null,
+            "timeMs": 1145000,
+            "listenedMs": 3000,
+            "words": "Naps never worked for me.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "rae-ending",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 1360000,
+            "listenedMs": 0,
+            "words": "The ending got me.",
+            "starred": false,
+            "sourceTextBefore": null
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "id": "rae-forty",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "heard",
+            "words": "Wait, only forty people?",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 100000,
+            "startHereMs": 80000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "own-sleep",
+            "depth": 0,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "The bit about sleep debt.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 190000,
+            "startHereMs": 170000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "sam-reply",
+            "depth": 1,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": "I've been running on sleep debt.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 200000,
+            "startHereMs": 180000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "own-answer",
+            "depth": 2,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "Try the no-screens hour.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 212000,
+            "startHereMs": 192000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "sam-tried",
+            "depth": 3,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": "Tried it. Slept like a rock.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 214000,
+            "startHereMs": 194000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "sam-placeholder",
+            "depth": 0,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": null,
+            "wordsComing": true,
+            "leadIn": null,
+            "timeMs": 465000,
+            "startHereMs": 445000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "rae-guest",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "unheard",
+            "words": "This guest is great.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 680000,
+            "startHereMs": 660000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "own-walk",
+            "depth": 0,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "Walk after lunch.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 930000,
+            "startHereMs": 910000,
+            "starred": true,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "sam-naps",
+            "depth": 0,
+            "sender": "Sam",
+            "hearing": "heard",
+            "words": "Naps never worked for me.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 1145000,
+            "startHereMs": 1125000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          },
+          {
+            "id": "rae-ending",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "unheard",
+            "words": "The ending got me.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 1360000,
+            "startHereMs": 1340000,
+            "starred": false,
+            "note": null,
+            "arrival": "plays"
+          }
+        ],
+        "nextMargin": {
+          "marginTimeMs": 190000,
+          "leadInStartMs": 170000,
+          "msUntilMargin": 90000,
+          "action": "seekToLeadIn",
+          "destinationMs": 170000,
+          "countdown": "1:30",
+          "firstToPlayId": "own-sleep"
+        },
+        "unheardCount": 5,
+        "opensOnMarginsTab": true,
+        "startWithUnheardMs": 170000
+      }
+    },
+    {
+      "id": "off-mode-takes-the-next-thread-and-its-first-unheard-margin",
+      "rule": "nextMargin",
+      "note": "Under Off, Next Margin takes the next thread whatever its hearing (no preference), and, as in prototype v3, still starts with that thread's first unheard friend's Margin.",
+      "input": {
+        "autoplay": "none",
+        "playheadMs": 680000,
+        "margins": [
+          {
+            "id": "rae-forty",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 100000,
+            "listenedMs": 6000,
+            "words": "Wait, only forty people?",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-sleep",
+            "sender": "you",
+            "parentId": null,
+            "timeMs": 190000,
+            "listenedMs": 0,
+            "words": "The bit about sleep debt.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-reply",
+            "sender": "Sam",
+            "parentId": "own-sleep",
+            "timeMs": 200000,
+            "listenedMs": 0,
+            "words": "I've been running on sleep debt.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-answer",
+            "sender": "you",
+            "parentId": "sam-reply",
+            "timeMs": 212000,
+            "listenedMs": 0,
+            "words": "Try the no-screens hour.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-tried",
+            "sender": "Sam",
+            "parentId": "own-answer",
+            "timeMs": 214000,
+            "listenedMs": 0,
+            "words": "Tried it. Slept like a rock.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-placeholder",
+            "sender": "Sam",
+            "parentId": null,
+            "timeMs": 465000,
+            "listenedMs": 0,
+            "words": "Voice Margin at 7:45 in “UI Test Episode”, recorded 12 Nov 2026",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "rae-guest",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 680000,
+            "listenedMs": 0,
+            "words": "This guest is great.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-walk",
+            "sender": "you",
+            "parentId": null,
+            "timeMs": 930000,
+            "listenedMs": 0,
+            "words": "Walk after lunch.",
+            "starred": true,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-naps",
+            "sender": "Sam",
+            "parentId": null,
+            "timeMs": 1145000,
+            "listenedMs": 3000,
+            "words": "Naps never worked for me.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "rae-ending",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 1360000,
+            "listenedMs": 0,
+            "words": "The ending got me.",
+            "starred": false,
+            "sourceTextBefore": null
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "id": "rae-forty",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "heard",
+            "words": "Wait, only forty people?",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 100000,
+            "startHereMs": 80000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "own-sleep",
+            "depth": 0,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "The bit about sleep debt.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 190000,
+            "startHereMs": 170000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "sam-reply",
+            "depth": 1,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": "I've been running on sleep debt.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 200000,
+            "startHereMs": 180000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "own-answer",
+            "depth": 2,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "Try the no-screens hour.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 212000,
+            "startHereMs": 192000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "sam-tried",
+            "depth": 3,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": "Tried it. Slept like a rock.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 214000,
+            "startHereMs": 194000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "sam-placeholder",
+            "depth": 0,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": null,
+            "wordsComing": true,
+            "leadIn": null,
+            "timeMs": 465000,
+            "startHereMs": 445000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "rae-guest",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "unheard",
+            "words": "This guest is great.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 680000,
+            "startHereMs": 660000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "own-walk",
+            "depth": 0,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "Walk after lunch.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 930000,
+            "startHereMs": 910000,
+            "starred": true,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "sam-naps",
+            "depth": 0,
+            "sender": "Sam",
+            "hearing": "heard",
+            "words": "Naps never worked for me.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 1145000,
+            "startHereMs": 1125000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "rae-ending",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "unheard",
+            "words": "The ending got me.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 1360000,
+            "startHereMs": 1340000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          }
+        ],
+        "nextMargin": {
+          "marginTimeMs": 930000,
+          "leadInStartMs": 910000,
+          "msUntilMargin": 250000,
+          "action": "seekToLeadIn",
+          "destinationMs": 910000,
+          "countdown": "4:10",
+          "firstToPlayId": "own-walk"
+        },
+        "unheardCount": 5,
+        "opensOnMarginsTab": true,
+        "startWithUnheardMs": 170000
+      }
+    },
+    {
+      "id": "off-mode-thread-with-an-unheard-reply",
+      "rule": "nextMargin",
+      "note": "Under Off, the 3:10 thread starts with Sam's unheard 3:20 reply, as in prototype v3's firstToPlay.",
+      "input": {
+        "autoplay": "none",
+        "playheadMs": 100000,
+        "margins": [
+          {
+            "id": "rae-forty",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 100000,
+            "listenedMs": 6000,
+            "words": "Wait, only forty people?",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-sleep",
+            "sender": "you",
+            "parentId": null,
+            "timeMs": 190000,
+            "listenedMs": 0,
+            "words": "The bit about sleep debt.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-reply",
+            "sender": "Sam",
+            "parentId": "own-sleep",
+            "timeMs": 200000,
+            "listenedMs": 0,
+            "words": "I've been running on sleep debt.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-answer",
+            "sender": "you",
+            "parentId": "sam-reply",
+            "timeMs": 212000,
+            "listenedMs": 0,
+            "words": "Try the no-screens hour.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-tried",
+            "sender": "Sam",
+            "parentId": "own-answer",
+            "timeMs": 214000,
+            "listenedMs": 0,
+            "words": "Tried it. Slept like a rock.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-placeholder",
+            "sender": "Sam",
+            "parentId": null,
+            "timeMs": 465000,
+            "listenedMs": 0,
+            "words": "Voice Margin at 7:45 in “UI Test Episode”, recorded 12 Nov 2026",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "rae-guest",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 680000,
+            "listenedMs": 0,
+            "words": "This guest is great.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "own-walk",
+            "sender": "you",
+            "parentId": null,
+            "timeMs": 930000,
+            "listenedMs": 0,
+            "words": "Walk after lunch.",
+            "starred": true,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "sam-naps",
+            "sender": "Sam",
+            "parentId": null,
+            "timeMs": 1145000,
+            "listenedMs": 3000,
+            "words": "Naps never worked for me.",
+            "starred": false,
+            "sourceTextBefore": null
+          },
+          {
+            "id": "rae-ending",
+            "sender": "Rae",
+            "parentId": null,
+            "timeMs": 1360000,
+            "listenedMs": 0,
+            "words": "The ending got me.",
+            "starred": false,
+            "sourceTextBefore": null
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "id": "rae-forty",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "heard",
+            "words": "Wait, only forty people?",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 100000,
+            "startHereMs": 80000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "own-sleep",
+            "depth": 0,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "The bit about sleep debt.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 190000,
+            "startHereMs": 170000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "sam-reply",
+            "depth": 1,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": "I've been running on sleep debt.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 200000,
+            "startHereMs": 180000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "own-answer",
+            "depth": 2,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "Try the no-screens hour.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 212000,
+            "startHereMs": 192000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "sam-tried",
+            "depth": 3,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": "Tried it. Slept like a rock.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 214000,
+            "startHereMs": 194000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "sam-placeholder",
+            "depth": 0,
+            "sender": "Sam",
+            "hearing": "unheard",
+            "words": null,
+            "wordsComing": true,
+            "leadIn": null,
+            "timeMs": 465000,
+            "startHereMs": 445000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "rae-guest",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "unheard",
+            "words": "This guest is great.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 680000,
+            "startHereMs": 660000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "own-walk",
+            "depth": 0,
+            "sender": "you",
+            "hearing": "yours",
+            "words": "Walk after lunch.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 930000,
+            "startHereMs": 910000,
+            "starred": true,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "sam-naps",
+            "depth": 0,
+            "sender": "Sam",
+            "hearing": "heard",
+            "words": "Naps never worked for me.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 1145000,
+            "startHereMs": 1125000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          },
+          {
+            "id": "rae-ending",
+            "depth": 0,
+            "sender": "Rae",
+            "hearing": "unheard",
+            "words": "The ending got me.",
+            "wordsComing": false,
+            "leadIn": null,
+            "timeMs": 1360000,
+            "startHereMs": 1340000,
+            "starred": false,
+            "note": null,
+            "arrival": "tone"
+          }
+        ],
+        "nextMargin": {
+          "marginTimeMs": 190000,
+          "leadInStartMs": 170000,
+          "msUntilMargin": 90000,
+          "action": "seekToLeadIn",
+          "destinationMs": 170000,
+          "countdown": "1:30",
+          "firstToPlayId": "sam-reply"
+        },
+        "unheardCount": 5,
+        "opensOnMarginsTab": true,
+        "startWithUnheardMs": 170000
       }
     }
   ]

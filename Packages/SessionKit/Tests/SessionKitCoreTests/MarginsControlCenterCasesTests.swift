@@ -22,6 +22,7 @@ final class MarginsControlCenterCasesTests: XCTestCase {
             let rowStart: RowStart
             let startWithUnheard: String
             let startFromBeginning: String
+            let autoplayMenuTitle: String
             let autoplay: Autoplay
         }
         let constants: Constants
@@ -86,6 +87,7 @@ final class MarginsControlCenterCasesTests: XCTestCase {
         let action: String
         let destinationMs: Int
         let countdown: String
+        let firstToPlayId: String
     }
 
     private static func loadCases() throws -> File {
@@ -109,6 +111,7 @@ final class MarginsControlCenterCasesTests: XCTestCase {
         XCTAssertEqual(file.labels.autoplay.unheard, MarginsControlCenter.Autoplay.unheard.title)
         XCTAssertEqual(file.labels.autoplay.all, MarginsControlCenter.Autoplay.all.title)
         XCTAssertEqual(file.labels.autoplay.none, MarginsControlCenter.Autoplay.none.title)
+        XCTAssertEqual(file.labels.autoplayMenuTitle, MarginsControlCenter.Autoplay.menuTitle)
     }
 
     func testEveryCase() throws {
@@ -121,8 +124,7 @@ final class MarginsControlCenterCasesTests: XCTestCase {
             let actual = rows.map { Self.expectedRow($0, autoplay: autoplay) }
             XCTAssertEqual(actual, item.expected.rows, "\(item.id): rows")
 
-            let next = NextMarginSkip.next(
-                playheadMs: item.input.playheadMs, marginTimesMs: MarginsControlCenter.skipTimes(rows))
+            let next = NextMarginSkip.next(playheadMs: item.input.playheadMs, rows: rows, autoplay: autoplay)
             XCTAssertEqual(next.map(Self.expectedNext), item.expected.nextMargin, "\(item.id): nextMargin")
             XCTAssertEqual(MarginsControlCenter.unheardCount(rows), item.expected.unheardCount, "\(item.id): unheardCount")
             XCTAssertEqual(MarginsControlCenter.opensOnMarginsTab(rows), item.expected.opensOnMarginsTab, "\(item.id): opensOnMarginsTab")
@@ -224,6 +226,11 @@ final class MarginsControlCenterCasesTests: XCTestCase {
     static func expectedNext(_ skip: NextMarginSkip) -> ExpectedNext {
         ExpectedNext(
             marginTimeMs: skip.marginTimeMs, leadInStartMs: skip.leadInStartMs, msUntilMargin: skip.msUntilMargin,
-            action: skip.action.rawValue, destinationMs: skip.destinationMs, countdown: skip.countdown)
+            action: skip.action.rawValue, destinationMs: skip.destinationMs, countdown: skip.countdown,
+            firstToPlayId: skip.firstToPlay.map { reference in
+                switch reference {
+                case .local(let id), .imported(let id): id
+                }
+            } ?? "")
     }
 }

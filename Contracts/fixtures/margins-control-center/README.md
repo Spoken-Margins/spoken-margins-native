@@ -16,8 +16,8 @@ The rules each case checks are named in its `rule` field:
 3. `words`: blank, missing or placeholder words show as words coming.
 4. `leadIn`: the quoted source text before a Margin, cut to 110 characters at a whole word.
 5. `starred`: only your own Margins can be starred.
-6. `autoplay`: with Unheard, only an unheard friend's Margin plays; All plays every Margin; None plays a tone for each.
-7. `nextMargin`: before the next Margin's 20 s lead-in it seeks to the lead-in; inside the lead-in it goes straight into that Margin. It never goes back and never past that Margin.
+6. `autoplay`: with Unheard, only an unheard friend's Margin plays; All plays every Margin; Off plays a tone for each.
+7. `nextMargin`: it stops only at a thread's first Margin, never at a reply. Under Unheard it goes to the next thread holding an unheard friend's Margin. Before that Margin's 20 s lead-in it seeks to the lead-in; inside the lead-in it goes straight in. It never goes back and never past it. `firstToPlayId` is the thread's first unheard friend's Margin unless Autoplay is All, otherwise its first Margin.
 8. `countdown`: the pill's `m:ss` clock to the next Margin, rounded up.
 9. `startWithUnheard`: the lead-in of the first thread holding an unheard friend's Margin. "Start from the beginning" is 0:00.
 

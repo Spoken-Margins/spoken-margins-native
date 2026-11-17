@@ -86,22 +86,36 @@ final class MarginsControlCenterTests: XCTestCase {
         XCTAssertEqual(MarginsControlCenter.Autoplay.allCases, [.unheard, .all, .none])
     }
 
-    func testSkipStepsThroughEveryPlacedMarginRepliesIncluded() {
+    func testNextMarginStopsOnlyAtThreadRootsAndPrefersUnheardThreads() {
         let rows = seedRows()
-        let times = MarginsControlCenter.skipTimes(rows)
-        XCTAssertEqual(times.count, 10)
-        // At 13:00 (the fixture's place) the next is the walk Margin at 15:30, lead-in from 15:10.
-        let skip = NextMarginSkip.next(playheadMs: 780_000, marginTimesMs: times)
-        XCTAssertEqual(skip, NextMarginSkip(
-            marginTimeMs: 930_000, leadInStartMs: 910_000, msUntilMargin: 150_000, action: .seekToLeadIn))
-        XCTAssertEqual(skip?.destinationMs, 910_000)
-        XCTAssertEqual(skip?.countdown, "2:30")
-        // Inside the conversation: at 3:15 the reply at 3:20 is 5 s ahead, inside its lead-in, so the press goes
-        // straight into it, not on to 7:45.
-        let inside = NextMarginSkip.next(playheadMs: 195_000, marginTimesMs: times)
-        XCTAssertEqual(inside?.marginTimeMs, 200_000)
-        XCTAssertEqual(inside?.action, .playMargin)
-        XCTAssertEqual(inside?.destinationMs, 200_000)
+        XCTAssertEqual(MarginsControlCenter.threads(rows).map(\.count), [1, 4, 1, 1, 1, 1, 1])
+        // At 13:00 under All the next thread is the walk Margin at 15:30, lead-in from 15:10.
+        let all = NextMarginSkip.next(playheadMs: 780_000, rows: rows, autoplay: .all)
+        XCTAssertEqual(all, NextMarginSkip(
+            marginTimeMs: 930_000, leadInStartMs: 910_000, msUntilMargin: 150_000, action: .seekToLeadIn,
+            firstToPlay: .local(MarginsControlCenterFixture.ownWalkId)))
+        XCTAssertEqual(all?.countdown, "2:30")
+        // Under Unheard it passes the walk (yours) and Sam's heard 19:05 for Rae's unheard 22:40.
+        XCTAssertEqual(NextMarginSkip.next(playheadMs: 780_000, rows: rows, autoplay: .unheard)?.marginTimeMs, 1_360_000)
+        // At 3:15 the replies at 3:20 to 3:34 are not stops: the next is the 7:45 thread.
+        XCTAssertEqual(NextMarginSkip.next(playheadMs: 195_000, rows: rows, autoplay: .all)?.marginTimeMs, 465_000)
+    }
+
+    func testLandingOnAThreadPlaysItsFirstUnheardMarginUnlessAutoplayIsAll() {
+        let rows = seedRows()
+        // At 1:40 the next thread is your 3:10, with Sam's unheard reply at 3:20 under it.
+        let unheard = NextMarginSkip.next(playheadMs: 100_000, rows: rows, autoplay: .unheard)
+        XCTAssertEqual(unheard?.marginTimeMs, 190_000, "lead-in and countdown are to the thread's first Margin")
+        XCTAssertEqual(unheard?.firstToPlay, .imported("sam-ui-tab-reply"))
+        XCTAssertEqual(NextMarginSkip.next(playheadMs: 100_000, rows: rows, autoplay: .none)?.firstToPlay,
+                       .imported("sam-ui-tab-reply"), "prototype v3: only All starts at the root")
+        XCTAssertEqual(NextMarginSkip.next(playheadMs: 100_000, rows: rows, autoplay: .all)?.firstToPlay,
+                       .local(MarginsControlCenterFixture.ownFirstId))
+    }
+
+    func testAutoplayLabels() {
+        XCTAssertEqual(MarginsControlCenter.Autoplay.menuTitle, "Play Margins by themselves")
+        XCTAssertEqual(MarginsControlCenter.Autoplay.allCases.map(\.title), ["Unheard Margins", "All Margins", "Off"])
     }
 
     // MARK: Start controls
