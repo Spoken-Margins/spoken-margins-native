@@ -792,7 +792,13 @@ struct LiveSessionView: View, Equatable {
             .buttonStyle(.bordered)
             .tint(.white)
             .disabled(finish.isSaving)
-            Button("Discard Session", role: .destructive) { confirmsDiscard = true }
+            // The destructive role alone is the system red, which is dim on this dark card (#4443). The icon keeps it a
+            // button for a listener who can't tell the red from the card.
+            Button(role: .destructive) { confirmsDiscard = true } label: {
+                Label("Discard Session", systemImage: "trash").frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .tint(AppColors.watchDanger)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
