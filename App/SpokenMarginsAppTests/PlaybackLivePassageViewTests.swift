@@ -71,6 +71,8 @@ final class PlaybackLivePassageViewTests: XCTestCase {
 
         // The same sentence, a few Characters on: nothing is drawn again.
         model.snapshot.currentTextStart = middle + 3
+        // fixed-sleep ok: the claim is that this tick draws no row, and no signal marks a row that is never drawn; the
+        // update path is one published change and one main-actor hop, which 600 ms covers many times over.
         try await Task.sleep(for: .milliseconds(600))
         XCTAssertEqual(NowSceneRowCounter.bodies - before, drawn, "A tick that keeps the same sentence draws no row")
     }
