@@ -81,7 +81,9 @@ public actor FollowedSourceCoordinator {
                 itemArtworkFile: URL? = nil, signals: ListeningSignalRecorder?) {
         self.repository = repository
         self.artwork = FollowingArtworkStore(file: artworkFile)
-        self.itemArtworkRecord = ItemArtworkFile(file: itemArtworkFile)
+        // Not read here: this init runs on the caller's thread, which is the main thread in the app. The first
+        // call into the actor reads it.
+        self.itemArtworkRecord = ItemArtworkFile(file: itemArtworkFile, deferringRead: true)
         self.signals = signals
         if let session {
             self.session = session
@@ -458,6 +460,7 @@ public actor FollowedSourceCoordinator {
     /// changes. Run after launch, off the main thread; an actor call is.
     public func itemArtwork(catalog: SourceCatalog? = nil) -> ItemArtworkStore {
         _ = followingArtwork(catalog: catalog)
+        itemArtworkRecord.loadIfNeeded()
         recordStoredEntries()
         reconcileItemArtwork()
         return itemArtworkRecord.store

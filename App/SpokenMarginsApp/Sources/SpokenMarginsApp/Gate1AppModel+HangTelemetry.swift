@@ -76,6 +76,9 @@ extension Gate1AppModel {
         let labels = hangTelemetry.labels
         labels.scoped("snapshot.playbackEvents") { recordPlaybackEventState(previous: oldValue) }
         if oldValue.sessionId != snapshot.sessionId { resumeDeferredPodcastPlacements() }
+        if oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId {
+            NowPlayingArtworkFeeder.shared.playingItemChanged(activePlaybackItemId, coordinator: followedSourceCoordinator) // the card's picture (#3864)
+        }
         compactBeginContext.snapshotChanged(from: oldValue, to: snapshot, at: Date())
         labels.scoped("snapshot.captureWatch") {
             if oldValue.isRecording, !snapshot.isRecording {
