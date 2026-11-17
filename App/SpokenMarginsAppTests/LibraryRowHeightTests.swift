@@ -38,7 +38,7 @@ final class LibraryRowHeightTests: XCTestCase {
         of row: LibraryItemRow, isCurrent: Bool = false, size: DynamicTypeSize = .large, width: CGFloat = 390
     ) -> CGFloat {
         let view = ExperienceLibraryCompactRow(
-            row: row, isCurrentItem: isCurrent, playbackSpeed: 1, spokenNoteFolders: SpokenNoteFolderLedger(),
+            row: row, isCurrentItem: isCurrent, isLoadedItem: isCurrent, playbackSpeed: 1, spokenNoteFolders: SpokenNoteFolderLedger(),
             onOpen: {}, onPlay: {}, onComplete: {}, onMarkUnfinished: {}, onPrepareOffline: {}, onPlayNext: {},
             onAddToQueue: {}, onAddToCollection: {}, onDelete: {}
         )

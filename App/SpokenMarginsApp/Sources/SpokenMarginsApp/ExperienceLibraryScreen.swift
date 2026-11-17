@@ -438,6 +438,7 @@ struct ExperienceLibraryScreen: View {
                     row: row,
                     artworkURL: itemArtwork.url(forItem: row.id),
                     isCurrentItem: entry.isCurrent,
+                    isLoadedItem: entry.isCurrent && model.activePlaybackItemId == row.id,
                     playbackSpeed: model.speechPlaybackRateMultiplier,
                     spokenNoteFolders: model.marginOutput.spokenNotes,
                     onOpen: { openRow(row) },
@@ -520,6 +521,9 @@ struct ExperienceLibraryCompactRow: View {
     /// The item's thumbnail, from its own feed entry or its show; nil keeps the icon (#3864).
     var artworkURL: URL?
     var isCurrentItem = false
+    /// The item has a session loaded in the player now, not only the one the Continue card offers: only it carries the
+    /// speaker glyph and the "Now playing" value (#4062).
+    var isLoadedItem = false
     /// The listener's speech speed, for a text item's estimated length (#305).
     var playbackSpeed: Double = 1
     /// Which spoken notes were saved to the export folder, for the "Exported" word on a finished note (#3661).
@@ -571,7 +575,7 @@ struct ExperienceLibraryCompactRow: View {
     private var iconTile: some View {
         iconTileArtwork
             .overlay(alignment: .bottomTrailing) {
-                if isCurrentItem {
+                if isLoadedItem {
                     Image(systemName: "speaker.wave.2.fill")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(AppColors.onEvergreen)
@@ -631,7 +635,7 @@ struct ExperienceLibraryCompactRow: View {
         .buttonStyle(.plain)
         // Title, progress, byline and kind, Margins, then whether it is the item playing (#4062).
         .accessibilityLabel(openAccessibilityLabel)
-        .accessibilityValue(isCurrentItem ? "Now playing" : "")
+        .accessibilityValue(isLoadedItem ? "Now playing" : "")
         .accessibilityIdentifier("library.row.\(row.id)")
     }
 
