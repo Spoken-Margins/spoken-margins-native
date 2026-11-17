@@ -3243,9 +3243,11 @@ def setup_fault_note(error: BaseException) -> str:
 
 def _t3_on_fresh_device_with_one_rerun(grouped, request_id, evidence, runtime):
     """#4438: a `simctl` call that times out while the simulator is being cloned is rerun once, on a fresh clone, in
-    this job (no new `/lane T3` comment). The clone step includes the template's own first boot, so a timeout is
-    rerun only with no evidence of a crash: nothing past the clone (`past_clone`), and no device newly marked
-    unsafe during the attempt (a crash handler's shutdown can be the call that hung; `lane_sim.stop` marks first).
+    this job (no new `/lane T3` comment). The rule is a whitelist, not "anything that is not a crash":
+    `lane_sim.clone_temporary` turns every timeout inside the template's first boot or its crash handling into a
+    BootError, and lets out only the plain setup calls (list, create, a clean template's release with no late
+    crash report, the clone). Nothing past the clone is rerun (`past_clone`), and a device newly marked unsafe
+    during the attempt is never rerun either (belt and braces: `lane_sim.stop` marks before its shutdown).
     A clone that failed outright, a boot that stalled and every test result keep their own verdicts, so no real
     failure is retried away and no device is switched past a crash. The first attempt's error and the load stay in
     the report. INCONCLUSIVE needs two faults. The caller holds the simulator slot throughout."""
