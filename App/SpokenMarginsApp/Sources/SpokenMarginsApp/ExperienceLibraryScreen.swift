@@ -509,7 +509,8 @@ struct ExperienceLibraryScreen: View {
     }
 }
 
-private struct ExperienceLibraryCompactRow: View {
+/// A Library row. Internal so the app-hosted height test can lay it out (#4062); the screen is its only caller.
+struct ExperienceLibraryCompactRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     // The icon tile scales with the text, up to twice its size, so a large glyph is not cut by a fixed frame (#1937).
     @ScaledMetric(relativeTo: .body) private var iconWidth: CGFloat = 38
@@ -565,7 +566,25 @@ private struct ExperienceLibraryCompactRow: View {
         }
     }
 
-    @ViewBuilder private var iconTile: some View {
+    /// The tile, with a small speaker glyph on the item that is loaded now in place of the label line the row used to
+    /// carry above its title (#4062). The tile stays hidden from VoiceOver; the open button says "Now playing".
+    private var iconTile: some View {
+        iconTileArtwork
+            .overlay(alignment: .bottomTrailing) {
+                if isCurrentItem {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(AppColors.onEvergreen)
+                        .frame(width: 18, height: 18)
+                        .background(AppColors.evergreen, in: Circle())
+                        .overlay(Circle().strokeBorder(AppColors.bone, lineWidth: 1.5))
+                        .offset(x: 4, y: 4)
+                }
+            }
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private var iconTileArtwork: some View {
         let width = min(max(iconWidth, 38), 76)
         let height = min(max(iconHeight, 44), 88)
         if let artworkURL {
@@ -594,11 +613,6 @@ private struct ExperienceLibraryCompactRow: View {
     private var openButton: some View {
         Button(action: onOpen) {
             VStack(alignment: .leading, spacing: 3) {
-                if isCurrentItem {
-                    Label(currentItemLabel, systemImage: "play.circle.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppColors.evergreen)
-                }
                 Text(row.title)
                     .font(.headline)
                     .foregroundStyle(AppColors.text)
@@ -608,29 +622,28 @@ private struct ExperienceLibraryCompactRow: View {
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
                     .multilineTextAlignment(.leading)
-                ownMarginsLine
-                sharedMarginsLine
+                marginsLine
             }
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Title, progress, byline and kind, Margins, then whether it is the item playing (#4062).
+        .accessibilityLabel(openAccessibilityLabel)
+        .accessibilityValue(isCurrentItem ? "Now playing" : "")
         .accessibilityIdentifier("library.row.\(row.id)")
     }
 
     private var playButton: some View {
         Button(action: onPlay) {
-            LibraryRowPlayLabel(isReadyOffline: row.offlineState == .readyOffline, isPreparing: row.startupAudioState == .preparing)
+            LibraryRowPlayLabel(
+                isReadyOffline: row.offlineState == .readyOffline, isPreparing: row.startupAudioState == .preparing,
+                progress: lines.ringFraction)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(playActionTitle)
-        .accessibilityValue(
-            row.startupAudioState == .preparing
-                ? "Preparing audio, \(startupProgressDescription). Playback can start now."
-                : row.startupAudioState == .waiting ? "Waiting to prepare audio. Playback can start now."
-                : (row.offlineState == .readyOffline ? "Ready offline" : "Ready to start")
-        )
+        .accessibilityValue(playAccessibilityValue)
         .accessibilityIdentifier("queue.start.\(row.id)")
     }
 
@@ -749,8 +762,31 @@ private struct ExperienceLibraryCompactRow: View {
         }
     }
 
+    /// The words of the row's progress and Margins lines: time left, the ring's fraction, yours and a friend's (#4062).
+    /// Worked out from the row alone, which the one Library read already filled, never from the store.
+    private var lines: LibraryRowLines {
+        LibraryRowLines(row: row, playbackSpeed: playbackSpeed, isExported: isSavedToExportFolder)
+    }
+
+    /// The progress words come first ("about 24 min left", "Completed"), then byline, kind and status as before. The
+    /// separate percent is gone: the words say how much is left and the ring shows the fraction (#4062).
     private var detail: LibraryRowDetail {
-        LibraryRowDetail(byline: sourceByline, kind: mediaLabel, length: lengthLabel, listening: listeningLabel, status: statusDetail)
+        LibraryRowDetail(byline: sourceByline, kind: mediaLabel, length: lines.progress, listening: nil, status: statusDetail)
+    }
+
+    private var openAccessibilityLabel: String {
+        [row.title, lines.progressSpoken, detail.rest.isEmpty ? nil : detail.rest, lines.marginsSpoken]
+            .compactMap { $0 }.joined(separator: ". ")
+    }
+
+    private var playAccessibilityValue: String {
+        let readiness = row.startupAudioState == .preparing
+            ? "Preparing audio, \(startupProgressDescription). Playback can start now."
+            : row.startupAudioState == .waiting ? "Waiting to prepare audio. Playback can start now."
+            : (row.offlineState == .readyOffline ? "Ready offline" : "Ready to start")
+        // A row not started or finished keeps its value as it was; an item in progress says how far along it is.
+        guard lines.ringFraction != nil, let spoken = lines.progressSpoken else { return readiness }
+        return "\(spoken). \(readiness)"
     }
 
     /// One line, except at the largest non-accessibility size, where a status such as "Opening audio unavailable ·
@@ -772,32 +808,55 @@ private struct ExperienceLibraryCompactRow: View {
         }
     }
 
-    /// How many Margins the listener has made here, so a nearly-finished item can be cleared without opening it to look (#2394).
-    /// Quiet at zero. The count is words; the icon is only a hint.
-    @ViewBuilder private var ownMarginsLine: some View {
-        if let line = LibraryRowWording.marginCountLine(row.marginCount) {
-            Label(line, systemImage: "bubble.left")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(AppColors.secondaryText)
-                .accessibilityIdentifier("library.margins.\(row.id)")
+    /// One Margins line for both kinds (#4062): "2 yours" and a friend's part, "2 Margins" alone, or just the friend's
+    /// part. It is one line when it fits and two stacked lines when it doesn't, and never cuts a count off. At
+    /// accessibility sizes the parts always stack. The words carry the meaning; the icons are only a hint.
+    @ViewBuilder private var marginsLine: some View {
+        let lines = lines
+        if lines.hasMarginsLine {
+            if let own = lines.ownMargins, let friend = lines.friendMargins {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 2) { ownPart(own); friendPart(friend) }
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 6) {
+                            ownPart(own)
+                            Text("·").accessibilityHidden(true)
+                            friendPart(friend)
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
+                        VStack(alignment: .leading, spacing: 2) { ownPart(own); friendPart(friend) }
+                    }
+                }
+            } else if let own = lines.ownMargins {
+                ownPart(own)
+            } else if let friend = lines.friendMargins {
+                friendPart(friend)
+            }
         }
     }
 
-    /// Where a friend left Margins, and whether any are new (#1792). The words carry it, not the color.
-    @ViewBuilder private var sharedMarginsLine: some View {
-        if let line = row.sharedMargins.libraryLine {
-            HStack(spacing: 6) {
-                Image(systemName: "person.2.fill")
-                    .accessibilityHidden(true)
-                Text(line)
-                if row.sharedMargins.new > 0 { NewMarginBadge() }
-            }
+    /// How many Margins the listener has made here, so a nearly-finished item can be cleared without opening it to look (#2394).
+    private func ownPart(_ line: String) -> some View {
+        Label(line, systemImage: "bubble.left")
             .font(.caption.weight(.semibold))
-            .foregroundStyle(AppColors.evergreen)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(row.sharedMargins.accessibilityLine ?? line)
-            .accessibilityIdentifier("library.sharedMargins.\(row.id)")
+            .foregroundStyle(AppColors.secondaryText)
+            .accessibilityIdentifier("library.margins.\(row.id)")
+    }
+
+    /// Where a friend left Margins, and whether any are new (#1792). The words carry it, not the color.
+    private func friendPart(_ line: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "person.2.fill")
+                .accessibilityHidden(true)
+            Text(line)
+            if lines.friendMarginsAreNew { NewMarginBadge() }
         }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(AppColors.evergreen)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(row.sharedMargins.accessibilityLine ?? line)
+        .accessibilityIdentifier("library.sharedMargins.\(row.id)")
     }
 
     private var sourceByline: String? {
@@ -809,32 +868,12 @@ private struct ExperienceLibraryCompactRow: View {
         return row.hasContinuationSession ? "Continue \(row.title)" : "Start \(row.title)"
     }
 
-    private var currentItemLabel: String {
-        if (row.continuationProgressPercent ?? 0) >= ItemFinishedRule.atEndPercent { return "Finished" }
-        return row.hasContinuationSession ? (dynamicTypeSize.isAccessibilitySize ? "Resume" : "Continue listening") : "Current"
-    }
-
     private var mediaSymbol: String { row.mediaSymbol }
-
-    /// "about 25 min" for a text item at the listener's speed (#305); podcasts show none.
-    private var lengthLabel: String? {
-        ListeningTimeEstimator.libraryTotalText(textCharacterCount: row.textCharacterCount, playbackSpeed: playbackSpeed)
-    }
 
     /// A finished spoken note that was saved to the export folder says so, in words (#3661).
     private var isSavedToExportFolder: Bool {
         guard let noteId = row.spokenNoteId else { return false }
         return !spokenNoteFolders.savedFolders(forNoteId: noteId).isEmpty
-    }
-
-    private var listeningLabel: String? {
-        if row.isCompleted {
-            isSavedToExportFolder ? "Completed · Exported" : "Completed"
-        } else if let progress = row.continuationProgressPercent {
-            "\(progress)%"
-        } else {
-            nil
-        }
     }
 
     private var mediaLabel: String {
@@ -898,6 +937,11 @@ struct LibraryRowPlayLabel: View {
     @ScaledMetric(relativeTo: .body) private var diameter: CGFloat = 40
     let isReadyOffline: Bool
     let isPreparing: Bool
+    /// How far the listener is through an item in progress, 0...1; nil draws no ring (#4062). The ring sits inside the
+    /// circle's own edge, so the button keeps its size and the 44 pt hit area. The row's words say the same thing.
+    var progress: Double?
+
+    private static let ringWidth: CGFloat = 2.5
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -905,6 +949,7 @@ struct LibraryRowPlayLabel: View {
                 .foregroundStyle(AppColors.evergreen)
                 .frame(width: min(max(diameter, 40), 80), height: min(max(diameter, 40), 80))
                 .background(AppColors.softGreen, in: Circle())
+                .overlay { ring }
             if isPreparing {
                 ProgressView()
                     .controlSize(.mini)
@@ -914,5 +959,20 @@ struct LibraryRowPlayLabel: View {
             }
         }
         .minimumTapTarget()
+    }
+
+    /// A thin full track in the separator colour and an arc for the fraction listened, from the top, clockwise.
+    @ViewBuilder private var ring: some View {
+        if let progress {
+            ZStack {
+                Circle().strokeBorder(AppColors.border, lineWidth: Self.ringWidth)
+                Circle()
+                    .inset(by: Self.ringWidth / 2)
+                    .trim(from: 0, to: min(max(progress, 0), 1))
+                    .stroke(AppColors.evergreen, style: StrokeStyle(lineWidth: Self.ringWidth, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            .accessibilityHidden(true)
+        }
     }
 }
