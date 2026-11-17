@@ -575,6 +575,14 @@ How it is used:
   - Where the pictures come from: usually a CDN such as Substack's, not the article's own host; a YouTube row contacts i.ytimg.com (Google), a host the page itself never touches.
   - Not changed: pages are still fetched only on a listener's action (2026-10-21); the import adds no request.
 
+## 2026-11-17
+
+- **Timeline pictures load on their own; opening Timeline is the tap, as with Safari's Reader (#2032, #4411, 2026-11-17).** After #4411's audit, the PR was changed to show "Tap to load the picture" on each row and fetch only on a tap. Asked "Keep tap-to-load (recommended, nothing is fetched without a tap), or go back to loading them when the Timeline opens?", he first asked: "do pictures only load on web browsers when you tap them? why are we different than reader mode on safari?" and then answered: "yes switch back tapping play or timeline is like clicking a link". This confirms the 2026-11-16 call above ("yes please merge as is") and gives its reason.
+  - How it squares with #2032: #2032's "No new network request beyond the page the listener already asked to import" is read this way. The import itself adds no request. A picture is fetched when the listener opens that item's Timeline and its row is drawn: their own action, like following a link or opening Reader, which loads a page's pictures without a tap on each. No picture is fetched at import, in the background, or for Following's automatic adds.
+  - What stays from the audit: the fetch sends no cookies; the 16 MB cap stops the download as it streams, not after it; a picture that can't load says so and tries again on the next open; a YouTube row's still comes from i.ytimg.com, a host the page itself never touches, and he has accepted that with the rest.
+  - For an audit or a later worker: a finding that drawing a Timeline row fetches its picture is the accepted behavior, not a violation, unless it is made without the listener opening that Timeline. Findings on the cap, memory, cookies and what is fetched still stand.
+  - The agent guide and the owner overlay carry the rule (`AGENTS.md`, `ops-private` `OWNER.md`).
+
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
   - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.
