@@ -38,7 +38,8 @@ final class MediaFileLengthTests: XCTestCase {
 
     func testReadsAThreeSecondFile() async throws {
         let url = try writeM4A(seconds: 3)
-        let ms = try await XCTUnwrap(MediaFileLength.read(fileURL: url))
+        let read = await MediaFileLength.read(fileURL: url)
+        let ms = try XCTUnwrap(read)
         XCTAssertEqual(Double(ms), 3_000, accuracy: 50)
     }
 
@@ -47,7 +48,8 @@ final class MediaFileLengthTests: XCTestCase {
         let source = try writeM4A(seconds: 3)
         let renamed = directory.appending(path: "episode.audio")
         try FileManager.default.copyItem(at: source, to: renamed)
-        let ms = try await XCTUnwrap(MediaFileLength.read(fileURL: renamed))
+        let read = await MediaFileLength.read(fileURL: renamed)
+        let ms = try XCTUnwrap(read)
         XCTAssertEqual(Double(ms), 3_000, accuracy: 50)
     }
 
