@@ -107,14 +107,17 @@ final class SharedMarginReturnAppTests: XCTestCase {
             try fixture.sourcePlayer.setMixesWithOtherAudio(true)
             XCTAssertTrue(AVAudioSession.sharedInstance().categoryOptions.contains(.mixWithOthers), file: file, line: line)
         }
-        XCTAssertNil(model.pendingImportedCommentary, "the tone has not sounded yet", file: file, line: line)
         let before = SessionFacts.now()
         let rateBefore = try XCTUnwrap(fixture.sourcePlayer.currentPlayerRate(), file: file, line: line)
+        // Taken first, so a runner slow enough to cross the Margin before here fails loudly instead of comparing the session with itself.
+        XCTAssertNil(model.pendingImportedCommentary, "the Margin was crossed before the session was read: nothing to compare", file: file, line: line)
 
         try await fixture.waitUntil("playback reaches the shared Margin at 1 s and sounds its tone", timeout: 8) {
             model.pendingImportedCommentary != nil
         }
         let tone = try XCTUnwrap(model.marginVoicePlayer.cuePlayer, "the tone started (the player exists once play() returned)", file: file, line: line)
+        // `play()`'s result is not kept, and the chime is 0.27 s against a 20 ms poll, so "sounding" is not asserted: the
+        // player exists once `play()` returned, and the session facts below are read at the prompt, not over its length.
         XCTAssertGreaterThan(tone.duration, 0.2, "it is the chime, not an empty player", file: file, line: line)
         let after = SessionFacts.now()
         XCTAssertEqual(after, before, "the tone changed the audio session: category, mode, options or other audio", file: file, line: line)
@@ -123,6 +126,12 @@ final class SharedMarginReturnAppTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .playing, "a tone, not a stop", file: file, line: line)
         let rateAfter = try XCTUnwrap(fixture.sourcePlayer.currentPlayerRate(), file: file, line: line)
         XCTAssertEqual(rateAfter, rateBefore, "the tone changed the episode's player rate", file: file, line: line)
+        // `currentPlayerRate()` falls back to the asked-for rate when the player is stopped, and the status can stay
+        // `.playing` while the audio changes, so the proof that the tone did not stop the episode is its clock moving on.
+        let clockAtTone = fixture.sourcePlayer.currentMediaTimeMs() ?? 0
+        try await fixture.waitUntil("the episode's own clock moves on after the tone") {
+            (fixture.sourcePlayer.currentMediaTimeMs() ?? 0) > clockAtTone + 100
+        }
         XCTAssertEqual(model.sharedMarginReturn, .none, "nothing was paused, so nothing is owed back", file: file, line: line)
     }
 
