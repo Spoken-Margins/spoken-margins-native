@@ -31,6 +31,11 @@ public enum ShareCleanupWords {
     /// The line after a bulk run. `completed` counts every Margin the run finished, failures included.
     public static func bulkResult(completed: Int, failed: Int) -> String {
         let changed = max(completed - failed, 0)
+        if changed == 0, failed > 0 {
+            return failed == 1
+                ? "Couldn't remove ums and pauses from this Margin. It goes as it is."
+                : "Couldn't remove ums and pauses from any of the \(failed) Margins. They go as they are."
+        }
         let done = "Removed ums and pauses from \(changed) \(changed == 1 ? "Margin" : "Margins")"
         guard failed > 0 else { return done }
         let rest = failed == 1 ? "1 couldn't be changed and goes as it is." : "\(failed) couldn't be changed and go as they are."

@@ -20,7 +20,9 @@ final class ShareCleanupWordsTests: XCTestCase {
         XCTAssertEqual(ShareCleanupWords.bulkResult(completed: 5, failed: 1),
             "Removed ums and pauses from 4 Margins. 1 couldn't be changed and goes as it is.")
         XCTAssertEqual(ShareCleanupWords.bulkResult(completed: 2, failed: 2),
-            "Removed ums and pauses from 0 Margins. 2 couldn't be changed and go as they are.")
+            "Couldn't remove ums and pauses from any of the 2 Margins. They go as they are.")
+        XCTAssertEqual(ShareCleanupWords.bulkResult(completed: 1, failed: 1),
+            "Couldn't remove ums and pauses from this Margin. It goes as it is.")
         XCTAssertEqual(ShareCleanupWords.running(completed: 2, total: 5), "Removing ums and pauses: 2 of 5")
     }
 
