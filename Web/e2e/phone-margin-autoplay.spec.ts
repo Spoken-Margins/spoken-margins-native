@@ -27,8 +27,8 @@ const margins: Margin[] = [
   { id: 'm1', episodeId: episode.id, atSeconds: FIRST_AT, createdAt: '2026-10-31T10:00:00Z', text: 'First voice note.', voice: voice() },
 ];
 
-async function packet(): Promise<{ name: string; buffer: Buffer }> {
-  const written = await writePacket(episode, margins, { sender: 'Sam' });
+async function packet(list: readonly Margin[] = margins): Promise<{ name: string; buffer: Buffer }> {
+  const written = await writePacket(episode, list, { sender: 'Sam' });
   return { name: written.fileName, buffer: Buffer.from(written.bytes) };
 }
 
@@ -47,6 +47,8 @@ async function watchPlays(page: Page, block: boolean): Promise<void> {
     window.__blockClips = blockFirstClip;
     const play = HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+      // The player readies its clip element from a tap with a moment of silence (#4472); that is not a Margin's clip.
+      if (this.src.startsWith('data:audio/wav')) return play.call(this);
       const episodeElement = document.querySelector('audio[data-testid="audio"]') as HTMLAudioElement | null;
       const clip = this !== episodeElement;
       window.__plays.push({ kind: clip ? 'clip' : 'episode', at: episodeElement?.currentTime ?? 0, episodePaused: episodeElement?.paused ?? true });
@@ -62,11 +64,11 @@ async function watchPlays(page: Page, block: boolean): Promise<void> {
 const audioTime = (page: Page) => page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.currentTime);
 const plays = (page: Page) => page.evaluate(() => window.__plays);
 
-async function openFile(page: Page) {
+async function openFile(page: Page, list: readonly Margin[] = margins) {
   await page.goto('./');
   const choosing = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: /Open a Margin file/ }).click();
-  await (await choosing).setFiles(await packet());
+  await (await choosing).setFiles(await packet(list));
   const nowPlaying = page.getByRole('dialog', { name: TITLE });
   await expect(nowPlaying).toBeVisible();
   return nowPlaying;
@@ -158,7 +160,7 @@ test('while a spoken Margin plays, the main button shows Pause and pauses it; Pl
     const play = HTMLMediaElement.prototype.play;
     window.__clipElements = [];
     HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
-      if (this !== document.querySelector('audio[data-testid="audio"]')) {
+      if (this !== document.querySelector('audio[data-testid="audio"]') && !this.src.startsWith('data:audio/wav')) {
         if (!window.__clipElements.includes(this)) window.__clipElements.push(this);
         this.playbackRate = 0.33;
       }
@@ -190,3 +192,42 @@ test('while a spoken Margin plays, the main button shows Pause and pauses it; Pl
   await expect.poll(() => audioTime(page), { timeout: 15_000 }).toBeGreaterThan(held + 0.5);
 });
 
+// #4472: after "Skip to just before" the next Margin comes up 20 s after the listener's last tap. Safari (WebKit, the
+// engine of every iPhone browser) refused a clip started that long after a tap, so the Margin waited behind a Play;
+// "Skip to <name> now", 0.3 s before it, was close enough to the tap to pass. Each row lands with the lead-in Skip and
+// lets playback reach the Margin with no tap at all.
+const at = (id: string, seconds: number): Margin => ({
+  id, episodeId: episode.id, atSeconds: seconds, createdAt: '2026-10-31T10:00:00Z', text: `Margin ${id}.`, voice: voice(),
+});
+const leadInRows: Array<{ name: string; list: Margin[]; clipsAt: number[] }> = [
+  { name: 'a spoken Margin', list: [at('first', 30), at('target', 90)], clipsAt: [90] },
+  { name: 'two spoken Margins five seconds apart', list: [at('first', 30), at('near', 85), at('target', 90)], clipsAt: [85, 90] },
+  { name: 'the last spoken Margin, near the end of the episode', list: [at('first', 30), at('target', 175)], clipsAt: [175] },
+];
+
+for (const row of leadInRows) {
+  test(`after "Skip to just before", ${row.name} plays by itself when playback reaches it (#4472)`, async ({ page }) => {
+    test.setTimeout(90_000);
+    await watchPlays(page, false);
+    const nowPlaying = await openFile(page, row.list);
+    await startAtLanding(nowPlaying);
+    // The landing Margin plays, the episode runs on past it, and the countdown offers the lead-in Skip.
+    await expect.poll(() => audioTime(page), { timeout: 20_000 }).toBeGreaterThan(31);
+    const skip = nowPlaying.getByRole('button', { name: 'Skip to just before Sam' });
+    await expect(skip).toBeVisible({ timeout: 10_000 });
+    const before = (await plays(page)).length;
+    await skip.click();
+    // Hands off through the lead-in and the clips: Playwright runs `evaluate` (which every poll and locator check uses)
+    // as a user gesture in WebKit, and a poll here would hand the clip the tap the listener never makes. That is how the
+    // tests above passed while the owner's phone refused the clip.
+    const span = row.clipsAt[row.clipsAt.length - 1] - row.clipsAt[0];
+    await page.waitForTimeout((20 + span + 3.5 * row.clipsAt.length + 3) * 1000);
+    // No Margin waits behind a Play: each clip is heard where it sits, and the episode carries on after the last.
+    await expect(nowPlaying.getByRole('button', { name: /^Play Sam’s Margin/ })).toHaveCount(0);
+    const clips = (await plays(page)).slice(before).filter((p) => p.kind === 'clip');
+    expect(clips.map((p) => Math.floor(p.at))).toEqual(row.clipsAt);
+    expect(clips.every((p) => p.episodePaused)).toBe(true);
+    const last = row.clipsAt[row.clipsAt.length - 1];
+    expect(await audioTime(page)).toBeGreaterThan(last + 1);
+  });
+}

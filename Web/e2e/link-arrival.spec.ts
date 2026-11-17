@@ -643,7 +643,8 @@ test('when the episode can’t load and the browser refuses a clip that starts l
     const play = HTMLMediaElement.prototype.play;
     let refused = false;
     HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
-      if (!refused && !this.hasAttribute('data-testid')) {
+      // The moment of silence the player plays from a tap to ready its clip element (#4472) is not a clip.
+      if (!refused && !this.hasAttribute('data-testid') && !this.src.startsWith('data:audio/wav')) {
         refused = true;
         return Promise.reject(new DOMException('refused', 'NotAllowedError'));
       }

@@ -15,7 +15,7 @@ import { FINISHED_WITHIN_SECONDS } from './logic/library.ts';
 import { services } from './services.ts';
 import { PaidPostNoVoice } from '../sources/read.ts';
 import { ended, NOTHING_HEARD, replyForComposer, started, type ReplyMemory } from './logic/reply-memory.ts';
-import { readWrittenMargin, type Reading } from './speech.ts';
+import { primeSpeech, readWrittenMargin, type Reading } from './speech.ts';
 import { useRelay, useUi } from './ui.tsx';
 
 export const SKIP_SECONDS = 15;
@@ -88,6 +88,28 @@ export interface PlayerApi {
 }
 
 const PlayerContext = createContext<PlayerApi | null>(null);
+
+/** A tenth of a second of silence, as a WAV address: what `primeClip` plays from a tap to ready the clip element. */
+const SILENCE_WAV = (() => {
+  const samples = 800;
+  const bytes = new Uint8Array(44 + samples);
+  const view = new DataView(bytes.buffer);
+  const text = (at: number, value: string) => [...value].forEach((c, i) => view.setUint8(at + i, c.charCodeAt(0)));
+  text(0, 'RIFF');
+  view.setUint32(4, 36 + samples, true);
+  text(8, 'WAVEfmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 8000, true);
+  view.setUint32(28, 8000, true);
+  view.setUint16(32, 1, true);
+  view.setUint16(34, 8, true);
+  text(36, 'data');
+  view.setUint32(40, samples, true);
+  bytes.fill(128, 44);
+  return `data:audio/wav;base64,${btoa(String.fromCharCode(...bytes))}`;
+})();
 
 /** Takes a finished or stopped clip's handlers off the shared clip element, so the next clip's events are its own. */
 function detachClip(element: HTMLAudioElement): void {
@@ -215,6 +237,38 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     URL.revokeObjectURL(current.url);
   }, [stopReading]);
 
+  /**
+   * The one element every friend's clip plays in (#4472). Safari, and every browser on an iPhone, lets page code start
+   * an element's sound only from a tap, unless that element has already played from one. A new element per clip was
+   * refused whenever its Margin came up more than a moment after the last tap: after "Skip to just before", 20 s of
+   * lead-in later. `primeClip` plays it once, silently, from the listener's tap, so it may play every clip after.
+   */
+  const clipElement = useRef<HTMLAudioElement | undefined>(undefined);
+  const clipPrimed = useRef(false);
+  const clipPlayer = useCallback((): HTMLAudioElement => {
+    clipElement.current ??= new Audio();
+    return clipElement.current;
+  }, []);
+
+  /** Called inside the listener's taps (Play, Pause, Skip, a seek, opening an item): readies the clip element once. */
+  const primeClip = useCallback(() => {
+    if (clipPrimed.current || clip.current || typeof Audio === 'undefined') return;
+    const element = clipPlayer();
+    // The voice that reads a written Margin has the same rule; the arrival page's Play readied it, other ways in didn't.
+    primeSpeech();
+    try {
+      element.src = SILENCE_WAV;
+      const started = element.play();
+      clipPrimed.current = true;
+      // A refusal here means this tap didn't count; the next one tries again. The silence ends by itself.
+      void started?.catch?.(() => {
+        if (!clip.current) clipPrimed.current = false;
+      });
+    } catch {
+      // Nothing to ready.
+    }
+  }, [clipPlayer]);
+
   /** Plays a voice Margin's clip with the episode paused, then resumes the episode (or the next queued clip). */
   const playClip = useCallback((margin: Margin, onDone?: () => void) => {
     const audio = audioRef.current;
@@ -223,7 +277,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     clearTimeout(shownTimer.current);
     setArrived({ margin, blocked: false });
     const url = URL.createObjectURL(margin.voice.blob);
-    const element = new Audio();
+    const element = clipPlayer();
     const previous = clip.current;
     if (previous) URL.revokeObjectURL(previous.url);
     const mine = { element, url };
@@ -268,7 +322,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
       finish();
     });
-  }, []);
+  }, [clipPlayer]);
 
   /** A friend's Margins whose moment playback just reached: written ones appear, spoken ones play. */
   const fire = useCallback(
@@ -495,20 +549,22 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const open = useCallback(
     async (id: string, options: OpenOptions = {}) => {
+      primeClip();
       const result = await attemptOpen(id, options);
       if (result === 'paid') toast(MESSAGES.paidPost, 'problem');
       if (result === 'no-voice') toast(MESSAGES.noVoice, 'problem');
     },
-    [attemptOpen, toast],
+    [attemptOpen, toast, primeClip],
   );
 
   const openNewestPlayable = useCallback(
     async (newestFirst: readonly Episode[]) => {
+      primeClip();
       const result = await playNewestAvailable(playCandidates(newestFirst), (episode) => attemptOpen(episode.id));
       const message = newestPlayableMessage(result);
       if (message) toast(message.text, message.tone);
     },
-    [attemptOpen, toast],
+    [attemptOpen, toast, primeClip],
   );
 
   // Read by the play controls between renders: whether a run's voice is sounding, and the card on screen.
@@ -574,19 +630,22 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [stopClip, retry]);
 
   const toggle = useCallback(() => {
+    primeClip();
     if (anythingSounding()) pauseSound();
     else resumeSound();
-  }, [anythingSounding, pauseSound, resumeSound]);
+  }, [anythingSounding, pauseSound, resumeSound, primeClip]);
 
   const seek = useCallback((seconds: number) => {
     const audio = audioRef.current;
     if (!audio || !audio.src) return;
+    // A Skip or a scrub is the listener's tap: the clip element is readied in it, for the Margin coming up (#4472).
+    primeClip();
     const max = Number.isFinite(audio.duration) ? audio.duration : Number.POSITIVE_INFINITY;
     audio.currentTime = Math.min(Math.max(0, seconds), max);
     setTime(audio.currentTime);
     // The scrub itself is the place, even if the page goes before the browser reports the seek finished (#4096).
     remember();
-  }, [remember]);
+  }, [remember, primeClip]);
 
   const skip = useCallback((seconds: number) => seek((audioRef.current?.currentTime ?? 0) + seconds), [seek]);
 
