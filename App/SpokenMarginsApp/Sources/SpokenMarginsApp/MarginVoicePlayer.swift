@@ -307,6 +307,8 @@ final class MarginVoicePlayer: ObservableObject {
     // MARK: The chime
 
     func playCue() throws {
+        // MUTATION CHECK for #4444, never merged: the tone takes the session and ducks others. The test must fail.
+        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [.duckOthers])
         cuePlayer = try SharedMarginChime.play()
     }
 }
