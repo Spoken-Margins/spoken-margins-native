@@ -58,7 +58,7 @@ final class PermanentDeleteRecordingsTests: XCTestCase {
             arrivals += 1
             let deadline = Date(timeIntervalSinceNow: patience)
             while !released {
-                if !condition.wait(until: deadline) { timeouts += 1; return }
+                if !condition.wait(until: deadline), !released { timeouts += 1; return }
             }
         }
 
