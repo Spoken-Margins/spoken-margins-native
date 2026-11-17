@@ -310,7 +310,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     element.play().catch((error: unknown) => {
       if (clip.current !== mine) return;
       setMarginPlaying(false);
-      if (clipRejection(error instanceof DOMException ? error.name : undefined) === 'wait-for-tap') {
+      const meaning = clipRejection(error instanceof DOMException ? error.name : undefined);
+      // Paused before it had loaded (a Pause tapped as it came up): it holds, with its card, until Play (#4473).
+      if (meaning === 'held') return;
+      if (meaning === 'wait-for-tap') {
         // The browser won't start the clip without a tap: the episode stays paused at the Margin, with a Play. A run
         // of Margins without the episode carries on with the rest from that tap.
         clip.current = null;

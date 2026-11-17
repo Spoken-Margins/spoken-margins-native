@@ -176,6 +176,8 @@ test('while a spoken Margin plays, the main button shows Pause and pauses it; Pl
   // The friend's voice is what is sounding, so the main button offers Pause, not Play.
   const main = nowPlaying.locator('.play-button');
   await expect(main).toHaveAccessibleName('Pause');
+  // In WebKit this tap lands while the clip is still loading; its play() then rejects with AbortError, which once
+  // skipped the Margin and started the episode under the card.
   await main.click();
   // Pause holds the clip; the episode stays paused under it and the card stays up.
   await expect.poll(clipPaused).toBe(true);
