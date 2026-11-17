@@ -536,7 +536,8 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
         h.navigationLocked = false
         h.coordinator.openDeferredItemIfReady()
-        for _ in 0..<100 where h.shownItems.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while h.shownItems.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
 
         XCTAssertEqual(h.refreshedLibraries, 1, "the rows were loaded again")
         XCTAssertEqual(h.shownItems, [itemId], "and then the item opened")
