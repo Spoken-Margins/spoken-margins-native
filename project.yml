@@ -247,7 +247,7 @@ targets:
           UIApplicationSupportsMultipleScenes: true
   # Speak a Margin from the wrist during a phone call (#2487): the call holds the iPhone's microphone, the Watch's
   # still records. A single-target watchOS app, embedded in the iOS app. It doesn't link SessionKit; it compiles the
-  # two contract files below directly.
+  # SessionKit files below (the contract, its state, diagnostics, error text and the plate colours) directly.
   SpokenMarginsWatchApp:
     type: application
     platform: watchOS
@@ -259,6 +259,8 @@ targets:
       - path: Packages/SessionKit/Sources/SessionKit/WatchContract.swift
       - path: Packages/SessionKit/Sources/SessionKit/WatchContractState.swift
       - path: Packages/SessionKit/Sources/SessionKit/WatchDiagnostics.swift
+      # The plates' colours, read by the Watch and by the contrast audit (#3731). Foundation only.
+      - path: Packages/SessionKit/Sources/SessionKit/WatchPlatePalette.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.watchkitapp
