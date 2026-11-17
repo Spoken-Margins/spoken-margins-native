@@ -97,6 +97,15 @@ public enum ShareLinkPlayCheck {
             default: true
             }
         }
+
+        /// Whether asking again could give a different answer: the phone was offline, Low Data Mode was on, or the
+        /// check ran out of time or was cut off. A verdict, a missing probe and an unsettled post voice stay as they are.
+        public var isWorthRetrying: Bool {
+            switch self {
+            case .notChecked(.offline), .notChecked(.lowDataMode), .notChecked(.didNotFinish): true
+            default: false
+            }
+        }
     }
 
     public enum LineKind: Equatable, Sendable {
@@ -261,7 +270,8 @@ public enum ShareLinkPlayCheck {
 
     /// One check runs at a time. A newer link waits behind the running check and replaces any older link still
     /// waiting, so the line always describes the link the screen shows now. Results stay in memory for the session,
-    /// keyed by link id, so sharing the same link again checks nothing again.
+    /// keyed by link id, so sharing the same link again checks nothing again. Only a result that could change is
+    /// asked for again (`Outcome.isWorthRetrying`): an offline phone that comes back online checks the link then.
     public struct Queue: Equatable, Sendable {
         public private(set) var running: String?
         public private(set) var waiting: String?
@@ -279,7 +289,8 @@ public enum ShareLinkPlayCheck {
         }
 
         public mutating func request(linkID: String, network: Network) -> Request {
-            if sessions[linkID] != nil || running == linkID || waiting == linkID { return .alreadyKnown }
+            if running == linkID || waiting == linkID { return .alreadyKnown }
+            if let known = sessions[linkID], !known.outcome.isWorthRetrying { return .alreadyKnown }
             if ShareLinkPlayCheck.skipReason(for: network) != nil {
                 sessions[linkID] = Session(skippedFor: network)
                 return .alreadyKnown
@@ -302,14 +313,17 @@ public enum ShareLinkPlayCheck {
         /// ended the running one.
         @discardableResult
         public mutating func apply(_ event: Event, to linkID: String) -> String? {
+            // Only the running check takes events: a waiting link has no web view yet, so a stray event can't end it early.
+            guard running == linkID else { return nil }
             sessions[linkID]?.apply(event)
-            guard running == linkID, sessions[linkID]?.outcome.isFinal == true else { return nil }
+            guard sessions[linkID]?.outcome.isFinal == true else { return nil }
             running = waiting
             waiting = nil
             return running
         }
 
         /// A waiting check has no web view yet, so going to the background ends it the same way as a running one.
+        @discardableResult
         public mutating func enteredBackground() -> String? {
             if let waiting { sessions[waiting]?.apply(.enteredBackground) }
             waiting = nil

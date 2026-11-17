@@ -196,6 +196,46 @@ final class ShareLinkPlayCheckTests: XCTestCase {
         XCTAssertEqual(queue.request(linkID: "b", network: .init(isOnline: true, isLowDataMode: true)), .alreadyKnown)
         XCTAssertEqual(queue.outcome(for: "b"), .notChecked(.lowDataMode))
         XCTAssertEqual(queue.request(linkID: "c", network: online), .start)
+        XCTAssertEqual(queue.request(linkID: "b", network: online), .wait(replaced: nil), "Low Data Mode off: b is checked next")
+    }
+
+    func testACheckThatCouldNotRunIsAskedForAgainButAResultIsNot() {
+        var queue = Check.Queue()
+        // Offline now, online later: the same link is checked then.
+        XCTAssertEqual(queue.request(linkID: "a", network: .init(isOnline: false, isLowDataMode: false)), .alreadyKnown)
+        XCTAssertEqual(queue.request(linkID: "a", network: online), .start)
+        XCTAssertEqual(queue.outcome(for: "a"), .checking)
+        // Out of time: asked for again on the next share.
+        XCTAssertNil(queue.apply(.message(.started), to: "a"))
+        XCTAssertNil(queue.apply(.timedOut, to: "a"))
+        XCTAssertEqual(queue.outcome(for: "a"), .notChecked(.didNotFinish))
+        XCTAssertEqual(queue.request(linkID: "a", network: online), .start)
+        // A verdict, an unsettled post voice and a page with no check stay as they are.
+        _ = queue.apply(.message(.started), to: "a")
+        _ = queue.apply(.message(.unverifiedPostVoice), to: "a")
+        XCTAssertEqual(queue.request(linkID: "a", network: online), .alreadyKnown)
+        XCTAssertEqual(queue.request(linkID: "p", network: online), .start)
+        _ = queue.apply(.message(.started), to: "p")
+        _ = queue.apply(.message(.cannot(.article)), to: "p")
+        XCTAssertEqual(queue.request(linkID: "p", network: online), .alreadyKnown)
+        XCTAssertEqual(queue.outcome(for: "p"), .problem(.article))
+        XCTAssertEqual(queue.request(linkID: "g", network: online), .start)
+        _ = queue.apply(.timedOut, to: "g")
+        XCTAssertEqual(queue.outcome(for: "g"), .gone)
+        XCTAssertEqual(queue.request(linkID: "g", network: online), .alreadyKnown)
+    }
+
+    func testAnEventForAWaitingOrReplacedLinkChangesNothing() {
+        var queue = Check.Queue()
+        _ = queue.request(linkID: "a", network: online)
+        _ = queue.request(linkID: "b", network: online)
+        XCTAssertNil(queue.apply(.timedOut, to: "b"), "b is waiting, with no web view")
+        XCTAssertEqual(queue.outcome(for: "b"), .checking)
+        _ = queue.request(linkID: "c", network: online)
+        XCTAssertNil(queue.apply(.message(.plays), to: "b"), "b was replaced")
+        XCTAssertNil(queue.outcome(for: "b"))
+        XCTAssertEqual(queue.apply(.message(.plays), to: "a"), "c")
+        XCTAssertEqual(queue.running, "c")
     }
 
     func testGoingToTheBackgroundEndsTheRunningCheckAndTheWaitingOne() {
