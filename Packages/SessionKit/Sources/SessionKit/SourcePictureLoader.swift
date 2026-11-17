@@ -36,7 +36,7 @@ public final class SourcePictureLoader: @unchecked Sendable {
     }
 
     /// The picture's bytes from memory, then disk, then the network. Nil when it can't be fetched, is too large, or
-    /// isn't a picture ImageIO can read.
+    /// isn't a picture ImageIO can read, or decodes to more than `SourcePicture.maximumPixels`.
     public func data(for url: URL) async -> Data? {
         if let cached = cachedData(for: url) { return cached }
         let task = await inFlight.task(for: url) { [self] in await load(url) }
@@ -45,11 +45,11 @@ public final class SourcePictureLoader: @unchecked Sendable {
 
     private func load(_ url: URL) async -> Data? {
         let diskURL = diskFileURL(for: url)
-        if let diskURL, let data = try? Data(contentsOf: diskURL), SourcePicture.size(of: data) != nil {
+        if let diskURL, let data = try? Data(contentsOf: diskURL), SourcePicture.isWithinDecodeBudget(data) {
             remember(data, for: url)
             return data
         }
-        guard let data = try? await fetch(url), data.count <= Self.maximumBytes, SourcePicture.size(of: data) != nil else {
+        guard let data = try? await fetch(url), data.count <= Self.maximumBytes, SourcePicture.isWithinDecodeBudget(data) else {
             return nil
         }
         remember(data, for: url)
@@ -139,6 +139,33 @@ public enum SourcePicture {
     public static func isAnimated(_ data: Data) -> Bool {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
         return CGImageSourceGetCount(source) > 1
+    }
+
+    /// The most pixels one frame of a picture may have. A frame decodes to about 4 bytes a pixel, so 16 million is about
+    /// 64 MB. The 16 MB download cap limits a picture's bytes, not what it decodes to: a 100 KB single-colour GIF can
+    /// be 10,000 by 10,000 pixels, 400 MB a frame.
+    public static let maximumPixels = 16_000_000
+    /// An animation decodes frame after frame at full size on the main queue, so it gets a quarter of that, about 16 MB
+    /// a frame. A bigger animated picture shows its still.
+    public static let maximumAnimatedPixels = 4_000_000
+
+    /// The picture's pixels in one frame. Zero when ImageIO can't read it.
+    public static func pixelCount(of data: Data) -> Int {
+        guard let size = size(of: data) else { return 0 }
+        return Int(size.width) * Int(size.height)
+    }
+
+    /// Whether ImageIO can read the picture and it is small enough to decode: no more than `maximumPixels` a frame.
+    public static func isWithinDecodeBudget(_ data: Data) -> Bool {
+        let pixels = pixelCount(of: data)
+        return pixels > 0 && pixels <= maximumPixels
+    }
+
+    /// Whether the picture has several frames and is small enough to play them at full size.
+    public static func canAnimate(_ data: Data) -> Bool {
+        guard isAnimated(data) else { return false }
+        let pixels = pixelCount(of: data)
+        return pixels > 0 && pixels <= maximumAnimatedPixels
     }
 }
 #endif

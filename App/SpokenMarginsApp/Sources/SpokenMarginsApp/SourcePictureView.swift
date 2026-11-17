@@ -179,7 +179,7 @@ final class AnimatedPictureView: UIView {
 
     private func startIfVisible() {
         guard window != nil, !isAnimating, !UIAccessibility.isReduceMotionEnabled,
-              let data, SourcePicture.isAnimated(data) else { return }
+              let data, SourcePicture.canAnimate(data) else { return }
         isAnimating = true
         generation += 1
         let running = generation

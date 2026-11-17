@@ -33,6 +33,24 @@ final class SourcePictureLoaderTests: XCTestCase {
         return output as Data
     }
 
+    private func solidImage(width: Int, height: Int) throws -> CGImage {
+        let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                              space: CGColorSpaceCreateDeviceRGB(),
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(red: 0, green: 0.45, blue: 0.7, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return try XCTUnwrap(context.makeImage())
+    }
+
+    private func solidPicture(type: String, width: Int, height: Int, frames: Int = 1) throws -> Data {
+        let image = try solidImage(width: width, height: height)
+        let output = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(output, type as CFString, frames, nil))
+        for _ in 0..<frames { CGImageDestinationAddImage(destination, image, nil) }
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return output as Data
+    }
+
     private actor FetchCount {
         private(set) var value = 0
         func add() { value += 1 }
@@ -117,6 +135,40 @@ final class SourcePictureLoaderTests: XCTestCase {
         } catch let error as URLError {
             XCTAssertEqual(error.code, .badServerResponse)
         }
+    }
+
+    // MARK: A picture's pixels are capped as well as its bytes (#4411 audit)
+
+    func testAPictureThatDecodesToTooManyPixelsIsNeverHandedToARow() async throws {
+        let url = try XCTUnwrap(URL(string: "https://cdn.example.com/huge.png"))
+        let side = Int(Double(SourcePicture.maximumPixels).squareRoot()) + 8 // a little over the budget
+        let huge = try solidPicture(type: "public.png", width: side, height: side)
+        XCTAssertLessThan(huge.count, SourcePictureLoader.maximumBytes, "small in bytes, large in pixels")
+        XCTAssertFalse(SourcePicture.isWithinDecodeBudget(huge))
+        let loader = SourcePictureLoader(diskDirectory: folder) { _ in huge }
+        let loaded = await loader.data(for: url)
+        XCTAssertNil(loaded, "the row says the picture didn't load instead of decoding it")
+        let kept = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        XCTAssertEqual(kept, [], "and nothing was kept on disk to decode later")
+    }
+
+    func testASmallPictureIsWithinTheBudgetAndAnUnreadableOneIsNot() throws {
+        XCTAssertTrue(SourcePicture.isWithinDecodeBudget(try png()))
+        XCTAssertFalse(SourcePicture.isWithinDecodeBudget(Data("not a picture".utf8)))
+        XCTAssertEqual(SourcePicture.pixelCount(of: try png()), 12)
+        XCTAssertEqual(SourcePicture.pixelCount(of: Data()), 0)
+    }
+
+    func testOnlyASmallAnimatedPictureIsPlayed() throws {
+        let small = try solidPicture(type: "com.compuserve.gif", width: 8, height: 6, frames: 2)
+        XCTAssertTrue(SourcePicture.isAnimated(small))
+        XCTAssertTrue(SourcePicture.canAnimate(small))
+        let side = Int(Double(SourcePicture.maximumAnimatedPixels).squareRoot()) + 8 // over the animation budget, under the still budget
+        let large = try solidPicture(type: "com.compuserve.gif", width: side, height: side, frames: 2)
+        XCTAssertTrue(SourcePicture.isAnimated(large))
+        XCTAssertTrue(SourcePicture.isWithinDecodeBudget(large), "its still can be shown")
+        XCTAssertFalse(SourcePicture.canAnimate(large), "its frames would each decode at full size")
+        XCTAssertFalse(SourcePicture.canAnimate(try png()), "a still picture does not animate")
     }
 }
 
