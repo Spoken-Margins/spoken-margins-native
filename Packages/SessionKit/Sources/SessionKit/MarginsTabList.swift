@@ -33,7 +33,7 @@ public enum MarginsTabList {
                 lastAtDepth.removeAll()
             }
             let parent = row.depth > 0 ? lastAtDepth[row.depth - 1] : nil
-            let replyTo = row.depth >= 2 ? parent?.senderLabel : nil
+            let replyTo = row.depth >= 2 ? parent?.shownName : nil
             threads[threads.count - 1].append(Entry(row: row, replyTo: replyTo))
             lastAtDepth[row.depth] = row
             lastAtDepth = lastAtDepth.filter { $0.key <= row.depth }
@@ -80,10 +80,10 @@ public enum MarginsArrivalPreview {
     public static func welcomeLine(_ rows: [MarginsControlCenter.Row]) -> String {
         let unheard = rows.filter { $0.hearing == .unheard }
         var names: [String] = []
-        for row in unheard where !names.contains(row.senderLabel) { names.append(row.senderLabel) }
+        for row in unheard where !names.contains(row.shownName) { names.append(row.shownName) }
         let who: String
         switch names.count {
-        case 0: who = "A friend"
+        case 0: who = MarginsControlCenter.Row.unnamedFriend
         case 1: who = names[0]
         default: who = names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
         }
@@ -121,6 +121,17 @@ public enum MarginsAutoplaySetting {
     ) -> ImportedCommentaryRevealMode? {
         if layerMode == .guided, heard, !includesHeard { return .companion }
         return layerMode
+    }
+}
+
+extension MarginsControlCenter.Row {
+    /// What a friend's row says when the file names nobody.
+    public static let unnamedFriend = "A friend"
+
+    /// The name the list shows: your own label as it is, a friend's through `SharedPacketArrival.senderName`, so an
+    /// unsigned packet's stand-in reads "A friend" and never "Unsigned sender".
+    public var shownName: String {
+        isYours ? senderLabel : SharedPacketArrival.senderName(senderLabel) ?? Self.unnamedFriend
     }
 }
 

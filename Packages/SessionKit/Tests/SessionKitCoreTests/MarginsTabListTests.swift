@@ -1,5 +1,5 @@
 import Foundation
-import SessionKit
+@testable import SessionKit
 import XCTest
 
 /// How the Margins tab and the arrival preview arrange the control centre's rows, and the Autoplay menu's wiring onto
@@ -77,6 +77,36 @@ final class MarginsTabListTests: XCTestCase {
         XCTAssertEqual(MarginsArrivalPreview.welcomeLine(seedRows()), "Sam and Rae left 5 Margins")
         let samOnly = seedRows().filter { $0.senderLabel == "Sam" && $0.hearing == .unheard }
         XCTAssertEqual(MarginsArrivalPreview.welcomeLine(Array(samOnly.prefix(1))), "Sam left 1 Margin")
+    }
+
+    /// A friend's label that names nobody reads "A friend" on the row, in "to …" and in the welcome, never a stand-in.
+    /// Your own label is shown as it is.
+    func testAFriendWhoseFileNamesNobodyReadsAsAFriend() {
+        func row(_ id: String, _ label: String, depth: Int = 0, hearing: MarginsControlCenter.Hearing = .unheard)
+            -> MarginsControlCenter.Row {
+            MarginsControlCenter.Row(
+                reference: .imported(id), depth: depth, senderLabel: label, hearing: hearing, words: .coming,
+                leadIn: nil, timeMs: 1_000, isStarred: false, note: nil)
+        }
+        let unnamed = SharedPacketArrival.snapshotSenderLabel(nil)
+        let table: [(label: String, shown: String)] = [
+            ("Sam", "Sam"), (" Sam ", "Sam"), ("", "A friend"), ("   ", "A friend"), (unnamed, "A friend"),
+            (unnamed.uppercased(), "A friend"), ("Someone", "A friend"), ("your  friend", "A friend"),
+            ("Zoë", "Zoë"),
+        ]
+        for (label, shown) in table {
+            XCTAssertEqual(row("a", label).shownName, shown, "label \(label.debugDescription)")
+        }
+        let yours = MarginsControlCenter.Row(
+            reference: .local("y"), depth: 0, senderLabel: "You", hearing: .yours, words: .coming,
+            leadIn: nil, timeMs: 1_000, isStarred: false, note: nil)
+        XCTAssertEqual(yours.shownName, "You")
+
+        let chain = [row("a", unnamed), row("b", "Sam", depth: 1), row("c", "Sam", depth: 2)]
+        XCTAssertEqual(MarginsTabList.threads([row("a", "Sam"), row("b", unnamed, depth: 1), row("c", "Sam", depth: 2)])[0]
+            .entries.map(\.replyTo), [nil, nil, "A friend"])
+        XCTAssertEqual(MarginsArrivalPreview.welcomeLine(chain), "A friend and Sam left 3 Margins")
+        XCTAssertEqual(MarginsArrivalPreview.welcomeLine([row("a", ""), row("b", unnamed)]), "A friend left 2 Margins")
     }
 
     // MARK: Autoplay menu on the existing auto-play path

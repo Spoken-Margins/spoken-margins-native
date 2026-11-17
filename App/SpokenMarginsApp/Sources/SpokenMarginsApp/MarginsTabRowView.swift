@@ -77,7 +77,7 @@ struct MarginsTabRowView: View {
             if isUnheard {
                 Circle().fill(Self.unheardBlue).frame(width: 8, height: 8).accessibilityHidden(true)
             }
-            Text(row.senderLabel)
+            Text(row.shownName)
                 .font(isHeard ? .subheadline.weight(.semibold) : .body.weight(.semibold))
                 .foregroundStyle(isHeard ? .white.opacity(0.7) : .white)
             if let replyTo = entry.replyTo { Text("to \(replyTo)") }
@@ -200,7 +200,7 @@ struct MarginsTabRowView: View {
     }
 
     private var accessibilityLabel: String {
-        var parts = ["\(row.senderLabel)'s Margin"]
+        var parts = ["\(row.shownName)'s Margin"]
         if let replyTo = entry.replyTo { parts.append("to \(replyTo)") }
         if let ms = row.timeMs { parts.append("at \(MarginReplyWords.clock(milliseconds: ms))") }
         switch row.hearing {
