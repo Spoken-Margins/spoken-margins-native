@@ -46,6 +46,10 @@ final class TimelineRowPaletteTests: XCTestCase {
                     XCTAssertTrue(names.contains("\(words) on \(fill.token) at \(fill.alpha) over \(base)"), "\(words) \(kind) \(base)")
                 }
             }
+            for kind in TimelineRowKind.allCases {
+                // A current row of any kind keeps its kind's label, now on the soft green.
+                XCTAssertTrue(names.contains("\(labels[kind]!) on softGreen at 1.0 over \(base)"), "current \(kind) \(base)")
+            }
             for words in ["row title", "row detail", "current row label"] {
                 XCTAssertTrue(names.contains("\(words) on softGreen at 1.0 over \(base)"), "\(words) current \(base)")
             }

@@ -403,6 +403,9 @@ public enum AppColorContrastAudit {
             for kind in TimelineRowKind.allCases {
                 rows.append((TimelineRowPalette.fill(kind: kind, isCurrent: false), labelNames[kind] ?? "\(kind.rawValue) row label",
                              TimelineRowPalette.labelColor(kind: kind)))
+                // The current row keeps its kind's label and icon, now on the highlighted card's fill.
+                rows.append((TimelineRowPalette.fill(kind: kind, isCurrent: true), labelNames[kind] ?? "\(kind.rawValue) row label",
+                             TimelineRowPalette.labelColor(kind: kind)))
             }
             for row in rows {
                 for (name, color) in [("row title", AppSemanticColorRGB.text), ("row detail", AppSemanticColorRGB.secondaryText),
