@@ -96,13 +96,17 @@ final class PlaybackLivePassageViewTests: XCTestCase {
         let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
         let appeared = Appearance()
         // The one-point sibling proves the host appeared even when the passage has no children.
-        let passage = PlaybackLivePassageView(scene: NowSceneController()) { _ in XCTFail("Mounting must not open the reader") }
+        let controller = NowSceneController()
         let root = VStack(spacing: 0) {
-            if inScrollView {
-                // As on the Now tab: the passage in a page scroll view, which is what makes its rows lazy.
-                ScrollView { passage }.frame(height: 700)
-            } else {
-                passage
+            // As on the Now tab: the reader wraps the page scroll view, whose proxy the passage scrolls with.
+            ScrollViewReader { proxy in
+                let passage = PlaybackLivePassageView(scene: controller, proxy: proxy) { _ in XCTFail("Mounting must not open the reader") }
+                if inScrollView {
+                    // The passage in a page scroll view, which is what makes its rows lazy.
+                    ScrollView { passage }.frame(height: 700)
+                } else {
+                    passage
+                }
             }
             Color.clear.frame(height: 1).onAppear { appeared.value = true }
         }.environmentObject(model)

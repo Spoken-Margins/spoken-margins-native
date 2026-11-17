@@ -103,19 +103,22 @@ struct PlaybackScreen: View {
                                         .onScrollVisibilityChange(threshold: 0.01) { nowScene.headerIsVisible = $0 }
                                     capturePermissionRecovery
                                     importedCommentaryControl
-                                    // Below a long scene these would be out of reach, so they sit above the text (#4453).
-                                    if !model.selectedItem.isNativeAudio {
-                                        recentMarginPreview
-                                    }
-                                    if model.shouldShowGuidedOnboardingCoach {
-                                        GuidedOnboardingPlaybackCard {
-                                            openTimeline()
-                                        }
-                                    }
                                     if model.selectedItem.isNativeAudio {
                                         PlaybackNowView()
+                                        if model.shouldShowGuidedOnboardingCoach {
+                                            GuidedOnboardingPlaybackCard {
+                                                openTimeline()
+                                            }
+                                        }
                                     } else {
-                                        PlaybackLivePassageView(scene: nowScene) { offset in
+                                        // Below a long scene these would be out of reach, so they sit above the text (#4453).
+                                        recentMarginPreview
+                                        if model.shouldShowGuidedOnboardingCoach {
+                                            GuidedOnboardingPlaybackCard {
+                                                openTimeline()
+                                            }
+                                        }
+                                        PlaybackLivePassageView(scene: nowScene, proxy: proxy) { offset in
                                             sourceTextTarget = PlaybackTextReaderTarget.resolve(
                                                 text: model.selectedItem.text,
                                                 chapters: model.selectedItem.chapters,
@@ -133,7 +136,7 @@ struct PlaybackScreen: View {
                             .scrollBounceBehavior(.always)
                             // The sentences on screen, and the listener's own scrolling (a drag or a fling; a scroll the
                             // view makes itself reports `.animating`), which stops the scene following playback (#4453).
-                            .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.5) { nowScene.sentencesOnScreen($0) }
+                            .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.1) { nowScene.sentencesOnScreen($0) }
                             .onScrollPhaseChange { _, phase in
                                 switch phase {
                                 case .interacting, .decelerating: nowScene.listenerScrolled()
@@ -141,7 +144,12 @@ struct PlaybackScreen: View {
                                 default: break
                                 }
                             }
-                            .overlay(alignment: .bottom) { NowBackToPlayingButton(scene: nowScene) }
+                            .overlay(alignment: .bottom) {
+                                // Only over this item's own scene: not over a podcast, nor while another item plays.
+                                if !model.selectedItem.isNativeAudio, model.snapshot.itemId == model.selectedItem.id {
+                                    NowBackToPlayingButton(scene: nowScene)
+                                }
+                            }
                             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                                 // ScrollGeometry's container is the inset content viewport.
                                 // The offset calculation below expects the whole viewport.

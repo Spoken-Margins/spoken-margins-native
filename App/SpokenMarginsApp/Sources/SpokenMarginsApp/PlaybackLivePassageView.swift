@@ -10,8 +10,11 @@ final class NowSceneController: ObservableObject {
     @Published private(set) var state: PlaybackNowSceneState?
     /// Whether the Now header, with the Library arrow in it, is on screen. Following scrolls it away.
     @Published var headerIsVisible = true
-    /// The ids (first Character offsets) of the sentences on screen.
-    @Published private(set) var visibleSentenceIDs: Set<Int> = []
+    /// The ids (first Character offsets) of the sentences on screen. Not published: a scroll changes it constantly, and
+    /// only `playingIsAbove` is drawn.
+    private(set) var visibleSentenceIDs: Set<Int> = []
+    /// Which way the playing sentence is from what is on screen, for the Back to playing arrow.
+    @Published private(set) var playingIsAbove = false
     /// Bumped when the view should scroll to the lit sentence: Back to playing, and a jump the listener chose.
     @Published private(set) var scrollToLitRequest = 0
 
@@ -47,15 +50,14 @@ final class NowSceneController: ObservableObject {
     }
 
     func sentencesOnScreen(_ ids: [Int]) {
-        let value = Set(ids)
-        if value != visibleSentenceIDs { visibleSentenceIDs = value }
-    }
-
-    /// Which way the lit sentence is from what is on screen, for the button's arrow.
-    var playingIsAbove: Bool {
+        visibleSentenceIDs = Set(ids)
         guard let state, let playing = state.playingSentenceID, !state.isReadingAnotherScene,
-              let first = visibleSentenceIDs.min() else { return false }
-        return playing < first
+              let first = visibleSentenceIDs.min() else {
+            if playingIsAbove { playingIsAbove = false }
+            return
+        }
+        let above = playing < first
+        if above != playingIsAbove { playingIsAbove = above }
     }
 }
 
@@ -67,6 +69,8 @@ final class NowSceneController: ObservableObject {
 struct PlaybackLivePassageView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @ObservedObject var scene: NowSceneController
+    /// The page scroll view's proxy, from the reader that wraps it: a proxy scrolls only the scroll views inside its own reader.
+    let proxy: ScrollViewProxy
     let openReader: (Int) -> Void
     @State private var sourceIndex = PlaybackLivePassage.SourceIndex(TimelineSourceContent(text: ""))
     @State private var sourceVersion = 0
@@ -99,8 +103,7 @@ struct PlaybackLivePassageView: View {
 
     var body: some View {
         let _ = playbackTick
-        ScrollViewReader { proxy in
-            VStack(spacing: 0) {
+        return VStack(spacing: 0) {
                 if isShowing, let state = scene.state {
                     NowSceneList(
                         scene: state.shownScene, revision: state.sceneRevision, lit: state.litSentence,
@@ -109,14 +112,14 @@ struct PlaybackLivePassageView: View {
                     )
                     .equatable()
                     // Room under the last row for the Back to playing button, so it never covers it.
-                    .padding(.bottom, state.offersBackToPlaying ? 84 : 0)
+                    .padding(.bottom, state.offersBackToPlaying ? 96 : 0)
                 }
             }
             .onAppear {
                 rebuild()
                 // Opening Now always starts with following on, at the lit sentence, without a scroll animation, once
                 // its rows are laid out.
-                DispatchQueue.main.async { scrollToLit(proxy, animated: false) }
+                Task { @MainActor in scrollToLit(animated: false) }
             }
             .onChange(of: input) { _, _ in rebuild() }
             .onChange(of: model.selectedItem.timelineSource) { _, value in
@@ -128,25 +131,25 @@ struct PlaybackLivePassageView: View {
             .onChange(of: sourceOffset) { _, _ in follow() }
             .onChange(of: scene.state?.litSentenceID) { _, _ in
                 guard let state = scene.state, state.follow.scrollsOnItsOwn(assistiveTechnologyRunning: voiceOverEnabled) else { return }
-                scrollToLit(proxy, animated: true)
+                scrollToLit(animated: true)
             }
             .onChange(of: scene.scrollToLitRequest) { _, _ in
                 // The scene is replaced in this update; scroll once its rows are in place.
-                DispatchQueue.main.async {
-                    scrollToLit(proxy, animated: true)
+                Task { @MainActor in
+                    scrollToLit(animated: true)
                     if voiceOverEnabled { focusedSentence = scene.state?.litSentenceID }
                 }
             }
-            .onChange(of: scene.state?.sceneRevision) { old, new in
+            .onChange(of: scene.state?.shownScene.chapterStart) { old, new in
                 guard voiceOverEnabled, old != nil, old != new, let title = scene.state?.shownScene.chapterTitle else { return }
                 AccessibilityNotification.Announcement("Now in \(title)").post()
             }
             .onChange(of: model.showNowRequests) { _, _ in scene.backToPlaying() }
             .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
-        }
     }
 
     private func rebuild() {
+        lastOffset = nil
         scene.reset(text: input.text, chapters: input.chapters)
         sourceIndex = PlaybackLivePassage.SourceIndex(model.selectedItem.timelineSource)
         sourceVersion &+= 1
@@ -171,12 +174,14 @@ struct PlaybackLivePassageView: View {
             return
         }
         lastOffset = offset
-        scene.move(offset: offset, margins: margins)
+        // Playback going on moves the light only while playing. A move while paused or starting is the listener's (a seek,
+        // Skim, Rewind), even one sentence on, and starts following again.
+        scene.move(offset: offset, margins: margins, byListenerControl: model.snapshot.status != .playing)
     }
 
     /// The lit sentence about a third of the way down the visible area. Near the start of a scene the scroll view's own
     /// top edge stops it, so the header stays in sight.
-    private func scrollToLit(_ proxy: ScrollViewProxy, animated: Bool) {
+    private func scrollToLit(animated: Bool) {
         guard let id = scene.state?.litSentenceID else { return }
         if animated {
             withMotion { proxy.scrollTo(id, anchor: Self.litAnchor) }
@@ -209,7 +214,7 @@ private struct NowSceneList: View, Equatable {
         return scene.sentences[lit].id
     }
 
-    static func == (lhs: NowSceneList, rhs: NowSceneList) -> Bool {
+    nonisolated static func == (lhs: NowSceneList, rhs: NowSceneList) -> Bool {
         lhs.revision == rhs.revision && lhs.lit == rhs.lit && lhs.sourceVersion == rhs.sourceVersion
     }
 
@@ -336,7 +341,6 @@ struct NowBackToPlayingButton: View {
             .accessibilityLabel(title.map { "Back to the playing sentence, now in \($0)" } ?? "Back to the playing sentence")
             .accessibilityHint("Scrolls to the sentence being read. Playback doesn't change.")
             .accessibilityIdentifier("playback.now.passage.back")
-            .transition(.opacity)
         }
     }
 }
