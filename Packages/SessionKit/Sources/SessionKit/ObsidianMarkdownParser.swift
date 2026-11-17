@@ -450,6 +450,8 @@ public enum ObsidianMarkdownParser {
         var skippingTimestampBlock = false
         var lineIsBoldOnly = false
         var pendingElements: [PendingElement] = []
+        // The first line after the last table kept, so a table's own rows never open another.
+        var tableEndLine = 0
 
         for (lineIndex, rawLine) in lines.enumerated() {
             var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -483,9 +485,9 @@ public enum ObsidianMarkdownParser {
                                                     outputIndex: output.count))
             }
             // A table's lines stay in the text as they always did; its cells are kept apart, anchored on its first line.
-            if capturingElements, !(lineIndex > 0 && SourceElementCapture.isTableRow(lines[lineIndex - 1])),
-               SourceElementCapture.opensTable(at: lineIndex, in: lines) {
+            if capturingElements, lineIndex >= tableEndLine, SourceElementCapture.opensTable(at: lineIndex, in: lines) {
                 let rawRows = lines[lineIndex...].prefix { SourceElementCapture.isTableRow($0) }
+                tableEndLine = lineIndex + rawRows.count
                 if let table = SourceElementCapture.table(Array(rawRows)) {
                     pendingElements.append(PendingElement(kind: .table, label: table.label, altText: nil, url: "",
                                                           outputIndex: output.count, rows: table.rows))

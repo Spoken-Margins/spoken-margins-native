@@ -364,6 +364,26 @@ final class SubstackSourceElementsTests: XCTestCase {
         XCTAssertEqual(try tables("| Café | naïve |\n| --- | --- |\n| 1 | 2 |").first?.label, "Café · naïve")
     }
 
+    /// GFM tables the first parser missed or misread (audit on a9dc647): no outer pipes, dividers of one or two dashes,
+    /// a pipe line straight above the header, a lone pipe line over a thematic break, and a body row without a
+    /// leading pipe. A `|` inside inline code still splits its cell, as GFM says; only `\|` keeps it.
+    func testGFMTableShapesTheFirstParserMissed() throws {
+        XCTAssertEqual(try tables("A | B\n--- | ---\n1 | 2").first?.rows, [["A", "B"], ["1", "2"]], "no outer pipes")
+        XCTAssertEqual(try tables("| A | B |\n|-|-|\n| 1 | 2 |").first?.rows, [["A", "B"], ["1", "2"]], "one-dash divider")
+        XCTAssertEqual(try tables("| A |\n| :-: |\n| 1 |").first?.rows, [["A"], ["1"]], "centred one-dash divider")
+        XCTAssertEqual(try tables("| A | B |\n| -- | :- |\n| 1 | 2 |").first?.rows, [["A", "B"], ["1", "2"]], "two-dash divider")
+        XCTAssertEqual(try tables("| just a line\n\n---\n\n\(prose("More"))"), [], "a pipe line over a break is not a table")
+        XCTAssertEqual(try tables("| just a line\n---"), [], "a pipe line over a Setext underline is not a table")
+        XCTAssertEqual(try tables("| note |\n| A | B |\n| --- | --- |\n| 1 | 2 |").map(\.rows), [[["A", "B"], ["1", "2"]]],
+                       "a pipe line above the header does not hide the table")
+        XCTAssertEqual(try tables("| A | B |\n| --- | --- |\n1 | 2\n| 3 | 4 |").first?.rows, [["A", "B"], ["1", "2"], ["3", "4"]],
+                       "a body row without a leading pipe stays in the table")
+        XCTAssertEqual(try tables("| A | B |\n| --- |\n| 1 | 2 |"), [], "a divider narrower than its header is not a table")
+        XCTAssertEqual(try tables("| A | B |\n| --- | --- |\n| 1 | 2 |\n| --- | --- |").first?.rows,
+                       [["A", "B"], ["1", "2"], ["---", "---"]], "only the second line is the divider")
+        XCTAssertEqual(try tables("Price -- not a | table\n\n\(prose("More"))"), [])
+    }
+
     func testARecordWithATableRoundTripsAndAnOlderReaderSkipsIt() throws {
         let table = SourceElement(id: "e00000", kind: .table, start: 3, label: "A · B", url: "", rows: [["A", "B"], ["1", "2"]])
         let picture = SourceElement(id: "e00001", kind: .picture, start: 9, label: "P", url: "https://x.example/p.jpg")

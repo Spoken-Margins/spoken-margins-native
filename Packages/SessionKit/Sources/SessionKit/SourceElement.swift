@@ -240,20 +240,37 @@ enum SourceElementCapture {
         webURL(sourceURL) != nil
     }
 
-    /// Whether `line` opens a Markdown table: a pipe row with the `| --- |` divider under it.
+    /// Whether `line` opens a GFM table: a row with a pipe in it, then a divider (`| --- | :-: |`, outer pipes
+    /// optional, one dash or more) with as many cells. A divider needs a pipe, so a pipe line over a `---` break or
+    /// Setext underline is not a table.
     static func opensTable(at index: Int, in lines: [String]) -> Bool {
-        guard index + 1 < lines.count, isTableRow(lines[index]) else { return false }
-        return isTableDivider(lines[index + 1])
+        guard index + 1 < lines.count, isTableRow(lines[index]), let columns = dividerColumns(lines[index + 1]) else {
+            return false
+        }
+        return tableCells(lines[index]).count == columns
     }
 
+    /// Whether `line` can be a table row: it has a pipe that isn't escaped. GFM rows needn't start with one.
     static func isTableRow(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        return trimmed.hasPrefix("|") && trimmed.count > 1
+        var previous: Character?
+        for character in line where !character.isWhitespace {
+            if character == "|", previous != "\\" { return true }
+            previous = character
+        }
+        return false
     }
 
-    static func isTableDivider(_ line: String) -> Bool {
-        line.trimmingCharacters(in: .whitespaces)
-            .range(of: #"^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?$"#, options: .regularExpression) != nil
+    /// How many columns a divider line has, or nil when it isn't one.
+    static func dividerColumns(_ line: String) -> Int? {
+        var trimmed = Substring(line.trimmingCharacters(in: .whitespaces))
+        guard trimmed.contains("|") else { return nil }
+        if trimmed.hasPrefix("|") { trimmed.removeFirst() }
+        if trimmed.hasSuffix("|") { trimmed.removeLast() }
+        let cells = trimmed.split(separator: "|", omittingEmptySubsequences: false)
+        let isDividerCell = { (cell: Substring) in
+            cell.trimmingCharacters(in: .whitespaces).range(of: #"^:?-+:?$"#, options: .regularExpression) != nil
+        }
+        return cells.allSatisfy(isDividerCell) ? cells.count : nil
     }
 
     /// The cells of a table row, cleaned the way the text is. An escaped pipe (`\|`) stays inside its cell.
@@ -277,10 +294,11 @@ enum SourceElementCapture {
         return cells.map { cleanedLabel($0.replacingOccurrences(of: "\\|", with: "|")) }
     }
 
-    /// A table: its rows (the divider dropped, short rows padded to the header's width) and a label made of its
+    /// A table: its rows (the divider line dropped, short rows padded to the header's width) and a label made of its
     /// column headings. Nil when the header has no words.
     static func table(_ rawRows: [String]) -> (label: String, rows: [[String]])? {
-        let rows = rawRows.filter { !isTableDivider($0) }.map(tableCells)
+        // The second line is the divider; a later line of dashes is a body row.
+        let rows = rawRows.enumerated().filter { $0.offset != 1 }.map { tableCells($0.element) }
         guard let header = rows.first, header.contains(where: { !$0.isEmpty }) else { return nil }
         let width = rows.map(\.count).max() ?? header.count
         let padded = rows.map { $0 + Array(repeating: "", count: width - $0.count) }
