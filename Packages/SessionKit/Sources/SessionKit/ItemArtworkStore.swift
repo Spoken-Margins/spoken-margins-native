@@ -275,16 +275,36 @@ public struct ItemArtworkStore: Codable, Equatable, Sendable {
 
 /// The item artwork side file with its file: changes are written straight away, and only when they change
 /// something. A nil file keeps the artwork in memory.
+///
+/// `init(file:)` reads the file there and then, so call it off the main thread. `init(file:deferringRead:)` with `true`
+/// reads nothing until the first `loadIfNeeded()` or `update`, which is how an actor that is built on the main
+/// thread keeps the read (a synchronous decode that grows with the followed feeds) inside its own isolation.
+/// `store` is empty until the file has been read.
 public struct ItemArtworkFile: Sendable {
     public let file: URL?
     public private(set) var store: ItemArtworkStore
+    private var isLoaded: Bool
 
-    public init(file: URL?) {
+    public init(file: URL?, deferringRead: Bool = false) {
         self.file = file
-        store = file.map(ItemArtworkStore.load(from:)) ?? ItemArtworkStore()
+        if deferringRead, file != nil {
+            store = ItemArtworkStore()
+            isLoaded = false
+        } else {
+            store = file.map(ItemArtworkStore.load(from:)) ?? ItemArtworkStore()
+            isLoaded = true
+        }
+    }
+
+    /// Reads the file once, if the read was deferred.
+    public mutating func loadIfNeeded() {
+        guard !isLoaded else { return }
+        isLoaded = true
+        if let file { store = ItemArtworkStore.load(from: file) }
     }
 
     public mutating func update(_ change: (inout ItemArtworkStore) -> Void) {
+        loadIfNeeded()
         let before = store
         change(&store)
         guard store != before, let file else { return }

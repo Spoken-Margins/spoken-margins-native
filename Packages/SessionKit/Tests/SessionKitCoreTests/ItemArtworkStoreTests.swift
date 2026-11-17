@@ -330,6 +330,59 @@ final class ItemArtworkStoreTests: XCTestCase {
         XCTAssertEqual(ItemArtworkStore.load(from: future).items["a"]?.itemImageURL, "https://example.com/a.jpg", "unknown keys are ignored")
     }
 
+    /// The coordinator is built on the main thread in the app, so building it must not read or decode the file (the
+    /// audit of #4420): the file is gone by the time the actor first runs, and nothing it held is there.
+    func testBuildingTheCoordinatorDoesNotReadTheFileAndItsFirstCallDoes() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "item-artwork-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: ItemArtworkStore.fileName)
+        var seed = ItemArtworkFile(file: file)
+        seed.update { $0.recordItem(id: "kept", itemImageURL: "https://example.com/kept.jpg") }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        let repository = InMemorySessionRepository()
+        try repository.saveItem(Item(id: "kept", title: "Kept", mediaType: "text", text: "x", externalReference: nil, status: "ready"))
+
+        let coordinator = FollowedSourceCoordinator(
+            repository: repository, session: URLSession(configuration: .ephemeral),
+            artworkFile: directory.appending(path: FollowingArtworkCache.fileName), itemArtworkFile: file, signals: nil)
+        try FileManager.default.removeItem(at: file)
+        let store = await coordinator.itemArtwork()
+        XCTAssertNil(store.recordedArtworkURL(forItem: "kept"), "nothing was read when the coordinator was built")
+
+        // The same file, present when the first call runs, is read there.
+        try seed.store.save(to: file)
+        let second = FollowedSourceCoordinator(
+            repository: repository, session: URLSession(configuration: .ephemeral),
+            artworkFile: directory.appending(path: FollowingArtworkCache.fileName), itemArtworkFile: file, signals: nil)
+        let read = await second.itemArtwork()
+        XCTAssertEqual(read.recordedArtworkURL(forItem: "kept")?.absoluteString, "https://example.com/kept.jpg")
+    }
+
+    func testADeferredFileReadsOnFirstUseAndOnlyOnce() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "item-artwork-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: ItemArtworkStore.fileName)
+        var seed = ItemArtworkFile(file: file)
+        seed.update { $0.recordItem(id: "a", itemImageURL: "https://example.com/a.jpg") }
+
+        var deferred = ItemArtworkFile(file: file, deferringRead: true)
+        XCTAssertTrue(deferred.store.items.isEmpty, "nothing is read at init")
+        deferred.update { $0.recordItem(id: "b", itemImageURL: "https://example.com/b.jpg") }
+        XCTAssertEqual(Set(deferred.store.items.keys), ["a", "b"], "an update reads first, so the file's items are not lost")
+        XCTAssertEqual(Set(ItemArtworkFile(file: file).store.items.keys), ["a", "b"], "and the write kept them")
+
+        var viaLoad = ItemArtworkFile(file: file, deferringRead: true)
+        viaLoad.loadIfNeeded()
+        XCTAssertEqual(Set(viaLoad.store.items.keys), ["a", "b"])
+        try FileManager.default.removeItem(at: file)
+        viaLoad.loadIfNeeded()
+        XCTAssertEqual(Set(viaLoad.store.items.keys), ["a", "b"], "a second call does not read again")
+
+        var inMemory = ItemArtworkFile(file: nil, deferringRead: true)
+        inMemory.loadIfNeeded()
+        XCTAssertTrue(inMemory.store.items.isEmpty)
+    }
+
     // MARK: The coordinator writes it
 
     func testFollowingAndRefreshingRecordImagesForLibraryItemsAndUnfollowingKeepsThem() async throws {
