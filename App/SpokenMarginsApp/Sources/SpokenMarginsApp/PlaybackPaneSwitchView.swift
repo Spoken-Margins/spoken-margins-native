@@ -88,23 +88,31 @@ struct PaneSwitchControl<Pane: Hashable>: View {
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(selection == pane ? .white.opacity(0.18) : .clear,
+                        .background(selection == pane ? Color.playbackSegment(PlaybackSegmentPalette.fill, alpha: PlaybackSegmentPalette.paneSelectedFillAlpha) : .clear,
                                     in: RoundedRectangle(cornerRadius: 10))
                         // A plain button takes taps only on what it draws, so an unselected pane was a target the
                         // size of its word (#430). The whole slot is the target.
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.playbackSegment(selection == pane ? PlaybackSegmentPalette.selectedLabel : PlaybackSegmentPalette.unselectedLabel))
                 .accessibilityLabel(accessibilityTitle(pane))
                 .accessibilityIdentifier(identifier(pane))
                 .accessibilityAddTraits(selection == pane ? .isSelected : [])
             }
         }
         .padding(4)
-        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color.playbackSegment(PlaybackSegmentPalette.fill, alpha: PlaybackSegmentPalette.trayAlpha), in: RoundedRectangle(cornerRadius: 14))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(groupLabel)
         .accessibilityIdentifier(groupIdentifier)
+    }
+}
+
+extension Color {
+    /// A colour of `PlaybackSegmentPalette`, drawn at `alpha`: the same colour on both planes, since the playback plate
+    /// is the same in light and dark (#3735).
+    static func playbackSegment(_ rgb: AppDynamicRGB, alpha: Double = 1) -> Color {
+        AppColors.dynamicColor(rgb).opacity(alpha)
     }
 }

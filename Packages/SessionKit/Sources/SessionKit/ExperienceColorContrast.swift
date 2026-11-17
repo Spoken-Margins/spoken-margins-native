@@ -438,6 +438,21 @@ public enum AppColorContrastAudit {
         onTint("current sentence text", foreground: AppSemanticColorRGB.white, tint: "listeningAccent", tintColor: AppSemanticColorRGB.listeningAccent, alpha: 0.18, over: AppSemanticColorRGB.listeningBackground, baseName: "listening background")
     ]
 
+    /// The playback plate's two segmented controls (#3735): the tray over the listening plate, the selected pill over
+    /// the tray, and the words on each. The pill must read against the tray (3:1) and its words against the pill (4.5:1).
+    public static let playbackSegmentPairs: [Pair] = [
+        .init(name: "pane switch selected fill against tray", foreground: PlaybackSegmentPalette.paneSelectedPill,
+              background: PlaybackSegmentPalette.tray, minimumRatio: 3),
+        .init(name: "pane switch selected label", foreground: PlaybackSegmentPalette.selectedLabel,
+              background: PlaybackSegmentPalette.paneSelectedPill, minimumRatio: 4.5),
+        .init(name: "filter selected fill against tray", foreground: PlaybackSegmentPalette.filterSelectedPill,
+              background: PlaybackSegmentPalette.tray, minimumRatio: 3),
+        .init(name: "filter selected label", foreground: PlaybackSegmentPalette.selectedLabel,
+              background: PlaybackSegmentPalette.filterSelectedPill, minimumRatio: 4.5),
+        .init(name: "segment unselected label on tray", foreground: PlaybackSegmentPalette.unselectedLabel,
+              background: PlaybackSegmentPalette.tray, minimumRatio: 4.5)
+    ]
+
     /// The app's one tint (#3733). `evergreen` is the asset catalog's global accent and the root `.tint`, so every
     /// default-tinted link, bordered button label, toggle and dialog button is drawn in it, on bone, the panel, the soft
     /// green and the app background. A system `.bordered` button draws that label over a tint of the same colour; 0.25 is an
@@ -566,7 +581,7 @@ public enum AppColorContrastAudit {
 
     public static var allPairs: [Pair] {
         textBackgroundPairs + nonTextPairs + increasedContrastEdgePairs + timelineRowPairs + watchPlatePairs + tintedFillPairs + accentPairs + readerHighlightPairs + pressedFillPairs + liveActivityPairs
-            + shareExtensionPairs + safariPopupPairs
+            + shareExtensionPairs + safariPopupPairs + playbackSegmentPairs
     }
 
     /// A pair that fails today, in an appearance, with the issue that fixes it. The audit prints these
@@ -599,7 +614,13 @@ public enum AppColorContrastAudit {
         .init(pair: "watch session plate label", appearance: "light", since: "2026-11-08", fixedBy: "#3731"),
         .init(pair: "watch session plate label", appearance: "dark", since: "2026-11-08", fixedBy: "#3731"),
         .init(pair: "watch episode and Record plate label", appearance: "light", since: "2026-11-08", fixedBy: "#3731"),
-        .init(pair: "watch episode and Record plate label", appearance: "dark", since: "2026-11-08", fixedBy: "#3731")
+        .init(pair: "watch episode and Record plate label", appearance: "dark", since: "2026-11-08", fixedBy: "#3731"),
+        // The selected pane's pill is 1.69:1 against its tray, and the selected filter's white words are 3.41:1 on its
+        // pill (#3735). Both appearances are the same: the plate is fixed.
+        .init(pair: "pane switch selected fill against tray", appearance: "light", since: "2026-11-13", fixedBy: "#3735"),
+        .init(pair: "pane switch selected fill against tray", appearance: "dark", since: "2026-11-13", fixedBy: "#3735"),
+        .init(pair: "filter selected label", appearance: "light", since: "2026-11-13", fixedBy: "#3735"),
+        .init(pair: "filter selected label", appearance: "dark", since: "2026-11-13", fixedBy: "#3735")
     ]
 
 
