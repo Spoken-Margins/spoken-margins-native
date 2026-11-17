@@ -583,6 +583,12 @@ How it is used:
   - For an audit or a later worker: a finding that drawing a Timeline row fetches its picture is the accepted behavior, not a violation, unless it is made without the listener opening that Timeline. Findings on the cap, memory, cookies and what is fetched still stand.
   - The agent guide and the owner overlay carry the rule (`AGENTS.md`, `ops-private` `OWNER.md`).
 
+- **A missing Mac build is never a reason to skip; skip notes last a day (owner asked, 2026-11-17).** Cole asked why ready app and UI issues sat untouched, and why a missing Mac build was ever a reason to skip, "This was not something we had an issue with before. Something changed." What changed (read from the repo and issue notes, 2026-11-07 to 2026-11-16):
+  - 2026-11-09: the design gate made what a listener sees merge "whole" and put simulator captures first in each Design plan. The same day the 2026-10-22 cloud rule moved from the public guide into the private overlay.
+  - 2026-11-14 to 2026-11-16: workers built the hidden PR 1 and handed PR 2 back as "needs a Mac build" (#3914, #4062, #3863, #4186, #3777). The Mac worker takes only `where:mac` issues and none of these carried it, so nobody took them. Three skip notes on #3597 were read by later workers as a reason to skip it.
+  - The rule he set on 2026-10-22 stands and is back in the public guide. A stop note names the maintainer's phone or data, a named defect with `file:line`, or `where:mac` on the issue. "Needs a Mac", "needs a simulator" and "can't compile" are not reasons. A skip note older than 24 hours doesn't count. A Design plan's captures and journey steps run after the PR is armed, on the lane or the Test Desk. An issue he asks for directly carries `owner-asked`, which sorts right after `priority`.
+  - Open follow-up, not in this change: `scripts/sm_sweep.py` should list an open listener-facing issue with none of `ready`, `needs-design`, `needs-human-validation`, `agent-verify`, `needs-owner` (17 found-on-phone issues were in that state on 2026-11-17), and the Mac worker should take a `ready` issue whose Design has PR 1 merged and PR 2 unstarted.
+
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
   - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.
