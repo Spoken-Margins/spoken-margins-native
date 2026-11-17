@@ -3,7 +3,7 @@
 // controls work. Positions are saved every few seconds while playing, and on pause, seek and leaving.
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Episode, Margin, PlaybackPosition } from '../shared/model.ts';
-import { useData } from './data.tsx';
+import { useData, type DataApi } from './data.tsx';
 import { friendMargins, readsAloud } from './logic/arrival.ts';
 import { clipRejection, EPISODE_FAILED, failureNoticeShown, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
 import { CrossingClock } from './logic/margin-autoplay.ts';
@@ -31,6 +31,18 @@ export interface Arrived {
   blocked: boolean;
 }
 
+/** What `open` takes besides the episode's id. */
+export interface OpenOptions {
+  at?: number;
+  episode?: Episode;
+  /**
+   * Runs once, when the audio that was opened reports its length, with the episode and `durationSeconds` set to that
+   * length. A Margin left on a post's words has only a percent of the way through, so it can be placed only on the
+   * length of the voice that plays the post, and a Substack post's page often gives none (#4421).
+   */
+  placeMargins?: (episode: Episode, data: Pick<DataApi, 'margins' | 'addMargin'>) => Promise<void>;
+}
+
 export interface PlayerApi {
   episode: Episode | undefined;
   playing: boolean;
@@ -42,7 +54,7 @@ export interface PlayerApi {
    * Opens an episode. `at` jumps to a moment (a Margin); otherwise it resumes where the listener left off. `episode`
    * is the episode itself, for one just stored that this render does not show yet (an opened Margin file).
    */
-  open(episodeId: string, options?: { at?: number; episode?: Episode }): Promise<void>;
+  open(episodeId: string, options?: OpenOptions): Promise<void>;
   /** A show's play button: starts the newest of these (newest first) that can actually play, and says so if it isn't the first. */
   openNewestPlayable(newestFirst: readonly Episode[]): Promise<void>;
   toggle(): void;
@@ -90,6 +102,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const lastSave = useRef(0);
   const lastMirror = useRef(0);
   const pendingSeek = useRef<number | undefined>(undefined);
+  // Margins waiting for the loaded audio's length, to be placed on it (OpenOptions.placeMargins).
+  const placement = useRef<{ id: string; episode: Episode; place: NonNullable<OpenOptions['placeMargins']> } | undefined>(undefined);
   const [arrived, setArrived] = useState<Arrived>();
   // Whether the episode failed to load, as a ref (events must see it at once) and as state (the screen shows it).
   const failedRef = useRef(false);
@@ -140,6 +154,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     lastMirror.current = Date.now();
     mirrorPosition(browserStorage(), place);
   }, [placeNow]);
+
+  /** Hands the waiting article Margins the length of the audio that just loaded, once. */
+  const placeWhenLengthKnown = useCallback(
+    (audio: HTMLAudioElement) => {
+      const waiting = placement.current;
+      if (!waiting || waiting.id !== loadedId.current || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
+      placement.current = undefined;
+      waiting.place({ ...waiting.episode, durationSeconds: audio.duration }, dataRef.current).catch((error: unknown) => {
+        // A write that failed has already said what wasn't saved.
+        if (!(error instanceof NotSavedError)) toast(`The Margins on this post weren’t saved. ${plainError(error)}`, 'problem');
+      });
+    },
+    [toast],
+  );
 
   const save = useCallback(() => {
     const place = placeNow();
@@ -370,11 +398,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   /** Opens an episode and says how it went. `paid` and `no-voice` are left for the caller to tell the listener. */
   const attemptOpen = useCallback(
-    async (id: string, options: { at?: number; episode?: Episode } = {}): Promise<PlayAttempt> => {
+    async (id: string, options: OpenOptions = {}): Promise<PlayAttempt> => {
       const audio = audioRef.current;
       let target = options.episode?.id === id ? options.episode : dataRef.current.episodes.find((e) => e.id === id);
       if (!audio || !target) return 'stopped';
       if (id === loadedId.current && audio.src) {
+        // Already loaded: its length is known (or arrives with the metadata), so the Margins are placed all the same.
+        placement.current = options.placeMargins ? { id, episode: target, place: options.placeMargins } : undefined;
+        placeWhenLengthKnown(audio);
         if (failedRef.current) {
           retry(audio);
           return 'played';
@@ -412,6 +443,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       pendingSeek.current = options.at ?? (finished ? 0 : resume);
       crossing.current.reset();
       loadedId.current = id;
+      // Margins on the post's words are placed on the audio's own length, which only the audio can say (#4421).
+      placement.current = options.placeMargins ? { id, episode: target, place: options.placeMargins } : undefined;
       apply({ kind: 'source-changed' });
       setEpisodeId(id);
       setMediaDuration(undefined);
@@ -422,11 +455,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       await audio.play().catch(onPlayRejected);
       return 'played';
     },
-    [relay, save, toast, stopClip, apply, retry, onPlayRejected],
+    [relay, save, toast, stopClip, apply, retry, onPlayRejected, placeWhenLengthKnown],
   );
 
   const open = useCallback(
-    async (id: string, options: { at?: number; episode?: Episode } = {}) => {
+    async (id: string, options: OpenOptions = {}) => {
       const result = await attemptOpen(id, options);
       if (result === 'paid') toast(MESSAGES.paidPost, 'problem');
       if (result === 'no-voice') toast(MESSAGES.noVoice, 'problem');
@@ -545,6 +578,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         onLoadedMetadata={(event) => {
           const audio = event.currentTarget;
           if (Number.isFinite(audio.duration)) setMediaDuration(audio.duration);
+          placeWhenLengthKnown(audio);
           if (pendingSeek.current !== undefined) {
             audio.currentTime = Math.min(pendingSeek.current, Number.isFinite(audio.duration) ? audio.duration : pendingSeek.current);
             pendingSeek.current = undefined;
@@ -553,6 +587,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         onDurationChange={(event) => {
           const d = event.currentTarget.duration;
           if (Number.isFinite(d)) setMediaDuration(d);
+          placeWhenLengthKnown(event.currentTarget);
         }}
         onSeeking={(event) => {
           stopReading();

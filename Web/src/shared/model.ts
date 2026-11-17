@@ -81,6 +81,17 @@ export interface Margin {
   starred?: true;
 }
 
+/**
+ * A Margin a friend left on an article's words, with no time of its own: it carries how far through the article it
+ * sits, and goes where that percent of the audio that plays the article reaches (#4421).
+ */
+export interface PercentMargin {
+  /** The Margin, ready to store once placed. `atSeconds` is 0 until then. */
+  margin: Margin;
+  /** How far through the article it sits, 0 to 100, as the sender's app measured it. */
+  percent: number;
+}
+
 /** Where the listener left off in an episode. */
 export interface PlaybackPosition {
   episodeId: string;

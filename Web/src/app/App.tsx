@@ -88,7 +88,15 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
 
   // The tab's title names where the listener is, so a screen reader or the tab switcher can tell (WCAG 2.4.2).
   const player = usePlayer();
-  const playingTitle = nowPlaying ? player.episode?.title : undefined;
+  // Now Playing shows only when there is an episode for it to show. A tap on a post whose voice isn't found, a paid post,
+  // a refused relay or a dead page opens nothing, and then the page behind must stay usable: Now Playing makes the tabs
+  // and the content inert, so one that drew nothing would freeze the whole page (#4433). Asked for while the voice is
+  // being looked up, it shows when the episode arrives; asked for and nothing came, the request is dropped.
+  const nowPlayingShown = nowPlaying && player.episode !== undefined;
+  useEffect(() => {
+    if (nowPlaying && player.episode === undefined && !player.loading) setNowPlaying(false);
+  }, [nowPlaying, player.episode, player.loading]);
+  const playingTitle = nowPlayingShown ? player.episode?.title : undefined;
   useEffect(() => {
     if (arriving) return;
     const label = TABS.find((t) => t.id === tab)?.label ?? 'Library';
@@ -105,7 +113,7 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
       }}
       onDrop={onDrop}
     >
-      <nav className="tabbar" aria-label="Sections" inert={nowPlaying || arriving}>
+      <nav className="tabbar" aria-label="Sections" inert={nowPlayingShown || arriving}>
         <span className="brand" aria-hidden="true">
           <img src="./icons/icon.svg" alt="" width="28" height="28" />
           Spoken Margins
@@ -117,7 +125,7 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
           </button>
         ))}
       </nav>
-      <main className="content" inert={nowPlaying || arriving}>
+      <main className="content" inert={nowPlayingShown || arriving}>
         {tab === 'library' && (
           <Library
             onPlay={openPlayer}
@@ -132,9 +140,9 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
         {tab === 'margins' && <Margins onPlay={openPlayer} onOpenFile={openMarginFile} onOpenLink={openShareLink} />}
         {tab === 'settings' && <Settings />}
       </main>
-      {!nowPlaying && !arriving && <MiniPlayer onOpen={openPlayer} />}
+      {!nowPlayingShown && !arriving && <MiniPlayer onOpen={openPlayer} />}
       {arriving && <Arrival link={launchLink} onDone={arrived} />}
-      {nowPlaying && (
+      {nowPlayingShown && (
         <NowPlaying
           landing={landing}
           onClose={() => {
