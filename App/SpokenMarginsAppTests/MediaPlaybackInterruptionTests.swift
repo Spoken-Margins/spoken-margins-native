@@ -888,6 +888,162 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNil(offered, "nothing is offered over the review")
     }
 
+    // MARK: A friend's Margins that wait for the end of the episode (#4356, #4347)
+    //
+    // A podcast Margin with no usable time plays after the others, when the episode ends. A stopped source has no more
+    // ticks, so `Gate1AppModel.offerNextMarginWaitingForTheEnd` is the only thing that offers the next one, and only from
+    // the four places where the listener is done with a Margin and stays at the end (its voice ending, Return to
+    // source, the card's Skip, the card timing out). Never from the teardowns many other routes share. The queue's own
+    // rules are host-tested (`FriendMarginsPlanTests`); these tests are the wiring that audits of #4248 found three bugs in.
+
+    /// Opens the fixture's podcast and brings it to its end as a played episode does: the last tick before it, then the
+    /// tick that reaches the end with the source stopped. The app's own reconcile runs on those two, as it does on a tick.
+    private func playToTheEnd(_ fixture: SharedMarginHearingFixture) {
+        let model = fixture.model
+        model.startItem(id: "real-source")
+        model.pause()
+        model.refreshSelectedItem()
+        XCTAssertEqual(model.selectedItem.id, "real-source", "the fixture's podcast is the open item")
+        XCTAssertEqual(
+            model.importedCommentaryPrompts(includeAnnounced: true).map(\.plan),
+            [SharedMarginPlacementPlan](repeating: .afterOthers, count: fixture.endRecords.count),
+            "no usable time, so every Margin plays after the others")
+        var playing = model.snapshot
+        playing.status = .playing
+        playing.currentPlaybackProgressPercent = 99
+        playing.currentMediaTimeMs = 29_500
+        var ended = playing
+        ended.status = .paused
+        ended.currentPlaybackProgressPercent = 100
+        ended.currentMediaTimeMs = 30_000
+        model.snapshot = ended
+        model.reconcileImportedCommentary(previous: playing, current: ended)
+    }
+
+    /// Taps each card as it appears, the way a listener who wants to hear them all would, and returns every Margin that
+    /// was offered or played, in the order it first showed, once `done` holds.
+    private func listenToEveryOffer(
+        _ model: Gate1AppModel, _ what: @autoclosure () -> String, timeout: TimeInterval = 25, until done: () throws -> Bool
+    ) throws -> [String] {
+        var seen: [String] = []
+        try waitUntil(what(), timeout: timeout) {
+            XCTAssertFalse(model.pendingImportedCommentary != nil && model.playingImportedCommentary != nil, "one Margin at a time")
+            let now = [model.pendingImportedCommentary?.interjection.id, model.playingImportedCommentary?.interjection.id].compactMap { $0 }
+            for id in now where !seen.contains(id) { seen.append(id) }
+            if model.pendingImportedCommentary != nil { model.listenToPendingImportedCommentary() }
+            return try done()
+        }
+        return seen
+    }
+
+    /// Done-when 1: two Margins with no usable time, the episode played to its end: both are offered, one at a time, in
+    /// order, and each is marked heard when its voice plays.
+    func testTheMarginsThatWaitForTheEndAreOfferedOneAtATimeInOrderAndEachIsMarkedHeard() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, endMargins: [.playable, .playable])
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        playToTheEnd(fixture)
+        XCTAssertEqual(model.pendingImportedCommentary?.interjection.id, "end-1", "the end offers the first of them at once")
+        XCTAssertNil(try fixture.storedRecord("end-1")?.firstHeardAt, "an offer is not a hearing")
+
+        let seen = try listenToEveryOffer(
+            model, "both voices play; \(fixture.heardWriteNote("end-1")) / \(fixture.heardWriteNote("end-2"))"
+        ) {
+            try fixture.storedRecord("end-1")?.firstHeardAt != nil && fixture.storedRecord("end-2")?.firstHeardAt != nil
+        }
+        XCTAssertEqual(seen, ["end-1", "end-2"], "one at a time, in order, each once")
+        try waitUntil("the second voice ends", timeout: 10) { model.playingImportedCommentary == nil }
+        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        XCTAssertNil(model.pendingImportedCommentary, "nothing is left to offer")
+        XCTAssertNil(model.playingImportedCommentary)
+    }
+
+    /// Done-when 2: hiding the sender while the first plays stops it, and nothing more of theirs is offered or plays.
+    /// Hiding clears the slot through the shared teardown, which must not drain the queue.
+    func testHidingTheSenderWhileTheFirstPlaysOffersNothingMoreAndPlaysNothingOfTheirs() throws {
+        let senderID = UUID().uuidString.replacingOccurrences(of: "-", with: "") // 32 characters: a valid sender id
+        let fixture = try SharedMarginHearingFixture(
+            itemID: "real-source", makeWAV: makeTestWAV, endMargins: [.playable, .playable], senderID: senderID)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        defer { model.showSender(senderID) } // the hidden list is the app's own file: leave it as it was found
+        playToTheEnd(fixture)
+        model.listenToPendingImportedCommentary()
+        XCTAssertEqual(model.playingImportedCommentary?.interjection.id, "end-1", "the first Margin plays")
+
+        model.hideSender(senderID, label: "Reviewer")
+        XCTAssertNil(model.playingImportedCommentary, "hiding the sender stops their voice")
+        XCTAssertNil(model.pendingImportedCommentary, "and does not offer their next Margin")
+        RunLoop.main.run(until: Date().addingTimeInterval(3)) // longer than a voice, so a late offer or a play would show
+        XCTAssertNil(model.pendingImportedCommentary, "still nothing offered")
+        XCTAssertNil(model.playingImportedCommentary, "nothing of theirs plays")
+        XCTAssertNil(try fixture.storedRecord("end-2")?.firstHeardAt, "the second Margin was never heard")
+    }
+
+    /// Done-when 3, first half: a card up at the end that the listener skips gives way to the next Margin.
+    func testSkippingTheCardAtTheEndOffersTheNextMargin() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, endMargins: [.playable, .playable])
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        playToTheEnd(fixture)
+        XCTAssertEqual(model.pendingImportedCommentary?.interjection.id, "end-1")
+
+        model.skipPendingImportedCommentary()
+        XCTAssertEqual(model.pendingImportedCommentary?.interjection.id, "end-2", "skipping the card offers the next Margin")
+        XCTAssertNil(model.playingImportedCommentary, "an offer is not played")
+        XCTAssertNil(try fixture.storedRecord("end-1")?.firstHeardAt, "a skipped Margin is not heard")
+
+        model.skipPendingImportedCommentary()
+        XCTAssertNil(model.pendingImportedCommentary, "nothing is left to offer")
+    }
+
+    /// Done-when 3, second half: jumping to another Margin while one plays stops it and offers none of the others over
+    /// the one jumped to. (A Skim stop clears the slot with the same pair of calls, `stopImportedCommentaryPlayback`
+    /// and `dismissPendingImportedCommentary`.)
+    func testJumpingToAnotherMarginWhileOnePlaysOffersNoneOverIt() throws {
+        let fixture = try SharedMarginHearingFixture(
+            itemID: "real-source", makeWAV: makeTestWAV, endMargins: [.playable, .playable, .playable])
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        playToTheEnd(fixture)
+        model.listenToPendingImportedCommentary()
+        XCTAssertEqual(model.playingImportedCommentary?.interjection.id, "end-1", "the first Margin plays")
+        let third = try XCTUnwrap(model.importedCommentaryPrompts(includeAnnounced: true).first { $0.interjection.id == "end-3" })
+
+        model.playSharedMarginNow(third)
+        XCTAssertEqual(model.playingImportedCommentary?.interjection.id, "end-3", "the Margin jumped to plays")
+        XCTAssertNil(model.pendingImportedCommentary, "the Margin that was next is not offered over it")
+        try waitUntil("the Margin jumped to ends", timeout: 10) {
+            if model.playingImportedCommentary == nil { return true }
+            XCTAssertNil(model.pendingImportedCommentary, "nothing is offered while it plays")
+            return false
+        }
+    }
+
+    /// Done-when 4: a Margin that can't play at the end (its recording is gone from this phone) is finished with, and the
+    /// next waiting Margin is offered, so the queue never stalls on one Margin. A Margin that can't play is not heard.
+    func testAMarginThatCantBePlayedAtTheEndIsFinishedWithAndTheNextIsOffered() throws {
+        let fixture = try SharedMarginHearingFixture(
+            itemID: "real-source", makeWAV: makeTestWAV, endMargins: [.recordingGone, .recordingGone, .playable])
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        playToTheEnd(fixture)
+        XCTAssertEqual(model.pendingImportedCommentary?.interjection.id, "end-1")
+
+        model.listenToPendingImportedCommentary()
+        XCTAssertEqual(model.pendingImportedCommentary?.interjection.id, "end-2", "the first can't play, so the next is offered")
+        XCTAssertNil(model.playingImportedCommentary)
+        model.listenToPendingImportedCommentary()
+        XCTAssertEqual(model.pendingImportedCommentary?.interjection.id, "end-3", "and again: the queue doesn't stall")
+        model.listenToPendingImportedCommentary()
+        XCTAssertEqual(model.playingImportedCommentary?.interjection.id, "end-3", "the one that can play plays")
+        try waitUntil("its voice plays; \(fixture.heardWriteNote("end-3"))", timeout: 10) {
+            try fixture.storedRecord("end-3")?.firstHeardAt != nil
+        }
+        XCTAssertNil(try fixture.storedRecord("end-1")?.firstHeardAt, "a Margin that couldn't play is not heard")
+        XCTAssertNil(try fixture.storedRecord("end-2")?.firstHeardAt)
+    }
+
     /// #1671: the owner's phone heard two Margins at once. A moment's voice (Play this moment, Now's rows) is the
     /// conductor's own player, apart from the one that plays a Margin from its detail, and starting through one route
     /// never stopped the other. Starting a Margin now stops any other Margin voice first.
@@ -1551,6 +1707,9 @@ private struct SharedMarginHearingFixture {
     let record: ImportedCommentaryInterjection
     /// A second Margin from the same friend ("note2"), when `secondMarginAtMs` is given (#474).
     let secondRecord: ImportedCommentaryInterjection?
+    /// The friend's Margins that wait for the end of the episode, when `endMargins` is given (#4356): "end-1", "end-2", ...
+    /// With them, `record` is the first and the fixture has no placed Margin.
+    let endRecords: [ImportedCommentaryInterjection]
     /// Where this fixture's model keeps the place a review owes the listener (#474), so a test never touches the app's own.
     let reviewPlaceDefaults: UserDefaults
     private let reviewPlaceSuite: String
@@ -1559,6 +1718,14 @@ private struct SharedMarginHearingFixture {
 
     var databaseURL: URL { root.appending(path: "library.sqlite") }
 
+    /// A friend's Margin that waits for the end of the episode (#4356).
+    enum EndMargin {
+        /// A two-second recording on this phone.
+        case playable
+        /// Its recording is gone from this phone: it can't play, and the listener is told so.
+        case recordingGone
+    }
+
     init(
         itemID: String,
         makeWAV: (TimeInterval) throws -> URL,
@@ -1566,14 +1733,38 @@ private struct SharedMarginHearingFixture {
         microphonePermissionStatus: (() -> PermissionPromptStatus)? = nil,
         layerIsMuted: Bool = true,
         secondMarginAtMs: Int? = nil,
-        seedsItem: Bool? = nil
+        seedsItem: Bool? = nil,
+        endMargins: [EndMargin] = [],
+        senderID: String? = nil
     ) throws {
         root = FileManager.default.temporaryDirectory.appending(path: "margin-heard-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let sourceURL = try makeWAV(30)
         let voiceURL = try makeWAV(2)
         let secondVoiceURL = try secondMarginAtMs.map { _ in try makeWAV(2) }
-        files = [sourceURL, voiceURL] + [secondVoiceURL].compactMap { $0 }
+        // Margins with no usable time play after the others, when the episode ends (#4347): no time of the sender's, no
+        // placement. Each has a two-second voice, or none on this phone at all (`recordingGone`).
+        var endVoiceFiles: [URL] = []
+        var builtEndRecords: [ImportedCommentaryInterjection] = []
+        for (offset, kind) in endMargins.enumerated() {
+            let id = "end-\(offset + 1)"
+            let audioPath: String
+            switch kind {
+            case .playable:
+                let url = try makeWAV(2)
+                endVoiceFiles.append(url)
+                audioPath = url.path
+            case .recordingGone:
+                audioPath = root.appending(path: "\(id)-gone.wav").path // never written
+            }
+            builtEndRecords.append(ImportedCommentaryInterjection(
+                id: id, layerId: "received", packageScopedId: id, createdAt: Date(),
+                anchorEvidence: PortableAnchorEvidence(anchorType: .media),
+                approvedTranscript: "Words \(id)", audioPath: audioPath, audioDurationMs: 2_000,
+                resolution: ImportedAnchorResolution(evidenceClass: .unresolved)))
+        }
+        endRecords = builtEndRecords
+        files = [sourceURL, voiceURL] + [secondVoiceURL].compactMap { $0 } + endVoiceFiles
         let db = root.appending(path: "library.sqlite")
         let routed = RoutedAudioPlaybackClient(speech: NoopAudioPlaybackClient(), media: AVPlayerStreamPlaybackClient())
         model = Gate1AppModel(
@@ -1594,18 +1785,19 @@ private struct SharedMarginHearingFixture {
         layer = ImportedCommentaryLayer(id: "received", itemId: itemID, packageDigest: "digest-\(UUID().uuidString)", packageId: "package",
             itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Source"),
             displayLabel: "Reviewer", importedAt: Date(), sourceResolutionStatus: .resolved,
-            isEnabled: true, isMuted: layerIsMuted, revealMode: .companion)
-        record = ImportedCommentaryInterjection(id: "note", layerId: layer.id, packageScopedId: "note", createdAt: Date(),
+            isEnabled: true, isMuted: layerIsMuted, revealMode: .companion, senderId: senderID)
+        let placedRecord = ImportedCommentaryInterjection(id: "note", layerId: layer.id, packageScopedId: "note", createdAt: Date(),
             anchorEvidence: PortableAnchorEvidence(anchorType: .media),
             approvedTranscript: "Reviewed words", audioPath: voiceURL.path, audioDurationMs: 2_000,
             resolution: ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 1_000, confidence: 1))
-        secondRecord = secondMarginAtMs.map { atMs in
+        record = builtEndRecords.first ?? placedRecord
+        secondRecord = builtEndRecords.count > 1 ? builtEndRecords[1] : (secondMarginAtMs.map { atMs in
             ImportedCommentaryInterjection(id: "note2", layerId: "received", packageScopedId: "note2", createdAt: Date(),
                 anchorEvidence: PortableAnchorEvidence(anchorType: .media),
                 approvedTranscript: "More reviewed words", audioPath: secondVoiceURL?.path, audioDurationMs: 2_000,
                 resolution: ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: atMs, confidence: 1))
-        }
-        let records = [record] + [secondRecord].compactMap { $0 }
+        })
+        let records: [ImportedCommentaryInterjection] = builtEndRecords.isEmpty ? ([record] + [secondRecord].compactMap { $0 }) : builtEndRecords
         _ = try store.importCommentaryLayer(layer, interjections: records)
         model.selectedItem.importedCommentaryLayers = [layer]
         model.selectedItem.importedCommentaryInterjections = [layer.id: records]
