@@ -67,6 +67,9 @@ public struct ItemMarginNote: Equatable, Sendable {
         let sourceEntries = export.timeline.enumerated()
             .compactMap { index, entry in sourceMargin(entry).map { (index: index, entry: entry, margin: $0) } }
             .sorted { a, b in
+                // A Margin with no place (#4233) follows every placed one, in the order it was recorded.
+                if a.margin.hasPlace != b.margin.hasPlace { return a.margin.hasPlace }
+                if !a.margin.hasPlace { return a.index < b.index }
                 if let aMs = a.margin.mediaTimeMs, let bMs = b.margin.mediaTimeMs, aMs != bMs { return aMs < bMs }
                 if a.margin.mediaTimeMs == nil || b.margin.mediaTimeMs == nil, a.margin.roughPercent != b.margin.roughPercent {
                     return a.margin.roughPercent < b.margin.roughPercent
