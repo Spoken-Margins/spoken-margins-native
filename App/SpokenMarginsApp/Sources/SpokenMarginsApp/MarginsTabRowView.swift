@@ -95,7 +95,7 @@ struct MarginsTabRowView: View {
     }
 
     private func leadInLine(_ leadIn: String) -> some View {
-        (Text("After ").italic(false) + Text("“\(leadIn)”").italic())
+        Text("After \(Text("“\(leadIn)”").italic())")
             .font(.footnote)
             .foregroundStyle(AppColors.watchSecondary.opacity(isHeard ? 0.8 : 1))
             .lineLimit(1)

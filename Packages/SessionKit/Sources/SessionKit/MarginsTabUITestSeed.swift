@@ -1,5 +1,4 @@
 import Foundation
-import SessionKit
 
 /// The Margins tab fixture (part of #3216), shared by the SessionKit tests and the app's UI-test seed
 /// (`SPOKEN_MARGINS_UI_TEST_MARGINS_TAB=1`, so the simulator shows the same Margins the tests check): one podcast episode (the `.offlinePodcast` seed) with the
