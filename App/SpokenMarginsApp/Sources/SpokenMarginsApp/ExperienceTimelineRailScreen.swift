@@ -205,6 +205,8 @@ struct ExperienceTimelineRailScreen: View {
     private var foldingRows: [TimelineChapterFolding.Row] { entries.map(\.foldingRow) }
 
     private func toggleChapter(_ id: String) {
+        // The listener is working the rail by hand: don't pull it back to the playing row under their finger.
+        followsPlayback = false
         withMotion(.snappy) { folding.toggle(id, in: foldingRows) }
     }
 
@@ -644,6 +646,7 @@ struct ExperienceTimelineRailScreen: View {
         }
         Task { @MainActor in
             await Task.yield()
+            await Task.yield() // a row just unfolded needs a layout pass before it can be scrolled to
             guard !responseEditorFocused else { return }
             withMotion(.snappy) { proxy.scrollTo(id, anchor: .center) }
             if model.requestedTimelineFocusMarginID == requested {
