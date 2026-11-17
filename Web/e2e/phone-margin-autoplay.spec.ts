@@ -36,6 +36,7 @@ declare global {
   interface Window {
     __plays: Array<{ kind: 'episode' | 'clip'; at: number; episodePaused: boolean }>;
     __blockClips: boolean;
+    __clipElements: HTMLMediaElement[];
   }
 }
 
@@ -148,3 +149,44 @@ test('skipping forward past a Margin does not play it', async ({ page }) => {
   expect((await plays(page)).filter((p) => p.kind === 'clip')).toHaveLength(1);
   await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThan(100);
 });
+
+test('while a spoken Margin plays, the main button shows Pause and pauses it; Play carries it on (#4473)', async ({ page }) => {
+  await watchPlays(page, false);
+  // Every clip element, so the test can see whether the friend's voice is paused. The clip plays at a third of its
+  // speed, so its 2.8 s last long enough for the taps to land while it plays.
+  await page.addInitScript(() => {
+    const play = HTMLMediaElement.prototype.play;
+    window.__clipElements = [];
+    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+      if (this !== document.querySelector('audio[data-testid="audio"]')) {
+        if (!window.__clipElements.includes(this)) window.__clipElements.push(this);
+        this.playbackRate = 0.33;
+      }
+      return play.call(this);
+    };
+  });
+  const clipPaused = () => page.evaluate(() => window.__clipElements.at(-1)?.paused ?? null);
+  const nowPlaying = await openFile(page);
+  await startAtLanding(nowPlaying);
+  const card = nowPlaying.getByTestId('arrived-margin');
+  await expect(card).toContainText('Sam is speaking', { timeout: 20_000 });
+  await expect.poll(clipPaused, { timeout: 10_000 }).toBe(false);
+  // The friend's voice is what is sounding, so the main button offers Pause, not Play.
+  const main = nowPlaying.locator('.play-button');
+  await expect(main).toHaveAccessibleName('Pause');
+  await main.click();
+  // Pause holds the clip; the episode stays paused under it and the card stays up.
+  await expect.poll(clipPaused).toBe(true);
+  await expect(main).toHaveAccessibleName('Play');
+  await expect(card).toContainText('Sam is speaking');
+  const held = await audioTime(page);
+  await page.waitForTimeout(1500);
+  expect(await clipPaused()).toBe(true);
+  expect(Math.abs((await audioTime(page)) - held)).toBeLessThan(0.1);
+  // Play carries the clip on, and then the episode as usual.
+  await main.click();
+  await expect.poll(clipPaused).toBe(false);
+  await expect(main).toHaveAccessibleName('Pause');
+  await expect.poll(() => audioTime(page), { timeout: 15_000 }).toBeGreaterThan(held + 0.5);
+});
+
