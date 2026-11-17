@@ -79,6 +79,61 @@ final class SharedMarginReturnAppTests: XCTestCase {
         XCTAssertNil(model.pendingImportedCommentary, "the dismissed Margin is not offered again")
     }
 
+    // #4444 (#3059): the tone over a playing episode neither ducks nor interrupts it. `snapshot.status` can stay `.playing`
+    // while the audio session changes, so this reads the session and the episode player's rate, before and after.
+    private struct SessionFacts: Equatable {
+        let category: AVAudioSession.Category
+        let mode: AVAudioSession.Mode
+        let options: AVAudioSession.CategoryOptions
+        let otherAudioPlaying: Bool
+
+        static func now() -> SessionFacts {
+            let session = AVAudioSession.sharedInstance()
+            return SessionFacts(category: session.category, mode: session.mode, options: session.categoryOptions,
+                                otherAudioPlaying: session.isOtherAudioPlaying)
+        }
+    }
+
+    /// With auto-play off and the tone sounding (a muted layer makes none), runs the episode to the Margin and checks what
+    /// the tone did to the session. Every claim is an assertion.
+    private func assertToneLeavesTheSessionAndTheEpisodeAlone(
+        mixingWithOtherAudio: Bool, file: StaticString = #filePath, line: UInt = #line
+    ) async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, isMuted: false)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        if mixingWithOtherAudio {
+            // The episode plays over another app's audio: the `.mixWithOthers` session `MixedPlaybackAudioSessionTests` sets up.
+            try fixture.sourcePlayer.setMixesWithOtherAudio(true)
+            XCTAssertTrue(AVAudioSession.sharedInstance().categoryOptions.contains(.mixWithOthers), file: file, line: line)
+        }
+        XCTAssertNil(model.pendingImportedCommentary, "the tone has not sounded yet", file: file, line: line)
+        let before = SessionFacts.now()
+        let rateBefore = try XCTUnwrap(fixture.sourcePlayer.currentPlayerRate(), file: file, line: line)
+
+        try await fixture.waitUntil("playback reaches the shared Margin at 1 s and sounds its tone", timeout: 8) {
+            model.pendingImportedCommentary != nil
+        }
+        let tone = try XCTUnwrap(model.marginVoicePlayer.cuePlayer, "the tone started (the player exists once play() returned)", file: file, line: line)
+        XCTAssertGreaterThan(tone.duration, 0.2, "it is the chime, not an empty player", file: file, line: line)
+        let after = SessionFacts.now()
+        XCTAssertEqual(after, before, "the tone changed the audio session: category, mode, options or other audio", file: file, line: line)
+        XCTAssertFalse(after.options.contains(.duckOthers), "the tone ducked other audio", file: file, line: line)
+        XCTAssertEqual(after.options.contains(.mixWithOthers), mixingWithOtherAudio, file: file, line: line)
+        XCTAssertEqual(model.snapshot.status, .playing, "a tone, not a stop", file: file, line: line)
+        let rateAfter = try XCTUnwrap(fixture.sourcePlayer.currentPlayerRate(), file: file, line: line)
+        XCTAssertEqual(rateAfter, rateBefore, "the tone changed the episode's player rate", file: file, line: line)
+        XCTAssertEqual(model.sharedMarginReturn, .none, "nothing was paused, so nothing is owed back", file: file, line: line)
+    }
+
+    func testToneOverAPlayingEpisodeDoesNotTouchTheAudioSession() async throws {
+        try await assertToneLeavesTheSessionAndTheEpisodeAlone(mixingWithOtherAudio: false)
+    }
+
+    func testToneOverAnEpisodeMixingWithAnotherAppLeavesThatSessionAsItWas() async throws {
+        try await assertToneLeavesTheSessionAndTheEpisodeAlone(mixingWithOtherAudio: true)
+    }
+
     // R02, R04: the source was already paused when the offer arrived, so dismissing leaves it paused.
     func testDismissingAPromptOverAnAlreadyPausedSourceLeavesItPaused() async throws {
         let fixture = try await ReturnFixture.make(sourcePlaying: true)
@@ -395,7 +450,8 @@ struct ReturnFixture {
 
     /// `writtenWords` makes the friend's Margin a written one (no recording, #3365); `unplaced` makes its layer a podcast
     /// still waiting for its placement pass, so the Margin has only the sender's time (#3059).
-    static func make(sourcePlaying: Bool, voiceIsReadable: Bool = true, writtenWords: String? = nil, unplaced: Bool = false) async throws -> ReturnFixture {
+    /// `isMuted: false` lets the friend's Margin sound its tone; the default keeps it silent, as these tests always had it (#4444).
+    static func make(sourcePlaying: Bool, voiceIsReadable: Bool = true, writtenWords: String? = nil, unplaced: Bool = false, isMuted: Bool = true) async throws -> ReturnFixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-return-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let sourceURL = try makeWAV(duration: 30)
@@ -422,7 +478,7 @@ struct ReturnFixture {
         let layer = ImportedCommentaryLayer(id: "received", itemId: itemID, packageDigest: "digest", packageId: "package",
             itemIdentity: SharedItemIdentity(itemType: unplaced ? .podcast : .other, title: "Source"),
             displayLabel: "Reviewer", importedAt: Date(), sourceResolutionStatus: .resolved,
-            isEnabled: true, isMuted: true, revealMode: .companion)
+            isEnabled: true, isMuted: isMuted, revealMode: .companion)
         let record = ImportedCommentaryInterjection(id: "note", layerId: layer.id, packageScopedId: "note", createdAt: Date(),
             anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: unplaced ? 1_000 : nil),
             approvedTranscript: writtenWords ?? "Reviewed words",
