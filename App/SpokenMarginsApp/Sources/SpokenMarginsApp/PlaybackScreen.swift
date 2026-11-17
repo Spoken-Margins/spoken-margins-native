@@ -152,6 +152,12 @@ struct PlaybackScreen: View {
                             PlaybackMarginsView()
                         }
                     }
+                    // Next Margin floats over the bottom right of every tab, and each tab's list scrolls under it
+                    // (owner's prototype v3, #3216). Not while the Timeline editor has the keyboard.
+                    .contentMargins(.bottom, timelineDock.hidesDock ? 0 : NextMarginPill.contentClearance, for: .scrollContent)
+                    .overlay(alignment: .bottomTrailing) {
+                        if !timelineDock.hidesDock { NextMarginPill() }
+                    }
                     // Pinned above every pane, not inside the Now pane's scrolling header: a failure about this
                     // listen hides the top banner, so the tag must stay in sight on Timeline and Margins too (#430).
                     .safeAreaInset(edge: .top, spacing: 0) {
@@ -176,7 +182,12 @@ struct PlaybackScreen: View {
                 .accessibilityIdentifier("playback.screen")
                 .announcesScreenChange()
                 .onChange(of: model.marginMoment?.target.marginId) { _, target in
-                    if target != nil { selectedPane = .now }
+                    // A jump from the Margins tab stays there, where its row shows it playing (prototype v3, #3216).
+                    if target != nil, selectedPane != .margins { selectedPane = .now }
+                }
+                // An item with a friend's Margins the listener hasn't heard opens on the Margins tab (#3216).
+                .task(id: model.selectedItem.id) {
+                    if MarginsControlCenter.opensOnMarginsTab(MarginsTabSource(model: model).rows) { selectedPane = .margins }
                 }
                 // The dock returns only once the keyboard has left the Timeline editor (#4043); a missed hide can't
                 // strand it.
