@@ -59,18 +59,14 @@ extension SourceElement {
 }
 
 /// A page's picture, drawn at its own shape: a still, or a GIF or animated PNG that plays while it's on screen.
-///
-/// With `.storedOnly` (a Timeline row) it draws a picture the listener already loaded and otherwise says where a tap
-/// would load it from: drawing a row makes no request (#2032). With `.network` (the sheet a tap opens) it fetches.
 struct SourcePictureView: View {
     let url: URL
     /// What VoiceOver reads for the picture.
     let accessibilityText: String
     var maxPixelSize = 1_200
-    var fetching: SourcePictureLoader.Fetching = .network
     private let loader = SourcePictureLoader.shared
 
-    private enum Phase: Equatable { case loading, loaded(Data, CGSize), notLoaded, failed }
+    private enum Phase: Equatable { case loading, loaded(Data, CGSize), failed }
     @State private var phase: Phase = .loading
 
     var body: some View {
@@ -84,11 +80,6 @@ struct SourcePictureView: View {
             case .loading:
                 placeholder { ProgressView() }
                     .accessibilityLabel("Loading picture")
-            case .notLoaded:
-                Label("Tap to load the picture from \(url.host() ?? "the web")", systemImage: "photo")
-                    .font(.footnote)
-                    .foregroundStyle(AppColors.secondaryText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             case .failed:
                 placeholder {
                     Label("Picture didn't load", systemImage: "photo.badge.exclamationmark")
@@ -99,27 +90,15 @@ struct SourcePictureView: View {
         }
         .frame(maxWidth: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .task(id: url) { await show() }
-        // A row that drew "Tap to load" draws the picture once its sheet has fetched it.
-        .onReceive(NotificationCenter.default.publisher(for: SourcePictureLoader.didStorePicture)) { note in
-            guard phase == .notLoaded, note.object as? URL == url,
-                  let data = loader.cachedData(for: url), let size = SourcePicture.size(of: data) else { return }
-            phase = .loaded(data, size)
-        }
-    }
-
-    private func show() async {
-        if let data = loader.cachedData(for: url), let size = SourcePicture.size(of: data) {
-            phase = .loaded(data, size)
-            return
-        }
-        if fetching == .network { phase = .loading }
-        let data = await loader.data(for: url, fetching: fetching)
-        guard !Task.isCancelled else { return }
-        if let data, let size = SourcePicture.size(of: data) {
-            phase = .loaded(data, size)
-        } else {
-            phase = fetching == .storedOnly ? .notLoaded : .failed
+        .task(id: url) {
+            if let data = loader.cachedData(for: url), let size = SourcePicture.size(of: data) {
+                phase = .loaded(data, size)
+                return
+            }
+            phase = .loading
+            let data = await loader.data(for: url)
+            guard !Task.isCancelled else { return }
+            if let data, let size = SourcePicture.size(of: data) { phase = .loaded(data, size) } else { phase = .failed }
         }
     }
 

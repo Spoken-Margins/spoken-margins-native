@@ -4,7 +4,8 @@ import ImageIO
 import XCTest
 @testable import SessionKit
 
-/// #2032: a Timeline row never fetches a picture by itself, and a download never holds more than the cap in memory.
+/// #2032: a Timeline row fetches its picture when it is drawn (owner, 2026-11-17), and a download never holds more
+/// than the cap in memory.
 /// Real URLSession over a stub protocol, real ImageIO and real files in a temporary folder.
 final class SourcePictureLoaderTests: XCTestCase {
     private var folder: URL!
@@ -37,9 +38,9 @@ final class SourcePictureLoaderTests: XCTestCase {
         func add() { value += 1 }
     }
 
-    // MARK: Drawing a row makes no request (audit finding 1 on a9dc647)
+    // MARK: Drawing a row fetches its picture, once
 
-    func testARowDrawsOnlyAStoredPictureAndTheTapFetchesIt() async throws {
+    func testDrawingARowFetchesThePictureAndALaterLaunchReadsItFromDisk() async throws {
         let url = try XCTUnwrap(URL(string: "https://cdn.example.com/p.png"))
         let picture = try png()
         let fetches = FetchCount()
@@ -48,25 +49,22 @@ final class SourcePictureLoaderTests: XCTestCase {
             return picture
         }
 
-        let drawn = await loader.data(for: url, fetching: .storedOnly)
-        XCTAssertNil(drawn, "nothing is stored yet, so the row has nothing to draw")
+        let drawn = await loader.data(for: url)
+        XCTAssertEqual(drawn, picture, "drawing a row loads its picture")
         let fetchesAfterDraw = await fetches.value
-        XCTAssertEqual(fetchesAfterDraw, 0, "drawing a row must not ask the picture's host")
-
-        let stored = expectation(forNotification: SourcePictureLoader.didStorePicture, object: url)
-        let tapped = await loader.data(for: url, fetching: .network)
-        XCTAssertEqual(tapped, picture)
-        let fetchesAfterTap = await fetches.value
-        XCTAssertEqual(fetchesAfterTap, 1)
-        await fulfillment(of: [stored], timeout: 2)
+        XCTAssertEqual(fetchesAfterDraw, 1)
+        let drawnAgain = await loader.data(for: url)
+        XCTAssertEqual(drawnAgain, picture)
+        let fetchesAfterSecondDraw = await fetches.value
+        XCTAssertEqual(fetchesAfterSecondDraw, 1, "the second draw comes from memory")
 
         let laterFetches = FetchCount()
         let nextLaunch = SourcePictureLoader(diskDirectory: folder) { _ in
             await laterFetches.add()
             return Data()
         }
-        let redrawn = await nextLaunch.data(for: url, fetching: .storedOnly)
-        XCTAssertEqual(redrawn, picture, "a picture the listener loaded once is drawn from disk")
+        let redrawn = await nextLaunch.data(for: url)
+        XCTAssertEqual(redrawn, picture, "a picture fetched once is drawn from disk on the next launch")
         let laterFetchCount = await laterFetches.value
         XCTAssertEqual(laterFetchCount, 0)
     }

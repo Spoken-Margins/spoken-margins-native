@@ -3,29 +3,16 @@ import CryptoKit
 import Foundation
 import ImageIO
 
-/// The bytes of a picture an imported page shows, kept in Caches once fetched (#2032).
+/// The bytes of a picture an imported page shows, fetched when Timeline first draws its row and kept in Caches.
 ///
-/// Rows show the page's own pictures, GIFs included, while the listener hears the article (owner, 2026-11-14). The
-/// import never fetches them, and neither does drawing a Timeline row: #2032 allows no request beyond the page the
-/// listener asked for, so a picture is fetched only when the listener taps it (`Fetching.network`). A row draws a
-/// picture that is already stored (`Fetching.storedOnly`). The request carries no cookies, so the picture's host
-/// learns no more than an address and that someone opened it.
+/// Rows show the page's own pictures, GIFs included, while the listener hears the article (owner, 2026-11-14 and
+/// 2026-11-17: load when the row is drawn, not on a tap). The import never fetches them, so an article with pictures
+/// costs nothing until its Timeline is opened. The request carries no cookies, so the picture's host learns no more
+/// than an address and that someone opened it.
 /// Unchecked Sendable: NSCache is thread-safe and every other stored property is immutable.
 public final class SourcePictureLoader: @unchecked Sendable {
-    /// Whether a load may go to the network.
-    public enum Fetching: Sendable {
-        /// Memory and disk only. What a Timeline row asks for when it is drawn.
-        case storedOnly
-        /// Memory, then disk, then the picture's host. Only after the listener taps the picture.
-        case network
-    }
-
     /// A picture larger than this is left on the web: its row says so and opens the page.
     public static let maximumBytes = 16 * 1_024 * 1_024
-
-    /// Posted on the main actor with the picture's URL as its object when a fetched picture is stored, so a row
-    /// that drew a placeholder can draw it.
-    public static let didStorePicture = Notification.Name("SourcePictureLoader.didStorePicture")
 
     public static let shared = SourcePictureLoader(
         diskDirectory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
@@ -48,37 +35,28 @@ public final class SourcePictureLoader: @unchecked Sendable {
         memory.object(forKey: url as NSURL) as Data?
     }
 
-    /// The picture's bytes from memory, then disk, then (only with `.network`) its host. Nil when it isn't stored
-    /// and may not be fetched, can't be fetched, is too large, or isn't a picture ImageIO can read.
-    public func data(for url: URL, fetching: Fetching) async -> Data? {
+    /// The picture's bytes from memory, then disk, then the network. Nil when it can't be fetched, is too large, or
+    /// isn't a picture ImageIO can read.
+    public func data(for url: URL) async -> Data? {
         if let cached = cachedData(for: url) { return cached }
-        switch fetching {
-        case .storedOnly:
-            return await Task.detached(priority: .utility) { [self] in loadStored(url) }.value
-        case .network:
-            let task = await inFlight.task(for: url) { [self] in await load(url) }
-            return await task.value
-        }
-    }
-
-    private func loadStored(_ url: URL) -> Data? {
-        guard let diskURL = diskFileURL(for: url), let data = try? Data(contentsOf: diskURL),
-              SourcePicture.size(of: data) != nil else { return nil }
-        remember(data, for: url)
-        return data
+        let task = await inFlight.task(for: url) { [self] in await load(url) }
+        return await task.value
     }
 
     private func load(_ url: URL) async -> Data? {
-        if let stored = loadStored(url) { return stored }
+        let diskURL = diskFileURL(for: url)
+        if let diskURL, let data = try? Data(contentsOf: diskURL), SourcePicture.size(of: data) != nil {
+            remember(data, for: url)
+            return data
+        }
         guard let data = try? await fetch(url), data.count <= Self.maximumBytes, SourcePicture.size(of: data) != nil else {
             return nil
         }
         remember(data, for: url)
-        if let diskURL = diskFileURL(for: url) {
+        if let diskURL {
             try? FileManager.default.createDirectory(at: diskURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: diskURL, options: .atomic)
         }
-        await MainActor.run { NotificationCenter.default.post(name: Self.didStorePicture, object: url) }
         return data
     }
 

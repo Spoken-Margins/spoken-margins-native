@@ -80,8 +80,8 @@ extension SourceElement {
 }
 
 /// A picture, embed, link or table from the imported page, at full size: the picture (a GIF plays) or the whole
-/// table, its description, and the address to open. The listener opened this by tapping the row, so this is where a
-/// picture is fetched (owner, 2026-11-14); neither the import nor drawing a Timeline row fetches one (#2032).
+/// table, its description, and the address to open. Pictures load when Timeline draws a row (owner, 2026-11-17),
+/// and this sheet shows the same picture from the loader's copy; the import itself fetches nothing but the page (#2032).
 struct PlaybackTimelineElementView: View {
     let element: SourceElement
     @Environment(\.dismiss) private var dismiss
