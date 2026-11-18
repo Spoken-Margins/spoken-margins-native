@@ -1354,6 +1354,24 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var replyTo: MarginReplyLink? = nil
     /// The packets this Margin went out in, so replies that come back link to it. Never exported.
     public var sharedAs: [MarginPacketIdentity]? = nil
+    /// Where a Margin moved from a live session came from (#4233). Not in the stored row and not part of `==`: the store
+    /// attaches it from a record of its own on every read, so a build that predates it still reads and saves the row
+    /// unchanged. Nil for every Margin made on the item.
+    @NotStoredOrCompared public var movedOrigin: MovedMarginOrigin? = nil
+
+    /// Whether this Margin has a place on its item. False only for a moved Margin that was captured with no playback
+    /// position: its `roughPercent` and anchor are then zeros that mean nothing. Anything that shows, orders, seeks to
+    /// or exports a place reads this first.
+    public var hasPlace: Bool { movedOrigin?.placeKnown != false }
+
+    /// The stored row's keys, listed so that `movedOrigin` stays out of it: adding a stored property to this struct
+    /// means adding its key here, and `MovedMarginOriginStoreTests` fails until it is.
+    private enum CodingKeys: String, CodingKey {
+        case id, itemId, sessionId, targetType, targetId, createdAt, roughPercent, anchor, audioPath, audioStatus
+        case transcriptionStatus, transcript, cleanedTranscript, displayText, status, anchorContextStatus
+        case alignedTranscript, podcastAnchorEvidence, sourceExactEditionSHA256, podcastAnchorEvidenceCaptureStatus
+        case podcastAnchorEvidenceFailureReason, isStarredForSharing, privateSharingNote, captureKind, replyTo, sharedAs
+    }
 
     public init(
         id: String,
