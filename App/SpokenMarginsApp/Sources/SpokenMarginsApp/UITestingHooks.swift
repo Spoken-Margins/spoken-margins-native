@@ -58,6 +58,11 @@ enum UITestingHooks {
         UITestingLaunchSeed.fetchesGuidedTour(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
     }
 
+    /// The launch also follows one show, with the Up next card's three entries (#3863).
+    static var seedsFollowedShow: Bool {
+        UITestingLaunchSeed.seedsFollowedShow(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
+    }
+
     /// A keep-library relaunch also imports one friend's Margin onto the seeded podcast (#474).
     static var importsCoopLayer: Bool {
         UITestingLaunchSeed.importsCoopLayer(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
@@ -163,6 +168,7 @@ enum UITestingHooks {
     static let seed = UITestingLaunchSeed.none
     static var usesStandInAudioServices: Bool { false }
     static var importsCoopLayer: Bool { false }
+    static var seedsFollowedShow: Bool { false }
     static var podcastPlaceSeconds: Int? { nil }
     static var podcastStartsCompleted: Bool { false }
     static var fetchesGuidedTour: Bool { true }

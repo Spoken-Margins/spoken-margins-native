@@ -504,9 +504,11 @@ enum PDFStructuredTextExtractor {
                 } else if footnotes.contains(lineIndex) {
                     result.append(StructuredDocumentLine(text: line.text, role: .footnote, pageIndex: pageIndex))
                 } else if tableLines.contains(lineIndex) {
-                    result.append(StructuredDocumentLine(text: line.text, role: .table, pageIndex: pageIndex))
+                    result.append(StructuredDocumentLine(text: line.text, role: .table, pageIndex: pageIndex,
+                                                         bounds: normalizedBounds(line.bounds, on: page)))
                 } else if figureLines.contains(lineIndex) {
-                    result.append(StructuredDocumentLine(text: line.text, role: .figureText, pageIndex: pageIndex))
+                    result.append(StructuredDocumentLine(text: line.text, role: .figureText, pageIndex: pageIndex,
+                                                         bounds: normalizedBounds(line.bounds, on: page)))
                 } else if layout.looksLikeDisplayMath(line) {
                     result.append(StructuredDocumentLine(text: line.text, role: .equation, pageIndex: pageIndex))
                 } else if outline.isEmpty
@@ -548,6 +550,23 @@ enum PDFStructuredTextExtractor {
         joinEquationFragments(&result)
         markSoftHyphens(&result)
         return result
+    }
+
+    /// Where a line sits on its page, as fractions of the crop box with the origin at the bottom left (#3895).
+    /// Nil when PDFKit gave no box, the page is rotated (its boxes are not in the unrotated space the
+    /// fractions mean), or the box lies off the page: a clip is cut from this, so a doubtful rectangle is none.
+    static func normalizedBounds(_ bounds: CGRect?, on page: PDFPage) -> PDFNormalizedRect? {
+        guard let bounds, page.rotation % 360 == 0 else { return nil }
+        let crop = page.bounds(for: .cropBox)
+        guard crop.width > 0, crop.height > 0, !bounds.isNull, !bounds.isInfinite else { return nil }
+        let clipped = bounds.intersection(crop)
+        guard !clipped.isNull, clipped.width > 0, clipped.height > 0 else { return nil }
+        return PDFNormalizedRect(
+            x: Double((clipped.minX - crop.minX) / crop.width),
+            y: Double((clipped.minY - crop.minY) / crop.height),
+            width: Double(clipped.width / crop.width),
+            height: Double(clipped.height / crop.height)
+        )
     }
 
     /// Marks line-end hyphens that only split a word for layout: "agree-" + "ment"
