@@ -60,21 +60,24 @@ final class PlaybackLivePassageViewTests: XCTestCase {
         let model = makeModel(target: .itemTextTTS, text: text)
         let middle = (text as NSString).range(of: "sentence number 4500 ").location
         model.snapshot.currentTextStart = middle
-        let before = NowSceneRowCounter.bodies
+        NowSceneRowCounter.reset()
         let mounted = try mount(model, inScrollView: true)
         defer { mounted.close() }
         try await waitForAppearance(mounted)
         try await Task.sleep(for: .seconds(2))
-        let drawn = NowSceneRowCounter.bodies - before
-        XCTAssertGreaterThan(drawn, 0, "The rows near the lit sentence are drawn")
-        XCTAssertLessThan(drawn, 100, "Fewer than 100 of 9,000 rows are realized")
+        let realized = NowSceneRowCounter.sentences.count
+        XCTAssertGreaterThan(realized, 0, "The rows near the lit sentence are drawn")
+        // Distinct sentences, not body runs: a publish elsewhere that redraws the visible rows once more is not a row
+        // realized. Counting bodies read 106 and 123 in the 11-18 batch run, with nothing in this view changed.
+        XCTAssertLessThan(realized, 100, "Fewer than 100 of 9,000 rows are realized")
+        let drawn = NowSceneRowCounter.bodies
 
         // The same sentence, a few Characters on: nothing is drawn again.
         model.snapshot.currentTextStart = middle + 3
         // fixed-sleep ok: the claim is that this tick draws no row, and no signal marks a row that is never drawn; the
         // update path is one published change and one main-actor hop, which 600 ms covers many times over.
         try await Task.sleep(for: .milliseconds(600))
-        XCTAssertEqual(NowSceneRowCounter.bodies - before, drawn, "A tick that keeps the same sentence draws no row")
+        XCTAssertEqual(NowSceneRowCounter.bodies, drawn, "A tick that keeps the same sentence draws no row")
     }
 
     private func makeModel(target: TargetType, text: String? = nil) -> Gate1AppModel {
