@@ -523,11 +523,18 @@ def xunit_records(path):
             seconds = float(case.get('time', 0))
         except ValueError:
             seconds = 0.0
+        said = []
         if identifier in records:  # a repeated case keeps its worst result
             previous = records[identifier]
             status = next(s for s in ('failed', 'skipped', 'passed') if s in (previous['status'], status))
             seconds += previous['seconds']
+            said = previous.get('retry_failures', [])
         records[identifier] = {'status': status, 'seconds': seconds}
+        if said:
+            records[identifier]['retry_failures'] = said
+        for element in [*case.findall('failure'), *case.findall('error')]:
+            # The `message` of each failure element, so a `Failed:` line can say why (#3534).
+            keep_failure_message(records[identifier], element.get('message') or element.text or '')
     return records
 
 
@@ -634,10 +641,23 @@ def reconcile(expected, records, allowed_skips=(), probation=()):
             errors.append(f'Unexpected {len(extra)} tests; first ten: {sorted(extra)[:10]}')
     for name, result in records.items():
         if result['status'] == 'failed' and name not in probation:
-            errors.append(f'Failed: {name}')
+            errors.append(f'Failed: {name}{failure_reason(result)}')
         if result['status'] == 'skipped' and name not in allowed_skips and name not in probation:
             errors.append(f'Unexpected skip: {name}')
     return errors
+
+
+FAILURE_REASON_WIDTH = 300
+
+
+def failure_reason(result):
+    """` — <what the failed attempts said>` for a failed test's `Failed:` line, or '' when no message was kept (#3534).
+
+    CI shows a red step as `Failed: <test>` and nothing else: the assertion that tripped is in `package.log` on the
+    runner, and the artifact holding it expires after 7 days. The messages are the cleaned ones the record already
+    keeps (`keep_failure_message`: no runner paths, ids or host names), so they are as safe to print as the name."""
+    messages = [message for message in result.get('retry_failures') or () if message]
+    return f' — {" | ".join(messages)[:FAILURE_REASON_WIDTH]}' if messages else ''
 
 
 def log_errors(text, limit=3, width=300):
