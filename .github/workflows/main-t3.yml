@@ -39,6 +39,8 @@ concurrency:
 jobs:
   decide:
     name: 'decide: has main moved since its last main-t3?'
+    # Only from the trunk: a dispatch from another branch writes nothing.
+    if: github.ref_name == (vars.SM_TRUNK || 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
