@@ -460,7 +460,7 @@ public enum OPMLExporter {
             let name = escape(subscription.source.title ?? subscription.source.host)
             var attributes = #"type="rss" text="\#(name)" title="\#(name)" xmlUrl="\#(escape(url))""#
             let key = FeedURLKey.make(url)
-            let guid = OPMLListNames.normalizedGUID(podcastGUIDs[subscription.id])
+            let guid = OPMLListNames.normalizedGUID(ShareableLinkPolicy.shareableEpisodeGUID(OPMLListNames.normalizedGUID(podcastGUIDs[subscription.id])))
             let categories = chipOrdered.filter { $0.contains(feedKey: key, podcastGUID: guid) }
                 .map { "/" + FollowListName.cleaned($0.name.replacingOccurrences(of: ",", with: " ")) }
             if !categories.isEmpty { attributes += #" category="\#(escape(categories.joined(separator: ",")))""# }

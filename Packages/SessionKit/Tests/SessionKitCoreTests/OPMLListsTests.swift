@@ -46,6 +46,7 @@ final class OPMLListsTests: XCTestCase {
             ("/News,/News", ["News"]),
             ("/News,/news", ["News"]),
             ("/Caf\u{00E9},/Cafe\u{0301}", [nfc]),
+            ("/Cafe\u{0301},/Caf\u{00E9}", ["Cafe\u{0301}"]),
             ("/\(String(repeating: "x", count: 200))", [String(repeating: "x", count: 200)]),
             ("/a b  c", ["a b  c"]),
             ("/R&amp;D", ["R&D"]),
@@ -54,6 +55,8 @@ final class OPMLListsTests: XCTestCase {
             let opml = Self.wrap(#"<outline type="rss" text="A" xmlUrl="https://a.example/feed" category="\#(attribute)"/>"#)
             let parsed = try OPMLParser.parse(opml).feeds.first?.categories
             XCTAssertEqual(parsed, names, "category=\(attribute.debugDescription)")
+            // String == treats NFC and NFD as equal, so compare the scalars: the first spelling is the one kept.
+            XCTAssertEqual(parsed?.map { Array($0.unicodeScalars) }, names.map { Array($0.unicodeScalars) }, "scalars of category=\(attribute.debugDescription)")
         }
     }
 
@@ -64,6 +67,26 @@ final class OPMLListsTests: XCTestCase {
         XCTAssertEqual(document.feeds.map(\.title), ["Radiolab", "Science Vs"])
         XCTAssertEqual(document.feeds.map(\.sm.via), ["Priya's science list", nil])
         XCTAssertEqual(document.title, "Sam's reading list")
+    }
+
+    func testAnIncludeRowNeverFallsThroughToAFolderOrAFeed() throws {
+        // A web include is an include; a relative or feed: one is unusable. Neither opens a folder for the rows after it.
+        let opml = Self.wrap("""
+        <outline type="include" text="Web" url="https://example.org/a.opml"/>
+        <outline type="include" text="Relative" url="lists/other.opml"/>
+        <outline type="rss" text="After" xmlUrl="https://a.example/feed"/>
+        """)
+        let document = try OPMLParser.parse(opml)
+        XCTAssertEqual(document.includes.map(\.title), ["Web"])
+        XCTAssertEqual(document.unusableOutlineCount, 1)
+        XCTAssertEqual(document.feeds.map(\.folders), [[]])
+    }
+
+    func testExportLeavesAGUIDThatIsATokenisedLinkOut() throws {
+        let show = Self.subscription("s", "Show", "https://example.com/s.xml")
+        let text = String(decoding: OPMLExporter.export([show], podcastGUIDs: ["s": "https://www.patreon.com/rss/x?auth=secret"]).data, as: UTF8.self)
+        XCTAssertFalse(text.contains("secret"))
+        XCTAssertFalse(text.contains("podcast:guid"))
     }
 
     func testAnIncludeWithoutATitleUsesItsAddress() throws {
@@ -85,6 +108,15 @@ final class OPMLListsTests: XCTestCase {
     }
 
     func testOlderFixturesReadAsBefore() throws {
+        // Counts taken from the parser before lists existed (feeds, unusable outlines).
+        let before: [String: (feeds: Int, unusable: Int)] = [
+            "overcast": (3, 0), "pocket-casts": (4, 0), "castro": (3, 0), "antennapod": (3, 0),
+        ]
+        for (name, counts) in before {
+            let document = try OPMLParser.parse(Self.fixture(name))
+            XCTAssertEqual(document.feeds.count, counts.feeds, name)
+            XCTAssertEqual(document.unusableOutlineCount, counts.unusable, name)
+        }
         for name in ["overcast", "pocket-casts", "castro", "antennapod", "edge-cases"] {
             let document = try OPMLParser.parse(Self.fixture(name))
             XCTAssertTrue(document.feeds.allSatisfy { $0.categories.isEmpty && $0.podcastGUID == nil && $0.sm == OPMLSpokenMarginsAttributes() }, name)
