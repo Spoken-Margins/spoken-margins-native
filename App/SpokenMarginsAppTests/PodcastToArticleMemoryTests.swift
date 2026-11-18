@@ -18,6 +18,9 @@ import SessionKitSharing
 /// What it can't show: growth per minute over the issue's 10-minute article, which `memoryVerdict` in the owner's
 /// Diagnostics reports from real listening; the phone's own memory limit; and anything the simulator's memory
 /// accounting does differently from a device.
+///
+/// It plays real audio for about a minute per test, so it sits in the AudioAdapters plan with the other real-playback
+/// tests and runs when a T3 request names it, not in every AppBehavior run.
 @MainActor
 final class PodcastToArticleMemoryTests: XCTestCase {
     /// The iOS voice, which reads articles on a fresh install and in the simulator.
@@ -35,17 +38,12 @@ final class PodcastToArticleMemoryTests: XCTestCase {
 
     /// Supertonic, the downloaded voice the owner listens with, and the app's biggest memory user on the phone
     /// (206 → 540 MB while it read, #122 comment of 2026-10-04). The model is a download: the lane provides it when
-    /// `SupertonicSpeechTests/testDownloadedRendererSynthesizesJamesAndLilyAndReusesSessions` is in the same run.
+    /// `SupertonicSpeechTests/testDownloadedRendererSynthesizesJamesAndLilyAndReusesSessions` is in the same run,
+    /// so a T3 request names that test too. Without the model this test skips, and a skip is not a measurement.
     func testSwitchingFromASharedMarginPodcastToAnArticleOnSupertonicLeavesNoMemoryBehind() async throws {
         executionTimeAllowance = 180
         let real = try SupertonicTestAssets.realModel()
-        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
-                                                  appropriateFor: nil, create: true)
-        // The app reads the last version folder under Voices/supertonic-3-int8; this name sorts last.
-        let installed = VoiceCatalogCoordinator.voicesRoot(supportDirectory: support)
-            .appending(path: SupertonicAssetResolver.catalogVoiceId, directoryHint: .isDirectory)
-            .appending(path: "zzzz-memory-scenario", directoryHint: .isDirectory)
-        try? FileManager.default.removeItem(at: installed)
+        let installed = try Self.installedScenarioVoice()
         let voiceFolder = installed.deletingLastPathComponent()
         let voiceFolderExisted = FileManager.default.fileExists(atPath: voiceFolder.path)
         try FileManager.default.createDirectory(at: voiceFolder, withIntermediateDirectories: true)
@@ -72,8 +70,21 @@ final class PodcastToArticleMemoryTests: XCTestCase {
     private var cleanup: [() -> Void] = []
     private var defaults: StandardDefaultsSnapshot?
 
+    /// Where the Supertonic test links the real model in. The app reads the last version folder under
+    /// Voices/supertonic-3-int8; this name sorts last.
+    private static func installedScenarioVoice() throws -> URL {
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                                  appropriateFor: nil, create: true)
+        return VoiceCatalogCoordinator.voicesRoot(supportDirectory: support)
+            .appending(path: SupertonicAssetResolver.catalogVoiceId, directoryHint: .isDirectory)
+            .appending(path: "zzzz-memory-scenario", directoryHint: .isDirectory)
+    }
+
     override func setUp() {
         super.setUp()
+        // A run killed at its time allowance skips tearDown: a link left behind would hand the real model to other
+        // tests that expect placeholders (SupertonicTestAssets.installPlaceholderDownload).
+        if let leftover = try? Self.installedScenarioVoice() { try? FileManager.default.removeItem(at: leftover) }
         defaults = StandardDefaultsSnapshot(keys: [
             SpokenMarginsTerms.acceptanceVersionKey, SpokenMarginsTerms.acceptanceDateKey, "supertonicTTSMigrationV1",
             Gate1AppModel.supertonicVoicePendingTermsKey, "ttsVoiceSelection", "ttsMode", "speechRate", "speechVoiceIdentifier",
@@ -119,25 +130,29 @@ final class PodcastToArticleMemoryTests: XCTestCase {
     }
 
     /// Starts `itemId` and waits until it is really playing: the podcast's player clock moving, or the voice past the
-    /// article's first characters. Then lets it play.
+    /// article's first characters. Then waits until it has played about `seconds` more: the podcast's clock that far on,
+    /// or the voice that many seconds of speech further into the article. Time is the subject here (memory gathered while
+    /// playing), so this waits in real time, on the playback position and under a ceiling (docs/testing.md).
     private func play(_ itemId: String, in model: Gate1AppModel, seconds: Int) async throws {
         model.startItem(id: itemId)
         let isArticle = itemId == articleId
-        func advanced() -> Bool {
-            guard model.snapshot.itemId == itemId, model.snapshot.status == .playing else { return false }
-            return isArticle ? (model.speechPlaybackClient?.currentCharOffset() ?? 0) > 0
-                : (model.sessionAudioPlaybackClient?.currentMediaTimeMs() ?? 0) > 200
+        func position() -> Int? {
+            guard model.snapshot.itemId == itemId, model.snapshot.status == .playing else { return nil }
+            return isArticle ? model.speechPlaybackClient?.currentCharOffset() : model.sessionAudioPlaybackClient?.currentMediaTimeMs()
         }
-        try await pollUntil(timeout: .seconds(30)) { advanced() }
-        guard advanced() else {
+        try await pollUntil { (position() ?? 0) > (isArticle ? 0 : 200) }
+        guard let start = position(), start > (isArticle ? 0 : 200) else {
             // Stop at the first failure: seven more 30 s waits would only run into the plan's time limit.
             throw ScenarioStopped(description: "\(isArticle ? "the article" : "the podcast") never started playing: "
                                   + "item \(model.snapshot.itemId ?? "none"), status \(model.snapshot.status)")
         }
-        try await Task.sleep(for: .seconds(seconds))
-        guard model.snapshot.itemId == itemId, model.snapshot.status.isPlaybackActive else {
-            throw ScenarioStopped(description: "playback stopped on its own: item \(model.snapshot.itemId ?? "none"), "
-                                  + "status \(model.snapshot.status)")
+        // Speech runs at roughly 12 characters a second; the podcast's clock is in milliseconds.
+        let target = start + seconds * (isArticle ? 12 : 1_000)
+        try await pollUntil { (position() ?? 0) >= target }
+        guard let reached = position(), reached >= target else {
+            throw ScenarioStopped(description: "\(isArticle ? "the article" : "the podcast") stopped short of \(seconds) s: "
+                                  + "item \(model.snapshot.itemId ?? "none"), status \(model.snapshot.status), "
+                                  + "position \(position().map(String.init) ?? "none") of \(target)")
         }
     }
 
