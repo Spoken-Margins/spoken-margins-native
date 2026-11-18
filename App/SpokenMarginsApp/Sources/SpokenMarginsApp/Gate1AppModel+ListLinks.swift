@@ -24,11 +24,11 @@ final class ListLinkRunnerHolder {
 /// Thin wiring from Following's refresh to `ListLinkRunner`. Which triggers read a list address, and which links are due,
 /// are SessionKit's (`FollowedRefreshTrigger`, `ListLinkSchedule`).
 extension Gate1AppModel {
-    /// Reads the list addresses that are due, for a refresh a listener asked for. Any other trigger returns at once, before
-    /// the store or the network is touched. A failed or cancelled check changes nothing the listener sees: a status and a
-    /// waiting change are stored for the screens that read them (PR 7a, 7b).
-    func checkListLinks(trigger: FollowedRefreshTrigger) async {
+    /// Starts reading the list addresses that are due, for a refresh a listener asked for, and returns at once. Any other
+    /// trigger returns before the store or the network is touched. A failed or cancelled check changes nothing the listener
+    /// sees: a status and a waiting change are stored for the screens that read them (PR 7a, 7b).
+    func startListLinkCheck(trigger: FollowedRefreshTrigger) {
         guard trigger.checksListLinks, let store else { return }
-        await ListLinkRunnerHolder.shared.runner(for: store).run(trigger: trigger)
+        ListLinkRunnerHolder.shared.runner(for: store).runWithoutWaiting(trigger: trigger)
     }
 }

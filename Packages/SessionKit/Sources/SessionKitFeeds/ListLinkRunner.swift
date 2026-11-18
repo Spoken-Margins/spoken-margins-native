@@ -42,6 +42,13 @@ public actor ListLinkRunner {
         self.clock = clock
     }
 
+    /// Starts a run and returns at once. A pull's spinner must not wait on a slow list host, and the caller (on the main actor)
+    /// should not need a `Task` of its own to say so.
+    public nonisolated func runWithoutWaiting(trigger: FollowedRefreshTrigger) {
+        guard trigger.checksListLinks else { return }
+        Task { await self.run(trigger: trigger) }
+    }
+
     /// - Parameter onlyLinkID: **Check now** on one list reads that link and no other.
     @discardableResult
     public func run(trigger: FollowedRefreshTrigger, onlyLinkID: String? = nil) async -> Outcome {

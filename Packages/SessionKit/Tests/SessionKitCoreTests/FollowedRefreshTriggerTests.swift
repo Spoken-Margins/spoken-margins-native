@@ -163,6 +163,22 @@ final class FollowedRefreshTriggerTests: XCTestCase {
         XCTAssertEqual(saved.last?.pending, saved.first?.pending, "one proposal, rewritten the same")
     }
 
+    func testRunWithoutWaitingReturnsAtOnceAndStillReadsTheLinkForAListenerActionOnly() async throws {
+        let url = "https://nowait.example/l.opml"
+        ListLinkStubProtocol.serve(url, text: ListLinkFixture.opml(rows: ListLinkFixture.rows(1...1)))
+        let store = SpyStore(links: [staleLink("a", url)])
+        let runner = runner(store)
+        runner.runWithoutWaiting(trigger: .background)
+        runner.runWithoutWaiting(trigger: .startup)
+        runner.runWithoutWaiting(trigger: .pull)
+        // Wait on the state, with a deadline that is only a ceiling.
+        let deadline = Date().addingTimeInterval(20)
+        while await store.saved.isEmpty, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        let saved = await store.saved
+        XCTAssertEqual(saved.count, 1, "the pull read the link; the background and launch calls read nothing")
+        XCTAssertEqual(ListLinkStubProtocol.count(of: url), 1)
+    }
+
     func testARequestAPassAlreadyServesIsNotRunAgain() async {
         let url = "https://dupe.example/l.opml"
         ListLinkStubProtocol.serve(url, text: ListLinkFixture.opml())

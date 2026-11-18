@@ -434,7 +434,7 @@ extension Gate1AppModel {
         // List addresses are read only for a listener's action (#4046 PR 6). `ListLinkRunner` answers
         // `trigger.checksListLinks` before it touches the store, so every other trigger costs nothing here. The check runs on
         // its own task: a slow or dead list host must not keep a pull's spinner turning. **Check now** awaits the runner itself.
-        if trigger.checksListLinks { Task { [weak self] in await self?.checkListLinks(trigger: trigger) } }
+        startListLinkCheck(trigger: trigger)
         return covered
     }
 
