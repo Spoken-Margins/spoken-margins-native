@@ -17,7 +17,10 @@ public struct SharedMarginTally: Hashable, Sendable {
         let total = max(0, total)
         self.total = total
         self.new = min(max(0, new), total)
-        self.senders = Self.mergedSenders(senders)
+        // Names read in a second statement can disagree with the count if a write came between them; then the names
+        // are dropped and the line says "a friend", rather than naming people for Margins that are not there.
+        let merged = Self.mergedSenders(senders)
+        self.senders = merged.reduce(0) { $0 + $1.count } == total ? merged : []
         self.replies = min(max(0, replies), total)
     }
 

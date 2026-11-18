@@ -14,8 +14,10 @@ extension SharedMarginTally {
         public let count: Int
 
         public init(key: String? = nil, name: String?, count: Int) {
-            let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            self.name = Self.isStandIn(trimmed) ? "" : trimmed
+            // The app's one rule for what is a name (`SharedPacketArrival.senderName`): "Unsigned sender", "Imported
+            // collection", "Someone" and "Your friend" are not names. Inner whitespace is collapsed so "Cole  M" is "Cole M".
+            let usable = SharedPacketArrival.senderName(name).map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") } ?? ""
+            self.name = usable.folded == "a friend" ? "" : usable
             let id = (key ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             self.key = id.isEmpty ? (self.name.isEmpty ? "" : "name:" + self.name.folded) : "id:" + id
             self.count = max(0, count)
@@ -23,17 +25,14 @@ extension SharedMarginTally {
 
         fileprivate init(merging first: Sender, _ second: Sender) {
             key = first.key
-            name = first.name.isEmpty ? second.name : first.name
+            // The same name whichever layer is read first: the longer one ("Cole M." over "Cole"), then the earlier in order.
+            if first.name.isEmpty { name = second.name } else if second.name.isEmpty { name = first.name } else {
+                name = (first.name.count, second.name) > (second.name.count, first.name) ? first.name : second.name
+            }
             count = first.count + second.count
         }
 
         public var isNamed: Bool { !name.isEmpty }
-
-        /// "Someone" and "a friend" are the app's own stand-ins for no name (2026-11-09), not a name to show.
-        static func isStandIn(_ name: String) -> Bool {
-            let folded = name.folded
-            return folded.isEmpty || folded == MarginLayerSynthesis.unnamedSenderLabel.folded || folded == "a friend"
-        }
 
         /// The name as the row shows it: over 24 characters, the first 23 and an ellipsis.
         var shownName: String {
@@ -53,9 +52,18 @@ extension SharedMarginTally {
                 merged[sender.key] = sender
             }
         }
+        // A friend's older packet with a name and no id is the same friend as a newer one with an id and that name.
+        for key in order where key.hasPrefix("name:") {
+            guard let loose = merged[key],
+                  let match = order.first(where: { $0.hasPrefix("id:") && merged[$0]?.name.folded == loose.name.folded })
+            else { continue }
+            merged[match] = Sender(merging: merged[match]!, loose)
+            merged[key] = nil
+        }
         return order.compactMap { merged[$0] }.sorted {
             if $0.count != $1.count { return $0.count > $1.count }
-            return $0.shownLabel.folded < $1.shownLabel.folded
+            if $0.shownLabel.folded != $1.shownLabel.folded { return $0.shownLabel.folded < $1.shownLabel.folded }
+            return $0.key < $1.key
         }
     }
 
@@ -115,9 +123,9 @@ extension SharedMarginTally {
     /// Whether a Library search finds the item through who sent the Margins: the same match as titles (case and
     /// diacritics ignored, a substring). An unnamed sender matches nothing, so "friend" finds nobody.
     public func senderMatches(_ query: String) -> Bool {
-        let wanted = query.trimmingCharacters(in: .whitespacesAndNewlines).folded
+        let wanted = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wanted.isEmpty else { return false }
-        return Self.mergedSenders(senders).contains { $0.isNamed && $0.name.folded.localizedStandardContains(wanted) }
+        return Self.mergedSenders(senders).contains { $0.isNamed && $0.name.localizedStandardContains(wanted) }
     }
 }
 
@@ -146,6 +154,6 @@ public enum LibraryCompletedHiddenNote {
 extension String {
     /// Case and diacritics ignored, as the Library search folds titles.
     fileprivate var folded: String {
-        folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
     }
 }

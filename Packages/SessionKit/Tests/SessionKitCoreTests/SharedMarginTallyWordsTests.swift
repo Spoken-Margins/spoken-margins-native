@@ -83,6 +83,42 @@ final class SharedMarginTallyWordsTests: XCTestCase {
         XCTAssertTrue(tally(3, new: 1, [(long, 3)]).senderLine?.hasSuffix(" · 1 new") ?? false, "the count and new stay readable")
     }
 
+    func testTheAppsOwnStandInsAreNotNames() {
+        for stand in ["Unsigned sender", "unsigned SENDER", "Imported collection", "Your friend", "Someone", "A friend", "Ünsigned sender"] { // the app folds accents too
+            let line = tally(2, new: 2, [(stand, 2)]).senderLine
+            XCTAssertEqual(line, "2 new Margins from a friend", stand)
+            XCTAssertFalse(tally(2, new: 2, [(stand, 2)]).senderMatches(stand), "search never finds a stand-in: \(stand)")
+        }
+        XCTAssertEqual(tally(2, new: 2, [("Unsigned sender", 1), ("Imported collection", 1)]).senderLine, "2 new Margins from friends")
+        XCTAssertEqual(LibraryCompletedHiddenNote.words(items: [tally(1, new: 0, [("Imported collection", 1)])]), "1 has Margins from a friend")
+        XCTAssertEqual(SharedMarginTally(total: 2, new: 2, senders: [Sender(name: "Cole  M", count: 1), Sender(name: "cole m", count: 1)]).senders.count, 1, "inner whitespace and case")
+        XCTAssertEqual(tally(1, new: 1, [("Cole   M.", 1)]).senderLine, "1 new Margin from Cole M.")
+    }
+
+    func testAFriendWithAndWithoutAnIdIsOneFriendAndTheNameIsStable() {
+        let mixed = SharedMarginTally(total: 3, new: 3, senders: [
+            Sender(key: nil, name: "Cole", count: 1), Sender(key: "abc", name: "Cole", count: 2)
+        ])
+        XCTAssertEqual(mixed.senderLine, "3 new Margins from Cole", "an older packet with no id, a newer one with")
+        let forward = SharedMarginTally(total: 3, new: 3, senders: [Sender(key: "abc", name: "Cole", count: 2), Sender(key: "abc", name: "Cole M.", count: 1)])
+        let backward = SharedMarginTally(total: 3, new: 3, senders: [Sender(key: "abc", name: "Cole M.", count: 1), Sender(key: "abc", name: "Cole", count: 2)])
+        XCTAssertEqual(forward, backward, "the same tally whichever layer is read first")
+        XCTAssertEqual(forward.senderLine, "3 new Margins from Cole M.")
+        let tied = [Sender(key: "x", name: "Ann", count: 1), Sender(key: "y", name: "Ann", count: 1)]
+        XCTAssertEqual(SharedMarginTally(total: 2, new: 0, senders: tied), SharedMarginTally(total: 2, new: 0, senders: tied.reversed()), "ties are ordered by key")
+    }
+
+    func testNamesThatDisagreeWithTheCountAreDropped() {
+        let raced = SharedMarginTally(total: 3, new: 3, senders: [Sender(key: "a", name: "Cole", count: 1)])
+        XCTAssertTrue(raced.senders.isEmpty)
+        XCTAssertEqual(raced.senderLine, "3 new Margins from a friend")
+    }
+
+    func testSearchIgnoresTheDevicesLocaleCasing() {
+        XCTAssertTrue(tally(1, new: 1, [("Isabel", 1)]).senderMatches("isabel"))
+        XCTAssertTrue(tally(1, new: 1, [("İsmail", 1)]).senderMatches("ismail"))
+    }
+
     func testTheSameFriendInTwoPacketsIsCountedOnce() {
         let merged = SharedMarginTally(total: 3, new: 3, senders: [
             Sender(key: "abc", name: "Cole", count: 2), Sender(key: "abc", name: nil, count: 1)
@@ -102,7 +138,7 @@ final class SharedMarginTallyWordsTests: XCTestCase {
     // MARK: Search
 
     func testSearchFindsAnItemThroughANamedSender() {
-        let item = tally(3, new: 1, [("Zoë", 2), ("Cole", 1), (nil, 1)])
+        let item = tally(4, new: 1, [("Zoë", 2), ("Cole", 1), (nil, 1)])
         XCTAssertTrue(item.senderMatches("cole"))
         XCTAssertTrue(item.senderMatches("COL"))
         XCTAssertTrue(item.senderMatches("zoe"), "diacritics ignored")
@@ -166,7 +202,7 @@ final class SharedMarginTallyWordsTests: XCTestCase {
         _ = try store.importCommentaryLayer(layer("anon", item: "b", label: nil, sender: nil), interjections: [margin("m6", layer: "anon")])
 
         let tallies = try SQLiteSessionStore(path: path).loadSharedMarginTallies()
-        XCTAssertEqual(tallies["a"]?.senderLine, "4 new Margins from Cole and Sam", "Cole once, though two packets; the deleted layer is not a sender")
+        XCTAssertEqual(tallies["a"]?.senderLine, "4 new Margins from Cole M. and Sam", "Cole once, though two packets (the longer name wins); the deleted layer is not a sender")
         XCTAssertEqual(tallies["a"]?.senders.map(\.count), [3, 1])
         XCTAssertEqual(tallies["b"]?.senderLine, "1 new Margin from a friend")
 
