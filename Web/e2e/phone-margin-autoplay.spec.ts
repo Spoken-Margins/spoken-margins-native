@@ -249,6 +249,58 @@ test('while a spoken Margin plays, the main button shows Pause and pauses it; Pl
   }
 });
 
+/** Every clip element is recorded, and plays at a third of its speed, so a tap lands while the friend's voice sounds. */
+async function slowClips(page: Page) {
+  await page.addInitScript(() => {
+    const play = HTMLMediaElement.prototype.play;
+    window.__clipElements = [];
+    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+      if (this !== document.querySelector('audio[data-testid="audio"]') && !this.src.startsWith('data:audio/wav')) {
+        if (!window.__clipElements.includes(this)) window.__clipElements.push(this);
+        this.playbackRate = 0.33;
+      }
+      return play.call(this);
+    };
+  });
+  return () => page.evaluate(() => window.__clipElements.at(-1)?.paused ?? null);
+}
+
+test('"Skip this Margin" ends the Margin that is playing and the episode carries on from there (#4473)', async ({ page }) => {
+  test.setTimeout(120_000);
+  await watchPlays(page, false);
+  const clipPaused = await slowClips(page);
+  const nowPlaying = await openFile(page);
+  await startAtLanding(nowPlaying);
+  const card = nowPlaying.getByTestId('arrived-margin');
+  await expect(card).toContainText('Sam is speaking', { timeout: 20_000 });
+  await expect.poll(clipPaused, { timeout: 10_000 }).toBe(false);
+  const before = await audioTime(page);
+  await nowPlaying.getByTestId('skip-margin').click();
+  // The friend's voice stops, the card goes, and the episode plays on, well before the clip would have ended by itself.
+  await expect.poll(clipPaused).toBe(true);
+  await expect(card).toHaveCount(0);
+  await expect(nowPlaying.locator('.play-button')).toHaveAccessibleName('Pause');
+  await expect.poll(() => audioTime(page), { timeout: 5_000 }).toBeGreaterThan(before + 0.5);
+});
+
+test('scrubbing out of a playing Margin stops it and the episode plays from the new place (#4473)', async ({ page }) => {
+  test.setTimeout(120_000);
+  await watchPlays(page, false);
+  const clipPaused = await slowClips(page);
+  const nowPlaying = await openFile(page);
+  await startAtLanding(nowPlaying);
+  const card = nowPlaying.getByTestId('arrived-margin');
+  await expect(card).toContainText('Sam is speaking', { timeout: 20_000 });
+  await expect.poll(clipPaused, { timeout: 10_000 }).toBe(false);
+  await nowPlaying.getByLabel('Position').fill('100');
+  await expect.poll(clipPaused).toBe(true);
+  await expect(card).toHaveCount(0);
+  await expect(nowPlaying.locator('.play-button')).toHaveAccessibleName('Pause');
+  await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThan(100);
+  const there = await audioTime(page);
+  await expect.poll(() => audioTime(page), { timeout: 5_000 }).toBeGreaterThan(there + 0.3);
+});
+
 // #4472: after "Skip to just before" the next Margin comes up 20 s after the listener's last tap. Safari (WebKit, the
 // engine of every iPhone browser) refused a clip started that long after a tap, so the Margin waited behind a Play;
 // "Skip to <name> now", 0.3 s before it, was close enough to the tap to pass. Each row lands with the lead-in Skip and

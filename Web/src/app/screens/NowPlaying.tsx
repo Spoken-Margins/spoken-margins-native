@@ -93,10 +93,15 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
         {margin.author ? <strong>{margin.author}</strong> : null} {formatClock(margin.atSeconds)}: {words}
       </p>
       {voiced && <p className="arrived-margin-note">Your device’s voice is reading {possessive(senderName(margin.author))} words.</p>}
-      {blocked && (
+      {blocked ? (
         <button type="button" className="button button-primary" onClick={player.playArrived}>
           <PlayIcon size={18} />
           Play {margin.author ? `${leading(possessive(senderName(margin.author)))}` : 'this'} Margin
+        </button>
+      ) : (
+        // Pause only holds a Margin; this is how to be done with it and carry on with the episode (#4473).
+        <button type="button" className="button" data-testid="skip-margin" onClick={player.skipMargin}>
+          Skip this Margin
         </button>
       )}
     </div>

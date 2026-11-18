@@ -68,6 +68,11 @@ export interface PlayerApi {
   pause(): void;
   skip(seconds: number): void;
   seek(seconds: number): void;
+  /**
+   * Ends the friend's Margin that is sounding or held, as if it had finished: the next queued Margin plays, or the
+   * episode carries on from where it was. Pause only holds a Margin; this is how to be done with it (#4473).
+   */
+  skipMargin(): void;
   setRate(rate: number): void;
   /** The current time, read straight from the audio element (for a Margin's anchor). */
   now(): number;
@@ -163,7 +168,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const crossing = useRef(new CrossingClock());
   // What to do after a blocked clip is played from the tap (the rest of a run of Margins without the episode).
   const blockedDone = useRef<(() => void) | undefined>(undefined);
-  const clip = useRef<{ element: HTMLAudioElement; url: string } | null>(null);
+  // `end` finishes the clip as if it had played out: what comes next (a queued Margin, the episode) follows.
+  const clip = useRef<{ element: HTMLAudioElement; url: string; end: () => void } | null>(null);
   const clipQueue = useRef<Margin[]>([]);
   // The voice reading a friend's written Margin aloud, while it does.
   const reading = useRef<Reading | undefined>(undefined);
@@ -288,7 +294,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const element = clipPlayer();
     const previous = clip.current;
     if (previous) URL.revokeObjectURL(previous.url);
-    const mine = { element, url };
+    const mine = { element, url, end: () => undefined as void };
     clip.current = mine;
     detachClip(element);
     element.src = url;
@@ -305,6 +311,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (next) playClip(next, onDone);
       else if (onDone) onDone();
       else void audio.play().catch(() => undefined);
+    };
+    mine.end = () => {
+      element.pause();
+      finish();
     };
     element.onended = finish;
     element.onerror = finish;
@@ -655,17 +665,48 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (anythingSounding()) pauseSound();
   }, [anythingSounding, pauseSound]);
 
+  /**
+   * Done with the friend's Margin that is sounding or held (#4473): a clip ends as if it had played out, so the next
+   * queued Margin or the episode follows; a written one that is being read stops being read and its card goes.
+   */
+  const skipMargin = useCallback(() => {
+    primeClip();
+    const current = clip.current;
+    if (current) {
+      current.end();
+      return;
+    }
+    clearTimeout(shownTimer.current);
+    const audio = audioRef.current;
+    if (reading.current) stopReading();
+    if (audio) audio.volume = 1;
+    setArrived((a) => (a?.blocked ? a : undefined));
+  }, [primeClip, stopReading]);
+
   const seek = useCallback((seconds: number) => {
     const audio = audioRef.current;
     if (!audio || !audio.src) return;
     // A Skip or a scrub is the listener's tap: the clip element is readied in it, for the Margin coming up (#4472).
     primeClip();
+    // Moving to another place leaves the friend's Margin behind: it stops, and the episode plays from the new place
+    // if the Margin was sounding (a Margin held by Pause leaves the episode held too). Otherwise the clip and the
+    // episode would sound together, with controls for only the clip (#4473).
+    const current = clip.current;
+    let resume = false;
+    if (!failedRef.current && (current || reading.current)) {
+      resume = current ? !current.element.paused : !audio.paused;
+      stopClip();
+      clearTimeout(shownTimer.current);
+      audio.volume = 1;
+      setArrived((a) => (a?.blocked ? a : undefined));
+    }
     const max = Number.isFinite(audio.duration) ? audio.duration : Number.POSITIVE_INFINITY;
     audio.currentTime = Math.min(Math.max(0, seconds), max);
     setTime(audio.currentTime);
+    if (resume) void audio.play().catch(() => undefined);
     // The scrub itself is the place, even if the page goes before the browser reports the seek finished (#4096).
     remember();
-  }, [remember, primeClip]);
+  }, [remember, primeClip, stopClip]);
 
   const skip = useCallback((seconds: number) => seek((audioRef.current?.currentTime ?? 0) + seconds), [seek]);
 
@@ -729,8 +770,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [episode, playing, duration, rate, time]);
 
   const api = useMemo<PlayerApi>(
-    () => ({ episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, play, pause, skip, seek, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
-    [episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, play, pause, skip, seek, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
+    () => ({ episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, play, pause, skip, seek, skipMargin, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
+    [episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, play, pause, skip, seek, skipMargin, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
   );
 
   return (
