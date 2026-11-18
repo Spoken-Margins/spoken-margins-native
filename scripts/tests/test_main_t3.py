@@ -57,6 +57,14 @@ class ShouldRunTests(unittest.TestCase):
         self.assertFalse(M.should_run([status('error', 1), status('pending', 2), status('error', 4),
                                        status('pending', 5)], NOW)[0])
 
+    def test_a_failure_is_never_run_again_on_the_same_commit(self):
+        # Owner, 2026-11-18: in-run retries already separate flakes, so a red result gets no second full run, even
+        # when an earlier attempt on the commit was a runner fault, or the failure is old.
+        for history in ([status('failure', 1)], [status('failure', 1), status('error', 3)],
+                        [status('failure', 30)], [status('failure', 1), status('pending', 2)]):
+            with self.subTest(history=[s['state'] for s in history]):
+                self.assertFalse(M.should_run(history, NOW)[0])
+
     def test_force_always_runs(self):
         self.assertTrue(M.should_run([status('success')], NOW, force=True)[0])
 
@@ -186,6 +194,23 @@ class LaneRunnerCouplingTests(unittest.TestCase):
                                       Path('/nonexistent'))
         self.assertEqual(len(ran), 1)
         self.assertIn('1 passed', ran[0])
+
+
+class WorkflowTests(unittest.TestCase):
+    """main-t3.yml is the trunk's one simulator run (owner, 2026-11-18)."""
+    ROOT = Path(__file__).resolve().parents[2]
+
+    def load(self, name):
+        import yaml
+        data = yaml.safe_load((self.ROOT / '.github/workflows' / name).read_text())
+        return data.get('on', data.get(True))  # PyYAML reads a bare `on:` key as True
+
+    def test_it_ticks_every_3_hours_and_before_the_owners_phone_builds(self):
+        crons = [c['cron'] for c in self.load('main-t3.yml')['schedule']]
+        self.assertEqual(crons, ['17 */3 * * *', '30 13 * * *', '30 22 * * *'])  # 6:30 and 15:30 America/Phoenix
+
+    def test_hosted_integration_no_longer_runs_on_a_push(self):
+        self.assertEqual(list(self.load('hosted-integration.yml')), ['workflow_dispatch'])
 
 
 class CommandLineTests(unittest.TestCase):

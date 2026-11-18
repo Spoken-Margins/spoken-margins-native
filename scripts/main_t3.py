@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """The scheduled T3 on main (#4573, plan on #2048): the whole app test suite on main's head, recorded as a commit status.
 
-Owner decision 2026-11-18: no per-PR simulator runs. Instead .github/workflows/main-t3.yml runs this every 3 hours,
-and only when main's head has no `main-t3` status yet, and releases refuse a commit without a green one (#4575).
+Owner decision 2026-11-18: no per-PR simulator runs. Instead .github/workflows/main-t3.yml runs this every 3 hours
+and at two fixed ticks before the owner's phone builds, only when main's head has no `main-t3` status yet, and
+releases refuse a commit without a green one (#4575). It is the trunk's one simulator run: hosted-integration.yml no
+longer runs on a push.
 
 The contract other tools read (#4575's release gate):
 - After each run, a commit status on the tested SHA with context `main-t3`: `success` (every test passed), `failure`
@@ -11,8 +13,9 @@ The contract other tools read (#4575's release gate):
   cut to GitHub's 140 characters. A run in progress leaves `pending`.
 - "Main has changed" means main's head SHA has no `main-t3` status yet. Two additions, which only decide when this
   workflow runs: a `pending` older than STALE_PENDING (a job killed too hard to clean up) counts as none, and one
-  `error` gets one automatic retry on the next tick (a runner fault proves nothing about main). A manual dispatch with
-  `force` always runs.
+  `error` gets one automatic retry on the next tick (a runner fault proves nothing about main). A `failure` is never
+  run again on the same commit (owner, 2026-11-18): verify-tests.py's in-run retries already tell a flake from a real
+  failure. A manual dispatch with `force` always runs.
 
 Subcommands:
 - decide --sha SHA: print and write `run=true|false` to $GITHUB_OUTPUT.
