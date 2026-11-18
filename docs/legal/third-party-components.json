@@ -17,7 +17,7 @@
       "license": "MIT",
       "distribution": "bundled",
       "by": "Microsoft Corporation",
-      "source": "https://github.com/microsoft/onnxruntime-swift-package-manager",
+      "source": "https://github.com/Spoken-Margins/onnxruntime-swift-package-manager",
       "paths": [
         "Packages/SessionKit/Package.swift"
       ],
@@ -26,7 +26,7 @@
         "App/SpokenMarginsApp/Resources/Supertonic/licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt",
         "Contracts/voice-models/licenses/onnxruntime-mit.txt"
       ],
-      "note": "Runs the voice models on the phone. ONNX Runtime's own third-party components (MIT, BSD, Apache-2.0, zlib, Boost, ISC, public domain and MPL-2.0 for Eigen) are listed in the second file.",
+      "note": "Runs the voice models on the phone. ONNX Runtime's own third-party components (MIT, BSD, Apache-2.0, zlib, Boost, ISC, public domain and MPL-2.0 for Eigen) are listed in the second file. Built from an unmodified copy in the Spoken-Margins organization, because Microsoft's original repository (github.com/microsoft/onnxruntime-swift-package-manager) returned 404 on 2026-11-18 (#4512).",
       "tracks": {
         "swiftPackage": "onnxruntime-swift-package-manager"
       }
