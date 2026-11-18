@@ -486,7 +486,10 @@ struct ExperienceAddSourceFlow: View {
         // `.txt` is plain text above. The fallbacks keep each pickable if a type ever failed to register.
         UTType("org.w3.webvtt") ?? UTType(filenameExtension: "vtt") ?? .plainText,
         UTType("com.spokenmargins.subrip") ?? UTType(filenameExtension: "srt") ?? .plainText,
+        // A Word document that isn't a transcript is a document item (#4594). An old `.doc` is pickable so the import can
+        // say how to make it a `.docx`, rather than sit greyed out with no reason.
         UTType("org.openxmlformats.wordprocessingml.document") ?? UTType(filenameExtension: "docx") ?? .data,
+        UTType("com.microsoft.word.doc") ?? UTType(filenameExtension: "doc") ?? .data,
         // Audiobooks.
         .mp3, .mpeg4Audio, .mpeg4Movie, UTType(filenameExtension: "m4b") ?? .audio,
         // A Margins packet. The app exports this type; the fallback keeps the picker usable if it ever failed to register.

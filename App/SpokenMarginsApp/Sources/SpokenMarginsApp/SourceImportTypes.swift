@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitPersistence
 
 struct SourceLinkCandidateReviewState: Identifiable, Equatable {
     let request: LinkResolutionRequest
@@ -48,6 +49,13 @@ struct ObsidianImportBatch: Sendable {
     let failures: [String]
     /// The same failures with the raw error text, for diagnostics only (#1965).
     var rawFailures: [String] = []
-    /// The bytes of each imported PDF by item id, held until the item is saved so the original can be kept (#4338).
-    var originals: [String: Data] = [:]
+    /// The bytes of each imported PDF or Word file by item id, held until the item is saved so the original can be kept
+    /// (#4338, #4594).
+    var originals: [String: KeptOriginal] = [:]
+}
+
+/// A picked file's bytes and what kind of file they are, waiting for its item to be saved (#4594).
+struct KeptOriginal: Sendable {
+    var data: Data
+    var kind: ItemOriginalStore.Kind
 }

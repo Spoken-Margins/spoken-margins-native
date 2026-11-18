@@ -3,6 +3,7 @@ import Security
 import SessionKit
 import SessionKitAI
 import SessionKitAudio
+import SessionKitEPUB
 import SessionKitSharing
 import SessionKitSupertonic
 import SessionKitPersistence
@@ -217,7 +218,7 @@ extension Gate1AppModel {
         var prepared: [PreparedObsidianImport] = []
         var failures: [String] = []
         var rawFailures: [String] = []
-        var originals: [String: Data] = [:]
+        var originals: [String: KeptOriginal] = [:]
         for request in requests {
             do {
                 let (imported, original) = try await importableText(from: request.url)
@@ -234,8 +235,12 @@ extension Gate1AppModel {
         return ObsidianImportBatch(prepared: prepared, failures: failures, rawFailures: rawFailures, originals: originals)
     }
 
-    /// The file's text and, for a PDF, its bytes to keep beside the item (#4338).
-    private nonisolated static func importableText(from url: URL) async throws -> (ImportedSourceText, original: Data?) {
+    /// The file's text and, for a PDF or a Word document, its bytes to keep beside the item (#4338, #4594).
+    private nonisolated static func importableText(from url: URL) async throws -> (ImportedSourceText, original: KeptOriginal?) {
+        if WordDocumentImport.handles(url) {
+            let read = try WordDocumentImport.read(url: url)
+            return (read.imported, KeptOriginal(data: read.original, kind: .docx))
+        }
         guard url.pathExtension.lowercased() == "pdf" else {
             return (ImportedSourceText(
                 text: try String(contentsOf: url, encoding: .utf8),
@@ -250,7 +255,7 @@ extension Gate1AppModel {
                 documentStructure: extracted.documentStructure,
                 structuredDocument: extracted.document,
                 title: extracted.title
-            ), extracted.originalData)
+            ), extracted.originalData.map { KeptOriginal(data: $0, kind: .pdf) })
         } catch PDFStructuredTextExtractor.ExtractionError.noExtractableText {
             throw SourceFileImportError.pdfHasNoExtractableText
         }
@@ -295,7 +300,7 @@ extension Gate1AppModel {
 
     /// Saves each prepared file's item, map and document off the main actor (#2509): the text can be megabytes.
     private nonisolated static func saveObsidianImports(
-        _ prepared: [PreparedObsidianImport], originals: [String: Data], originalStore: PDFOriginalStore?,
+        _ prepared: [PreparedObsidianImport], originals: [String: KeptOriginal], originalStore: ItemOriginalStore?,
         store: SQLiteSessionStore
     ) -> SavedObsidianImports {
         var result = SavedObsidianImports()
@@ -313,7 +318,7 @@ extension Gate1AppModel {
                 if let original = originals[prepared.item.id] {
                     do {
                         guard let originalStore else { throw CocoaError(.fileNoSuchFile) }
-                        try originalStore.write(original, itemId: prepared.item.id)
+                        try originalStore.write(original.data, itemId: prepared.item.id, kind: original.kind)
                     } catch {
                         result.originalKeepFailures.append(SafeErrorText.describe(error))
                     }

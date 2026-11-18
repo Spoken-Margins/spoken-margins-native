@@ -86,7 +86,8 @@ final class TranscriptPickImportTests: XCTestCase {
         XCTAssertEqual(try itemCount(), 1)
     }
 
-    func testAWordTranscriptImportsAndAWordEssayIsRefusedWithItsOwnSentence() async throws {
+    /// #4594: a Word essay is a document now. Before, it was refused with "isn't a meeting transcript".
+    func testAWordTranscriptImportsAndAWordEssayGoesToTheDocumentImport() async throws {
         let meeting = try writeDocx("meeting.docx", paragraphs: [
             "Budget sync", "Alice Example\t0:03", "Welcome everyone, let's start with the budget.",
             "Ben Sample\t0:06", "Thanks. I have the draft numbers ready.", "Alice Example\t0:09", "Great, please share them.",
@@ -94,15 +95,24 @@ final class TranscriptPickImportTests: XCTestCase {
         let essayDocx = try writeDocx("essay.docx", paragraphs: [essay, "A second paragraph of the essay."])
         let result = try await run([meeting, essayDocx])
         XCTAssertEqual(result.added.map(\.title).count, 1)
-        XCTAssertEqual(result.refusals, [TranscriptImportMessage(.docxNotATranscript, fileName: "essay.docx")])
-        XCTAssertTrue(result.passthrough.isEmpty, "a Word file that isn't a transcript is never imported as text")
-        XCTAssertEqual(try itemCount(), 1)
+        XCTAssertEqual(result.refusals, [])
+        XCTAssertEqual(result.passthrough.map(\.lastPathComponent), ["essay.docx"], "the essay goes on to the document import")
+        XCTAssertEqual(try itemCount(), 1, "the pick itself saves only the transcript")
     }
 
-    func testAWordFileThatWontUnzipIsRefusedAsUnreadable() async throws {
+    /// #4594: a Word file the transcript rule can't read, finds empty, or that is over the transcript cap, goes on to the
+    /// document import, which refuses it in a document's words (a password, the old format) or reads it.
+    func testAWordFileThatWontOpenIsEmptyOrLargeGoesToTheDocumentImport() async throws {
         let bad = try write("broken.docx", "this is not a zip file")
-        let result = try await run([bad])
-        XCTAssertEqual(result.refusals, [TranscriptImportMessage(.docxUnreadable, fileName: "broken.docx")])
+        let empty = try writeDocx("empty.docx", paragraphs: ["", "  "])
+        let large = try writeDocx("large.docx", paragraphs: [String(repeating: "Four score and seven years ago. ", count: 10)])
+        let paddedSize = TranscriptImport.maximumBytes + 1
+        let handle = try FileHandle(forWritingTo: large)
+        try handle.truncate(atOffset: UInt64(paddedSize))
+        try handle.close()
+        let result = try await run([bad, empty, large])
+        XCTAssertEqual(result.refusals, [])
+        XCTAssertEqual(result.passthrough.map(\.lastPathComponent), ["broken.docx", "empty.docx", "large.docx"])
         XCTAssertEqual(try itemCount(), 0)
     }
 
@@ -161,16 +171,17 @@ final class TranscriptPickImportTests: XCTestCase {
         XCTAssertEqual(result.refusals, [TranscriptImportMessage(.couldNotRead, fileName: "gone.vtt")])
     }
 
-    func testAnOverTheCapVttIsRefusedAndAnOverTheCapTxtGoesToTodaysImportWithoutBeingRead() async throws {
+    /// A `.docx` over the transcript cap goes to the document import, which has its own cap (#4594).
+    func testAnOverTheCapVttIsRefusedAndAnOverTheCapTxtOrDocxGoesToTodaysImportWithoutBeingRead() async throws {
         let big = Data(repeating: UInt8(ascii: "a"), count: TranscriptImport.maximumBytes + 1)
         let vtt = try write("big.vtt", big)
         let srt = try write("big.srt", big)
         let docx = try write("big.docx", big)
         let txt = try write("big.txt", big)
         let result = try await run([vtt, srt, docx, txt])
-        XCTAssertEqual(result.refusals.map(\.kind), [.tooLarge, .tooLarge, .tooLarge])
-        XCTAssertEqual(result.refusals.map(\.fileName), ["big.vtt", "big.srt", "big.docx"])
-        XCTAssertEqual(result.passthrough.map(\.lastPathComponent), ["big.txt"])
+        XCTAssertEqual(result.refusals.map(\.kind), [.tooLarge, .tooLarge])
+        XCTAssertEqual(result.refusals.map(\.fileName), ["big.vtt", "big.srt"])
+        XCTAssertEqual(result.passthrough.map(\.lastPathComponent), ["big.docx", "big.txt"])
         XCTAssertEqual(try itemCount(), 0)
     }
 
