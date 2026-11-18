@@ -15,9 +15,11 @@ public enum PlaybackLeadingControl: Equatable, Sendable {
 
     public enum Pane: Equatable, Sendable { case now, timeline, margins }
 
-    public static func control(pane: Pane, timelineEditorHasFocus: Bool) -> PlaybackLeadingControl {
+    /// `nowHeaderIsVisible`: on Now the Library button sits in the header, which the scene's following scrolls out of
+    /// sight; while it is, the toolbar shows the same arrow (#4453). Visible, it stays in line with the title.
+    public static func control(pane: Pane, timelineEditorHasFocus: Bool, nowHeaderIsVisible: Bool = true) -> PlaybackLeadingControl {
         switch pane {
-        case .now: .none
+        case .now: nowHeaderIsVisible ? .none : .libraryExit
         case .timeline: timelineEditorHasFocus ? .returnToNow : .libraryExit
         case .margins: .libraryExit
         }

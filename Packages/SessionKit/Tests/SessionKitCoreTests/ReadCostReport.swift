@@ -26,6 +26,7 @@ struct ReadCostReport {
         return [
             ("listItems()", { _ = try store.listItems() }),
             ("listDeletedItems()", { _ = try store.listDeletedItems() }),
+            ("loadMovedMarginOrigins()", { _ = try store.loadMovedMarginOrigins() }),
             ("loadItem(article)", { _ = try store.loadItem(id: article) }),
             ("loadItem(mapped)", { _ = try store.loadItem(id: mapped) }),
             ("loadSessions()", { _ = try store.loadSessions() }),

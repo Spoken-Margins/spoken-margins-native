@@ -86,7 +86,7 @@ final class J10OfflineJourneyUITests: XCTestCase {
             // carries Share (#3211): Export is for taking Margins out for yourself.
             tap("playback.shareMargins.button")
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The sender flow did not open")
-            let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
+            let cleanUpQuestion = app.alerts["Remove ums and long pauses?"]
             if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
             XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5), "Share did not open on the review stage")
             senderElement("build23.sender.preview.build").tap()

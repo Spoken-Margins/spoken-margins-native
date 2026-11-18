@@ -3595,7 +3595,8 @@ public final class SessionEngine {
                     page: interjection.targetType == .item
                         ? pageDocument?.pageNumber(atCharacter: interjection.anchor.startChar)
                         : nil,
-                    sourceCharOffset: interjection.targetType == .item ? interjection.anchor.startChar : nil
+                    sourceCharOffset: interjection.targetType == .item ? interjection.anchor.startChar : nil,
+                    noPlace: interjection.hasPlace ? nil : true
                 )
             }
         )
