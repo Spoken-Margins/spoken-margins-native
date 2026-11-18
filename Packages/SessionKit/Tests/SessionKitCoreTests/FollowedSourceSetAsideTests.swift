@@ -90,8 +90,10 @@ final class FollowedSourceSetAsideTests: XCTestCase {
     private final class FailingEntryReads: InMemorySessionRepository, @unchecked Sendable {
         nonisolated(unsafe) var failReads = false
         override func loadFeedEntries(subscriptionId: String?) throws -> [FeedEntry] {
-            if failReads { throw URLError(.cannotDecodeContentData) }
-            return try super.loadFeedEntries(subscriptionId: subscriptionId)
+            let stored = try super.loadFeedEntries(subscriptionId: subscriptionId)
+            // Fails only once the refresh has saved the new episode, so it is the set-aside read that throws.
+            if failReads, stored.contains(where: { $0.title == "Crypto weekly" }) { throw URLError(.cannotDecodeContentData) }
+            return stored
         }
     }
 
@@ -100,7 +102,6 @@ final class FollowedSourceSetAsideTests: XCTestCase {
         let coordinator = coordinator(repository, setAside: { _, _ in [] })
         _ = try await follow(coordinator)
         SetAsideFeedURLProtocol.titles = [1: "Garden notes", 2: "Maps and more", 3: "Crypto weekly"]
-        // The refresh's own reads work until the entries are saved; only the evaluator's read fails.
         repository.failReads = true
         let added = await coordinator.refreshStale(force: true)
         repository.failReads = false
