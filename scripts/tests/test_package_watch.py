@@ -121,6 +121,21 @@ class AcceptedTests(unittest.TestCase):
                 out = pw.apply_accepted(found, {'newer': {'through': through, 'why': 'pinned on purpose'}})
                 self.assertEqual(self.kinds(out), ['accepted-newer' if accepted else 'newer'])
 
+    def test_a_malformed_table_flags_instead_of_crashing(self):
+        found = [('upstream-gone', 'x'), ('newer', 'upstream tag 2.0.0 is newer than the pinned 1.0.0')]
+        for accepted in (None, [], 'x', {'newer': {'through': '2.0.0', 'why': 5}}, {'newer': {'through': 7, 'why': 'x'}}):
+            with self.subTest(accepted=accepted):
+                out = pw.apply_accepted(found, accepted)
+                self.assertEqual(len(out), 2)
+
+    def test_real_findings_for_output_is_accepted(self):
+        """Pins the wording coupling between findings_for and NEWER_TAG."""
+        table = {ONNX: {'tags': ['1.24.2', 'v1.30.0'], 'heads': {}}}
+        found = pw.findings_for(pin(), ONNX, remote_of(table), NONE, SAME)
+        self.assertEqual(self.kinds(found), ['newer'])
+        out = pw.apply_accepted(found, {'newer': {'through': 'v1.30.0', 'why': 'on purpose'}})
+        self.assertEqual(self.kinds(out), ['accepted-newer'])
+
     def test_a_moved_branch_pin_is_never_accepted_as_newer(self):
         found = [('newer', 'upstream main is at ffff000, pinned aaaa111')]
         out = pw.apply_accepted(found, {'newer': {'through': '9.9.9', 'why': 'x'}})

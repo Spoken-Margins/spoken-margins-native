@@ -143,6 +143,7 @@ def apply_accepted(found, accepted):
     "accepted" table. Only `upstream-gone` (a reason) and `newer` (`through` tag and a reason) can be accepted; a
     `newer` finding with a tag past `through`, or with an unreadable table entry, stays flagged."""
     out = []
+    accepted = accepted if isinstance(accepted, dict) else {}
     for kind, text in found:
         entry = accepted.get(kind)
         if kind == 'upstream-gone' and isinstance(entry, str) and entry.strip():
@@ -152,7 +153,7 @@ def apply_accepted(found, accepted):
             latest = tag.group(1) if tag else None
             through = version_key(str(entry.get('through', '')))
             if latest and through and version_key(latest) <= through:
-                out.append((f'accepted-{kind}', f"{text} (accepted through {entry['through']}: {entry['why'].strip()})"))
+                out.append((f'accepted-{kind}', f"{text} (accepted through {entry['through']}: {str(entry['why']).strip()})"))
             else:
                 out.append((kind, text))
         else:
@@ -257,7 +258,7 @@ def main(argv=None):
     for identity, pin in collect_pins().items():
         upstream = upstreams.get(identity, {}).get('upstream', pin['location'])
         found = findings_for(pin, upstream, git_remote, gh_advisories, gh_repo_name)
-        results[identity] = (pin, upstream, apply_accepted(found, accepted.get(identity, {})))
+        results[identity] = (pin, upstream, apply_accepted(found, (accepted or {}).get(identity, {})))
     text, sig, flagged = report(results)
     print(text)
     if args.json:
