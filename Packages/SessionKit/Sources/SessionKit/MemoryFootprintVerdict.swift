@@ -4,19 +4,27 @@ import Foundation
 ///
 /// Two kinds of growth matter for an out-of-memory kill: memory that stays behind each time playback moves
 /// to another item (growth per switch), and memory that climbs while one item plays (growth per minute).
-/// - Per switch: the change in footprint from one switch into a media type to the next switch into the same type,
-///   taking the median so one reload doesn't decide it. The first switch into a type is left out, because it is
-///   when that type's engine loads (for example the text voice), and so is the first one after a memory warning,
-///   since the app unloads its voices on a warning. It needs at least two changes: four switches into one type.
-/// - Per minute: within one stretch of playback samples of the same media type with no switch in between, from
-///   its first playback sample (a minute in, after loading) to its last.
+/// - Per switch: the change in footprint from one switch into a media type to the next switch into the same type.
+///   The first switch into a type is left out, because it is when that type's engine loads (for example the text
+///   voice), and so is the first one after a memory warning, since the app unloads its voices on a warning. It needs
+///   at least two changes: four switches into one type. It takes the median, and with an even count the lower of the
+///   middle two, so one reload doesn't decide it, not even among the two changes of four switches.
+///   A switch is sampled as the new item starts, so its footprint is mostly what the items before it left behind.
+///   When listening alternates between two types, memory left behind by either one shows up in both types' changes,
+///   and the verdict names every type that grew: the samples can't say which of the two leaves it.
+/// - Per minute: within one stretch of playback samples of the same media type, with no switch and no pause in
+///   between, the least-squares slope of footprint over time, from the stretch's first playback sample (a minute in,
+///   after loading). A stretch counts once it covers five minutes, so a few megabytes of wobble over two minutes
+///   don't read as a climb. Playback samples come about a minute apart; a longer gap is a pause, which starts a
+///   new stretch so the paused time isn't counted as playback.
 /// Only the samples after the newest `launch` count, since a relaunch starts memory over. The log keeps 20 samples,
 /// so a long run may have dropped its launch; the verdict then reads the samples it has.
 public enum MemoryFootprintVerdict: Equatable, Sendable {
     case steady(switches: Int, playbackMinutes: Int)
-    case growingPerSwitch(mediaType: String, megabytesPerSwitch: Int)
+    /// `mediaTypes`: every type whose switches grew, the worst first; `megabytesPerSwitch` is the worst.
+    case growingPerSwitch(mediaTypes: [String], megabytesPerSwitch: Int)
     case growingPerMinute(mediaType: String, megabytesPerMinute: Int)
-    /// Not enough samples to say: fewer than four switches into one media type and no stretch of three
+    /// Not enough samples to say: fewer than four switches into one media type and no five-minute stretch of
     /// playback samples.
     case tooFewSamples
 
@@ -24,6 +32,10 @@ public enum MemoryFootprintVerdict: Equatable, Sendable {
     /// gigabyte in 100 switches; 5 MB a minute reaches it in about three hours of listening.
     public static let switchThresholdBytes: Double = 10 * 1_048_576
     public static let minuteThresholdBytes: Double = 5 * 1_048_576
+    /// The shortest stretch of playback that is measured per minute.
+    public static let minimumStretchSeconds: TimeInterval = 300
+    /// Playback samples further apart than this have a pause between them (the recorder samples about each minute).
+    public static let pauseGapSeconds: TimeInterval = 150
 
     public init(samples: [MemoryFootprintLog.Sample]) {
         let lastLaunch = samples.lastIndex { $0.event == .launch }
@@ -53,7 +65,8 @@ public enum MemoryFootprintVerdict: Equatable, Sendable {
                 stretches.append(stretch)
                 stretch = []
             case .playback:
-                if let last = stretch.last, last.mediaType != sample.mediaType {
+                if let last = stretch.last,
+                   last.mediaType != sample.mediaType || sample.time.timeIntervalSince(last.time) > Self.pauseGapSeconds {
                     stretches.append(stretch)
                     stretch = []
                 }
@@ -68,34 +81,35 @@ public enum MemoryFootprintVerdict: Equatable, Sendable {
         stretches.append(stretch)
 
         var measured = false
-        var worstSwitch: (type: String, perSwitch: Double)?
+        var grownSwitches: [(type: String, perSwitch: Double)] = []
         for type in typeOrder {
             let changes = changesByType[type, default: []].sorted()
             guard changes.count >= 2 else { continue }
             measured = true
-            let middle = changes.count / 2
-            let perSwitch = changes.count.isMultiple(of: 2) ? (changes[middle - 1] + changes[middle]) / 2 : changes[middle]
-            if perSwitch >= Self.switchThresholdBytes, perSwitch > (worstSwitch?.perSwitch ?? 0) {
-                worstSwitch = (type, perSwitch)
-            }
+            let perSwitch = changes[(changes.count - 1) / 2]
+            if perSwitch >= Self.switchThresholdBytes { grownSwitches.append((type, perSwitch)) }
         }
 
         var worstMinute: (type: String, perMinute: Double)?
         var playbackSeconds: TimeInterval = 0
-        for stretch in stretches where stretch.count >= 3 {
+        for stretch in stretches {
             guard let first = stretch.first, let last = stretch.last else { continue }
             let seconds = last.time.timeIntervalSince(first.time)
-            guard seconds > 0 else { continue }
+            guard seconds >= Self.minimumStretchSeconds else { continue }
             measured = true
             playbackSeconds += seconds
-            let perMinute = (Double(last.footprintBytes) - Double(first.footprintBytes)) / seconds * 60
+            let perMinute = Self.slopePerSecond(stretch) * 60
             if perMinute >= Self.minuteThresholdBytes, perMinute > (worstMinute?.perMinute ?? 0) {
                 worstMinute = (first.mediaType, perMinute)
             }
         }
 
-        if let worstSwitch {
-            self = .growingPerSwitch(mediaType: worstSwitch.type, megabytesPerSwitch: Self.megabytes(worstSwitch.perSwitch))
+        if let worst = grownSwitches.map(\.perSwitch).max() {
+            // Stable sort: equal growth keeps the order the types first played in.
+            let types = grownSwitches.enumerated()
+                .sorted { ($0.element.perSwitch, -$0.offset) > ($1.element.perSwitch, -$1.offset) }
+                .map(\.element.type)
+            self = .growingPerSwitch(mediaTypes: types, megabytesPerSwitch: Self.megabytes(worst))
         } else if let worstMinute {
             self = .growingPerMinute(mediaType: worstMinute.type, megabytesPerMinute: Self.megabytes(worstMinute.perMinute))
         } else if measured {
@@ -106,18 +120,31 @@ public enum MemoryFootprintVerdict: Equatable, Sendable {
         }
     }
 
-    /// For Diagnostics, for example `growing 35MB per switch into text`.
+    /// For Diagnostics, for example `growing 35MB per switch into text` or
+    /// `growing 35MB per switch into transcript_backed_media and text`.
     public var diagnosticsLine: String {
         switch self {
         case let .steady(switches, playbackMinutes):
             return "steady: \(switches) switches, \(playbackMinutes) playback minutes measured"
-        case let .growingPerSwitch(mediaType, megabytes):
-            return "growing \(megabytes)MB per switch into \(mediaType)"
+        case let .growingPerSwitch(mediaTypes, megabytes):
+            return "growing \(megabytes)MB per switch into \(mediaTypes.joined(separator: " and "))"
         case let .growingPerMinute(mediaType, megabytes):
             return "growing \(megabytes)MB per minute playing \(mediaType)"
         case .tooFewSamples:
             return "too few samples to say"
         }
+    }
+
+    /// Least-squares slope of footprint over time, in bytes per second. The stretch spans at least
+    /// `minimumStretchSeconds`, so its times are not all equal.
+    private static func slopePerSecond(_ stretch: [MemoryFootprintLog.Sample]) -> Double {
+        let origin = stretch[0].time
+        let points = stretch.map { ($0.time.timeIntervalSince(origin), Double($0.footprintBytes)) }
+        let meanT = points.map(\.0).reduce(0, +) / Double(points.count)
+        let meanY = points.map(\.1).reduce(0, +) / Double(points.count)
+        let covariance = points.map { ($0.0 - meanT) * ($0.1 - meanY) }.reduce(0, +)
+        let variance = points.map { ($0.0 - meanT) * ($0.0 - meanT) }.reduce(0, +)
+        return covariance / variance
     }
 
     private static func megabytes(_ bytes: Double) -> Int {
