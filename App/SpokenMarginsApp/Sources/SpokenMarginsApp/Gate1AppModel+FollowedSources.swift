@@ -516,7 +516,7 @@ extension Gate1AppModel {
                         landedItemId = itemId
                     } else {
                         let itemId = self.listeningSignals.followedArticleImported(
-                            try self.importBrowserTextInBackground(handoff, listenerAdded: startedByListener), for: entry) // #4178
+                            try await self.importBrowserTextInBackgroundReloadingOffMain(handoff, listenerAdded: startedByListener), for: entry) // #4178
                         // The earlier record's text map is kept and the save runs off the main actor (#2509), as for a shared link.
                         var audio: PublisherAudio?
                         if let found = try PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId) {
