@@ -102,4 +102,33 @@ final class TimelinePositionLabelTests: XCTestCase {
             TimelinePositionLabel.currentLine(currentLabel: "Current chapter", currentMs: 6_130_000, percent: percent, isMedia: true),
             "Current chapter · 1:42:10 · 99%")
     }
+
+    // MARK: the text scrubber's percent, shared with the Timeline
+
+    func testTheTextScrubberPercentIsTheNearestWholePercentAndClamped() {
+        XCTAssertEqual(TimelinePositionLabel.textScrubberPercent(offset: 470, length: 1_000), 47)
+        XCTAssertEqual(TimelinePositionLabel.textScrubberPercent(offset: 474.9, length: 1_000), 47)
+        XCTAssertEqual(TimelinePositionLabel.textScrubberPercent(offset: 475, length: 1_000), 48)
+        XCTAssertEqual(TimelinePositionLabel.textScrubberPercent(offset: 0, length: 1_000), 0)
+        XCTAssertEqual(TimelinePositionLabel.textScrubberPercent(offset: 2_000, length: 1_000), 100)
+        XCTAssertEqual(TimelinePositionLabel.textScrubberPercent(offset: -4, length: 1_000), 0)
+    }
+
+    func testTheTextScrubberPercentIsZeroWhileTheLengthIsUnknown() {
+        XCTAssertEqual(TimelinePositionLabel.textScrubberPercent(offset: 50, length: 0), 0)
+        XCTAssertEqual(TimelinePositionLabel.textScrubberPercent(offset: 50, length: -1), 0)
+    }
+
+    // MARK: the media scrubber's spoken value
+
+    func testTheMediaScrubberValueGainsTheSpokenPercent() {
+        XCTAssertEqual(
+            TimelinePositionLabel.appendingSpokenPercent(to: "1:06:48 of 1:43:00", currentMs: 4_008_000, durationMs: 6_180_000),
+            "1:06:48 of 1:43:00, 64 percent")
+    }
+
+    func testTheMediaScrubberValueIsUnchangedWithoutADuration() {
+        XCTAssertEqual(TimelinePositionLabel.appendingSpokenPercent(to: "1:06 of 0:00", currentMs: 66_000, durationMs: nil), "1:06 of 0:00")
+        XCTAssertEqual(TimelinePositionLabel.appendingSpokenPercent(to: "1:06 of 0:00", currentMs: 66_000, durationMs: 0), "1:06 of 0:00")
+    }
 }
