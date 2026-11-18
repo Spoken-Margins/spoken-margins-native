@@ -23,9 +23,6 @@ WRAPS_TEXT_ROWS = {
     # The "Where are you now?" field keeps focus while it is typed in (`@FocusState`); a `ViewThatFits` swap would
     # rebuild it. A column at accessibility sizes, so the placeholder is not cut (#3721).
     "LiveSessionSessionPane.swift": 1,
-    # Each preview button keeps its player in @State and relabels itself "Stop" while playing; a swap between a row and
-    # a column would rebuild the buttons and stop the audio.
-    "SharingExperience.swift": 1,
 }
 
 

@@ -94,4 +94,63 @@ final class ShareReviewStepsTests: XCTestCase {
             "No transcript yet, so this Margin can't be shared. Retry its transcription in Margin detail.")
         XCTAssertNil(ShareReviewSteps.badge(margin()))
     }
+
+    func testThePinnedStepCarriesTheIconOfTheWaitItNames() {
+        let moment = margin(status: .pendingPostResumeSample, playing: true)
+        XCTAssertEqual(ShareReviewSteps.pinnedStep([moment])?.icon, .clock)
+        XCTAssertEqual(ShareReviewSteps.pinnedStep([moment])?.text, ShareReviewSteps.pinnedLine([moment]))
+        XCTAssertEqual(ShareReviewSteps.pinnedStep([moment, margin(words: "pending")])?.icon, .words)
+        XCTAssertNil(ShareReviewSteps.pinnedStep([margin()]))
+    }
+
+    // MARK: From a stored Margin
+
+    private func stored(
+        evidence: [CapturedPodcastAnchorEvidence]? = nil, status: PodcastAnchorEvidenceCaptureStatus? = nil,
+        words: String = "ready"
+    ) -> Interjection {
+        .init(id: "m", itemId: "item", sessionId: "s", targetType: .item, targetId: "item", createdAt: Date(timeIntervalSince1970: 0),
+              roughPercent: 10, anchor: .init(anchorType: .text, startChar: 0, endChar: 1, anchorBefore: "", anchorAfter: ""),
+              audioPath: nil, audioStatus: "ready", transcriptionStatus: words, transcript: nil,
+              cleanedTranscript: nil, displayText: nil, status: "ready",
+              podcastAnchorEvidence: evidence, podcastAnchorEvidenceCaptureStatus: status)
+    }
+
+    private let oneEvidence = CapturedPodcastAnchorEvidence(id: "e", localPath: "/unused", durationMs: 12_000, anchorOffsetMs: 4_000)
+
+    func testAStoredMarginReadsItsEvidenceNilAndEmptyAreTheSameAndNonEmptyGivesNothing() {
+        for evidence in [nil, []] as [[CapturedPodcastAnchorEvidence]?] {
+            let m = ShareReviewSteps.Margin(stored(evidence: evidence, status: .pendingPostResumeSample), isNativeAudio: true, playingThisItem: true)
+            XCTAssertTrue(m.waitsOnMoment, "\(String(describing: evidence))")
+            XCTAssertFalse(m.hasEvidence)
+        }
+        let withEvidence = ShareReviewSteps.Margin(
+            stored(evidence: [oneEvidence], status: .pendingPostResumeSample), isNativeAudio: true, playingThisItem: true)
+        XCTAssertTrue(withEvidence.hasEvidence)
+        XCTAssertEqual(ShareReviewSteps.cardSteps(withEvidence), [])
+        XCTAssertNil(ShareReviewSteps.pinnedLine([withEvidence]))
+    }
+
+    func testAStoredMarginOnAnArticleGivesNothing() {
+        let m = ShareReviewSteps.Margin(stored(status: .pendingPostResumeSample), isNativeAudio: false, playingThisItem: false)
+        XCTAssertEqual(ShareReviewSteps.cardSteps(m), [])
+        XCTAssertNil(ShareReviewSteps.cardNote(m))
+    }
+
+    func testTheWordsWaitIsOffUntilTheDraftRebuildLands() {
+        let pending = stored(status: .pendingPostResumeSample, words: "pending")
+        let off = ShareReviewSteps.Margin(pending, isNativeAudio: true, playingThisItem: true)
+        XCTAssertNil(ShareReviewSteps.badge(off), "no badge a rebuild would never clear")
+        XCTAssertEqual(ShareReviewSteps.cardSteps(off).map(\.icon), [.clock])
+        let on = ShareReviewSteps.Margin(pending, isNativeAudio: true, playingThisItem: true, includesWordsWait: true)
+        XCTAssertEqual(ShareReviewSteps.badge(on), "Waiting for words")
+    }
+
+    func testAStepClearsWhenTheStoredMarginGainsEvidence() {
+        var margin = stored(status: .pendingPostResumeSample)
+        XCTAssertNotNil(ShareReviewSteps.pinnedLine([.init(margin, isNativeAudio: true, playingThisItem: true)]))
+        margin.podcastAnchorEvidence = [oneEvidence]
+        margin.podcastAnchorEvidenceCaptureStatus = .ready
+        XCTAssertNil(ShareReviewSteps.pinnedLine([.init(margin, isNativeAudio: true, playingThisItem: true)]))
+    }
 }

@@ -149,7 +149,7 @@ final class SharedMarginPlaceholderTests: XCTestCase {
     func testTheDraftStartsWithReplaceablePlaceholderWordsAndNoWarning() {
         var draft = ShareInterjectionDraft.initial(
             for: margin(), isIncluded: true, hasVoice: true, itemTitle: "Episode 1 (example episode)",
-            anchorWarning: nil, timeZone: chicago
+            timeZone: chicago
         )
         let words = "Voice Margin at 12:34 in “Episode 1 (example episode)”, recorded 30 Oct 2026"
         XCTAssertEqual(draft.approvedTranscript, words)
@@ -167,14 +167,14 @@ final class SharedMarginPlaceholderTests: XCTestCase {
         XCTAssertTrue(draft.isShowingPlaceholder)
 
         draft.setReviewedWords("Mine again.")
-        draft.restoreOriginal(hasOriginalAudio: true, anchorWarning: nil)
+        draft.restoreOriginal(hasOriginalAudio: true)
         XCTAssertEqual(draft.approvedTranscript, words, "undoing all edits goes back to the placeholder, not to nothing")
     }
 
     func testADraftWithWordsHasNoPlaceholderAndIgnoresPlaceholderEdits() {
         var draft = ShareInterjectionDraft.initial(
             for: margin(transcript: "Remember this.", status: "completed"), isIncluded: true, hasVoice: true,
-            itemTitle: "T", anchorWarning: nil, timeZone: chicago
+            itemTitle: "T", timeZone: chicago
         )
         XCTAssertNil(draft.placeholderText)
         XCTAssertFalse(draft.isShowingPlaceholder)
@@ -187,7 +187,7 @@ final class SharedMarginPlaceholderTests: XCTestCase {
         func draft(_ lastSent: Bool?) -> ShareInterjectionDraft {
             ShareInterjectionDraft.initial(
                 for: margin(transcript: "Remember this.", status: "completed"), isIncluded: true, hasVoice: false,
-                itemTitle: "T", anchorWarning: nil, lastSentReadAloud: lastSent, timeZone: chicago
+                itemTitle: "T", lastSentReadAloud: lastSent, timeZone: chicago
             )
         }
         XCTAssertTrue(draft(nil).readAloud, "never shared: on, as before")
@@ -200,7 +200,7 @@ final class SharedMarginPlaceholderTests: XCTestCase {
     func testAWrittenMarginWithoutWordsIsStillWarnedAndLeftOut() {
         let draft = ShareInterjectionDraft.initial(
             for: margin(captureKind: .written), isIncluded: true, hasVoice: false, itemTitle: "T",
-            anchorWarning: nil, timeZone: chicago
+            timeZone: chicago
         )
         XCTAssertEqual(draft.approvedTranscript, "")
         XCTAssertEqual(draft.warning, SharedMarginTextRequirement.reviewWarningText)
@@ -210,8 +210,8 @@ final class SharedMarginPlaceholderTests: XCTestCase {
     /// #1185: the count on the button is the count in the packet. A word-less voice Margin now counts.
     func testTheCountIncludesAWordlessVoiceMargin() {
         let drafts = [
-            ShareInterjectionDraft.initial(for: margin(), isIncluded: true, hasVoice: true, itemTitle: "T", anchorWarning: nil),
-            ShareInterjectionDraft.initial(for: margin(captureKind: .written), isIncluded: true, hasVoice: false, itemTitle: "T", anchorWarning: nil),
+            ShareInterjectionDraft.initial(for: margin(), isIncluded: true, hasVoice: true, itemTitle: "T"),
+            ShareInterjectionDraft.initial(for: margin(captureKind: .written), isIncluded: true, hasVoice: false, itemTitle: "T"),
         ]
         let summary = SharedMarginSelectionSummary(drafts, isIncluded: \.isIncluded, text: \.approvedTranscript)
         XCTAssertEqual(summary.packetCount, 1)
@@ -230,7 +230,7 @@ final class SharedMarginPlaceholderTests: XCTestCase {
         try writeClip(to: audio)
 
         let draft = ShareInterjectionDraft.initial(
-            for: margin(), isIncluded: true, hasVoice: true, itemTitle: "A Useful Article", anchorWarning: nil, timeZone: chicago
+            for: margin(), isIncluded: true, hasVoice: true, itemTitle: "A Useful Article", timeZone: chicago
         )
         let words = "Voice Margin at 12:34 in “A Useful Article”, recorded 30 Oct 2026"
         XCTAssertEqual(draft.approvedTranscript, words)

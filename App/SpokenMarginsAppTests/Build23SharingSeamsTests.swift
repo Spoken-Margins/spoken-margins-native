@@ -120,6 +120,62 @@ final class Build23SharingSeamsTests: XCTestCase {
         XCTAssertEqual(coordinator.stage, .share)
     }
 
+    /// #3839: the moment step reads the stored Margin and whether this item is playing each time, so it clears when the
+    /// sample lands without the sheet reopening, says "Play the episode" while the item is paused or another one plays,
+    /// and a flip of playback reaches the sheet.
+    func testTheMomentStepFollowsTheStoredMarginAndPlaybackWithoutReopening() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: root.appending(path: "library.sqlite"))
+        model.resetAndSeed()
+        let itemID = model.selectedItem.id
+        model.selectedItem.isNativeAudio = true
+        model.selectedItem.interjections = [Interjection(
+            id: "margin-just-recorded", itemId: itemID, sessionId: "session-test", targetType: .item, targetId: itemID,
+            createdAt: Date(), roughPercent: 40,
+            anchor: Anchor(anchorType: .text, startChar: 0, endChar: 5, anchorBefore: "Before", anchorAfter: "After"),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "Just recorded.",
+            cleanedTranscript: nil, displayText: nil, status: "active",
+            podcastAnchorEvidenceCaptureStatus: .pendingPostResumeSample
+        )]
+        let coordinator = Build23SharingCoordinator(model: model)
+        coordinator.send(.begin)
+        coordinator.send(.advanceToReview)
+        try await waitUntilQuiet(coordinator)
+
+        func firstStep() -> String? { coordinator.snapshot.margins.first?.steps.first?.text }
+        XCTAssertEqual(coordinator.snapshot.margins.first?.steps.first?.icon, .clock)
+        XCTAssertTrue(firstStep()?.hasPrefix("Play the episode for about 12 seconds") == true, "paused: \(String(describing: firstStep()))")
+        XCTAssertTrue(coordinator.snapshot.pinnedStep?.text.hasPrefix("Play the episode") == true)
+
+        // Another item playing does not count as this one.
+        model.snapshot.itemId = "another-episode"
+        model.snapshot.status = .playing
+        XCTAssertTrue(firstStep()?.hasPrefix("Play the episode") == true, "another item plays: \(String(describing: firstStep()))")
+
+        // This item playing changes the words, and the change reaches the sheet.
+        var notifications = 0
+        let subscription = coordinator.objectWillChange.sink { notifications += 1 }
+        defer { withExtendedLifetime(subscription) {} }
+        model.snapshot.itemId = itemID
+        let clock = ContinuousClock()
+        let start = clock.now
+        while notifications == 0, clock.now - start < .seconds(10) { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThan(notifications, 0, "playback of this item starting must reach the sheet")
+        XCTAssertTrue(firstStep()?.hasPrefix("Finding the exact moment for this Margin") == true, String(describing: firstStep()))
+        XCTAssertTrue(coordinator.snapshot.pinnedStep?.text.hasPrefix("Finding the exact moment for your new Margin") == true)
+
+        // The sample lands in the stored Margin: no step, no pinned line, nothing reopened.
+        model.selectedItem.interjections[0].podcastAnchorEvidence = [
+            CapturedPodcastAnchorEvidence(id: "evidence", localPath: "/unused", durationMs: 12_000, anchorOffsetMs: 4_000)
+        ]
+        model.selectedItem.interjections[0].podcastAnchorEvidenceCaptureStatus = .ready
+        XCTAssertEqual(coordinator.snapshot.margins.first?.steps, [])
+        XCTAssertNil(coordinator.snapshot.margins.first?.placementNote)
+        XCTAssertNil(coordinator.snapshot.pinnedStep)
+    }
+
     func testSenderStageVocabularyIsFrozenInReleaseOrder() {
         XCTAssertEqual(
             Build23SharingStage.allCases.map(\.rawValue),

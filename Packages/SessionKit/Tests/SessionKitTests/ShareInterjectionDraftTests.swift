@@ -141,7 +141,7 @@ final class ShareInterjectionDraftTests: XCTestCase {
                 draft.isPreparingCleanup = true
                 draft.preparationMessage = "Preparing"
                 draft.renderGeneration = 7
-                draft.restoreOriginal(hasOriginalAudio: hasAudio, anchorWarning: "Anchor warning")
+                draft.restoreOriginal(hasOriginalAudio: hasAudio)
                 XCTAssertEqual(draft.editHistory, [.original])
                 XCTAssertEqual(draft.editHistoryIndex, 0)
                 XCTAssertNil(draft.cleanup)
@@ -152,9 +152,10 @@ final class ShareInterjectionDraftTests: XCTestCase {
                 XCTAssertNil(draft.preparationMessage)
                 XCTAssertEqual(draft.approvedTranscript, expected)
                 XCTAssertEqual(draft.representationChoice, hasAudio ? .original : .textOnly)
+                // The placement wait is no longer a warning on the draft (#3839): it is a live step on the card.
                 XCTAssertEqual(draft.warning, expected.isEmpty
                     ? "No transcript yet, so this Margin can't be shared. Retry its transcription in Margin detail."
-                    : "Anchor warning")
+                    : nil)
                 XCTAssertEqual(draft.acousticPauseDecisions, [acousticPause])
                 XCTAssertEqual(draft.renderGeneration, 7)
             }
@@ -280,6 +281,30 @@ final class ShareInterjectionDraftTests: XCTestCase {
 
     private var acousticPause: InterjectionCleanupDecision {
         .init(id: "acoustic", kind: .longPause, startMs: 700, endMs: 1_500)
+    }
+
+    /// #3839: the review's step reads the stored Margin, so the packet must be built from it too. Evidence the stored
+    /// Margin gains while the sheet is open reaches the draft; the sender's words and edits never change.
+    func testTheDraftTakesEvidenceTheStoredMarginGainsAndNothingElse() {
+        var draft = makeDraft()
+        draft.approvedTranscript = "The sender's own words"
+        XCTAssertFalse(draft.refreshAnchorEvidence(from: draft.interjection), "an unchanged Margin is no change")
+        var stored = draft.interjection
+        stored.transcript = "Different stored words"
+        stored.podcastAnchorEvidence = [CapturedPodcastAnchorEvidence(id: "e", localPath: "/unused", durationMs: 12_000, anchorOffsetMs: 4_000)]
+        stored.podcastAnchorEvidenceCaptureStatus = .ready
+        stored.sourceExactEditionSHA256 = "sha"
+        XCTAssertTrue(draft.refreshAnchorEvidence(from: stored))
+        XCTAssertEqual(draft.interjection.podcastAnchorEvidence?.map(\.id), ["e"])
+        XCTAssertEqual(draft.interjection.podcastAnchorEvidenceCaptureStatus, .ready)
+        XCTAssertEqual(draft.interjection.sourceExactEditionSHA256, "sha")
+        XCTAssertEqual(draft.approvedTranscript, "The sender's own words")
+        XCTAssertNotEqual(draft.interjection.transcript, "Different stored words")
+        XCTAssertFalse(draft.refreshAnchorEvidence(from: stored), "the second read changes nothing")
+        var other = stored
+        other.id = "another"
+        other.podcastAnchorEvidence = nil
+        XCTAssertFalse(draft.refreshAnchorEvidence(from: other), "another Margin's evidence is never taken")
     }
 
     private func makeDraft() -> ShareInterjectionDraft {

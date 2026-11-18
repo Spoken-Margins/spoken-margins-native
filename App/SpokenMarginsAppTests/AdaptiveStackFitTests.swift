@@ -22,7 +22,6 @@ final class AdaptiveStackFitTests: XCTestCase {
         ("three buttons", ["Back to selection", "Send as a file", "Preview what your friend gets"]),
         ("undo and redo", ["Undo", "Redo", "Undo all edits"]),
         ("prepare queue", ["Prioritize", "Prepare Now", "Don't Prepare"]),
-        ("preview audio", ["Preview Original", "Preview Cleaned"]),
     ]
 
     func testEveryRowIsOneLineOfButtonsOrTheSameButtonsStacked() {
