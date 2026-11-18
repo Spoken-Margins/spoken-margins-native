@@ -2501,6 +2501,22 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         GROUP BY layer.item_id;
         """
 
+    /// Who sent them (#3794): per item and layer, the sender's id and name as the layer saved them, and how many Margins
+    /// of that layer count. The same rows as `sharedMarginTalliesSQL`, so a deleted layer, a hidden sender and a hidden
+    /// Margin leave the names exactly as they leave the count. One grouped read in the Library's snapshot, no query per
+    /// row; the layer match stays a plain equality on the primary key for the same reason. Swift merges the layers of
+    /// one friend (`SharedMarginTally.Sender`).
+    static let sharedMarginSendersSQL = """
+        SELECT layer.item_id, json_extract(layer.payload, '$.senderId'), json_extract(layer.payload, '$.displayLabel'), COUNT(note.id)
+        FROM records AS note
+        JOIN records AS layer
+          ON layer.kind = ?2
+         AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
+        WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
+          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        GROUP BY layer.item_id, layer.id;
+        """
+
     /// The narrow read behind that last column: the same rows, with only what `SharedMarginHearing.noteCanBeMet` needs.
     /// No Margin is decoded. The CASE keeps a broken payload from failing the read: it gives no match, as above.
     static let newNotesSQL = """
@@ -2564,10 +2580,34 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
                 anyNewNote = anyNewNote || sqlite3_column_int64(statement, 3) > 0
             }
             let unmet = anyNewNote ? try newNotesNobodyCanMeet(connection, hidden: hidden) : [:]
+            let senders = counts.isEmpty ? [:] : try sharedMarginSenders(connection, hidden: hidden)
             return counts.reduce(into: [:]) { tallies, entry in
-                tallies[entry.key] = SharedMarginTally(total: entry.value.total, new: entry.value.new - (unmet[entry.key] ?? 0))
+                tallies[entry.key] = SharedMarginTally(
+                    total: entry.value.total, new: entry.value.new - (unmet[entry.key] ?? 0), senders: senders[entry.key] ?? [])
             }
         }
+    }
+
+    /// Per item, who sent the counted Margins (#3794), from `sharedMarginSendersSQL`.
+    private func sharedMarginSenders(_ connection: OpaquePointer?, hidden: HiddenSenders) throws -> [String: [SharedMarginTally.Sender]] {
+        let (sql, bindings) = Self.hidingFromSharedMarginSQL(Self.sharedMarginSendersSQL, before: "GROUP BY layer.item_id, layer.id;", hidden: hidden)
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_shared_margin_senders")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: "imported_commentary_interjection")
+        bind(statement, index: 2, value: "imported_commentary_layer")
+        for (offset, value) in bindings.enumerated() { bind(statement, index: Int32(3 + offset), value: value) }
+        var senders: [String: [SharedMarginTally.Sender]] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let item = sqlite3_column_text(statement, 0) else { continue }
+            let id = sqlite3_column_text(statement, 1).map { String(cString: $0) }
+            let name = sqlite3_column_text(statement, 2).map { String(cString: $0) }
+            senders[String(cString: item), default: []].append(
+                SharedMarginTally.Sender(key: id, name: name, count: Int(sqlite3_column_int64(statement, 3))))
+        }
+        return senders
     }
 
     /// Per item, when the newest friend layer that has a counted Margin was imported (#4101), for the Library's Recently
@@ -2637,10 +2677,10 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
 
     /// SQLite's plan for `loadSharedMarginTallies`, one line per step, so a test can tell a primary-key
     /// lookup of each layer from a scan of every layer.
-    func sharedMarginTalliesQueryPlan() throws -> [String] {
+    func sharedMarginTalliesQueryPlan(of sql: String = SQLiteSessionStore.sharedMarginTalliesSQL) throws -> [String] {
         try withReadConnection { connection in
             var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(connection, "EXPLAIN QUERY PLAN " + Self.sharedMarginTalliesSQL, -1, &statement, nil) == SQLITE_OK else {
+            guard sqlite3_prepare_v2(connection, "EXPLAIN QUERY PLAN " + sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_shared_margin_tallies_plan")
             }
             defer { sqlite3_finalize(statement) }

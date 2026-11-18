@@ -1,0 +1,151 @@
+import Foundation
+
+/// The Library row's words for who sent the Margins on an item, and the "Completed hidden" note that says when
+/// the hidden items hold friends' Margins (#3794). Pure and host-tested: the row draws these strings, and nothing
+/// here reads the database. They sit beside `SharedMarginTally.libraryLine`, which the view keeps reading until
+/// the visible change switches it over.
+extension SharedMarginTally {
+    /// One friend whose Margins are on an item. `key` is what tells two people apart (the sender's id; for a sender
+    /// with no id, the name), so the same friend in two packets is one sender.
+    public struct Sender: Hashable, Sendable {
+        public let key: String
+        /// The name as the friend gave it, trimmed; empty when they gave none.
+        public let name: String
+        public let count: Int
+
+        public init(key: String? = nil, name: String?, count: Int) {
+            let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            self.name = Self.isStandIn(trimmed) ? "" : trimmed
+            let id = (key ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            self.key = id.isEmpty ? (self.name.isEmpty ? "" : "name:" + self.name.folded) : "id:" + id
+            self.count = max(0, count)
+        }
+
+        fileprivate init(merging first: Sender, _ second: Sender) {
+            key = first.key
+            name = first.name.isEmpty ? second.name : first.name
+            count = first.count + second.count
+        }
+
+        public var isNamed: Bool { !name.isEmpty }
+
+        /// "Someone" and "a friend" are the app's own stand-ins for no name (2026-11-09), not a name to show.
+        static func isStandIn(_ name: String) -> Bool {
+            let folded = name.folded
+            return folded.isEmpty || folded == MarginLayerSynthesis.unnamedSenderLabel.folded || folded == "a friend"
+        }
+
+        /// The name as the row shows it: over 24 characters, the first 23 and an ellipsis.
+        var shownName: String {
+            name.count > 24 ? String(name.prefix(23)) + "…" : name
+        }
+    }
+
+    /// Senders merged by `key`; the unnamed with no id are one sender. Most Margins first, then by name.
+    static func mergedSenders(_ senders: [Sender]) -> [Sender] {
+        var order: [String] = []
+        var merged: [String: Sender] = [:]
+        for sender in senders where sender.count > 0 {
+            if let existing = merged[sender.key] {
+                merged[sender.key] = Sender(merging: existing, sender)
+            } else {
+                order.append(sender.key)
+                merged[sender.key] = sender
+            }
+        }
+        return order.compactMap { merged[$0] }.sorted {
+            if $0.count != $1.count { return $0.count > $1.count }
+            return $0.shownLabel.folded < $1.shownLabel.folded
+        }
+    }
+
+    /// The counts alone, without who sent them, for the places that compare what counts apart from the names.
+    public var counts: SharedMarginTally { SharedMarginTally(total: total, new: new) }
+
+    /// "2 new Margins from Cole", "3 Margins from Cole · 1 new", "1 new reply and 1 new Margin from Sam",
+    /// "5 Margins from Cole and Sam", "5 Margins from 3 friends · 2 new", "2 new Margins from a friend".
+    /// Nil when nobody shared a Margin on the item.
+    public var senderLine: String? { senderWords(spokenSuffix: false) }
+
+    /// What VoiceOver says: the same words, and ", 1 new to you" in place of " · 1 new".
+    public var senderAccessibilityLine: String? { senderWords(spokenSuffix: true) }
+
+    private func senderWords(spokenSuffix: Bool) -> String? {
+        guard total > 0 else { return nil }
+        let people = Self.mergedSenders(senders)
+        // A tally with no sender read (an older caller) is one friend with no name.
+        let who = Self.who(people)
+        let wordsAreNew = new == total
+        let somewhatNew = new > 0 && new < total
+        let marginCount = total - min(max(replies, 0), total)
+        let replyCount = total - marginCount
+        let countWords: String
+        if people.count >= 2 || replyCount == 0 {
+            countWords = Self.count(total, noun: "Margin", plural: "Margins", isNew: wordsAreNew)
+        } else if marginCount == 0 {
+            countWords = Self.count(replyCount, noun: "reply", plural: "replies", isNew: wordsAreNew)
+        } else {
+            countWords = Self.count(replyCount, noun: "reply", plural: "replies", isNew: wordsAreNew)
+                + " and " + Self.count(marginCount, noun: "Margin", plural: "Margins", isNew: wordsAreNew)
+        }
+        var line = "\(countWords) from \(who)"
+        if somewhatNew { line += spokenSuffix ? ", \(new) new to you" : " · \(new) new" }
+        return line
+    }
+
+    /// "1 reply", "2 new replies": `new` goes before the noun when everything is new.
+    private static func count(_ n: Int, noun: String, plural: String, isNew: Bool) -> String {
+        "\(n) \(isNew ? "new " : "")\(n == 1 ? noun : plural)"
+    }
+
+    private static func who(_ people: [Sender]) -> String {
+        guard !people.isEmpty else { return "a friend" }
+        let named = people.filter(\.isNamed).count
+        switch people.count {
+        case 1:
+            return people[0].isNamed ? people[0].shownName : "a friend"
+        case 2:
+            if named == 0 { return "friends" }
+            return people.map { $0.isNamed ? $0.shownName : "a friend" }.joined(separator: " and ")
+        default:
+            return "\(people.count) friends"
+        }
+    }
+
+    /// Whether a Library search finds the item through who sent the Margins: the same match as titles (case and
+    /// diacritics ignored, a substring). An unnamed sender matches nothing, so "friend" finds nobody.
+    public func senderMatches(_ query: String) -> Bool {
+        let wanted = query.trimmingCharacters(in: .whitespacesAndNewlines).folded
+        guard !wanted.isEmpty else { return false }
+        return Self.mergedSenders(senders).contains { $0.isNamed && $0.name.folded.localizedStandardContains(wanted) }
+    }
+}
+
+extension SharedMarginTally.Sender {
+    /// The sort label: the name, or "a friend".
+    fileprivate var shownLabel: String { isNamed ? shownName : "a friend" }
+}
+
+/// What "Completed hidden" adds when a hidden completed item still has a friend's Margins on it (#3794). Items
+/// with unheard Margins are not hidden (#4103), so these are all heard. The view puts a dot before it.
+public enum LibraryCompletedHiddenNote {
+    /// - Parameter items: for each hidden completed item that has friends' Margins, its tally.
+    /// - Returns: "1 has Margins from Cole" (one item, one sender), "1 has Margins from friends" (one item, several
+    ///   senders), "2 have Margins from friends" (two or more items); nil when no hidden item has any.
+    public static func words(items: [SharedMarginTally]) -> String? {
+        let withMargins = items.filter { !$0.isEmpty }
+        guard !withMargins.isEmpty else { return nil }
+        if withMargins.count > 1 { return "\(withMargins.count) have Margins from friends" }
+        let people = SharedMarginTally.mergedSenders(withMargins[0].senders)
+        if people.count == 1, let only = people.first, only.isNamed { return "1 has Margins from \(only.shownName)" }
+        if people.count <= 1 { return "1 has Margins from a friend" }
+        return "1 has Margins from friends"
+    }
+}
+
+extension String {
+    /// Case and diacritics ignored, as the Library search folds titles.
+    fileprivate var folded: String {
+        folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+    }
+}

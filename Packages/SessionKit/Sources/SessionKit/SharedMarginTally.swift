@@ -7,11 +7,18 @@ public struct SharedMarginTally: Hashable, Sendable {
 
     public let total: Int
     public let new: Int
+    /// Who sent them (#3794): the friends whose Margins these are, merged by sender, as `SharedMarginTally.Sender`.
+    /// Empty from a caller that doesn't read them; `senderLine` then says "a friend".
+    public let senders: [Sender]
+    /// How many of `total` are replies to the listener's own Margins (#3889's rule), for `senderLine`'s words.
+    public let replies: Int
 
-    public init(total: Int, new: Int) {
+    public init(total: Int, new: Int, senders: [Sender] = [], replies: Int = 0) {
         let total = max(0, total)
         self.total = total
         self.new = min(max(0, new), total)
+        self.senders = Self.mergedSenders(senders)
+        self.replies = min(max(0, replies), total)
     }
 
     public var isEmpty: Bool { total == 0 }
