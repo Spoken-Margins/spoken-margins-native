@@ -25,7 +25,7 @@ It compares your branch (uncommitted files included) with `origin/main`, prints 
 
 ## 3. Ask the lane
 
-1. Merge `origin/main` into your branch and push. The lane tests the pushed commit, not your working tree.
+1. Push your branch. The lane tests the pushed commit, not your working tree, and merges the newest `main` in itself. Merge `origin/main` in first only if the PR conflicts with `main` (AGENTS.md, "Merge `main` into a branch only when you must").
 2. On your draft PR into `main`, post the request exactly in the format from test-lane.md, then add the `lane:queued` label:
 
    ```bash
@@ -67,7 +67,7 @@ It compares your branch (uncommitted files included) with `origin/main`, prints 
 A PR is done when it's armed (owner overlay `OWNER.md`, "How to work"). Never stop before that:
 
 1. Run `.venv/bin/python scripts/verify-tests.py --plan fast` (or just `scripts/hot_file_ratchet.py`, 5 seconds) after `git fetch origin next`. Its first step is the lane's hot-file ratchet: if it says "Move N lines out of it, or ask the desk for the hot-file-ok label", move the lines out of `Gate1AppModel.swift` or `Gate1RootView.swift` into a focused type before you push. A lane FAIL on the ratchet costs a queue trip of hours (#2175). With `hot-file-ok` granted, set `SM_HOT_FILE_OK=1`.
-2. Merge `origin/main` into your branch and push. GitHub builds the run from the PR's merge ref, which it doesn't refresh when `main` moves, so a branch last pushed before the lane workflow reached `main` (#221), or one that conflicts with `main`, gets no run.
+2. Push. Merge `origin/main` in first only when the PR conflicts with `main`, or when it got no lane run because its branch was last pushed before the lane workflow changed on `main` (GitHub builds the run from the PR's merge ref, which it doesn't refresh when `main` moves, #221). The runner merges the newest `main` in itself, so don't merge it in just to refresh.
 3. A T3 is optional and never holds the merge (#4572); `main` gets a scheduled T3 (#4573). If you want one anyway, post the `/lane T3` request and add `lane:queued` (section 3). Adding a label that's already on the PR triggers nothing, so if `lane:queued` was already there (a T4 waiting), remove it and add it again. The PR must target `main` from a branch in this repository.
 4. Add `automerge` once the issue's "Done when" holds; don't wait for a T3. The runner then runs the host tests and builds the diff needs, and runs again on every push while the label stays ([test-lane.md](../../../docs/workstreams/test-lane.md), Request format).
 5. Post a short summary on the PR. Then take the next `ready` issue, or, above about 250,000 tokens of context, post a short note on the issue and stop (owner overlay `OWNER.md`, "How to work").
