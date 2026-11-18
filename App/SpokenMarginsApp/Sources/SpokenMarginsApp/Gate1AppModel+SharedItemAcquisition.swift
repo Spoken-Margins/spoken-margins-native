@@ -34,6 +34,6 @@ extension Gate1AppModel {
             throw SessionKitError.persistenceFailed("shared_article_unreadable")
         }
         diagnostics["lastSharedArticleAcquisition"] = "fetched:\(url.absoluteString)"
-        return try importBrowserTextInBackground(handoff)
+        return try await importBrowserTextInBackgroundReloadingOffMain(handoff)
     }
 }

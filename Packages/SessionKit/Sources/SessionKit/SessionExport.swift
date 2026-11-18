@@ -61,6 +61,13 @@ public struct ExportInterjection: Codable, Equatable {
     /// Where a source Margin's anchor starts in the item's text. A text item has no media clock, so
     /// this orders its Margins within a percent (#1439).
     public var sourceCharOffset: Int? = nil
+    /// True only for a moved Margin captured with no playback position (#4233); nil otherwise, so it stays out of every
+    /// other Margin's export. Its `roughPercent`, `mediaTimeMs` and `sourceCharOffset` are then zeros that mean nothing:
+    /// read `hasPlace`, not them.
+    public var noPlace: Bool? = nil
+
+    /// Whether this Margin has a place on its item (`Interjection.hasPlace`).
+    public var hasPlace: Bool { noPlace != true }
 }
 
 public struct ExportOptions: Equatable {

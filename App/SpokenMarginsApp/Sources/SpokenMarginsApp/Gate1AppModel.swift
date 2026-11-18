@@ -58,7 +58,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private var presentedScreen: Gate1Screen = .home
     @Published var requestedExperienceRoot: AppRoot?
     @Published var marginCollectionQuery = MarginCollectionQuery()
-    @Published var sharedMarginRows: [SharedMarginRow] = []
+    @Published var sharedMarginRows: [SharedMarginRow] = [] { didSet { updateSkimAvailability(refreshResources: false) } } // Skim's stops are these Margins (#4447)
     @Published var justHeardPeek = JustHeardPeekState() // a podcast's "Just heard" words, transcribed after the tap (#2966)
     var screen: Gate1Screen {
         get { presentedScreen }
@@ -236,7 +236,7 @@ final class Gate1AppModel: ObservableObject {
             }
         }
     }
-    @Published var marginRows: [MarginRow] = []
+    @Published var marginRows: [MarginRow] = [] { didSet { updateSkimAvailability(refreshResources: false) } } // Skim's stops are these Margins (#4447)
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
     @Published var recordingCaptureHealth: MarginCaptureSupervisor.Health = .capturing // written by Gate1AppModel+MarginCapture only
     var captureWatcher = MarginCaptureWatcher(); var compactBeginContext = CompactBeginContext() // the latter: what came just before a Lock Screen or headset Margin start (#4414); one line, the hot-file ratchet
@@ -298,6 +298,7 @@ final class Gate1AppModel: ObservableObject {
         return snapshot.skimBridgeState?.status == .playing || snapshot.status.isPlaybackActive
     }
     let quickAccess = QuickAccessFolderState() // the Quick Folder; its changes are relayed in init (#981)
+    let libraryCollections = LibraryCollectionModel() // the Library's collection chips; relayed in init (#4343)
     @Published var sourceImportProgressMessage: String?
     @Published var importInbox: [ImportInboxEntry] = []
     @Published var sourceLinksWaitingForNetwork = 0 // shared links left pending while offline (#1546)
@@ -677,6 +678,7 @@ final class Gate1AppModel: ObservableObject {
         sanitizeTTSMode()
         settingsValueChanged()
         wireQuickAccessFolder()
+        wireLibraryCollections()
         refreshQuickAccessFolder()
         streamingSpeechQueue.onTurnDrained = { [weak self] turnId in
             self?.finishStreamingTurnIfReady(turnId)
@@ -1528,16 +1530,8 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    var visibleLibraryItems: [LibraryItemRow] {
-        LibraryQueryEngine.visibleLibraryItems(libraryItems, query: libraryQuery)
-    }
-
     static func loadLibraryListeningFilter(defaults: UserDefaults) -> LibraryListeningStateFilter {
         LibraryQueryEngine.loadLibraryListeningFilter(defaults: defaults)
-    }
-
-    var libraryIsCaughtUp: Bool {
-        LibraryQueryEngine.libraryIsCaughtUp(libraryItems, query: libraryQuery)
     }
 
     var libraryHidesCompleted: Bool {
@@ -2333,7 +2327,7 @@ final class Gate1AppModel: ObservableObject {
                         return
                     }
                     var stable = handoff; stable.itemId = id
-                    try importBrowserTextInBackground(stable)
+                    try await importBrowserTextInBackgroundReloadingOffMain(stable)
                     reportConfirmation("Added article. Your reading service has not been changed.")
                 } else {
                     // URL-only services use the existing local readable-page importer,
@@ -2346,7 +2340,7 @@ final class Gate1AppModel: ObservableObject {
                         reportConfirmation("This article is already in your Library."); return
                     }
                     handoff.itemId = id
-                    try importBrowserTextInBackground(handoff)
+                    try await importBrowserTextInBackgroundReloadingOffMain(handoff)
                     reportConfirmation("Added article from its original website.")
                 }
             } catch { reportFailure(error, context: "Article import failed") }

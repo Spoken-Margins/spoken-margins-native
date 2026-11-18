@@ -25,6 +25,27 @@ test.beforeEach(async ({}, info) => {
 
 const audioTime = (page: Page) => page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.currentTime);
 
+/**
+ * Waits until every write the page has already started to the Margins store has landed. IndexedDB runs read-write
+ * transactions on one store in the order they were made, so an empty read-write transaction made now finishes only after
+ * the earlier ones. A test that reloads to see what was kept calls this first: a reload kills a write still in flight, and
+ * the page shows the pending star at once, so the screen alone can't say the second of two quick taps has been written (#4525).
+ */
+const settleMarginWrites = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open('spoken-margins');
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const tx = open.result.transaction('margins', 'readwrite');
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error ?? new Error('The Margins store write was aborted.'));
+        };
+      }),
+  );
+
 async function friendPage(context: BrowserContext): Promise<Page> {
   const page = await context.newPage();
   await serveFixtures(page);
@@ -702,6 +723,7 @@ test('a double tap on Select all and on a star ends where the buttons say, not w
   await expect(list.getByRole('button', { name: 'Select none' })).toBeVisible();
   // In the Margins tab after a reload: a star made above is kept, and a double tap on an unstarred Margin writes on then
   // off, so it is off in the store too (a second reload shows what was kept).
+  await settleMarginWrites(page);
   await page.reload();
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
   const stored = (words: string) => page.locator('li.margin').filter({ hasText: words }).getByRole('button', { name: 'Star for sharing' });
@@ -709,6 +731,7 @@ test('a double tap on Select all and on a star ends where the buttons say, not w
   await expect(stored('First note.')).toHaveAttribute('aria-pressed', 'false');
   await stored('First note.').dblclick();
   await expect(stored('First note.')).toHaveAttribute('aria-pressed', 'false');
+  await settleMarginWrites(page); // the second tap's write, not only the button, before the reload (#4525)
   await page.reload();
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
   await expect(stored('First note.')).toHaveAttribute('aria-pressed', 'false');
@@ -753,6 +776,7 @@ test('star two of four Margins and Share starts only those ticked and writes onl
   // A star is not in the file at all.
   expect(JSON.stringify(sent.paths)).not.toContain('star');
   // Stars are kept with the Margin: a fresh page of the same browser still has them, and a tap clears one.
+  await settleMarginWrites(page);
   await page.reload();
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
   const inTab = page.locator('li.margin').filter({ hasText: 'Second note.' });

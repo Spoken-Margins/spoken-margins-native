@@ -197,6 +197,7 @@ public enum ImportedMarginResends {
             var margin = entry.margin
             if let incoming = plan.incomingByHeldMargin[entry.margin.id] {
                 margin.followSenderReadAloud(of: incoming, arrivedAt: layer.importedAt)
+                margin.followSenderLeadIn(of: incoming, arrivedAt: layer.importedAt)
             }
             margin.alsoSharedAs = (margin.alsoSharedAs ?? []) + identities.filter { !(margin.alsoSharedAs ?? []).contains($0) }
             try repository.saveImportedCommentaryInterjection(margin)
@@ -221,5 +222,17 @@ extension ImportedCommentaryInterjection {
               choice != (senderReadAloud ?? true) else { return }
         senderReadAloud = incoming.senderReadAloud
         senderReadAloudAt = arrivedAt
+    }
+
+    /// A re-sent Margin can change how much of the episode the sender asks the friend to hear first (#4171): the held
+    /// copy follows the length in the newest packet. A packet with no length changes nothing, because the sender's app
+    /// writes no key for the default, so a re-share that merely repeats an earlier Margin must not cancel an earlier
+    /// length. An explicit 20 000 really is the sender taking a length back, so it resets the copy to the default. No
+    /// `isWritten` guard: spoken Margins have a run-up too. The length is not part of `Fingerprint`, so a change never
+    /// makes a second copy.
+    mutating func followSenderLeadIn(of incoming: ImportedCommentaryInterjection, arrivedAt: Date) {
+        guard let length = incoming.senderLeadInMs, length != senderLeadInMs else { return }
+        senderLeadInMs = length
+        senderLeadInAt = arrivedAt
     }
 }

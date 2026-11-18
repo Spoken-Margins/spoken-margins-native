@@ -96,8 +96,10 @@ public struct ClipboardLinkOffer: Equatable, Sendable {
     /// something to show: the link to add, or the message for why nothing was added (#2835).
     public static func pasteResult(for content: String?) -> PasteResult {
         if (content ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .nothingPasted }
-        if case .link(let url) = ClipboardIntakeClassifier.classify(content) { return .link(url) }
-        return .notALink
+        switch PasteIntake.classify(content) {
+        case .shareLink(let url), .intake(.link(let url)): return .link(url) // a friend's link is added too (#3782)
+        case .intake: return .notALink
+        }
     }
 
     public enum PasteResult: Equatable, Sendable {

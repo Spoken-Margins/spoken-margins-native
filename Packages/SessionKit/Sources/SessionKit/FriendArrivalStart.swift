@@ -62,6 +62,35 @@ public struct FriendArrivalStart: Equatable, Sendable {
 
     /// The one line above the two buttons while a tap is kept.
     public static let waitingLine = "Getting the episode ready. It starts by itself."
+
+    /// How long a kept tap waits before the screen starts anyway: the review's own path then says what is missing, as it
+    /// does for "Skip to the Margins" today (`WrittenMarginReadings.reviewHold`, 10 s, and the lead-in's 20 s more).
+    public static let keptLimit: TimeInterval = 30
+
+    /// The item screen's facts as this type takes them. Play's `episodeCanStart` is the item's own audio: a text item's
+    /// speech still being made or queued is not ready, a podcast streams while its file downloads (today's rule for
+    /// Play, which this does not change), and a failed preparation is `failed`.
+    public init(startupAudio: NativeTextStartupAudioState, firstMargin: FirstMarginAudio?) {
+        self.init(
+            episodeCanStart: ![.waiting, .preparing, .failed].contains(startupAudio),
+            episodeFailed: startupAudio == .failed,
+            firstMargin: firstMargin)
+    }
+}
+
+extension FriendArrivalStart.FirstMarginAudio {
+    /// What the first Margin in Skip order has, from the one place that decides it (`SharedMarginAudio.resolve`). A
+    /// recording that is gone from this phone is `unavailable`, not waiting: nothing will bring it, and the review says why.
+    public init(_ audio: SharedMarginAudio) {
+        switch audio {
+        case .voiceFile: self = .recording(onPhone: true)
+        case .readingReady: self = .reading(isReady: true)
+        // A long note is not rendered ahead, so nothing would make it ready while a tap waits; the review starts it and
+        // holds for it itself (`WrittenMarginReadings.holdReview`), so the tap goes through.
+        case .readingRendering(let reading, _): self = .reading(isReady: !reading.isShortEnoughToRenderAhead)
+        case .cannotBeRead: self = .unavailable
+        }
+    }
 }
 
 /// The tap the friend made before its start was possible, for one item (#3788). Held in a small presenter the item

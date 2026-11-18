@@ -19,6 +19,7 @@ let package = Package(
         .library(name: "SessionKitSpeechFrontEnd", targets: ["SessionKitSpeechFrontEnd"]),
         .library(name: "SessionKitEPUB", targets: ["SessionKitEPUB"]),
         .library(name: "SessionKitFeeds", targets: ["SessionKitFeeds"]),
+        .library(name: "SessionKitPDF", targets: ["SessionKitPDF"]),
         .executable(name: "speech-bench", targets: ["SpeechBench"]),
         // Renders the guided tour clip with the bundled Kitten voice (#2051). The app never links it.
         .executable(name: "tour-render", targets: ["TourRender"]),
@@ -30,7 +31,7 @@ let package = Package(
     ],
     dependencies: [
         .package(
-            url: "https://github.com/microsoft/onnxruntime-swift-package-manager.git",
+            url: "https://github.com/Spoken-Margins/onnxruntime-swift-package-manager.git",
             exact: "1.24.2"
         ),
         .package(
@@ -102,6 +103,13 @@ let package = Package(
             name: "SessionKitFeeds",
             dependencies: ["SessionKit"]
         ),
+        // The PDFKit side of exporting Margins as comments in a copy of a PDF (#4338). The rules it runs on
+        // (`MarginCommentPlan`, `PDFSentenceLocator`) are in SessionKit and host-test on Linux; this target only asks
+        // PDFKit for page text and rectangles, so it is Apple only and SessionKit itself stays free of PDFKit.
+        .target(
+            name: "SessionKitPDF",
+            dependencies: ["SessionKit"]
+        ),
         // The canary's verdict rules (#2027), Foundation only so they host-test on Linux; and the canary itself,
         // which reads live Substack pages with the app's parser. Neither is in the app.
         .target(name: "SubstackCanaryCore"),
@@ -164,6 +172,7 @@ let package = Package(
                 "SessionKitPocket",
                 "SessionKitEPUB",
                 "SessionKitFeeds",
+                "SessionKitPDF",
                 "ShippedPacketReader",
                 "ShippedSessionKit",
                 "SessionKitTestInputs",
