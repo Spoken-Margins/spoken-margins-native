@@ -1,13 +1,15 @@
 import Foundation
 import SessionKit
-import SessionKitSharing
 
-enum SharingRightsPresentation {
-    static let rightsNotice = "Source material may be protected by copyright. Share only material you have permission or another lawful basis to share. Attribution, a short excerpt, or a private recipient does not by itself grant permission."
-    static let recipientCopiesNotice = "Recipients can keep or forward this file. Deleting your local copy cannot revoke their copies. Review the source excerpts, matching evidence, and voice or generated content before sharing."
+/// What a sender is told before sharing and what a recipient is told before keeping (#318: moved from the app so the
+/// words and the branches that choose them are host-tested). The copy is the lawyer's review item: change it only with
+/// the record.
+public enum SharingRightsPresentation {
+    public static let rightsNotice = "Source material may be protected by copyright. Share only material you have permission or another lawful basis to share. Attribution, a short excerpt, or a private recipient does not by itself grant permission."
+    public static let recipientCopiesNotice = "Recipients can keep or forward this file. Deleting your local copy cannot revoke their copies. Review the source excerpts, matching evidence, and voice or generated content before sharing."
 
     /// Values come from the successfully verified archive, never mutable drafts.
-    static func disclosures(for package: VerifiedSpokenMarginsPackage) -> [String] {
+    public static func disclosures(for package: VerifiedSpokenMarginsPackage) -> [String] {
         let manifest = package.manifest
         let item = manifest.item
         var lines = [rightsNotice, recipientCopiesNotice,

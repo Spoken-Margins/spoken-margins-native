@@ -1,4 +1,5 @@
 import SessionKit
+import SessionKitSharing
 import SwiftUI
 
 /// "From Cole", above the item's title while a friend's Margins wait (#3219). The words come from `FriendMarginsIntro`.
