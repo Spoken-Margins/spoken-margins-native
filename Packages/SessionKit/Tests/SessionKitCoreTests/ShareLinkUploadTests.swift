@@ -188,6 +188,44 @@ final class ShareLinkUploadTests: XCTestCase {
         XCTAssertNil(try url("https://example.com/" + String(repeating: "a", count: 2_100)))
     }
 
+    /// An Apple Podcasts episode page names its episode in the query (`?i=`), so "any query is left out" dropped every
+    /// episode shared from Apple Podcasts and sent the file along as if it had no public page. A known episode page
+    /// keeps only its episode key; everything else in the query, and any other site's query, is still left out.
+    func testAKnownEpisodePageKeepsOnlyItsEpisodeKey() throws {
+        func url(_ page: String) throws -> String? {
+            try ShareLinkPreviewBuilder.make(title: "T", show: nil, pageURL: page, enclosureURL: nil, marginTexts: ["x"]).source.url
+        }
+        let apple = "https://podcasts.apple.com/us/podcast/imaginary-worlds/id916273527"
+        let episode = apple + "?i=1000543006547"
+        XCTAssertEqual(try url(episode), episode, "the owner's packet, 2026-11-17")
+        XCTAssertEqual(try url(apple), apple, "the show page has no query")
+        XCTAssertEqual(try url(episode + "&uo=4"), episode, "a tracking item is dropped")
+        XCTAssertEqual(try url(apple + "?uo=4&i=1000543006547"), episode, "order does not matter")
+        XCTAssertEqual(try url(apple + "?i=1000543006547&utm_source=share"), episode)
+        XCTAssertEqual(try url(episode + "#top"), episode, "a fragment is dropped")
+        XCTAssertEqual(try url("  " + episode + "\n"), episode, "whitespace")
+        XCTAssertEqual(try url("https://PODCASTS.APPLE.COM/us/podcast/imaginary-worlds/id916273527?i=1000543006547"), episode, "host case")
+        XCTAssertEqual(try url("https://podcasts.apple.com/gb/podcast/x/id1?i=42"), "https://podcasts.apple.com/gb/podcast/x/id1?i=42", "another storefront")
+        XCTAssertNil(try url(apple + "?i=abc"), "an episode key is digits")
+        XCTAssertNil(try url(apple + "?i="), "empty")
+        XCTAssertNil(try url(apple + "?i=" + String(repeating: "1", count: 30)), "too long for an episode id")
+        XCTAssertNil(try url(apple + "?i=1&i=2"), "two episode keys")
+        XCTAssertNil(try url(apple + "?i=%31%32"), "an encoded key is not trusted")
+        XCTAssertNil(try url(apple + "?uo=4"), "no episode key")
+        XCTAssertNil(try url(apple + "?i=1000543006547&token=abc"), "a secret anywhere still drops the page")
+        XCTAssertNil(try url("http://podcasts.apple.com/us/podcast/x/id1?i=42"), "https only")
+        XCTAssertNil(try url("https://podcasts.apple.com.example.net/us/podcast/x/id1?i=42"), "lookalike host")
+        XCTAssertNil(try url("https://evilpodcasts.apple.com/us/podcast/x/id1?i=42"), "lookalike host")
+        XCTAssertNil(try url("https://example.com/ep?i=42"), "another site's query is still left out")
+
+        let watch = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        XCTAssertEqual(try url(watch), watch)
+        XCTAssertEqual(try url(watch + "&t=42s&si=abcdef"), watch, "time and share tracking are dropped")
+        XCTAssertEqual(try url("https://youtube.com/watch?v=dQw4w9WgXcQ"), "https://youtube.com/watch?v=dQw4w9WgXcQ")
+        XCTAssertNil(try url("https://www.youtube.com/watch?v=short"), "a video id is 11 characters")
+        XCTAssertNil(try url("https://www.youtube.com/results?v=dQw4w9WgXcQ"), "only the watch page")
+    }
+
     func testNoPrivateAddressAppearsAnywhereInTheEncodedPreview() throws {
         let secret = "https://feeds.example.com/private/abc?token=SECRET123"
         let preview = try ShareLinkPreviewBuilder.make(

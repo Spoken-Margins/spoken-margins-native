@@ -62,10 +62,10 @@ final class TapTargetSizeTests: XCTestCase {
         }
     }
 
-    func testMarginsSearchFieldIsAtLeastFortyFourPointsTall() {
+    func testTheSearchFieldIsAtLeastFortyFourPointsTall() {
         for text in Self.textSizes {
-            let field = measure(MarginsSearchField(text: .constant("")), textSize: text.size)
-            XCTAssertAtLeastPoints(field.height, TapTarget.minimum, "The Margins search field (\(text.name)) is \(field.height) pt tall")
+            let field = measure(AppSearchField("Search your notes or a title", text: .constant(""), identifier: "margins.search.field"), textSize: text.size)
+            XCTAssertAtLeastPoints(field.height, TapTarget.minimum, "The search field (\(text.name)) is \(field.height) pt tall")
         }
     }
 
