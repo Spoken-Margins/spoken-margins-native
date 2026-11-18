@@ -11,10 +11,15 @@ import SessionKit
 ///
 /// A write goes to a temporary file in the same folder and is then renamed over the final name, so a quit leaves either
 /// the old file, the new file or a leftover temporary file that `removeInterruptedWrites` clears. Never a half file under
-/// the final name.
+/// the final name. The data is synced to disk before the rename, so that also holds after a crash or a power loss.
+///
+/// Another write to the same item may be running (a double import, a re-import during a share import), so clearing
+/// leftovers only touches temporary files untouched for `abandonedAfter` seconds, never one still being written.
 public struct PDFOriginalStore: Sendable {
     public static let fileName = "original.pdf"
     private static let temporarySuffix = ".tmp"
+    /// A temporary file this old belongs to a write that is no longer running.
+    public static let abandonedAfter: TimeInterval = 600
 
     /// The `ItemOriginals` folder under Application Support.
     public let root: URL
@@ -36,7 +41,7 @@ public struct PDFOriginalStore: Sendable {
         let destination = folder.appendingPathComponent(Self.fileName)
         let temporary = folder.appendingPathComponent(Self.fileName + "." + UUID().uuidString + Self.temporarySuffix)
         do {
-            try data.write(to: temporary)
+            try writeAndSync(data, to: temporary)
             // rename(2) replaces an existing file in one step on the same volume. (`FileManager.replaceItemAt` has
             // left no file at the destination on Linux, so it is not used.)
             guard rename(temporary.path, destination.path) == 0 else {
@@ -46,7 +51,7 @@ public struct PDFOriginalStore: Sendable {
             try? fileManager.removeItem(at: temporary)
             throw error
         }
-        clearTemporaryFiles(in: folder)
+        clearTemporaryFiles(in: folder, olderThan: Self.abandonedAfter, now: Date())
         return destination
     }
 
@@ -74,11 +79,11 @@ public struct PDFOriginalStore: Sendable {
     /// Clears temporary files a quit left behind, in every item's folder, and returns how many it removed. Never touches a
     /// kept PDF. Run it at launch.
     @discardableResult
-    public func removeInterruptedWrites() -> Int {
+    public func removeInterruptedWrites(olderThan age: TimeInterval = PDFOriginalStore.abandonedAfter, now: Date = Date()) -> Int {
         guard let folders = try? FileManager.default.contentsOfDirectory(
             at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
         ) else { return 0 }
-        return folders.reduce(0) { $0 + clearTemporaryFiles(in: $1) }
+        return folders.reduce(0) { $0 + clearTemporaryFiles(in: $1, olderThan: age, now: now) }
     }
 
     /// The folder an item's original lives in, nil for an empty id.
@@ -87,12 +92,25 @@ public struct PDFOriginalStore: Sendable {
         return root.appendingPathComponent(name, isDirectory: true)
     }
 
+    /// Writes `data` to a new file and flushes it to disk, so a rename that follows can't leave an empty file after a crash.
+    private func writeAndSync(_ data: Data, to url: URL) throws {
+        guard FileManager.default.createFile(atPath: url.path, contents: nil) else { throw CocoaError(.fileWriteUnknown) }
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.write(contentsOf: data)
+        try handle.synchronize()
+    }
+
+    /// Removes temporary files last changed at least `age` seconds before `now`.
     @discardableResult
-    private func clearTemporaryFiles(in folder: URL) -> Int {
+    private func clearTemporaryFiles(in folder: URL, olderThan age: TimeInterval, now: Date) -> Int {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return 0 }
         var removed = 0
         for name in names where name.hasPrefix(Self.fileName + ".") && name.hasSuffix(Self.temporarySuffix) {
-            if (try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))) != nil { removed += 1 }
+            let file = folder.appendingPathComponent(name)
+            guard let changed = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date,
+                  now.timeIntervalSince(changed) >= age else { continue }
+            if (try? FileManager.default.removeItem(at: file)) != nil { removed += 1 }
         }
         return removed
     }

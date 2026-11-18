@@ -90,21 +90,46 @@ final class PDFOriginalStoreTests: XCTestCase {
         try Data("half a file".utf8).write(to: leftover)
         XCTAssertEqual(store.url(itemId: "item-1"), url, "the leftover is not the original")
         XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(store.url(itemId: "item-1"))), pdf)
-        XCTAssertEqual(store.removeInterruptedWrites(), 1)
+        XCTAssertEqual(store.removeInterruptedWrites(olderThan: 0), 1)
         XCTAssertFalse(FileManager.default.fileExists(atPath: leftover.path))
         XCTAssertEqual(try Data(contentsOf: url), pdf)
-        XCTAssertEqual(store.removeInterruptedWrites(), 0)
+        XCTAssertEqual(store.removeInterruptedWrites(olderThan: 0), 0)
 
         // An item whose only file is a leftover has no original.
         let second = folder.deletingLastPathComponent().appendingPathComponent(try XCTUnwrap(ItemOwnedFiles.itemOriginalsFolderName(itemId: "item-2")), isDirectory: true)
         try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
         try Data("half".utf8).write(to: second.appendingPathComponent("original.pdf.x.tmp"))
         XCTAssertNil(store.url(itemId: "item-2"))
-        XCTAssertEqual(store.removeInterruptedWrites(), 1)
+        XCTAssertEqual(store.removeInterruptedWrites(olderThan: 0), 1)
+    }
+
+    func testAnotherWritersTemporaryFileSurvivesAFinishedWriteAndALaunchCleanup() throws {
+        let url = try store.write(pdf, itemId: "item-1")
+        let folder = url.deletingLastPathComponent()
+        let inFlight = folder.appendingPathComponent("original.pdf.\(UUID().uuidString).tmp")
+        let abandoned = folder.appendingPathComponent("original.pdf.\(UUID().uuidString).tmp")
+        try Data("being written".utf8).write(to: inFlight)
+        try Data("quit halfway".utf8).write(to: abandoned)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-3600)], ofItemAtPath: abandoned.path)
+
+        XCTAssertEqual(store.removeInterruptedWrites(), 1, "only the abandoned one, at launch")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: inFlight.path), "a writer still running keeps its file")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: abandoned.path))
+
+        try Data("quit halfway again".utf8).write(to: abandoned)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-3600)], ofItemAtPath: abandoned.path)
+        try store.write(Data("newer".utf8), itemId: "item-1")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: inFlight.path), "a finished write doesn't delete another writer's file")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: abandoned.path), "it does clear an abandoned one")
+        XCTAssertEqual(try Data(contentsOf: url), Data("newer".utf8))
+
+        // The other writer's rename still works.
+        XCTAssertEqual(rename(inFlight.path, url.path), 0)
+        XCTAssertEqual(try Data(contentsOf: url), Data("being written".utf8))
     }
 
     func testRemovingInterruptedWritesWithNoFolderIsHarmless() {
-        XCTAssertEqual(store.removeInterruptedWrites(), 0)
+        XCTAssertEqual(store.removeInterruptedWrites(olderThan: 0), 0)
     }
 
     func testAFolderAtTheFileNameIsNotAKeptPDF() throws {
