@@ -20,14 +20,20 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        let created = createdModels
-        await MainActor.run {
-            for model in created.take() {
-                model.podcastDownloadCoordinator?.shutdown()
-            }
-        }
+        await Self.settle(createdModels)
         URLProtocol.unregisterClass(FailFastNetworkURLProtocol.self)
         try await super.tearDown()
+    }
+
+    /// Stops the downloads the models started and waits for any import still running, so nothing they ask of the
+    /// network outlives the class. The wait is on the import's own state, with the deadline only as a ceiling.
+    @MainActor
+    private static func settle(_ created: CreatedModels) async {
+        for model in created.take() {
+            model.podcastDownloadCoordinator?.shutdown()
+            await model.waitForPackageStaging()
+            try? await pollUntil(timeout: .seconds(10)) { !model.isImportingSpokenMarginsPackage }
+        }
     }
 
     @MainActor
