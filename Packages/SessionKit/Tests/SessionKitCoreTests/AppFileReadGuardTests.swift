@@ -30,7 +30,9 @@ final class AppFileReadGuardTests: XCTestCase {
         // writes the same map-only packet shape to drive the real importer into a store and then Skim (#1471); it asserts nothing
         // about what Build 29 can read. SourceLinkImportTests
         // writes a private-feed packet only to drive the #454 recovery; PrivateFeedRecoveryTests exports the same
-        // kind of linkless packet through exportPacket. This pins that list: a new
+        // kind of linkless packet through exportPacket. PodcastToArticleMemoryTests writes a text-only packet for a
+        // podcast shared by reference only to put shared Margins on it before a memory run (#122); it asserts nothing
+        // about what Build 29 can read. This pins that list: a new
         // direct write fails here until someone either routes it through a packet the Mac package tests also read
         // with Build 29, or adds it below on purpose.
         let appTests = try TestInputs.directory(.appTests)
@@ -46,7 +48,7 @@ final class AppFileReadGuardTests: XCTestCase {
             if matches > 0 { counts[file.lastPathComponent] = matches }
         }
         XCTAssertEqual(counts, ["EpisodeMapStoredNamesTests.swift": 1, "LocalAudioListeningPackageTests.swift": 3,
-                                "SkimBridgeControllerTests.swift": 1, "SourceLinkImportTests.swift": 1, "SpokenMarginsPackageHandoffTests.swift": 1,
+                                "PodcastToArticleMemoryTests.swift": 1, "SkimBridgeControllerTests.swift": 1, "SourceLinkImportTests.swift": 1, "SpokenMarginsPackageHandoffTests.swift": 1,
                                 "SpokenMarginsPackageImportCoordinatorTests.swift": 2])
     }
 }
