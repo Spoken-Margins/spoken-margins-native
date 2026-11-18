@@ -236,29 +236,7 @@ struct ExperienceLibraryScreen: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(AppColors.secondaryText)
-                    .accessibilityHidden(true)
-                AppTextField("Search title, source, or author", text: $model.libraryQuery.query)
-                    .textInputAutocapitalization(.never)
-                    .submitLabel(.search)
-                    .accessibilityIdentifier("library.search.field")
-                if !model.libraryQuery.query.isEmpty {
-                    Button {
-                        model.libraryQuery.query = ""
-                    } label: {
-                        TapTargetIcon(systemName: "xmark.circle.fill")
-                            .foregroundStyle(AppColors.secondaryText)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear search")
-                }
-            }
-            .padding(.horizontal, 14)
-            .frame(minHeight: 48)
-            .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay { RoundedRectangle(cornerRadius: 14).stroke(AppColors.border) }
+            AppSearchField("Search title, source, or author", text: $model.libraryQuery.query, identifier: "library.search.field")
 
             HStack(spacing: 8) {
                 libraryFiltersMenu

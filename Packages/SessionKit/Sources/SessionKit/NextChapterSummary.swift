@@ -65,6 +65,21 @@ public enum NextChapterSummaryRule {
         case playNextItem
     }
 
+    /// How many chapters an item needs before the chapter row always draws both arrows (#3865).
+    public static let chapterCountForChapterRow = 2
+
+    /// Whether the chapter row draws its arrows (#3865). The row is the same for every item kind: it shows when Skim
+    /// has somewhere to go or a map, and also whenever the item has two or more chapters, so a Skim input that comes
+    /// up empty (no store yet, a map still loading, no stop behind the playhead) can never hide the arrows of an item
+    /// that has chapters. The forward and back controls then dim or stand in as `forwardControl` and `backwardControl` say.
+    /// - Parameters:
+    ///   - isSkimSource: the playing item is a media item or a text item read aloud.
+    ///   - hasSkimAffordance: Skim can go somewhere, a summary is playing, or the item has a map.
+    ///   - chapterCount: the playing item's chapters (text chapters, media chapters, or map scenes where it has none).
+    public static func showsChapterRow(isSkimSource: Bool, hasSkimAffordance: Bool, chapterCount: Int) -> Bool {
+        isSkimSource && (hasSkimAffordance || chapterCount >= chapterCountForChapterRow)
+    }
+
     /// The control on the right of the chapter title. When forward Skim can be pressed it is the one forward control;
     /// otherwise Next chapter if there is a chapter ahead (marked as standing in for Skim when the item has Skim);
     /// otherwise a disabled Skim so the slot never goes empty.
