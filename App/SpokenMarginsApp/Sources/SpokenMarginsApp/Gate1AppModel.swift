@@ -58,7 +58,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private var presentedScreen: Gate1Screen = .home
     @Published var requestedExperienceRoot: AppRoot?
     @Published var marginCollectionQuery = MarginCollectionQuery()
-    @Published var sharedMarginRows: [SharedMarginRow] = []
+    @Published var sharedMarginRows: [SharedMarginRow] = [] { didSet { updateSkimAvailability(refreshResources: false) } } // Skim's stops are these Margins (#4447)
     @Published var justHeardPeek = JustHeardPeekState() // a podcast's "Just heard" words, transcribed after the tap (#2966)
     var screen: Gate1Screen {
         get { presentedScreen }
@@ -236,7 +236,7 @@ final class Gate1AppModel: ObservableObject {
             }
         }
     }
-    @Published var marginRows: [MarginRow] = []
+    @Published var marginRows: [MarginRow] = [] { didSet { updateSkimAvailability(refreshResources: false) } } // Skim's stops are these Margins (#4447)
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
     @Published var recordingCaptureHealth: MarginCaptureSupervisor.Health = .capturing // written by Gate1AppModel+MarginCapture only
     var captureWatcher = MarginCaptureWatcher(); var compactBeginContext = CompactBeginContext() // the latter: what came just before a Lock Screen or headset Margin start (#4414); one line, the hot-file ratchet
