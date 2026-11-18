@@ -90,7 +90,7 @@ extension PodcastDownloadRecord {
         userInitiated: Bool,
         exceededUnannouncedLimit: Bool,
         transport: PodcastNetworkTransport,
-        errorDescription: String
+        reason: String
     ) -> Interruption {
         if exceededUnannouncedLimit { return .failed(reason: PodcastDownloadSizeProbe.unannouncedLimitMessage) }
         if !userInitiated && transport != .wifi {
@@ -99,7 +99,7 @@ extension PodcastDownloadRecord {
             waiting.failureReason = nil
             return .waiting(waiting)
         }
-        return .failed(reason: errorDescription)
+        return .failed(reason: reason)
     }
 
     // MARK: Launch and network changes

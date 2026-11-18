@@ -807,7 +807,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         // write the same bytes again.
         switch record.interrupted(
             userInitiated: attempt.userInitiated, exceededUnannouncedLimit: exceededUnannouncedLimit,
-            transport: networkTransport, errorDescription: error.localizedDescription
+            transport: networkTransport, reason: error.localizedDescription
         ) {
         case .waiting(let waiting): persist(waiting)
         case .failed(let reason): fail(record, reason: reason)
