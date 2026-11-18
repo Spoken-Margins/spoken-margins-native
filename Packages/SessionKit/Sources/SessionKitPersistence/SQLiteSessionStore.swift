@@ -2603,6 +2603,40 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         GROUP BY layer.item_id, layer.id;
         """
 
+    /// How many of the counted Margins are replies to the listener's own Margins, per item (#3794). A reply is one whose
+    /// reply link names a packet identity one of the listener's own Margins on that item was shared as (`sharedAs`), the
+    /// same match the reply graph makes (`MarginReplyGraph`). Only Margins that carry reply links reach the join, so a
+    /// Library with none reads nothing more. The same rows as `sharedMarginTalliesSQL` otherwise: the layer match is a
+    /// plain equality on the primary key, a broken payload gives an empty list rather than an error (`json_each` throws on
+    /// malformed text), and the hidden-list conditions are added to the same WHERE. A Margin naming several parents
+    /// counts once. A fork whose first resolvable parent is another friend's Margin counts here too if any parent is the
+    /// listener's: a small difference from the review's own label, which takes the first, and only in the count.
+    /// Only the listener's active Margins are parents (the reply graph drops a deleted one: it is neither a parent nor a
+    /// reply), and only those that were shared at all are parsed for their identities. Parents are looked for on the same
+    /// item, as the review's own context is (`SharedMarginReview.ownMargins(itemId:)`); the graph looks across the
+    /// Library, so a reply imported under another row of the same episode is a reply there and not here. A list element
+    /// that is not an object (a shape a later build might write) matches nothing instead of failing the read.
+    static let sharedMarginRepliesSQL = """
+        SELECT layer.item_id, COUNT(DISTINCT note.id)
+        FROM records AS note
+        JOIN records AS layer
+          ON layer.kind = ?2
+         AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
+        JOIN json_each(CASE WHEN json_valid(note.payload) THEN note.payload ELSE '{}' END, '$.replyLinks') AS link
+        JOIN records AS own ON own.kind = 'interjection' AND own.item_id = layer.item_id
+         AND CASE WHEN json_valid(own.payload)
+                  THEN json_extract(own.payload, '$.status') = 'active' AND json_extract(own.payload, '$.sharedAs') IS NOT NULL
+                  ELSE 0 END
+        JOIN json_each(CASE WHEN json_valid(own.payload) THEN own.payload ELSE '{}' END, '$.sharedAs') AS identity
+          ON CASE WHEN json_type(identity.value) = 'object' AND json_type(link.value) = 'object'
+                  THEN json_extract(identity.value, '$.packageDigest') = json_extract(link.value, '$.parentPackageDigest')
+                   AND json_extract(identity.value, '$.packageScopedId') = json_extract(link.value, '$.parentPackageScopedId')
+                  ELSE 0 END
+        WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
+          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        GROUP BY layer.item_id;
+        """
+
     /// The narrow read behind that last column: the same rows, with only what `SharedMarginHearing.noteCanBeMet` needs.
     /// No Margin is decoded. The CASE keeps a broken payload from failing the read: it gives no match, as above.
     static let newNotesSQL = """
@@ -2667,11 +2701,32 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
             }
             let unmet = anyNewNote ? try newNotesNobodyCanMeet(connection, hidden: hidden) : [:]
             let senders = counts.isEmpty ? [:] : try sharedMarginSenders(connection, hidden: hidden)
+            let replies = counts.isEmpty ? [:] : try sharedMarginReplies(connection, hidden: hidden)
             return counts.reduce(into: [:]) { tallies, entry in
                 tallies[entry.key] = SharedMarginTally(
-                    total: entry.value.total, new: entry.value.new - (unmet[entry.key] ?? 0), senders: senders[entry.key] ?? [])
+                    total: entry.value.total, new: entry.value.new - (unmet[entry.key] ?? 0),
+                    senders: senders[entry.key] ?? [], replies: replies[entry.key] ?? 0)
             }
         }
+    }
+
+    /// Per item, how many counted Margins reply to the listener's own, from `sharedMarginRepliesSQL`.
+    private func sharedMarginReplies(_ connection: OpaquePointer?, hidden: HiddenSenders) throws -> [String: Int] {
+        let (sql, bindings) = Self.hidingFromSharedMarginSQL(Self.sharedMarginRepliesSQL, before: "GROUP BY layer.item_id;", hidden: hidden)
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_shared_margin_replies")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: "imported_commentary_interjection")
+        bind(statement, index: 2, value: "imported_commentary_layer")
+        for (offset, value) in bindings.enumerated() { bind(statement, index: Int32(3 + offset), value: value) }
+        var replies: [String: Int] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let item = sqlite3_column_text(statement, 0) else { continue }
+            replies[String(cString: item)] = Int(sqlite3_column_int64(statement, 1))
+        }
+        return replies
     }
 
     /// Per item, who sent the counted Margins (#3794), from `sharedMarginSendersSQL`.

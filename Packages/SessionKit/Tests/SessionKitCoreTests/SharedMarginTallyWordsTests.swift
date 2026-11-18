@@ -214,4 +214,61 @@ final class SharedMarginTallyWordsTests: XCTestCase {
         XCTAssertTrue(try store.loadSharedMarginTallies()["a"]?.senderMatches("cole") ?? false)
         XCTAssertFalse(without["a"]?.senderMatches("cole") ?? true, "and the search")
     }
+
+    /// Real SQLite: a friend's Margin whose reply link names a packet one of the listener's own Margins on that item
+    /// was shared as is a reply; one that names nothing of theirs, or whose layer is deleted or sender hidden, is not.
+    func testTheStoreCountsRepliesToTheListenersOwnMargins() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "tally-replies-\(UUID().uuidString).sqlite").path
+        defer { for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) } }
+        let store = try SQLiteSessionStore(path: path)
+        for id in ["a", "b"] { try store.saveItem(Item(id: id, title: "Title \(id)", mediaType: "text", text: "Words.", externalReference: nil, status: "ready")) }
+        for id in ["a", "b"] {
+            try store.saveSession(Session(
+                id: "session-\(id)", itemId: id, createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1),
+                status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: id,
+                position: Position(), completionPercent: 0, playbackRate: 1))
+        }
+        let sent = MarginPacketIdentity(packageDigest: "digest-mine", packageScopedId: "margin-0001")
+        let other = MarginPacketIdentity(packageDigest: "digest-else", packageScopedId: "margin-0009")
+        func own(_ id: String, item: String, sharedAs: [MarginPacketIdentity]?, status: String = "active") -> Interjection {
+            Interjection(
+                id: id, itemId: item, sessionId: "session-\(item)", targetType: .item, targetId: item, createdAt: Date(timeIntervalSince1970: 1), roughPercent: 0,
+                anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 754_000),
+                audioPath: "\(id).m4a", audioStatus: "ready", transcriptionStatus: "complete", transcript: "Words", cleanedTranscript: nil,
+                displayText: "Words", status: status, sharedAs: sharedAs)
+        }
+        func reply(_ id: String, layer: String, to parents: [MarginPacketIdentity]) -> ImportedCommentaryInterjection {
+            ImportedCommentaryInterjection(
+                id: id, layerId: layer, packageScopedId: id, createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "A reply.",
+                audioPath: "ImportedCommentary/\(id).m4a", audioDurationMs: 4_000,
+                replyLinks: parents.map { MarginReplyLink.replying(to: $0, parentConversationId: nil) })
+        }
+        try store.saveInterjection(own("mine", item: "a", sharedAs: [sent]))
+        try store.saveInterjection(own("unshared", item: "a", sharedAs: nil))
+        try store.saveInterjection(own("mine-b", item: "b", sharedAs: [other]))
+        // A Margin of mine that I deleted after sharing it: a reply to it has no parent, as in the reply graph.
+        let deletedSent = MarginPacketIdentity(packageDigest: "digest-deleted", packageScopedId: "margin-0002")
+        try store.saveInterjection(own("deleted", item: "a", sharedAs: [deletedSent], status: "deleted"))
+        let sam = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        // a: Sam answers my Margin twice (one names two parents, counted once) and adds a plain Margin; one reply names a
+        // Margin that is not mine. b: a reply naming my Margin from item a does not count on item b.
+        _ = try store.importCommentaryLayer(layer("sam", item: "a", label: "Sam", sender: sam), interjections: [
+            reply("r1", layer: "sam", to: [sent]), reply("r2", layer: "sam", to: [sent, other]),
+            margin("plain", layer: "sam"), reply("r3", layer: "sam", to: [MarginPacketIdentity(packageDigest: "x", packageScopedId: "y")]),
+            reply("r6", layer: "sam", to: [deletedSent])])
+        _ = try store.importCommentaryLayer(layer("sam-b", item: "b", label: "Sam", sender: sam), interjections: [reply("r4", layer: "sam-b", to: [sent])])
+        _ = try store.importCommentaryLayer(layer("gone", item: "a", label: "Ana", sender: nil, deleted: true), interjections: [reply("r5", layer: "gone", to: [sent])])
+
+        let tallies = try SQLiteSessionStore(path: path).loadSharedMarginTallies()
+        XCTAssertEqual(tallies["a"]?.total, 5)
+        XCTAssertEqual(tallies["a"]?.replies, 2, "two replies to my Margin; the one that names two parents counts once; a plain Margin, a reply to someone else's and a reply to a Margin I deleted do not")
+        XCTAssertEqual(tallies["a"]?.senderLine, "2 new replies and 3 new Margins from Sam", "one sender: replies and Margins are said apart")
+        XCTAssertEqual(tallies["b"]?.replies, 0, "my Margin on another item is not the parent here")
+
+        var hidden = HiddenSenders()
+        hidden.hide(sam)
+        XCTAssertNil(try store.loadSharedMarginTallies(hiding: hidden)["a"], "a hidden sender's replies leave with its Margins")
+        XCTAssertEqual(try store.sharedMarginTalliesQueryPlan(of: SQLiteSessionStore.sharedMarginRepliesSQL).filter { $0.hasPrefix("SCAN layer") }, [])
+    }
 }
