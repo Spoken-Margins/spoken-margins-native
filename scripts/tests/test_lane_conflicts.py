@@ -176,7 +176,7 @@ class ConflictCheckTests(unittest.TestCase):
         self.assertEqual(api.deleted, ['issues/8/labels/automerge'])
         self.assertEqual(self.sweep(api), {})  # no longer armed: nothing more to do
 
-    def test_the_github_only_hand_off_is_not_commented_twice_for_the_same_head_and_base(self):
+    def test_a_re_armed_github_only_hand_off_gets_a_short_reason_not_a_second_full_comment(self):
         head = self.clean_pr()
         pr = pull(8, head)
         pr['mergeable'] = False
@@ -184,9 +184,34 @@ class ConflictCheckTests(unittest.TestCase):
         self.sweep(api)
         api.pulls[8]['labels'] = [{'name': 'automerge'}]  # re-armed by hand
         self.sweep(api)
-        comments = [path for path, _ in api.posted if path.endswith('/comments')]
-        self.assertEqual(len(comments), 1)
+        comments = [fields['body'] for path, fields in api.posted if path.endswith('/comments')]
+        self.assertEqual(len(comments), 2)
+        self.assertEqual(comments[0].count('lane-conflict-no-merge-ref'), 1, 'only the first carries the marker')
+        self.assertIn('came off again', comments[1])
+        self.assertNotIn('<!--', comments[1])
         self.assertEqual(api.deleted, ['issues/8/labels/automerge', 'issues/8/labels/automerge'])
+
+    def test_a_state_other_than_dirty_changes_nothing_and_a_pr_that_settles_before_the_hand_off_is_left_alone(self):
+        head = self.clean_pr()
+        pr = pull(8, head)
+        pr['mergeable'], pr['mergeable_state'] = False, 'behind'
+        api = FakeApi([pr])
+        self.assertEqual(self.sweep(api), {})
+        self.assertEqual((api.posted, api.deleted), ([], []))
+        # GitHub settles between the check and the hand-off: act_on_conflict reads the PR again.
+        pr['mergeable_state'] = 'dirty'
+        original, reads = api.get, []
+
+        def settle(path):
+            result = dict(original(path))  # what this read saw
+            if path == 'pulls/8':
+                reads.append(path)
+                if len(reads) >= 2:
+                    result['mergeable'] = True  # the read inside the hand-off: GitHub has settled
+            return result
+        api.get = settle
+        self.assertEqual(self.sweep(api), {8: []})
+        self.assertEqual((api.posted, api.deleted), ([], []))
 
     def test_an_unknown_or_true_mergeable_state_changes_nothing(self):
         for state in (None, True):

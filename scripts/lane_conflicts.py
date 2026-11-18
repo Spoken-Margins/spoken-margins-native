@@ -187,7 +187,8 @@ def github_cannot_merge(api, pr, head):
     """
     import lane_dedupe
     current = api.get(f'pulls/{pr}')
-    if current.get('state') != 'open' or current['head']['sha'] != head or current.get('mergeable') is not False:
+    if (current.get('state') != 'open' or current['head']['sha'] != head or current.get('mergeable') is not False
+            or current.get('mergeable_state') not in (None, 'dirty')):
         return False
     for run in lane_dedupe.active_runs(api).values():
         info = lane_dedupe.parse_run_name(run.get('display_title'))
@@ -237,10 +238,21 @@ def act_on_conflict(api, pr, base, base_sha, head, files, log=print, kind='confl
         if not labels & set(ARMED):
             log(f'#{pr}: no longer armed; nothing changed.')
             return done
-        if not any(marker(head, base_sha, kind) in (c.get('body') or '') for c in api.get_all(f'issues/{pr}/comments?per_page=100')):
+        if kind != 'conflict' and current.get('mergeable') is not False:
+            # The sweep's git merge takes minutes with many PRs; GitHub may have settled since (#4538 review).
+            log(f'#{pr}: GitHub no longer reports it as not mergeable; nothing changed.')
+            return done
+        already = any(marker(head, base_sha, kind) in (c.get('body') or '') for c in api.get_all(f'issues/{pr}/comments?per_page=100'))
+        if not already:
             body = comment_body(base, base_sha, head, files) if kind == 'conflict' else no_merge_ref_body(base, base_sha, head)
             api.post(f'issues/{pr}/comments', {'body': body})
             done.append('comment')
+        elif kind != 'conflict':
+            # Re-armed at the same head and base: say why it came off again rather than do it silently.
+            api.post(f'issues/{pr}/comments', {'body': (
+                f'{HANDOFF} still not mergeable on GitHub at `{head[:7]}`, so no run can start; `automerge` and '
+                f'`lane:queued` came off again. Merge `{base}` into the branch and push, then arm it.')})
+            done.append('comment (re-armed)')
         # The labels that start a Mac job go first; needs-mac is the hand-off and goes on last.
         for name in REMOVE:
             if name in labels and remove_label(api, pr, name):
