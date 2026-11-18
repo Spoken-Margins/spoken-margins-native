@@ -236,20 +236,9 @@ public struct SourceCatalog: Codable, Equatable, Sendable {
         return entries.first { Self.feedKey($0.feedURL) == key }
     }
 
-    /// The key a feed URL is matched by: https, lower-case host, no fragment, no trailing slash. Public so a hide
-    /// kept on the phone (#4285) matches the same way a follow does.
-    public static func feedKey(_ raw: String) -> String? {
-        guard var components = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let host = components.host?.lowercased(), !host.isEmpty else { return nil }
-        components.scheme = "https"
-        components.host = host
-        components.fragment = nil
-        if components.path.count > 1, components.path.hasSuffix("/") {
-            components.path.removeLast()
-        }
-        // Paths are case-sensitive (Simplecast ids are mixed case), so only scheme and host fold.
-        return components.string
-    }
+    /// The key a feed URL is matched by (`FeedURLKey`). Public so a hide kept on the phone (#4285) matches the same
+    /// way a follow does.
+    public static func feedKey(_ raw: String) -> String? { FeedURLKey.make(raw) }
 }
 
 /// Reads the ISO 8601 times a catalog carries, with or without fractional seconds.

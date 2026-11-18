@@ -1,0 +1,73 @@
+import Foundation
+import SessionKit
+
+/// The pictures of a PDF's tables and figures, kept as files for the Timeline to show (#3895).
+///
+/// The PDF is not kept after it is imported, so each clip is cut from it at import and saved here, one JPEG per
+/// float of the item's structured document, in a folder of the item's own: `<directory>/<item folder>/<float>.jpg`.
+/// Nothing reads a clip until the listener opens that Timeline. A permanent delete removes the item's folder
+/// (`ItemOwnedFiles.pdfClipsRoot`). A clip that isn't there is not an error: the row shows its text, as it always has.
+public struct PDFClipStore: Sendable {
+    /// `SpokenMargins/PDFClips/` under Application Support.
+    public let directory: URL
+
+    public init(directory: URL) {
+        self.directory = directory
+    }
+
+    /// The file name of a float's clip, or nil when its id can't name a file.
+    public static func fileName(forFloat floatId: String) -> String? {
+        guard !floatId.isEmpty else { return nil }
+        let name = PodcastAnchorEvidencePaths.safeComponent(floatId)
+        guard !name.isEmpty, name != ".", name != ".." else { return nil }
+        return name + ".jpg"
+    }
+
+    /// The item's folder, or nil when the id has none of its own.
+    public func folder(forItem itemId: String) -> URL? {
+        ItemOwnedFiles.pdfClipDirectoryName(itemId: itemId).map { directory.appending(path: $0, directoryHint: .isDirectory) }
+    }
+
+    /// The clip's file, if it was saved.
+    public func url(forFloat floatId: String, itemId: String) -> URL? {
+        guard let folder = folder(forItem: itemId), let name = Self.fileName(forFloat: floatId) else { return nil }
+        let file = folder.appending(path: name)
+        return FileManager.default.fileExists(atPath: file.path) ? file : nil
+    }
+
+    /// Makes `clips` (JPEG data by float id) the item's clips, and nothing else. Only the floats of `document` get one:
+    /// a clip whose float is not in the document the item now has could never be shown, so it is not kept. Clips
+    /// the item had before are replaced, so a re-import leaves no stale picture. With none to keep, the folder goes.
+    ///
+    /// The new files are written beside the old folder and swapped in, so a failed write leaves the old clips.
+    public func replaceClips(_ clips: [String: Data], forItem itemId: String, document: StructuredDocument?) throws {
+        guard let folder = folder(forItem: itemId) else { return }
+        let wanted = Set(document?.floats.map(\.id) ?? [])
+        let files = clips.compactMap { id, data -> (name: String, data: Data)? in
+            guard wanted.contains(id), !data.isEmpty, let name = Self.fileName(forFloat: id) else { return nil }
+            return (name, data)
+        }
+        let manager = FileManager.default
+        guard !files.isEmpty else {
+            if manager.fileExists(atPath: folder.path) { try manager.removeItem(at: folder) }
+            return
+        }
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let staging = directory.appending(path: ".\(folder.lastPathComponent).\(UUID().uuidString).tmp", directoryHint: .isDirectory)
+        do {
+            try manager.createDirectory(at: staging, withIntermediateDirectories: true)
+            for file in files { try file.data.write(to: staging.appending(path: file.name), options: .atomic) }
+            if manager.fileExists(atPath: folder.path) { try manager.removeItem(at: folder) }
+            try manager.moveItem(at: staging, to: folder)
+        } catch {
+            try? manager.removeItem(at: staging)
+            throw error
+        }
+    }
+
+    /// Removes the item's clips.
+    public func removeClips(forItem itemId: String) throws {
+        guard let folder = folder(forItem: itemId), FileManager.default.fileExists(atPath: folder.path) else { return }
+        try FileManager.default.removeItem(at: folder)
+    }
+}

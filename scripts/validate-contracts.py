@@ -325,7 +325,9 @@ PORTABLE_VERSIONS = {
 # it is optional, never required by a manifest capability, and an older reader reads the Margin as it always did.
 FIELDS_ADDED_AFTER_BUILD_29 = {
     # The sender's "don't read this written Margin aloud" (2026-11-05, #3427): written only when false.
-    "SharedInterjectionPackageRecord": {"readAloud": "Bool?"},
+    # How much of the episode the sender asks their friend to hear before the Margin (2026-11-13, #4171): written
+    # only when it isn't the 20 s default, or when an earlier share used another length.
+    "SharedInterjectionPackageRecord": {"readAloud": "Bool?", "leadInMs": "Int?"},
 }
 ARTIFACT_TYPES = {
     "commentary_layer": "SharedCommentaryLayerArtifact",
