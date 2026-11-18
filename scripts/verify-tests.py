@@ -56,6 +56,12 @@ SCREENSHOT_PLANS = {'tour'}
 PLAN_TIMEOUT_ENV = 'SM_PLAN_TIMEOUT_SECONDS'
 
 
+def node_modules_installed() -> bool:
+    """Whether this checkout has its npm packages. A function so a test of the host steps can say yes: a hosted Mac's
+    checkout has none, and the steps' own commands are what those tests replace (#4643)."""
+    return (ROOT / 'node_modules').exists()
+
+
 def plan_timeout(default: int) -> int:
     """The test step's time budget: PLANS' own, unless the caller sets SM_PLAN_TIMEOUT_SECONDS to a positive whole
     number of seconds. PLANS' budgets are the owner's Mac; the hosted integration run (hosted-integration.yml) sets
@@ -2066,7 +2072,7 @@ class Run:
         self.command('listener-words', [sys.executable, 'scripts/listener_words.py'])
         # A recorder freed while its audio queue runs, after a failed start, crashes the app (#3633).
         self.command('recorder-failed-start', [sys.executable, 'scripts/recorder_failed_start.py'])
-        if not (ROOT / 'node_modules').exists():
+        if not node_modules_installed():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         # A lockfile that moved since node_modules was installed can fail the bundle check with "is stale". The
         # lane links a shared node_modules that only moves to the trunk, so drift alone must not fail a run: name

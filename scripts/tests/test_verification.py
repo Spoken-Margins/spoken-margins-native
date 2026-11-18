@@ -170,8 +170,13 @@ class VerificationTests(unittest.TestCase):
         # developer's or the lane Mac's real records out of these tests (tests/test_sessionkit_steps.py covers them).
         state = tempfile.TemporaryDirectory()
         self.addCleanup(state.cleanup)
+        # Nor may the machine's own settings change what they assert (#4643): the hosted Mac's lane sets
+        # SM_LANE_IOS_MAJOR to the iOS its image ships when it has no iOS 26, and its checkout has no node_modules.
         for patcher in (patch.object(verification, 'state_dir', return_value=Path(state.name)),
                         patch.object(verification.sessionkit_pass, 'toolchain', return_value=None),
+                        patch.object(verification, 'node_modules_installed', return_value=True),
+                        patch.dict(os.environ, {'SM_LANE_IOS_MAJOR': '26'}),
+                        patch.object(verification.lane_sim, 'IOS_MAJOR', 26),
                         # #705's settle sleeps for real (up to 20 s) whenever a test runs run.xcode twice on one
                         # device: the first call marks it quiet in this shared state folder. Tests of the settle
                         # itself patch it again or inject sleep= (SimulatorSettleTests).
