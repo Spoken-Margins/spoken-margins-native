@@ -30,8 +30,9 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   ready-queue plan, decision 3). The base branch's scripts/test-scope.py classifies the PR's
   committed diff: T0 (docs, research notes) runs nothing, and anything else runs --plan fast only. It
   builds no app (owner, 2026-10-09: 140 runs in a week built both targets and caught no compile failure):
-  the author builds both targets before pushing, and the integration run on next's tip builds and tests
-  the merged app. A diff under App/ also waits for the hosted app build (#3539). An explicit request on the PR goes first. Before any of that, next's scripts/hot_file_ratchet.py fails a PR that grows Gate1AppModel.swift or
+  the author builds both targets before pushing, and main's scheduled main-t3 run builds and tests the merged
+  app (#4573, #4616), with bisect cutting a compile break (#4574). Since 2026-11-18 a diff under App/ no longer waits
+  for a hosted app build either (#3539 retired). An explicit request on the PR goes first. Before any of that, next's scripts/hot_file_ratchet.py fails a PR that grows Gate1AppModel.swift or
   Gate1RootView.swift above its ceiling, unless the PR has the hot-file-ok label.
 - The runner merges what it passes (decision 3, owner-approved). An automerge run tests the exact
   merge commit, with next as its first parent. On PASS it posts a "Merge check (triage desk)"
@@ -1114,8 +1115,8 @@ def tools_python_fault(tree: Path, run=None) -> str | None:
     return f'{line} Fix or re-create that .venv, then run the lane again; nothing was tested.'
 
 
-NO_APP_BUILD_PER_PR = ('no app build per PR (owner, 2026-10-09): the author builds both targets before pushing, '
-                       'and the integration run on next\'s tip builds and tests the merged app')
+NO_APP_BUILD_PER_PR = ('no app build per PR (owner, 2026-10-09 and 2026-11-18): the author builds both targets before '
+                       'pushing, and main\'s scheduled main-t3 run builds and tests the merged app (#4616)')
 
 
 def recheck_on_base(github, base_sha: str):
@@ -1225,11 +1226,8 @@ HOSTED_PORTABLE_CHECK = {'hosted fast: portable': 'fast-portable'}
 # these two checks. The Mac-rest job records plan fast-hosted-sessionkit+fast-mac-rest after running both. The pair
 # (HOSTED_FAST_CHECKS) is what the `sessionkit` job still records with the variable off.
 HOSTED_MERGED_CHECKS = {**HOSTED_PORTABLE_CHECK, **HOSTED_REST_CHECK}
-# #3539: a diff under App/ also waits for the app's build (hosted-app-macos.yml). No plan: the job writes no
-# `lane-hosted-tested` notice and is not re-run when main moves, so its newest run on the PR's head being green is what
-# stands. The integration run on main's tip builds the merged app. 7 of 58 PRs merged with this build unfinished before.
-HOSTED_APP_CHECK = {'app build (T2, tests only when asked)': None}
-HOSTED_APP_WORKFLOW = 'hosted-app-macos.yml'
+# No per-PR app build (owner, 2026-11-18): until then a diff under App/ also waited for hosted-app-macos.yml's build
+# (#3539). That workflow no longer runs on pull requests; main-t3.yml builds and tests main on a schedule (#4616).
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'
 # #4085: a hosted check that failed because the runner did (no DNS in the swift container, #4082) and said so with a
 # `::error title=lane-fault::` annotation (scripts/linux_core_tests.py, exit 75) is the lane's fault, not the PR's.
@@ -1259,7 +1257,7 @@ def hosted_check_set(tree: Path, base: str) -> tuple[dict, str | None]:
     base branch like the other policies), only the portable check is required, and the reason is printed. Anything
     that goes wrong, or a base without the function yet, requires all three: a skipped Mac job is never read as a pass
     (a "skipped" conclusion still stops hosted_fast_records), only left out when the diff cannot need it.
-    #3539: test-scope.py app_build_required adds the app build, whichever of those applies."""
+    No app build is ever among them (#3539 retired 2026-11-18)."""
     full = HOSTED_MERGED_CHECKS
     try:
         policy = base_policy(tree, base, 'scripts/test-scope.py')
@@ -1268,11 +1266,9 @@ def hosted_check_set(tree: Path, base: str) -> tuple[dict, str | None]:
             return full, None
         paths, _ = committed_changes(tree, base)
         needed, why = required(paths)
-        app = getattr(policy, 'app_build_required', None)
-        extra = HOSTED_APP_CHECK if app is not None and app(paths) else {}
     except Exception:  # noqa: BLE001 - any doubt requires the Mac checks
         return full, None
-    return ({**full, **extra}, None) if needed else ({**HOSTED_PORTABLE_CHECK, **extra}, why)
+    return (full, None) if needed else (HOSTED_PORTABLE_CHECK, why)
 
 
 def hosted_tested(annotations: list[dict]) -> dict | None:
@@ -1295,28 +1291,15 @@ def hosted_fast_records(github, head: str, checks: dict = HOSTED_FAST_CHECKS) ->
                                      f'{urllib.parse.quote(name, safe="")}&filter=latest&per_page=50'))
         # Only GitHub Actions' own runs: another app could post a check run with the same name.
         runs = [run for run in runs.get('check_runs', []) if (run.get('app') or {}).get('slug') == 'github-actions']
-        if plan is None and runs:
-            # The app build: hosted-app-macos.yml gives hand-started (workflow_dispatch) runs the same job name, and
-            # one started on the PR's branch sits on this head. Only the PR's own build counts (audit on 7812c37).
-            # That workflow's runs only: every label change adds lane runs on the head, which could page it out.
-            suites = json.loads(github.api(f'repos/{github.repo}/actions/workflows/{HOSTED_APP_WORKFLOW}/runs?'
-                                           f'head_sha={head}&event=pull_request&per_page=100'))
-            suites = {wf.get('check_suite_id') for wf in suites.get('workflow_runs', [])}
-            runs = [run for run in runs if (run.get('check_suite') or {}).get('id') in suites]
         if not runs:
             return None, f'no "{name}" check ran on {head[:7]}'
         run = max(runs, key=lambda run: (run.get('started_at') or '', run.get('id') or 0))
         if run.get('status') != 'completed':
             return None, f'"{name}" {NOT_FINISHED} on {head[:7]}'
         if run.get('conclusion') != 'success':
-            # Not the app build (plan None): dispatch() starts hosted-portable.yml, never it, so a fault there could not be
-            # run again and would report INCONCLUSIVE on every re-add; it stays the FAIL it was (audit on 9d98b41).
             fault = (hosted_lane_fault(github, run, name, head)
-                     if plan is not None and run.get('conclusion') in HOSTED_FAILED_CONCLUSIONS else '')
+                     if run.get('conclusion') in HOSTED_FAILED_CONCLUSIONS else '')
             return None, f'"{name}" ended {run.get("conclusion")} on {head[:7]}{fault}'
-        if plan is None:  # the app build (#3539): green on this head is all it says
-            found[name] = {'head': head, 'url': run.get('html_url', '')}
-            continue
         record = hosted_tested(json.loads(github.api(f'repos/{github.repo}/check-runs/{run["id"]}/annotations')))
         if not record or record['plan'] != plan or record['head'] != head:
             return None, f'"{name}" on {head[:7]} did not record that it tested {plan} on this head'
@@ -1431,8 +1414,6 @@ def _fast_checks_stand(github, tree: Path, base: str, head: str, base_sha: str, 
         if found is None:
             return None, why
         for name, record in found.items():
-            if checks.get(name, '') is None:  # no merge tree to compare (HOSTED_APP_CHECK)
-                continue
             if merged_tree(tree, record['base'], head, fetch=base) != record['tree']:
                 return None, (f'"{name}" tested a tree that is not {head[:7]} merged onto {base} at '
                               f'{record["base"][:7]}')
@@ -1447,9 +1428,6 @@ def _fast_checks_stand(github, tree: Path, base: str, head: str, base_sha: str, 
 
 
 def hosted_fast_ran(found: dict) -> str:
-    if set(HOSTED_APP_CHECK) & set(found):
-        rest = {name: record for name, record in found.items() if name not in HOSTED_APP_CHECK}
-        return f'{hosted_fast_ran(rest)}; the app build passed on this head'
     bases = sorted({record['base'][:7] for record in found.values()})
     where = sorted({record.get('runner', 'GitHub-hosted') for record in found.values()})
     if set(found) == set(HOSTED_PORTABLE_CHECK):
@@ -1465,10 +1443,6 @@ def hosted_fast_ran(found: dict) -> str:
 def hosted_fast_lines(found: dict) -> list[str]:
     lines = []
     for name, record in found.items():
-        if name in HOSTED_APP_CHECK:
-            lines.append(f'{record.get("runner", "GitHub-hosted")} check "{name}": PASS on this head. '
-                         f'{record.get("url", "")}'.rstrip())
-            continue
         moved = record.get('moved')
         since = (f'; next\'s {len(moved)} commit{"s" if len(moved) != 1 else ""} since touch none of this PR\'s files '
                  'and no project.yml, Package.swift, Package.resolved or lockfile' if moved else '')
@@ -1582,11 +1556,6 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
             return found, why
         if NOT_FINISHED in why:
             running_seen = True
-        elif any(plan is None and why.startswith((f'"{name}" ', f'no "{name}" ')) for name, plan in checks.items()):
-            # The app build (#3539): dispatch() starts hosted-portable.yml, never it, so a fresh run can't change what
-            # it shows and would spend hosted Macs for nothing (audit on 432241e). hosted_checks_missing says what does.
-            if not (HOSTED_MISSING.search(why) and clock() - started < grace):
-                return None, why
         elif run_again and HOSTED_UNREADABLE in why:
             pass  # the next poll reads them again; a job that never can ends at the deadline, and reports
         elif run_again and HOSTED_SKIPPED.search(why) and dispatches \
@@ -1689,13 +1658,6 @@ def hosted_checks_missing(why: str, fallback: str = NEEDS_MAC) -> tuple[str, str
     if HOSTED_FAILED.search(why):
         return 'FAIL', 'hosted checks', 'hosted fast checks: failed', [
             f'not merged: {why}. Its log is in the PR\'s checks; fix it and push.']
-    if any(f'"{name}"' in why for name in HOSTED_APP_CHECK):
-        # The build Mac runs host tests and builds no app, so handing this to it would merge with no compile (#3539).
-        # With no run on the head there is nothing to re-run: only a new pull_request event starts one.
-        start = ('Push a commit, or close and reopen the PR, to start the app build' if why.startswith('no "')
-                 else 'Re-run the app build')
-        return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
-            f'not merged: {why}. {start}, then remove and re-add automerge.']
     details = [f'the hosted checks do not stand: {why}']
     if HOSTED_SCOPE_CLASH in why:  # re-adding the label would only ask the same scope job again
         details.append('Merge the base branch into the branch and push: the scope job then reads the base\'s rule, '

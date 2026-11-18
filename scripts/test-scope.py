@@ -604,8 +604,8 @@ MAC_READS = ('Packages/SessionKit/', 'Contracts/', 'research/C2/frontend/', 'res
              'Site/onboarding/catalog/', 'Site/onboarding/v1/', 'README.md', 'traces/', 'fixtures/')
 # The App/ paths that tests only a Mac runs still read (#3538). test_mac_checks_scope.py fails on any other, so a text-only
 # read goes to SessionKitCoreTests, which also runs on Linux, instead of keeping App/ diffs on the Mac. Every other App/
-# path needs no Mac check (#3540): the Linux portable job runs the core tests that read it, and the runner waits for
-# the app build (app_build_required) so an App-only diff never merges without a compile.
+# path needs no Mac check (#3540): the Linux portable job runs the core tests that read it. No per-PR app build either
+# since 2026-11-18 (#3539 retired): main-t3.yml compiles main on a schedule (#4616) and bisect cuts a break (#4574).
 MAC_APP_READS = (
     # SharingLoopTourFixtureTests: reads its packets with SessionKitSharing, which imports ShazamKit and AudioToolbox.
     'App/TestFixtures/',
@@ -640,7 +640,7 @@ HOSTED_WEB_PREFIXES = WEB_PREFIXES + ('research/B4/server/internal/links/', '.gi
 
 def mac_check_reason(path):
     """Why <path> needs the hosted Mac checks, or None when it does not."""
-    if path.startswith('App/'):  # #3540: only the paths a Mac-only test still reads; the app build covers the rest
+    if path.startswith('App/'):  # #3540: only the paths a Mac-only test still reads
         return f'{path} is read by a test only a Mac runs' if path.startswith(MAC_APP_READS) else None
     if path.startswith(MAC_PREFIXES) or path in MAC_FILES or path.endswith(('.swift', '.xcodeproj')):
         return f'{path} is a Swift input or part of the Mac jobs'
@@ -668,13 +668,6 @@ def mac_checks_required(paths):
 def web_check_required(paths):
     """Whether the merge waits for hosted web's Playwright job (#3535): the diff is one that starts it."""
     return any(path.startswith(HOSTED_WEB_PREFIXES) for path in paths)
-
-
-def app_build_required(paths):
-    """True when the runner waits for hosted-app-macos.yml's build before merging (#3539). Every path here is on that
-    workflow's `paths` list, so the build is sure to start. Packages/ and project.yml also start it, but the runner
-    doesn't wait for it on those diffs: the need here is App/ diffs leaving the Mac checks (#3540)."""
-    return any(path.startswith('App/') for path in paths)
 
 
 # Ops folders whose tests skip themselves on Linux (ops/power's amph is AppleScript): a pass there proves nothing.
