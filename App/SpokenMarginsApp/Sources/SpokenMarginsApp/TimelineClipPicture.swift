@@ -148,8 +148,7 @@ struct TimelineClipViewer: View {
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .frame(minWidth: 44, minHeight: 44)
+                    Button { dismiss() } label: { Text("Done").minimumTapTarget() }
                         .accessibilityIdentifier("timeline.clip.done")
                 }
             }

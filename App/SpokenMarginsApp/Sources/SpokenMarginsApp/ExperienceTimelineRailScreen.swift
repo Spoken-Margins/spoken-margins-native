@@ -502,14 +502,22 @@ struct ExperienceTimelineRailScreen: View {
         refreshClips(for: item)
     }
 
-    /// Which of the item's tables and figures have a picture: one listing of its folder, and only for an item whose
-    /// document located any, so a page or a podcast does no disk work here (#3895).
+    /// Which of the item's tables and figures have a picture: one listing of its folder, read off the main thread, and
+    /// only for an item whose document located any, so a page or a podcast does no disk work here (#3895). Until the
+    /// listing arrives the rows are their text, as they were before pictures existed.
     private func refreshClips(for item: ItemDetailState) {
-        var next = TimelineClipSource.none
-        if item.timelineSource.entries.contains(where: { $0.floatId != nil }), let store = model.pdfClipStore() {
-            next = TimelineClipSource(store: store, itemId: item.id, available: store.available(forItem: item.id))
+        guard item.timelineSource.entries.contains(where: { $0.floatId != nil }), let store = model.pdfClipStore() else {
+            if clipSource != .none { clipSource = .none }
+            return
         }
-        if next != clipSource { clipSource = next }
+        let itemId = item.id
+        Task {
+            let available = await Task.detached(priority: .utility) { store.available(forItem: itemId) }.value
+            // The listener may have moved to another item while the folder was read.
+            guard model.selectedItem.id == itemId else { return }
+            let next = TimelineClipSource(store: store, itemId: itemId, available: available)
+            if next != clipSource { clipSource = next }
+        }
     }
 
     /// Replies sit directly under the Margin they answer, indented, at that Margin's place on the rail (#473).
