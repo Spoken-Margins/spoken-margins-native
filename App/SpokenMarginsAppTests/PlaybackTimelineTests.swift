@@ -341,4 +341,126 @@ final class PlaybackTimelineTests: XCTestCase {
             XCTAssertEqual(entries.map(\.id), ["source.beginning", "session::margin", "turn.reply"])
         }
     }
+
+    // MARK: #3862 one unit per item, matching its scrubber
+
+    /// A podcast's publisher chapters are saved twice with one id: `chapters` (a percent) and `mediaChapters` (the exact start).
+    private func podcastWithPublisherChapters(durationMs: Int = 6_180_000) -> ItemDetailState {
+        var item = ItemDetailState(id: "podcast", title: "Episode", text: "", isNativeAudio: true)
+        item.mediaDurationMs = durationMs
+        item.chapters = [
+            Chapter(id: "open", title: "Opening", startChar: 0, endChar: 0, percent: 0),
+            Chapter(id: "long", title: "Self modification", startChar: 0, endChar: 0, percent: 65),
+            Chapter(id: "rough", title: "Rough chapter", startChar: 0, endChar: 0, percent: 72)
+        ]
+        // "rough" has no exact twin: it was saved only as a fraction by an earlier build.
+        item.mediaChapters = [
+            MediaTimelineChapter(id: "open", title: "Opening", startMs: 0, transcriptSegmentId: "s0"),
+            MediaTimelineChapter(id: "long", title: "Self modification", startMs: 4_050_000, transcriptSegmentId: "s1")
+        ]
+        return item
+    }
+
+    func testAPodcastChapterWithAnExactStartShowsItsTimeNotItsPercent() throws {
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: podcastWithPublisherChapters(), sessionID: nil)
+        let long = try XCTUnwrap(entries.first { $0.id == "source.chapter.long" })
+        XCTAssertEqual(long.cornerLabel, "1:07:30", "an hour in is 1:07:30, never 67:30")
+        XCTAssertEqual(long.detail, "Chapter · 1:07:30")
+        XCTAssertEqual(long.spokenPosition, "1 hour, 7 minutes, 30 seconds")
+        XCTAssertEqual(long.position, 65, "the sort coordinate stays a percent, so the order does not move")
+        let open = try XCTUnwrap(entries.first { $0.id == "source.chapter.open" })
+        XCTAssertEqual(open.cornerLabel, "0:00")
+        XCTAssertEqual(entries.map(\.id), ["source.chapter.open", "source.chapter.long", "source.chapter.rough"],
+                       "showing a time does not move a card")
+    }
+
+    func testAPodcastChapterSavedOnlyAsAFractionSaysAboutAndNeverMakesATime() throws {
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: podcastWithPublisherChapters(), sessionID: nil)
+        let rough = try XCTUnwrap(entries.first { $0.id == "source.chapter.rough" })
+        XCTAssertEqual(rough.cornerLabel, "72%")
+        XCTAssertEqual(rough.detail, "Chapter · about 72%")
+        XCTAssertEqual(rough.spokenPosition, "72 percent")
+
+        // An episode whose chapters an earlier build saved only as percents (no exact twins at all).
+        var returning = podcastWithPublisherChapters()
+        returning.mediaChapters = []
+        for entry in ExperienceTimelineRailScreen.makeEntries(from: returning, sessionID: nil)
+        where entry.id.hasPrefix("source.chapter.") {
+            XCTAssertTrue(entry.cornerLabel.hasSuffix("%"), "\(entry.id) has no exact time to show")
+            XCTAssertTrue(entry.detail.contains("about"), entry.detail)
+        }
+    }
+
+    func testAnArticleKeepsPercentsEvenWhenItHasPreparedAudioChapters() throws {
+        var item = ItemDetailState(id: "article", title: "Essay", text: String(repeating: "word ", count: 400))
+        item.chapters = [Chapter(id: "c1", title: "Middle", startChar: 1_100, endChar: 1_500, percent: 56)]
+        item.mediaChapters = [MediaTimelineChapter(id: "c1", title: "Middle", startMs: 502_000, transcriptSegmentId: "s")]
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        let chapter = try XCTUnwrap(entries.first { $0.id == "source.chapter.c1" })
+        XCTAssertEqual(chapter.cornerLabel, "56%", "text never shows a time")
+        XCTAssertEqual(chapter.detail, "Chapter · 56%")
+        XCTAssertEqual(chapter.spokenPosition, "56 percent")
+        XCTAssertEqual(try XCTUnwrap(entries.first { $0.id == "source.beginning" }).cornerLabel, "0%")
+    }
+
+    func testAMediaChapterAndSceneOverAnHourReadAsHoursInTheirDetailLines() throws {
+        var item = ItemDetailState(id: "long", title: "Long episode", text: "", isNativeAudio: true)
+        item.mediaDurationMs = 7_200_000
+        item.mediaChapters = [MediaTimelineChapter(id: "m1", title: "Late", startMs: 4_050_000, transcriptSegmentId: "s")]
+        item.listeningMapScenes = [MediaTimelineChapter(id: "sc1", title: "Scene", startMs: 3_725_000, transcriptSegmentId: "s")]
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        let chapter = try XCTUnwrap(entries.first { $0.id == "source.mediaChapter.m1" })
+        XCTAssertEqual(chapter.detail, "Chapter · 1:07:30")
+        XCTAssertEqual(chapter.cornerLabel, "1:07:30")
+        let scene = try XCTUnwrap(entries.first { $0.id == "source.listeningMapScene.sc1" })
+        XCTAssertTrue(scene.detail.hasPrefix("Generated scene · 1:02:05"), scene.detail)
+        XCTAssertEqual(scene.cornerLabel, "1:02:05")
+    }
+
+    func testTheCurrentLineOnAPodcastHasTheClockAndTheFlooredPercent() throws {
+        let item = podcastWithPublisherChapters(durationMs: 6_180_000)
+        var snapshot = SessionSnapshot()
+        snapshot.itemId = item.id
+        snapshot.currentMediaTimeMs = 4_008_000
+        snapshot.currentPlaybackDurationMs = 6_180_000
+        let position = try XCTUnwrap(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot))
+        XCTAssertEqual(position.line(for: "Current chapter"), "Current chapter · 1:06:48 · 64%")
+
+        snapshot.currentMediaTimeMs = 6_130_000
+        XCTAssertEqual(try XCTUnwrap(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot))
+            .line(for: "Current chapter"), "Current chapter · 1:42:10 · 99%", "99% is not rounded up to finished")
+
+        snapshot.currentPlaybackDurationMs = nil
+        XCTAssertEqual(try XCTUnwrap(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot))
+            .line(for: "Current chapter"), "Current chapter · 1:42:10", "no duration, no percent: none is made up")
+    }
+
+    func testTheCurrentLineOnAnArticleUsesTheTextScrubbersPercent() throws {
+        let text = String(repeating: "word ", count: 200)
+        let item = ItemDetailState(id: "article", title: "Essay", text: text)
+        var snapshot = SessionSnapshot()
+        snapshot.itemId = item.id
+        snapshot.targetType = TargetType.itemTextTTS.rawValue
+        snapshot.currentTextStart = 470
+        let position = try XCTUnwrap(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot))
+        let scrubber = TimelinePositionLabel.textScrubberPercent(offset: 470, length: text.count)
+        XCTAssertEqual(position.percent, scrubber)
+        XCTAssertEqual(position.line(for: "Current passage"), "Current passage · \(scrubber)%")
+        XCTAssertNil(position.ms)
+    }
+
+    func testTheCurrentLineIsLeftOutWhenAnotherItemOrAReplyIsPlaying() {
+        let item = ItemDetailState(id: "article", title: "Essay", text: String(repeating: "word ", count: 200))
+        var snapshot = SessionSnapshot()
+        snapshot.targetType = TargetType.itemTextTTS.rawValue
+        snapshot.currentTextStart = 100
+        snapshot.itemId = "another"
+        XCTAssertNil(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot))
+        snapshot.itemId = item.id
+        snapshot.targetType = TargetType.assistantTurnTTS.rawValue
+        XCTAssertNil(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot),
+                     "a reply counts characters in its own text, not the item's")
+        snapshot.itemId = nil
+        XCTAssertNil(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot))
+    }
 }
