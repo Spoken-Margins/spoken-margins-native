@@ -218,12 +218,12 @@ final class LibraryFolderWalkTests: XCTestCase {
     }
 
     func testAPackageJSONAndAnUnreadableJSONAreNamed() throws {
-        try write("package.json", "{\"name\":\"x\",\"version\":\"1\"}")
+        try write("tool-settings.json", "{\"name\":\"x\",\"version\":\"1\"}")
         try write("broken.json", "{not json")
         try write("array.json", "[1,2]")
         let result = LibraryFolderWalk.walk(root)
         XCTAssertTrue(result.members.isEmpty)
-        XCTAssertEqual(Set(result.notAdded.map(\.key)), ["package.json", "broken.json", "array.json"])
+        XCTAssertEqual(Set(result.notAdded.map(\.key)), ["tool-settings.json", "broken.json", "array.json"])
         XCTAssertTrue(result.notAdded.allSatisfy { $0.reason == "Not a file the app can read" })
     }
 
