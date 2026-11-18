@@ -46,6 +46,8 @@ What it was not shown to do, and why that matters here:
 
 After the fix shipped, a followed Substack post that has headings was added again from the Following tab and still showed no chapters on a maintainer's phone. The leading explanation is the stale stored entry above, but that is unconfirmed. Tracing the code and a host test with the real feed both produce chapters for a fresh read, so the open question is what the saved entry held at the time of the add. Settle that before treating the explanation as the cause.
 
+Later the same day, a headed Substack post added through the share sheet on the same build came in with chapters and the publisher's voice. That confirms the fix for a fresh read of the page. It does not test the Following path, because a share-sheet add reads the page at that moment and never uses the saved Following copy. The Following case stays untested: add a headed post from Following after its feed has refreshed, and see whether chapters appear.
+
 ## Before merging an ingest fix
 
 1. Name which of the three places above the fix covers.
