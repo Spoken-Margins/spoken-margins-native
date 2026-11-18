@@ -97,7 +97,7 @@ struct ExperienceSourcesScreen: View, Equatable {
         let inputs = feed.inputs
         // Under a list chip only that list's shows are drawn; under All nothing changes (J13).
         let byList = FollowingByList.screen(
-            selected: selectedListID, lists: listsState.lists, feedRows: inputs.feedRows, shows: inputs.list,
+            selected: inputs.showsEmptyState ? nil : selectedListID, lists: listsState.lists, feedRows: inputs.feedRows, shows: inputs.list,
             subscriptions: inputs.subscriptions
         )
         NavigationStack(path: $path) {
@@ -178,6 +178,8 @@ struct ExperienceSourcesScreen: View, Equatable {
             .motionAnimation(.smooth(duration: 0.24), value: byList.rows.map(\.id))
             // A list of only Quiet shows opens its Quiet group, since that is all it has.
             .onChange(of: byList.opensQuietGroup) { _, opens in if opens { isQuietExpanded = true } }
+            // Two all-Quiet lists in a row leave that value true, so a new selection opens the group too.
+            .onChange(of: selectedListID) { _, _ in if byList.opensQuietGroup { isQuietExpanded = true } }
             // A deleted list can't stay selected.
             .onChange(of: listsState.lists) { _, lists in
                 selectedListID = FollowingByList.resolvedSelection(selectedListID, in: lists)
@@ -229,18 +231,25 @@ struct ExperienceSourcesScreen: View, Equatable {
                 FollowListPickerSheet(subscription: subscription)
                     .environmentObject(model)
             }
-            .alert("Rename list", isPresented: Binding(get: { renamingList != nil }, set: { if !$0 { renamingList = nil } })) {
+            // `presenting:` hands the buttons the list itself, so they never depend on the order in which the
+            // binding is reset and the action runs.
+            .alert(
+                "Rename list",
+                isPresented: Binding(get: { renamingList != nil }, set: { if !$0 { renamingList = nil } }),
+                presenting: renamingList
+            ) { list in
                 TextField("Name", text: $renameText)
                 Button("Cancel", role: .cancel) {}
-                Button("Rename", action: commitRename)
+                Button("Rename") { commitRename(list) }
             }
             .confirmationDialog(
                 FollowListWords.deleteQuestion(listName: deletingList?.name ?? "this list"),
                 isPresented: Binding(get: { deletingList != nil }, set: { if !$0 { deletingList = nil } }),
-                titleVisibility: .visible
-            ) {
-                Button("Delete list", role: .destructive, action: commitDelete)
-            } message: {
+                titleVisibility: .visible,
+                presenting: deletingList
+            ) { list in
+                Button("Delete list", role: .destructive) { commitDelete(list) }
+            } message: { _ in
                 Text(FollowListWords.deleteMessage)
             }
             .navigationDestination(item: $openFriend) { friend in
@@ -419,8 +428,7 @@ struct ExperienceSourcesScreen: View, Equatable {
         renamingList = list
     }
 
-    private func commitRename() {
-        guard let list = renamingList else { return }
+    private func commitRename(_ list: FollowList) {
         renamingList = nil
         let name = renameText
         Task {
@@ -428,8 +436,7 @@ struct ExperienceSourcesScreen: View, Equatable {
         }
     }
 
-    private func commitDelete() {
-        guard let list = deletingList else { return }
+    private func commitDelete(_ list: FollowList) {
         deletingList = nil
         Task { await model.deleteFollowList(id: list.id) }
     }
