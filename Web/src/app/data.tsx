@@ -11,7 +11,7 @@ import type { Episode, Margin, PlaybackPosition, Show } from '../shared/model.ts
 import { browserStorage, forgetMirrored, mergeMirror, pruneMirror, readMirror } from './logic/position-mirror.ts';
 import { mergeRefresh } from './logic/refresh.ts';
 import { keepingSharedAs, withSharedAs, type WrittenFacts } from './logic/shared-as.ts';
-import { keepingStar, withStar } from './logic/star.ts';
+import { keepingHeard, keepingStar, withStar } from './logic/star.ts';
 import { FailureGate, NotSavedError, notSavedMessage, shouldAskToPersist, type PersistState, type WriteKind } from './logic/storage.ts';
 import type { FeedRead } from './ports.ts';
 import { DEFAULT_SETTINGS, loadAll, putMany, putMargin, putSetting, putShowWithEpisodes, remove, removeShow, type Settings, type Snapshot } from './store/db.ts';
@@ -38,6 +38,8 @@ export interface DataApi extends Snapshot {
   addSharedAs(written: WrittenFacts): Promise<void>;
   /** Stars or unstars the listener's own Margin for sharing (#4172). Throws a `NotSavedError` when it isn't kept. */
   setStarred(marginId: string, on: boolean): Promise<void>;
+  /** Marks a friend's Margin heard: the listener listened to some of it (part of #3216). Once heard, it stays heard. */
+  setHeard(marginId: string): Promise<void>;
   deleteMargin(id: string): Promise<void>;
   savePosition(position: PlaybackPosition): Promise<void>;
   setSetting<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void>;
@@ -213,7 +215,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const addMargin = useCallback(
     (margin: Margin) => {
       const stored = dataRef.current.margins.find((m) => m.id === margin.id);
-      return saveMargin(keepingSharedAs(keepingStar(margin, stored), stored));
+      return saveMargin(keepingHeard(keepingSharedAs(keepingStar(margin, stored), stored), stored));
     },
     [saveMargin],
   );
@@ -232,6 +234,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // Always written, even when the stored star already agrees: a quick second tap reaches here before the first write lands.
       if (!stored) return;
       await saveMargin(withStar(stored, on));
+    },
+    [saveMargin],
+  );
+
+  const setHeard = useCallback(
+    async (marginId: string) => {
+      const stored = dataRef.current.margins.find((m) => m.id === marginId);
+      if (!stored || stored.heard === true || !stored.author) return;
+      await saveMargin({ ...stored, heard: true });
     },
     [saveMargin],
   );
@@ -256,8 +267,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
   );
 
   const api = useMemo<DataApi>(
-    () => ({ ...data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, deleteMargin, savePosition, setSetting }),
-    [data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, deleteMargin, savePosition, setSetting],
+    () => ({ ...data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting }),
+    [data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting],
   );
   return <DataContext.Provider value={api}>{children}</DataContext.Provider>;
 }

@@ -27,12 +27,18 @@ export function firesByItself(margin: Margin): boolean {
  * The Margins whose moment playback just crossed, in the order they come, going from `previous` to `now` seconds.
  * Undefined `previous` means nothing to compare with: nothing fires.
  */
-export function dueMargins(margins: readonly Margin[], previous: number | undefined, now: number): Margin[] {
+export function dueMargins(
+  margins: readonly Margin[],
+  previous: number | undefined,
+  now: number,
+  /** Which Margins count. The Margins tab's Autoplay (part of #3216) passes every Margin and decides itself what plays. */
+  counts: (margin: Margin) => boolean = firesByItself,
+): Margin[] {
   if (previous === undefined || !Number.isFinite(previous) || !Number.isFinite(now)) return [];
   const step = now - previous;
   if (step <= 0 || step > MAX_PLAYING_STEP_SECONDS) return [];
   return margins
-    .filter((m) => firesByItself(m) && m.atSeconds >= previous && m.atSeconds < now)
+    .filter((m) => counts(m) && m.atSeconds >= previous && m.atSeconds < now)
     .sort((a, b) => a.atSeconds - b.atSeconds);
 }
 
@@ -59,8 +65,8 @@ export class CrossingClock {
   }
 
   /** A time update while playing: the Margins crossed since the last one. */
-  update(margins: readonly Margin[], now: number): Margin[] {
-    const due = dueMargins(margins, this.last, now);
+  update(margins: readonly Margin[], now: number, counts?: (margin: Margin) => boolean): Margin[] {
+    const due = dueMargins(margins, this.last, now, counts);
     this.last = now;
     return due;
   }

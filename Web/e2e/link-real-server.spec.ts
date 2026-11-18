@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { devices, expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { keyFromFragment, PART } from '../src/packet/share-link.ts';
 import { sealPart } from '../src/cli/link-sealing.ts';
-import { seconds, serveAudio, serveFixtures } from './fixtures.ts';
+import { seconds, serveAudio, serveFixtures, startFromBeginning } from './fixtures.ts';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 const SERVER_PORT = Number(process.env.SM_LINK_REAL_PORT ?? 8899);
@@ -143,7 +143,7 @@ for (const [shape, open] of shapes) {
     expect(before.filter((host) => host === 'example.com' || host === 'feeds.test')).toEqual([]);
     expect(await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.paused)).toBe(true);
 
-    await arrival.getByRole('button', { name: 'Play' }).click();
+    await startFromBeginning(page);
     const playing = page.getByRole('dialog', { name: EPISODE });
     await expect(playing).toBeVisible();
     await expect.poll(() => page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.currentTime), { timeout: 10_000 }).toBeGreaterThan(0.3);
@@ -234,7 +234,7 @@ test('an enclosure that fails to load: one sentence and the Margins still play (
   await wire(context, page);
   await page.route('https://example.com/podcast/**', (route) => route.fulfill({ status: 404, body: 'Not found', headers: { 'content-type': 'text/html' } }));
   await page.goto(`${SERVER}/l/${id}#${KEY}`);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page);
   const cue = page.getByRole('dialog', { name: EPISODE }).getByTestId('margin-cue');
   await expect(cue).toContainText('This episode can’t play here, but you can still hear Web fixture’s Margins.');
   // The card is the one sentence: no problem toast beside it (#3356). Give a late second one time to appear.

@@ -77,6 +77,20 @@ export async function shot(page: Page, info: TestInfo, name: string): Promise<vo
   await page.screenshot({ path: `${SHOTS_DIR}/${info.project.name}-${name}.png` });
 }
 
+/**
+ * A share link's start from the beginning (part of #3216): the arrival preview's "Start from the beginning", or an
+ * article packet's one Play, then the Now tab, which a friend's unheard Margins would otherwise open on Margins.
+ */
+export async function startFromBeginning(page: Page, button: 'Start from the beginning' | 'Play' = 'Start from the beginning'): Promise<void> {
+  await page.getByTestId('arrival').getByRole('button', { name: button, exact: true }).click();
+  await nowTab(page);
+}
+
+/** The Now tab of Now Playing. */
+export async function nowTab(page: Page): Promise<void> {
+  await page.locator('.now-playing').getByRole('tab', { name: 'Now' }).click();
+}
+
 /** Clock text like "1:05" to seconds. */
 export function seconds(clock: string): number {
   return clock
