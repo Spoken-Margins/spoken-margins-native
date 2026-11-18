@@ -27,6 +27,8 @@ struct ExperienceItemDetailScreen: View {
     @State private var episodeLinkText = ""
     @State private var showsReactions = false
     @State private var collectionItem: LibraryItemRow?
+    /// A tap on Play or "Skip to …" made before its start is possible, kept until it can run (#3788).
+    @StateObject private var arrival = FriendArrivalPresenter()
     private let episodeLinker = ImportedFileEpisodeLinker()
 
     var body: some View {
@@ -142,7 +144,10 @@ struct ExperienceItemDetailScreen: View {
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
             .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
-            .onDisappear { WrittenMarginReadings.leftItemScreen(model.selectedItem.id) }
+            .onDisappear {
+                WrittenMarginReadings.leftItemScreen(model.selectedItem.id)
+                arrival.cancel()
+            }
             .trackedSheet(item: $collectionItem) { item in
                 ItemCollectionSheet(item: item).environmentObject(model)
             }
@@ -398,9 +403,18 @@ struct ExperienceItemDetailScreen: View {
             .accessibilityIdentifier("item.start.preparing")
         }
         let choices = listeningChoices
-        let behind = marginsBehindPlace
+        // While the friend's intro shows, a tap that can't start yet is kept (#3788). Otherwise the buttons act as before.
+        let holdsEarlyTap = FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin)) != nil
+        if let line = arrival.line {
+            Text(line)
+                .font(.subheadline)
+                .foregroundStyle(AppColors.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("item.arrival.waitingLine")
+        }
         Button {
-            perform(choices.primaryAction, behind: behind)
+            tapped(.play, holdsEarlyTap: holdsEarlyTap)
         } label: {
             Label(choices.primaryTitle, systemImage: "play.fill")
                 .frame(maxWidth: .infinity, minHeight: 52)
@@ -410,7 +424,8 @@ struct ExperienceItemDetailScreen: View {
         .accessibilityIdentifier("item.start.button")
         if let secondaryTitle = choices.secondaryTitle, let secondaryAction = choices.secondaryAction {
             Button {
-                perform(secondaryAction, behind: behind)
+                // Only "Skip to …" waits on a Margin's audio; "Listen without them" and "Play from the start" need none.
+            tapped(.skip, holdsEarlyTap: holdsEarlyTap && secondaryAction == .reviewNewMargins(thenContinue: false))
             } label: {
                 // Words only, as on the screens the owner reviewed (#3247): the line already says whose Margins.
                 Text(secondaryTitle)
@@ -421,6 +436,23 @@ struct ExperienceItemDetailScreen: View {
             .tint(AppColors.evergreen)
             .accessibilityLabel(choices.secondaryAccessibilityLabel ?? secondaryTitle)
             .accessibilityIdentifier(secondaryAction == .reviewNewMargins(thenContinue: false) ? "item.reviewNewMargins.button" : "item.listenWithout.button")
+        }
+    }
+
+    /// A tap on a pinned button. With the friend's intro showing it goes through the keeper, which runs it now or keeps it
+    /// until it can start (#3788); the rest of the time it runs as it always did.
+    private func tapped(_ choice: FriendArrivalStart.Choice, holdsEarlyTap: Bool) {
+        guard holdsEarlyTap else { return start(choice) }
+        arrival.tap(choice, model: model) { start($0) }
+    }
+
+    /// Plays or skips to the Margins, as the buttons are labelled now.
+    private func start(_ choice: FriendArrivalStart.Choice) {
+        let choices = listeningChoices
+        let behind = marginsBehindPlace
+        switch choice {
+        case .play: perform(choices.primaryAction, behind: behind)
+        case .skip: if let action = choices.secondaryAction { perform(action, behind: behind) }
         }
     }
 
