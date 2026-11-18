@@ -64,6 +64,7 @@
 		BF4CD875E4DFA95B3AB14636 /* SourceLinkHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69050C3D4931DF4FF8E80364 /* SourceLinkHandoff.swift */; };
 		BFAB396D17668E220C6104D8 /* Supertonic in Resources */ = {isa = PBXBuildFile; fileRef = 0B8C44619E7FAF16175EC2D7 /* Supertonic */; };
 		C2A4BB4A4E23CFE6CE076AC6 /* SessionKitFeeds in Frameworks */ = {isa = PBXBuildFile; productRef = BE649F52B4257A8BB5ED3717 /* SessionKitFeeds */; };
+		5A7D1E0C4B3F9A2E6D8C1B70 /* SessionKitPDF in Frameworks */ = {isa = PBXBuildFile; productRef = 6B8E2F1D5C4A0B3F7E9D2C81 /* SessionKitPDF */; };
 		C53A80476E4513D666A228D3 /* SpokenMarginsBrowserTextExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F2A6CC7522887307C67D46AE /* SpokenMarginsBrowserTextExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		CC0AD39630C14AEC9A9A8573 /* SessionKitEPUB in Frameworks */ = {isa = PBXBuildFile; productRef = 62C6DAFDEEEE7BC12B1CDE55 /* SessionKitEPUB */; };
 		CC6A33EA5ED33F43E7A818A4 /* emoji-article-crash-regression.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */; };
@@ -364,6 +365,7 @@
 				3EB7A4EE3350ECA1902F69A8 /* SessionKitSupertonic in Frameworks */,
 				CC0AD39630C14AEC9A9A8573 /* SessionKitEPUB in Frameworks */,
 				C2A4BB4A4E23CFE6CE076AC6 /* SessionKitFeeds in Frameworks */,
+				5A7D1E0C4B3F9A2E6D8C1B70 /* SessionKitPDF in Frameworks */,
 				8307E9C688A9F07FD4DD86F9 /* ptts in Frameworks */,
 				A391E3C44188F2FE5A49C93B /* KokoroPipeline in Frameworks */,
 				E7CEE322949FF588F91ED916 /* SessionKitSpeechFrontEnd in Frameworks */,
@@ -736,6 +738,7 @@
 				BE679FFC0BC2A00A74297525 /* SessionKitSupertonic */,
 				62C6DAFDEEEE7BC12B1CDE55 /* SessionKitEPUB */,
 				BE649F52B4257A8BB5ED3717 /* SessionKitFeeds */,
+				6B8E2F1D5C4A0B3F7E9D2C81 /* SessionKitPDF */,
 				893FEBD7410AEC3A77FCF5FA /* ptts */,
 				54900B4C14FBCE4EEBA05420 /* KokoroPipeline */,
 				958A66714D007E32A7B05F00 /* SessionKitSpeechFrontEnd */,
@@ -1593,6 +1596,10 @@
 		BE649F52B4257A8BB5ED3717 /* SessionKitFeeds */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SessionKitFeeds;
+		};
+		6B8E2F1D5C4A0B3F7E9D2C81 /* SessionKitPDF */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SessionKitPDF;
 		};
 		BE679FFC0BC2A00A74297525 /* SessionKitSupertonic */ = {
 			isa = XCSwiftPackageProductDependency;
