@@ -155,4 +155,120 @@ final class PodcastDownloadRecordTransitionsTests: XCTestCase {
     func testAnAutomaticDownloadThatFailsOnWiFiFailsWithTheError() {
         XCTAssertEqual(interruption(userInitiated: false, transport: .wifi), .failed(reason: "The network connection was lost."))
     }
+
+    // MARK: Launch
+
+    private func restore(
+        _ record: PodcastDownloadRecord, retained: Int64? = nil, fileExists: Bool = true
+    ) -> (restoration: PodcastDownloadRecord.Restoration, asked: [String]) {
+        var asked: [String] = []
+        let restoration = record.restoredAtLaunch(
+            retainedFileSize: { asked.append("retained"); return retained },
+            fileExists: { asked.append("exists"); return fileExists })
+        return (restoration, asked)
+    }
+
+    /// A kill during a replacement left a `failed` row beside a saved file: the listener keeps the episode.
+    func testALaunchFindingAFailedReplacementBesideASavedFileMakesTheAudioAvailable() {
+        let (result, _) = restore(row(state: .failed, path: "old.mp3", written: 1, failure: "x"), retained: 2_048)
+        XCTAssertEqual(result.record.state, .availableOffline)
+        XCTAssertEqual(result.record.bytesWritten, 2_048)
+        XCTAssertEqual(result.record.expectedBytes, 2_048)
+        XCTAssertEqual(result.record.failureReason, "Replacement download failed; saved audio is still available.")
+        XCTAssertTrue(result.localAssetReady)
+        XCTAssertEqual(result.writes, [result.record], "written behind, once")
+    }
+
+    func testALaunchWithAFailedRowAndNoSavedFileLeavesItFailedAndWritesNothing() {
+        let (result, asked) = restore(row(state: .failed, written: 4, failure: "refused"), retained: nil)
+        XCTAssertEqual(result.record, row(state: .failed, written: 4, failure: "refused"))
+        XCTAssertEqual(result.writes, [])
+        XCTAssertFalse(result.localAssetReady)
+        XCTAssertEqual(asked, ["retained"], "no file check for a row that isn't available")
+    }
+
+    func testALaunchWhoseSavedFileIsGoneFailsTheRowWithTheRetryText() {
+        let available = row(state: .availableOffline, path: "a.mp3", written: 10, expected: 10)
+        let (result, asked) = restore(available, fileExists: false)
+        XCTAssertEqual(result.record.state, .failed)
+        XCTAssertNil(result.record.localRelativePath)
+        XCTAssertEqual(result.record.failureReason, "Downloaded file is missing. Retry to download it again.")
+        XCTAssertFalse(result.localAssetReady)
+        XCTAssertEqual(result.writes, [result.record])
+        XCTAssertEqual(asked, ["exists"], "an available row never asks for the retained size")
+    }
+
+    func testALaunchWithItsFileStillThereChangesNothingAndSaysTheAssetIsReady() {
+        let available = row(state: .availableOffline, path: "a.mp3", written: 10, expected: 10)
+        let (result, _) = restore(available, fileExists: true)
+        XCTAssertEqual(result.record, available)
+        XCTAssertEqual(result.writes, [])
+        XCTAssertTrue(result.localAssetReady)
+    }
+
+    func testAFailedReplacementWhoseFileThenVanishesIsWrittenTwiceInOrder() {
+        // The retained size was read, but the existence check says the file is gone by the time it is asked.
+        let (result, _) = restore(row(state: .failed, path: "old.mp3"), retained: 5, fileExists: false)
+        XCTAssertEqual(result.writes.map(\.state), [.availableOffline, .failed])
+        XCTAssertEqual(result.record.state, .failed)
+        XCTAssertNil(result.record.localRelativePath)
+    }
+
+    func testALaunchTurnsADownloadThatWasCutOffIntoOneWaitingForWiFi() {
+        let (result, asked) = restore(row(state: .downloading, written: 7, expected: 70))
+        XCTAssertEqual(result.record.state, .waitingForWiFi)
+        XCTAssertEqual(result.record.bytesWritten, 7)
+        XCTAssertEqual(result.writes, [result.record])
+        XCTAssertEqual(asked, [])
+    }
+
+    func testALaunchLeavesWaitingStreamingAndEvictedRowsAlone() {
+        for state in [PodcastDownloadState.waitingForWiFi, .streamingOnly, .evicted] {
+            let stored = row(state: state)
+            let (result, asked) = restore(stored)
+            XCTAssertEqual(result.record, stored, "\(state)")
+            XCTAssertEqual(result.writes, [], "\(state)")
+            XCTAssertFalse(result.localAssetReady, "\(state)")
+            XCTAssertEqual(asked, [], "\(state)")
+        }
+    }
+
+    // MARK: Network changes
+
+    func testOnWiFiOnlyRowsThatWaitedStartAnAutomaticDownload() {
+        for state in PodcastDownloadState.allCasesForTests {
+            let expected: PodcastDownloadRecord.NetworkReaction? =
+                (state == .waitingForWiFi || state == .streamingOnly) ? .startAutomaticDownload : nil
+            for userInitiated in [true, false] {
+                XCTAssertEqual(row(state: state).reaction(toTransport: .wifi, userInitiated: userInitiated), expected,
+                               "\(state) \(userInitiated)")
+            }
+        }
+    }
+
+    func testLeavingWiFiPausesAutomaticDownloadsAndLeavesTheListenersOwnRunning() {
+        for transport in [PodcastNetworkTransport.cellular, .unavailable, .other] {
+            let target: PodcastDownloadState = transport == .cellular ? .streamingOnly : .waitingForWiFi
+            for state in PodcastDownloadState.allCasesForTests {
+                let paused = state == .downloading || state == .waitingForWiFi
+                XCTAssertEqual(row(state: state).reaction(toTransport: transport, userInitiated: false),
+                               paused ? .pause(to: target) : nil, "\(state) on \(transport)")
+                XCTAssertNil(row(state: state).reaction(toTransport: transport, userInitiated: true),
+                             "the listener's own download keeps going: \(state) on \(transport)")
+            }
+        }
+    }
+}
+
+private extension PodcastDownloadState {
+    /// Every case, spelled out; the exhaustive switch below stops compiling when one is added without a row here.
+    static let allCasesForTests: [PodcastDownloadState] = {
+        let all: [PodcastDownloadState] = [.waitingForWiFi, .downloading, .availableOffline, .streamingOnly, .failed, .evicted]
+        for state in all {
+            switch state {
+            case .waitingForWiFi, .downloading, .availableOffline, .streamingOnly, .failed, .evicted: break
+            }
+        }
+        return all
+    }()
 }
