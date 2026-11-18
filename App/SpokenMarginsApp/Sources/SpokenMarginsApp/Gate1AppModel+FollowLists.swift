@@ -48,7 +48,7 @@ extension Gate1AppModel {
     func createFollowList(named name: String, adding subscription: FeedSubscription?) async -> FollowListName.Problem? {
         guard let service = followListsService() else { return nil }
         do {
-            let change = try await service.create(name: name, adding: subscription.map(FollowListEditing.member(for:)))
+            let change = try await service.create(name: name, adding: subscription.map { FollowListEditing.member(for: $0) })
             FollowListsState.shared.publish(change.lists)
             return change.problem
         } catch {
