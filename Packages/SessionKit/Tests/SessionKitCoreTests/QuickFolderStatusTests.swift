@@ -77,17 +77,20 @@ final class QuickFolderStatusTests: XCTestCase {
 
     #if canImport(Darwin)
     func testTheSystemFormatterGivesTheNamedAbbreviatedAndFullForms() {
-        let system = QuickFolderStatus(
-            name: "C", lastCheckedAt: now.addingTimeInterval(-120), now: now, calendar: calendar, locale: Locale(identifier: "en_US"))
-        // The system's own words, whatever the OS version spells them as, with no-break spaces read as spaces.
-        let plain = { (text: String) in
-            text.replacingOccurrences(of: "\u{00A0}", with: " ").replacingOccurrences(of: "\u{202F}", with: " ")
-        }
-        let short = plain(system.checkedText), spoken = plain(system.spokenCheckedText)
-        XCTAssertTrue(short.hasPrefix("Checked 2 min"), short)
-        XCTAssertTrue(spoken.hasPrefix("checked 2 minute"), spoken)
-        XCTAssertTrue(spoken.hasSuffix(" ago"), spoken)
-        XCTAssertLessThan(short.count, spoken.count + 1, "the abbreviated form is no longer than the spoken one")
+        let locale = Locale(identifier: "en_US")
+        let date = now.addingTimeInterval(-120)
+        let system = QuickFolderStatus(name: "C", lastCheckedAt: date, now: now, calendar: calendar, locale: locale)
+        // Whatever the OS spells it as: the words are the system formatter's, `.named`, abbreviated for the line and full for VoiceOver.
+        let formatter = RelativeDateTimeFormatter()
+        formatter.dateTimeStyle = .named
+        formatter.locale = locale
+        formatter.unitsStyle = .abbreviated
+        let abbreviated = formatter.localizedString(for: date, relativeTo: now)
+        formatter.unitsStyle = .full
+        let full = formatter.localizedString(for: date, relativeTo: now)
+        XCTAssertFalse(abbreviated.isEmpty)
+        XCTAssertEqual(system.checkedText, "Checked " + abbreviated)
+        XCTAssertEqual(system.spokenCheckedText, "checked " + full)
     }
     #endif
 
