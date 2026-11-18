@@ -480,9 +480,9 @@ struct ExperienceItemDetailScreen: View {
                     .frame(minHeight: 40)
                     .expandedHitArea(vertical: 2)
             }
-            // Beside the two start choices it is a quiet link, not a third peer button (#3219).
-            .buttonStyle(.bordered)
-            .tint(quietMarginsLink ? AppColors.secondaryText : AppColors.evergreen)
+            // Beside the two start choices it is a quiet link, not a third peer button (#3219). Quiet means no fill,
+            // not grey: grey text on a grey fill is how iOS draws a disabled button (#3854).
+            .modifier(MarginsLinkStyleModifier(style: ItemMarginsLinkStyle.style(quiet: quietMarginsLink)))
             .accessibilityIdentifier("item.reviewMargins.button")
         }
     }
@@ -1044,6 +1044,30 @@ private struct ItemLinksRow: View {
                     .contentShape(Rectangle())
             }
             .accessibilityIdentifier("item.readwise.link")
+        }
+    }
+}
+
+/// "Review Margins" drawn as `ItemMarginsLinkStyle` says: an evergreen outline capsule with no fill, or the bordered
+/// evergreen button (#3854). The outline is at least 44 pt tall, and its stroke is a shape cue as well as a colour.
+private struct MarginsLinkStyleModifier: ViewModifier {
+    let style: ItemMarginsLinkStyle
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch style {
+        case .outline:
+            content
+                .buttonStyle(.plain)
+                .foregroundStyle(AppColors.evergreen)
+                .padding(.horizontal, 16)
+                .frame(minHeight: TapTarget.minimum)
+                .overlay { Capsule().stroke(AppColors.evergreen, lineWidth: 1) }
+                .contentShape(Capsule())
+        case .bordered:
+            content
+                .buttonStyle(.bordered)
+                .tint(AppColors.evergreen)
         }
     }
 }
