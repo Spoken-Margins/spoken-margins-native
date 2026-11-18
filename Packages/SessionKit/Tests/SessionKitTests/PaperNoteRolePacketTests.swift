@@ -74,8 +74,8 @@ final class PaperNoteRolePacketTests: XCTestCase {
         )
         let url = root.appendingPathComponent("package-a.spokenmargins")
         // exportPacket imports it with the last shipped build's reader and compares the Margins it read.
-        try exportPacket(prepared, to: url)
-        try SpokenMarginsPackageExportRecord.recordExport(manifest: prepared.manifest, selections: selections, repository: store)
+        let manifest = try exportPacket(prepared, to: url)
+        try SpokenMarginsPackageExportRecord.recordExport(manifest: manifest, selections: selections, repository: store)
 
         let archive = try Archive(url: url, accessMode: .read)
         var entries = 0
