@@ -509,11 +509,12 @@ final class BackgroundRefreshGateTests: XCTestCase {
         let margin = try XCTUnwrap(model.selectedItem.interjections.first)
         XCTAssertNotEqual(margin.isStarredForSharing, true)
 
-        model.setInterjectionStarredForSharing(margin.id, starred: true)
-        XCTAssertNotEqual(model.selectedItem.interjections.first?.isStarredForSharing, true,
-                          "the star must not read the item before it returns")
+        model.setStarredForSharing(margin, starred: true, place: .detail)
+        // The star shows at once, from the Margin the one-row write returned: Share reads the selected item, and a Margin
+        // starred a moment ago must start selected (#4173). The item itself is still read in the background, not here (#2505).
+        XCTAssertEqual(model.selectedItem.interjections.first?.isStarredForSharing, true, "the star shows before any reload")
         await model.settleItemReload()
-        XCTAssertEqual(model.selectedItem.interjections.first?.isStarredForSharing, true, "the background read shows the star")
+        XCTAssertEqual(model.selectedItem.interjections.first?.isStarredForSharing, true, "the background read keeps the star")
 
         model.setInterjectionPrivateSharingNote(margin.id, note: "For Sam")
         XCTAssertNil(model.selectedItem.interjections.first?.privateSharingNote, "the note must not read the item before it returns")
