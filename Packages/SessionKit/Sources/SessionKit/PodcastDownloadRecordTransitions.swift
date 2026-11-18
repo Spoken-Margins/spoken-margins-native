@@ -101,4 +101,73 @@ extension PodcastDownloadRecord {
         }
         return .failed(reason: reason)
     }
+
+    // MARK: Launch and network changes
+
+    /// What a launch makes of one stored row.
+    public struct Restoration: Equatable, Sendable {
+        /// The row to hold in memory.
+        public var record: PodcastDownloadRecord
+        /// Rows to write behind, in this order, because the stored row still says the old thing.
+        public var writes: [PodcastDownloadRecord]
+        /// True when the row's saved file is there and the app should be told its local asset is ready.
+        public var localAssetReady: Bool
+    }
+
+    /// Repairs a stored row at launch. `retainedFileSize` and `fileExists` are asked only when the row needs them, so
+    /// a launch makes no file check a row doesn't call for.
+    /// - A row that failed while a saved file is still on disk was a failed replacement: the saved audio is available.
+    /// - A row that says it is available but whose file is gone is `failed`, with no file named.
+    /// - A row still `downloading` was cut off by the app ending: it waits for Wi-Fi.
+    public func restoredAtLaunch(
+        retainedFileSize: () -> Int64?,
+        fileExists: () -> Bool
+    ) -> Restoration {
+        var record = self
+        var writes: [PodcastDownloadRecord] = []
+        if record.state == .failed, let size = retainedFileSize() {
+            record.state = .availableOffline
+            record.bytesWritten = size
+            record.expectedBytes = size
+            record.failureReason = "Replacement download failed; saved audio is still available."
+            writes.append(record)
+        }
+        if record.state == .availableOffline {
+            guard fileExists() else {
+                record.state = .failed
+                record.localRelativePath = nil
+                record.failureReason = "Downloaded file is missing. Retry to download it again."
+                writes.append(record)
+                return Restoration(record: record, writes: writes, localAssetReady: false)
+            }
+            return Restoration(record: record, writes: writes, localAssetReady: true)
+        }
+        if record.state == .downloading {
+            record.state = .waitingForWiFi
+            writes.append(record)
+        }
+        return Restoration(record: record, writes: writes, localAssetReady: false)
+    }
+
+    /// What a row does when the network changes.
+    public enum NetworkReaction: Equatable, Sendable {
+        /// Start the download, not on the listener's behalf.
+        case startAutomaticDownload
+        /// Stop its automatic work and show this state.
+        case pause(to: PodcastDownloadState)
+    }
+
+    /// On Wi-Fi, a row waiting for Wi-Fi or streaming only starts downloading. Off Wi-Fi, a row downloading or waiting
+    /// stops, unless the listener asked for it: it becomes `streamingOnly` on cellular and `waitingForWiFi` otherwise.
+    /// Every other row, and a listener's own download, is left alone.
+    public func reaction(
+        toTransport transport: PodcastNetworkTransport,
+        userInitiated: Bool
+    ) -> NetworkReaction? {
+        if transport == .wifi {
+            return state == .waitingForWiFi || state == .streamingOnly ? .startAutomaticDownload : nil
+        }
+        guard state == .downloading || state == .waitingForWiFi, !userInitiated else { return nil }
+        return .pause(to: transport == .cellular ? .streamingOnly : .waitingForWiFi)
+    }
 }
