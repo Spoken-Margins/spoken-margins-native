@@ -2988,6 +2988,21 @@ class PackageFetchRetryTests(unittest.TestCase):
         self.assertEqual(calls, ['build-for-testing'])
         sleep.assert_not_called()
 
+    def test_a_cache_warning_about_a_clone_does_not_excuse_a_failure_of_the_pr_itself(self):
+        # The audit on 4366e8f: SwiftPM warns "skipping cache due to an error: Failed to clone", fetches another way,
+        # and then the PR's own build fails with an error that has no file:line (a link failure, a manifest error).
+        warning = ("warning: 'onnxruntime-swift-package-manager': skipping cache due to an error: Failed to clone "
+                   "repository https://github.com/microsoft/onnxruntime-swift-package-manager.git:\n")
+        for text in (warning + 'error: link command failed with exit code 1\n',
+                     warning + "error: 'sessionkit': product 'Foo' required by package 'bar' not found\n"):
+            with self.subTest(text=text):
+                calls, manifest, sleep, error = self.run_build([(text, True)], step_name='package-build')
+                self.assertIsNotNone(error)
+                self.assertEqual(calls, ['package-build'])
+                self.assertNotIn('lane_fault', manifest)
+                self.assertNotIn('::error title=lane-fault::', self.printed)
+                sleep.assert_not_called()
+
     def test_a_compile_error_or_a_version_conflict_is_not_tried_again(self):
         for text in ('Foo.swift:3:1: error: cannot find Bar in scope\n',
                      'xcodebuild: error: Could not resolve package dependencies:\n  root depends on Foo 9.0.0\n'):

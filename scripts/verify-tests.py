@@ -70,7 +70,33 @@ BUILD_SLOT_WAIT_SECONDS = 1800
 PACKAGE_FETCH_ATTEMPTS = 3
 PACKAGE_FETCH_PAUSES = (10, 30)  # seconds before the second and the third attempt
 PACKAGE_FETCH_FAULT = re.compile(r'Failed to clone repository\b')
-OTHER_BUILD_FAILURE = re.compile(r':\d+:\d+: error:|^The following build commands failed:', re.M)  # the PR's own code was reached
+# A compile error, a failed build command, or any other `error:` line (a link failure, a manifest error, a version
+# conflict) means the PR's own code or manifest was reached and is wrong, so a clone line in the same log must not
+# excuse it. A `warning:` line is no error: SwiftPM warns "skipping cache due to an error: Failed to clone" and goes on.
+OTHER_BUILD_FAILURE = re.compile(r':\d+:\d+: error:|^failed: |^The following build commands failed:', re.M)
+_ERROR_LINE = re.compile(r'(?:^|: )error: ')
+_PACKAGE_RESOLUTION_ERROR = re.compile(r'error: (?:Failed to clone repository\b|Could not resolve package dependencies)')
+
+
+def has_other_failure(text):
+    """True when `text` holds an error that is not package resolution's own (see OTHER_BUILD_FAILURE)."""
+    if OTHER_BUILD_FAILURE.search(text):
+        return True
+    return any(_ERROR_LINE.search(line) and not _PACKAGE_RESOLUTION_ERROR.search(line)
+               for line in (raw.strip() for raw in text.splitlines()) if not line.startswith('warning:'))
+
+
+def package_fetch_fault_line(text):
+    """The `Failed to clone repository <url>` line when that is what stopped the build (#4512): package resolution
+    itself failed (an `error: Failed to clone` or `error: Could not resolve package dependencies` line), a clone failure
+    is named, and nothing else in the text is an error. None otherwise. scripts/lane-runner.py keeps the same rule for the
+    lane's own builds; scripts/tests/test_lane_runner.py checks the two agree."""
+    if has_other_failure(text):
+        return None
+    lines = [raw.strip() for raw in text.splitlines()]
+    if not any(_PACKAGE_RESOLUTION_ERROR.search(line) for line in lines if not line.startswith('warning:')):
+        return None
+    return next((line for line in lines if PACKAGE_FETCH_FAULT.search(line)), None)
 
 # Xcode's compilation cache for the app build-for-testing (#1331). Every T3 builds in fresh DerivedData, so
 # without it each one recompiled every module. Measured on the lane Mac (Xcode 27.0, 2026-10-12): 57-73 s
@@ -2281,8 +2307,8 @@ class Run:
                 failed = self.manifest['steps'][-1]  # `command` adds its step before anything can fail
                 log = self.output / f'{name}.log'
                 text = log.read_text(errors='replace') if log.is_file() else ''
-                fault = next((line.strip() for line in text.splitlines() if PACKAGE_FETCH_FAULT.search(line)), None)
-                if (not fault or OTHER_BUILD_FAILURE.search(text) or failed.get('name') != name or failed.get('tests')
+                fault = package_fetch_fault_line(text)
+                if (not fault or failed.get('name') != name or failed.get('tests')
                         or failed.get('interrupted') or failed.get('signalled')):
                     raise
                 if attempt == PACKAGE_FETCH_ATTEMPTS:

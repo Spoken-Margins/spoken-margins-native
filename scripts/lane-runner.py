@@ -859,25 +859,45 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
 # is the network or the host, never the PR's code, so a build that stopped on it is INCONCLUSIVE with a lane reason.
 # Narrow on purpose: "Could not resolve package dependencies" alone also names a PR's own bad version requirement.
 PACKAGE_FETCH_FAULT = re.compile(r'Failed to clone repository\b')
-# A compile error, or xcodebuild's list of failed build commands, means the PR's own code was reached and is wrong: a
-# clone line elsewhere in the same log (or echoed in a source excerpt) must not excuse it.
+# A compile error, xcodebuild's list of failed build commands, or any other `error:` line (a link failure, a manifest
+# error, a version conflict) means the PR's own code or manifest was reached and is wrong: a clone line elsewhere in the
+# same log (or echoed in a source excerpt) must not excuse it. A `warning:` line is no error: SwiftPM warns "skipping
+# cache due to an error: Failed to clone" and goes on. scripts/verify-tests.py keeps the same rule for its own steps.
 OTHER_BUILD_FAILURE = re.compile(r':\d+:\d+: error:|^failed: |^The following build commands failed:', re.M)
+_ERROR_LINE = re.compile(r'(?:^|: )error: ')
+_PACKAGE_RESOLUTION_ERROR = re.compile(r'error: (?:Failed to clone repository\b|Could not resolve package dependencies)')
 PACKAGE_FETCH_FAULT_MARK = 'lane fault, not the PR: Swift package resolution could not fetch a package'  # NOT_LANE_FAULTS reads it
 PACKAGE_FETCH_FAULT_WHY = (f'{PACKAGE_FETCH_FAULT_MARK} from GitHub, so the build never started compiling. Ask again '
                            'with a new /lane request; the dispatcher does it once, and files a regression issue if the '
                            'same fetch fails again.')
 
 
+def has_other_failure(text: str) -> bool:
+    """True when `text` holds an error that is not package resolution's own (see OTHER_BUILD_FAILURE)."""
+    if OTHER_BUILD_FAILURE.search(text):
+        return True
+    return any(_ERROR_LINE.search(line) and not _PACKAGE_RESOLUTION_ERROR.search(line)
+               for line in (raw.strip() for raw in text.splitlines()) if not line.startswith('warning:'))
+
+
+def package_fetch_fault_line(text: str) -> str | None:
+    """The `Failed to clone repository <url>` line when that is what stopped the build: package resolution itself
+    failed (an `error: Failed to clone` or `error: Could not resolve package dependencies` line), a clone failure is
+    named, and nothing else in the text is an error."""
+    if has_other_failure(text):
+        return None
+    lines = [raw.strip() for raw in text.splitlines()]
+    if not any(_PACKAGE_RESOLUTION_ERROR.search(line) for line in lines if not line.startswith('warning:')):
+        return None
+    return next((line for line in lines if PACKAGE_FETCH_FAULT.search(line)), None)
+
+
 def package_fetch_fault(log: Path) -> str | None:
-    """The `Failed to clone repository <url>` line of a build log, if that is what stopped the build: nothing else in
-    the log is a compile error or a failed build command."""
+    """`package_fetch_fault_line` of a build log."""
     try:
-        text = log.read_text(errors='replace')
+        return package_fetch_fault_line(log.read_text(errors='replace'))
     except OSError:
         return None
-    if OTHER_BUILD_FAILURE.search(text):
-        return None
-    return next((line.strip() for line in text.splitlines() if PACKAGE_FETCH_FAULT.search(line)), None)
 
 
 @ledger_step('app builds', lambda args, result: (
@@ -3004,8 +3024,9 @@ def summarize_manifest(manifest: dict, output: Path | None = None) -> dict:
         # under them, so the build log, where the runner has it, is read as well.
         fetch_fault = None
         if step.get('name') == 'build-for-testing' and errors:
-            fetch_fault = None if any(OTHER_BUILD_FAILURE.search(e) for e in errors) else (
-                next((e for e in errors if PACKAGE_FETCH_FAULT.search(e)), None) or
+            errors_text = '\n'.join(errors)
+            fetch_fault = None if has_other_failure(errors_text) else (
+                package_fetch_fault_line(errors_text) or
                 (package_fetch_fault(output / 'build-for-testing.log') if output else None))
         if fetch_fault:
             summary['package_fetch_fault'] = fetch_fault
@@ -3536,7 +3557,9 @@ NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'),
                    # hosted_checks_missing's words for a lane-fault: a GitHub runner's network, not a lane change. Before
                    # #4085 it was a FAIL, which never counted toward the auto-revert (audit on 9d98b41).
                    ("Runner fault, not this PR's code: run again", 'a GitHub-hosted runner fault, not a lane change (#4085)'),
-                   (PACKAGE_FETCH_FAULT_MARK, "a package that could not be fetched from GitHub, not a lane change (#4512)"))
+                   (PACKAGE_FETCH_FAULT_MARK, "a package that could not be fetched from GitHub, not a lane change (#4512)"),
+                   # run_host_plan's words for the same fault in a fast or Mac-rest plan (verify-tests.py `lane_fault`).
+                   ('lane fault: a Swift package could not be fetched', "a package that could not be fetched from GitHub, not a lane change (#4512)"))
 PENDING_T3_HOLD = re.compile(r'^not merged: held for T3:', re.M)
 LANE_MERGE_LOOKBACK = 300
 

@@ -1100,6 +1100,55 @@ class T3PreparationTests(unittest.TestCase):
         self.assertIn('Run it again.', details[0])
         self.assertNotIn('open the lid', details[0])
 
+    def test_the_fast_plan_line_of_a_package_fetch_fault_does_not_count_toward_the_auto_revert(self):
+        # The audit on 4366e8f: this line came from run_host_plan and carried no NOT_LANE_FAULTS text, so two of them
+        # after a network outage reverted an unrelated lane merge (on main the same clone failure was a FAIL).
+        # The line is built here the way the lane builds it, from the lane_fault verify-tests.py writes.
+        with tempfile.TemporaryDirectory() as temporary:
+            def run(command, log, timeout):
+                output = Path(command[command.index('--output') + 1])
+                output.mkdir(parents=True, exist_ok=True)
+                why = ('a Swift package could not be fetched from GitHub '
+                       '(error: Failed to clone repository https://github.com/x/y.git:), so the PR was never judged')
+                (output / 'manifest.json').write_text(json.dumps({'status': 'failed_or_incomplete', 'lane_fault': why,
+                                                                  'steps': []}))
+                return 1
+            verdict, details = lane.run_host_plan('fast-mac-rest', Path(temporary), run, None)
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        body = (f'Lane report r — INCONCLUSIVE\ncommit abc · tier auto\nran: host tests\n{details[0]}\n'
+                '<!-- lane-request: {"commit": "abc"} -->\n')
+        counts, why = lane.lane_report_verdict(body)
+        self.assertFalse(counts, why)
+        self.assertIn('#4512', why)
+
+    def test_the_lane_and_verify_tests_read_a_package_fetch_fault_the_same_way(self):
+        # One rule in two scripts: the audit found each place that read a clone line counted something it should not.
+        clone = 'error: Failed to clone repository https://github.com/microsoft/onnxruntime-swift-package-manager.git:'
+        warning = ("warning: 'onnxruntime-swift-package-manager': skipping cache due to an error: "
+                   'Failed to clone repository https://github.com/microsoft/onnxruntime-swift-package-manager.git:')
+        table = [
+            ('the real tools-step wording', f'{warning}\n{clone}\n', True),
+            ('xcodebuild: resolution failed, clone indented under it',
+             'xcodebuild: error: Could not resolve package dependencies:\n  Failed to clone repository https://x/y.git:\n', True),
+            ('the T3 report: the cache warning and the resolution error', 'Process exit 74; skipping cache due to an error: '
+             'Failed to clone repository https://x/y.git:\nxcodebuild: error: Could not resolve package dependencies:\n', True),
+            ('a clone warning, then a link failure', f'{warning}\nerror: link command failed with exit code 1\n', False),
+            ('a clone warning, then a manifest error',
+             f"{warning}\nerror: 'sessionkit': product 'Foo' required by package 'bar' not found\n", False),
+            ('a clone warning and nothing that failed the build', f'{warning}\n', False),
+            ('a clone warning, then a compile error', f'{warning}\nSources/A.swift:3:5: error: cannot find x in scope\n', False),
+            ('a clone error beside a compile error', f'{clone}\nSources/A.swift:3:5: error: cannot find x in scope\n', False),
+            ('a version conflict, no clone', 'error: Dependencies could not be resolved because root depends on x 1.0.0\n', False),
+            ('xcodebuild unsatisfiable requirement', 'xcodebuild: error: Could not resolve package dependencies:\n  requirement 9.9\n', False),
+            ('failed build commands', f'{clone}\nThe following build commands failed:\n', False),
+            ('empty', '', False),
+        ]
+        for name, text, expected in table:
+            with self.subTest(name):
+                self.assertEqual(bool(lane.package_fetch_fault_line(text)), expected)
+                self.assertEqual(bool(verification.package_fetch_fault_line(text)), expected)
+                self.assertEqual(lane.package_fetch_fault_line(text), verification.package_fetch_fault_line(text))
+
     def test_a_package_fetch_inconclusive_does_not_count_toward_the_auto_revert(self):
         # Without its NOT_LANE_FAULTS entry, two of these after a lane merge would revert an unrelated lane change.
         body = f'Lane report r — INCONCLUSIVE\n{lane.PACKAGE_FETCH_FAULT_WHY}\n'
