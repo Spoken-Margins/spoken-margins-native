@@ -47,6 +47,7 @@ struct FollowListsScreen: View {
                     ForEach(rows) { row in
                         NavigationLink {
                             FollowListScreen(model: model, subscriptions: subscriptions, artwork: artwork, listID: row.id)
+                                .miniPlayerKeepOut()
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(row.name).foregroundStyle(AppColors.text)
@@ -105,7 +106,6 @@ struct FollowListsScreen: View {
             FollowListAddShowsSheet(model: model, subscriptions: subscriptions, listID: list.id)
         }
         .accessibilityIdentifier("followLists.screen")
-        .miniPlayerKeepOut()
     }
 
     private func beginNaming() {

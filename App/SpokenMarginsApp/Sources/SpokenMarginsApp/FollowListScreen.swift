@@ -102,7 +102,6 @@ struct FollowListScreen: View {
             FollowListAddShowsSheet(model: model, subscriptions: subscriptions, listID: list.id)
         }
         .accessibilityIdentifier("followList.screen")
-        .miniPlayerKeepOut()
     }
 
     private func addShowsButton(_ list: FollowList) -> some View {

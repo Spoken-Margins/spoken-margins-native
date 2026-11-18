@@ -250,9 +250,11 @@ struct ExperienceSourcesScreen: View, Equatable {
             }
             .navigationDestination(isPresented: $isShowingLists) {
                 FollowListsScreen(model: model, subscriptions: inputs.subscriptions, artwork: artwork)
+                    .miniPlayerKeepOut()
             }
             .navigationDestination(item: $editingList) { target in
                 FollowListScreen(model: model, subscriptions: inputs.subscriptions, artwork: artwork, listID: target.id)
+                    .miniPlayerKeepOut()
             }
             .navigationDestination(item: $openFriend) { friend in
                 FollowingFriendItemsScreen(friend: friend)
