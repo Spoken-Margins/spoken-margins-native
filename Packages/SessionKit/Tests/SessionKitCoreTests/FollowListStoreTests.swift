@@ -84,7 +84,8 @@ final class FollowListStoreTests: XCTestCase {
                                                 members: [ListMember(feedKey: "https://a.example/feed")]))
         }
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
-        XCTAssertEqual(try Self.schemaObjects(atPath: path), try Self.build29SchemaObjects(), "lists add no table, column or index")
+        let build29Schema = try Self.build29SchemaObjects()
+        XCTAssertEqual(try Self.schemaObjects(atPath: path), build29Schema, "lists add no table, column or index")
         XCTAssertEqual(try store.listItems(), before)
         XCTAssertEqual(try SQLiteSessionStore(path: path).listItems(), before)
         XCTAssertEqual(try store.loadFeedSubscriptions(), [])
