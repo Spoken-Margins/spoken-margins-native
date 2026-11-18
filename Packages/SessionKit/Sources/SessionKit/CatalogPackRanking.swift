@@ -65,8 +65,9 @@ public enum CatalogPackRanking {
 
     /// The pack's sources the listener hasn't hidden, in the one order every surface uses: podcasts first, then
     /// everything else (newsletters); within each group, lighter weight first, and ties in the order the pack names
-    /// them. The Pack screen, a card's artwork strip, Follow all and Done's first listen all use it, so the first
-    /// listen is a podcast whenever the pack has one.
+    /// them (Default taken: the pack's own `entryIds` order, which the catalog builder writes as its editorial order,
+    /// not the order of `catalog.entries`). The Pack screen, a card's artwork strip, Follow all and Done's first
+    /// listen all use it, so the first listen is a podcast whenever the pack has one.
     public static func visibleSources(
         of pack: SourceCatalogPack,
         in catalog: SourceCatalog,
@@ -131,6 +132,11 @@ public enum CatalogPackRanking {
         visiblePacks(in: catalog, notForMe: notForMe).isEmpty ? .top : .packs
     }
 
+    /// A pack card's pace: its visible sources' rates, as of the catalog's `generatedAt`.
+    public static func packPace(of pack: SourceCatalogPack, in catalog: SourceCatalog, notForMe: NotForMeSnapshot) -> CatalogPackPace.Measure? {
+        CatalogPackPace.packMeasure(visibleSources(of: pack, in: catalog, notForMe: notForMe).map { CatalogPackPace.measure(for: $0, in: catalog) })
+    }
+
     // MARK: Following a pack
 
     /// What Follow all follows, in order: visible sources not yet followed, in `visibleSources` order.
@@ -145,6 +151,8 @@ public enum CatalogPackRanking {
 
     /// The card's button, from each visible source's state (see `CatalogDrawerFollowState.merged`). "Followed" means
     /// a live subscription matches the entry however it was followed; a show that sits in two packs counts in both.
+    /// States are read per source, so a follow in flight or a failure on a show this pack shares with another pack
+    /// or with a single row shows here too: the caller clears a state when its batch is over.
     public static func buttonState(visibleSourceIds: [String], states: [String: CatalogDrawerFollowState]) -> CatalogPackButtonState {
         let total = visibleSourceIds.count
         let own = visibleSourceIds.compactMap { states[$0] }

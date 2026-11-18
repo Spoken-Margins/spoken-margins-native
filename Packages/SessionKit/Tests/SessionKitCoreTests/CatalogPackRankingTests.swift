@@ -113,7 +113,7 @@ final class CatalogPackRankingTests: XCTestCase {
 
     func testPodcastsComeBeforeNewslettersEvenWhenWeightWouldPutANewsletterFirst() {
         var (catalog, pack) = standardCatalog()
-        // Name the newsletters first in the pack; give every podcast a mark on a similar podcast so each weighs 6.
+        // Name the newsletters first in the pack; give each of four podcasts 3 marks, so podcasts weigh far more than the newsletters.
         pack.entryIds = ["n1", "n2", "p1", "p2", "p3", "p4"]
         catalog.packs = [pack]
         let snapshot = marks(["p1": 3, "p2": 3, "p3": 3, "p4": 3])
@@ -144,6 +144,13 @@ final class CatalogPackRankingTests: XCTestCase {
         XCTAssertEqual(ids(CatalogPackRanking.visibleSources(of: pack, in: cat, notForMe: NotForMeSnapshot(hiddenEntryIds: ["a"]))), ["c", "d", "b"])
     }
 
+    func testTiesKeepThePacksOwnOrderNotTheOrderOfTheCatalogsEntries() {
+        let a = entry("a"), b = entry("b"), c = entry("c")
+        let pack = SourceCatalogPack(id: "p", title: "P", summary: "S", entryIds: ["c", "a", "b"])
+        let cat = catalog([a, b, c], packs: [pack]) // the catalog lists a, b, c
+        XCTAssertEqual(ids(CatalogPackRanking.visibleSources(of: pack, in: cat, notForMe: .empty)), ["c", "a", "b"])
+    }
+
     func testAPackNamingAnIdTheCatalogLacksSkipsIt() {
         let a = entry("a")
         let pack = SourceCatalogPack(id: "p", title: "P", summary: "S", entryIds: ["ghost", "a"])
@@ -162,9 +169,10 @@ final class CatalogPackRankingTests: XCTestCase {
         // One hidden source in pack0 and a mark on pack1: pack2 (nothing) first, then pack1 (1) and pack0 (1) in catalog order.
         let snapshot = NotForMeSnapshot(hiddenEntryIds: ["e1"], marksByFeedKey: [key("e5"): 1])
         XCTAssertEqual(CatalogPackRanking.visiblePacks(in: cat, notForMe: snapshot).map(\.id), ["pack2", "pack0", "pack1"])
-        // Marks cap at 3 per source: 9 marks on one source count 3, so pack1 (3) sorts after pack0 (1).
-        let heavy = NotForMeSnapshot(hiddenEntryIds: ["e1"], marksByFeedKey: [key("e5"): 9])
-        XCTAssertEqual(CatalogPackRanking.visiblePacks(in: cat, notForMe: heavy).map(\.id), ["pack2", "pack0", "pack1"])
+        // Marks cap at 3 per source: pack0 has 4 pushed away (3 hidden + 1 more mark) and pack1 one source with 9 marks.
+        // Capped, pack1 counts 3 and sorts before pack0 (4); uncapped it would count 9 and sort after it.
+        let capped = NotForMeSnapshot(hiddenEntryIds: ["e1", "e2", "e3"], marksByFeedKey: [key("e4"): 1, key("e5"): 9])
+        XCTAssertEqual(CatalogPackRanking.visiblePacks(in: cat, notForMe: capped).map(\.id), ["pack2", "pack1", "pack0"])
         // A source both hidden and marked counts 1 + its capped marks against its pack.
         let both = NotForMeSnapshot(hiddenEntryIds: ["e5"], marksByFeedKey: [key("e5"): 2, key("e1"): 2])
         XCTAssertEqual(CatalogPackRanking.visiblePacks(in: cat, notForMe: both).map(\.id), ["pack2", "pack0", "pack1"], "pack0 has 2, pack1 has 3")
@@ -182,9 +190,8 @@ final class CatalogPackRankingTests: XCTestCase {
 
     func testAHiddenSourceStillCountsAgainstItsPack() {
         let (cat, pack) = standardCatalog()
-        XCTAssertEqual(CatalogPackRanking.members(of: pack, in: cat).count, 8)
         let snapshot = NotForMeSnapshot(hiddenEntryIds: ["p1"])
-        XCTAssertEqual(CatalogPackRanking.members(of: pack, in: cat).count, 8, "membership is the pack's full list")
+        XCTAssertEqual(CatalogPackRanking.members(of: pack, in: cat).count, 8, "membership is the pack's full list, hidden or not")
         XCTAssertEqual(CatalogPackRanking.visibleSources(of: pack, in: cat, notForMe: snapshot).count, 7)
     }
 
@@ -201,10 +208,15 @@ final class CatalogPackRankingTests: XCTestCase {
     // MARK: Follow all
 
     func testFollowAllFollowsVisibleUnfollowedSourcesPodcastFirstEvenWhenAWeightWouldPutANewsletterFirst() {
-        let (cat, pack) = standardCatalog()
-        let order = CatalogPackRanking.followAllOrder(of: pack, in: cat, notForMe: .empty, followedEntryIds: [])
+        var (cat, pack) = standardCatalog()
+        // The pack names a newsletter first, and a mark on a podcast would weigh the other podcasts down.
+        pack.entryIds = ["n1", "p1", "p2", "n2", "p3", "p4", "p5", "p6"]
+        cat.packs = [pack]
+        let order = CatalogPackRanking.followAllOrder(of: pack, in: cat, notForMe: marks(["p1": 3]), followedEntryIds: [])
         XCTAssertEqual(order.first?.contentKind, .podcast, "Done's first listen is a podcast when the pack has one")
-        XCTAssertEqual(ids(order), ["p1", "p2", "p3", "p4", "p5", "p6", "n1", "n2"])
+        XCTAssertEqual(ids(order).suffix(2).sorted(), ["n1", "n2"])
+        let plain = CatalogPackRanking.followAllOrder(of: pack, in: cat, notForMe: .empty, followedEntryIds: [])
+        XCTAssertEqual(ids(plain), ["p1", "p2", "p3", "p4", "p5", "p6", "n1", "n2"], "podcasts in the pack's order, then newsletters in it")
         let someDone = CatalogPackRanking.followAllOrder(
             of: pack, in: cat, notForMe: NotForMeSnapshot(hiddenEntryIds: ["p2"]), followedEntryIds: ["p1", "n1"]
         )
@@ -234,6 +246,37 @@ final class CatalogPackRankingTests: XCTestCase {
         // Fewer visible sources: "all" means all of those.
         XCTAssertEqual(state(["a": .followed, "b": .followed], ["a", "b"]), .followedAll(2))
         XCTAssertEqual(state([:], []), .followAll(0), "an empty pack is not shown, so this is never drawn")
+    }
+
+    // MARK: Pace
+
+    func testAPacksPaceSumsItsVisibleSourcesAndLeavesHiddenOnesOut() throws {
+        var entries = ["p1", "p2", "p3", "p4"].map { entry($0) }
+        // Generated at 2026-11-14T12:00Z; each source: 8 dates a week apart or a day apart.
+        entries[0].recentPublishedAt = (0...7).map { String(format: "2026-11-%02dT08:00:00Z", 14 - $0) } // 8 over 7.17 days
+        entries[1].recentPublishedAt = ["2026-11-14T08:00:00Z", "2026-11-07T08:00:00Z"]                 // 2 over 7.17 days
+        entries[2].recentPublishedAt = nil
+        entries[3].recentPublishedAt = (0...7).map { String(format: "2026-11-%02dT08:00:00Z", 14 - $0) }
+        let pack = SourceCatalogPack(id: "p", title: "P", summary: "S", entryIds: entries.map(\.id))
+        let cat = catalog(entries, packs: [pack])
+        let all = try XCTUnwrap(CatalogPackRanking.packPace(of: pack, in: cat, notForMe: .empty))
+        let eight = 8 * 7 / (7 + 4.0 / 24), two = 2 * 7 / (7 + 4.0 / 24)
+        XCTAssertEqual(all.itemsPerWeek, eight + two + eight, accuracy: 1e-9, "the source with no dates adds nothing; 3 of 4 known is enough")
+        let hidden = try XCTUnwrap(CatalogPackRanking.packPace(of: pack, in: cat, notForMe: NotForMeSnapshot(hiddenEntryIds: ["p4"])))
+        XCTAssertEqual(hidden.itemsPerWeek, eight + two, accuracy: 1e-9, "a hidden source's rate leaves the pack's pace")
+        // Hide p1 and p4: p2 (known) and p3 (no dates) are left, so exactly half are known and the pace is two.
+        let half = try XCTUnwrap(CatalogPackRanking.packPace(of: pack, in: cat, notForMe: NotForMeSnapshot(hiddenEntryIds: ["p1", "p4"])))
+        XCTAssertEqual(half.itemsPerWeek, two, accuracy: 1e-9)
+        // Hide p1, p2 and p4: only p3, with no dates, is left, so nothing is known.
+        XCTAssertNil(CatalogPackRanking.packPace(of: pack, in: cat, notForMe: NotForMeSnapshot(hiddenEntryIds: ["p1", "p2", "p4"])))
+    }
+
+    func testANonFiniteRateReadsAsUnknownRatherThanCrashing() {
+        for rate in [Double.nan, .infinity, -.infinity] {
+            let measure = CatalogPackPace.Measure(itemsPerWeek: rate, newestIsStale: false)
+            XCTAssertEqual(CatalogPackPace.packWords(measure), "Pace not known yet")
+            XCTAssertNil(CatalogPackPace.rowWords(measure))
+        }
     }
 
     // MARK: Words

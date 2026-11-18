@@ -56,13 +56,13 @@ public enum CatalogPackPace {
     /// The words on a pack card: "About 2 new a day", "About one new a week", "Now and then", or
     /// "Pace not known yet".
     public static func packWords(_ measure: Measure?) -> String {
-        guard let measure else { return "Pace not known yet" }
+        guard let measure, measure.itemsPerWeek.isFinite else { return "Pace not known yet" }
         return words(measure, rowStyle: false) ?? "Pace not known yet"
     }
 
     /// The words on a source row: "About 3 a week". Nil when the pace is unknown, so the row leaves it out.
     public static func rowWords(_ measure: Measure?) -> String? {
-        guard let measure else { return nil }
+        guard let measure, measure.itemsPerWeek.isFinite else { return nil }
         return words(measure, rowStyle: true)
     }
 
