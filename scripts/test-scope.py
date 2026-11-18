@@ -581,8 +581,8 @@ def hosted_app_routing(result, env=None):
 
 def hosted_merge_routing(result, env=None):
     """#2459: every automerge job starts on a GitHub-hosted Linux runner once the hosted fast pair runs
-    (LANE_HOSTED_FAST `on`, the rule lane-runner.py's hosted_fast_on reads). There a PR held for T3 is reported held
-    without a Mac, and the job waits for the hosted checks: with LANE_HOSTED_MAC_REST `on` too it merges on all
+    (LANE_HOSTED_FAST `on`, the rule lane-runner.py's hosted_fast_on reads). There the job waits for the hosted
+    checks without a Mac: with LANE_HOSTED_MAC_REST `on` too it merges on all
     three and runs no test; without it, it hands the run to the build Mac (lane.yml's automerge-mac) only once the
     pair has finished. T0 and ops diffs test themselves, as before. The lane job keeps its route. Anything else
     leaves <result> as it is."""
@@ -797,7 +797,8 @@ def render(result):
     if result['run']:
         lines += ['', 'Run yourself:'] + [f'  {c}' for c in result['run']]
     if result['lane_request']:
-        lines += ['', 'Ask the lane (see the lane-request skill):'] + [f'  {c}' for c in result['lane_request'].splitlines()]
+        lines += ['', 'Optional: ask the lane for a T3 (it never holds the merge, #4572; main gets a scheduled T3, #4573):'] \
+            + [f'  {c}' for c in result['lane_request'].splitlines()]
     if result['notes']:
         lines += ['', 'Notes:'] + [f'  - {n}' for n in result['notes']]
     return '\n'.join(lines)
