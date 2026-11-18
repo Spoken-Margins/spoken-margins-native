@@ -300,10 +300,15 @@ public struct OPMLImportPreview: Equatable, Sendable {
     /// Repeats of a feed earlier in the same file.
     public var duplicatesInFile: [OPMLFeed]
     public var unusableOutlineCount: Int
+    /// The lists the file holds, for the import screen's "Lists in this file" (#4046).
+    public var lists: [OPMLPlannedList] = []
 }
 
 public enum OPMLImportPlanner {
-    public static func preview(_ document: OPMLDocument, existing subscriptions: [FeedSubscription]) -> OPMLImportPreview {
+    /// - Parameter existingLists: the listener's lists, so a list in the file with the same name shows that it adds to it.
+    public static func preview(
+        _ document: OPMLDocument, existing subscriptions: [FeedSubscription], existingLists: [FollowList] = []
+    ) -> OPMLImportPreview {
         var followedKeys = Set(subscriptions.compactMap { FeedURLKey.make($0.source.canonicalURL) })
         var toFollow: [SourceCandidate] = []
         var already: [OPMLFeed] = []
@@ -339,7 +344,8 @@ public enum OPMLImportPlanner {
             toFollow: toFollow,
             alreadyFollowed: already,
             duplicatesInFile: duplicates,
-            unusableOutlineCount: document.unusableOutlineCount
+            unusableOutlineCount: document.unusableOutlineCount,
+            lists: OPMLListPlanner.plan(document, existingLists: existingLists)
         )
     }
 
