@@ -47,6 +47,7 @@ extension Gate1AppModel {
         )
         let itemId = try await importBrowserTextInBackgroundOffMain(handoff, structuredDocument: extracted.document)
         await keepOriginalPDF(data, itemId: itemId) // #4338: a PDF imported again replaces its item's copy (#556)
+        await savePDFClips(extracted.clips, itemId: itemId)
         diagnostics["lastRemotePDFImport"] = url.absoluteString
         markOnboardingSteps(onboardingSteps)
         return itemId
@@ -76,6 +77,7 @@ extension Gate1AppModel {
         )
         let itemId = try await importBrowserTextInBackgroundOffMain(handoff, structuredDocument: extracted.document)
         if let original = extracted.originalData { await keepOriginalPDF(original, itemId: itemId) } // #4338
+        await savePDFClips(extracted.clips, itemId: itemId)
         diagnostics["lastSharedPDFImport"] = url.lastPathComponent
         markOnboardingSteps([.addedOwnSource, .addedFromSafari])
         return itemId
@@ -102,6 +104,25 @@ extension Gate1AppModel {
     func finishBackgroundBrowserTextImport(_ item: Item, handoff: BrowserTextHandoff) throws -> String {
         if item.mediaType == "pdf" { PreparedSpeechHooks.texts.invalidate(itemId: item.id) }
         libraryItems = try loadLibraryRows(store: try requireStore())
+        return recordBackgroundBrowserTextImport(item, handoff: handoff)
+    }
+
+    /// `importBrowserTextInBackground` for a caller that is already in a `Task`: the new item is written as before, and
+    /// the whole-Library read that follows runs off the main thread and is awaited, so the rows are on screen when this
+    /// returns (what `reportAddedToLibrary` and `openItem` read next). The synchronous version stays for the callers
+    /// that cannot await (#2256).
+    @discardableResult
+    func importBrowserTextInBackgroundReloadingOffMain(
+        _ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil, listenerAdded: Bool = true
+    ) async throws -> String {
+        let item = try browserTextImportEngine().importBrowserTextInBackground(
+            Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument, listenerAdded: listenerAdded)
+        return try await finishBackgroundBrowserTextImportOffMain(item, handoff: handoff)
+    }
+
+    func finishBackgroundBrowserTextImportOffMain(_ item: Item, handoff: BrowserTextHandoff) async throws -> String {
+        if item.mediaType == "pdf" { PreparedSpeechHooks.texts.invalidate(itemId: item.id) }
+        try await reloadLibraryRowsOffMain(store: try requireStore())
         return recordBackgroundBrowserTextImport(item, handoff: handoff)
     }
 

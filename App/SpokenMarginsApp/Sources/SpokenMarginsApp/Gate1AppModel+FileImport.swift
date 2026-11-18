@@ -190,8 +190,9 @@ extension Gate1AppModel {
             do {
                 let store = try self.requireStore()
                 let originalStore = try? self.pdfOriginalStore()
+                let clipStore = self.pdfClipStore()
                 let written = try await Self.offMain {
-                    Self.saveObsidianImports(batch.prepared, originals: batch.originals, originalStore: originalStore, store: store)
+                    Self.saveObsidianImports(batch.prepared, originals: batch.originals, originalStore: originalStore, store: store, clipStore: clipStore)
                 }
                 saved = self.hangTelemetry.labels.scoped("obsidianImportFinish") {
                     Result { try self.completeObsidianMarkdownImport(batch, written: written, store: store) }
@@ -249,7 +250,8 @@ extension Gate1AppModel {
                 text: extracted.document.text,
                 documentStructure: extracted.documentStructure,
                 structuredDocument: extracted.document,
-                title: extracted.title
+                title: extracted.title,
+                clips: extracted.clips
             ), extracted.originalData)
         } catch PDFStructuredTextExtractor.ExtractionError.noExtractableText {
             throw SourceFileImportError.pdfHasNoExtractableText
@@ -296,7 +298,7 @@ extension Gate1AppModel {
     /// Saves each prepared file's item, map and document off the main actor (#2509): the text can be megabytes.
     private nonisolated static func saveObsidianImports(
         _ prepared: [PreparedObsidianImport], originals: [String: Data], originalStore: PDFOriginalStore?,
-        store: SQLiteSessionStore
+        store: SQLiteSessionStore, clipStore: PDFClipStore?
     ) -> SavedObsidianImports {
         var result = SavedObsidianImports()
         for prepared in prepared {
@@ -307,6 +309,8 @@ extension Gate1AppModel {
                 }
                 if let document = prepared.structuredDocument {
                     try store.saveStructuredDocument(document, itemId: prepared.item.id)
+                    // The item is saved; a picture that can't be written only leaves its row as text (#3895).
+                    try? clipStore?.replaceClips(prepared.clips, forItem: prepared.item.id, document: document)
                 }
                 result.imported.append(prepared.item)
                 // After the item is saved, so a failed save leaves no original behind. A failed write loses only the copy.
