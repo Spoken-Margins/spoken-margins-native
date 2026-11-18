@@ -222,7 +222,7 @@ final class ShareLinkOpeningTests: XCTestCase {
     }
 
     /// J10, the offline check (#1842), opens this link in `docs/journeys.md` and `J10OfflineJourneyUITests`.
-    /// Without a usable key it would fail as damaged before asking the server, so the check would never
+    /// Without a usable key it would fail as cut off before asking the server, so the check would never
     /// reach the unreachable host it is meant to test.
     func testTheOfflineCheckLinkAsksTheServerAndSaysOffline() async throws {
         let text = "https://\(host)/l/\(id)#AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"

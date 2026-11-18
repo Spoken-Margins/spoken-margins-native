@@ -171,6 +171,16 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
         XCTAssertEqual(order.phase, .drawerShowing)
     }
 
+    func testAFailedLinkDoesNotUndoAnEarlierLaunchsHold() {
+        var order = Order(drawerOwed: true, owedFromEarlierLaunch: true)
+        XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .none)
+        XCTAssertEqual(order.settle(at: .library), .none)
+
+        XCTAssertEqual(order.friendFileFailed(place: .library), .presentDrawer)
+
+        XCTAssertFalse(order.playsWelcomeSampleOnClose, "the friend's item from the earlier launch is in the Library")
+    }
+
     func testAFailureBeforeTheLaunchSettlesWaitsForItToSettle() {
         var order = Order(drawerOwed: true)
         XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .none)

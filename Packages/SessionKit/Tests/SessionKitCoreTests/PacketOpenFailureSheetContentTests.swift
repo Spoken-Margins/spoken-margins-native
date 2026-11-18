@@ -49,7 +49,7 @@ final class PacketOpenFailureSheetContentTests: XCTestCase {
         XCTAssertEqual(Set(retryable), [.serverProblem, .offline])
     }
 
-    func testEveryHeadlineSaysWhatWasTappedFailedAndEveryRowHasItsOwnWords() {
+    func testEveryRowHasItsOwnWords() {
         let contents = Content.Row.allCases.map { Content(row: $0) }
         XCTAssertEqual(Set(contents.map(\.headline)).count, contents.count, "no two rows share a headline")
         for content in contents {
@@ -78,6 +78,7 @@ final class PacketOpenFailureSheetContentTests: XCTestCase {
             ("https://\(host)/l/\(id.prefix(12))#key", nil),
             ("https://\(host)/l/\(id)0", nil),
             ("https://\(host)/l/\(id.uppercased())", nil),
+            ("https://\(host)/l/\(id)/", id),
             ("https://\(host)/l/\(id)/packet", id),
             ("https://\(host)/l/\(id)/report#key", id),
         ]
@@ -97,10 +98,18 @@ final class PacketOpenFailureSheetContentTests: XCTestCase {
         }
     }
 
-    func testTheReportPageIsTheOneTheWebUses() throws {
-        let content = Content(.cutOff, linkID: id)
-        let page = try XCTUnwrap(ShareLinkReport.pageURL(forLinkId: try XCTUnwrap(content.reportLinkID)))
-        XCTAssertEqual(page.path, "/l/\(id)")
-        XCTAssertNil(page.fragment, "never the key")
+    func testTheReportIdIsTheLinkIdAndNeverTheKey() throws {
+        let key = ShareLinkSealing.Key.random().fragment
+        let url = try XCTUnwrap(URL(string: "https://\(host)/l/\(id)/packet#\(key)"))
+        let content = Content(unparsedShareHostURL: url)
+        XCTAssertEqual(content.reportLinkID, id)
+        XCTAssertFalse(String(describing: content).contains(key))
+    }
+
+    func testEveryHeadlineNamesWhatFailedAsTheLinkTheFileOrTheServer() {
+        let links: [Content.Row] = [.expired, .unavailable, .cutOff, .linkDamaged]
+        for row in links { XCTAssertTrue(Content(row: row).headline.hasPrefix("This link"), "\(row)") }
+        let files: [Content.Row] = [.fileDamaged, .fileTooBig]
+        for row in files { XCTAssertTrue(Content(row: row).headline.hasPrefix("This file"), "\(row)") }
     }
 }
