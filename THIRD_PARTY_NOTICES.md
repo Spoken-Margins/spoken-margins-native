@@ -12,11 +12,11 @@ These are compiled into or packaged with the app, and some are also stored in th
 
 - Licence: MIT
 - From: Microsoft Corporation
-- Source: <https://github.com/microsoft/onnxruntime-swift-package-manager>
+- Source: <https://github.com/Spoken-Margins/onnxruntime-swift-package-manager>
 - Where: `Packages/SessionKit/Package.swift`
 - Licence text: [ONNXRUNTIME_MIT.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/ONNXRUNTIME_MIT.txt), [ONNXRUNTIME_THIRD_PARTY_NOTICES.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt), [onnxruntime-mit.txt](Contracts/voice-models/licenses/onnxruntime-mit.txt)
 
-Runs the voice models on the phone. ONNX Runtime's own third-party components (MIT, BSD, Apache-2.0, zlib, Boost, ISC, public domain and MPL-2.0 for Eigen) are listed in the second file.
+Runs the voice models on the phone. ONNX Runtime's own third-party components (MIT, BSD, Apache-2.0, zlib, Boost, ISC, public domain and MPL-2.0 for Eigen) are listed in the second file. Built from an unmodified copy in the Spoken-Margins organization, because Microsoft's original repository (github.com/microsoft/onnxruntime-swift-package-manager) returned 404 on 2026-11-18 (#4512).
 
 ### ZIPFoundation 0.9.20
 
