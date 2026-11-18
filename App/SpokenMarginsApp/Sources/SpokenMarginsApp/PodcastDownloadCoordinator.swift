@@ -447,29 +447,16 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     /// are written behind on the row queue, in the order made (#2509): a launch does not wait on a write per row, and
     /// a repair that never lands is made again on the next launch, because the stored row still says the old thing.
     private func restoreRecords() throws {
-        for var record in try store.loadPodcastDownloads() {
-            if record.state == .failed, let retained = retainedLocalFile(for: record) {
-                record.state = .availableOffline
-                record.bytesWritten = retained.size
-                record.expectedBytes = retained.size
-                record.failureReason = "Replacement download failed; saved audio is still available."
-                writeBehind(record)
+        for stored in try store.loadPodcastDownloads() {
+            let restoration = stored.restoredAtLaunch(
+                retainedFileSize: { retainedLocalFile(for: stored)?.size },
+                fileExists: { localURL(for: stored).map { FileManager.default.fileExists(atPath: $0.path) } ?? false }
+            )
+            for row in restoration.writes { writeBehind(row) }
+            if restoration.localAssetReady, let url = localURL(for: restoration.record) {
+                onLocalAssetReady?(restoration.record.itemId, url)
             }
-            if record.state == .availableOffline {
-                guard let url = localURL(for: record), FileManager.default.fileExists(atPath: url.path) else {
-                    record.state = .failed
-                    record.localRelativePath = nil
-                    record.failureReason = "Downloaded file is missing. Retry to download it again."
-                    writeBehind(record)
-                    recordsByItemId[record.itemId] = record
-                    continue
-                }
-                onLocalAssetReady?(record.itemId, url)
-            } else if record.state == .downloading {
-                record.state = .waitingForWiFi
-                writeBehind(record)
-            }
-            recordsByItemId[record.itemId] = record
+            recordsByItemId[restoration.record.itemId] = restoration.record
         }
     }
 
@@ -480,20 +467,21 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
 
     private func networkChanged(to transport: PodcastNetworkTransport) {
         networkTransport = transport
-        if transport == .wifi {
-            let waiting = recordsByItemId.values.filter {
-                $0.state == .waitingForWiFi || $0.state == .streamingOnly
-            }
-            for record in waiting { beginDownload(record: record, userInitiated: false) }
-        } else {
-            // Invalidate preparation as well as URLSession work. A delayed HEAD
-            // response must not start an automatic download after leaving Wi-Fi.
-            for var record in Array(recordsByItemId.values)
-            where record.state == .downloading || record.state == .waitingForWiFi {
-                guard userInitiatedByItemId[record.itemId] != true else { continue }
+        for record in Array(recordsByItemId.values) {
+            switch record.reaction(
+                toTransport: transport, userInitiated: userInitiatedByItemId[record.itemId] == true
+            ) {
+            case .startAutomaticDownload:
+                beginDownload(record: record, userInitiated: false)
+            case .pause(let state):
+                // Invalidate preparation as well as URLSession work. A delayed HEAD
+                // response must not start an automatic download after leaving Wi-Fi.
                 invalidateAttempt(itemId: record.itemId)
-                record.state = transport == .cellular ? .streamingOnly : .waitingForWiFi
-                persist(record)
+                var paused = record
+                paused.state = state
+                persist(paused)
+            case nil:
+                break
             }
         }
     }
