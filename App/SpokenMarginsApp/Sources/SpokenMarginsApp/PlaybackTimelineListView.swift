@@ -1,6 +1,18 @@
 import SwiftUI
 import SessionKit
 
+/// Where the listener is now, for the current card's line (#3862): the clock and percent on media, the percent on text.
+/// Built from the playback snapshot only while the Timeline's item is the one playing.
+struct TimelineCurrentPosition: Equatable {
+    var isMedia: Bool
+    var ms: Int?
+    var percent: Int?
+
+    func line(for currentLabel: String) -> String {
+        TimelinePositionLabel.currentLine(currentLabel: currentLabel, currentMs: ms, percent: percent, isMedia: isMedia)
+    }
+}
+
 /// The canonical row list for standalone Timeline and its playback window (#448).
 /// A chapter row folds and unfolds the rows under it (#3895); `folding` says which are folded.
 struct PlaybackTimelineListView<Details: View>: View {
@@ -8,6 +20,8 @@ struct PlaybackTimelineListView<Details: View>: View {
     let currentIDs: Set<String>
     var folding = TimelineChapterFolding()
     var toggleChapter: (String) -> Void = { _ in }
+    /// Added to the current card's line, so the listener can compare their place with the cards' (#3862).
+    var currentPosition: TimelineCurrentPosition? = nil
     let perform: (TimelineRailEntry.Action) -> Void
     @ViewBuilder var details: (TimelineRailEntry.Action) -> Details
 
@@ -23,6 +37,8 @@ struct PlaybackTimelineListView<Details: View>: View {
                     TimelineRailRow(entry: entry, isCurrent: currentIDs.contains(entry.id),
                                     isFirst: index == 0, isLast: index == visible.count - 1,
                                     hidden: summary,
+                                    // Only the current card carries the position, so a playback tick redraws one row.
+                                    currentLine: currentIDs.contains(entry.id) ? currentPosition?.line(for: entry.currentLabel) : nil,
                                     action: { perform(entry.action) })
                         .equatable()
                         .contextMenu { details(entry.action) }
@@ -85,11 +101,13 @@ private struct TimelineRailRow: View, Equatable {
     let isLast: Bool
     /// Set when this chapter is folded: what its hidden rows hold (#3895).
     var hidden: TimelineChapterFolding.HiddenSummary? = nil
+    /// The current card's line with the listener's position (#3862); nil on other cards, and the label alone when unknown.
+    var currentLine: String? = nil
     let action: () -> Void
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.entry == rhs.entry && lhs.isCurrent == rhs.isCurrent && lhs.isFirst == rhs.isFirst && lhs.isLast == rhs.isLast
-            && lhs.hidden == rhs.hidden
+            && lhs.hidden == rhs.hidden && lhs.currentLine == rhs.currentLine
     }
 
     var body: some View {
@@ -118,12 +136,12 @@ private struct TimelineRailRow: View, Equatable {
                             .fixedSize(horizontal: false, vertical: true)
                         if entry.isNew { NewMarginBadge() }
                         if !dynamicTypeSize.isAccessibilitySize { Spacer() }
-                        Text("\(entry.position)%")
+                        Text(entry.cornerLabel)
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(AppColors.secondaryText)
                     }
                     if isCurrent {
-                        Label(entry.currentLabel, systemImage: "speaker.wave.2.fill")
+                        Label(currentLine ?? entry.currentLabel, systemImage: "speaker.wave.2.fill")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(AppColors.dynamicColor(TimelineRowPalette.currentLabelColor))
                     } else if hidden?.containsCurrent == true {
@@ -166,9 +184,14 @@ private struct TimelineRailRow: View, Equatable {
             .padding(.bottom, 12)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(isCurrent ? "\(entry.currentLabel). " : "")\(entry.isNew ? "New to you. " : "")\(entry.provenanceLabel), \(entry.position) percent. \(entry.title). \(entry.detail)\(hiddenSpoken)")
+        .accessibilityLabel("\(isCurrent ? "\(currentSpoken). " : "")\(entry.isNew ? "New to you. " : "")\(entry.provenanceLabel), \(entry.spokenPosition). \(entry.title). \(entry.detail)\(hiddenSpoken)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { action() }
+    }
+
+    /// The current line as VoiceOver reads it: the separators become pauses.
+    private var currentSpoken: String {
+        (currentLine ?? entry.currentLabel).replacingOccurrences(of: " · ", with: ", ")
     }
 
     /// What VoiceOver adds after a folded chapter's own words: what is hidden, and whether the playhead is in it.
