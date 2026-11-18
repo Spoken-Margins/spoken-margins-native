@@ -5,7 +5,10 @@ import XCTest
 @testable import SpokenMarginsApp
 
 /// #1923: the selected Margins filter was white at 18% over a 6% tray, about 1.7:1, so a sighted listener
-/// couldn't tell which segment was on. The fill now reaches 3:1 against the tray (WCAG 1.4.11).
+/// couldn't tell which segment was on. The fill now reaches 3:1 against the tray (WCAG 1.4.11). #3735: the pane switch
+/// had the same faint fill, and both controls now draw an opaque pill. The pixels are sampled over the real plate
+/// colour, since the tray is only 6% white and its ratio depends on what is under it. The words are measured by the
+/// host pairs in `PlaybackSegmentPaletteTests`, because anti-aliased 15 pt text at scale 1 is not a reliable sample.
 @MainActor
 final class PlaybackMarginsFilterContrastTests: XCTestCase {
     func testTheSelectedFilterSegmentReachesThreeToOneAgainstTheTray() throws {
@@ -22,10 +25,28 @@ final class PlaybackMarginsFilterContrastTests: XCTestCase {
         )
     }
 
+    func testTheSelectedPaneReachesThreeToOneAgainstTheTray() throws {
+        let image = try render(
+            PlaybackPaneSwitchView(selection: .constant(.now)))
+        XCTAssertEqual([image.width, image.height], [360, 60], "the render is not the size the pixel positions assume")
+        // 360 pt wide, 4 pt tray padding, three slots with 4 pt gaps: "Now" spans about x 4 to 119, and its centred
+        // title starts well right of x 20.
+        let selected = try XCTUnwrap(luminance(of: image, x: 20, y: 30))
+        let tray = try XCTUnwrap(luminance(of: image, x: 2, y: 30))
+        let ratio = (selected + 0.05) / (tray + 0.05)
+        XCTAssertGreaterThanOrEqual(
+            ratio, 3, "Selected pane is \(ratio):1 against the tray (selected \(selected), tray \(tray), image \(image.width) x \(image.height))"
+        )
+    }
+
     private func render(selection: PlaybackMarginsList.Filter) throws -> CGImage {
+        try render(PlaybackMarginsFilterView(selection: .constant(selection)))
+    }
+
+    private func render<Content: View>(_ content: Content) throws -> CGImage {
         let view = ZStack {
-            Color.black
-            PlaybackMarginsFilterView(selection: .constant(selection))
+            AppColors.listeningBackground
+            content
         }
         .frame(width: 360, height: 60)
         .environment(\.colorScheme, .dark)

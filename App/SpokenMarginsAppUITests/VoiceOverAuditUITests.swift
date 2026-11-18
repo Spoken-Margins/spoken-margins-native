@@ -143,7 +143,7 @@ final class VoiceOverAuditUITests: XCTestCase {
         assertSpokenName(of: share)
         share.tap()
         XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 5), "Share Margins did not open")
-        let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
+        let cleanUpQuestion = app.alerts["Remove ums and long pauses?"]
         if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
         audit("Share: choose Margins")
 

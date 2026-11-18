@@ -25,6 +25,18 @@ struct ExperienceSourcesScreen: View, Equatable {
     @State private var isShowingQuickFolder = false
     @State private var path: [String] = []
     @State private var isQuietExpanded = false
+    /// The follow lists (#4046). Empty until the first read finishes, so Following then shows All with no chips.
+    @ObservedObject private var listsState = FollowListsState.shared
+    /// The chip that is selected: a list's id, or nil for All. It lives here, not in `Gate1AppModel`, lasts while the
+    /// app runs, and returns to All at launch and when its list is deleted (Default 15 of #4046).
+    @State private var selectedListID: String?
+    /// The show whose "Lists for <show>" sheet is open.
+    @State private var listsSheetShow: FeedSubscription?
+    @State private var renamingList: FollowList?
+    @State private var renameText = ""
+    @State private var deletingList: FollowList?
+    /// Why the last rename was refused; shown in an alert of its own.
+    @State private var listProblem: String?
     /// Each followed show's artwork (#773), read from the coordinator's side file.
     @State private var artwork = FollowingArtworkCache()
 
@@ -57,6 +69,8 @@ struct ExperienceSourcesScreen: View, Equatable {
         var isRefreshingQuickAddFeed: Bool
         var importingEntryIds: Set<String>
         var subscriptionIDs: [String]
+        /// What `FollowingByList` needs to tell which rows are in a list.
+        var subscriptions: [FeedSubscription]
         var isRefreshingFollowedSources: Bool
 
         @MainActor init(_ model: Gate1AppModel) {
@@ -71,6 +85,7 @@ struct ExperienceSourcesScreen: View, Equatable {
             isRefreshingQuickAddFeed = model.isRefreshingQuickAddFeed
             importingEntryIds = model.importingFollowedSourceEntryIds
             subscriptionIDs = model.feedSubscriptions.map(\.id)
+            subscriptions = model.feedSubscriptions
             isRefreshingFollowedSources = model.isRefreshingFollowedSources
         }
     }
@@ -80,9 +95,17 @@ struct ExperienceSourcesScreen: View, Equatable {
         let _ = ScreenRedrawProbe.record("following")
         #endif
         let inputs = feed.inputs
+        // Under a list chip only that list's shows are drawn; under All nothing changes (J13).
+        let byList = FollowingByList.screen(
+            selected: inputs.showsEmptyState ? nil : selectedListID, lists: listsState.lists, feedRows: inputs.feedRows, shows: inputs.list,
+            subscriptions: inputs.subscriptions
+        )
         NavigationStack(path: $path) {
-            let list = inputs.list
+            let list = FollowingShowList(rows: inputs.list.rows, quiet: byList.quiet)
             List {
+                if !listsState.lists.isEmpty, !inputs.showsEmptyState {
+                    listChipRow(lists: listsState.lists)
+                }
                 // An item's Follow can find several feeds; the choice shows here too, not only on the follow screen.
                 if inputs.hasFollowCandidates {
                     VStack(alignment: .leading, spacing: 10) { FollowCandidateChoices() }
@@ -117,8 +140,22 @@ struct ExperienceSourcesScreen: View, Equatable {
                     }
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
+                if let emptyListText = byList.emptyListText {
+                    Text(emptyListText)
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .accessibilityIdentifier("sources.list.empty")
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+                }
+                if let allQuietNote = byList.allQuietNote {
+                    Text(allQuietNote)
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .accessibilityIdentifier("sources.list.allQuiet")
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                }
                 // Friends who sent Margins and followed shows in one list, newest first (#3291, #3343).
-                ForEach(inputs.feedRows) { row in
+                ForEach(byList.rows) { row in
                     switch row {
                     case .friend(let friend): friendRow(friend)
                     case .show(let show): showRow(show)
@@ -138,7 +175,16 @@ struct ExperienceSourcesScreen: View, Equatable {
             .scrollContentBackground(.hidden)
             .listStyle(.plain)
             .refreshable { await model.pullToRefreshFollowing() }
-            .motionAnimation(.smooth(duration: 0.24), value: list.rows.map(\.id))
+            .motionAnimation(.smooth(duration: 0.24), value: byList.rows.map(\.id))
+            // A list of only Quiet shows opens its Quiet group, since that is all it has.
+            .onChange(of: byList.opensQuietGroup) { _, opens in if opens { isQuietExpanded = true } }
+            // Two all-Quiet lists in a row leave that value true, so a new selection opens the group too.
+            .onChange(of: selectedListID) { _, _ in if byList.opensQuietGroup { isQuietExpanded = true } }
+            // A deleted list can't stay selected.
+            .onChange(of: listsState.lists) { _, lists in
+                selectedListID = FollowingByList.resolvedSelection(selectedListID, in: lists)
+            }
+            .task { if !isEdgeSwipePreview { await model.reloadFollowLists() } }
             .accessibilityIdentifier("sources.screen")
             .navigationTitle("Following")
             .navigationBarTitleDisplayMode(.inline)
@@ -181,6 +227,31 @@ struct ExperienceSourcesScreen: View, Equatable {
                 .environmentObject(model)
                 .environmentObject(catalogDrawer)
             }
+            .trackedSheet(item: $listsSheetShow) { subscription in
+                FollowListPickerSheet(subscription: subscription)
+                    .environmentObject(model)
+            }
+            // `presenting:` hands the buttons the list itself, so they never depend on the order in which the
+            // binding is reset and the action runs.
+            .alert(
+                "Rename list",
+                isPresented: Binding(get: { renamingList != nil }, set: { if !$0 { renamingList = nil } }),
+                presenting: renamingList
+            ) { list in
+                TextField("Name", text: $renameText)
+                Button("Cancel", role: .cancel) {}
+                Button("Rename") { commitRename(list) }
+            }
+            .confirmationDialog(
+                FollowListWords.deleteQuestion(listName: deletingList?.name ?? "this list"),
+                isPresented: Binding(get: { deletingList != nil }, set: { if !$0 { deletingList = nil } }),
+                titleVisibility: .visible,
+                presenting: deletingList
+            ) { list in
+                Button("Delete list", role: .destructive) { commitDelete(list) }
+            } message: { _ in
+                Text(FollowListWords.deleteMessage)
+            }
             .navigationDestination(item: $openFriend) { friend in
                 FollowingFriendItemsScreen(friend: friend)
                     .miniPlayerKeepOut()
@@ -203,6 +274,12 @@ struct ExperienceSourcesScreen: View, Equatable {
                 artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
             }
             .miniPlayerKeepOut()
+        }
+        // Its own alert, on the stack rather than the list, so it can follow the rename alert's dismissal.
+        .alert("Can’t save that name", isPresented: Binding(get: { listProblem != nil }, set: { if !$0 { listProblem = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(listProblem ?? "")
         }
     }
 
@@ -282,6 +359,18 @@ struct ExperienceSourcesScreen: View, Equatable {
                 .accessibilityIdentifier("sources.show.\(row.id).inLibrary")
             }
         }
+        // Long press: the lists this show is in (#4046). The leading swipe actions above stay as they were.
+        .contextMenu {
+            if let subscription = followedSubscription(for: row) {
+                Button { listsSheetShow = subscription } label: { Label("Lists…", systemImage: "list.bullet") }
+            }
+        }
+        // The same action for VoiceOver and Switch Control, which can't long-press (#1917).
+        .accessibilityActions {
+            if let subscription = followedSubscription(for: row) {
+                Button("Lists…") { listsSheetShow = subscription }
+            }
+        }
         .listRowInsets(EdgeInsets(
             top: 0,
             leading: horizontalSizeClass == .regular ? 28 : 16,
@@ -290,6 +379,66 @@ struct ExperienceSourcesScreen: View, Equatable {
         ))
         .listRowSeparator(.hidden)
         .listRowBackground(AppColors.bone)
+    }
+
+    private func followedSubscription(for row: FollowingShowRow) -> FeedSubscription? {
+        feed.inputs.subscriptions.first { $0.id == row.id }
+    }
+
+    // MARK: List chips (#4046)
+
+    /// **All**, then the lists in alphabetical order, in the catalog drawer's chip style. The selected chip carries a
+    /// checkmark, so colour is never the only signal. A long press on a list's chip offers Rename and Delete list; PR 3
+    /// replaces them with Edit list.
+    private func listChipRow(lists: [FollowList]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Button { selectedListID = nil } label: {
+                    CatalogSubjectChipLabel(title: "All", isSelected: selectedListID == nil)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selectedListID == nil ? .isSelected : [])
+                .accessibilityIdentifier("sources.list.chip.all")
+                ForEach(FollowListName.chipOrder(lists)) { list in
+                    let isSelected = selectedListID == list.id
+                    Button { selectedListID = list.id } label: {
+                        CatalogSubjectChipLabel(title: list.name, isSelected: isSelected)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(list.name)
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                    .accessibilityIdentifier("sources.list.chip.\(list.id)")
+                    .contextMenu {
+                        Button("Rename", systemImage: "pencil") { beginRename(list) }
+                        Button("Delete list", systemImage: "trash", role: .destructive) { deletingList = list }
+                    }
+                    .accessibilityActions {
+                        Button("Rename") { beginRename(list) }
+                        Button("Delete list") { deletingList = list }
+                    }
+                }
+            }
+        }
+        .accessibilityIdentifier("sources.list.chips")
+        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+    }
+
+    private func beginRename(_ list: FollowList) {
+        renameText = list.name
+        renamingList = list
+    }
+
+    private func commitRename(_ list: FollowList) {
+        renamingList = nil
+        let name = renameText
+        Task {
+            if let problem = await model.renameFollowList(id: list.id, to: name) { listProblem = problem.message }
+        }
+    }
+
+    private func commitDelete(_ list: FollowList) {
+        deletingList = nil
+        Task { await model.deleteFollowList(id: list.id) }
     }
 
     /// "Quiet (2)", a button that opens and closes the group. The count and the chevron say what it holds.
@@ -636,8 +785,14 @@ struct SourceInboxRow: View {
                 if let subscription { model.unfollowSource(id: subscription.id) }
             }
         } message: {
-            Text("Everything already in your Library will be kept.")
+            Text(FollowListWords.unfollowMessage(inAList: isInAList))
         }
+    }
+
+    /// Unfollowing takes the show out of its lists (#4046), and the confirmation says so.
+    private var isInAList: Bool {
+        guard let subscription else { return false }
+        return !FollowListsState.shared.lists(containing: subscription).isEmpty
     }
 
     private var rowButton: some View {
