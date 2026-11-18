@@ -24,6 +24,16 @@ extension Gate1AppModel {
     @discardableResult
     func beginSourceLinkImportFromForm(startSession: Bool = true) -> Bool {
         guard !sourceLinkGate.isBusy else { return false }
+        // A friend's share link is not a source to resolve: open it as a tapped link, clear the field and let the sheet
+        // close (#3782). Pasting it into the field used to import it as a web page the app could not read.
+        if case .shareLink(let link) = PasteIntake.classify(sourceLinkURL) {
+            sourceLinkURL = ""
+            sourceLinkSafariOffer = nil
+            sourceLinkImportMessage = nil
+            sourceLinkImportState = "success"
+            openShareLink(link)
+            return true
+        }
         let submittedURL = sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let parsedURL = URL(string: submittedURL),
               let scheme = parsedURL.scheme?.lowercased(),
