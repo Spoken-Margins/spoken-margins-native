@@ -231,11 +231,16 @@ final class ScreenTourTests: XCTestCase {
         capture("24-item-bottom", "The episode's item screen, scrolled to the bottom")
         for _ in 0..<3 { app.swipeDown() }
 
-        // The item offers two choices (#3219): the big Play starts the episode without asking, and "Skip to …"
-        // reviews Sam's Margin in place. Hear it on its own first.
-        let hearOnly = scrollTo("item.reviewNewMargins.button")
-        capture("25-item-two-choices", "The item's two choices: Play, and Skip to Sam's new Margin")
-        hearOnly.tap()
+        // The listener's own place is at about 84% (their Margin is at 80%), past Sam's Margin at 5:00. Since #4125
+        // the item then says so: the big button reads "Hear Sam's Margins first" and plays them, then carries on,
+        // and the second choice is "Listen without them". The old "Skip to …" pair appears only when nothing of
+        // Sam's sits behind the place, which this story never is (#4298).
+        let hearFirst = scrollTo("item.start.button")
+        let hearFirstLabel = app.buttons["item.start.button"].firstMatch.label
+        XCTAssertTrue(hearFirstLabel.hasPrefix("Hear "), "The big button should offer to hear Sam's Margins first, not \(hearFirstLabel)")
+        XCTAssertTrue(element("item.listenWithout.button").exists, "The item has no \"Listen without them\" choice")
+        capture("25-item-two-choices", "The item's two choices: Hear Sam's Margins first, and Listen without them")
+        hearFirst.tap()
         if !element("playback.screen").waitForExistence(timeout: 8) { tapButton("miniPlayer.open.button") }
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
         // The story depends on the review starting, running through and ending, so they fail the tour when they don't
@@ -244,7 +249,7 @@ final class ScreenTourTests: XCTestCase {
         // and the reply step below fails unless this Margin was heard, because then it would count two new Margins.
         captureRequired(element("review.comingUp"), timeout: 12, "26-now-review-lead-in",
                         "Now tab during the review's lead-in, the pinned card above the title (#3220)",
-                        failure: "The review never started after Skip to Sam's new Margin")
+                        failure: "The review never started after Hear Sam's Margins first")
         captureWhenPresent(element("review.playing"), timeout: 40, "27-now-review-sam",
                            "Now tab while Sam's Margin plays in the review, the pinned card above the title (#3220)")
         XCTAssertTrue(waitForDisappearance(element("review.comingUp"), timeout: 40), "The review's lead-in never ended")
