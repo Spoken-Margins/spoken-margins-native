@@ -609,6 +609,7 @@ struct SettingsScreen: View, Equatable {
             .background(AppColors.bone)
             .tint(AppColors.evergreen)
             .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline) // the same header as Library, Following and Margins (#4019)
             .onAppear {
                 guard !isEdgeSwipePreview else { return }  // a swipe's preview starts no refresh (#106)
                 model.refreshSpeechVoiceOptions()

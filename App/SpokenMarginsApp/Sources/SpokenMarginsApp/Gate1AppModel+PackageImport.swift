@@ -362,7 +362,7 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
             showImportedItem: { [weak model] itemId, store in
                 guard let model else { return }
                 model.activeItemId = itemId
-                model.libraryItems = try model.loadLibraryRows(store: store)
+                // The Library rows were loaded off the main thread by `refreshImportedLibrary`, which runs before this (#2256).
                 model.selectedItem = try model.loadItemDetail(id: itemId, store: store)
                 model.updateSkimAvailability() // a map added from a packet reaches Skim even where the chapters read the same (#1471)
                 // The Margins and Now tabs read these rows, not selectedItem; without this they stay empty until relaunch (#3263).
@@ -411,7 +411,7 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
             navigationIsLocked: { [weak model] in model?.recordingNavigationIsLocked ?? false },
             refreshImportedLibrary: { [weak model] store in
                 guard let model else { return }
-                model.libraryItems = try model.loadLibraryRows(store: store)
+                try await model.reloadLibraryRowsOffMain(store: store) // on screen when it returns, as the direct read was
             },
             labels: model.hangTelemetry.labels
         )
