@@ -34,7 +34,7 @@ struct ExperienceSourcesScreen: View, Equatable {
     @State private var listsSheetShow: FeedSubscription?
     /// The Lists screen is pushed from the toolbar's Lists button, and a list's own screen from a chip's Edit list (PR 3).
     @State private var isShowingLists = false
-    @State private var editingListID: String?
+    @State private var editingList: FollowListEditTarget?
     /// The empty list whose "Add shows to <list>" sheet is open.
     @State private var addingShowsToList: FollowList?
     /// Each followed show's artwork (#773), read from the coordinator's side file.
@@ -251,8 +251,8 @@ struct ExperienceSourcesScreen: View, Equatable {
             .navigationDestination(isPresented: $isShowingLists) {
                 FollowListsScreen(model: model, subscriptions: inputs.subscriptions, artwork: artwork)
             }
-            .navigationDestination(item: $editingListID) { id in
-                FollowListScreen(model: model, subscriptions: inputs.subscriptions, artwork: artwork, listID: id)
+            .navigationDestination(item: $editingList) { target in
+                FollowListScreen(model: model, subscriptions: inputs.subscriptions, artwork: artwork, listID: target.id)
             }
             .navigationDestination(item: $openFriend) { friend in
                 FollowingFriendItemsScreen(friend: friend)
@@ -405,10 +405,10 @@ struct ExperienceSourcesScreen: View, Equatable {
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
                     .accessibilityIdentifier("sources.list.chip.\(list.id)")
                     .contextMenu {
-                        Button("Edit list", systemImage: "pencil") { editingListID = list.id }
+                        Button("Edit list", systemImage: "pencil") { editingList = FollowListEditTarget(id: list.id) }
                     }
                     .accessibilityActions {
-                        Button("Edit list") { editingListID = list.id }
+                        Button("Edit list") { editingList = FollowListEditTarget(id: list.id) }
                     }
                 }
             }

@@ -29,12 +29,18 @@ struct FollowListScreen: View {
             if let list {
                 content(list)
             } else {
-                // Deleted here, or on another path while the screen was open: there is nothing left to show.
+                // Deleted here, or on another path while the screen was open: there is nothing left to show. Only this
+                // branch dismisses, so one deletion pops one level.
                 Color.clear.onAppear { dismiss() }
             }
         }
         .task { await model.reloadFollowLists() }
-        .onChange(of: list == nil) { _, gone in if gone { dismiss() } }
+        // Its own alert, on the group rather than the list, so it can follow the rename alert's dismissal.
+        .alert("Can’t save that name", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(problem ?? "")
+        }
     }
 
     private func content(_ list: FollowList) -> some View {
@@ -82,11 +88,6 @@ struct FollowListScreen: View {
             TextField("Name", text: $renameText)
             Button("Cancel", role: .cancel) {}
             Button("Rename") { rename(list) }
-        }
-        .alert("Can’t save that name", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(problem ?? "")
         }
         .confirmationDialog(
             FollowListWords.deleteQuestion(listName: list.name),
@@ -199,4 +200,10 @@ struct FollowListAddShowsSheet: View {
         }
         .accessibilityIdentifier("followList.pick.sheet")
     }
+}
+
+/// What Following pushes for a chip's Edit list. A type of its own, so the destination can't be confused with the stack's
+/// own `String` destination for a show.
+struct FollowListEditTarget: Hashable {
+    let id: String
 }

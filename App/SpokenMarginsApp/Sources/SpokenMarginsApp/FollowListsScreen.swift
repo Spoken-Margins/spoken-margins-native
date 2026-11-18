@@ -21,6 +21,16 @@ struct FollowListsScreen: View {
     @State private var isCreating = false
 
     var body: some View {
+        // Its own alert, on the outer view rather than the list, so it can follow the New list alert's dismissal.
+        listBody
+            .alert("Can’t save that name", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(problem ?? "")
+            }
+    }
+
+    private var listBody: some View {
         let rows = FollowListScreens.overviewRows(lists: listsState.lists, subscriptions: subscriptions)
         List {
             if rows.isEmpty {
@@ -46,7 +56,6 @@ struct FollowListsScreen: View {
                             }
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         }
-                        .accessibilityElement(children: .combine)
                         .accessibilityLabel(row.accessibilityLabel)
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) {
@@ -76,11 +85,6 @@ struct FollowListsScreen: View {
             TextField("Name", text: $newName)
             Button("Cancel", role: .cancel) {}
             Button("Create") { create() }
-        }
-        .alert("Can’t save that name", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(problem ?? "")
         }
         // `presenting:` hands the button the list itself, so it never depends on the order in which the binding is
         // reset and the action runs.
