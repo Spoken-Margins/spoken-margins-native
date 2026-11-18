@@ -8,6 +8,8 @@
 //   vectorvoice01  Contracts/fixtures/web-packets/web-voice.spokenmargins sealed under the vector's key
 //   vectorpost01   a Substack post's Margins: the web-written packet's Margins moved onto the post's words, each with
 //                  only how far through the post it sits (what the iPhone app writes for an article; #4421)
+//   vectorarticle1 an article on an ordinary site (not Substack) with Margins that carry only how far through they sit:
+//                  no audio of its own and no voice to look up, so a browser can't play it (#4454)
 //   expired00001   answers 410, as an expired link does
 //   switchedoff1   answers 503 `disabled`, as the server does while links are switched off
 // Run: node e2e/link-stub-server.ts (Node 24 strips the types). Port 4174, or SM_LINK_STUB_PORT.
@@ -65,6 +67,28 @@ const articlePacket = await withLayer(
 links.set('vectorpost01', {
   preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
   packet: await sealPart(articlePacket, PART.packet, vectorKey),
+});
+
+const essayPacket = await withLayer(
+  writtenPacket,
+  (records) => {
+    records.forEach((record, i) => {
+      record.anchor = { anchorType: 'text', startChar: 400 + 1000 * i, endChar: 460 + 1000 * i, exactText: 'A sentence in the essay.', prefix: 'Before.', suffix: 'After.', roughPercent: [20, 60][i], machineEvidenceAssetIds: [] };
+    });
+  },
+  (manifest) => {
+    manifest.item = {
+      canonicalURL: 'https://example.com/essay',
+      itemType: 'text',
+      title: 'An essay on an ordinary site',
+      publisher: 'Example Publisher',
+      source: { sourceType: 'newsletter', canonicalURL: 'https://example.com/essay' },
+    };
+  },
+);
+links.set('vectorarticle1', {
+  preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
+  packet: await sealPart(essayPacket, PART.packet, vectorKey),
 });
 
 const TYPES: Record<string, string> = {
