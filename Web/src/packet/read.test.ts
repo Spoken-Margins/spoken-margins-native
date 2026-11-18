@@ -217,3 +217,37 @@ test('a timed Margin is never a percent Margin, and a text anchor’s own percen
   const result = await readPacket(edited);
   assert.ok(result.percentMargins.every((p) => p.percent === 50 && p.margin.atSeconds === 0));
 });
+
+test('a Margin\u2019s leadInMs comes through in seconds; absent or null means the usual run-up (#4171)', async () => {
+  const bytes = await writeVoice().then((w) => w.bytes);
+  const edited = await withLayer(bytes, (records) => { records[0].leadInMs = 60_000; if (records[1]) records[1].leadInMs = null; });
+  const result = await readPacket(edited);
+  assert.equal(result.margins[0].leadInSeconds, 60);
+  if (result.margins[1]) assert.equal(result.margins[1].leadInSeconds, undefined, 'null is no length');
+  const plain = await readPacket(bytes);
+  assert.equal(plain.margins[0].leadInSeconds, undefined, 'a Margin without the key keeps each run-up\u2019s own length');
+});
+
+test('leadInMs is clamped to 0-300000 ms, and 0 stays 0 (#4171)', async () => {
+  const bytes = await writeVoice().then((w) => w.bytes);
+  const rows: Array<[number, number]> = [[0, 0], [5_000, 5], [300_000, 300], [300_001, 300], [9_000_000, 300], [-1, 0], [-9_000, 0]];
+  for (const [ms, seconds] of rows) {
+    const edited = await withLayer(bytes, (records) => { records[0].leadInMs = ms; });
+    const result = await readPacket(edited);
+    assert.equal(result.margins[0].leadInSeconds, seconds, `leadInMs ${ms}`);
+  }
+});
+
+test('leadInMs of another type is refused, as the app does (#4171)', async () => {
+  const bytes = await writeVoice().then((w) => w.bytes);
+  for (const value of ['60000', true, false, 1.5, {}, [60000]]) {
+    const edited = await withLayer(bytes, (records) => { records[0].leadInMs = value; });
+    await refusedAs(readPacket(edited), 'doesNotMatch');
+  }
+});
+
+test('the corpus packet with leadInMs 60000 imports with a minute of run-up (#4171)', async () => {
+  const bytes = new Uint8Array(readFileSync(new URL('../../../Contracts/examples/packets/lead-in-per-margin.spokenmargins', import.meta.url)));
+  const result = await readPacket(bytes);
+  assert.ok(result.margins.some((m) => m.leadInSeconds === 60) || result.percentMargins.some((m) => m.margin.leadInSeconds === 60));
+});

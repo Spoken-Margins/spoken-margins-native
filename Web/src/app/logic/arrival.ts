@@ -13,6 +13,13 @@ import { firesByItself } from './margin-autoplay.ts';
 
 /** How far before a Margin the first Skip lands, so the friend hears the episode's own lead-in (2026-10-31 call). */
 export const LEAD_IN_SECONDS = 20;
+/** How much more of the episode "Start a minute earlier" plays before the Margin (#4171). */
+export const START_EARLIER_SECONDS = 60;
+
+/** The run-up before this Margin: the sender's own length when the packet carried one, else the usual 20 seconds (#4171). */
+export function leadInSecondsFor(margin: Margin): number {
+  return margin.leadInSeconds ?? LEAD_IN_SECONDS;
+}
 /** A written Margin counts this long toward "about N min": the time to hear a tone and a short line read aloud. */
 const WRITTEN_SECONDS = 8;
 
@@ -185,6 +192,11 @@ export type MarginCue =
       leadIn: boolean;
       /** The share left in the lead-in, 0 to 1, for the draining bar. */
       leadInLeft: number;
+      /**
+       * Inside the lead-in only: "Start a minute earlier", which seeks a minute back so the Margin comes after more of the
+       * episode (#4171). Absent outside the lead-in, and when the playhead is too near the start to go back.
+       */
+      startEarlier?: { to: number };
     }
   | { kind: 'after-last'; who: string; /** The name at the start of a sentence. */ lead: string }
   /** The episode failed to load: no countdown, no Skip; one sentence and one button that plays the Margins without it. */
@@ -229,7 +241,9 @@ export function cueFor(margins: readonly Margin[], time: number, sender: string 
   const who = senderName(namedAuthor(next.author, sender));
   const away = next.atSeconds - time;
   const ordinal = friends.length === 1 ? '' : index === 0 ? 'first ' : index === friends.length - 1 ? 'last ' : 'next ';
-  const leadIn = away <= LEAD_IN_SECONDS + 1;
+  const run = leadInSecondsFor(next);
+  const leadIn = away <= run + 1;
+  const earlierTo = Math.max(0, time - START_EARLIER_SECONDS);
   return {
     kind: 'countdown',
     label: `${leading(possessive(who))} ${ordinal}Margin in`,
@@ -237,9 +251,11 @@ export function cueFor(margins: readonly Margin[], time: number, sender: string 
     spoken: `${leading(possessive(who))} ${ordinal}Margin in ${countdownSpoken(away)}`,
     skip: leadIn
       ? { label: `Skip to ${who} now`, to: Math.max(0, next.atSeconds - CROSS_MARGIN_SECONDS) }
-      : { label: `Skip to just before ${who}`, to: Math.max(0, next.atSeconds - LEAD_IN_SECONDS) },
+      : { label: `Skip to just before ${who}`, to: Math.max(0, next.atSeconds - Math.max(run, CROSS_MARGIN_SECONDS)) },
     leadIn,
-    leadInLeft: leadIn ? Math.min(1, Math.max(0, away / LEAD_IN_SECONDS)) : 1,
+    leadInLeft: leadIn ? (run > 0 ? Math.min(1, Math.max(0, away / run)) : 0) : 1,
+    // Not offered when there is no minute to go back (a hair from the episode's start): no dead button.
+    ...(leadIn && time - earlierTo >= 1 && { startEarlier: { to: earlierTo } }),
   };
 }
 
