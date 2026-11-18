@@ -1,7 +1,7 @@
 import XCTest
 @testable import SessionKit
 
-/// The first-run "Clean selected Margins automatically?" question asks only when it can be true (#3792).
+/// The first-run "Remove ums and long pauses?" question asks only when it can be true (#3792).
 final class ShareAutoCleanQuestionTests: XCTestCase {
     func testAsksOnlyWhenNoDecisionIsRecordedOnAnOrdinaryShareWithACleanableMargin() {
         XCTAssertTrue(ShareAutoCleanQuestion.asks(hasRecordedDecision: false, isReplyBack: false, anyIncludedCanBeCleaned: true))
@@ -12,7 +12,7 @@ final class ShareAutoCleanQuestionTests: XCTestCase {
     }
 
     func testNeverAsksWhenNothingIncludedCouldBeCleaned() {
-        // A Margin with no word-level timing: "Automatic cleanup is unavailable" sits under it, so the question is moot.
+        // A Margin with no word-level timing: nothing can be removed, so the question is moot.
         XCTAssertFalse(ShareAutoCleanQuestion.asks(hasRecordedDecision: false, isReplyBack: false, anyIncludedCanBeCleaned: false))
     }
 
