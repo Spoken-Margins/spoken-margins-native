@@ -123,6 +123,39 @@ final class SQLiteItemDeletionGraphTests: XCTestCase {
         XCTAssertEqual(try store.listDeletedItems().map(\.id), [unselectedTrash.itemId])
     }
 
+    /// The path the Recently Deleted row's "Delete Permanently" takes for one item. This replaces the UI test that
+    /// looked for a restored Library row (#4227): the neighbour in Recently Deleted must stay there, and the
+    /// deleted item must not come back through Restore, the Library or Recently Deleted.
+    func testPermanentDeleteOfOneTrashedItemLeavesAnotherTrashedItemInRecentlyDeletedAndCannotBeRestored() throws {
+        let (store, path) = try makeStore()
+        let target = ItemGraph(itemId: "item-gone")
+        let otherTrashed = ItemGraph(itemId: "item-other-trashed", withTurn: true)
+        let active = ItemGraph(itemId: "item-active", withTurn: true)
+        for graph in [target, otherTrashed, active] { try graph.seed(into: store) }
+        let otherBefore = try otherTrashed.snapshot(from: store)
+        let activeBefore = try active.snapshot(from: store)
+        try store.moveItemToTrash(id: target.itemId)
+        try store.moveItemToTrash(id: otherTrashed.itemId)
+
+        try store.deleteItem(id: target.itemId)
+
+        XCTAssertEqual(try target.snapshot(from: store), ItemGraph.Snapshot.empty)
+        XCTAssertEqual(try rows(in: path, ownedBy: target), [])
+        XCTAssertThrowsError(try store.restoreItem(id: target.itemId), "A permanently deleted item has nothing left to restore")
+        XCTAssertEqual(try target.snapshot(from: store), ItemGraph.Snapshot.empty, "A refused restore must not write the item back")
+        XCTAssertEqual(try store.listItems().map(\.id), [active.itemId])
+        XCTAssertEqual(try store.listDeletedItems().map(\.id), [otherTrashed.itemId])
+        var other = try otherTrashed.snapshot(from: store)
+        XCTAssertNotNil(other.item?.deletedAt)
+        other.item?.deletedAt = nil
+        XCTAssertEqual(other, otherBefore)
+        XCTAssertEqual(try active.snapshot(from: store), activeBefore)
+        // And the same after the store is opened again, as a relaunch does.
+        let reopened = try SQLiteSessionStore(path: path)
+        XCTAssertEqual(try reopened.listItems().map(\.id), [active.itemId])
+        XCTAssertEqual(try reopened.listDeletedItems().map(\.id), [otherTrashed.itemId])
+    }
+
     /// `deleteItems` promises that emptying Recently Deleted never leaves a partial selection. SQLite can
     /// only refuse a delete part-way through if something makes it; a trigger on the database file does,
     /// the way a full disk or a locked database would in the field.
