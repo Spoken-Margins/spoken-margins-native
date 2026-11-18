@@ -30,6 +30,10 @@ public struct MarginCommentPlan: Equatable, Sendable {
         /// The sentence's characters, exactly as the document spells them (hard line breaks and all). Empty when
         /// `sentence` is nil.
         public var sentenceText: String
+        /// Up to `precedingLength` characters of the document's text just before the sentence, as the document spells
+        /// them. Only used to tell two copies of the same sentence on a page apart (`PDFSentenceLocator`). Empty when
+        /// `sentence` is nil or starts the text.
+        public var precedingText: String = ""
         /// The zero-based page of the segment the anchor sits in, the page to look on first. Nil when the document
         /// has no page for it (no segment holds the anchor, or its `pageIndex` is not a page of the document).
         public var pageIndex: Int?
@@ -38,6 +42,9 @@ public struct MarginCommentPlan: Equatable, Sendable {
         public var commentText: String
         public var status: Status
     }
+
+    /// How much text before the sentence an entry carries in `precedingText`.
+    public static let precedingLength = 80
 
     /// One entry per own Margin of the item, in document order (then the order they were made).
     public var entries: [Entry]
@@ -73,6 +80,7 @@ public struct MarginCommentPlan: Equatable, Sendable {
                 marginId: margin.id,
                 sentence: sentence,
                 sentenceText: sentence.map { String(characters[$0]) } ?? "",
+                precedingText: sentence.map { String(characters[max(0, $0.lowerBound - precedingLength)..<$0.lowerBound]) } ?? "",
                 pageIndex: position.flatMap { page(of: $0, in: document.segments, pageCount: document.extraction.pageCount) },
                 commentText: status == .included ? words : "",
                 status: status
