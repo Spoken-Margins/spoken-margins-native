@@ -16,6 +16,12 @@ public enum PDFCommentWriter {
         public var pageNotes: Int
         /// Placements left out: no words for that Margin in the plan, or a page the file doesn't have.
         public var skipped: Int
+
+        public init(highlights: Int, pageNotes: Int, skipped: Int) {
+            self.highlights = highlights
+            self.pageNotes = pageNotes
+            self.skipped = skipped
+        }
     }
 
     public enum Failure: Error, Equatable, Sendable {
@@ -43,9 +49,7 @@ public enum PDFCommentWriter {
         date: Date = Date(),
         to destination: URL
     ) throws -> Summary {
-        guard source.resolvingSymlinksInPath().standardizedFileURL != destination.resolvingSymlinksInPath().standardizedFileURL else {
-            throw Failure.destinationIsTheSource
-        }
+        guard !isSameFile(source, destination) else { throw Failure.destinationIsTheSource }
         guard let document = PDFDocument(url: source) else { throw Failure.unreadable }
         if let refusal = PDFMarginPlacer.refusal(for: document) { throw Failure.refused(refusal) }
 
@@ -56,7 +60,8 @@ public enum PDFCommentWriter {
         var summary = Summary(highlights: 0, pageNotes: 0, skipped: 0)
         var notesOnPage: [Int: Int] = [:]
         for placement in placements {
-            guard let text = words[placement.marginId], !text.isEmpty, let page = document.page(at: placement.pageIndex) else {
+            guard let text = words[placement.marginId], !text.isEmpty, placement.pageIndex >= 0,
+                  let page = document.page(at: placement.pageIndex) else {
                 summary.skipped += 1
                 continue
             }
@@ -89,10 +94,35 @@ public enum PDFCommentWriter {
     }
 
     private static func pageNote(on page: PDFPage, slot: Int, text: String, author: String, date: Date) -> PDFAnnotation {
-        let bounds = PDFCommentGeometry.pageNoteBounds(pageBounds: page.bounds(for: .cropBox), rotation: page.rotation, slot: slot)
+        let space = noteSpace(of: page)
+        let bounds = PDFCommentGeometry.pageNoteBounds(pageBounds: space.bounds, rotation: space.rotation, slot: slot)
         let annotation = PDFAnnotation(bounds: bounds, forType: .text, withProperties: nil)
         describe(annotation, text: text, author: author, date: date)
         return annotation
+    }
+
+    /// The bounds and rotation `pageNoteBounds` should be given for a page. A PDF's own `/Rect` is in the page's default
+    /// space, before `/Rotate`. If PDFKit hands back the page's bounds as drawn (width and height swapped on a
+    /// quarter-turned page, which only a page that is not square can show), its annotation space is the drawn page and
+    /// its top left is simply `(minX, maxY)`: then no rotation is applied. Otherwise the page's `/Rotate` is.
+    private static func noteSpace(of page: PDFPage) -> (bounds: CGRect, rotation: Int) {
+        let kit = page.bounds(for: .cropBox)
+        let rotation = page.rotation
+        let quarterTurn = (((rotation / 90) % 4) + 4) % 4 % 2 == 1
+        if quarterTurn, let raw = page.pageRef?.getBoxRect(.cropBox), abs(raw.width - raw.height) > 1,
+           abs(kit.width - raw.height) < 1, abs(kit.height - raw.width) < 1 {
+            return (kit, 0)
+        }
+        return (kit, rotation)
+    }
+
+    /// Whether two addresses are one file: the same path once links are resolved, or, for a file that exists, the same
+    /// file on disk (a different spelling on a case-insensitive volume, a hard link).
+    private static func isSameFile(_ a: URL, _ b: URL) -> Bool {
+        if a.resolvingSymlinksInPath().standardizedFileURL == b.resolvingSymlinksInPath().standardizedFileURL { return true }
+        guard let first = try? a.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier,
+              let second = try? b.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier else { return false }
+        return first.isEqual(second)
     }
 
     private static func describe(_ annotation: PDFAnnotation, text: String, author: String, date: Date) {

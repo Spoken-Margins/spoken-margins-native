@@ -20,7 +20,10 @@ public enum PDFCommentGeometry {
     public static func pageNoteBounds(pageBounds: CGRect, rotation: Int, slot: Int) -> CGRect {
         let turns = (((rotation / 90) % 4) + 4) % 4
         let step = noteSize + noteGap
-        let offset = noteInset + CGFloat(max(slot, 0)) * step
+        // A page only holds so many notes down its drawn height; more share the last place rather than leave the page.
+        let drawnHeight = turns % 2 == 0 ? pageBounds.height : pageBounds.width
+        let lastSlot = max(0, Int(((drawnHeight - 2 * noteInset - noteSize) / step).rounded(.down)))
+        let offset = noteInset + CGFloat(min(max(slot, 0), lastSlot)) * step
         let inset = noteInset
         let side = noteSize
         switch turns {

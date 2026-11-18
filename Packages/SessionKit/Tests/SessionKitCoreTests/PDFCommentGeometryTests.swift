@@ -60,6 +60,18 @@ final class PDFCommentGeometryTests: XCTestCase {
         XCTAssertTrue(shifted.contains(note))
     }
 
+    func testNotesPastWhatThePageHoldsShareTheLastPlaceInsteadOfLeavingThePage() {
+        for rotation in [0, 90, 180, 270] {
+            for slot in [0, 5, 22, 23, 24, 100, 10_000] {
+                let note = PDFCommentGeometry.pageNoteBounds(pageBounds: page, rotation: rotation, slot: slot)
+                XCTAssertTrue(page.contains(note), "rotation \(rotation), slot \(slot): \(note)")
+            }
+        }
+        let small = CGRect(x: 0, y: 0, width: 100, height: 60)
+        XCTAssertTrue(small.contains(PDFCommentGeometry.pageNoteBounds(pageBounds: small, rotation: 0, slot: 7)))
+        XCTAssertTrue(small.contains(PDFCommentGeometry.pageNoteBounds(pageBounds: small, rotation: 90, slot: 7)))
+    }
+
     func testANegativeSlotIsTheFirst() {
         XCTAssertEqual(
             PDFCommentGeometry.pageNoteBounds(pageBounds: page, rotation: 0, slot: -3),
