@@ -154,6 +154,9 @@ extension Gate1AppModel {
     func unfollowShowWithUndo(_ subscription: FeedSubscription) {
         let title = subscription.source.title ?? subscription.source.host
         let feedURL = subscription.source.canonicalURL
+        // The lists it is in (#4046): the show leaves them, and Undo puts it back.
+        let listIDs = FollowListsState.shared.lists(containing: subscription).map(\.id)
+        let member = FollowListEditing.member(for: subscription)
         followingLooked.remove(subscription.id)
         unfollowSource(id: subscription.id)
         if followingLookedLoaded { saveFollowingLooked() } else { followingLookedDirty = true }
@@ -162,11 +165,16 @@ extension Gate1AppModel {
             accessibilityLabel: FollowingRowActions.undoUnfollowAccessibilityLabel(showTitle: title),
             identifier: "following.undo.button",
             perform: { [weak self] in
-                Task { [weak self] in _ = try? await self?.followCatalogFeed(feedURL) }
+                Task { [weak self] in
+                    guard (try? await self?.followCatalogFeed(feedURL)) != nil else { return }
+                    await self?.restoreFollowListMembership(member, toLists: listIDs)
+                }
             }
         )
         presentFeedback(UserFeedbackEvent(
-            kind: .success, message: FollowingRowActions.unfollowedMessage(showTitle: title), action: action
+            kind: .success,
+            message: FollowListWords.unfollowedBanner(showTitle: title, wasInAList: !listIDs.isEmpty),
+            action: action
         ))
     }
 }
