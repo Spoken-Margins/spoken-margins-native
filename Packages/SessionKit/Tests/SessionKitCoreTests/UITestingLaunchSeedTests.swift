@@ -14,6 +14,7 @@ final class UITestingLaunchSeedTests: XCTestCase {
         "SPOKEN_MARGINS_UI_TEST_PODCAST_PLACE": "1490",
         "SPOKEN_MARGINS_UI_TEST_PODCAST_COMPLETED": "1",
         "SPOKEN_MARGINS_UI_TEST_LIBRARY_FILLER": "12",
+        "SPOKEN_MARGINS_UI_TEST_FOLLOWED_SHOW": "1",
     ]
 
     func testANormalLaunchSeedsNothingWhateverTheEnvironmentHolds() {
@@ -25,6 +26,7 @@ final class UITestingLaunchSeedTests: XCTestCase {
             XCTAssertFalse(seed.seedsGeneratedTimeline, key)
             XCTAssertFalse(UITestingLaunchSeed.importsCoopLayer(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
             XCTAssertFalse(UITestingLaunchSeed.marksListenerMarginShared(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
+            XCTAssertFalse(UITestingLaunchSeed.seedsFollowedShow(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
             XCTAssertNil(UITestingLaunchSeed.podcastPlaceSeconds(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
             XCTAssertFalse(UITestingLaunchSeed.podcastStartsCompleted(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
             XCTAssertEqual(UITestingLaunchSeed.libraryFillerCount(arguments: ["SpokenMarginsApp"], environment: [key: value]), 0, key)
@@ -35,6 +37,14 @@ final class UITestingLaunchSeedTests: XCTestCase {
         XCTAssertEqual(UITestingLaunchSeed(arguments: ["SpokenMarginsApp"], environment: everySeedVariable), .none)
         XCTAssertFalse(UITestingLaunchSeed.importsCoopLayer(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
         XCTAssertFalse(UITestingLaunchSeed.marksListenerMarginShared(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
+        XCTAssertFalse(UITestingLaunchSeed.seedsFollowedShow(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
+    }
+
+    func testTheFollowedShowSwitchNeedsTheUITestFlagAndTheValueOne() {
+        let key = "SPOKEN_MARGINS_UI_TEST_FOLLOWED_SHOW"
+        XCTAssertTrue(UITestingLaunchSeed.seedsFollowedShow(arguments: ["--ui-testing"], environment: [key: "1"]))
+        XCTAssertFalse(UITestingLaunchSeed.seedsFollowedShow(arguments: ["--ui-testing"], environment: [key: "0"]))
+        XCTAssertFalse(UITestingLaunchSeed.seedsFollowedShow(arguments: ["--ui-testing"], environment: [:]))
     }
 
     func testAUITestLaunchWithNoSeedVariablesKeepsTheFixtureArticle() {

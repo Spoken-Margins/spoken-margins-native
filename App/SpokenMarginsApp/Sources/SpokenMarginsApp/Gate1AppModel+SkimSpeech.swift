@@ -47,11 +47,14 @@ extension Gate1AppModel {
         switch control {
         case .hidden: return nil
         case .skim: return skimSpeech(.forward)
-        case .skimDisabled, .playNextItem: return skimDisabledSpeech(.forward)
+        case .skimDisabled: return skimDisabledSpeech(.forward)
+        case .playNextItem:
+            // Not "Play Next": in the item menu that means put an item at the head of the queue (#3914).
+            return .init(label: "Next in queue", value: chapterRowQueuedNextId.map(queuedTitle) ?? "")
         case .nextChapter, .nextChapterInSkimSlot:
             let next = nextChapterStop
             return skimDescriber.nextChapterSpeech(
-                standingInFor: control == .nextChapterInSkimSlot ? skimBridge.forwardUnavailableReason : nil,
+                standingInFor: control == .nextChapterInSkimSlot ? chapterRowSkimReason : nil,
                 chapterId: next?.id, start: next?.start, inSkimSlot: control == .nextChapterInSkimSlot)
         }
     }

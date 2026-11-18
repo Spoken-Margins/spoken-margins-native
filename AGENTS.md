@@ -47,6 +47,7 @@ Tests that pass while the app is broken usually fake the boundary that broke (au
 1. **Component tests (host, fast).** This is the default loop for every change: `.venv/bin/python scripts/verify-tests.py --plan fast`. It runs the SessionKit suite, contract validators and browser suites. [BUILDING.md](BUILDING.md) covers the setup.
    - In a new git worktree, run `scripts/setup-worktree.sh` once first. It links the main checkout's `.venv` and `node_modules`, which git doesn't carry.
    - Write tests that can fail for the bug they name. Run a new regression test once without the fix and confirm it fails.
+   - Wait on state, never on the clock. A test that sleeps a fixed time and then asserts, or whose deadline is close to how long the work normally takes, fails on a busy runner while the app is fine. Wait for the condition itself (`pollUntil`, an expectation, a gate the test controls), with a deadline that is only a ceiling. [docs/testing.md](docs/testing.md#waiting-in-tests) has the rule and its exceptions.
    - For a matching, sanitizing or page/title parsing bug, write a table of neighbouring inputs before fixing: case, whitespace, Unicode normalization, punctuation, empty, very long, the same item from another source, and lookalike items. Fix every row that fails in the same commit.
    - Prefer real temporary files, real SQLite and real AVFoundation decoding on macOS over hand-written fakes at the boundary being tested.
 2. **App compile and app-hosted unit tests.**

@@ -220,6 +220,43 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         }
     }
 
+    public static let followedShowSubscriptionId = "ui-test-followed-show"
+    public static let followedShowLibraryItemId = "ui-test-followed-show-heard"
+
+    /// The followed show `seedsFollowedShow` stores, for the Up next card's captures: three entries, newest first.
+    /// 1. A long title with a publisher description, unseen: the one the card features.
+    /// 2. No description, unseen.
+    /// 3. Already in the Library, as the item `libraryItem` (matched by its audio link).
+    /// Its addresses use the reserved `.example` domain, so a refresh of the feed finds nothing and changes nothing.
+    public static func followedShow(now: Date) -> (subscription: FeedSubscription, entries: [FeedEntry], libraryItem: Item) {
+        let feed = "https://walking-podcast.example"
+        let source = SourceIdentity(
+            id: "ui-test-followed-source", kind: .podcastFeed, canonicalURL: "\(feed)/feed.xml",
+            host: "walking-podcast.example", title: "The Walking Podcast")
+        let subscription = FeedSubscription(
+            id: followedShowSubscriptionId, source: source, lastRefreshAt: now, createdAt: now.addingTimeInterval(-14 * 86_400))
+        func entry(_ id: String, title: String, summary: String?, days: Double, state: FeedEntryState, minutes: Int) -> FeedEntry {
+            FeedEntry(
+                id: "ui-test-followed-\(id)", subscriptionId: subscription.id, canonicalURL: "\(feed)/\(id)",
+                audioURL: "\(feed)/\(id).mp3", title: title, summary: summary,
+                publishedAt: now.addingTimeInterval(-days * 86_400), state: state,
+                audioDurationMs: minutes * 60_000, episodeGUID: "guid-\(id)", firstSeenAt: now.addingTimeInterval(-days * 86_400))
+        }
+        let entries = [
+            entry("ep3", title: "Why the river path bends, what the hedgerow birds are saying, and a long walk home along the railway cutting with a bell somewhere marking the hour",
+                  summary: "<p>This week we follow the old river path from the willows to the hill, and ask why walkers &amp; birds keep to the same bends.</p><p>Plus: the allotments, the burning leaves, and what the town looks like from the top of the hill at dusk.</p>",
+                  days: 1, state: .unseen, minutes: 42),
+            entry("ep2", title: "A short walk in the rain", summary: nil, days: 3, state: .unseen, minutes: 18),
+            entry("ep1", title: "The first walk", summary: "The first walk, at the river.", days: 9, state: .imported, minutes: 25),
+        ]
+        let heard = entries[2]
+        let libraryItem = Item(
+            id: followedShowLibraryItemId, title: heard.title, mediaType: "transcript_backed_media", text: nil,
+            externalReference: heard.audioURL, status: "ready", externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: heard.audioURL, durationMs: heard.audioDurationMs))
+        return (subscription, entries, libraryItem)
+    }
+
     #if DEBUG
     /// How many filler articles a fixture launch adds below the fixture article: `SPOKEN_MARGINS_UI_TEST_LIBRARY_FILLER`
     /// (#4314), at most 40. Zero for any other seed, and for anything but a whole number above 0.
@@ -253,6 +290,13 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         arguments.contains("--ui-testing")
             && environment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] == "1"
             && environment["SPOKEN_MARGINS_UI_TEST_COOP"] == "1"
+    }
+
+    /// Whether a launch also follows one show for the Following tab and its show screen (#3863):
+    /// `SPOKEN_MARGINS_UI_TEST_FOLLOWED_SHOW=1`. It adds to the Library the launch seeds (the `text` and podcast seeds,
+    /// and a kept Library) and changes nothing else. The fixture seed does not carry it.
+    public static func seedsFollowedShow(arguments: [String], environment: [String: String]) -> Bool {
+        arguments.contains("--ui-testing") && environment["SPOKEN_MARGINS_UI_TEST_FOLLOWED_SHOW"] == "1"
     }
 
     /// Whether a keep-library UI-test relaunch marks the listener's Margin as sent in `listenerSharedIdentity`:
