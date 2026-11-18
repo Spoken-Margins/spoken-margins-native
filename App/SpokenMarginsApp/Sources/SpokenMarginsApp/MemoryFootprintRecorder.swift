@@ -8,8 +8,9 @@ import UIKit
 /// Samples the app's memory use into Diagnostics as `memoryFootprint` (#122): at launch, when an item
 /// starts playing, when playback moves to another item, at the first playback update a minute after the
 /// last sample, and on each memory warning. The samples are saved after each one, so the samples taken
-/// before an out-of-memory kill can still be read after the relaunch. It watches the model from outside,
-/// so `Gate1AppModel` doesn't grow.
+/// before an out-of-memory kill can still be read after the relaunch. Next to the samples, `memoryVerdict`
+/// says whether memory held steady since launch or grew, per switch or per minute, and for which media type
+/// (`MemoryFootprintVerdict`). It watches the model from outside, so `Gate1AppModel` doesn't grow.
 @MainActor
 final class MemoryFootprintRecorder {
     struct Reading: Equatable {
@@ -18,6 +19,7 @@ final class MemoryFootprintRecorder {
     }
 
     static let diagnosticsKey = "memoryFootprint"
+    static let verdictKey = "memoryVerdict"
 
     private(set) var log: MemoryFootprintLog
     private let diagnostics: PinnedDiagnostics
@@ -87,6 +89,7 @@ final class MemoryFootprintRecorder {
         log.record(event, mediaType: mediaType, footprintBytes: reading.footprintBytes,
                    availableBytes: reading.availableBytes, at: now())
         diagnostics.set(Self.diagnosticsKey, log.diagnosticsLine)
+        diagnostics.set(Self.verdictKey, MemoryFootprintVerdict(samples: log.samples).diagnosticsLine)
         save()
     }
 
