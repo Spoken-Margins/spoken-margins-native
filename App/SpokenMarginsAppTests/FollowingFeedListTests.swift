@@ -1,4 +1,5 @@
 import XCTest
+import SessionKit
 import SessionKitPersistence
 import SessionKitSharing
 @testable import SessionKit
@@ -107,10 +108,15 @@ final class FollowingFeedListTests: XCTestCase {
             XCTAssertEqual(ada.items.map(\.title), ["On ada-new", "On ada-old"])
             XCTAssertEqual(ada.items.map(\.countLabel), ["1 Margin", "1 Margin"])
             XCTAssertEqual(ada.items.map(\.newLabel), ["1 new", "1 new"], "the friend's unheard Margins are counted in words")
-            // The Library row's wording after the length: source, kind, then progress.
-            let details = ada.items.map { model.followingFriendItemDetail($0)?.rest }
-            XCTAssertEqual(details.first??.hasSuffix("Text"), true, "each item carries the Library row's kind: \(details)")
-            XCTAssertEqual(details.last??.hasSuffix("Text · 40%"), true, "progress reads as on the Library row: \(details)")
+            // The Library row's wording (#4062): progress words first, then source and kind.
+            let details = ada.items.map { model.followingFriendItemDetail($0) }
+            XCTAssertEqual(details.map { $0?.rest }, ["local · Text", "local · Text"], "each item carries the Library row's source and kind")
+            let started = model.libraryItems.first { $0.id == "ada-old" }
+            XCTAssertNotNil(started, "the started item is in the Library")
+            let libraryProgress = started.flatMap { LibraryRowLines(row: $0, playbackSpeed: model.speechPlaybackRateMultiplier).progress }
+            XCTAssertNotNil(libraryProgress)
+            XCTAssertEqual(details.last??.length, libraryProgress, "progress reads as on the Library row")
+            XCTAssertNotEqual(details.last??.length, details.first??.length, "the started item shows its progress, not the length the unstarted one shows")
         }
     }
 }

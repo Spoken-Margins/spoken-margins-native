@@ -99,6 +99,7 @@ extension Gate1AppModel {
             try reconcileOnboardingEvidence(items: launchData.liveItems, store: store)
             try recoverInterruptedAIJobs(store: store); settleOrphanedTranscriptions(store: store)
             libraryItems = rows
+            if let stored = launchData.collections { libraryCollections.publish(stored) }
             recentlyDeletedItems = deletedRows
             let availableItemIDs = Set(rows.map(\.id))
             var writtenMarginNotice: String?

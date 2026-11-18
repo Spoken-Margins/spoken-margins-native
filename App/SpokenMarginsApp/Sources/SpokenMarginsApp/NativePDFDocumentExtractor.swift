@@ -19,6 +19,9 @@ struct NativePDFStructuredImport: Sendable {
     /// The PDF's bytes when the import read them whole, so the import path can keep the original (#4338). The document's
     /// `extraction.sourceSHA256` is the hash of these bytes.
     var originalData: Data?
+    /// JPEG pictures of the document's tables and figures by float id (#3895), cut now because the PDF is not kept.
+    /// The importer saves them under the item once it has an id, and only for the floats its stored document has.
+    var clips: [String: Data] = [:]
 }
 
 /// Keeps PDFKit's exact embedded text and authored outline as the canonical
@@ -92,7 +95,8 @@ enum NativePDFDocumentExtractor {
                 analyzedPageCount: 0,
                 bibliography: PDFStructuredTextExtractor.bibliography(for: document)
             ),
-            originalData: originalData
+            originalData: originalData,
+            clips: structured.floats.isEmpty ? [:] : PDFClipRenderer.clips(for: structured.floats, in: document)
         )
     }
 

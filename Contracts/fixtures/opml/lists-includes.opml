@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0" xmlns:sm="https://spokenmargins.com/ns/lists/1">
+  <head><title>Sam's reading list</title></head>
+  <body>
+    <outline type="include" text="Priya's science list" title="Priya's science list" url="https://example.org/lists/priya-science.opml"/>
+    <outline type="include" text="Broken include" url="feed://example.org/not-web.opml"/>
+    <outline type="rss" text="Radiolab" xmlUrl="https://feeds.simplecast.com/EmVW7VGp" category="/Science" sm:via="Priya's science list"/>
+    <outline type="rss" text="Science Vs" xmlUrl="https://feeds.simplecast.com/EmVW7VGp-sciencevs" category="/Science"/>
+  </body>
+</opml>

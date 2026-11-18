@@ -11,19 +11,23 @@ public struct ImportedSourceText: Sendable {
     /// A Word document's paragraphs (#4594). When set, the item is built from them as they are: their headings are the
     /// chapters, and nothing is read as Markdown, so a line that starts with `#` or `-`, or says "Timestamps", is text.
     public var paragraphs: [DocumentParagraph]?
+    /// JPEG pictures of the PDF's tables and figures by float id (#3895), cut while the PDF was open.
+    public var clips: [String: Data]
 
     public init(
         text: String,
         documentStructure: PDFDocumentStructure?,
         structuredDocument: StructuredDocument? = nil,
         title: String? = nil,
-        paragraphs: [DocumentParagraph]? = nil
+        paragraphs: [DocumentParagraph]? = nil,
+        clips: [String: Data] = [:]
     ) {
         self.text = text
         self.documentStructure = documentStructure
         self.structuredDocument = structuredDocument
         self.title = title
         self.paragraphs = paragraphs
+        self.clips = clips
     }
 }
 
@@ -44,11 +48,14 @@ public struct PreparedObsidianImport: Sendable {
     public let item: Item
     public let listeningMap: ListeningMap?
     public var structuredDocument: StructuredDocument?
+    /// The PDF's clip pictures by float id, saved beside the item (#3895).
+    public var clips: [String: Data]
 
-    public init(item: Item, listeningMap: ListeningMap?, structuredDocument: StructuredDocument? = nil) {
+    public init(item: Item, listeningMap: ListeningMap?, structuredDocument: StructuredDocument? = nil, clips: [String: Data] = [:]) {
         self.item = item
         self.listeningMap = listeningMap
         self.structuredDocument = structuredDocument
+        self.clips = clips
     }
 }
 
@@ -79,7 +86,7 @@ public enum SourceFileItemBuilder {
                 createdAt: createdAt,
                 documentStructure: imported.documentStructure
             )
-            return PreparedObsidianImport(item: item, listeningMap: map, structuredDocument: document)
+            return PreparedObsidianImport(item: item, listeningMap: map, structuredDocument: document, clips: imported.clips)
         }
         if let paragraphs = imported.paragraphs {
             return try prepare(paragraphs: paragraphs, title: imported.title, fileURL: fileURL, itemId: itemId, createdAt: createdAt)
