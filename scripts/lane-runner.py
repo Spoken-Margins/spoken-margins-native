@@ -854,6 +854,25 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
     return list(dict.fromkeys(found))[:limit]
 
 
+# xcodebuild's words when Swift Package Manager can't fetch a package from GitHub (#4512: three hosted T3 runs in a row
+# ended FAIL on `Failed to clone repository https://github.com/microsoft/onnxruntime-swift-package-manager.git`). That
+# is the network or the host, never the PR's code, so a build that stopped on it is INCONCLUSIVE with a lane reason.
+# Narrow on purpose: "Could not resolve package dependencies" alone also names a PR's own bad version requirement.
+PACKAGE_FETCH_FAULT = re.compile(r'Failed to clone repository\b')
+PACKAGE_FETCH_FAULT_WHY = ('lane fault, not the PR: Swift package resolution could not fetch a package from GitHub, '
+                           'so the build never started compiling. Ask again with a new /lane request; the dispatcher does it once, '
+                           'and files a regression issue if the same fetch fails again.')
+
+
+def package_fetch_fault(log: Path) -> str | None:
+    """The `Failed to clone repository <url>` line of a build log, if that is what stopped the build."""
+    try:
+        text = log.read_text(errors='replace')
+    except OSError:
+        return None
+    return next((line.strip() for line in text.splitlines() if PACKAGE_FETCH_FAULT.search(line)), None)
+
+
 @ledger_step('app builds', lambda args, result: (
     [part.rsplit(' (', 1)[0] for part in result[1].split(', ') if not part.endswith('(pass)')], False))
 def run_t2(evidence: Path, runner=None) -> tuple[str, str, list[str]]:
@@ -867,16 +886,20 @@ def run_t2(evidence: Path, runner=None) -> tuple[str, str, list[str]]:
                    '-scheme', 'SpokenMarginsApp', '-derivedDataPath', str(ROOT / f'.build/dd-{name}'), *args]
         with log.open('w') as handle:
             code = runner(command, handle, BUILD_TIMEOUT)
+        fetch_fault = package_fetch_fault(log) if code not in (0, None) else None
         if code == 0:
             results.append(f'{name} build (pass)')
         else:
-            results.append(f'{name} build ({"timed out" if code is None else "fail"})')
+            results.append(f'{name} build ({"timed out" if code is None else "package fetch fault" if fetch_fault else "fail"})')
             details.append(f'{name} build — expected: succeeds. observed: '
                            f'{"no result after " + duration(BUILD_TIMEOUT) if code is None else f"exit {code}"}. '
                            f'evidence: {log}')
+            if fetch_fault:
+                details.append(f'  {PACKAGE_FETCH_FAULT_WHY} ({fetch_fault})')
             details += [f'  {line}' for line in first_errors(log)]
     failed = [r for r in results if not r.endswith('(pass)')]
-    verdict = 'PASS' if not failed else ('INCONCLUSIVE' if all('timed out' in r for r in failed) else 'FAIL')
+    verdict = 'PASS' if not failed else (
+        'INCONCLUSIVE' if all('timed out' in r or 'package fetch fault' in r for r in failed) else 'FAIL')
     return verdict, ', '.join(results), details
 
 
@@ -2944,7 +2967,7 @@ def plan_for_tests(selectors: list[str], plans: dict[str, set]) -> tuple[dict[st
     return grouped, unknown
 
 
-def summarize_manifest(manifest: dict) -> dict:
+def summarize_manifest(manifest: dict, output: Path | None = None) -> dict:
     """Test counts, failed tests, crash reports and whether a flood or timeout stopped the run.
 
     A build that was interrupted (timeout or flood) is not a build failure: that's INCONCLUSIVE.
@@ -2966,8 +2989,18 @@ def summarize_manifest(manifest: dict) -> dict:
         summary['crashes'] += [Path(p).name for p in step.get('simulator_crash_reports', [])]
         summary['flood'] |= bool(step.get('simulator_crash_report'))
         summary['interrupted'] |= bool(step.get('interrupted'))
-        summary['build_failed'] |= (step.get('name') == 'build-for-testing' and bool(step.get('errors'))
-                                    and not step.get('interrupted'))
+        errors = step.get('errors') or []
+        # A build that stopped on a package it could not fetch is the lane's fault, not a build failure (#4512).
+        # The step's error lines hold only the first few `error:` lines; the clone failure may sit on an indented line
+        # under them, so the build log, where the runner has it, is read as well.
+        fetch_fault = None
+        if step.get('name') == 'build-for-testing' and errors:
+            fetch_fault = next((e for e in errors if PACKAGE_FETCH_FAULT.search(e)), None) or (
+                package_fetch_fault(output / 'build-for-testing.log') if output else None)
+        if fetch_fault:
+            summary['package_fetch_fault'] = fetch_fault
+        summary['build_failed'] |= (step.get('name') == 'build-for-testing' and bool(errors)
+                                    and not step.get('interrupted') and not fetch_fault)
     return summary
 
 
@@ -3193,10 +3226,11 @@ def prepare_t3_build(grouped, runtime, evidence):
     if manifest.get('status') == 'verified':
         return 'PASS', [f'shared build before simulator boot took {duration(time.monotonic() - started)} '
                         f'(reused: {manifest.get("reused_build", False)}); evidence: {output}/manifest.json']
-    summary = summarize_manifest(manifest)
+    summary = summarize_manifest(manifest, output)
     verdict = t3_verdict([summary], [manifest.get('status', 'missing')])
+    why = [PACKAGE_FETCH_FAULT_WHY] if summary.get('package_fetch_fault') else []
     return verdict, [f'Build before simulator boot: {manifest.get("error") or "no verified build manifest"}; '
-                     f'evidence: {output}/manifest.json', *failed_step_errors(manifest, output)]
+                     f'evidence: {output}/manifest.json', *why, *failed_step_errors(manifest, output)]
 
 
 def _run_t3_grouped(grouped, request_id, evidence):

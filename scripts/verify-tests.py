@@ -65,6 +65,11 @@ def plan_timeout(default: int) -> int:
 
 # A run waits at most this long for a Mac-wide build slot, then fails rather than hanging.
 BUILD_SLOT_WAIT_SECONDS = 1800
+# Swift Package Manager clones its packages from GitHub when a build starts. A clone that fails (three hosted T3 runs in
+# a row, #4512) is the network, not the PR, so the build is tried again after a pause before the step is allowed to fail.
+PACKAGE_FETCH_ATTEMPTS = 3
+PACKAGE_FETCH_PAUSES = (10, 30)  # seconds before the second and the third attempt
+PACKAGE_FETCH_FAULT = re.compile(r'Failed to clone repository\b')
 
 # Xcode's compilation cache for the app build-for-testing (#1331). Every T3 builds in fresh DerivedData, so
 # without it each one recompiled every module. Measured on the lane Mac (Xcode 27.0, 2026-10-12): 57-73 s
@@ -2246,7 +2251,7 @@ class Run:
             if require_build:
                 raise RuntimeError('Prepared Xcode build is missing or stale; refusing to build on a booted T3 device')
             stamp.unlink(missing_ok=True)
-            self.command('build-for-testing', base + compilation_cache_settings() + ['build-for-testing'], timeout=900)
+            self.build_for_testing(base + compilation_cache_settings() + ['build-for-testing'])
             log = self.output / 'build-for-testing.log'
             self.manifest['compilation_cache'] = compilation_cache_hits(log.read_text(errors='replace')) \
                 if log.is_file() else None
@@ -2258,6 +2263,30 @@ class Run:
         self.command('bundle-contracts', [sys.executable, 'scripts/verify-bundle.py',
                      str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
         return derived, identity
+
+    def build_for_testing(self, args):
+        """The `build-for-testing` step, tried again when Swift Package Manager could not clone a package (#4512).
+
+        Only that failure is tried again, up to PACKAGE_FETCH_ATTEMPTS times; a compile error or any other failure
+        fails the step at once. The failed attempts leave the manifest's steps (so a later pass reads as a pass) and are
+        kept under `package_fetch_retries`; if every attempt fails, the last one stays, and the lane reports a fetch
+        fault, not a failed build."""
+        for attempt in range(1, PACKAGE_FETCH_ATTEMPTS + 1):
+            try:
+                return self.command('build-for-testing', args, timeout=900)
+            except RuntimeError:
+                log = self.output / 'build-for-testing.log'
+                fetch_fault = log.is_file() and PACKAGE_FETCH_FAULT.search(log.read_text(errors='replace'))
+                if attempt == PACKAGE_FETCH_ATTEMPTS or not fetch_fault:
+                    raise
+                failed = self.manifest['steps'].pop()
+                pause = PACKAGE_FETCH_PAUSES[min(attempt, len(PACKAGE_FETCH_PAUSES)) - 1]
+                self.manifest.setdefault('package_fetch_retries', []).append(
+                    {'attempt': attempt, 'seconds': failed.get('seconds'), 'errors': failed.get('errors')})
+                self.save()
+                print(f'warning: build-for-testing could not clone a package (attempt {attempt} of '
+                      f'{PACKAGE_FETCH_ATTEMPTS}); trying again in {pause}s', flush=True)
+                time.sleep(pause)
 
     def provide_supertonic_model(self):
         """Fetch Supertonic's model before the simulator boots, and give its folder to the app's tests, which read

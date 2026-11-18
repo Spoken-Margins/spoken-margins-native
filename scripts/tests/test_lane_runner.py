@@ -348,6 +348,33 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(lane.run_t2(evidence, runner=lambda *_: 0)[0], 'PASS')
             self.assertEqual(lane.run_t2(evidence, runner=lambda *_: None)[0], 'INCONCLUSIVE')
 
+    def test_a_build_that_could_not_clone_a_package_is_inconclusive_and_a_compile_error_still_fails(self):
+        # #4512: three hosted T3 runs in a row ended FAIL on a clone of onnxruntime-swift-package-manager.
+        clone = ('xcodebuild: error: Could not resolve package dependencies:\n'
+                 '  Failed to clone repository https://github.com/microsoft/onnxruntime-swift-package-manager.git\n')
+        for name, text, code, expected in (
+                ('clone failure', clone, 74, 'INCONCLUSIVE'),
+                ('compile error', 'Foo.swift:3:1: error: cannot find Bar in scope\n** BUILD FAILED **\n', 65, 'FAIL'),
+                ('a version the PR cannot satisfy', 'xcodebuild: error: Could not resolve package dependencies:\n'
+                 '  Dependencies could not be resolved because root depends on Foo 9.0.0\n', 74, 'FAIL')):
+            with self.subTest(name), tempfile.TemporaryDirectory() as temporary:
+                def fake(command, log, timeout, text=text, code=code):
+                    log.write(text)
+                    return code
+                verdict, ran, details = lane.run_t2(Path(temporary), runner=fake)
+                self.assertEqual(verdict, expected)
+                self.assertEqual(any('lane fault, not the PR' in line for line in details), expected == 'INCONCLUSIVE')
+
+    def test_one_clone_failure_and_one_compile_error_together_still_fail(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            def fake(command, log, timeout):
+                if 'generic/platform=iOS' in command:
+                    log.write('Foo.swift:3:1: error: cannot find Bar in scope\n')
+                    return 65
+                log.write('  Failed to clone repository https://github.com/x/y.git\n')
+                return 74
+            self.assertEqual(lane.run_t2(Path(temporary), runner=fake)[0], 'FAIL')
+
     def test_the_simulator_and_device_builds_never_share_a_derived_data_folder(self):
         # #405: with one warm DerivedData, the simulator build after a device build failed on a missing
         # all-product-headers.yaml in the extension targets; cold builds, and every device build, passed.
@@ -1015,6 +1042,39 @@ class T3PreparationTests(unittest.TestCase):
             self.assertIn('--build-only', commands[0])
             self.assertIn('runtime', commands[0])
             self.assertNotIn('--device', commands[0])
+
+    def test_a_package_clone_failure_before_the_simulator_boots_is_inconclusive_with_a_lane_reason(self):
+        """#4512: the manifest's error lines held only the first `error:` lines, and the clone failure sat on an indented
+        line under them, in the build's log."""
+        for name, log_text, expected in (
+                ('clone failure', 'xcodebuild: error: Could not resolve package dependencies:\n'
+                 '  Failed to clone repository https://github.com/microsoft/onnxruntime-swift-package-manager.git\n',
+                 'INCONCLUSIVE'),
+                ('compile error', 'Foo.swift:3:1: error: cannot find Bar in scope\n', 'FAIL')):
+            with self.subTest(name), tempfile.TemporaryDirectory() as temporary:
+                evidence = Path(temporary)
+
+                def run(command, log, timeout, log_text=log_text):
+                    output = evidence / 'verify-build'
+                    output.mkdir()
+                    (output / 'build-for-testing.log').write_text(log_text)
+                    (output / 'manifest.json').write_text(json.dumps({
+                        'status': 'failed_or_incomplete', 'error': 'Process exit 74',
+                        'steps': [{'name': 'build-for-testing', 'exit_code': 74,
+                                   'errors': ['Process exit 74', log_text.splitlines()[0]]}]}))
+                    return 1
+
+                with mock.patch.object(lane, 'run_bounded', side_effect=run):
+                    verdict, details = lane.prepare_t3_build({'app': ['T/A']}, 'runtime', evidence)
+                self.assertEqual(verdict, expected)
+                self.assertEqual(any('lane fault, not the PR' in line for line in details), expected == 'INCONCLUSIVE')
+
+    def test_a_clone_failure_named_in_the_manifest_errors_is_a_lane_fault_too(self):
+        summary = lane.summarize_manifest({'steps': [{'name': 'build-for-testing', 'exit_code': 74, 'errors': [
+            'Process exit 74', 'error: Failed to clone repository https://github.com/x/y.git']}]})
+        self.assertFalse(summary['build_failed'])
+        self.assertIn('Failed to clone repository', summary['package_fetch_fault'])
+        self.assertEqual(lane.t3_verdict([summary], ['failed_or_incomplete']), 'INCONCLUSIVE')
 
     def test_a_clone_boot_gets_the_first_boot_tolerance_because_the_clone_never_booted(self):
         """#1359: with first_boot=False every cloned T3 boot stopped on SpringBoard's early change."""

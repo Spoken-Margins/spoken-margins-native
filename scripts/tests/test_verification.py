@@ -2898,6 +2898,59 @@ class VerificationTests(unittest.TestCase):
         self.assertIn('all-items filter', j14[0])
 
 
+class PackageFetchRetryTests(unittest.TestCase):
+    """#4512: Swift Package Manager could not clone a package on three hosted T3 runs in a row."""
+    CLONE_FAILURE = ('xcodebuild: error: Could not resolve package dependencies:\n'
+                     '  Failed to clone repository https://github.com/microsoft/onnxruntime-swift-package-manager.git\n')
+
+    def run_build(self, outcomes):
+        """Runs `build_for_testing` with one scripted outcome per attempt: (log text, fails)."""
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'app')
+
+            def command(name, args, **kw):
+                text, fails = outcomes[len(calls)]
+                calls.append(name)
+                run.manifest['steps'].append({'name': name, 'seconds': 1.0, 'errors': ['Process exit 74'] if fails else []})
+                (run.output / f'{name}.log').write_text(text)
+                if fails:
+                    raise RuntimeError('Process exit 74')
+
+            with patch.object(run, 'command', side_effect=command), patch.object(verification.time, 'sleep') as sleep:
+                try:
+                    run.build_for_testing(['xcodebuild', 'build-for-testing'])
+                    error = None
+                except RuntimeError as failed:
+                    error = failed
+            return calls, run.manifest, sleep, error
+
+    def test_a_clone_failure_is_tried_again_and_a_later_pass_leaves_no_failed_step(self):
+        calls, manifest, sleep, error = self.run_build([(self.CLONE_FAILURE, True), (self.CLONE_FAILURE, True), ('** TEST BUILD SUCCEEDED **\n', False)])
+        self.assertIsNone(error)
+        self.assertEqual(calls, ['build-for-testing'] * 3)
+        self.assertEqual([step.get('errors') for step in manifest['steps']], [[]], 'only the passing attempt is a step')
+        self.assertEqual([retry['attempt'] for retry in manifest['package_fetch_retries']], [1, 2])
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], list(verification.PACKAGE_FETCH_PAUSES))
+
+    def test_three_clone_failures_fail_the_step_and_keep_the_last_attempt_for_the_lane(self):
+        calls, manifest, _, error = self.run_build([(self.CLONE_FAILURE, True)] * 3)
+        self.assertIsNotNone(error)
+        self.assertEqual(len(calls), verification.PACKAGE_FETCH_ATTEMPTS)
+        self.assertEqual(len(manifest['steps']), 1)
+        self.assertTrue(manifest['steps'][0]['errors'])
+
+    def test_a_compile_error_or_a_version_conflict_is_not_tried_again(self):
+        for text in ('Foo.swift:3:1: error: cannot find Bar in scope\n',
+                     'xcodebuild: error: Could not resolve package dependencies:\n  root depends on Foo 9.0.0\n'):
+            with self.subTest(text=text):
+                calls, manifest, sleep, error = self.run_build([(text, True)])
+                self.assertIsNotNone(error)
+                self.assertEqual(calls, ['build-for-testing'])
+                self.assertNotIn('package_fetch_retries', manifest)
+                sleep.assert_not_called()
+
+
 class WarmLaunchTests(unittest.TestCase):
     """#2806: a UI plan's first launch of the app happens before its first test, not inside it."""
     UDID = 'A1B2C3D4-0000-0000-0000-SYNTHETIC00'
