@@ -78,7 +78,7 @@ final class MemoryFootprintRecorderTests: XCTestCase {
         let diagnostics = RuntimeDiagnostics()
         let recorder = makeRecorder(diagnostics: diagnostics)
         recorder.record(.launch, mediaType: nil)
-        XCTAssertEqual(diagnostics.values["memoryVerdict"], "too few samples since launch")
+        XCTAssertEqual(diagnostics.values["memoryVerdict"], "too few samples to say")
 
         for (switchIndex, articleMB) in ([300, 340, 380, 420] as [UInt64]).enumerated() {
             footprintMB = 120
@@ -91,7 +91,7 @@ final class MemoryFootprintRecorderTests: XCTestCase {
         XCTAssertEqual(diagnostics.values["memoryVerdict"], "growing 40MB per switch into text")
 
         recorder.record(.launch, mediaType: nil)
-        XCTAssertEqual(diagnostics.values["memoryVerdict"], "too few samples since launch")
+        XCTAssertEqual(diagnostics.values["memoryVerdict"], "too few samples to say")
     }
 
     func testQueuedWritesLandInOrderSoTheFileHoldsTheNewestLog() throws {

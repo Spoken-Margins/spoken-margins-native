@@ -33,7 +33,7 @@ final class MemoryFootprintVerdictTests: XCTestCase {
     func testSteadySwitchesAndPlaybackReadSteady() {
         let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 340, 345, 338], podcastAt: [330, 335, 332]))
         XCTAssertEqual(verdict, .steady(switches: 7, playbackMinutes: 8))
-        XCTAssertEqual(verdict.diagnosticsLine, "steady since launch: 7 switches, 8 playback minutes measured")
+        XCTAssertEqual(verdict.diagnosticsLine, "steady: 7 switches, 8 playback minutes measured")
     }
 
     func testTheFirstSwitchIntoATypeLoadingItsEngineIsNotGrowth() {
@@ -55,6 +55,21 @@ final class MemoryFootprintVerdictTests: XCTestCase {
     func testGrowthJustUnderTheSwitchThresholdIsSteady() {
         let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 300, 309, 318], podcastAt: [300, 300, 300]))
         if case .growingPerSwitch = verdict { XCTFail("9 MB a switch is under the 10 MB threshold") }
+    }
+
+    func testOneReloadAmongSteadySwitchesIsNotGrowth() {
+        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 300, 302, 500, 503], podcastAt: [90, 90, 90, 90]))
+        if case .growingPerSwitch = verdict { XCTFail("one 198 MB jump among +2 and +3 is a reload, not memory left behind each time") }
+    }
+
+    func testTheSwitchAfterAMemoryWarningReloadsAndIsNotGrowth() {
+        // The app unloads its voices on a warning: 300 → 150 MB, then the next article reloads the voice to 400 MB.
+        let verdict = MemoryFootprintVerdict(samples: samples([
+            (.itemStart, "text", 100), (.itemSwitch, "podcast", 90), (.itemSwitch, "text", 300),
+            (.memoryWarning, "text", 150), (.itemSwitch, "podcast", 90), (.itemSwitch, "text", 400),
+            (.itemSwitch, "podcast", 90), (.itemSwitch, "text", 402),
+        ]))
+        if case .growingPerSwitch = verdict { XCTFail("the reload after a warning is not memory left behind: \(verdict)") }
     }
 
     func testMemoryClimbingWhileTheArticlePlaysIsGrowthPerMinute() {
@@ -80,7 +95,7 @@ final class MemoryFootprintVerdictTests: XCTestCase {
         XCTAssertEqual(MemoryFootprintVerdict(samples: []), .tooFewSamples)
         XCTAssertEqual(MemoryFootprintVerdict(samples: samples([(.itemStart, "podcast", 90), (.playback, "podcast", 400)])),
                        .tooFewSamples)
-        XCTAssertEqual(MemoryFootprintVerdict.tooFewSamples.diagnosticsLine, "too few samples since launch")
+        XCTAssertEqual(MemoryFootprintVerdict.tooFewSamples.diagnosticsLine, "too few samples to say")
     }
 
     func testAMemoryWarningInsideAStretchDoesNotSplitIt() {

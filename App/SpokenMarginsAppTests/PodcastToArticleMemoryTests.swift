@@ -24,8 +24,13 @@ final class PodcastToArticleMemoryTests: XCTestCase {
     func testSwitchingFromASharedMarginPodcastToAnArticleOnTheIOSVoiceLeavesNoMemoryBehind() async throws {
         executionTimeAllowance = 180
         try await SystemVoiceRuntime.requireAnsweringVoice() // loads the speech service before the clock starts
+        UserDefaults.standard.removeObject(forKey: Gate1AppModel.supertonicVoicePendingTermsKey)
         let model = try await makeModelWithSharedPodcast()
-        try await runSwitches(model, voice: "iOS voice", secondsEach: 6)
+        // An earlier test may have left the Terms accepted and Supertonic chosen; this run is about the iOS voice.
+        model.ttsVoiceSelection = .system
+        model.ttsVoiceSelectionChanged()
+        XCTAssertTrue(model.speechPlaybackClient is SystemSpeechPlaybackClient, "the article must be read by the iOS voice")
+        try await runSwitches(model, voice: "iOS voice", secondsEach: 4)
     }
 
     /// Supertonic, the downloaded voice the owner listens with, and the app's biggest memory user on the phone
@@ -41,21 +46,21 @@ final class PodcastToArticleMemoryTests: XCTestCase {
             .appending(path: SupertonicAssetResolver.catalogVoiceId, directoryHint: .isDirectory)
             .appending(path: "zzzz-memory-scenario", directoryHint: .isDirectory)
         try? FileManager.default.removeItem(at: installed)
-        try FileManager.default.createDirectory(at: installed.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let voiceFolder = installed.deletingLastPathComponent()
+        let voiceFolderExisted = FileManager.default.fileExists(atPath: voiceFolder.path)
+        try FileManager.default.createDirectory(at: voiceFolder, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(at: installed, withDestinationURL: real.rootURL)
-        addTeardownBlock { try? FileManager.default.removeItem(at: installed) }
-        let defaults = StandardDefaultsSnapshot(keys: [
-            SpokenMarginsTerms.acceptanceVersionKey, SpokenMarginsTerms.acceptanceDateKey, "supertonicTTSMigrationV1",
-            Gate1AppModel.supertonicVoicePendingTermsKey, "ttsVoiceSelection", "ttsMode",
-        ])
-        addTeardownBlock { defaults.restore() }
+        cleanup.append {
+            try? FileManager.default.removeItem(at: installed)
+            if !voiceFolderExisted { try? FileManager.default.removeItem(at: voiceFolder) }
+        }
         SpokenMarginsTerms.recordAcceptance()
 
         let model = try await makeModelWithSharedPodcast()
         model.ttsVoiceSelection = .james
         model.ttsVoiceSelectionChanged()
         XCTAssertTrue(model.speechPlaybackClient is SupertonicSpeechPlaybackClient, "the article must be read by Supertonic")
-        try await runSwitches(model, voice: "Supertonic", secondsEach: 6) {
+        try await runSwitches(model, voice: "Supertonic", secondsEach: 4) {
             XCTAssertNil(model.diagnostics["supertonicFallback"], "Supertonic handed the article to another voice")
         }
     }
@@ -65,10 +70,20 @@ final class PodcastToArticleMemoryTests: XCTestCase {
     private var podcastId = ""
     private var articleId = ""
     private var cleanup: [() -> Void] = []
+    private var defaults: StandardDefaultsSnapshot?
+
+    override func setUp() {
+        super.setUp()
+        defaults = StandardDefaultsSnapshot(keys: [
+            SpokenMarginsTerms.acceptanceVersionKey, SpokenMarginsTerms.acceptanceDateKey, "supertonicTTSMigrationV1",
+            Gate1AppModel.supertonicVoicePendingTermsKey, "ttsVoiceSelection", "ttsMode", "speechRate", "speechVoiceIdentifier",
+        ])
+    }
 
     override func tearDown() {
         cleanup.reversed().forEach { $0() }
         cleanup = []
+        defaults?.restore()
         super.tearDown()
     }
 
@@ -96,8 +111,10 @@ final class PodcastToArticleMemoryTests: XCTestCase {
         XCTContext.runActivity(named: "memory samples, \(voice)") { $0.add(XCTAttachment(string: report)) }
         XCTAssertEqual(recorder.log.samples.filter { $0.event == .itemSwitch }.count, 7,
                        "every switch is sampled, or the verdict reads too few: \(report)")
+        // Each play is shorter than the recorder's minute, so memory that grows with time also shows up here, between
+        // switches: the samples' times tell the two apart.
         if case .growingPerSwitch = verdict {
-            XCTFail("memory stays behind at each switch; file the fix as its own issue with these numbers (#122 item 4). \(report)")
+            XCTFail("memory grows from one switch to the next; file the fix as its own issue with these numbers (#122 item 4). \(report)")
         }
     }
 
@@ -112,11 +129,16 @@ final class PodcastToArticleMemoryTests: XCTestCase {
                 : (model.sessionAudioPlaybackClient?.currentMediaTimeMs() ?? 0) > 200
         }
         try await pollUntil(timeout: .seconds(30)) { advanced() }
-        XCTAssertTrue(advanced(), "\(isArticle ? "the article" : "the podcast") never started playing: "
-                      + "item \(model.snapshot.itemId ?? "none"), status \(model.snapshot.status)")
+        guard advanced() else {
+            // Stop at the first failure: seven more 30 s waits would only run into the plan's time limit.
+            throw ScenarioStopped(description: "\(isArticle ? "the article" : "the podcast") never started playing: "
+                                  + "item \(model.snapshot.itemId ?? "none"), status \(model.snapshot.status)")
+        }
         try await Task.sleep(for: .seconds(seconds))
-        XCTAssertEqual(model.snapshot.itemId, itemId)
-        XCTAssertTrue(model.snapshot.status.isPlaybackActive, "playback stopped on its own: \(model.snapshot.status)")
+        guard model.snapshot.itemId == itemId, model.snapshot.status.isPlaybackActive else {
+            throw ScenarioStopped(description: "playback stopped on its own: item \(model.snapshot.itemId ?? "none"), "
+                                  + "status \(model.snapshot.status)")
+        }
     }
 
     /// A downloaded podcast, a friend's packet of shared Margins imported onto it through the real import, and a long
@@ -150,6 +172,7 @@ final class PodcastToArticleMemoryTests: XCTestCase {
 
         let model = Gate1AppModel(databaseURLOverride: db)
         model.bootstrapLibraryIfNeeded()
+        cleanup.append { model.pause() }
 
         let selections = (0..<3).map { index in
             ReviewedInterjectionSelection(
@@ -159,7 +182,8 @@ final class PodcastToArticleMemoryTests: XCTestCase {
                     sessionId: "friend-session", createdAt: Date(), approvedTranscript: "Listen to this part, number \(index).",
                     anchorBefore: "", anchorAfter: "", status: .senderApproved
                 ),
-                anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 20_000 + index * 30_000),
+                // Past the 20-odd seconds the podcast plays here: a friend's Margin pauses the source to play itself.
+                anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 90_000 + index * 10_000),
                 representation: .textOnly
             )
         }
@@ -207,6 +231,10 @@ final class PodcastToArticleMemoryTests: XCTestCase {
                                                                AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000])
         try file.write(from: buffer)
     }
+}
+
+private struct ScenarioStopped: Error, CustomStringConvertible {
+    let description: String
 }
 
 private struct StandardDefaultsSnapshot {
