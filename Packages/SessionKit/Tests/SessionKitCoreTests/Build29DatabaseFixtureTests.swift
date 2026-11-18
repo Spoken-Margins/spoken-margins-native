@@ -146,6 +146,13 @@ final class Build29DatabaseFixtureTests: XCTestCase {
             id: "list-fixture", name: "Fixture list", createdAt: Date(timeIntervalSince1970: 1),
             members: [ListMember(feedKey: "https://example.substack.com/feed", podcastGUID: "fixture-guid")]
         ))
+        // #4046: a listening rule and a Show less mark, the same way.
+        try store.saveListeningRule(ListeningRule(
+            id: "rule-fixture", action: .skip, words: ["crypto*"], scope: .list("list-fixture"), isOn: true, createdAt: Date(timeIntervalSince1970: 1)
+        ))
+        try store.saveShowLessMark(ShowLessMark(
+            feedKey: "https://example.substack.com/feed", entryId: "entry-publisher-audio", title: "Post", markedAt: Date(timeIntervalSince1970: 1)
+        ))
         XCTAssertEqual(try store.loadPublisherAudio(itemId: v1.id)?.durationMs, 60_000)
         XCTAssertNil(try store.loadTranscriptTimeline(itemId: v1.id), "the map must not make the article transcript-backed")
 
