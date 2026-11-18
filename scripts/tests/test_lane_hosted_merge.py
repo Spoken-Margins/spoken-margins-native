@@ -469,7 +469,8 @@ class HostedRunAutoTests(unittest.TestCase):
         self.assertEqual(verdict, 'PASS')
         push.assert_called_once()
         self.assertEqual(wait.call_args.kwargs['checks'], lane.HOSTED_PORTABLE_CHECK)
-        self.assertFalse(any('app build' in line for line in details), details)
+        self.assertFalse(any('app build (T2' in line for line in details), details)
+        self.assertIn(lane.NO_APP_BUILD_PER_PR, details)
 
     def test_the_three_hosted_checks_merge_it_with_no_test_here(self):
         (verdict, where, ran, details), github, wait, push = self.run_auto()

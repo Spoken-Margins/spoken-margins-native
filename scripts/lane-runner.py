@@ -1115,8 +1115,8 @@ def tools_python_fault(tree: Path, run=None) -> str | None:
     return f'{line} Fix or re-create that .venv, then run the lane again; nothing was tested.'
 
 
-NO_APP_BUILD_PER_PR = ('no app build per PR (owner, 2026-10-09): the author builds both targets before pushing, '
-                       'and the integration run on next\'s tip builds and tests the merged app')
+NO_APP_BUILD_PER_PR = ('no app build per PR (owner, 2026-10-09 and 2026-11-18): the author builds both targets before '
+                       'pushing, and main\'s scheduled main-t3 run builds and tests the merged app (#4616)')
 
 
 def recheck_on_base(github, base_sha: str):
