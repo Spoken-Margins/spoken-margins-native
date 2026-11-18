@@ -60,6 +60,8 @@ public struct MarginMomentSequence: Sendable, Equatable {
     /// Progress ticks arrive every 0.5 s, so even 3× playback advances well under this. A bigger forward move
     /// is a seek or skip, and skipping over a Margin shouldn't play it.
     public static let maxTickAdvanceMs = 4_000
+    /// How far short of a run-up's start the playhead may be and still count as inside it (`startEarlierPlan`).
+    public static let runUpSeekSlackMs = 1_000
     /// The same limit for this moment's clock; a text clock reads in characters, so its limit differs (see `MarginMomentClock`).
     public let tickAdvanceLimitMs: Int
 
@@ -333,7 +335,8 @@ public struct MarginMomentSequence: Sendable, Equatable {
             margin = target
             let runUp = leadInMs(for: margin)
             if let current = currentMediaTimeMs {
-                guard current >= margin.mediaTimeMs - runUp, current <= margin.mediaTimeMs else { return nil }
+                // A second of slack at the start: a seek to the run-up's start can land just short of it.
+                guard current >= margin.mediaTimeMs - runUp - Self.runUpSeekSlackMs, current <= margin.mediaTimeMs else { return nil }
             } else if hasReachedAMargin {
                 return nil
             }
@@ -360,7 +363,9 @@ public struct MarginMomentSequence: Sendable, Equatable {
             return nil
         }
         lengthenedLeadInMs[marginId] = max(0, lengthened)
-        let later = unplayed.filter { $0.marginId != marginId }
+        // A review plays its Margins in its own order. A plain moment plays by time, and the longer run-up must not play a
+        // Margin that sits before this one, so only those after it stay.
+        let later = unplayed.filter { $0.marginId != marginId && (review != nil || $0.mediaTimeMs > margin.mediaTimeMs) }
         unplayed = review != nil ? [margin] + later : Self.inPlaybackOrder([margin] + later)
         playing = nil
         target = margin

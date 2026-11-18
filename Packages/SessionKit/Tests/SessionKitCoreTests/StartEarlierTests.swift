@@ -77,7 +77,7 @@ final class StartEarlierTests: XCTestCase {
         // The hop button is showing: the playhead is far before b's run-up, and a restart would move the listener forward.
         XCTAssertNil(sequence.startEarlierPlan(currentMediaTimeMs: 100_500))
         XCTAssertNil(sequence.startEarlierPlan(currentMediaTimeMs: nil), "a review that has reached a Margin and has no reading")
-        XCTAssertNil(sequence.startEarlierPlan(currentMediaTimeMs: 579_000))
+        XCTAssertNil(sequence.startEarlierPlan(currentMediaTimeMs: 578_999))
         XCTAssertNotNil(sequence.startEarlierPlan(currentMediaTimeMs: 580_000), "exactly at the run-up's start")
         XCTAssertNotNil(sequence.startEarlierPlan(currentMediaTimeMs: 600_000))
         XCTAssertNil(sequence.startEarlierPlan(currentMediaTimeMs: 601_000), "past the Margin")
@@ -196,16 +196,22 @@ final class StartEarlierTests: XCTestCase {
     }
 
     func testAPlainMomentRestartKeepsTheMarginsAfterItAndNeverPlaysOnesBeforeIt() throws {
-        // b sits inside the longer run-up before c. It had not been in the moment's list (it came before the 30 s start).
+        // "Play this moment" runs 30 s. b sits inside c's original run-up, so it is in the moment's list and has not played.
         var sequence = MarginMomentSequence(
             itemId: "item", target: anchor("c", at: 600_000),
-            otherMargins: [anchor("b", at: 560_000), anchor("d", at: 900_000), anchor("early", at: 100_000)])
-        XCTAssertEqual(sequence.unplayed.map(\.marginId), ["c", "d"])
-        XCTAssertNotNil(sequence.progressed(from: 599_800, to: 600_100))
+            otherMargins: [anchor("b", at: 580_000), anchor("d", at: 900_000), anchor("early", at: 100_000)])
+        XCTAssertEqual(sequence.unplayed.map(\.marginId), ["b", "c", "d"])
         XCTAssertEqual(sequence.restartLonger(marginId: "c", leadInMs: 90_000), 510_000)
-        XCTAssertEqual(sequence.unplayed.map(\.marginId), ["c", "d"], "the run-up is this Margin's; no other Margin plays in it")
-        XCTAssertNil(sequence.progressed(from: 509_800, to: 510_300))
+        XCTAssertEqual(sequence.unplayed.map(\.marginId), ["c", "d"], "the run-up is this Margin's; b does not play in it")
+        XCTAssertNil(sequence.progressed(from: 579_800, to: 580_300))
         XCTAssertEqual(sequence.progressed(from: 599_800, to: 600_100)?.marginId, "c")
+    }
+
+    func testTheSeekToARunUpsStartMayLandAMomentShort() throws {
+        let sequence = try review([anchor("a", at: 300_000)])
+        // The run-up starts at 280 s.
+        XCTAssertNotNil(sequence.startEarlierPlan(currentMediaTimeMs: 279_000))
+        XCTAssertNil(sequence.startEarlierPlan(currentMediaTimeMs: 278_999))
     }
 
     // MARK: Ordinary playback
