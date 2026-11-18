@@ -5,6 +5,16 @@ import Foundation
 public enum ItemCollectionEditing {
     public static let maximumNameCharacters = 60
 
+    /// The words a collection's sheets and chips use, in one place so the Add to Collection sheet and the Library's chip
+    /// row never drift apart (#4343).
+    public enum Wording {
+        public static let nameRequired = "Type a name for the collection."
+        public static let nameTaken = "You already have a collection with that name."
+        public static let renameRefused = "That name is empty or already used by another collection."
+        public static let saveFailed = "Couldn't save the collection. Try again."
+        public static let deleteKeepsEverything = "Deleting a collection keeps everything in it, and all Margins."
+    }
+
     /// The name as it will be saved: trimmed, runs of whitespace made one space, cut to a sane length. nil when empty.
     public static func normalizedName(_ raw: String) -> String? {
         let words = raw.split(whereSeparator: { $0.isWhitespace })
@@ -24,6 +34,32 @@ public enum ItemCollectionEditing {
     ) -> ItemCollection? {
         guard let name = normalizedName(name), !isNameTaken(name, in: collections) else { return nil }
         return ItemCollection(id: id, name: name, itemIDs: itemID.map { [$0] } ?? [], createdAt: now)
+    }
+
+    /// A new collection holding `itemIDs` in the order given, if the name is usable. An empty list is allowed: an empty
+    /// collection is fine (#4343). Ids that repeat count once.
+    public static func creating(
+        name: String, itemIDs: [String], id: String, now: Date, in collections: [ItemCollection]
+    ) -> ItemCollection? {
+        guard let name = normalizedName(name), !isNameTaken(name, in: collections) else { return nil }
+        return ItemCollection(id: id, name: name, itemIDs: itemIDs, createdAt: now)
+    }
+
+    /// The collection with exactly `itemIDs` in it, for Edit Items. Members that are not in `choosable` (they are in
+    /// Recently Deleted, so the checklist cannot show them) are kept where they are, so restoring the item brings it
+    /// back into the collection (#4343); members the checklist showed and the listener unticked are taken out.
+    public static func settingItems(
+        _ chosen: Set<String>, in collection: ItemCollection, choosable: [String], now: Date
+    ) -> ItemCollection {
+        var edited = collection
+        let shown = Set(choosable)
+        let kept = collection.itemIDs.filter { !shown.contains($0) || chosen.contains($0) }
+        let keptSet = Set(kept)
+        // Newly ticked items join in the Library's order, after the ones already there.
+        let added = choosable.filter { chosen.contains($0) && !keptSet.contains($0) }
+        edited.itemIDs = kept + added
+        if edited.itemIDs != collection.itemIDs { edited.updatedAt = now }
+        return edited
     }
 
     public static func renaming(_ collection: ItemCollection, to name: String, now: Date, in collections: [ItemCollection]) -> ItemCollection? {

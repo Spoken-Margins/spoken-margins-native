@@ -207,6 +207,7 @@ struct ExperienceTimelineRailScreen: View {
     private var timelineRail: some View {
         PlaybackTimelineListView(entries: entries, currentIDs: currentEntryIDs,
                                  folding: folding, toggleChapter: toggleChapter,
+                                 currentPosition: currentPosition,
                                  perform: perform, openClip: openClip, details: details)
             .environment(\.timelineClips, clipSource)
     }
@@ -217,6 +218,29 @@ struct ExperienceTimelineRailScreen: View {
     }
 
     private var foldingRows: [TimelineChapterFolding.Row] { entries.map(\.foldingRow) }
+
+    /// The listener's place for the current card's line, while this item is the one playing (#3862).
+    private var currentPosition: TimelineCurrentPosition? {
+        Self.currentPosition(forItem: model.selectedItem, snapshot: model.snapshot)
+    }
+
+    /// Media: the clock and, with a known length, the percent (rounded down, as the Timeline's cards are, so 99.6% is 99%).
+    /// Text: the percent the text scrubber prints, from the same function. Nil when another item is playing.
+    static func currentPosition(forItem item: ItemDetailState, snapshot: SessionSnapshot) -> TimelineCurrentPosition? {
+        guard let itemId = snapshot.itemId, itemId == item.id else { return nil }
+        if item.isNativeAudio {
+            guard let ms = snapshot.currentMediaTimeMs else { return nil }
+            let duration = max(0, snapshot.currentPlaybackDurationMs ?? 0)
+            return TimelineCurrentPosition(
+                isMedia: true, ms: ms, percent: TimelinePositionLabel.mediaPercent(currentMs: ms, durationMs: duration))
+        }
+        // Another target (a spoken reply, a summary) counts characters in its own text, not the item's.
+        guard snapshot.targetType == TargetType.itemTextTTS.rawValue,
+              let offset = snapshot.currentTextStart, !item.text.isEmpty else { return nil }
+        return TimelineCurrentPosition(
+            isMedia: false, ms: nil,
+            percent: TimelinePositionLabel.textScrubberPercent(offset: Double(offset), length: item.text.count))
+    }
 
     private func toggleChapter(_ id: String) {
         // The listener is working the rail by hand: don't pull it back to the playing row under their finger.
@@ -264,6 +288,8 @@ struct ExperienceTimelineRailScreen: View {
     static func makeEntries(from item: ItemDetailState, sessionID: String?, playbackDurationMs: Int? = nil) -> [TimelineRailEntry] {
         var result: [TimelineRailEntry] = []
         let sourceLength = item.timelineSource.characterCount > 0 ? item.timelineSource.characterCount : item.text.count
+        // A podcast or audio file speaks in clock time, like its scrubber; an article or PDF speaks in percent (#3862).
+        let kind: TimelinePositionLabel.ItemKind = item.isNativeAudio ? .media : .text
 
         // Paragraph following belongs to Now. Timeline keeps retained rich source elements
         // alongside actual chapter/scene boundaries, rather than inventing a row for every paragraph (#1624).
@@ -302,12 +328,17 @@ struct ExperienceTimelineRailScreen: View {
                             item.overview,
                             characterLimit: TimelineTextPresentation.supportingCharacterLimit
                         ),
-                    action: .beginning
+                    action: .beginning,
+                    positionLabel: TimelinePositionLabel.label(kind: kind, startMs: 0, percent: 0)
                 )
             )
         }
 
+        // A publisher's chapters are saved twice, with the same id: as a percent copy (`chapters`) and as a copy with the
+        // exact start (`mediaChapters`). The rail draws the percent copy, so look the exact start up by id (#3862).
+        let exactStartByChapterID = Dictionary(item.mediaChapters.map { ($0.id, $0.startMs) }, uniquingKeysWith: { first, _ in first })
         for chapter in item.chapters {
+            let label = TimelinePositionLabel.label(kind: kind, startMs: exactStartByChapterID[chapter.id], percent: chapter.percent)
             result.append(
                 TimelineRailEntry(
                     id: "source.chapter.\(chapter.id)",
@@ -315,9 +346,10 @@ struct ExperienceTimelineRailScreen: View {
                     rank: 0,
                     provenance: .source,
                     title: chapter.title,
-                    detail: "Chapter · \(chapter.percent)%",
+                    detail: label.chapterDetail,
                     action: .chapter(chapter),
-                    precisePosition: TimelineRailSortKey.percent(position: chapter.startChar, length: sourceLength)
+                    precisePosition: TimelineRailSortKey.percent(position: chapter.startChar, length: sourceLength),
+                    positionLabel: label
                 )
             )
         }
@@ -334,8 +366,9 @@ struct ExperienceTimelineRailScreen: View {
                     rank: 0,
                     provenance: .source,
                     title: chapter.title,
-                    detail: "Chapter · \(formatTime(chapter.startMs))",
-                    action: .mediaChapter(chapter), precisePosition: TimelineRailSortKey.percent(position: chapter.startMs, length: knownDuration)
+                    detail: "Chapter · \(PlaybackPositionText.visible(ms: chapter.startMs))",
+                    action: .mediaChapter(chapter), precisePosition: TimelineRailSortKey.percent(position: chapter.startMs, length: knownDuration),
+                    positionLabel: TimelinePositionLabel.label(kind: kind, startMs: chapter.startMs, percent: position)
                 )
             )
         }
@@ -348,8 +381,9 @@ struct ExperienceTimelineRailScreen: View {
             result.append(TimelineRailEntry(
                 id: "source.listeningMapScene.\(scene.id)", position: position, rank: 0,
                 provenance: .listeningMap, title: scene.title,
-                detail: "Generated scene · \(formatTime(scene.startMs))" + (summary.map { " · \($0)" } ?? ""),
-                action: .listeningMapScene(scene), precisePosition: TimelineRailSortKey.percent(position: scene.startMs, length: knownDuration)
+                detail: "Generated scene · \(PlaybackPositionText.visible(ms: scene.startMs))" + (summary.map { " · \($0)" } ?? ""),
+                action: .listeningMapScene(scene), precisePosition: TimelineRailSortKey.percent(position: scene.startMs, length: knownDuration),
+                positionLabel: TimelinePositionLabel.label(kind: kind, startMs: scene.startMs, percent: position)
             ))
         }
 
@@ -368,7 +402,9 @@ struct ExperienceTimelineRailScreen: View {
                     action: .sharedMargin(row),
                     isNew: row.isNew,
                     precisePosition: TimelineRailSortKey.percent(position: margin.resolution.localMediaTimeMs ?? row.placementStatus.previousMediaTimeMs, length: knownDuration),
-                    reference: .imported(margin.id)
+                    reference: .imported(margin.id),
+                    // Only a Margin placed at a time shows one; a rough percent stays a percent (#3862).
+                    positionLabel: TimelinePositionLabel.label(kind: kind, startMs: margin.resolution.localMediaTimeMs, percent: position)
                 ))
             }
         }
@@ -392,7 +428,8 @@ struct ExperienceTimelineRailScreen: View {
                     detail: [row.cutShort?.tag, row.needsAttention ? row.attentionDescription : "Captured at \(position)%"].compactMap { $0 }.joined(separator: " · "),
                     action: .margin(row),
                     precisePosition: preciseSourcePosition(row.interjection, in: item, durationMs: knownDuration),
-                    reference: .local(row.interjection.id)
+                    reference: .local(row.interjection.id),
+                    positionLabel: TimelinePositionLabel.label(kind: kind, startMs: row.interjection.anchor.mediaTimeMs, percent: position)
                 )
             )
         }
@@ -486,19 +523,21 @@ struct ExperienceTimelineRailScreen: View {
             importedMargins: item.importedCommentaryLayers.flatMap { item.importedCommentaryInterjections[$0.id, default: []] }
         )
         let roots = Dictionary(entries.compactMap { entry in entry.reference.map { ($0, entry) } }, uniquingKeysWith: { first, _ in first })
-        struct Place { let order: Int; let depth: Int; let rootPosition: Int?; let rootPrecise: Double?; let parentLabel: String?; let note: String? }
+        struct Place { let order: Int; let depth: Int; let rootPosition: Int?; let rootPrecise: Double?; let rootLabel: TimelinePositionLabel.Label?; let parentLabel: String?; let note: String? }
         var places: [MarginReference: Place] = [:]
         var path: [String] = []
         var rootPosition: Int?
         var rootPrecise: Double?
+        var rootLabel: TimelinePositionLabel.Label?
         for (index, row) in rows.enumerated() {
             if row.depth == 0 {
                 rootPosition = roots[row.reference]?.position
                 rootPrecise = roots[row.reference]?.precisePosition
+                rootLabel = roots[row.reference]?.positionLabel
             }
             path = Array(path.prefix(row.depth))
             places[row.reference] = Place(
-                order: index + 1, depth: row.depth, rootPosition: rootPosition, rootPrecise: rootPrecise,
+                order: index + 1, depth: row.depth, rootPosition: rootPosition, rootPrecise: rootPrecise, rootLabel: rootLabel,
                 parentLabel: row.depth > 0 ? path.last : nil, note: row.note
             )
             path.append(row.senderLabel)
@@ -516,6 +555,8 @@ struct ExperienceTimelineRailScreen: View {
                     threaded.position = rootPosition
                     // The sort key goes by the precise place first, so a reply takes its parent's exactly.
                     threaded.precisePosition = place.rootPrecise
+                    // The corner says what `position` says: a reply reads as its parent's place, in the parent's unit (#3862).
+                    threaded.positionLabel = place.rootLabel
                 }
                 threaded.detail = "Reply to \(place.parentLabel ?? "a Margin") · \(entry.detail)"
             } else if let note = place.note {
@@ -702,11 +743,6 @@ struct ExperienceTimelineRailScreen: View {
         }
     }
 
-    private static func formatTime(_ milliseconds: Int) -> String {
-        let seconds = max(0, milliseconds / 1_000)
-        return String(format: "%d:%02d", seconds / 60, seconds % 60)
-    }
-
     private static func humanize(_ value: String) -> String {
         value.replacingOccurrences(of: "_", with: " ").capitalized
     }
@@ -742,6 +778,14 @@ struct TimelineRailEntry: Identifiable, Equatable {
     var depth = 0
     /// Where the entry falls among the Margins at one place: a conversation in order, parent first.
     var threadOrder = 0
+    /// What the card's corner says about its place, in the item's own unit: a time on media where the entry has an exact one,
+    /// otherwise a percent (#3862). Nil means the percent in `position`. `position` itself stays the sort coordinate.
+    var positionLabel: TimelinePositionLabel.Label? = nil
+
+    /// The card's corner: "1:07:30" or "65%".
+    var cornerLabel: String { positionLabel?.corner ?? PlaybackPositionText.visible(percent: position) }
+    /// The corner as VoiceOver reads it: "1 hour, 7 minutes, 30 seconds" or "65 percent".
+    var spokenPosition: String { positionLabel?.spoken ?? PlaybackPositionText.spoken(percent: position) }
 
     var sortKey: TimelineRailSortKey {
         TimelineRailSortKey(position: position, rank: rank, threadOrder: threadOrder, id: id, precisePosition: precisePosition)
