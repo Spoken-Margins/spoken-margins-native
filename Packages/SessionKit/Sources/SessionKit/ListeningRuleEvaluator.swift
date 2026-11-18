@@ -67,7 +67,8 @@ public enum ListeningRuleEvaluator {
     ///   - shows: each followed show with its episodes. Only rules whose scope covers a show apply to it.
     ///   - rules: all the listener's rules. Only those switched on act.
     ///   - lists: the listener's lists, for rules scoped to a list.
-    ///   - marks: Show less marks. A marked entry is set aside whatever the rules say.
+    ///   - marks: Show less marks, matched to an entry by `entryId`, so a caller marking a feed episode must pass its entry id. A
+    ///     marked entry is set aside whatever the rules say.
     ///   - protected: entry ids that are never set aside, by a rule or by a mark: in the Library, played, or holding Margins,
     ///     the listener's own or a friend's. The caller works this out (finished, part played, the Library and every Margin
     ///     layer), so a played episode never vanishes under the listener.
@@ -112,11 +113,9 @@ public enum ListeningRuleEvaluator {
             }
 
             for (index, entry) in show.entries.enumerated() {
-                if markedIds.contains(entry.id) {
-                    if !protected.contains(entry.id) {
-                        outcome.setAside.insert(entry.id)
-                        outcome.markedShowLess.insert(entry.id)
-                    }
+                if markedIds.contains(entry.id), !protected.contains(entry.id) {
+                    outcome.setAside.insert(entry.id)
+                    outcome.markedShowLess.insert(entry.id)
                     continue
                 }
                 if !protected.contains(entry.id),

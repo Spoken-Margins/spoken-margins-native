@@ -105,6 +105,13 @@ final class ListeningRuleEvaluatorTests: XCTestCase {
         XCTAssertTrue(evaluate([mixedShow], rules: [], marks: marks, protected: ["e2"]).setAsideEntryIds.isEmpty, "a played episode never vanishes")
     }
 
+    func testAProtectedMarkedEpisodeCanStillBeAPick() {
+        let marks = [ShowLessMark(feedKey: showA.feedKey, entryId: "e2", title: "Gardening")]
+        let outcome = evaluate([mixedShow], rules: [rule("r", .more, ["gardening"])], marks: marks, protected: ["e2"]).outcome(for: "a")
+        XCTAssertTrue(outcome.setAside.isEmpty)
+        XCTAssertEqual(outcome.picks, ["e2"], "protected, so listed, and it matches the pick rule like any other protected episode")
+    }
+
     func testAMarkWithOnlyAnItemIdDoesNotTouchEntries() {
         let marks = [ShowLessMark(feedKey: showA.feedKey, itemId: "item-1", title: "Gardening")]
         XCTAssertTrue(evaluate([mixedShow], rules: [], marks: marks).setAsideEntryIds.isEmpty)

@@ -70,6 +70,9 @@ public enum ListeningRuleWords {
     /// A listener can keep this many rules.
     public static let maxRules = 200
 
+    /// Whether another rule fits. The caller checks before saving a new rule; saving an existing rule again is always fine.
+    public static func hasRoom(forRulesAlreadyKept count: Int) -> Bool { count < maxRules }
+
     public enum Problem: Equatable, Sendable {
         /// Every word was empty, or only punctuation.
         case noWords
@@ -186,7 +189,7 @@ public struct ListeningRuleMatcher: Sendable {
         // MARK: Folding and tokenising
 
         static func tokens(of raw: String) -> [String] {
-            let folded = raw.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
+            let folded = fold(raw)
             var tokens: [String] = []
             var current = String.UnicodeScalarView()
             func flush() {
@@ -215,6 +218,37 @@ public struct ListeningRuleMatcher: Sendable {
             return tokens
         }
 
+        /// Case, diacritics and width fold everywhere except in kana, where the voiced and semi-voiced marks tell words apart
+        /// (バイク is not ハイク). Whether `.diacriticInsensitive` strips them differs by platform, so kana never see it.
+        static func fold(_ raw: String) -> String {
+            let all: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive, .widthInsensitive]
+            let keepMarks: String.CompareOptions = [.caseInsensitive, .widthInsensitive]
+            guard raw.unicodeScalars.contains(where: isKana) else { return raw.folding(options: all, locale: nil) }
+            var result = ""
+            var run = String.UnicodeScalarView()
+            var runIsKana = false
+            func flush() {
+                guard !run.isEmpty else { return }
+                let folded = String(run).folding(options: runIsKana ? keepMarks : all, locale: nil)
+                // Width folding turns a half-width voiced mark into a combining one; composing puts ﾊﾞ back to バ.
+                result += runIsKana ? folded.precomposedStringWithCanonicalMapping : folded
+                run = String.UnicodeScalarView()
+            }
+            for scalar in raw.unicodeScalars {
+                // A combining mark joins the run of the scalar before it.
+                let kana = isKana(scalar) || (scalar.properties.generalCategory == .nonspacingMark && runIsKana && !run.isEmpty)
+                if kana != runIsKana { flush(); runIsKana = kana }
+                run.append(scalar)
+            }
+            flush()
+            return result
+        }
+
+        /// Hiragana, katakana and the half-width katakana block.
+        private static func isKana(_ scalar: Unicode.Scalar) -> Bool {
+            (0x3040...0x30FF).contains(scalar.value) || (0xFF66...0xFF9F).contains(scalar.value)
+        }
+
         private static let apostrophes: Set<Unicode.Scalar> = ["'", "’", "‘", "ʼ", "`", "´", "＇"]
 
         private static func isWordScalar(_ scalar: Unicode.Scalar) -> Bool {
@@ -226,7 +260,7 @@ public struct ListeningRuleMatcher: Sendable {
         }
 
         private static func isUnspacedScript(_ scalar: Unicode.Scalar) -> Bool {
-            scalar.properties.isIdeographic || (0x3040...0x30FF).contains(scalar.value)
+            scalar.properties.isIdeographic || isKana(scalar)
         }
     }
 

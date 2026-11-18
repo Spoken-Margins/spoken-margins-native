@@ -71,6 +71,13 @@ final class ListeningRuleMatcherTests: XCTestCase {
             Row(["比特币"], "比特 币", true, "a space between ideographs doesn't break the run"),
             Row(["比特币"], "比特 now 币", false, "but another word between them does"),
             Row(["ニュース"], "今夜のニュース", true, "kana"),
+            Row(["バイク"], "ハイクの話", false, "a voiced kana is not its plain form"),
+            Row(["パン"], "ハンの話", false, "a semi-voiced kana is not its plain form"),
+            Row(["がっこう"], "かっこうの話", false, "hiragana dakuten is not stripped either"),
+            Row(["バイク"], "バイクの話", true, "the same kana match"),
+            Row(["ﾊﾞｲｸ"], "バイクの話", true, "half-width katakana fold to full-width"),
+            Row(["バイク"], "ﾊﾞｲｸの話", true, "half-width text matches too"),
+            Row(["café バイク"], "Cafe バイク", true, "kana beside accented Latin: the Latin still folds"),
             Row(["दुनिया"], "दुनिया भर की खबरें", true, "Devanagari keeps its combining marks"),
             Row(["crypto"], "Crypto\u{0301}", true, "a combining mark folds away"),
         ]
@@ -112,6 +119,8 @@ final class ListeningRuleMatcherTests: XCTestCase {
         let twenty = (0..<20).map { "w\($0)" }
         XCTAssertEqual(ListeningRuleWords.validate(twenty), .valid(twenty))
         XCTAssertEqual(ListeningRuleWords.validate(twenty + ["w20"]), .invalid(.tooManyWords))
+        XCTAssertTrue(ListeningRuleWords.hasRoom(forRulesAlreadyKept: 199))
+        XCTAssertFalse(ListeningRuleWords.hasRoom(forRulesAlreadyKept: 200))
         XCTAssertEqual(ListeningRuleWords.split("a, b ,c，d,,"), ["a", " b ", "c", "d"])
     }
 }
