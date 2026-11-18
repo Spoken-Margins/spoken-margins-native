@@ -205,13 +205,23 @@ final class MarginTidyDecisionTests: XCTestCase {
 
         var used = decided
         used.tidyDecision = MarginTidyDecision(choice: .usedTidy, source: .fillers, decidedAt: decidedAt)
+        used.cleanedTranscript = "Tidy."
+        used.displayText = "Tidy."
         MarginSync.write(used, changedFrom: decided, into: &record, clock: &clock, wallMillis: 2_000)
-        XCTAssertEqual(MarginSync.apply(record, to: onOtherPhone).tidyDecision, used.tidyDecision)
+        let usedOnOtherPhone = MarginSync.apply(record, to: onOtherPhone)
+        XCTAssertEqual(usedOnOtherPhone.tidyDecision, used.tidyDecision)
+        XCTAssertEqual(usedOnOtherPhone.cleanedTranscript, "Tidy.")
 
+        // Use my original words: the answer and the tidy text go, the transcript shows again.
         var cleared = used
         cleared.tidyDecision = nil
+        cleared.cleanedTranscript = nil
+        cleared.displayText = used.transcript
         MarginSync.write(cleared, changedFrom: used, into: &record, clock: &clock, wallMillis: 3_000)
-        XCTAssertNil(MarginSync.apply(record, to: used).tidyDecision, "Use my original words on one phone clears it on the other")
+        let clearedOnOtherPhone = MarginSync.apply(record, to: usedOnOtherPhone)
+        XCTAssertNil(clearedOnOtherPhone.tidyDecision, "Use my original words on one phone clears it on the other")
+        XCTAssertNil(clearedOnOtherPhone.cleanedTranscript, "readers that prefer the cleaned text would otherwise show the tidy words again")
+        XCTAssertEqual(clearedOnOtherPhone.displayText, Self.spoken)
     }
 
     func testAnUntouchedAnswerIsNotWrittenAndARecordWithoutOneLeavesTheDevicesAnswerAlone() throws {

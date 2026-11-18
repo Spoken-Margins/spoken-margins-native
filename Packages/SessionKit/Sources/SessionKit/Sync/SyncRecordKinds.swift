@@ -88,7 +88,9 @@ public enum MarginSync {
         if let value = record["isStarredForSharing"]?.boolValue { margin.isStarredForSharing = value }
         if let value = record["tidyDecision"] {
             // An answer this build cannot read (a newer reading of the field) is left as the device has it.
-            if case .null = value { margin.tidyDecision = nil } else if let decision = try? value.decoded(as: MarginTidyDecision.self) { margin.tidyDecision = decision }
+            // A cleared answer means the tidy text was withdrawn too (every path that clears one clears the other), and a
+            // cleared text is not written as a register of its own, so the other phone drops it here.
+            if case .null = value { margin.tidyDecision = nil; margin.cleanedTranscript = nil } else if let decision = try? value.decoded(as: MarginTidyDecision.self) { margin.tidyDecision = decision }
         }
         if let value = record["status"]?.stringValue { margin.status = value }
         return margin
