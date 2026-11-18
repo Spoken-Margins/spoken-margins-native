@@ -16,6 +16,10 @@ struct ExperienceItemDetailScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var confirmsTrash = false
+    /// Why Share has nothing to send, when it has none (#4229).
+    @State private var shareExplanation: ItemShareStart.Explanation?
+    /// Share is re-reading the item's Margins; a second tap meanwhile does nothing.
+    @State private var checksShare = false
     @State private var confirmsNewSession = false
     @State private var showsAdvanced = false
     /// Set while Continue waits on the "hear new Margins first?" question (#474). The item screen asks it only when no friend Margins wait (#3219).
@@ -27,6 +31,8 @@ struct ExperienceItemDetailScreen: View {
     @State private var episodeLinkText = ""
     @State private var showsReactions = false
     @State private var collectionItem: LibraryItemRow?
+    /// A tap on Play or "Skip to …" made before its start is possible, kept until it can run (#3788).
+    @StateObject private var arrival = FriendArrivalPresenter()
     private let episodeLinker = ImportedFileEpisodeLinker()
 
     var body: some View {
@@ -93,8 +99,26 @@ struct ExperienceItemDetailScreen: View {
                     .accessibilityLabel("Back to \(backTitle)")
                     .accessibilityIdentifier("item.home.button")
                 }
+                // Share sits before the options menu, so the header reads back, title, Share, options (#4229). It is the
+                // friend sheet the player opens; Export, in the menu, takes text out for yourself.
+                if !model.selectedItem.id.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: share) {
+                            Label("Share Margins", systemImage: "square.and.arrow.up")
+                                .labelStyle(.iconOnly)
+                                .frame(width: 44, height: 44)
+                        }
+                        .accessibilityLabel("Share Margins")
+                        .accessibilityHint("Sends your Margins here to a friend")
+                        .accessibilityIdentifier("item.share.button")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        if !model.selectedItem.id.isEmpty {
+                            Button("Share Margins", systemImage: "square.and.arrow.up", action: share)
+                                .accessibilityIdentifier("item.menu.share.button")
+                        }
                         Button("Export", systemImage: "doc.text") {
                             model.openExport(sessionId: model.selectedItem.sessions.first?.id)
                         }
@@ -142,7 +166,10 @@ struct ExperienceItemDetailScreen: View {
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
             .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
-            .onDisappear { WrittenMarginReadings.leftItemScreen(model.selectedItem.id) }
+            .onDisappear {
+                WrittenMarginReadings.leftItemScreen(model.selectedItem.id)
+                arrival.cancel()
+            }
             .trackedSheet(item: $collectionItem) { item in
                 ItemCollectionSheet(item: item).environmentObject(model)
             }
@@ -158,6 +185,15 @@ struct ExperienceItemDetailScreen: View {
                 Button("Link") { linkEpisode() }
             } message: {
                 Text("Paste the link to this episode, like the one a friend shared. Margins a friend shares by link for it will then land on this file.")
+            }
+            .alert(
+                shareExplanation?.title ?? "",
+                isPresented: Binding(get: { shareExplanation != nil }, set: { if !$0 { shareExplanation = nil } }),
+                presenting: shareExplanation
+            ) { _ in
+                Button("OK", role: .cancel) {}
+            } message: { explanation in
+                Text(explanation.message)
             }
             .alert("Move to Recently Deleted?", isPresented: $confirmsTrash) {
                 Button("Cancel", role: .cancel) {}
@@ -222,6 +258,25 @@ struct ExperienceItemDetailScreen: View {
         // The listener may have moved to another item while the read ran; that item's own refresh sets its status.
         guard let status = read, !Task.isCancelled, model.selectedItem.id == itemId else { return }
         episodeLinkStatus = status
+    }
+
+    /// The header's Share and the menu's Share Margins (#4229): the friend sheet when there are Margins to send, otherwise
+    /// an alert that says why. A second tap while the check runs or the sheet is up does nothing.
+    private func share() {
+        guard !checksShare, !model.isSharingInterjectionsPresented else { return }
+        checksShare = true
+        let itemId = model.selectedItem.id
+        Task {
+            defer { checksShare = false }
+            let start = await model.itemShareStart()
+            // The re-read can take a moment; if the listener has gone to another item, Share is for the one they tapped on.
+            guard model.selectedItem.id == itemId else { return }
+            switch start {
+            // The sheet's store reads run on this task; label them for the hang probe (#4229).
+            case .share: model.hangTelemetry.labels.scoped("itemShare") { model.openItemShareSheet() }
+            case .nothingYet(let explanation): shareExplanation = explanation
+            }
+        }
     }
 
     private func linkEpisode() {
@@ -398,9 +453,18 @@ struct ExperienceItemDetailScreen: View {
             .accessibilityIdentifier("item.start.preparing")
         }
         let choices = listeningChoices
-        let behind = marginsBehindPlace
+        // While the friend's intro shows, a tap that can't start yet is kept (#3788). Otherwise the buttons act as before.
+        let holdsEarlyTap = FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin)) != nil
+        if let line = arrival.line {
+            Text(line)
+                .font(.subheadline)
+                .foregroundStyle(AppColors.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("item.arrival.waitingLine")
+        }
         Button {
-            perform(choices.primaryAction, behind: behind)
+            tapped(.play, holdsEarlyTap: holdsEarlyTap)
         } label: {
             Label(choices.primaryTitle, systemImage: "play.fill")
                 .frame(maxWidth: .infinity, minHeight: 52)
@@ -410,7 +474,8 @@ struct ExperienceItemDetailScreen: View {
         .accessibilityIdentifier("item.start.button")
         if let secondaryTitle = choices.secondaryTitle, let secondaryAction = choices.secondaryAction {
             Button {
-                perform(secondaryAction, behind: behind)
+                // Only "Skip to …" waits on a Margin's audio; "Listen without them" and "Play from the start" need none.
+            tapped(.skip, holdsEarlyTap: holdsEarlyTap && secondaryAction == .reviewNewMargins(thenContinue: false))
             } label: {
                 // Words only, as on the screens the owner reviewed (#3247): the line already says whose Margins.
                 Text(secondaryTitle)
@@ -421,6 +486,23 @@ struct ExperienceItemDetailScreen: View {
             .tint(AppColors.evergreen)
             .accessibilityLabel(choices.secondaryAccessibilityLabel ?? secondaryTitle)
             .accessibilityIdentifier(secondaryAction == .reviewNewMargins(thenContinue: false) ? "item.reviewNewMargins.button" : "item.listenWithout.button")
+        }
+    }
+
+    /// A tap on a pinned button. With the friend's intro showing it goes through the keeper, which runs it now or keeps it
+    /// until it can start (#3788); the rest of the time it runs as it always did.
+    private func tapped(_ choice: FriendArrivalStart.Choice, holdsEarlyTap: Bool) {
+        guard holdsEarlyTap else { return start(choice) }
+        arrival.tap(choice, model: model) { start($0) }
+    }
+
+    /// Plays or skips to the Margins, as the buttons are labelled now.
+    private func start(_ choice: FriendArrivalStart.Choice) {
+        let choices = listeningChoices
+        let behind = marginsBehindPlace
+        switch choice {
+        case .play: perform(choices.primaryAction, behind: behind)
+        case .skip: if let action = choices.secondaryAction { perform(action, behind: behind) }
         }
     }
 

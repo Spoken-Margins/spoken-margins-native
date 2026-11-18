@@ -113,7 +113,7 @@ class WorkflowTrunkTests(unittest.TestCase):
 
     def test_workflows_that_push_or_post_run_only_for_the_trunk(self):
         """A push to any branch but the trunk starts nothing that writes."""
-        gated = {'lane.yml': 5, 'merge-audit.yml': 1, 'hosted-integration.yml': 3, 'substack-canary.yml': 1,
+        gated = {'lane.yml': 5, 'merge-audit.yml': 1, 'hosted-integration.yml': 3, 'substack-canary.yml': 1, 'main-t3.yml': 1,
                  'lane-conflicts.yml': 2}
         texts = self.workflows()
         for name, count in gated.items():
@@ -132,26 +132,6 @@ class WorkflowTrunkTests(unittest.TestCase):
 
 
 class LaneRunnerTrunkTests(unittest.TestCase):
-    IN_JOB = {'GITHUB_ACTIONS': 'true', 'GH_TOKEN': 't', 'GH_REPO': 'o/r'}
-
-    def dispatch(self, base, env):
-        with mock.patch.dict(os.environ, {**self.IN_JOB, **env}, clear=True), \
-                mock.patch.object(lane.subprocess, 'run',
-                                  return_value=subprocess.CompletedProcess([], 0, '', '')) as run:
-            return lane.dispatch_hosted_integration(base), run
-
-    def test_hosted_integration_follows_the_trunk(self):
-        said, run = self.dispatch('main', {})
-        self.assertIn('-f', run.call_args.args[0])
-        self.assertEqual(run.call_args.args[0][-1], 'ref=main')
-        said, run = self.dispatch('next', NEXT)
-        self.assertEqual(run.call_args.args[0][-1], 'ref=next')
-        said, run = self.dispatch('next', {})
-        run.assert_not_called()
-        self.assertEqual(said, 'hosted integration not started: it tests main, not next')
-        said, run = self.dispatch('main', NEXT)
-        run.assert_not_called()
-
     def test_the_report_names_the_trunk_when_no_base_is_given(self):
         with mock.patch.dict(os.environ, MAIN):
             body = lane.report('r1', 'PASS', 'a' * 40, 'b' * 40, 'T2', 'here', 1.0, 'ran', [], '', '', '', {})

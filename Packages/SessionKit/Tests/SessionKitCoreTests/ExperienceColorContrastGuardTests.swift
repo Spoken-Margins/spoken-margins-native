@@ -480,10 +480,11 @@ final class AppColorUsageGuardTests: XCTestCase {
     }
 
     /// The default placeholder is a system grey, 1.73:1 on the input fill in light mode. `AppTextField` and
-    /// `AppSecureField` draw it in `secondaryText`. Only the three system alerts keep a plain field: the system draws those.
+    /// `AppSecureField` draw it in `secondaryText`. Only the system alerts keep a plain field: the system draws those.
+    /// The follow lists' New list and Rename alerts (#4046) are two of them.
     private static let plainFieldAllowed: [String: Int] = [
         "ExperienceDesignSystem.swift": 3, "ExperienceItemDetailScreen.swift": 1, "ItemCollectionSheet.swift": 1,
-        "SpokenNoteRenameAlert.swift": 1
+        "SpokenNoteRenameAlert.swift": 1, "ExperienceSourcesScreen.swift": 1, "FollowListPickerSheet.swift": 1
     ]
 
     func testTextFieldsUseTheAppPlaceholderColour() throws {
