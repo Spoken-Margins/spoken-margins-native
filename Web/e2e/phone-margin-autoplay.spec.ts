@@ -198,6 +198,7 @@ test('skipping forward past a Margin does not play it', async ({ page }) => {
 });
 
 test('while a spoken Margin plays, the main button shows Pause and pauses it; Play carries it on (#4473)', async ({ page }) => {
+  test.setTimeout(120_000);
   await watchPlays(page, false);
   // Every clip element, so the test can see whether the friend's voice is paused. The clip plays at a third of its
   // speed, so its 2.8 s last long enough for the taps to land while it plays.
@@ -238,6 +239,9 @@ test('while a spoken Margin plays, the main button shows Pause and pauses it; Pl
   await expect.poll(clipPaused).toBe(false);
   await expect(main).toHaveAccessibleName('Pause');
   try {
+    // The clip ends first. Its time is the clip's own, at a third of its speed, and slower again where the runner's
+    // media clock lags the wall (hosted CI's Chrome: a clip "playing" for 1.7 s moved 0.01 s), so wait on its end.
+    await expect.poll(() => trace.clipEnds, { timeout: 60_000, intervals: [500] }).toBeGreaterThan(0);
     await expect.poll(() => audioTime(page), { timeout: 15_000 }).toBeGreaterThan(held + 0.5);
   } catch (error) {
     console.log(`Media trace:\n${trace.lines.join('\n')}`);
