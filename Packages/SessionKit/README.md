@@ -45,7 +45,7 @@ Inside the spoken-margins-native checkout all of them are found. In a package ch
 
 The Kitten tests (`KittenFrontEndTests`, `KittenRendererTests`) read the voice and the reference vectors through these inputs. `speech-bench` takes `--kitten <folder>` and `--supertonic <folder>` and has no default.
 
-Not converted yet: the Pocket tests still find their model in `research/C2/` on their own. They move to the download registry with #1392, and `scripts/tests/test_sessionkit_pass.py` lists them until then.
+`PocketRendererTests` reads its weights (`pocketModel`, `POCKET_TTS_MODEL_DIR`), its scoring Python (`POCKET_TTS_PYTHON`) and its fixtures through the same inputs. Without the weights, or in a package checked out alone, they skip and name the input. The weights are still fetched by `research/C2/pocket/fetch_weights.sh` into `research/C2/models/pocket`; moving them to the download registry is #1392.
 
 ## Versions
 
