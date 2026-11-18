@@ -76,10 +76,15 @@ public actor FollowedSourceCoordinator {
     private var artwork: FollowingArtworkStore
     /// The picture of each Library item that came from a followed feed, in a second side file (#3864).
     private var itemArtworkRecord: ItemArtworkFile
+    /// The entry ids of one show that the listener's rules and Show less marks set aside (#4046): its stored episodes, the
+    /// show. "Add everything new" leaves them out. Nil, as it is until the app passes the evaluator, sets nothing aside.
+    public typealias SetAside = @Sendable ([FeedEntry], FeedSubscription) -> Set<String>
+    private let setAside: SetAside?
 
     public init(repository: any SessionRepository, session: URLSession? = nil, artworkFile: URL? = nil,
-                itemArtworkFile: URL? = nil, signals: ListeningSignalRecorder?) {
+                itemArtworkFile: URL? = nil, setAside: SetAside? = nil, signals: ListeningSignalRecorder?) {
         self.repository = repository
+        self.setAside = setAside
         self.artwork = FollowingArtworkStore(file: artworkFile)
         // Not read here: this init runs on the caller's thread, which is the main thread in the app. The first
         // call into the actor reads it.
@@ -523,6 +528,11 @@ public actor FollowedSourceCoordinator {
                 new: saved.entries, existing: saved.previous,
                 policy: subscription.state == .muted ? nil : subscription.newItemPolicy
             )
+            // An episode a rule skips, or the listener marked Show less, stays in Following but is not added on its own.
+            if !toAdd.isEmpty, let setAside {
+                let skipped = setAside(try repository.loadFeedEntries(subscriptionId: subscription.id), subscription)
+                toAdd.removeAll { skipped.contains($0.id) }
+            }
             subscription.lastRefreshAt = now
             try repository.saveFeedSubscription(subscription)
             try repository.saveFeedRefreshState(FeedRefreshState(
