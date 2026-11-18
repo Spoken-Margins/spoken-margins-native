@@ -41,6 +41,7 @@ const settleMarginWrites = (page: Page) =>
           const tx = open.result.transaction('margins', 'readwrite');
           tx.oncomplete = () => resolve();
           tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error ?? new Error('The Margins store write was aborted.'));
         };
       }),
   );
@@ -767,6 +768,7 @@ test('star two of four Margins and Share starts only those ticked and writes onl
   // A star is not in the file at all.
   expect(JSON.stringify(sent.paths)).not.toContain('star');
   // Stars are kept with the Margin: a fresh page of the same browser still has them, and a tap clears one.
+  await settleMarginWrites(page);
   await page.reload();
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
   const inTab = page.locator('li.margin').filter({ hasText: 'Second note.' });
