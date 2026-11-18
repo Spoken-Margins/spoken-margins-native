@@ -192,10 +192,18 @@ public struct TimelineChapterFolding: Equatable, Sendable {
     /// Returns whether anything changed.
     @discardableResult
     public mutating func reveal(_ rowID: String, in rows: [Row]) -> Bool {
-        guard let header = foldedChapterHiding(rowID, in: rows) else { return false }
-        foldedChapterIDs.remove(header)
-        // The listener asked to be taken here: playback doesn't fold it back behind them.
-        handManagedChapterIDs.insert(header)
+        // The listener asked to be taken to this row, so its chapter is theirs from now on, whether it was
+        // folded or already open: playback doesn't fold it back behind them.
+        var header: String?
+        for row in rows {
+            if row.isChapter { header = row.id }
+            if row.id == rowID {
+                if !row.isChapter, let header { handManagedChapterIDs.insert(header) }
+                break
+            }
+        }
+        guard let hiding = foldedChapterHiding(rowID, in: rows) else { return false }
+        foldedChapterIDs.remove(hiding)
         return true
     }
 

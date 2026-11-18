@@ -355,4 +355,14 @@ final class TimelineChapterFoldingTests: XCTestCase {
         XCTAssertEqual(next.foldedChapterIDs, ["ch1", "ch4"], "no hand toggle from the earlier item carries over")
         XCTAssertTrue(next.handManagedChapterIDs.isEmpty)
     }
+
+    func testBeingTakenToAMarginInTheAlreadyOpenPlayingChapterAlsoKeepsItOpen() {
+        var folding = TimelineChapterFolding()
+        folding.sync(rows: rows, currentIDs: ["fig1"])
+        XCTAssertFalse(folding.reveal("tab1", in: rows), "already visible: nothing to unfold")
+
+        folding.sync(rows: rows, currentIDs: ["fig2"])
+
+        XCTAssertFalse(folding.isFolded("ch1"), "the same rule as a folded chapter: the listener was taken here")
+    }
 }
