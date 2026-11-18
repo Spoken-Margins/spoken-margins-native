@@ -159,4 +159,53 @@ final class LibraryCollectionScopeTests: XCTestCase {
         XCTAssertEqual(ids(LibraryCollectionScope.rows(library, in: ItemCollectionScope(decoded))), ["a", "b"])
         XCTAssertEqual(LibraryCollectionScope.itemCount(in: decoded, among: library), 2)
     }
+
+    // MARK: What the Library shows with a collection chosen (#4343, PR 2)
+
+    func testAnEmptyCollectionShowsTheEmptyCollectionStateWhileAllStillListsTheLibrary() {
+        let library = rows("a", "b")
+        let empty = ItemCollectionScope(collection("e", []))
+        XCTAssertEqual(LibraryCollectionScope.screenState(accessError: nil, rows: library, query: LibraryQuery(), in: empty), .emptyCollection)
+        XCTAssertEqual(LibraryCollectionScope.screenState(accessError: nil, rows: library, query: LibraryQuery(), in: nil), .list)
+    }
+
+    func testACollectionOfFinishedItemsShowsCaughtUpNotEmptyAndAllStaysAList() {
+        var done = Row(id: "d"); done.isCompleted = true
+        let library = [done, Row(id: "open")]
+        let finished = ItemCollectionScope(collection("f", ["d"]))
+        XCTAssertEqual(LibraryCollectionScope.screenState(accessError: nil, rows: library, query: LibraryQuery(), in: finished), .caughtUp)
+        XCTAssertEqual(LibraryCollectionScope.screenState(accessError: nil, rows: library, query: LibraryQuery(), in: nil), .list)
+    }
+
+    func testACollectionWhoseItemsTheFilterHidesIsNoMatchesNotEmpty() {
+        let library = rows("a", "b")
+        let course = ItemCollectionScope(collection("c", ["a"]))
+        let query = LibraryQuery(query: "zzz")
+        XCTAssertEqual(LibraryCollectionScope.screenState(accessError: nil, rows: library, query: query, in: course), .noMatches)
+    }
+
+    func testAMembersTrashedItemDoesNotMakeACollectionNonEmpty() {
+        let course = ItemCollectionScope(collection("c", ["trashed"]))
+        XCTAssertEqual(LibraryCollectionScope.screenState(accessError: nil, rows: rows("a"), query: LibraryQuery(), in: course), .emptyCollection)
+    }
+
+    func testChipLabelsForVoiceOver() {
+        XCTAssertEqual(LibraryCollectionScope.chipAccessibilityLabel(name: nil, itemCount: 16, isSelected: false), "All items")
+        XCTAssertEqual(LibraryCollectionScope.chipAccessibilityLabel(name: nil, itemCount: 16, isSelected: true), "All items, selected")
+        XCTAssertEqual(LibraryCollectionScope.chipAccessibilityLabel(name: "HIST 210", itemCount: 12, isSelected: true), "Collection, HIST 210, selected, 12 items")
+        XCTAssertEqual(LibraryCollectionScope.chipAccessibilityLabel(name: "HIST 210", itemCount: 1, isSelected: false), "Collection, HIST 210, 1 item")
+        XCTAssertEqual(LibraryCollectionScope.chipAccessibilityLabel(name: "HIST 210", itemCount: 0, isSelected: false), "Collection, HIST 210, 0 items")
+    }
+
+    func testTheChecklistOffersEveryRowIncludingFinishedOnesAndSearchesTitleSourceAndAuthor() {
+        var done = Row(id: "done"); done.isCompleted = true; done.title = "Finished reading"
+        var byAuthor = Row(id: "auth"); byAuthor.author = "Ada Lovelace"
+        var bySource = Row(id: "src"); bySource.sourceTitle = "The Atlantic"
+        let library = [done, byAuthor, bySource, Row(id: "plain")]
+        XCTAssertEqual(Set(ids(LibraryCollectionScope.checklistRows(library, search: ""))), ["done", "auth", "src", "plain"])
+        XCTAssertEqual(ids(LibraryCollectionScope.checklistRows(library, search: "lovelace")), ["auth"])
+        XCTAssertEqual(ids(LibraryCollectionScope.checklistRows(library, search: "ATLANTIC")), ["src"])
+        XCTAssertEqual(ids(LibraryCollectionScope.checklistRows(library, search: "finished")), ["done"])
+        XCTAssertEqual(ids(LibraryCollectionScope.checklistRows(library, search: "  ")).count, 4)
+    }
 }
