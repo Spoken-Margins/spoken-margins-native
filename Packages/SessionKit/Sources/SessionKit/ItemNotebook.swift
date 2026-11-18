@@ -134,7 +134,8 @@ public struct ItemNotebook: Equatable, Sendable {
 
         // Only Margins on the item itself: one on an AI reply is anchored in that reply's text.
         for margin in ownMargins where margin.targetType == .item {
-            let stop = SkimStop.margin(margin, unit: unit.skimUnit)
+            // A moved Margin with no place has zeros for a position; it goes under "Not placed yet" (#4233).
+            let stop = margin.hasPlace ? SkimStop.margin(margin, unit: unit.skimUnit) : nil
             file(Entry(marginID: margin.id, origin: .own, position: stop?.position, isApproximate: false, createdAt: margin.createdAt),
                  roughPercent: margin.roughPercent)
         }

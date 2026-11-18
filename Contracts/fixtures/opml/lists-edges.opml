@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <head><title>List edge cases</title></head>
+  <body>
+    <outline type="rss" text="Spacey" xmlUrl="https://example.com/a.xml" category=" /News , /Tech/AI ,, ,/Tech/AI,  "/>
+    <outline type="rss" text="Slashes" xmlUrl="https://example.com/b.xml" category="//News,///"/>
+    <outline type="rss" text="Unicode twins" xmlUrl="https://example.com/c.xml" category="/Caf&#233;,/Cafe&#769;,/CAFE"/>
+    <outline type="rss" text="Ampersand &amp; &lt;angle&gt; &quot;quotes&quot;" xmlUrl="https://example.com/d.xml?x=1&amp;y=2" category="/R&amp;D,/&quot;Quoted&quot;"/>
+    <outline type="rss" text="Blank guid" xmlUrl="https://example.com/e.xml" podcast:guid="   "/>
+    <outline type="rss" text="Folder and category" xmlUrl="https://example.com/f.xml" category="/News"/>
+    <outline type="rss" text="Empty category" xmlUrl="https://example.com/g.xml" category=""/>
+  </body>
+</opml>

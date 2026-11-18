@@ -140,6 +140,19 @@ final class Build29DatabaseFixtureTests: XCTestCase {
         let feedEntry = FeedEntry(id: "entry-publisher-audio", subscriptionId: "subscription-substack", canonicalURL: "https://example.substack.com/p/post",
                                   audioURL: "https://api.substack.com/feed/podcast/1/a.mp3", title: "Post", bodyWordCount: 720, fullBody: "A full subscriber article", publisherPlatform: "substack", publisherNarrationConfirmed: true, audioDurationMs: 60_000)
         try store.saveFeedEntry(feedEntry)
+        // #4046: a follow list is a record kind the shipped builds' readers never read. It sits in the database the frozen
+        // readers open, so scripts/check-build29-database.sh shows they ignore it.
+        try store.saveFollowList(FollowList(
+            id: "list-fixture", name: "Fixture list", createdAt: Date(timeIntervalSince1970: 1),
+            members: [ListMember(feedKey: "https://example.substack.com/feed", podcastGUID: "fixture-guid")]
+        ))
+        // #4046: a listening rule and a Show less mark, the same way.
+        try store.saveListeningRule(ListeningRule(
+            id: "rule-fixture", action: .skip, words: ["crypto*"], scope: .list("list-fixture"), isOn: true, createdAt: Date(timeIntervalSince1970: 1)
+        ))
+        try store.saveShowLessMark(ShowLessMark(
+            feedKey: "https://example.substack.com/feed", entryId: "entry-publisher-audio", title: "Post", markedAt: Date(timeIntervalSince1970: 1)
+        ))
         XCTAssertEqual(try store.loadPublisherAudio(itemId: v1.id)?.durationMs, 60_000)
         XCTAssertNil(try store.loadTranscriptTimeline(itemId: v1.id), "the map must not make the article transcript-backed")
 
