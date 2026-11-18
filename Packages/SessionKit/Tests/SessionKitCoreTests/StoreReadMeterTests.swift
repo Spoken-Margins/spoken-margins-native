@@ -427,6 +427,7 @@ final class StoreReadMeterTests: XCTestCase {
         "importedCommentaryRecordsMention",   // a miss is the common answer: it scans every record
         "marginNoteChanges", "itemRevision", "isLiveImportedCommentaryLayer", "transcriptTimelineStamp",
         "listDeletedItems",                   // the trash starts empty
+        "loadMovedMarginOrigins",             // no Margin is moved until the Move feature ships (#4233); then only a cut-short move has one to finish
         "loadTranscriptTimes",                // only an imported meeting transcript has a record; the screens read it only for one (#2997)
         "loadLastSentReadAloud",              // only a Margin shared as text carries a choice, so a healthy Library mostly misses (it filters inside SQLite)
         "latestPendingSummaryTurnId",         // no summary is waiting in a healthy Library; a miss is the common answer

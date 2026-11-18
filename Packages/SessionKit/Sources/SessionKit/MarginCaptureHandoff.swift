@@ -44,6 +44,11 @@ public struct MarginCaptureHandoff: Sendable, Equatable {
     /// One of the listener's own Margins playing from its detail sheet: the place it was recorded at. A conversation
     /// turn's place is relative to that turn, so it carries the turn's identity and only moves that turn.
     public init(localMargin: Interjection) {
+        // A moved Margin with no place (#4233) has no spot to start from: its zeros would put the new Margin at the start.
+        guard localMargin.hasPlace else {
+            self.init(itemId: localMargin.itemId, place: nil)
+            return
+        }
         let anchor = localMargin.anchor
         let place: Place?
         switch anchor.anchorType {

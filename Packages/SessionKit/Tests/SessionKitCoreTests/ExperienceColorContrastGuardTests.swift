@@ -354,6 +354,53 @@ final class AppColorUsageGuardTests: XCTestCase {
         }
     }
 
+    // MARK: Destructive buttons on the dark live-session cards (#4443)
+
+    /// A destructive button with no tint draws the system red, which is dim on `watchControl`: the finish card's Discard
+    /// Session was nearly invisible on the owner's phone. The audit already holds `watchDanger` on `watchControl` to 4.5:1
+    /// ("danger label on watch control"), but only a button that uses the token is measured by it. So every destructive
+    /// button in a live-session view carries `.tint(AppColors.watchDanger)`, except the confirmation dialog's, which the
+    /// system draws.
+    static func untintedDestructiveButtons(in text: String) throws -> [String] {
+        var offenders: [String] = []
+        for match in try NSRegularExpression(pattern: #"Button\([^{}]{0,80}role: \.destructive"#).matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            let start = Range(match.range, in: text)!.lowerBound
+            let before = String(text[..<start].suffix(160))
+            if before.contains(".confirmationDialog(") || before.contains(".alert(") { continue }
+            // The button's own modifiers: up to the next `Button(` or 400 characters.
+            var after = String(text[start...].prefix(400))
+            if let next = after.range(of: "Button(", range: after.index(after.startIndex, offsetBy: 7)..<after.endIndex) {
+                after = String(after[..<next.lowerBound])
+            }
+            if !after.contains(".tint(AppColors.watchDanger)") { offenders.append(String(after.prefix(60))) }
+        }
+        return offenders
+    }
+
+    func testDestructiveButtonScanSeesAnUntintedOneAndSkipsTheDialogs() throws {
+        let bare = #"Button("Discard Session", role: .destructive) { confirmsDiscard = true } } .padding(12)"#
+        let tinted = #"Button(role: .destructive) { a() } label: { Label("Discard Session", systemImage: "trash") } .buttonStyle(.bordered) .tint(AppColors.watchDanger) }"#
+        let dialog = #".confirmationDialog("Discard?", isPresented: $x) { Button("Discard Session", role: .destructive) { go() } }"#
+        XCTAssertEqual(try Self.untintedDestructiveButtons(in: bare).count, 1)
+        XCTAssertEqual(try Self.untintedDestructiveButtons(in: tinted), [])
+        XCTAssertEqual(try Self.untintedDestructiveButtons(in: dialog), [])
+    }
+
+    func testLiveSessionDestructiveButtonsUseTheDangerTokenAndKeepTheirIcon() throws {
+        // Only `LiveSessionView.swift`: its cards are filled with `watchControl`. The Margin detail's Delete has its own
+        // button style on its own surface.
+        let files = try appSwiftFiles()
+        let view = try XCTUnwrap(files.first { $0.lastPathComponent == "LiveSessionView.swift" })
+        let text = try collapsedText(view)
+        XCTAssertGreaterThan(text.components(separatedBy: "role: .destructive").count - 1, 1, "the scan must see Discard Session and its dialog")
+        XCTAssertEqual(try Self.untintedDestructiveButtons(in: text), [], "tint it with AppColors.watchDanger")
+        XCTAssertTrue(text.contains(#"Label("Discard Session", systemImage: "trash")"#), "the icon keeps the words and the shape, not the colour alone")
+        XCTAssertTrue(
+            AppColorContrastAudit.allPairs.contains { $0.name == "danger label on watch control" },
+            "the pair that measures watchDanger on the card"
+        )
+    }
+
     // MARK: System colours
 
     /// A system colour used directly: `Color.red`, `.foregroundStyle(.secondary)`, or an arm of a ternary. The default
@@ -433,10 +480,11 @@ final class AppColorUsageGuardTests: XCTestCase {
     }
 
     /// The default placeholder is a system grey, 1.73:1 on the input fill in light mode. `AppTextField` and
-    /// `AppSecureField` draw it in `secondaryText`. Only the three system alerts keep a plain field: the system draws those.
+    /// `AppSecureField` draw it in `secondaryText`. Only the system alerts keep a plain field: the system draws those.
+    /// The follow lists' New list and Rename alerts (#4046) are two of them.
     private static let plainFieldAllowed: [String: Int] = [
         "ExperienceDesignSystem.swift": 3, "ExperienceItemDetailScreen.swift": 1, "ItemCollectionSheet.swift": 1,
-        "SpokenNoteRenameAlert.swift": 1
+        "SpokenNoteRenameAlert.swift": 1, "ExperienceSourcesScreen.swift": 1, "FollowListPickerSheet.swift": 1
     ]
 
     func testTextFieldsUseTheAppPlaceholderColour() throws {

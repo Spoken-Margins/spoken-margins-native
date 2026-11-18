@@ -32,7 +32,7 @@ struct ExperienceMarginDetailView: View {
 
     private var starButton: some View {
         Button(isStarred ? "Starred" : "Star", systemImage: isStarred ? "star.fill" : "star") {
-            model.setMarginStarred(current, starred: !isStarred)
+            model.toggleStarredForSharing(current.interjection, place: .detail)
         }
         .accessibilityLabel(isStarred ? "Unstar Margin" : "Star Margin")
         .accessibilityIdentifier("marginDetail.star.button")
