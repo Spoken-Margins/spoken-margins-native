@@ -36,6 +36,8 @@ final class OPMLImportPlannerListTests: XCTestCase {
         """)
         let lists = OPMLImportPlanner.preview(document, existing: []).lists
         XCTAssertEqual(lists.map(\.name), ["Tech", "feeds"], "a list the sender chose to call feeds is still a list")
+        let nested = try Self.parse(#"<outline text="Work"><outline text="Feeds"><outline type="rss" text="E" xmlUrl="https://a.example/e"/></outline></outline>"#)
+        XCTAssertEqual(OPMLImportPlanner.preview(nested, existing: []).lists.map(\.name), ["Work", "Feeds"], "only the outermost folder is Overcast's")
         XCTAssertEqual(lists[0].members.map(\.feedKey), ["https://a.example/b"])
         XCTAssertEqual(lists[1].members.map(\.feedKey), ["https://a.example/d"])
     }
@@ -64,6 +66,11 @@ final class OPMLImportPlannerListTests: XCTestCase {
             ("/👩‍👩‍👧 family", ["👩‍👩‍👧 family"]),                                 // an emoji is one character
             (",,/,", []),
             ("", []),
+            ("/\u{200B}", []),                                           // nothing visible
+            ("/\u{FEFF}\u{200D}", []),
+            ("/\u{200B}News\u{200B}", ["News"]),
+            ("/a\u{200B}b", ["a b"]),                                 // Foundation counts a zero-width space as a break
+            ("/\u{00AD}", []),
         ]
         for (attribute, names) in cases {
             let document = try Self.parse(#"<outline type="rss" text="A" xmlUrl="https://a.example/a" category="\#(attribute)"/>"#)
@@ -71,6 +78,20 @@ final class OPMLImportPlannerListTests: XCTestCase {
             XCTAssertEqual(planned, names, "category=\(attribute.debugDescription)")
             XCTAssertTrue(planned.allSatisfy { $0.count <= FollowListName.maxLength }, "category=\(attribute.debugDescription)")
         }
+    }
+
+    func testAFolderNameWithACommaBecomesTheNameTheExportWrites() throws {
+        let document = try Self.parse(#"<outline text="Tech, AI"><outline type="rss" text="A" xmlUrl="https://a.example/a"/></outline>"#)
+        let planned = try XCTUnwrap(OPMLImportPlanner.preview(document, existing: []).lists.first)
+        XCTAssertEqual(planned.name, "Tech AI")
+        XCTAssertFalse(planned.name.contains(","))
+        // Shared and opened again it is the same list, not a second one.
+        let sub = Self.subscription("s", "A", "https://a.example/a")
+        let list = FollowList(id: "l", name: planned.name, members: planned.members)
+        let back = try OPMLParser.parse(OPMLExporter.exportList(list, subscriptions: [sub]).data)
+        let again = OPMLImportPlanner.preview(back, existing: [], existingLists: [list]).lists
+        XCTAssertEqual(again.map(\.name), ["Tech AI"])
+        XCTAssertEqual(again.map(\.mergesIntoListId), ["l"])
     }
 
     func testAShowRepeatedInTheFileJoinsEachOfItsListsOnce() throws {
@@ -213,14 +234,28 @@ final class OPMLImportPlannerListTests: XCTestCase {
                     Self.subscription("s3", "Moved", "https://new.example/moved"), Self.subscription("s4", "Other", "https://a.example/other")]
         let list = FollowList(id: "l", name: "Commute", members: [
             ListMember(feedKey: "https://a.example/daily"), ListMember(feedKey: "https://old.example/moved", podcastGUID: "G-moved")])
-        let other = FollowList(id: "o", name: "Other list", members: [ListMember(feedKey: "https://a.example/other")])
         let export = OPMLExporter.exportList(list, subscriptions: subs, podcastGUIDs: ["s3": "g-MOVED"])
         let parsed = try OPMLParser.parse(export.data)
         XCTAssertEqual(parsed.title, "Commute")
         XCTAssertEqual(parsed.feeds.map(\.title), ["Daily", "Moved"], "the show that moved hosts is found by its GUID")
         XCTAssertEqual(parsed.feeds.map(\.categories), [["Commute"], ["Commute"]], "no other list leaks out of the file")
         XCTAssertEqual(export.exportedCount, 2)
-        _ = other
+    }
+
+    func testAShowWhoseGUIDIsALinkTheExportRefusesIsStillFoundByItsFeedLink() throws {
+        // The export drops a link-shaped GUID it would not share. Membership uses the GUID the file would carry, so the show is
+        // in the file with its category (found by its feed link) and the GUID stays out of it.
+        let sub = Self.subscription("s", "Show", "https://a.example/show")
+        let list = FollowList(id: "l", name: "Mine", members: [ListMember(feedKey: "https://a.example/show")])
+        let export = OPMLExporter.exportList(list, subscriptions: [sub], podcastGUIDs: ["s": "https://www.patreon.com/rss/secretsecretsecret"])
+        let text = String(decoding: export.data, as: UTF8.self)
+        XCTAssertFalse(text.contains("secretsecret"))
+        XCTAssertEqual(try OPMLParser.parse(export.data).feeds.map(\.categories), [["Mine"]])
+        // A list that holds the show only by that GUID cannot find it, and the file is empty rather than leaking the GUID.
+        let byGUID = FollowList(id: "g", name: "ByGUID", members: [ListMember(feedKey: "https://old.example/show", podcastGUID: "https://www.patreon.com/rss/secretsecretsecret")])
+        let none = OPMLExporter.exportList(byGUID, subscriptions: [sub], podcastGUIDs: ["s": "https://www.patreon.com/rss/secretsecretsecret"])
+        XCTAssertEqual(none.exportedCount, 0)
+        XCTAssertFalse(String(decoding: none.data, as: UTF8.self).contains("secretsecret"))
     }
 
     func testShareListLeavesPrivateFeedsOut() throws {
@@ -236,13 +271,17 @@ final class OPMLImportPlannerListTests: XCTestCase {
     }
 
     func testExportAllFollowsKeepsEveryShowAndEveryList() throws {
-        let subs = [Self.subscription("s1", "Daily", "https://a.example/daily"), Self.subscription("s2", "Loose", "https://a.example/loose")]
-        let lists = [FollowList(id: "a", name: "News", members: [ListMember(feedKey: "https://a.example/daily")])]
+        let subs = [Self.subscription("s1", "Daily", "https://a.example/daily"), Self.subscription("s2", "Loose", "https://a.example/loose"),
+                    Self.subscription("s3", "Both", "https://a.example/both")]
+        let lists = [
+            FollowList(id: "a", name: "News", members: [ListMember(feedKey: "https://a.example/daily"), ListMember(feedKey: "https://a.example/both")]),
+            FollowList(id: "b", name: "Commute", members: [ListMember(feedKey: "https://a.example/both")]),
+        ]
         let export = OPMLExporter.exportAllFollows(subs, lists: lists)
         XCTAssertEqual(OPMLExporter.allFollowsFileName, "Following.opml")
         let parsed = try OPMLParser.parse(export.data)
-        XCTAssertEqual(parsed.feeds.map(\.title), ["Daily", "Loose"])
-        XCTAssertEqual(parsed.feeds.map(\.categories), [["News"], []])
+        XCTAssertEqual(parsed.feeds.map(\.title), ["Both", "Daily", "Loose"])
+        XCTAssertEqual(parsed.feeds.map(\.categories), [["Commute", "News"], ["News"], []])
     }
 
     func testAListSharedAndOpenedComesBackAsTheSameList() throws {
@@ -265,6 +304,10 @@ final class OPMLImportPlannerListTests: XCTestCase {
             ("", "List.opml"),
             ("Line\nbreak", "Line break.opml"),
             ("Café 👩‍👩‍👧", "Café 👩‍👩‍👧.opml"),
+            ("a/\u{0301}b", "a b.opml"),                // a separator with a combining mark is still a separator
+            ("a:\u{FE0F}b", "a b.opml"),
+            ("\u{200B}", "List.opml"),
+            ("x\\y", "x y.opml"),
         ]
         for (name, file) in cases {
             XCTAssertEqual(OPMLExporter.fileName(forList: FollowList(id: "x", name: name)), file, "name=\(name.debugDescription)")

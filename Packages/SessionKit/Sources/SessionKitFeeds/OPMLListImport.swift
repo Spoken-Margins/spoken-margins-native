@@ -29,8 +29,11 @@ enum OPMLListPlanner {
         var lists: [FollowList] = []
         for feed in document.feeds {
             guard let key = FeedURLKey.make(feed.feedURL) else { continue }
-            let folders = feed.folders.filter { folder in
-                !ignoredFolders.contains(folder.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+            // Overcast's own folders are the outermost ones; a sender's nested "Work/Feeds" is still a list.
+            var folders = feed.folders
+            if let outermost = folders.first,
+               ignoredFolders.contains(outermost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) {
+                folders.removeFirst()
             }
             let member = ListMember(feedKey: key, podcastGUID: feed.podcastGUID)
             for raw in OPMLListNames.merged(folders, feed.categories) {
@@ -51,11 +54,24 @@ enum OPMLListPlanner {
         }
     }
 
-    /// A name from a file keeps its slashes (it is not typed in the app) but not more than 40 characters.
+    /// A name from a file keeps its slashes (it is not typed in the app) but not more than 40 characters. A comma becomes a
+    /// space, as the export writes it, so a list shared and opened again is the same list and no list name holds a comma.
+    /// Characters that show nothing (a zero-width space, a lone joiner) are dropped, so a name can't look blank.
     static func cut(_ raw: String) -> String {
-        let cleaned = FollowListName.cleaned(raw)
+        let cleaned = FollowListName.cleaned(visible(raw).replacingOccurrences(of: ",", with: " "))
         guard cleaned.count > FollowListName.maxLength else { return cleaned }
         return FollowListName.cleaned(String(cleaned.prefix(FollowListName.maxLength)))
+    }
+
+    /// `raw` without the characters that are all format or control scalars. An emoji joiner inside a sequence is part of a
+    /// character that has visible scalars, so it stays.
+    static func visible(_ raw: String) -> String {
+        String(raw.filter { character in
+            // A line break or tab is a control scalar too, but `FollowListName.cleaned` turns it into the space it stands for.
+            !character.unicodeScalars.allSatisfy {
+                [.format, .control].contains($0.properties.generalCategory) && !CharacterSet.whitespacesAndNewlines.contains($0)
+            }
+        })
     }
 }
 
@@ -136,19 +152,21 @@ extension OPMLExporter {
         _ list: FollowList, subscriptions: [FeedSubscription], podcastGUIDs: [String: String] = [:], createdAt: Date = Date()
     ) -> OPMLExport {
         let members = subscriptions.filter { subscription in
-            list.contains(
+            // The GUID the export would write, so a show is in the file exactly when it is written with the list.
+            let guid = OPMLListNames.normalizedGUID(ShareableLinkPolicy.shareableEpisodeGUID(OPMLListNames.normalizedGUID(podcastGUIDs[subscription.id])))
+            return list.contains(
                 feedKey: FeedURLKey.make(subscription.source.canonicalURL) ?? subscription.source.canonicalURL,
-                podcastGUID: podcastGUIDs[subscription.id])
+                podcastGUID: guid)
         }
         return export(members, title: list.name, createdAt: createdAt, lists: [list], podcastGUIDs: podcastGUIDs)
     }
 
     /// "<list>.opml", safe as a file name: no slash, colon or other character a file system or share sheet trips on.
     public static func fileName(forList list: FollowList) -> String {
-        // By character, not by scalar: an emoji's joiner is a control-like scalar inside one character.
+        // By character: a separator with a combining mark or variation selector after it is one character that still holds it.
         let forbidden = CharacterSet(charactersIn: "/\\:*?\"<>|").union(.newlines).union(.illegalCharacters)
-        let replaced = list.name.map { character -> Character in
-            character.unicodeScalars.allSatisfy { forbidden.contains($0) || ($0.value < 0x20) || $0.value == 0x7F } ? " " : character
+        let replaced = OPMLListPlanner.visible(list.name).map { character -> Character in
+            character.unicodeScalars.contains { forbidden.contains($0) || $0.value < 0x20 || $0.value == 0x7F } ? " " : character
         }
         var name = FollowListName.cleaned(String(replaced))
         while name.hasPrefix(".") { name.removeFirst() }
