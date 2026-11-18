@@ -21,7 +21,7 @@ public enum PasteIntake: Equatable, Sendable {
 ///
 /// It looks at every word of the text before the classifier's one-line and length limits, so the link is found inside
 /// the whole message a friend sent, and takes the first one. A link that lost part of its id or its key is still
-/// a share link here: opening it says it is cut off (``ShareLinkURL`` rejects it), which is better than importing it as
+/// a share link here: opening it says it isn't a share link (``ShareLinkURL`` rejects it), which is better than importing it as
 /// a web page. `http` on a share host and a missing scheme are read as `https`. Only the exact share hosts count
 /// (`www.` does not, as for a tapped link), and only paths that start with `/l/`: the join page and the rest of the
 /// site are ordinary links.
@@ -35,7 +35,9 @@ public enum PastedShareLink {
     }
 
     private static func shareLink(in word: String) -> URL? {
-        let candidate = ClipboardIntakeClassifier.stripWrapping(word)
+        // Most words of a pasted article are not links; skip them before any parsing.
+        guard word.contains("/l/") else { return nil }
+        let candidate = linkStart(in: ClipboardIntakeClassifier.stripWrapping(word))
         let lowered = candidate.lowercased()
         let secure: String
         if lowered.hasPrefix("https://") {
@@ -51,5 +53,18 @@ public enum PastedShareLink {
               components.percentEncodedPath.hasPrefix("/l/"), let url = components.url,
               ShareLinkURL.isOnShareHost(url) else { return nil }
         return url
+    }
+
+    /// A link with no space before it, as in Markdown `[Hear it](https://…)` or `feed:https://…`, starts at its
+    /// `http(s)://`. Only when what comes before is a bracket, quote or scheme opener, never a query parameter
+    /// like `other.com?u=https://…`.
+    private static func linkStart(in word: String) -> String {
+        guard !word.lowercased().hasPrefix("http"), let scheme = word.range(of: "http", options: .caseInsensitive),
+              let marker = word.range(of: "://", range: scheme.lowerBound..<word.endIndex),
+              word[scheme.upperBound..<marker.lowerBound].allSatisfy({ $0 == "s" || $0 == "S" }) else { return word }
+        let prefix = word[..<scheme.lowerBound]
+        guard let last = prefix.last, "(<[\"'“‘«:".contains(last),
+              !prefix.contains(where: { "/?&=#".contains($0) }) else { return word }
+        return ClipboardIntakeClassifier.stripWrapping(String(word[scheme.lowerBound...]))
     }
 }

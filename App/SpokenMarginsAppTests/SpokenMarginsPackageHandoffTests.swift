@@ -197,7 +197,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let message = "Cole sent you a Margin. Hear it here: \(link) Get the app at https://spokenmargins.com/join"
         let before = Gate1AppModel.PasteAndGoOutcome.openingShareLink
 
-        for (route, paste) in [
+        let routes: [(String, (Gate1AppModel) -> Bool)] = [
             ("Paste & go", { (model: Gate1AppModel) in model.pasteAndGo(message) == before }),
             ("the copied-link card", { (model: Gate1AppModel) in
                 guard case .link(let url) = ClipboardLinkOffer.pasteResult(for: message) else { return false }
@@ -206,7 +206,8 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
                 model.sourceLinkURL = link
                 return model.beginSourceLinkImportFromForm(startSession: false) && model.sourceLinkURL.isEmpty
                     && model.sourceLinkImportState == "success" }),
-        ] {
+        ]
+        for (route, paste) in routes {
             let requested = ShareLinkRequestLog()
             let folder = root.appendingPathComponent(route.replacingOccurrences(of: " ", with: "-"))
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

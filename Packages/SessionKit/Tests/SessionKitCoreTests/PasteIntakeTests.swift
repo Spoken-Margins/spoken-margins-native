@@ -28,7 +28,21 @@ final class PasteIntakeTests: XCTestCase {
     func testALinkWithoutAKeyOrWithAnIdCutShortIsStillAShareLink() {
         for link in ["https://\(host)/l/\(id)", "https://\(host)/l/\(id)#", "https://\(host)/l/\(id.prefix(12))",
                      "https://\(host)/l/\(id.prefix(12))#\(key)", "https://\(host)/l/"] {
-            shareLink(link, opens: link) // opening it says it is cut off (#3801); it is never imported as a web page
+            shareLink(link, opens: link) // opening it says it isn't a share link; it is never imported as a web page
+        }
+    }
+
+    func testALinkStuckToBracketsOrASchemeOpenerIsStillTheShareLink() {
+        let link = "https://\(host)/l/\(id)#\(key)"
+        for text in ["[Hear it](\(link))", "see [Hear it](\(link)).", "<\(link)>", "feed:\(link)", "(\"\(link)\")"] {
+            shareLink(text, opens: link)
+        }
+    }
+
+    func testALinkInsideAnotherSitesQueryIsNotAShareLink() {
+        let link = "https://\(host)/l/\(id)#\(key)"
+        for text in ["other.com?u=\(link)", "https://other.com/go?u=\(link)", "other.com/x=\(link)"] {
+            XCTAssertNil(PastedShareLink.first(in: text), text)
         }
     }
 
