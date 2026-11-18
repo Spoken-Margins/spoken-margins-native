@@ -89,10 +89,7 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
         <strong>{line.title}</strong>
         {line.position && <span> · {line.position}</span>}
       </p>
-      <p className="arrived-margin-text">
-        {margin.author ? <strong>{margin.author}</strong> : null} {formatClock(margin.atSeconds)}: {words}
-      </p>
-      {voiced && <p className="arrived-margin-note">Your device’s voice is reading {possessive(senderName(margin.author))} words.</p>}
+      {/* Above the words, so a long Margin never pushes it off the screen (owner, 2026-11-18). */}
       {blocked ? (
         <button type="button" className="button button-primary" onClick={player.playArrived}>
           <PlayIcon size={18} />
@@ -104,6 +101,10 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
           Skip this Margin
         </button>
       )}
+      <p className="arrived-margin-text">
+        {margin.author ? <strong>{margin.author}</strong> : null} {formatClock(margin.atSeconds)}: {words}
+      </p>
+      {voiced && <p className="arrived-margin-note">Your device’s voice is reading {possessive(senderName(margin.author))} words.</p>}
     </div>
   );
 }
