@@ -117,7 +117,7 @@ final class PodcastDownloadRecordTransitionsTests: XCTestCase {
         userInitiated: Bool, exceeded: Bool = false, transport: PodcastNetworkTransport, error: String = "The network connection was lost."
     ) -> PodcastDownloadRecord.Interruption {
         row(state: .downloading, written: 50, expected: 100, failure: "old")
-            .interrupted(userInitiated: userInitiated, exceededUnannouncedLimit: exceeded, transport: transport, errorDescription: error)
+            .interrupted(userInitiated: userInitiated, exceededUnannouncedLimit: exceeded, transport: transport, reason: error)
     }
 
     func testAnEpisodeThatPassedItsUnannouncedBoundFailsWithThatReasonOnEveryNetworkAndForEveryStarter() {
