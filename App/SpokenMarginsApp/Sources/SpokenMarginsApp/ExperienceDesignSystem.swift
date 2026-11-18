@@ -350,6 +350,54 @@ struct AppTextField: View {
     }
 }
 
+/// The one search box for the app's tabs that search (Library, Margins; #4018): a magnifier, an `AppTextField`, and a
+/// clear button once there is text, in a panel at least 48 pt tall. A tap anywhere in the panel focuses the field. The
+/// identifier sits on the field itself, since the UI tests query `app.textFields[...]`; the clear button's is
+/// `<identifier>.clear`.
+struct AppSearchField: View {
+    private let placeholder: String
+    private let text: Binding<String>
+    private let identifier: String
+    @FocusState private var isFocused: Bool
+
+    init(_ placeholder: String, text: Binding<String>, identifier: String) {
+        self.placeholder = placeholder
+        self.text = text
+        self.identifier = identifier
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(AppColors.secondaryText)
+                .accessibilityHidden(true)
+            AppTextField(placeholder, text: text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+                .focused($isFocused)
+                .accessibilityIdentifier(identifier)
+            if !text.wrappedValue.isEmpty {
+                Button {
+                    text.wrappedValue = ""
+                } label: {
+                    TapTargetIcon(systemName: "xmark.circle.fill")
+                        .foregroundStyle(AppColors.secondaryText)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+                .accessibilityIdentifier("\(identifier).clear")
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 48)
+        .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: 14).stroke(AppColors.border) }
+        .contentShape(Rectangle())
+        .onTapGesture { isFocused = true }
+    }
+}
+
 /// `AppTextField` for secrets, with the same placeholder colour.
 struct AppSecureField: View {
     private let title: String
