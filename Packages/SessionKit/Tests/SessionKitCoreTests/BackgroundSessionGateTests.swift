@@ -15,8 +15,9 @@ final class BackgroundSessionGateTests: XCTestCase {
         let timedOut = await gate.claim("a", waitingUpTo: .milliseconds(50))
         XCTAssertFalse(timedOut)
 
-        async let first = gate.claim("a", waitingUpTo: .milliseconds(200))
-        async let second = gate.claim("a", waitingUpTo: .milliseconds(200))
+        // Generous deadlines: a stalled runner must not expire both waiters before the release.
+        async let first = gate.claim("a", waitingUpTo: .seconds(1))
+        async let second = gate.claim("a", waitingUpTo: .seconds(1))
         try? await Task.sleep(for: .milliseconds(30))
         gate.release("a")
         let results = await [first, second]
@@ -27,7 +28,7 @@ final class BackgroundSessionGateTests: XCTestCase {
     func testAFreeIdentifierIsTakenAtOnceAndOnlyReleaseGivesItBack() async {
         let gate = BackgroundSessionGate()
         XCTAssertFalse(gate.isHeld("a"))
-        let took = await gate.claim("a", waitingUpTo: .seconds(5))
+        let took = await gate.claim("a", waitingUpTo: .seconds(1))
         XCTAssertTrue(took, "nothing holds it, so there is nothing to wait for")
         XCTAssertTrue(gate.isHeld("a"))
         gate.release("a")
@@ -50,7 +51,7 @@ final class BackgroundSessionGateTests: XCTestCase {
     }
 
     /// Releasing one identifier must not hand over another that is still held.
-    func testReleasingAnotherIdentifierDoesNotWakeAWaiter() async {
+    func testReleasingAnotherIdentifierDoesNotHandOverTheHeldOne() async {
         let gate = BackgroundSessionGate()
         XCTAssertTrue(gate.claim("a"))
         XCTAssertTrue(gate.claim("b"))
@@ -82,14 +83,12 @@ final class BackgroundSessionGateTests: XCTestCase {
         async let two = gate.claim("a", waitingUpTo: .seconds(10))
         async let three = gate.claim("a", waitingUpTo: .seconds(10))
         // Release until all three have held it once; each release lets exactly one of those still waiting in.
-        var winners = 0
         for _ in 0..<3 {
             try? await Task.sleep(for: .milliseconds(40))
             gate.release("a")
-            winners += 1
         }
         let results = await [one, two, three]
-        XCTAssertEqual(results, [true, true, true], "\(results) after \(winners) releases")
+        XCTAssertEqual(results, [true, true, true], "\(results)")
         XCTAssertTrue(gate.isHeld("a"), "the last waiter still holds it")
     }
 }
