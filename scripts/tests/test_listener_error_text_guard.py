@@ -35,7 +35,6 @@ ALLOWED = {
     ('Gate1AppModel+RemoteProvider.swift', 'let presentation = LocalSummaryFailurePresentation(errorDescription: error.localizedDescription)'): 'the presentation type does its own plain-text step',
     ('PodcastDownloadCoordinator.swift', 'self.fail(updated, reason: error.localizedDescription)'): 'failureReason is read only by Diagnostics',
     ('PodcastDownloadCoordinator.swift', 'fail(recordsByItemId[attempt.itemId] ?? record, reason: error.localizedDescription)'): 'failureReason is read only by Diagnostics',
-    ('PodcastDownloadCoordinator.swift', 'fail(record, reason: error.localizedDescription)'): 'failureReason is read only by Diagnostics',
 }
 
 
