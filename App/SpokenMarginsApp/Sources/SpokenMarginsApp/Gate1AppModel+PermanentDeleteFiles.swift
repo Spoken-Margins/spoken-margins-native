@@ -63,6 +63,8 @@ extension Gate1AppModel {
                       url: support.appending(path: "Audiobooks", directoryHint: .isDirectory)),
                 .init(name: ItemOwnedFiles.episodeMapsRoot,
                       url: support.appending(path: "SpokenMargins/EpisodeMaps", directoryHint: .isDirectory)),
+                .init(name: ItemOwnedFiles.itemOriginalsRoot,
+                      url: support.appending(path: "ItemOriginals", directoryHint: .isDirectory)),
             ],
             marginRecordings: .init(
                 directory: support.appending(path: "SpokenMargins", directoryHint: .isDirectory),

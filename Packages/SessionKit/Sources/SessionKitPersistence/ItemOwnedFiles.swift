@@ -21,6 +21,14 @@ public enum ItemOwnedFiles {
     public static let audiobooksRoot = "Audiobooks"
     /// `SpokenMargins/EpisodeMaps/` under Application Support: one folder per item.
     public static let episodeMapsRoot = "EpisodeMaps"
+    /// `ItemOriginals/` under Application Support: the PDF the listener added, one folder per item (`PDFOriginalStore`, #4338).
+    public static let itemOriginalsRoot = "ItemOriginals"
+
+    /// The folder name of an item's kept original PDF under `ItemOriginals/`: a digest of the id, so no two ids share a
+    /// folder and no id can name a path. Nil for an empty id. `PDFOriginalStore` writes to this folder.
+    public static func itemOriginalsFolderName(itemId: String) -> String? {
+        itemId.isEmpty ? nil : ListeningEdition.digest(itemId)
+    }
 
     /// The audio file types `LocalSourceImporter.importAudiobook` accepts (and writes, lower-cased).
     static let audiobookExtensions: Set<String> = ["mp3", "m4a", "m4b", "mp4"]
@@ -141,6 +149,9 @@ public enum ItemOwnedFiles {
             }
             if let mapFolder = episodeMapDirectoryName(itemId: itemId), mapFolders.insert(mapFolder).inserted {
                 targets.append(.init(root: episodeMapsRoot, relativePath: mapFolder, itemId: itemId))
+            }
+            if let original = itemOriginalsFolderName(itemId: itemId) {
+                targets.append(.init(root: itemOriginalsRoot, relativePath: original, itemId: itemId))
             }
             var copied: Set<String> = []
             for asset in assets {
