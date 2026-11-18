@@ -264,14 +264,19 @@ final class ReplyBackTests: XCTestCase {
     /// #4171: a reply moved to its parent's place is a second anchor built in `playlist`; it keeps the sender's length.
     func testAReplyMovedToItsParentsPlaceKeepsTheSendersLeadIn() throws {
         let margins = [own("m1", madeAt: 10, atMs: 754_000, sharedAs: [mine])]
-        for (ms, evidence) in [(785_000, AnchorResolutionEvidenceClass.timestampFallback), (760_000, .exactEdition)] {
+        // Where the pair plays: a clock-only reply follows its parent's exact place, an exact one moves the parent to it.
+        for (ms, evidence, pairAt) in [(785_000, AnchorResolutionEvidenceClass.timestampFallback, 754_000), (760_000, .exactEdition, 760_000)] {
             let entries = SharedMarginReview.entries(
                 layers: [layer("ben")],
                 records: ["ben": [friendMargin("reply", in: "ben", at: ms, replyingTo: mine, evidence: evidence, senderLeadInMs: 90_000)]],
                 ownMargins: margins
             )
-            let reply = try XCTUnwrap(SharedMarginReview.playlist(for: entries, ownMargins: margins).last)
-            XCTAssertEqual(reply.anchor.leadInMs, 90_000, "\(evidence)")
+            let steps = SharedMarginReview.playlist(for: entries, ownMargins: margins)
+            XCTAssertEqual(steps.last?.anchor.leadInMs, 90_000, "\(evidence)")
+            // The listener's own Margin plays first at that place, so the review starts the sender's length before IT.
+            XCTAssertEqual(steps.first?.anchor.leadInMs, 90_000, "the parent step: \(evidence)")
+            let sequence = try XCTUnwrap(MarginMomentSequence(itemId: "item", reviewing: steps.map(\.anchor)))
+            XCTAssertEqual(sequence.startMediaTimeMs, pairAt - 90_000, "\(evidence)")
         }
     }
 
