@@ -1889,6 +1889,15 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(verification.reconcile(set(records), records),
                          ['Failed: SessionKitCoreTests/AlphaTests/testTwo — XCTAssertEqual failed: ("1") is not equal to ("2")'])
 
+    def test_the_linux_containers_paths_never_reach_a_failed_line(self):
+        # Review of #3534: the SessionKitCoreTests container mounts the checkout at /w, and hosted container jobs at /__w.
+        for text, expected in (
+                ('/w/Packages/SessionKit/Tests/X.swift:9 XCTAssertEqual failed', 'XCTAssertEqual failed'),
+                ('/w/Packages/X.swift:9: XCTAssertEqual failed', 'XCTAssertEqual failed'),
+                ('XCTAssertEqual failed ("file:///__w/spoken/spoken/a.json")', 'XCTAssertEqual failed ("<path>")'),
+                ('a and/or b, 3 w/o c, TCP/w', 'a and/or b, 3 w/o c, TCP/w')):  # prose with a slash is left alone
+            self.assertEqual(verification.clean_failure_message(text), expected, text)
+
     def test_every_soak_assertion_carries_the_numbers_that_decide_it(self):
         # #3534: the soak's SOAK line stays in a log that expires, so each assertion repeats the numbers and the CPU.
         text = (Path(__file__).resolve().parents[2] / 'Packages/SessionKit/Tests/SessionKitTests/KittenRendererTests.swift').read_text()
