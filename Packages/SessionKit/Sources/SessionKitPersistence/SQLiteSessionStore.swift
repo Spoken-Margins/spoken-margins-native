@@ -318,6 +318,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         case "feed_subscription": return columns(FeedSubscription.self, item: { _ in nil })
         case "feed_entry": return columns(FeedEntry.self, item: { _ in nil })
         case "item_collection": return columns(ItemCollection.self, item: { _ in nil })
+        case "follow_list": return columns(FollowList.self, item: { _ in nil })
         case TranscriptTimes.recordKind: return columns(TranscriptTimes.self, item: { $0.itemId })
         default: return nil
         }
@@ -1565,6 +1566,42 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
 
     public func deleteItemCollection(id: String) throws {
         try deleteRecord(kind: "item_collection", id: id)
+    }
+
+    /// Follow lists (#4046) are their own record kind with no item_id, so Build 29 and the later shipped builds, which read
+    /// every record by an explicit kind, never see them. The record id is the list id, so a rename keeps it.
+    public func saveFollowList(_ list: FollowList) throws {
+        try save(kind: "follow_list", id: list.id, sessionId: nil, itemId: nil, value: list)
+    }
+
+    /// Oldest first, then by id, so the order is the same on every read. Chips sort by name themselves
+    /// (`FollowListName.chipOrder`).
+    public func loadFollowLists() throws -> [FollowList] {
+        let lists: [FollowList] = try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["follow_list"])
+        return lists.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+    }
+
+    public func loadFollowList(id: String) throws -> FollowList? {
+        try loadOptional(kind: "follow_list", id: id)
+    }
+
+    /// Deleting a list never unfollows a show.
+    public func deleteFollowList(id: String) throws {
+        try deleteRecord(kind: "follow_list", id: id)
+    }
+
+    /// Takes a show out of every list it is in, in one transaction (unfollow does this). A list left with no members stays.
+    /// Returns the ids of the lists that changed.
+    @discardableResult
+    public func removeFromFollowLists(feedKey: String?, podcastGUID: String? = nil) throws -> [String] {
+        try withTransaction {
+            var changed: [String] = []
+            for var list in try loadFollowLists() where list.remove(feedKey: feedKey, podcastGUID: podcastGUID) {
+                try saveFollowList(list)
+                changed.append(list.id)
+            }
+            return changed
+        }
     }
 
     public func loadFeedSubscriptions() throws -> [FeedSubscription] {
