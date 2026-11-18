@@ -73,13 +73,33 @@ final class FollowListFilterTests: XCTestCase {
         XCTAssertEqual(ListMember(feedKey: "k", podcastGUID: "  ").podcastGUID, nil, "a blank GUID is none")
     }
 
-    func testAListWith500ShowsFiltersFast() {
+    func testAListWith500ShowsFiltersAllOfThemWithinABudget() {
         let ids = (0..<500).map { "s\($0)" }
         let fixture = Self.shows(ids)
         let list = FollowList(id: "l", name: "Big", members: ids.map { ListMember(feedKey: "https://\($0).example/feed") })
         XCTAssertEqual(list.members.count, 500)
-        measure { _ = FollowListFilter.apply(rows: fixture.list.rows, quietRows: [], list: list, subscriptions: fixture.subscriptions) }
-        XCTAssertEqual(FollowListFilter.apply(rows: fixture.list.rows, quietRows: [], list: list, subscriptions: fixture.subscriptions).rows.count, 500)
+        let started = Date()
+        let filtered = FollowListFilter.apply(rows: fixture.list.rows, quietRows: [], list: list, subscriptions: fixture.subscriptions)
+        XCTAssertEqual(filtered.rows.count, 500)
+        // 500 rows against 500 members is a quarter of a million comparisons; a debug build on a busy host still does it in under 2 s.
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+    }
+
+    func testGUIDsAreTrimmedOnBothSidesAndInDecodedMembers() throws {
+        XCTAssertEqual(ListMember(feedKey: "k", podcastGUID: " g ").podcastGUID, "g")
+        // A member decoded from JSON skips init, so matching trims too.
+        let decoded = try JSONDecoder().decode(ListMember.self, from: Data(#"{"feedKey":"k","podcastGUID":" G "}"#.utf8))
+        XCTAssertTrue(decoded.matches(feedKey: "other", podcastGUID: "g"))
+        var list = FollowList(id: "l", name: "L", members: [decoded])
+        XCTAssertFalse(list.add(ListMember(feedKey: "moved", podcastGUID: "g")))
+        XCTAssertEqual(list.members.count, 1)
+    }
+
+    func testListsContainingAFeedKey() {
+        let lists = [FollowList(id: "1", name: "B", members: [ListMember(feedKey: "k")]), FollowList(id: "2", name: "A", members: [ListMember(feedKey: "k")]),
+                     FollowList(id: "3", name: "C", members: [ListMember(feedKey: "z")])]
+        XCTAssertEqual(FollowListFilter.lists(containingFeedKey: "k", in: lists).map(\.name), ["A", "B"])
+        XCTAssertEqual(FollowListFilter.lists(containingFeedKey: nil, in: lists), [])
     }
 
     // MARK: Fixtures

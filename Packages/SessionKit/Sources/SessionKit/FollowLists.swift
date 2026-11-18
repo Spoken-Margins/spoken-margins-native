@@ -9,13 +9,20 @@ public struct ListMember: Codable, Equatable, Hashable, Sendable {
 
     public init(feedKey: String, podcastGUID: String? = nil) {
         self.feedKey = feedKey
-        self.podcastGUID = podcastGUID.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        self.podcastGUID = Self.normalizedGUID(podcastGUID)
+    }
+
+    /// Trimmed, nil when blank. A GUID is compared without case.
+    static func normalizedGUID(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
     }
 
     /// The feed link is the same, or both sides carry a GUID and it is the same.
     public func matches(feedKey otherKey: String?, podcastGUID otherGUID: String? = nil) -> Bool {
         if let otherKey, otherKey == feedKey { return true }
-        if let mine = podcastGUID, let theirs = otherGUID?.trimmingCharacters(in: .whitespacesAndNewlines), !theirs.isEmpty {
+        // Members decoded from JSON skip `init`, so both sides are trimmed here.
+        if let mine = Self.normalizedGUID(podcastGUID), let theirs = Self.normalizedGUID(otherGUID) {
             return mine.caseInsensitiveCompare(theirs) == .orderedSame
         }
         return false
@@ -47,7 +54,7 @@ public struct FollowList: Codable, Equatable, Sendable, Identifiable {
         var guids = Set<String>()
         var kept: [ListMember] = []
         for member in members {
-            let guid = member.podcastGUID?.lowercased()
+            let guid = ListMember.normalizedGUID(member.podcastGUID)?.lowercased()
             if keys.contains(member.feedKey) || (guid.map(guids.contains) ?? false) { continue }
             keys.insert(member.feedKey)
             if let guid { guids.insert(guid) }
@@ -132,7 +139,7 @@ public enum FollowListName {
     public static func validate(_ raw: String, existing: [FollowList] = [], renaming id: String? = nil) -> Outcome {
         let name = cleaned(raw)
         if name.isEmpty { return .invalid(.empty) }
-        if name.contains(where: { $0 == "," || $0 == "/" }) { return .invalid(.containsCommaOrSlash) }
+        if name.unicodeScalars.contains(where: { $0 == "," || $0 == "/" }) { return .invalid(.containsCommaOrSlash) }
         if name.count > maxLength { return .invalid(.tooLong) }
         if let clash = existing.first(where: { $0.id != id && sameName($0.name, name) }) {
             return .invalid(.duplicate(existingName: clash.name))
@@ -183,7 +190,15 @@ public enum FollowListFilter {
         in lists: [FollowList],
         podcastGUID: String? = nil
     ) -> [FollowList] {
-        let key = FeedURLKey.make(subscription.source.canonicalURL)
-        return FollowListName.chipOrder(lists).filter { $0.contains(feedKey: key, podcastGUID: podcastGUID) }
+        self.lists(containingFeedKey: FeedURLKey.make(subscription.source.canonicalURL), in: lists, podcastGUID: podcastGUID)
+    }
+
+    /// The same, for a caller that has only a feed key (unfollow, an imported file's row).
+    public static func lists(
+        containingFeedKey key: String?,
+        in lists: [FollowList],
+        podcastGUID: String? = nil
+    ) -> [FollowList] {
+        FollowListName.chipOrder(lists).filter { $0.contains(feedKey: key, podcastGUID: podcastGUID) }
     }
 }

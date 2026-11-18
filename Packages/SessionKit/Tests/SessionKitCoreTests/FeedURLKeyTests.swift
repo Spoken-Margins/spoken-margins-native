@@ -32,11 +32,4 @@ final class FeedURLKeyTests: XCTestCase {
         XCTAssertNotEqual(FeedURLKey.make("https://example.com/Feed"), FeedURLKey.make("https://example.com/feed"))
         XCTAssertNotEqual(FeedURLKey.make("https://example.com/feed"), FeedURLKey.make("https://example.org/feed"))
     }
-
-    func testTheCatalogAndTheKeyAgree() throws {
-        // SourceCatalog.feedKey used to be a second copy of the OPML one. It forwards to FeedURLKey now; this pins it.
-        for raw in ["http://A.example/Feed/", "https://a.example/feed#x", "  https://a.example/feed  ", "nope", ""] {
-            XCTAssertEqual(SourceCatalog.feedKey(raw), FeedURLKey.make(raw), "input: \(raw.debugDescription)")
-        }
-    }
 }

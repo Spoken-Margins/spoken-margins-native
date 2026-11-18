@@ -21,6 +21,9 @@ final class FollowListNameTests: XCTestCase {
             ("Tech, AI", .invalid(.containsCommaOrSlash)),
             ("Tech/AI", .invalid(.containsCommaOrSlash)),
             ("/News", .invalid(.containsCommaOrSlash)),
+            (",\u{0301}", .invalid(.containsCommaOrSlash)),         // a comma with a combining mark is still a comma
+            ("Tech,\u{0301}AI", .invalid(.containsCommaOrSlash)),
+            ("a/\u{FE0F}b", .invalid(.containsCommaOrSlash)),
             ("Tech\u{FF0C}AI", .valid("Tech\u{FF0C}AI")),   // fullwidth comma: OPML does not split on it
             (forty, .valid(forty)),
             (forty + "a", .invalid(.tooLong)),
