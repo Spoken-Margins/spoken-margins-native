@@ -58,6 +58,9 @@ What it does:
 
 Gates (hourly coalescing, #1329; bugs are fine, crashes the runners would catch are not):
 - One phone build at a time (a lock in ~/SpokenMargins-phone). A second run exits at once.
+- Main's T3 passed on the commit (#4575, scripts/main_t3_gate.py): without --commit it builds the newest commit
+  on the trunk whose `main-t3` status is success, not the tip; a named commit, or the hosted build's commit,
+  without one is refused, naming it. The owner overrides with --allow-without-main-t3 "<reason>" (recorded).
 - --if-changed starts at most once an hour, unless the current tip has an integration PASS on #184.
   Explicit builds without --if-changed bypass that delay. Deferred tips do not reset the hour.
 - Memory pressure must be normal, and free disk at least 10 GB plus 4 GB per running build
@@ -114,6 +117,7 @@ ROOT = Path(os.environ.get('SM_PHONE_REPO') or PUBLIC)  # the repo it builds fro
 sys.path.insert(0, str(PUBLIC / 'scripts'))
 import comment_trust  # noqa: E402  (#1822: whose comments the plan believes)
 import lane_slots  # noqa: E402
+import main_t3_gate  # noqa: E402  (#4575: only a commit main's T3 passed reaches the phone)
 import ops_checkout  # noqa: E402  (#2372: scheduled jobs run from a checkout pinned to main)
 import phone_build_settings  # noqa: E402  (#3354: the settings both phone builds share)
 from trunk import trunk_branch  # noqa: E402  (#1492: the branch it builds)
@@ -425,6 +429,14 @@ def runner_evidence(sha: str) -> tuple[str | None, str]:
                     f'repeating host tests; the Test Desk tests {BRANCH}\'s merged tip end to end'), ''
     return None, (f'PR #{found.group(1)}\'s lane merge checks name no PASS for `{sha[:7]}` itself '
                   '(the trunk moved after the tested merge)')
+
+
+def main_t3_allows(sha: str, override: str | None) -> bool:
+    """Whether main's T3 passed on `sha`, or the owner overrode it (#4575). Says the verdict when it isn't plain green."""
+    verdict = main_t3_gate.check(sha, override, 'phone-build', gh=gh_call, repo=REPO)
+    if not verdict.allowed or verdict.overridden:
+        main_t3_gate.report(verdict, say)
+    return verdict.allowed
 
 
 def coalesce_reason(sha: str) -> str | None:
@@ -2188,7 +2200,7 @@ class BuildFailed(Exception):
 HOSTED_TAKEN = 'hosted-taken.json'
 
 
-def take_hosted(commit: str | None, if_changed: bool, tip: str = '') -> int:
+def take_hosted(commit: str | None, if_changed: bool, tip: str = '', override: str | None = None) -> int:
     """--source hosted: no xcodebuild here. Take the newest hosted build (of `commit`, when one is named)."""
     hosted, problem = hosted_build(commit)
     if not hosted:
@@ -2214,6 +2226,8 @@ def take_hosted(commit: str | None, if_changed: bool, tip: str = '') -> int:
     if if_changed and attempt.get('sha') == sha and str(attempt.get('result', '')).startswith('failed'):
         say(f'{sha[:7]} already failed ({attempt["result"]}); waiting for a newer hosted build')
         return 0
+    if not main_t3_allows(sha, override):
+        return 0 if if_changed else 1
     free, needed = free_disk_gb(phone_dir()), DISK_FLOOR_GB
     if free < needed:
         say(f'skipped: free disk is {free:.1f} GB; taking a phone build needs {needed} GB')
@@ -2230,10 +2244,16 @@ def main(argv) -> int:
     parser.add_argument('--commit', help='build this commit instead of the trunk\'s tip')
     parser.add_argument('--if-changed', action='store_true', help='coalesce changed tips to hourly, or after integration PASS')
     parser.add_argument('--plan-only', action='store_true', help="rewrite latest's test-plan.md and stop")
+    parser.add_argument(main_t3_gate.OVERRIDE_FLAG, dest='override', metavar='REASON',
+                        help="owner only: build without a green main T3 on the commit (#4575); REASON is recorded")
     parser.add_argument('--source', choices=SOURCES,
                         help='mac builds here; hosted downloads the GitHub-hosted build (default: SM_PHONE_SOURCE, '
                              'then ~/SpokenMargins-phone/source, then mac)')
     args = parser.parse_args(argv)
+    try:
+        args.override = main_t3_gate.check_reason(args.override)
+    except ValueError as error:
+        parser.error(str(error))
     ops_checkout.pin_from_env(notify, reexec=True)  # a scheduled job runs from the pinned ops checkout (#2372)
     phone_dir().mkdir(parents=True, exist_ok=True)
     if args.plan_only:
@@ -2253,19 +2273,36 @@ def main(argv) -> int:
             return 0
         if not os.environ.get('SM_PHONE_NO_FETCH'):
             git('fetch', 'origin', BRANCH, '-q', check=False)
-        sha = git('rev-parse', f'{args.commit or "origin/" + BRANCH}^{{commit}}')
         tip = git('rev-parse', '-q', '--verify', f'origin/{BRANCH}^{{commit}}', check=False)
         refresh_installer(tip)
         try:
+            sha = build_target(args)
+            if not sha:
+                return 0 if args.if_changed else 1
             return take_or_build(args, sha, tip)
         finally:
             note_trunk(tip, (args.source or source()) == 'hosted')
 
 
+def build_target(args) -> str | None:
+    """The commit to build: --commit, else the newest on the trunk main's T3 passed on (#4575), or None (said why).
+
+    The trunk's tip rarely has a T3 result yet, since main is tested every few hours, so building only the tip would
+    stop phone builds; the newest green commit keeps them coming. An override builds the tip as before. The hosted
+    source takes whatever commit the hosted build is of, and take_hosted gates that commit."""
+    if args.commit or args.override or (args.source or source()) == 'hosted':
+        return git('rev-parse', f'{args.commit or "origin/" + BRANCH}^{{commit}}')
+    green, why = main_t3_gate.newest_green(BRANCH, gh=gh_call, repo=REPO)
+    if not green:
+        say(f'main T3 gate: no phone build; {why}. A commit main\'s T3 passed on is built as soon as there is one; '
+            f'the owner can build the tip anyway with {main_t3_gate.OVERRIDE_FLAG} "<reason>"')
+    return green
+
+
 def take_or_build(args, sha: str, tip: str) -> int:
     """Under the lock: take the hosted build, or build `sha` here."""
     if (args.source or source()) == 'hosted':
-        return take_hosted(sha if args.commit else None, args.if_changed, tip)
+        return take_hosted(sha if args.commit else None, args.if_changed, tip, args.override)
     if args.if_changed:
         if latest_build().get('sha') == sha:
             say(f'latest is already {sha[:7]}; nothing to do')
@@ -2282,6 +2319,8 @@ def take_or_build(args, sha: str, tip: str) -> int:
     if reason:
         say(f'skipped: {reason}')
         return EXIT_SKIPPED
+    if not main_t3_allows(sha, args.override):
+        return 0 if args.if_changed else 1
     clear_work()
     (phone_dir() / 'last-start.json').write_text(json.dumps({
         'sha': sha, 'at': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}) + '\n')

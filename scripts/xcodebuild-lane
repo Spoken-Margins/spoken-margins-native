@@ -18,6 +18,10 @@ Usage: scripts/xcodebuild-lane <xcodebuild arguments>
 - Information-only calls (-version, -list, -showBuildSettings, -exportArchive, ...) skip all three.
 - Every call first links the main checkout's git-ignored Config/Local.xcconfig, the signing team, into a
   worktree that has none (#1841), so device builds and archives in any worktree sign as the main checkout does.
+- An `archive` is the first step of an App Store Connect upload, so it is refused unless main's T3 passed on the
+  worktree's HEAD and the tracked files are unchanged from it (#4575, scripts/main_t3_gate.py). The owner may
+  archive anyway with `--allow-without-main-t3 "<reason>"`; the wrapper records the reason and never passes the
+  flag to xcodebuild.
 """
 import contextlib
 import os
@@ -31,6 +35,7 @@ import threading
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lane_slots import build_slot  # noqa: E402
 import sm_build_cache  # noqa: E402
+import main_t3_gate  # noqa: E402
 import xcodebuild_finish  # noqa: E402
 
 NO_BUILD_FLAGS = {'-version', '-list', '-showsdks', '-showBuildSettings', '-showdestinations',
@@ -77,8 +82,56 @@ def simulator_arch(args, machine=None):
     return ['ARCHS=arm64'] if any(d.startswith('generic/platform=iOSSimulator') for d in destinations) else []
 
 
+ACTIONS = {'build', 'build-for-testing', 'archive', 'test', 'test-without-building',
+           'analyze', 'clean', 'install', 'installsrc', 'docbuild'}
+
+
+def xcode_action(argv):
+    """The xcodebuild action the arguments name (the last one), or 'build', xcodebuild's default."""
+    return next((a for a in reversed(argv) if not a.startswith('-') and '=' not in a and a in ACTIONS), 'build')
+
+
+def archives(argv):
+    return not any(arg in NO_BUILD_FLAGS for arg in argv) and xcode_action(argv) == 'archive'
+
+
+def archive_commit():
+    """(the commit an archive here would be built from, or None and why it isn't one commit)."""
+    root = worktree_root()
+    try:
+        sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True,
+                                      stderr=subprocess.DEVNULL).strip()
+        dirty = subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=root,
+                                        text=True, stderr=subprocess.DEVNULL).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None, f'{root} is not a git checkout, so the archived commit is unknown'
+    if dirty:
+        return None, f'{root} has uncommitted changes to tracked files, so the archive would not be {sha[:7]}'
+    return sha, ''
+
+
+def main_t3_refuses(override):
+    """Whether the main T3 gate stops this archive (#4575); it says why either way it isn't plain green."""
+    sha, problem = archive_commit()
+    if sha is None:
+        lane_note(f'main T3 gate: REFUSED. {problem}. Commit it, or archive from a clean checkout of the commit.')
+        return True
+    verdict = main_t3_gate.check(sha, override, 'xcodebuild-lane')
+    if not verdict.allowed or verdict.overridden:
+        main_t3_gate.report(verdict, lane_note)
+    return not verdict.allowed
+
+
 def main(argv):
     xcodebuild = os.environ.get('SM_LANE_XCODEBUILD', 'xcodebuild')
+    try:
+        argv, override = main_t3_gate.split_override(list(argv))
+        main_t3_gate.check_reason(override)
+    except ValueError as error:
+        lane_note(f'main T3 gate: {error}')
+        return 2
+    if archives(argv) and main_t3_refuses(override):
+        return 1
     link_local_config(worktree_root(), log=lambda line: print(line, file=sys.stderr, flush=True))
     if any(arg in NO_BUILD_FLAGS for arg in argv):
         os.execvp(xcodebuild, [xcodebuild, *argv])
@@ -89,9 +142,7 @@ def main(argv):
         args += ['-derivedDataPath', str(root / '.build/dd')]
     args += simulator_arch(args)
     derived = args[args.index('-derivedDataPath') + 1]
-    action = next((a for a in reversed(argv) if not a.startswith('-') and '=' not in a
-                   and a in {'build', 'build-for-testing', 'archive', 'test', 'test-without-building',
-                             'analyze', 'clean', 'install', 'installsrc', 'docbuild'}), 'build')
+    action = xcode_action(argv)
     label = f'xcodebuild {action}'
     with build_slot(label):
         print(f'[lane] DerivedData: {derived}', file=sys.stderr, flush=True)
