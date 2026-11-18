@@ -16,7 +16,8 @@ import Foundation
 /// transcript), and on an article that plays its publisher's recording (#547). That article's session is stored in
 /// article form, at a text place, so the recording's time is turned into the text place the recording's map gives for
 /// it, and the engine resumes the session as the recording there, as it does when the listener opens the article. Any
-/// other item throws `unsupportedTarget`. The app runs it on the main actor, in order, a few milliseconds long.
+/// article read aloud with the on-device voice takes one only when the caller gives a `ReadAloudPlace` (#4561): the
+/// listener aimed a Watch Margin at it. Any other item throws `unsupportedTarget`. The app runs it on the main actor, in order, a few milliseconds long.
 public enum PlayerItemMargin {
     public enum Failure: Error, Equatable {
         case itemNotFound
@@ -29,6 +30,15 @@ public enum PlayerItemMargin {
         case notWritten
     }
 
+    /// Where on an article read aloud with the on-device voice a Watch Margin aimed at it goes (#4561). That reading
+    /// keeps no media clock, so a media time means nothing there; the caller says the text place instead.
+    public enum ReadAloudPlace: Equatable, Sendable {
+        /// The text place the player was paused at when the Watch began recording.
+        case textOffset(Int)
+        /// No pause on record (the Watch could not reach the phone): the article's saved place.
+        case savedPlace
+    }
+
     /// Saves a spoken Margin whose recording is `audioPath`, taken at `markedAt`, at `mediaTimeMs` on `itemId`.
     @discardableResult
     public static func placeSpoken(
@@ -36,10 +46,11 @@ public enum PlayerItemMargin {
         atMediaTimeMs mediaTimeMs: Int,
         markedAt: Date,
         itemId: String,
-        repository: SessionRepository & StructuredDocumentRepository
+        repository: SessionRepository & StructuredDocumentRepository,
+        readAloudPlace: ReadAloudPlace? = nil
     ) throws -> Interjection {
         guard let audioPath, !audioPath.isEmpty else { throw Failure.noRecording }
-        let target = try Target(itemId: itemId, mediaTimeMs: mediaTimeMs, repository: repository)
+        let target = try Target(itemId: itemId, mediaTimeMs: mediaTimeMs, repository: repository, readAloudPlace: readAloudPlace)
         // A retry after the first try got as far as the store: the Margin is already there, so never write a second copy.
         if let existing = (try? repository.loadInterjections(sessionId: target.original.id))?.first(where: { $0.audioPath == audioPath }) {
             return existing
@@ -174,7 +185,10 @@ public enum PlayerItemMargin {
         /// True for an article playing its publisher's recording: the place is a text place.
         let isArticle: Bool
 
-        init(itemId: String, mediaTimeMs: Int, repository: SessionRepository & StructuredDocumentRepository) throws {
+        init(
+            itemId: String, mediaTimeMs: Int, repository: SessionRepository & StructuredDocumentRepository,
+            readAloudPlace: ReadAloudPlace? = nil
+        ) throws {
             guard let item = try? repository.loadItem(id: itemId), item.deletedAt == nil else { throw Failure.itemNotFound }
             guard let original = StoredSessionMargin.targetSession(in: try repository.loadSessions(itemId: itemId)) else {
                 throw Failure.noSession
@@ -191,12 +205,25 @@ public enum PlayerItemMargin {
             case .itemTextTTS:
                 // Only an article playing its publisher's recording has a media time; one read with on-device speech
                 // reports none, so the player keeps no run for it (`PlayerRunRecorder`).
-                guard original.phase == .itemPlayback,
-                      let record = try? (repository as? any PublisherAudioRepository)?.loadPublisherAudio(itemId: itemId),
-                      let plan = PublisherAudioPlayback.plan(for: item, record: record) else { throw Failure.unsupportedTarget }
-                timeMs = clamped(plan.playingMedia.durationMs)
-                let offset = PreparedNarrationFallback.textOffset(mediaTimeMs: timeMs, timeline: plan.timeline)
-                moved.position = Position(charOffset: max(0, min(offset, item.text?.count ?? 0)), chapterId: nil)
+                let textLength = item.text?.count ?? 0
+                if original.phase == .itemPlayback,
+                   let record = try? (repository as? any PublisherAudioRepository)?.loadPublisherAudio(itemId: itemId),
+                   let plan = PublisherAudioPlayback.plan(for: item, record: record) {
+                    timeMs = clamped(plan.playingMedia.durationMs)
+                    let offset = PreparedNarrationFallback.textOffset(mediaTimeMs: timeMs, timeline: plan.timeline)
+                    moved.position = Position(charOffset: max(0, min(offset, textLength)), chapterId: nil)
+                } else if let readAloudPlace {
+                    // Read with on-device speech: no media time, so the place is the text place the caller gives (#4561).
+                    let offset: Int
+                    switch readAloudPlace {
+                    case .textOffset(let char): offset = char
+                    case .savedPlace: offset = original.position.charOffset
+                    }
+                    timeMs = 0
+                    moved.position = Position(charOffset: max(0, min(offset, textLength)), chapterId: original.position.chapterId)
+                } else {
+                    throw Failure.unsupportedTarget
+                }
                 isArticle = true
             default:
                 throw Failure.unsupportedTarget
