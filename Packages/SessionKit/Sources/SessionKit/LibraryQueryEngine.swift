@@ -45,10 +45,13 @@ extension LibraryItemRow: LibraryQueryRow {}
 
 /// Library query rules shared by the app and host tests.
 public enum LibraryQueryEngine {
-    public static func visibleLibraryItems<Row: LibraryQueryRow>(_ libraryItems: [Row], query libraryQuery: LibraryQuery) -> [Row] {
+    /// The rows that pass the query's filters and search, in the order they came.
+    private static func filteredLibraryItems<Row: LibraryQueryRow>(
+        _ libraryItems: [Row], query libraryQuery: LibraryQuery, includingSenders: Bool
+    ) -> [Row] {
         let normalizedQuery = libraryQuery.query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let filtered = libraryItems.filter { row in
+        return libraryItems.filter { row in
             let metadataMatch: Bool
             if normalizedQuery.isEmpty {
                 metadataMatch = true
@@ -57,6 +60,7 @@ public enum LibraryQueryEngine {
                     .compactMap { $0 }
                     .map { $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) }
                     .contains { $0.localizedStandardContains(normalizedQuery) }
+                    || (includingSenders && row.sharedMargins.senderMatches(libraryQuery.query))
             }
             let contentMatch = libraryQuery.contentType == .all || libraryContentType(for: row) == libraryQuery.contentType
             let listeningMatch: Bool
@@ -71,6 +75,29 @@ public enum LibraryQueryEngine {
             let sharedMatch = libraryQuery.sharedMargins.matches(row.sharedMargins)
             return metadataMatch && contentMatch && listeningMatch && offlineMatch && sharedMatch
         }
+    }
+
+    /// What "Completed hidden" adds on the Library: who the hidden finished items hold Margins from (#3794). Nil when
+    /// nothing is hidden, or none of what is hidden has a friend's Margins. The hidden items are the finished ones that
+    /// pass every other filter and the search, and that the listening filter leaves out.
+    public static func completedHiddenNote<Row: LibraryQueryRow>(_ libraryItems: [Row], query libraryQuery: LibraryQuery) -> String? {
+        guard libraryHidesCompleted(query: libraryQuery) else { return nil }
+        var finished = libraryQuery
+        finished.listeningState = .completed
+        // A finished item passes the other filters the same under either listening state, so what the listening state
+        // hides is decided by its own rule: Unfinished lists a finished item only while a friend's Margins on it are new
+        // (#4103); Unplayed and In Progress never list one.
+        let hidden = filteredLibraryItems(libraryItems, query: finished, includingSenders: true)
+            .filter { libraryQuery.listeningState != .unfinished || !$0.staysInUnfinished }
+        return LibraryCompletedHiddenNote.words(items: hidden.map(\.sharedMargins))
+    }
+
+    /// - Parameter includingSenders: whether a search also finds items through who sent the Margins on them (#3794).
+    ///   The Library's search does; a list that says "title, source, or author" (the collection checklist) doesn't.
+    public static func visibleLibraryItems<Row: LibraryQueryRow>(
+        _ libraryItems: [Row], query libraryQuery: LibraryQuery, includingSenders: Bool = true
+    ) -> [Row] {
+        let filtered = filteredLibraryItems(libraryItems, query: libraryQuery, includingSenders: includingSenders)
         return filtered.sorted { lhs, rhs in
             let ordered: ComparisonResult
             switch libraryQuery.sort {
