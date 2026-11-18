@@ -163,7 +163,8 @@ extension SharedMarginReview {
                 if entry.isApproximate, let place = parentPlaces[id] {
                     replyAnchor = MarginMomentAnchor(
                         marginId: entry.marginId, mediaTimeMs: place, label: entry.senderLabel, isApproximate: true,
-                        caption: entry.replyContext?.caption, isReadAloud: entry.interjection.isWritten
+                        caption: entry.replyContext?.caption, isReadAloud: entry.interjection.isWritten,
+                        leadInMs: entry.interjection.senderLeadInMs
                     )
                 }
             }

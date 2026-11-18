@@ -35,7 +35,7 @@ final class ReplyBackTests: XCTestCase {
 
     private func friendMargin(
         _ id: String, in layerId: String, at ms: Int = 60_000, replyingTo parent: MarginPacketIdentity? = nil, createdAt: Double = 120,
-        evidence: AnchorResolutionEvidenceClass = .exactEdition
+        evidence: AnchorResolutionEvidenceClass = .exactEdition, senderLeadInMs: Int? = nil
     ) -> ImportedCommentaryInterjection {
         ImportedCommentaryInterjection(
             id: id, layerId: layerId, packageScopedId: id, createdAt: date(createdAt),
@@ -44,7 +44,8 @@ final class ReplyBackTests: XCTestCase {
             resolution: ImportedAnchorResolution(evidenceClass: evidence, localMediaTimeMs: ms, confidence: 1),
             replyLinks: parent.map {
                 [MarginReplyLink(conversationId: "conversation", parentPackageDigest: $0.packageDigest, parentPackageScopedId: $0.packageScopedId)]
-            }
+            },
+            senderLeadInMs: senderLeadInMs
         )
     }
 
@@ -258,6 +259,20 @@ final class ReplyBackTests: XCTestCase {
         XCTAssertEqual(reply.anchor.caption, "Reply to your Margin at 12:34")
         let sequence = try XCTUnwrap(MarginMomentSequence(itemId: "item", reviewing: steps.map(\.anchor)))
         XCTAssertLessThan(sequence.startMediaTimeMs, 754_000)
+    }
+
+    /// #4171: a reply moved to its parent's place is a second anchor built in `playlist`; it keeps the sender's length.
+    func testAReplyMovedToItsParentsPlaceKeepsTheSendersLeadIn() throws {
+        let margins = [own("m1", madeAt: 10, atMs: 754_000, sharedAs: [mine])]
+        for (ms, evidence) in [(785_000, AnchorResolutionEvidenceClass.timestampFallback), (760_000, .exactEdition)] {
+            let entries = SharedMarginReview.entries(
+                layers: [layer("ben")],
+                records: ["ben": [friendMargin("reply", in: "ben", at: ms, replyingTo: mine, evidence: evidence, senderLeadInMs: 90_000)]],
+                ownMargins: margins
+            )
+            let reply = try XCTUnwrap(SharedMarginReview.playlist(for: entries, ownMargins: margins).last)
+            XCTAssertEqual(reply.anchor.leadInMs, 90_000, "\(evidence)")
+        }
     }
 
     func testAClockOnlyReplyToAnAlreadyPlayedParentStillSitsAtTheParentsPlace() {
