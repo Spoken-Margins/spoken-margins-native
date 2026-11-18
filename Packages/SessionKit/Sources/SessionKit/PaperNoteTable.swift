@@ -57,23 +57,47 @@ public struct PaperNoteTable: Equatable, Sendable {
 
     // MARK: Files
 
-    /// A Markdown table. Pipes are escaped and line breaks become `<br>`, so a cell never ends its row.
+    /// A Markdown table. Backslashes and pipes are escaped and line breaks become `<br>`, so a cell never ends its row.
+    /// Escaping runs over unicode scalars: a Foundation string replace skips a match followed by a combining mark.
     public func markdown() -> String {
-        func line(_ cells: [String]) -> String {
-            "| " + cells.map { $0.replacingOccurrences(of: "|", with: "\\|").replacingOccurrences(of: "\r\n", with: "\n")
-                .replacingOccurrences(of: "\n", with: "<br>").replacingOccurrences(of: "\r", with: "<br>") }.joined(separator: " | ") + " |"
+        func cell(_ value: String) -> String {
+            var result = String.UnicodeScalarView()
+            var scalars = Array(value.unicodeScalars)[...]
+            while let scalar = scalars.popFirst() {
+                switch scalar {
+                case "\\": result.append(contentsOf: "\\\\".unicodeScalars)
+                case "|": result.append(contentsOf: "\\|".unicodeScalars)
+                case "\r":
+                    if scalars.first == "\n" { scalars.removeFirst() }
+                    result.append(contentsOf: "<br>".unicodeScalars)
+                case "\n", "\u{2028}", "\u{2029}", "\u{85}", "\u{0B}", "\u{0C}": result.append(contentsOf: "<br>".unicodeScalars)
+                default: result.append(scalar)
+                }
+            }
+            return String(result)
         }
+        func line(_ cells: [String]) -> String { "| " + cells.map(cell).joined(separator: " | ") + " |" }
         return ([line(Self.columns), "|" + String(repeating: " --- |", count: Self.columns.count)] + rows.map(line)).joined(separator: "\n") + "\n"
     }
 
-    /// RFC 4180 CSV with CRLF line ends. A cell that would open as a formula in a spreadsheet (starting with `=`, `+`, `-`
-    /// or `@`) gets an apostrophe in front.
+    /// RFC 4180 CSV with CRLF line ends. A cell that would open as a formula in a spreadsheet (starting, after any spaces,
+    /// with `=`, `+`, `-` or `@`, or starting with a tab or a carriage return) gets an apostrophe in front.
     public func csv() -> String {
         func cell(_ value: String) -> String {
-            let guarded = value.unicodeScalars.first.map { "=+-@".unicodeScalars.contains($0) } == true ? "'" + value : value
-            // Scalars, not Characters: "\r\n" is one Character, so a lone "\n" would not match it.
+            let scalars = value.unicodeScalars
+            let first = scalars.first(where: { $0 != " " })
+            let formula = first.map { "=+-@".unicodeScalars.contains($0) } == true || scalars.first == "\t" || scalars.first == "\r"
+            let guarded = formula ? "'" + value : value
+            // Scalars, not Characters or a Foundation replace: "\r\n" is one Character, and a replace skips a match that a combining mark follows.
             guard guarded.unicodeScalars.contains(where: { $0 == "," || $0 == "\"" || $0 == "\r" || $0 == "\n" }) else { return guarded }
-            return "\"" + guarded.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+            var quoted = String.UnicodeScalarView()
+            quoted.append("\"")
+            for scalar in guarded.unicodeScalars {
+                if scalar == "\"" { quoted.append("\"") }
+                quoted.append(scalar)
+            }
+            quoted.append("\"")
+            return String(quoted)
         }
         return ([Self.columns] + rows).map { $0.map(cell).joined(separator: ",") }.joined(separator: "\r\n") + "\r\n"
     }

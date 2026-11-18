@@ -114,6 +114,7 @@ final class PaperNoteTableTests: XCTestCase {
         let papers = [
             paper(id: "with", title: "With", [margin("a", .purpose, "x", item: "with")]),
             paper(id: "plain", title: "Plain", [margin("b", nil, "x", item: "plain")]),
+            // A friend's Margins are another type and are never passed in, so a paper that only has them has none to give.
             paper(id: "friends-only", title: "Friends", []),
             paper(id: "out", title: "Out", [margin("c", .purpose, "x", item: "out")]),
             paper(id: "blank", title: "Blank", [margin("d", .purpose, "  \n ", item: "blank")]),
@@ -202,6 +203,54 @@ final class PaperNoteTableTests: XCTestCase {
         // Every row has the same number of unescaped separators as the header.
         func separators(_ line: String) -> Int { line.replacingOccurrences(of: "\\|", with: "").filter { $0 == "|" }.count }
         XCTAssertEqual(separators(lines[2]), separators(lines[0]))
+    }
+
+    func testMarkdownEscapingSurvivesBackslashesCombiningMarksAndEveryLineBreak() {
+        let nasty = [
+            "a\\|b", "a|\u{301}b", "a\n\u{301}b", "x\r\ny\rz", "u\u{2028}v\u{85}w", "C:\\path\\file",
+        ]
+        let table = PaperNoteTable(papers: nasty.enumerated().map { index, words in
+            paper(id: "p\(index)", title: "T\(index)", [margin("m\(index)", .purpose, words, item: "p\(index)")])
+        })
+        let lines = table.markdown().components(separatedBy: "\n")
+        XCTAssertEqual(lines.count, nasty.count + 3, "one line per row: no cell ended its row")
+        func separators(_ line: String) -> Int {
+            var count = 0, escaped = false
+            for character in line.unicodeScalars {
+                if escaped { escaped = false } else if character == "\\" { escaped = true } else if character == "|" { count += 1 }
+            }
+            return count
+        }
+        for line in lines.dropFirst(2).dropLast() { XCTAssertEqual(separators(line), separators(lines[0]), line) }
+        let all = table.markdown()
+        XCTAssertTrue(all.contains("a\\\\\\|b"), "the backslash is escaped, then the pipe")
+        XCTAssertTrue(all.contains("x<br>y<br>z"))
+        XCTAssertTrue(all.contains("u<br>v<br>w"))
+        XCTAssertTrue(all.contains("C:\\\\path\\\\file"))
+    }
+
+    func testCSVDoublesAQuoteThatACombiningMarkFollowsAndGuardsLeadingWhitespaceFormulas() {
+        let table = PaperNoteTable(papers: [
+            paper(id: "a", title: "say \"\u{301}x", author: "\t=HYPERLINK(\"x\")", [margin("a", .purpose, "x", item: "a", created: 3)]),
+            paper(id: "b", title: " =1+1", author: "\r+2", [margin("b", .purpose, "x\r\ny", item: "b", created: 2)]),
+        ])
+        let rows = parseCSV(table.csv())
+        XCTAssertEqual(rows[1][0], "say \"\u{301}x")
+        XCTAssertEqual(rows[1][1], "'\t=HYPERLINK(\"x\")")
+        XCTAssertEqual(rows[2][0], "' =1+1")
+        XCTAssertEqual(rows[2][1], "'\r+2")
+        XCTAssertEqual(rows[2][4], "x\r\ny", "a CRLF inside a cell survives a spreadsheet read")
+    }
+
+    func testEqualPagesOrderByPositionThenCreationThenIdAndPaddedTextIsTrimmed() {
+        let row = cells(PaperNoteTable(papers: [paper([
+            margin("z", .keyFinding, "  later position  ", at: onPage1 + 4, created: 1),
+            margin("b", .keyFinding, "same spot, later", at: onPage1, created: 2),
+            margin("c", .keyFinding, "same spot, same time, id c", at: onPage1, created: 2),
+            margin("a", .keyFinding, "\n same spot, earlier \n", at: onPage1, created: 1),
+        ])]))
+        XCTAssertEqual(row["Key findings"], "same spot, earlier / same spot, later / same spot, same time, id c / later position")
+        XCTAssertEqual(row["Key findings page"], "1 / 1 / 1 / 1")
     }
 
     func testThreeHundredPapersWithTenAnswersEachBuildQuickly() {
