@@ -106,6 +106,18 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
         }
     }
 
+    /// A friend's link or file failed to open and the sheet saying so was closed with OK or Close (#3801), not on Try
+    /// Again, which stays waiting. The drawer the file withdrew comes back: at once when the listener is on the
+    /// Library and the launch has settled, else owed to the next time they reach it. It no longer counts as held
+    /// back, so Done with nothing picked plays the Welcome sample as on any first launch. A failure with the drawer
+    /// never withdrawn (it had picks, or nothing was owed) changes nothing.
+    public mutating func friendFileFailed(place: Place) -> Action {
+        guard phase == .waitingForFriendItem else { return .none }
+        wasHeldBack = false
+        phase = .owed
+        return moved(to: place)
+    }
+
     /// The listener's place changed.
     public mutating func moved(to place: Place) -> Action {
         switch phase {
