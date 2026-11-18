@@ -1,0 +1,11 @@
+{
+  "about": "Swift packages the app builds from a Spoken-Margins copy, keyed by Package.resolved identity. scripts/package_watch.py checks each copy's upstream weekly. A package not listed here is its own upstream.",
+  "copies": {
+    "onnxruntime-swift-package-manager": {
+      "copy": "https://github.com/Spoken-Margins/onnxruntime-swift-package-manager.git",
+      "upstream": "https://github.com/microsoft/onnxruntime-swift-package-manager.git",
+      "since": "2026-11-18",
+      "why": "Upstream returned 404 on 2026-11-17 (#4512); the copy is unmodified, pushed from a SwiftPM cache (#4568)."
+    }
+  }
+}
