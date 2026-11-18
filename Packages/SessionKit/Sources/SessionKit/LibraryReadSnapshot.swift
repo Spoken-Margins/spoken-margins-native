@@ -15,6 +15,11 @@ public struct LibraryReadSnapshot: Sendable {
     public var friendMarginsArrivedAtByItemId: [String: Date] = [:]
     /// The listener's own active Margins, counted per item (#2394). Items with none are absent.
     public var marginCountsByItemId: [String: Int] = [:]
+    /// The listener's collections and the records of those that are Library folders (#3769). Empty until a folder is
+    /// imported. Read here so a Library folder's row is drawn from the same pass as its items, never a first frame with the
+    /// items flat.
+    public var collections: [ItemCollection] = []
+    public var libraryFolders: [LibraryFolderRecord] = []
 
     /// The items not in Recently Deleted, in the snapshot's order: what `listItemSummaries()` returns. A caller that
     /// already holds the snapshot asks this instead of reading the item table again (#2507).
@@ -29,8 +34,12 @@ public struct LibraryReadSnapshot: Sendable {
         structuredDocumentItemIds: Set<String> = [],
         sharedMarginsByItemId: [String: SharedMarginTally] = [:],
         marginCountsByItemId: [String: Int] = [:],
-        friendMarginsArrivedAtByItemId: [String: Date] = [:]
+        friendMarginsArrivedAtByItemId: [String: Date] = [:],
+        collections: [ItemCollection] = [],
+        libraryFolders: [LibraryFolderRecord] = []
     ) {
+        self.collections = collections
+        self.libraryFolders = libraryFolders
         self.friendMarginsArrivedAtByItemId = friendMarginsArrivedAtByItemId
         self.items = items
         self.sessions = sessions
@@ -51,12 +60,15 @@ public struct LibraryReadSnapshot: Sendable {
         structuredDocumentItemIds: Set<String> = [],
         sharedMarginsByItemId: [String: SharedMarginTally] = [:],
         marginCountsByItemId: [String: Int] = [:],
-        friendMarginsArrivedAtByItemId: [String: Date] = [:]
+        friendMarginsArrivedAtByItemId: [String: Date] = [:],
+        collections: [ItemCollection] = [],
+        libraryFolders: [LibraryFolderRecord] = []
     ) {
         self.init(
             items: items.map(LibraryItemSummary.init), sessions: sessions, manifests: manifests, jobs: jobs,
             downloads: downloads, structuredDocumentItemIds: structuredDocumentItemIds,
             sharedMarginsByItemId: sharedMarginsByItemId, marginCountsByItemId: marginCountsByItemId,
-            friendMarginsArrivedAtByItemId: friendMarginsArrivedAtByItemId)
+            friendMarginsArrivedAtByItemId: friendMarginsArrivedAtByItemId, collections: collections,
+            libraryFolders: libraryFolders)
     }
 }

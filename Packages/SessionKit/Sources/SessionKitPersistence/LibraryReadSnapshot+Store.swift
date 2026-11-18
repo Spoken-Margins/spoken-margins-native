@@ -9,6 +9,7 @@ extension LibraryReadSnapshot {
                  downloads: store.loadPodcastDownloads(), structuredDocumentItemIds: store.loadStructuredDocumentItemIds(),
                  sharedMarginsByItemId: store.loadSharedMarginTallies(hiding: hiddenSenders),
                  marginCountsByItemId: store.loadActiveMarginCountsByItem(),
-                 friendMarginsArrivedAtByItemId: store.loadFriendMarginsArrivals(hiding: hiddenSenders))
+                 friendMarginsArrivedAtByItemId: store.loadFriendMarginsArrivals(hiding: hiddenSenders),
+                 collections: store.loadItemCollections(), libraryFolders: store.loadLibraryFolders())
     }
 }
