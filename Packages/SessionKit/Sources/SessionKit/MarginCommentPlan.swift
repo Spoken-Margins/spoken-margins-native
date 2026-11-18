@@ -31,7 +31,7 @@ public struct MarginCommentPlan: Equatable, Sendable {
         /// `sentence` is nil.
         public var sentenceText: String
         /// The zero-based page of the segment the anchor sits in, the page to look on first. Nil when the document
-        /// has no page for it (a segment with no `pageIndex`, or a document with no segments).
+        /// has no page for it (no segment holds the anchor, or its `pageIndex` is not a page of the document).
         public var pageIndex: Int?
         /// The Margin's words as the app shows them (`displayText ?? cleanedTranscript ?? transcript`), trimmed.
         /// Empty unless `status` is `.included`.
@@ -48,9 +48,8 @@ public struct MarginCommentPlan: Equatable, Sendable {
     public static func make(itemId: String, document: StructuredDocument, margins: [Interjection]) -> MarginCommentPlan {
         let characters = Array(document.text)
         let sentences = SentenceBounds.ranges(in: characters)
-        let segments = document.segments.sorted { $0.range.start < $1.range.start }
         let own = margins
-            .filter { $0.itemId == itemId && $0.status == "active" && $0.anchor.anchorType == .text }
+            .filter { $0.itemId == itemId && $0.targetType == .item && $0.status == "active" && $0.anchor.anchorType == .text }
             .sorted { lhs, rhs in
                 let (left, right) = (lhs.anchor.startChar, rhs.anchor.startChar)
                 if left != right { return left < right }
@@ -74,7 +73,7 @@ public struct MarginCommentPlan: Equatable, Sendable {
                 marginId: margin.id,
                 sentence: sentence,
                 sentenceText: sentence.map { String(characters[$0]) } ?? "",
-                pageIndex: position.flatMap { page(of: $0, in: segments) },
+                pageIndex: position.flatMap { page(of: $0, in: document.segments, pageCount: document.extraction.pageCount) },
                 commentText: status == .included ? words : "",
                 status: status
             )
@@ -104,16 +103,13 @@ public struct MarginCommentPlan: Equatable, Sendable {
         return low < sentences.count && sentences[low].contains(index) ? sentences[low] : nil
     }
 
-    /// The page of the last segment that starts at or before `index`, which is the segment holding it (or, for the
-    /// gap after a segment, the one just above it). `segments` is sorted by start.
-    private static func page(of index: Int, in segments: [StructuredDocument.Segment]) -> Int? {
-        var low = 0
-        var high = segments.count
-        while low < high {
-            let middle = (low + high) / 2
-            if segments[middle].range.start <= index { low = middle + 1 } else { high = middle }
-        }
-        return low == 0 ? nil : segments[low - 1].pageIndex
+    /// The page of the segment that contains `index`: the narrowest one when segments overlap, nil when none does
+    /// or when the segment has no page the document actually has (`0 ..< pageCount`).
+    private static func page(of index: Int, in segments: [StructuredDocument.Segment], pageCount: Int) -> Int? {
+        let containing = segments.filter { $0.range.start <= index && index < $0.range.end }
+        guard let segment = containing.min(by: { ($0.range.length, $0.range.start) < ($1.range.length, $1.range.start) }),
+              let page = segment.pageIndex, page >= 0, page < pageCount else { return nil }
+        return page
     }
 }
 
@@ -128,10 +124,14 @@ enum SentenceBounds {
     private static let terminators: Set<Character> = [".", "!", "?", "…"]
     private static let closers: Set<Character> = ["\"", "”", "’", "'", ")", "]", "»"]
     private static let openingQuotes: Set<Character> = ["\"", "“", "‘", "'", "«"]
-    /// Lowercased, without the final full stop. Dotted forms ("e.g", "i.e", "u.s") are caught by `isDottedInitials`.
-    private static let abbreviations: Set<String> = [
-        "fig", "figs", "dr", "vs", "cf", "eq", "eqs", "mr", "mrs", "ms", "prof", "ph.d", "approx", "vol", "ref", "refs", "sec", "p", "pp",
-    ]
+    /// Never a sentence end, whatever follows. Lowercased, without the final full stop. Dotted forms ("e.g", "i.e",
+    /// "u.s") are caught by `isDottedInitials`.
+    private static let abbreviations: Set<String> = ["fig", "figs", "dr", "vs", "cf", "eq", "eqs", "ph.d"]
+    /// Titles and name suffixes, matched with their capital: "Ms." is a title, "ms." is milliseconds.
+    private static let titles: Set<String> = ["Mr", "Mrs", "Ms", "Prof", "St", "Jr", "Sr", "Inc", "Co", "Mt"]
+    /// Abbreviations that are also ordinary words or units, so they only count when a digit follows: "p. 4",
+    /// "No. 5", "Tab. 2" are one sentence, but "We set p. Then we ran." and "Wait 3 sec. Then go." are two.
+    private static let abbreviationsBeforeANumber: Set<String> = ["p", "pp", "no", "tab", "ch", "sec", "sect", "vol", "ref", "refs", "approx"]
 
     /// The ranges of the sentences in `characters`, each trimmed of the white space around it, in order.
     static func ranges(in characters: [Character]) -> [Range<Int>] {
@@ -157,7 +157,7 @@ enum SentenceBounds {
                     let next = skipWhitespace(characters, from: afterClosers)
                     if next < count,
                        startsSentence(characters[next]),
-                       !(runEnd - index == 1 && characters[index] == "." && endsAbbreviation(characters, periodAt: index)),
+                       !(runEnd - index == 1 && characters[index] == "." && endsAbbreviation(characters, periodAt: index, before: characters[next])),
                        !isParagraphBreak(characters, from: afterClosers, to: next) {
                         finish(at: afterClosers)
                         start = next
@@ -204,13 +204,14 @@ enum SentenceBounds {
     }
 
     /// Whether the full stop at `periodAt` closes an abbreviation or an initial instead of a sentence.
-    private static func endsAbbreviation(_ characters: [Character], periodAt period: Int) -> Bool {
+    private static func endsAbbreviation(_ characters: [Character], periodAt period: Int, before next: Character) -> Bool {
         var begin = period
         while begin > 0, !characters[begin - 1].isWhitespace, !openers.contains(characters[begin - 1]) { begin -= 1 }
         let word = String(characters[begin..<period])
         guard !word.isEmpty else { return false }
         let lowered = word.lowercased()
-        if abbreviations.contains(lowered) || isDottedInitials(word) { return true }
+        if abbreviations.contains(lowered) || titles.contains(word) || isDottedInitials(word) { return true }
+        if abbreviationsBeforeANumber.contains(lowered), next.isWholeNumber { return true }
         // A single capital letter is an initial ("J. Smith"); a single lowercase one is a word ("option a.").
         if word.count == 1, let only = word.first, only.isUppercase { return true }
         if lowered == "al" { return previousWord(characters, before: begin)?.lowercased() == "et" }

@@ -80,6 +80,14 @@ final class MarginCommentPlanTests: XCTestCase {
             ("three dots", "It held... Then it fell. Done.", "held", "It held..."),
             ("a digit starts the next sentence", "It held. 12 mice fell. Done.", "mice", "12 mice fell."),
             ("a decimal is not an end", "The mean was 3.5 units. Next.", "units", "The mean was 3.5 units."),
+            ("milliseconds end a sentence", "It took 250 ms. Then it fell.", "fell", "Then it fell."),
+            ("seconds end a sentence", "Wait 3 sec. Then go.", "go", "Then go."),
+            ("a bare p ends a sentence", "We set p. Then we ran.", "ran", "Then we ran."),
+            ("Tab. before a number", "See Tab. 2 for details. Next.", "details", "See Tab. 2 for details."),
+            ("No. before a number", "Order No. 5 shipped. Next.", "shipped", "Order No. 5 shipped."),
+            ("No. before a word ends", "I said no. Then I left.", "left", "Then I left."),
+            ("St. as a name", "Louis St. Clair spoke. Next.", "spoke", "Louis St. Clair spoke."),
+            ("Ms. as a title", "Ms. Lee agreed. Next.", "agreed", "Ms. Lee agreed."),
             ("a lowercase word after a full stop is the same sentence", "See p. 4 for details. Next.", "details", "See p. 4 for details."),
             ("curly quotes closing", "She said “it held.” Then it fell. Done.", "held", "She said “it held.”"),
             ("curly quotes opening", "She said “it held.” “Then it fell,” he said. Done.", "Then", "“Then it fell,” he said."),
@@ -189,6 +197,39 @@ final class MarginCommentPlanTests: XCTestCase {
         XCTAssertEqual(pages["gap"] ?? nil, 1, "an anchor in the gap moves to the next words, which are on page two")
     }
 
+    func testOverlappingSegmentsGiveTheNarrowestOnesPage() {
+        let text = String(repeating: "A sentence goes here. ", count: 50)
+        let plan = MarginCommentPlan.make(
+            itemId: itemId, document: document(text, segments: [(start: 0, length: 1000, page: 0), (start: 100, length: 10, page: 1)]),
+            margins: [margin("outer", at: 500, transcript: "x"), margin("inner", at: 105, transcript: "x")]
+        )
+        XCTAssertEqual(plan.entries.map(\.pageIndex), [1, 0], "ordered by position: the inner one at 105 first")
+    }
+
+    func testAnAnchorNoSegmentCoversHasNoPage() {
+        let text = String(repeating: "A sentence goes here. ", count: 10)
+        let plan = MarginCommentPlan.make(
+            itemId: itemId, document: document(text, segments: [(start: 0, length: 50, page: 0)]),
+            margins: [margin("covered", at: 10, transcript: "x"), margin("past", at: 120, transcript: "x")]
+        )
+        XCTAssertEqual(plan.entries.map(\.pageIndex), [0, nil])
+    }
+
+    func testAPageThatIsNotInTheDocumentIsNotAHint() {
+        // The test document says it has three pages: 0, 1 and 2.
+        for page in [-1, 3, 99] {
+            let plan = MarginCommentPlan.make(
+                itemId: itemId, document: document("One. Two.", segments: [(start: 0, length: 9, page: page)]),
+                margins: [margin(at: 0, transcript: "x")]
+            )
+            XCTAssertNil(plan.entries.first?.pageIndex, "page \(page)")
+        }
+        let last = MarginCommentPlan.make(
+            itemId: itemId, document: document("One. Two.", segments: [(start: 0, length: 9, page: 2)]), margins: [margin(at: 0, transcript: "x")]
+        )
+        XCTAssertEqual(last.entries.first?.pageIndex, 2)
+    }
+
     func testADocumentWithNoSegmentsHasNoPage() {
         let plan = MarginCommentPlan.make(itemId: itemId, document: document("One. Two."), margins: [margin(at: 0, transcript: "x")])
         XCTAssertNil(plan.entries.first?.pageIndex)
@@ -260,13 +301,15 @@ final class MarginCommentPlanTests: XCTestCase {
         XCTAssertEqual(plan.entries.map(\.marginId), ["mine"])
     }
 
-    /// A friend's Margins are `ImportedCommentaryLayer` rows, never `Interjection`s, so the plan can only be asked
-    /// about the listener's own. This pins that, so a change that mixed them into one type fails here.
-    func testAFriendsMarginsCannotBeInThePlan() {
-        let own: [Interjection] = []
-        let plan = MarginCommentPlan.make(itemId: itemId, document: document("One. Two."), margins: own)
-        XCTAssertTrue(plan.entries.isEmpty)
-        XCTAssertTrue(Interjection.self != ImportedCommentaryLayer.self)
+    /// A friend's Margins are `ImportedCommentaryLayer` rows, never `Interjection`s, so the plan cannot be handed one;
+    /// what it can be handed and must refuse is a Margin on a summary or assistant turn, even with a text anchor.
+    func testAMarginOnATurnIsNotPlannedEvenWithATextAnchor() {
+        var summary = margin("summary", at: 0, transcript: "x")
+        summary.targetType = .summaryTurn
+        var assistant = margin("assistant", at: 0, transcript: "x")
+        assistant.targetType = .assistantTurn
+        let plan = MarginCommentPlan.make(itemId: itemId, document: document("One. Two."), margins: [summary, assistant, margin("item", at: 0, transcript: "x")])
+        XCTAssertEqual(plan.entries.map(\.marginId), ["item"])
     }
 
     func testEntriesComeInDocumentOrderThenCreationOrder() {
