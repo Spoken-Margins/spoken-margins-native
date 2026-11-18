@@ -200,18 +200,7 @@ public struct SourceCatalog: Codable, Equatable, Sendable {
         return entries.first { Self.feedKey($0.feedURL) == key }
     }
 
-    static func feedKey(_ raw: String) -> String? {
-        guard var components = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let host = components.host?.lowercased(), !host.isEmpty else { return nil }
-        components.scheme = "https"
-        components.host = host
-        components.fragment = nil
-        if components.path.count > 1, components.path.hasSuffix("/") {
-            components.path.removeLast()
-        }
-        // Paths are case-sensitive (Simplecast ids are mixed case), so only scheme and host fold.
-        return components.string
-    }
+    static func feedKey(_ raw: String) -> String? { FeedURLKey.make(raw) }
 }
 
 public enum SourceCatalogValidationError: Error, Equatable, Sendable {
