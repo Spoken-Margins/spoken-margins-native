@@ -24,6 +24,12 @@ public enum LibraryRowWording {
         }
     }
 
+    /// Whether an item is a PDF by the Library filter's own rule. One helper, so every menu, sheet and screen that
+    /// only makes sense for a PDF (Export PDF with Margins, the Paper note, #4338, #4340) agrees with the "PDF" filter.
+    public static func isPDF(mediaType: String, sourceReference: String?, sourceReferenceType: String?) -> Bool {
+        contentType(mediaType: mediaType, sourceReference: sourceReference, sourceReferenceType: sourceReferenceType) == .pdf
+    }
+
     /// The kind in words, matching the Library filter's names so a listener can
     /// filter by what a row says. `usesNewReader` marks a PDF read through the
     /// structured-document reader, so it can be told apart from an older import
