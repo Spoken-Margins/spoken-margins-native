@@ -111,7 +111,7 @@ struct BrowserTextImporter: Sendable {
             // Margin anchors. Retain the original edition and give changed text its
             // own identity.
             if let existing = try existingItem(id: itemId), existing.text != text ||
-                (document.map({ (try? (repository as? any StructuredDocumentRepository)?.loadStructuredDocument(itemId: itemId))?.withoutClipGeometry != $0.withoutClipGeometry }) == true
+                (document.map({ (try? (repository as? any StructuredDocumentRepository)?.loadStructuredDocument(itemId: itemId))?.comparedOnReimport != $0.comparedOnReimport }) == true
                  && !(existing.text == text && openItemIds.contains(existing.id)
                       && !isPlaybackActive && existing.media?.sourceType != .generatedTTSPrerendered)) {
                 // C1 M3 step 5: a PDF re-imported with a newer extraction moves the

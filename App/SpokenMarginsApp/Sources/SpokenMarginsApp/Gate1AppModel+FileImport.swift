@@ -189,7 +189,10 @@ extension Gate1AppModel {
             let saved: Result<SavedObsidianBatch, Error>
             do {
                 let store = try self.requireStore()
-                let written = try await Self.offMain { Self.saveObsidianImports(batch.prepared, store: store) }
+                let originalStore = try? self.pdfOriginalStore()
+                let written = try await Self.offMain {
+                    Self.saveObsidianImports(batch.prepared, originals: batch.originals, originalStore: originalStore, store: store)
+                }
                 saved = self.hangTelemetry.labels.scoped("obsidianImportFinish") {
                     Result { try self.completeObsidianMarkdownImport(batch, written: written, store: store) }
                 }
@@ -214,36 +217,40 @@ extension Gate1AppModel {
         var prepared: [PreparedObsidianImport] = []
         var failures: [String] = []
         var rawFailures: [String] = []
+        var originals: [String: Data] = [:]
         for request in requests {
             do {
-                let imported = try await importableText(from: request.url)
+                let (imported, original) = try await importableText(from: request.url)
                 prepared.append(try SourceFileItemBuilder.prepare(
                     imported, fileURL: request.url, itemId: request.itemId, createdAt: Date()
                 ))
+                // Held until the item is saved: the picked file's access ends before then (#4338).
+                originals[request.itemId] = original
             } catch {
                 failures.append("\(request.url.lastPathComponent)\n\(ListenerErrorText.message(for: error))")
                 rawFailures.append("\(request.url.lastPathComponent): \(error)")
             }
         }
-        return ObsidianImportBatch(prepared: prepared, failures: failures, rawFailures: rawFailures)
+        return ObsidianImportBatch(prepared: prepared, failures: failures, rawFailures: rawFailures, originals: originals)
     }
 
-    private nonisolated static func importableText(from url: URL) async throws -> ImportedSourceText {
+    /// The file's text and, for a PDF, its bytes to keep beside the item (#4338).
+    private nonisolated static func importableText(from url: URL) async throws -> (ImportedSourceText, original: Data?) {
         guard url.pathExtension.lowercased() == "pdf" else {
-            return ImportedSourceText(
+            return (ImportedSourceText(
                 text: try String(contentsOf: url, encoding: .utf8),
                 documentStructure: nil
-            )
+            ), nil)
         }
         #if canImport(PDFKit)
         do {
             let extracted = try NativePDFDocumentExtractor.extractStructured(from: url)
-            return ImportedSourceText(
+            return (ImportedSourceText(
                 text: extracted.document.text,
                 documentStructure: extracted.documentStructure,
                 structuredDocument: extracted.document,
                 title: extracted.title
-            )
+            ), extracted.originalData)
         } catch PDFStructuredTextExtractor.ExtractionError.noExtractableText {
             throw SourceFileImportError.pdfHasNoExtractableText
         }
@@ -266,6 +273,7 @@ extension Gate1AppModel {
     private func completeObsidianMarkdownImport(
         _ batch: ObsidianImportBatch, written: SavedObsidianImports, store: SQLiteSessionStore
     ) throws -> SavedObsidianBatch {
+        if let reason = written.originalKeepFailures.first { diagnostics["lastPDFOriginalKeepFailure"] = reason } // #4338
         let saved = SavedObsidianBatch(
             imported: written.imported, failures: batch.failures + written.failures,
             rawFailures: batch.rawFailures + written.rawFailures,
@@ -281,11 +289,14 @@ extension Gate1AppModel {
         var imported: [Item] = []
         var failures: [String] = []
         var rawFailures: [String] = []
+        /// Why a saved PDF's original was not kept; the import itself still counts (#4338).
+        var originalKeepFailures: [String] = []
     }
 
     /// Saves each prepared file's item, map and document off the main actor (#2509): the text can be megabytes.
     private nonisolated static func saveObsidianImports(
-        _ prepared: [PreparedObsidianImport], store: SQLiteSessionStore
+        _ prepared: [PreparedObsidianImport], originals: [String: Data], originalStore: PDFOriginalStore?,
+        store: SQLiteSessionStore
     ) -> SavedObsidianImports {
         var result = SavedObsidianImports()
         for prepared in prepared {
@@ -298,6 +309,15 @@ extension Gate1AppModel {
                     try store.saveStructuredDocument(document, itemId: prepared.item.id)
                 }
                 result.imported.append(prepared.item)
+                // After the item is saved, so a failed save leaves no original behind. A failed write loses only the copy.
+                if let original = originals[prepared.item.id] {
+                    do {
+                        guard let originalStore else { throw CocoaError(.fileNoSuchFile) }
+                        try originalStore.write(original, itemId: prepared.item.id)
+                    } catch {
+                        result.originalKeepFailures.append(SafeErrorText.describe(error))
+                    }
+                }
             } catch {
                 result.failures.append("\(prepared.item.title)\n\(ListenerErrorText.message(for: error))")
                 result.rawFailures.append("\(prepared.item.title): \(error)")

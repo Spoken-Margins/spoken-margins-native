@@ -48,4 +48,6 @@ struct ObsidianImportBatch: Sendable {
     let failures: [String]
     /// The same failures with the raw error text, for diagnostics only (#1965).
     var rawFailures: [String] = []
+    /// The bytes of each imported PDF by item id, held until the item is saved so the original can be kept (#4338).
+    var originals: [String: Data] = [:]
 }

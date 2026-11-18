@@ -28,6 +28,15 @@ final class PDFOriginalStoreTests: XCTestCase {
         XCTAssertEqual(store.sha256(itemId: "item-1")?.count, 64)
     }
 
+    /// The import records this hash in the structured document before the item is saved, and the export screen later
+    /// compares it with the kept file's: the two must be the same function of the same bytes.
+    func testTheHashAnImportRecordsIsTheHashOfTheKeptFile() throws {
+        try store.write(pdf, itemId: "item-1")
+        XCTAssertEqual(PDFOriginalStore.sha256(of: pdf), store.sha256(itemId: "item-1"))
+        XCTAssertEqual(PDFOriginalStore.sha256(of: Data()), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        XCTAssertNotEqual(PDFOriginalStore.sha256(of: pdf), PDFOriginalStore.sha256(of: pdf + Data([0x0a])))
+    }
+
     func testASecondStoreOverTheSameFolderFindsItAfterARelaunch() throws {
         try store.write(pdf, itemId: "item-1")
         let relaunched = PDFOriginalStore(root: root)

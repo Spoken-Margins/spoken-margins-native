@@ -1,6 +1,7 @@
 import Foundation
 import PDFKit
 import SessionKit
+import SessionKitPersistence
 import UIKit
 import Vision
 
@@ -15,6 +16,9 @@ struct NativePDFStructuredImport: Sendable {
     var document: StructuredDocument
     var title: String?
     var documentStructure: PDFDocumentStructure
+    /// The PDF's bytes when the import read them whole, so the import path can keep the original (#4338). The document's
+    /// `extraction.sourceSHA256` is the hash of these bytes.
+    var originalData: Data?
 }
 
 /// Keeps PDFKit's exact embedded text and authored outline as the canonical
@@ -61,22 +65,23 @@ enum NativePDFDocumentExtractor {
         return try baselineExtraction(from: document)
     }
 
+    /// Reads the file whole (the import path keeps it, #4338: a picked file's access ends before the item is saved, so the
+    /// bytes are held, not the URL) and extracts from those bytes.
     static func extractStructured(from url: URL) throws -> NativePDFStructuredImport {
-        guard let document = PDFDocument(url: url) else {
-            throw PDFStructuredTextExtractor.ExtractionError.unreadableDocument
-        }
-        return try structuredExtraction(from: document)
+        try extractStructured(from: try Data(contentsOf: url))
     }
 
     static func extractStructured(from data: Data) throws -> NativePDFStructuredImport {
         guard let document = PDFDocument(data: data) else {
             throw PDFStructuredTextExtractor.ExtractionError.unreadableDocument
         }
-        return try structuredExtraction(from: document)
+        return try structuredExtraction(from: document, originalData: data)
     }
 
-    private static func structuredExtraction(from document: PDFDocument) throws -> NativePDFStructuredImport {
-        let structured = try PDFStructuredTextExtractor.structuredDocument(from: document)
+    private static func structuredExtraction(from document: PDFDocument, originalData: Data) throws -> NativePDFStructuredImport {
+        let structured = try PDFStructuredTextExtractor.structuredDocument(
+            from: document, sourceSHA256: PDFOriginalStore.sha256(of: originalData)
+        )
         return NativePDFStructuredImport(
             document: structured,
             title: PDFStructuredTextExtractor.itemTitle(for: document, structured: structured),
@@ -86,7 +91,8 @@ enum NativePDFDocumentExtractor {
                 pageCount: document.pageCount,
                 analyzedPageCount: 0,
                 bibliography: PDFStructuredTextExtractor.bibliography(for: document)
-            )
+            ),
+            originalData: originalData
         )
     }
 

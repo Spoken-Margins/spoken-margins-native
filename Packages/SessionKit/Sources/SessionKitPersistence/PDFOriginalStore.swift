@@ -64,10 +64,16 @@ public struct PDFOriginalStore: Sendable {
         return FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory) && !isDirectory.boolValue ? file : nil
     }
 
+    /// The SHA-256 of PDF bytes as lower-case hex: what an import records as `Extraction.sourceSHA256` before it saves the
+    /// item, and what `sha256(itemId:)` reads back from the kept file, so the two can be compared.
+    public static func sha256(of data: Data) -> String {
+        SourceCatalogVerifier.sha256(data)
+    }
+
     /// The SHA-256 of the kept file, as lower-case hex; nil when there is none or it can't be read.
     public func sha256(itemId: String) -> String? {
         guard let file = url(itemId: itemId), let data = try? Data(contentsOf: file, options: .mappedIfSafe) else { return nil }
-        return SourceCatalogVerifier.sha256(data)
+        return Self.sha256(of: data)
     }
 
     /// Removes the item's folder and the PDF in it. Nothing to remove is not an error.

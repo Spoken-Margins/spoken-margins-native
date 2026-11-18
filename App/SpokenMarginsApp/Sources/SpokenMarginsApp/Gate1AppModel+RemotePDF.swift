@@ -46,6 +46,7 @@ extension Gate1AppModel {
             documentStructure: extracted.documentStructure
         )
         let itemId = try await importBrowserTextInBackgroundOffMain(handoff, structuredDocument: extracted.document)
+        await keepOriginalPDF(data, itemId: itemId) // #4338: a PDF imported again replaces its item's copy (#556)
         diagnostics["lastRemotePDFImport"] = url.absoluteString
         markOnboardingSteps(onboardingSteps)
         return itemId
@@ -74,6 +75,7 @@ extension Gate1AppModel {
             documentStructure: extracted.documentStructure
         )
         let itemId = try await importBrowserTextInBackgroundOffMain(handoff, structuredDocument: extracted.document)
+        if let original = extracted.originalData { await keepOriginalPDF(original, itemId: itemId) } // #4338
         diagnostics["lastSharedPDFImport"] = url.lastPathComponent
         markOnboardingSteps([.addedOwnSource, .addedFromSafari])
         return itemId
