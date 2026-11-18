@@ -121,7 +121,8 @@ final class WordDocumentImportTests: XCTestCase {
     }
 
     func testAPlaceholderTitleFallsBackToTheFileName() throws {
-        XCTAssertEqual(try item("placeholder-title.docx").item.title, "placeholder-title")
+        let prepared = try item("placeholder-title.docx")
+        XCTAssertEqual(prepared.item.title, "placeholder-title")
     }
 
     // MARK: Refusals: a plain sentence, and nothing to add
@@ -165,7 +166,8 @@ final class WordDocumentImportTests: XCTestCase {
         let url = try TestInputs.url(.contracts, "fixtures/word/plain-paragraphs.docx")
         let read = try WordDocumentImport.read(url: url)
         XCTAssertEqual(read.original, try Data(contentsOf: url))
-        XCTAssertEqual(read.imported.paragraphs, try self.read("plain-paragraphs.docx").paragraphs)
+        let fromData = try self.read("plain-paragraphs.docx")
+        XCTAssertEqual(read.imported.paragraphs, fromData.paragraphs)
         XCTAssertTrue(WordDocumentImport.handles(url))
         XCTAssertTrue(WordDocumentImport.handles(URL(fileURLWithPath: "/a/OLD.DOC")))
         XCTAssertFalse(WordDocumentImport.handles(URL(fileURLWithPath: "/a/notes.md")))
