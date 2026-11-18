@@ -72,12 +72,12 @@ final class OPMLListsTests: XCTestCase {
     func testAnIncludeRowNeverFallsThroughToAFolderOrAFeed() throws {
         // A web include is an include; a relative or feed: one is unusable. Neither opens a folder for the rows after it.
         let opml = Self.wrap("""
-        <outline type="include" text="Web" url="https://example.org/a.opml"/>
+        <outline type="include" text="Web picks" url="https://example.org/a.opml"/>
         <outline type="include" text="Relative" url="lists/other.opml"/>
         <outline type="rss" text="After" xmlUrl="https://a.example/feed"/>
         """)
         let document = try OPMLParser.parse(opml)
-        XCTAssertEqual(document.includes.map(\.title), ["Web"])
+        XCTAssertEqual(document.includes.map(\.title), ["Web picks"])
         XCTAssertEqual(document.unusableOutlineCount, 1)
         XCTAssertEqual(document.feeds.map(\.folders), [[]])
     }
