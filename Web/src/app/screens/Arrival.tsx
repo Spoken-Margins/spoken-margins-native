@@ -7,7 +7,7 @@ import { PlayIcon } from '../icons.tsx';
 import { arrivalResumeAt, playHint, playableArticleMargins, ARRIVAL_WORDS, GET_APP_LINK, arrivalFacts, possessive, type ArrivalFacts } from '../logic/arrival.ts';
 import { placeImport, unnamedAuthorFor } from '../logic/import.ts';
 import { playability } from '../logic/playability.ts';
-import { messageForFailure, messageForOpened, reportPlayCheck, type PlayCheckMessage } from '../play-check.ts';
+import { messageForFailure, messageForOpenedSettled, reportPlayCheck, type PlayCheckMessage } from '../play-check.ts';
 import { placeMarginsOnAudio } from '../place-margins.ts';
 import { plainError } from '../logic/messages.ts';
 import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkRef } from '../logic/share-link.ts';
@@ -98,18 +98,21 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
       return;
     }
     void (async () => {
-      let message: PlayCheckMessage;
+      let message: PlayCheckMessage | undefined;
+      let opened: PacketRead | undefined;
       try {
         const { bytes, expires } = await openSharedPacketWithExpiry(serverFor(link.link));
         const read = await services.packets.readPacket(bytes, 'shared.spokenmargins');
         setState({ status: 'ready', read, facts: arrivalFacts(read.sender, [...read.margins, ...playableArticleMargins(read)]), ...(expires === undefined ? {} : { expires }) });
-        message = messageForOpened(read);
+        opened = read;
+        message = undefined;
       } catch (error) {
         setState({ status: 'failed', message: failureWords(error) });
         message = messageForFailure(error);
       }
-      // After the try, so nothing about the sender's check can turn a link that opened into the failed card.
-      reportPlayCheck(message);
+      // After the try, so nothing about the sender's check can turn a link that opened into the failed card. Inside the
+      // app's check it may read the post's voice and the audio's start through the app; anywhere else it reads nothing.
+      reportPlayCheck(message ?? (opened ? await messageForOpenedSettled(opened) : { type: 'failed', reason: 'server' }));
     })();
   }, [data.ready, link]);
 
