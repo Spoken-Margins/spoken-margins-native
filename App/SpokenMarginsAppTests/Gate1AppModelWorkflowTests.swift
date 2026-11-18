@@ -5149,8 +5149,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try store.saveImportedCommentaryLayer(layer)
         try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(id: "same-note-id", layerId: layer.id, packageScopedId: "shared-note", createdAt: Date(), anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "Shared approved words"))
         model.openHome()
-        before = model.snapshot
         model.refreshMarginRows()
+        // The baseline is taken once the rows are loaded: loading them lets Skim see the playing item's Margin ahead, so
+        // `canSkimForward` rightly turns on then (#4447). What this test pins is that searching, opening and starring
+        // leave the session untouched.
+        before = model.snapshot
         model.marginCollectionQuery.text = "CAFE with an amber"
         let found = try XCTUnwrap(model.visiblePrivateMarginRows.first)
         XCTAssertEqual(model.visiblePrivateMarginRows.count, 1)
