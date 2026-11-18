@@ -56,6 +56,27 @@ final class FollowListEditingTests: XCTestCase {
         XCTAssertEqual(FollowListEditing.renaming(id: "gone", to: "Anything", in: [news, tech]), .missing)
     }
 
+    func testAShowsMemberIsFoundByTheFilterThatReadsTheSameFeedLink() {
+        let spellings = ["https://a.example/feed", "http://A.example/feed/", "https://a.example/feed#top", " https://a.example/feed "]
+        for link in spellings {
+            let subscription = FeedSubscription(
+                id: "a", source: SourceIdentity(id: "s", kind: .podcastFeed, canonicalURL: link, host: "a.example", title: "A"),
+                state: .active, createdAt: now
+            )
+            let member = FollowListEditing.member(for: subscription)
+            XCTAssertEqual(member.feedKey, "https://a.example/feed", link)
+            let list = FollowList(id: "l", name: "L", members: [member])
+            let shows = FollowingShowRows.build(subscriptions: [subscription], entries: [])
+            XCTAssertEqual(
+                FollowListFilter.apply(rows: shows.rows, quietRows: [], list: list, subscriptions: [subscription]).rows.map(\.id), ["a"], link
+            )
+        }
+        let hostless = FeedSubscription(
+            id: "h", source: SourceIdentity(id: "h", kind: .podcastFeed, canonicalURL: "not a link", host: "", title: nil), state: .active, createdAt: now
+        )
+        XCTAssertEqual(FollowListEditing.member(for: hostless).feedKey, "not a link")
+    }
+
     func testTheShowScreensListsRowValue() {
         XCTAssertEqual(FollowListWords.rowValue([]), "None")
         XCTAssertEqual(FollowListWords.rowValue([FollowList(id: "2", name: "news"), FollowList(id: "1", name: "Commute")]), "Commute, news", "chip order, not stored order")

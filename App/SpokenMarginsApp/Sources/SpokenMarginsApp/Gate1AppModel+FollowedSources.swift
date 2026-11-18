@@ -542,8 +542,11 @@ extension Gate1AppModel {
 
     func unfollowSource(id: String) {
         guard let coordinator = followedSourceCoordinator else { return }
+        // The show leaves its follow lists with it (#4046). The member is read before the subscription goes.
+        let member = feedSubscriptions.first { $0.id == id }.map { FollowListEditing.member(for: $0) }
         Task { [weak self] in
-            try? await coordinator.unfollow(subscriptionId: id)
+            let unfollowed: Void? = try? await coordinator.unfollow(subscriptionId: id)
+            if unfollowed != nil, let member { await self?.removeFromFollowLists(member) }
             await self?.publishFeedSubscriptionsAfterChange()
             await self?.performFollowedSourceRefresh(force: false)
         }

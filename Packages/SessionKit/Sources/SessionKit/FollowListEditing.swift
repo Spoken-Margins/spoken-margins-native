@@ -15,6 +15,13 @@ public enum FollowListEditing {
         case invalid(FollowListName.Problem)
     }
 
+    /// The list member for a followed show: its feed link as `FeedURLKey` writes it, which is what `FollowListFilter`
+    /// matches rows by. A link with no host (not a feed at all) keeps its text, so the tick is not lost.
+    public static func member(for subscription: FeedSubscription, podcastGUID: String? = nil) -> ListMember {
+        let link = subscription.source.canonicalURL
+        return ListMember(feedKey: FeedURLKey.make(link) ?? link, podcastGUID: podcastGUID)
+    }
+
     /// A new list, holding `member` when the listener made it from a show's sheet ("the new list is ticked for this
     /// show").
     public static func creating(
