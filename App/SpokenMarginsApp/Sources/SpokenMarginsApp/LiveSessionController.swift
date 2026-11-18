@@ -33,6 +33,9 @@ final class LiveSessionController: ObservableObject {
     private let spokenCapture: LiveSessionSpokenCapture
     private var captureObservers: Set<AnyCancellable> = []
     private var diskObserver: NSObjectProtocol?
+    /// Photo Margins whose picture has been handed to the page-number reader by this screen, so each is read once here
+    /// even while the read has not finished or could not be done (#2708).
+    private var pageReadsStarted: Set<String> = []
     /// Finish tapped on the Lock Screen card while a spoken Margin records (#3499); lives only while one records.
 
     init(sessionId: String? = nil, files: LiveSessionFileWorker = .shared, spokenCapture: LiveSessionSpokenCapture = .shared) {
@@ -67,6 +70,7 @@ final class LiveSessionController: ObservableObject {
             // A session started or discarded while the file was read is newer than the file.
             if saveGeneration == generation { session = stored }
             didLoad = true
+            readPagesFromPhotos()
             // A card left on "Recording" by an earlier screen or run goes back to Mark (#3499).
             if let id = session?.id { spokenCapture.syncCard(for: id) }
             WatchMarginReceiver.shared.fileWaitingMarks()
@@ -298,6 +302,30 @@ final class LiveSessionController: ObservableObject {
         Task { [files] in await files.discardStaged(staged) }
     }
 
+    /// Reads each photo Margin's picture once for a page number, off the main actor (#2708). What it finds is only
+    /// recorded as an offer, which the Margin screen shows with Keep and No; the words on the page are not kept.
+    private func readPagesFromPhotos() {
+        guard let current = session else { return }
+        for margin in current.margins {
+            guard let photo = margin.validPhoto, !pageReadsStarted.contains(margin.id),
+                  current.needsPageRead(forMarginId: margin.id) else { continue }
+            pageReadsStarted.insert(margin.id)
+            let sessionId = current.id
+            let marginId = margin.id
+            Task { [weak self] in
+                let outcome = await LiveSessionPagePhotoReader.read(photo)
+                self?.finishPageRead(outcome, sessionId: sessionId, marginId: marginId)
+            }
+        }
+    }
+
+    private func finishPageRead(_ outcome: LiveSessionPagePhotoReader.Outcome, sessionId: String, marginId: String) {
+        // The session may have been closed, discarded or replaced, or the Margin deleted, while the picture was read.
+        guard case let .read(page) = outcome, session?.id == sessionId,
+              session?.recordPageRead(page, forMarginId: marginId) == true else { return }
+        save()
+    }
+
     /// Keeps the page, percent or chapter heard in a Margin's words as that Margin's checkpoint (#2707).
     func keepHeardPlace(id: String) {
         guard session?.keepHeardPlace(forMarginId: id) == true else { return }
@@ -487,6 +515,7 @@ final class LiveSessionController: ObservableObject {
     private func save() {
         guard let session else { return }
         let generation = nextGeneration()
+        defer { readPagesFromPhotos() }
         lastWrite = Task { [weak self, files] in
             do {
                 try await files.save(session, generation: generation)
