@@ -248,7 +248,7 @@ struct ExperienceLibraryScreen: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AppSearchField("Search title, source, or author", text: $model.libraryQuery.query, identifier: "library.search.field")
+            AppSearchField("Search title, source, author, or friend", text: $model.libraryQuery.query, identifier: "library.search.field")
 
             HStack(spacing: 8) {
                 libraryFiltersMenu
@@ -274,13 +274,22 @@ struct ExperienceLibraryScreen: View {
                 }
             }
             if model.libraryHidesCompleted {
+                let friendNote = model.libraryCompletedHiddenNote
                 ViewThatFits(in: .horizontal) {
                     HStack {
                         Text("Completed hidden")
+                        if let friendNote {
+                            // The dot only separates the two texts on the screen; VoiceOver reads them as two items.
+                            Text("·").accessibilityHidden(true)
+                            Text(friendNote).accessibilityIdentifier("library.completed.friendNote")
+                        }
                         completedVisibilityButton
                     }
                     VStack(alignment: .leading) {
                         Text("Completed hidden")
+                        if let friendNote {
+                            Text(friendNote).accessibilityIdentifier("library.completed.friendNote")
+                        }
                         completedVisibilityButton
                     }
                 }
@@ -944,7 +953,7 @@ struct ExperienceLibraryCompactRow: View {
         .font(.caption.weight(.semibold))
         .foregroundStyle(AppColors.evergreen)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(row.sharedMargins.accessibilityLine ?? line)
+        .accessibilityLabel(row.sharedMargins.senderAccessibilityLine ?? line)
         .accessibilityIdentifier("library.sharedMargins.\(row.id)")
     }
 
