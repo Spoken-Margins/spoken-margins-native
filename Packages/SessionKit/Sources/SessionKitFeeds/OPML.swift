@@ -230,13 +230,13 @@ public struct OPMLImportPreview: Equatable, Sendable {
 
 public enum OPMLImportPlanner {
     public static func preview(_ document: OPMLDocument, existing subscriptions: [FeedSubscription]) -> OPMLImportPreview {
-        var followedKeys = Set(subscriptions.compactMap { feedKey($0.source.canonicalURL) })
+        var followedKeys = Set(subscriptions.compactMap { FeedURLKey.make($0.source.canonicalURL) })
         var toFollow: [SourceCandidate] = []
         var already: [OPMLFeed] = []
         var duplicates: [OPMLFeed] = []
         var seenInFile = Set<String>()
         for feed in document.feeds {
-            guard let key = feedKey(feed.feedURL) else { continue }
+            guard let key = FeedURLKey.make(feed.feedURL) else { continue }
             if followedKeys.contains(key) {
                 if seenInFile.insert(key).inserted { already.append(feed) } else { duplicates.append(feed) }
                 continue
@@ -267,17 +267,6 @@ public enum OPMLImportPlanner {
             duplicatesInFile: duplicates,
             unusableOutlineCount: document.unusableOutlineCount
         )
-    }
-
-    /// Scheme-free key: an http feed in the file and its https subscription are the same feed.
-    static func feedKey(_ raw: String) -> String? {
-        guard var components = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let host = components.host?.lowercased(), !host.isEmpty else { return nil }
-        components.scheme = "https"
-        components.host = host
-        components.fragment = nil
-        if components.path.count > 1, components.path.hasSuffix("/") { components.path.removeLast() }
-        return components.string
     }
 
     /// The follow path requires https (ATS). An http feed is offered as https; if the host
