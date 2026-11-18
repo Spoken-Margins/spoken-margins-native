@@ -6,6 +6,8 @@ Production storage should preserve sessions, anchors, audio references, and AI w
 
 The JSON Schemas define the portable contract. SQLite tables should be shaped to support those contracts, not replace them.
 
+When a change to how we read a source (a PDF, an article, a podcast) has to reach items a listener already saved, see [ingest-fixes-and-saved-items.md](ingest-fixes-and-saved-items.md).
+
 ## Initial Tables
 
 ### items
