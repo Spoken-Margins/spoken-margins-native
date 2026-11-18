@@ -21,11 +21,11 @@ public enum ItemOwnedFiles {
     public static let audiobooksRoot = "Audiobooks"
     /// `SpokenMargins/EpisodeMaps/` under Application Support: one folder per item.
     public static let episodeMapsRoot = "EpisodeMaps"
-    /// `ItemOriginals/` under Application Support: the PDF the listener added, one folder per item (`PDFOriginalStore`, #4338).
+    /// `ItemOriginals/` under Application Support: the PDF or Word file the listener added, one folder per item (`ItemOriginalStore`, #4338, #4594).
     public static let itemOriginalsRoot = "ItemOriginals"
 
-    /// The folder name of an item's kept original PDF under `ItemOriginals/`: a digest of the id, so no two ids share a
-    /// folder and no id can name a path. Nil for an empty id. `PDFOriginalStore` writes to this folder.
+    /// The folder name of an item's kept original under `ItemOriginals/`: a digest of the id, so no two ids share a
+    /// folder and no id can name a path. Nil for an empty id. `ItemOriginalStore` writes to this folder.
     public static func itemOriginalsFolderName(itemId: String) -> String? {
         itemId.isEmpty ? nil : ListeningEdition.digest(itemId)
     }
