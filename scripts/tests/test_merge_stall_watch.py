@@ -108,13 +108,12 @@ class StallTests(unittest.TestCase):
             blocking = comment(f'{heading}\nBlocking: the packet breaks.')
             self.assertEqual(watch.stall(NOW, ago(300), [armed([blocking])]), [], heading)
 
-    def test_a_t3_fail_holds_until_a_t3_passes_however_many_other_passes_follow(self):
-        # The runner's t3_gate: a PR that asked for T3 merges only on a T3 PASS, so the author has to act.
+    def test_a_t3_fail_does_not_excuse_a_stall(self):
+        # #4572: a T3 holds no merge, so an armed PR whose only FAIL is a T3's is stalled, not waiting on its author.
         t3_fail = comment(lane_report('FAIL', 'T3'), minutes=500)
         t2_pass = comment(lane_report('PASS', 'T2'), minutes=400)
-        t3_pass = comment(lane_report('PASS', 'T3'), minutes=300)
-        self.assertEqual(watch.stall(NOW, ago(300), [armed([t3_fail, t2_pass])]), [])
-        self.assertEqual(len(watch.stall(NOW, ago(300), [armed([t3_fail, t2_pass, t3_pass])])), 1)
+        self.assertEqual(len(watch.stall(NOW, ago(300), [armed([t3_fail, t2_pass])])), 1)
+        self.assertEqual(len(watch.stall(NOW, ago(300), [armed([t3_fail])])), 1)
 
     def test_an_inconclusive_t3_is_the_pipelines_to_retry_so_it_can_stall(self):
         inconclusive = comment(lane_report('INCONCLUSIVE', 'T3'))
