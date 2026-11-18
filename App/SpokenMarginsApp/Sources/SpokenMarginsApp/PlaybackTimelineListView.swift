@@ -142,6 +142,9 @@ private struct TimelineRailRow: View, Equatable {
                         .foregroundStyle(AppColors.secondaryText)
                         .multilineTextAlignment(.leading)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 4)
+                    if case .sourceElement(let element) = entry.action {
+                        TimelineSourceElementPreview(element: element)
+                    }
                     if let hidden {
                         Text(hidden.text)
                             .font(.footnote.weight(.semibold))
@@ -218,6 +221,24 @@ extension TimelineProvenance {
         case .userResponse: .userResponse
         case .sharedMargin: .sharedMargin
         case .assistantResponse: .assistantResponse
+        }
+    }
+}
+
+/// What a picture, embed or table row shows under its words: the page's own picture (a GIF plays), a video's still,
+/// or the first rows of the table (owner, 2026-11-14). A picture loads when its row is drawn (owner, 2026-11-17), so
+/// the import itself still fetches nothing but the page (#2032). A link row has no preview; tapping it opens the link.
+private struct TimelineSourceElementPreview: View {
+    let element: SourceElement
+
+    var body: some View {
+        if let url = element.previewImageURL {
+            SourcePictureView(url: url, accessibilityText: element.altText ?? element.label, maxPixelSize: 900)
+                .frame(maxHeight: 260)
+                .padding(.top, 4)
+        } else if element.kind == .table, let rows = element.rows {
+            SourceTableView(rows: rows, bodyRowLimit: 4)
+                .padding(.top, 4)
         }
     }
 }

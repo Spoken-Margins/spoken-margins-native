@@ -94,16 +94,15 @@ final class SubstackSourceElementsTests: XCTestCase {
         XCTAssertEqual(plain.elements, [])
     }
 
-    func testOnlySubstackPagesKeepElementsInPhaseOne() throws {
-        let otherSite = try parse("# Post\n\nSee [a link](https://example.com/a).\n\n![alt](https://cdn.example.com/p.jpg)\n\n\(prose("Body"))",
-                                  sourceURL: "https://news.example.com/story")
-        XCTAssertEqual(otherSite.elements, [])
-        let customDomain = try parse(page, sourceURL: "https://writer.example.org/p/rates")
-        XCTAssertFalse(customDomain.elements.isEmpty, "a publication on its own domain still serves Substack's pictures")
-        let apex = try parse("# Post\n\nSee [a link](https://example.com/a).\n\n\(prose("Body"))", sourceURL: "https://substack.com/@writer/note")
-        XCTAssertEqual(apex.elements.map(\.url), ["https://example.com/a"])
-        XCTAssertEqual(try parse("# Post\n\nSee [a link](https://example.com/a).\n\n\(prose("Body"))",
-                                 sourceURL: "https://notsubstack.com/p/x").elements, [])
+    /// The owner asked for every web article, not only Substack (2026-11-14). A file from disk has no page address.
+    func testEveryWebPageKeepsElementsAndAFileKeepsNone() throws {
+        let markdown = "# Post\n\nSee [a link](https://example.com/a).\n\n![alt](https://cdn.example.com/p.jpg)\n\n\(prose("Body"))"
+        let otherSite = try parse(markdown, sourceURL: "https://news.example.com/story")
+        XCTAssertEqual(otherSite.elements.map(\.kind), [.link, .picture])
+        XCTAssertEqual(try parse(markdown, sourceURL: "http://plain.example.com/x").elements.count, 2)
+        XCTAssertEqual(try ObsidianMarkdownParser.parse(fileName: "Post", contents: markdown).elements, [])
+        XCTAssertEqual(try parse(markdown, sourceURL: "file:///Users/x/Post.md").elements, [])
+        XCTAssertEqual(try parse(markdown, sourceURL: "not a url").elements, [])
     }
 
     func testNeighbouringInputs() throws {
@@ -200,7 +199,7 @@ final class SubstackSourceElementsTests: XCTestCase {
         XCTAssertEqual(withoutRecord.timelineSource.elements, [], "an item imported before this keeps its Timeline as it was")
     }
 
-    func testAnotherSitesPageKeepsNothing() throws {
+    func testAnotherSitesPageKeepsItsElements() throws {
         let repository = InMemorySessionRepository()
         let importer = BrowserTextImporter(repository: repository, openItemIds: [], isPlaybackActive: false, publisherPlayback: [:])
         let other = BrowserTextHandoff(
@@ -208,10 +207,8 @@ final class SubstackSourceElementsTests: XCTestCase {
             text: "# Story\n\n\(prose("Lead"))\n\nSee [a link](https://example.com/a).\n\n\(prose("Tail"))",
             contentFormat: .markdown)
         _ = try importer.outcomeAndPersist(other, structuredDocument: nil, upgrade: .skip)
-        XCTAssertTrue(repository.sourceElements.isEmpty)
+        XCTAssertEqual(repository.sourceElements.values.first?.elements.map(\.url), ["https://example.com/a"])
     }
-
-    // MARK: Review findings
 
     func testLinksWhosePathOnlyStartsLikePageChromeAreKept() throws {
         let urls = ["https://example.com/accountability-report", "https://example.com/shareholder-letter",
@@ -279,12 +276,13 @@ final class SubstackSourceElementsTests: XCTestCase {
         XCTAssertEqual(record.elements.map(\.id), ["e00000"])
     }
 
-    func testNonSubstackMarkdownCapturesNothingAndTextIsTheSame() throws {
-        let markdown = "# Notes\n\n[a link](https://example.com/a)\n\n![pic](https://cdn.example.com/p.jpg)\n\n\(prose("Body"))"
+    func testCapturingElementsLeavesTheTextAsItWas() throws {
+        let markdown = "# Notes\n\n[a link](https://example.com/a)\n\n![pic](https://cdn.example.com/p.jpg)\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n\(prose("Body"))"
         let withSource = try parse(markdown, sourceURL: "https://news.example.com/x")
         let without = try ObsidianMarkdownParser.parse(fileName: "Rates", contents: markdown, fallbackTitle: "Rates")
-        XCTAssertEqual(withSource.elements, [])
+        XCTAssertEqual(withSource.elements.count, 3)
         XCTAssertEqual(withSource.text, without.text)
+        XCTAssertEqual(withSource.headings, without.headings)
     }
 
     func testALinkOnlyOrLinkedPictureLineAfterAPictureIsNotItsCaption() throws {
@@ -333,5 +331,66 @@ final class SubstackSourceElementsTests: XCTestCase {
         let parsed = try parse("# Post\n\n\(prose("Lead"))\n\n1. the post about this post [post](https://example.com/p)\n\n\(prose("Tail"))")
         let link = try XCTUnwrap(parsed.elements.first)
         XCTAssertEqual(link.start, try start(of: "this post post", in: parsed.text) + "this post ".count)
+    }
+
+    // MARK: Tables (2026-11-14)
+
+    private func tables(_ markdown: String) throws -> [SourceElement] {
+        try parse("# Post\n\n\(prose("Lead"))\n\n\(markdown)\n\n\(prose("Tail"))").elements.filter { $0.kind == .table }
+    }
+
+    func testATableIsKeptWithItsCellsAndAnchorsOnItsFirstLine() throws {
+        let parsed = try parse("# Post\n\n\(prose("Lead"))\n\n| Model | **Cost** | Speed |\n| :--- | :---: | ---: |\n| Small | $1 | fast |\n| Large | $9 | [slow](https://example.com/s) |\n\n\(prose("Tail"))")
+        let table = try XCTUnwrap(parsed.elements.first { $0.kind == .table })
+        XCTAssertEqual(table.label, "Model · Cost · Speed")
+        XCTAssertEqual(table.rows, [["Model", "Cost", "Speed"], ["Small", "$1", "fast"], ["Large", "$9", "slow"]])
+        XCTAssertEqual(table.url, "")
+        XCTAssertEqual(table.start, try start(of: "| Model", in: parsed.text))
+        XCTAssertTrue(parsed.elements.contains { $0.kind == .link && $0.url == "https://example.com/s" }, "a link in a cell is still a link")
+    }
+
+    /// Neighbouring inputs: escaped pipes, short rows, no closing pipe, an empty header, a pipe line with no divider,
+    /// two tables in a row, a table that ends the text, and a table straight after a paragraph.
+    func testTableNeighbouringInputs() throws {
+        XCTAssertEqual(try tables("| A \\| B | C |\n| --- | --- |\n| 1 | 2 |").first?.rows, [["A | B", "C"], ["1", "2"]])
+        XCTAssertEqual(try tables("| A | B | C |\n| --- | --- | --- |\n| 1 |").first?.rows, [["A", "B", "C"], ["1", "", ""]])
+        XCTAssertEqual(try tables("| A | B\n| --- | ---\n| 1 | 2").first?.rows, [["A", "B"], ["1", "2"]])
+        XCTAssertEqual(try tables("|  |  |\n| --- | --- |\n| 1 | 2 |"), [], "a header with no words")
+        XCTAssertEqual(try tables("| not | a table |\n| just pipes |"), [])
+        XCTAssertEqual(try tables("| A |\n| --- |\n| 1 |\n\n| B |\n| --- |\n| 2 |").map(\.label), ["A", "B"])
+        XCTAssertEqual(try tables("Intro line.\n| A |\n| --- |\n| 1 |").map(\.rows), [[["A"], ["1"]]])
+        let atEnd = try parse("# Post\n\n\(prose("Lead"))\n\n| A | B |\n| --- | --- |\n| 1 | 2 |").elements
+        XCTAssertEqual(atEnd.filter { $0.kind == .table }.count, 1)
+        XCTAssertEqual(try tables("| Café | naïve |\n| --- | --- |\n| 1 | 2 |").first?.label, "Café · naïve")
+    }
+
+    /// GFM tables the first parser missed or misread (audit on a9dc647): no outer pipes, dividers of one or two dashes,
+    /// a pipe line straight above the header, a lone pipe line over a thematic break, and a body row without a
+    /// leading pipe. A `|` inside inline code still splits its cell, as GFM says; only `\|` keeps it.
+    func testGFMTableShapesTheFirstParserMissed() throws {
+        XCTAssertEqual(try tables("A | B\n--- | ---\n1 | 2").first?.rows, [["A", "B"], ["1", "2"]], "no outer pipes")
+        XCTAssertEqual(try tables("| A | B |\n|-|-|\n| 1 | 2 |").first?.rows, [["A", "B"], ["1", "2"]], "one-dash divider")
+        XCTAssertEqual(try tables("| A |\n| :-: |\n| 1 |").first?.rows, [["A"], ["1"]], "centred one-dash divider")
+        XCTAssertEqual(try tables("| A | B |\n| -- | :- |\n| 1 | 2 |").first?.rows, [["A", "B"], ["1", "2"]], "two-dash divider")
+        XCTAssertEqual(try tables("| just a line\n\n---\n\n\(prose("More"))"), [], "a pipe line over a break is not a table")
+        XCTAssertEqual(try tables("| just a line\n---"), [], "a pipe line over a Setext underline is not a table")
+        XCTAssertEqual(try tables("| note |\n| A | B |\n| --- | --- |\n| 1 | 2 |").map(\.rows), [[["A", "B"], ["1", "2"]]],
+                       "a pipe line above the header does not hide the table")
+        XCTAssertEqual(try tables("| A | B |\n| --- | --- |\n1 | 2\n| 3 | 4 |").first?.rows, [["A", "B"], ["1", "2"], ["3", "4"]],
+                       "a body row without a leading pipe stays in the table")
+        XCTAssertEqual(try tables("| A | B |\n| --- |\n| 1 | 2 |"), [], "a divider narrower than its header is not a table")
+        XCTAssertEqual(try tables("| A | B |\n| --- | --- |\n| 1 | 2 |\n| --- | --- |").first?.rows,
+                       [["A", "B"], ["1", "2"], ["---", "---"]], "only the second line is the divider")
+        XCTAssertEqual(try tables("Price -- not a | table\n\n\(prose("More"))"), [])
+    }
+
+    func testARecordWithATableRoundTripsAndAnOlderReaderSkipsIt() throws {
+        let table = SourceElement(id: "e00000", kind: .table, start: 3, label: "A · B", url: "", rows: [["A", "B"], ["1", "2"]])
+        let picture = SourceElement(id: "e00001", kind: .picture, start: 9, label: "P", url: "https://x.example/p.jpg")
+        let record = SourceElementsRecord(text: "some text here", elements: [table, picture])
+        let data = try JSONEncoder().encode(record)
+        XCTAssertEqual(try JSONDecoder().decode(SourceElementsRecord.self, from: data), record)
+        let json = try XCTUnwrap(String(data: data, encoding: .utf8))
+        XCTAssertFalse(json.contains("\"rows\":null"), "a picture writes no rows key, as before tables")
     }
 }
