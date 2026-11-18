@@ -245,15 +245,19 @@ private struct NowSceneList: View, Equatable {
 }
 
 #if DEBUG
-/// How many row bodies have run, so an app-hosted test can show a long scene draws only the rows near the screen and a
-/// tick that keeps the same sentence draws none (#4453).
+/// How many row bodies have run, and which sentences have had one, so an app-hosted test can show a long scene
+/// realizes only the rows near the screen (distinct sentences: a redraw of the same row is not a new row) and a tick
+/// that keeps the same sentence draws none (body count) (#4453).
 @MainActor
 enum NowSceneRowCounter {
     private(set) static var bodies = 0
-    static func count() -> Int {
+    private(set) static var sentences: Set<Int> = []
+    static func count(sentence: Int) -> Int {
         bodies += 1
+        sentences.insert(sentence)
         return bodies
     }
+    static func reset() { sentences = [] }
 }
 #endif
 
@@ -266,7 +270,7 @@ private struct NowSceneRow: View {
 
     var body: some View {
         #if DEBUG
-        let _ = NowSceneRowCounter.count()
+        let _ = NowSceneRowCounter.count(sentence: sentence.id)
         #endif
         HStack(alignment: .top, spacing: 10) {
             VStack(spacing: 5) {
