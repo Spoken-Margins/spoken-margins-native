@@ -50,7 +50,10 @@ public enum MarginExport {
     /// The file name stem for a Margin's recording when there is no Markdown note to take it from:
     /// `Margin - <item title> - <position>`, as the note is named.
     public static func audioBaseName(itemTitle: String, margin: Interjection) -> String {
-        "Margin - \(MarginMarkdownShare.safeName(itemTitle)) - \(MarginMarkdownShare.position(mediaTimeMs: margin.anchor.mediaTimeMs, roughPercent: margin.roughPercent))"
+        let place = margin.hasPlace
+            ? MarginMarkdownShare.position(mediaTimeMs: margin.anchor.mediaTimeMs, roughPercent: margin.roughPercent)
+            : MarginMarkdownShare.noPlaceName(createdAt: margin.createdAt)
+        return "Margin - \(MarginMarkdownShare.safeName(itemTitle)) - \(place)"
     }
 
     /// Makes the export in a fresh folder under `exportRoot`. The Markdown note keeps its own name and the recording
