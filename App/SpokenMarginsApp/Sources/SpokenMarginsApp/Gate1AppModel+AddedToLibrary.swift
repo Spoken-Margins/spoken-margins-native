@@ -9,6 +9,9 @@ extension Gate1AppModel {
     }
 
     func reportAddedToLibrary(title: String, itemId: String) {
+        // A new item belongs to no collection yet, so a Library narrowed to one would not list what this confirmation
+        // says was added: show All, the same class of mismatch #4178 closed for the filters (#4343).
+        libraryCollections.select(collectionID: nil)
         // Says, in Diagnostics, whether the Library lists what this confirmation says was added, and if not, why (#4178).
         diagnostics["addedToLibraryVisibility"] = LibraryQueryEngine.addedItemVisibility(
             itemId: itemId, in: libraryItems, query: libraryQuery)
@@ -34,6 +37,7 @@ extension Gate1AppModel {
             let title = libraryItems.first { $0.id == first }?.title ?? "Shared source"
             reportAddedToLibrary(title: title, itemId: first)
         } else {
+            libraryCollections.select(collectionID: nil) // the same reason as `reportAddedToLibrary` (#4343)
             reportConfirmation(AddedToLibraryConfirmation.message(addedCount: itemIds.count, nowPlayingIsEmpty: nowPlayingIsEmpty))
         }
     }

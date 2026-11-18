@@ -319,6 +319,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         case "feed_subscription": return columns(FeedSubscription.self, item: { _ in nil })
         case "feed_entry": return columns(FeedEntry.self, item: { _ in nil })
         case "item_collection": return columns(ItemCollection.self, item: { _ in nil })
+        case "follow_list": return columns(FollowList.self, item: { _ in nil })
+        case "listening_rule": return columns(ListeningRule.self, item: { _ in nil })
+        case "show_less_mark": return columns(ShowLessMark.self, item: { _ in nil })
         case TranscriptTimes.recordKind: return columns(TranscriptTimes.self, item: { $0.itemId })
         default: return nil
         }
@@ -898,6 +901,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             // The same for the listener's read-aloud choice: a copy loaded before they made it must not undo it (#3427).
             if interjection.listenerReadAloud == nil { interjection.listenerReadAloud = stored?.listenerReadAloud }
             interjection.keepNewerSenderReadAloud(from: stored)
+            interjection.keepNewerSenderLeadIn(from: stored)
             var aliases = stored?.alsoSharedAs ?? []
             for identity in interjection.alsoSharedAs ?? [] where !aliases.contains(identity) { aliases.append(identity) }
             interjection.alsoSharedAs = aliases.isEmpty ? nil : aliases
@@ -1572,6 +1576,78 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
 
     public func deleteItemCollection(id: String) throws {
         try deleteRecord(kind: "item_collection", id: id)
+    }
+
+    /// Follow lists (#4046) are their own record kind with no item_id, so Build 29 and the later shipped builds, which read
+    /// every record by an explicit kind, never see them. The record id is the list id, so a rename keeps it.
+    public func saveFollowList(_ list: FollowList) throws {
+        try save(kind: "follow_list", id: list.id, sessionId: nil, itemId: nil, value: list)
+    }
+
+    /// Oldest first, then by id, so the order is the same on every read. Chips sort by name themselves
+    /// (`FollowListName.chipOrder`).
+    public func loadFollowLists() throws -> [FollowList] {
+        let lists: [FollowList] = try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["follow_list"])
+        return lists.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+    }
+
+    public func loadFollowList(id: String) throws -> FollowList? {
+        try loadOptional(kind: "follow_list", id: id)
+    }
+
+    /// Deleting a list never unfollows a show.
+    public func deleteFollowList(id: String) throws {
+        try deleteRecord(kind: "follow_list", id: id)
+    }
+
+    /// Takes a show out of every list it is in, in one transaction (unfollow does this). A list left with no members stays.
+    /// Returns the ids of the lists that changed.
+    @discardableResult
+    public func removeFromFollowLists(feedKey: String?, podcastGUID: String? = nil) throws -> [String] {
+        try withTransaction {
+            var changed: [String] = []
+            for var list in try loadFollowLists() where list.remove(feedKey: feedKey, podcastGUID: podcastGUID) {
+                try saveFollowList(list)
+                changed.append(list.id)
+            }
+            return changed
+        }
+    }
+
+    /// Listening rules (#4046) are their own record kind with no item_id, so the shipped builds' readers never see them. A rule
+    /// does nothing until `isOn`. The record id is the rule id.
+    public func saveListeningRule(_ rule: ListeningRule) throws {
+        try save(kind: "listening_rule", id: rule.id, sessionId: nil, itemId: nil, value: rule)
+    }
+
+    /// Oldest first, then by id, so the order is the same on every read.
+    public func loadListeningRules() throws -> [ListeningRule] {
+        let rules: [ListeningRule] = try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["listening_rule"])
+        return rules.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+    }
+
+    public func loadListeningRule(id: String) throws -> ListeningRule? {
+        try loadOptional(kind: "listening_rule", id: id)
+    }
+
+    public func deleteListeningRule(id: String) throws {
+        try deleteRecord(kind: "listening_rule", id: id)
+    }
+
+    /// Show less marks (#4046). A mark's id is its entry id (else its item id), so marking an episode twice keeps one mark.
+    public func saveShowLessMark(_ mark: ShowLessMark) throws {
+        try save(kind: "show_less_mark", id: mark.id, sessionId: nil, itemId: nil, value: mark)
+    }
+
+    /// Oldest mark first, then by id.
+    public func loadShowLessMarks() throws -> [ShowLessMark] {
+        let marks: [ShowLessMark] = try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["show_less_mark"])
+        return marks.sorted { ($0.markedAt, $0.id) < ($1.markedAt, $1.id) }
+    }
+
+    /// "Undo Show less". Takes the mark for the entry or, with none, the item.
+    public func deleteShowLessMark(entryId: String?, itemId: String?) throws {
+        try deleteRecord(kind: "show_less_mark", id: ShowLessMark.id(entryId: entryId, itemId: itemId))
     }
 
     public func loadFeedSubscriptions() throws -> [FeedSubscription] {
@@ -2587,6 +2663,56 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         GROUP BY layer.item_id;
         """
 
+    /// Who sent them (#3794): per item and layer, the sender's id and name as the layer saved them, and how many Margins
+    /// of that layer count. The same rows as `sharedMarginTalliesSQL`, so a deleted layer, a hidden sender and a hidden
+    /// Margin leave the names exactly as they leave the count. One grouped read in the Library's snapshot, no query per
+    /// row; the layer match stays a plain equality on the primary key for the same reason. Swift merges the layers of
+    /// one friend (`SharedMarginTally.Sender`).
+    static let sharedMarginSendersSQL = """
+        SELECT layer.item_id, json_extract(layer.payload, '$.senderId'), json_extract(layer.payload, '$.displayLabel'), COUNT(note.id)
+        FROM records AS note
+        JOIN records AS layer
+          ON layer.kind = ?2
+         AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
+        WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
+          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        GROUP BY layer.item_id, layer.id;
+        """
+
+    /// How many of the counted Margins are replies to the listener's own Margins, per item (#3794). A reply is one whose
+    /// reply link names a packet identity one of the listener's own Margins on that item was shared as (`sharedAs`), the
+    /// same match the reply graph makes (`MarginReplyGraph`). Only Margins that carry reply links reach the join, so a
+    /// Library with none reads nothing more. The same rows as `sharedMarginTalliesSQL` otherwise: the layer match is a
+    /// plain equality on the primary key, a broken payload gives an empty list rather than an error (`json_each` throws on
+    /// malformed text), and the hidden-list conditions are added to the same WHERE. A Margin naming several parents
+    /// counts once. A fork whose first resolvable parent is another friend's Margin counts here too if any parent is the
+    /// listener's: a small difference from the review's own label, which takes the first, and only in the count.
+    /// Only the listener's active Margins are parents (the reply graph drops a deleted one: it is neither a parent nor a
+    /// reply), and only those that were shared at all are parsed for their identities. Parents are looked for on the same
+    /// item, as the review's own context is (`SharedMarginReview.ownMargins(itemId:)`); the graph looks across the
+    /// Library, so a reply imported under another row of the same episode is a reply there and not here. A list element
+    /// that is not an object (a shape a later build might write) matches nothing instead of failing the read.
+    static let sharedMarginRepliesSQL = """
+        SELECT layer.item_id, COUNT(DISTINCT note.id)
+        FROM records AS note
+        JOIN records AS layer
+          ON layer.kind = ?2
+         AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
+        JOIN json_each(CASE WHEN json_valid(note.payload) THEN note.payload ELSE '{}' END, '$.replyLinks') AS link
+        JOIN records AS own ON own.kind = 'interjection' AND own.item_id = layer.item_id
+         AND CASE WHEN json_valid(own.payload)
+                  THEN json_extract(own.payload, '$.status') = 'active' AND json_extract(own.payload, '$.sharedAs') IS NOT NULL
+                  ELSE 0 END
+        JOIN json_each(CASE WHEN json_valid(own.payload) THEN own.payload ELSE '{}' END, '$.sharedAs') AS identity
+          ON CASE WHEN json_type(identity.value) = 'object' AND json_type(link.value) = 'object'
+                  THEN json_extract(identity.value, '$.packageDigest') = json_extract(link.value, '$.parentPackageDigest')
+                   AND json_extract(identity.value, '$.packageScopedId') = json_extract(link.value, '$.parentPackageScopedId')
+                  ELSE 0 END
+        WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
+          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        GROUP BY layer.item_id;
+        """
+
     /// The narrow read behind that last column: the same rows, with only what `SharedMarginHearing.noteCanBeMet` needs.
     /// No Margin is decoded. The CASE keeps a broken payload from failing the read: it gives no match, as above.
     static let newNotesSQL = """
@@ -2650,10 +2776,55 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
                 anyNewNote = anyNewNote || sqlite3_column_int64(statement, 3) > 0
             }
             let unmet = anyNewNote ? try newNotesNobodyCanMeet(connection, hidden: hidden) : [:]
+            let senders = counts.isEmpty ? [:] : try sharedMarginSenders(connection, hidden: hidden)
+            let replies = counts.isEmpty ? [:] : try sharedMarginReplies(connection, hidden: hidden)
             return counts.reduce(into: [:]) { tallies, entry in
-                tallies[entry.key] = SharedMarginTally(total: entry.value.total, new: entry.value.new - (unmet[entry.key] ?? 0))
+                tallies[entry.key] = SharedMarginTally(
+                    total: entry.value.total, new: entry.value.new - (unmet[entry.key] ?? 0),
+                    senders: senders[entry.key] ?? [], replies: replies[entry.key] ?? 0)
             }
         }
+    }
+
+    /// Per item, how many counted Margins reply to the listener's own, from `sharedMarginRepliesSQL`.
+    private func sharedMarginReplies(_ connection: OpaquePointer?, hidden: HiddenSenders) throws -> [String: Int] {
+        let (sql, bindings) = Self.hidingFromSharedMarginSQL(Self.sharedMarginRepliesSQL, before: "GROUP BY layer.item_id;", hidden: hidden)
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_shared_margin_replies")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: "imported_commentary_interjection")
+        bind(statement, index: 2, value: "imported_commentary_layer")
+        for (offset, value) in bindings.enumerated() { bind(statement, index: Int32(3 + offset), value: value) }
+        var replies: [String: Int] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let item = sqlite3_column_text(statement, 0) else { continue }
+            replies[String(cString: item)] = Int(sqlite3_column_int64(statement, 1))
+        }
+        return replies
+    }
+
+    /// Per item, who sent the counted Margins (#3794), from `sharedMarginSendersSQL`.
+    private func sharedMarginSenders(_ connection: OpaquePointer?, hidden: HiddenSenders) throws -> [String: [SharedMarginTally.Sender]] {
+        let (sql, bindings) = Self.hidingFromSharedMarginSQL(Self.sharedMarginSendersSQL, before: "GROUP BY layer.item_id, layer.id;", hidden: hidden)
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_shared_margin_senders")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: "imported_commentary_interjection")
+        bind(statement, index: 2, value: "imported_commentary_layer")
+        for (offset, value) in bindings.enumerated() { bind(statement, index: Int32(3 + offset), value: value) }
+        var senders: [String: [SharedMarginTally.Sender]] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let item = sqlite3_column_text(statement, 0) else { continue }
+            let id = sqlite3_column_text(statement, 1).map { String(cString: $0) }
+            let name = sqlite3_column_text(statement, 2).map { String(cString: $0) }
+            senders[String(cString: item), default: []].append(
+                SharedMarginTally.Sender(key: id, name: name, count: Int(sqlite3_column_int64(statement, 3))))
+        }
+        return senders
     }
 
     /// Per item, when the newest friend layer that has a counted Margin was imported (#4101), for the Library's Recently
@@ -2723,10 +2894,10 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
 
     /// SQLite's plan for `loadSharedMarginTallies`, one line per step, so a test can tell a primary-key
     /// lookup of each layer from a scan of every layer.
-    func sharedMarginTalliesQueryPlan() throws -> [String] {
+    func sharedMarginTalliesQueryPlan(of sql: String = SQLiteSessionStore.sharedMarginTalliesSQL) throws -> [String] {
         try withReadConnection { connection in
             var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(connection, "EXPLAIN QUERY PLAN " + Self.sharedMarginTalliesSQL, -1, &statement, nil) == SQLITE_OK else {
+            guard sqlite3_prepare_v2(connection, "EXPLAIN QUERY PLAN " + sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_shared_margin_tallies_plan")
             }
             defer { sqlite3_finalize(statement) }

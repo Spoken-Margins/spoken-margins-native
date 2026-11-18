@@ -727,7 +727,9 @@ struct PlaybackScreen: View {
                     },
                     barContent: mediaBarContent,
                     barPositionUnit: .seconds,
-                    positionAccessibilityValue: "\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))"
+                    positionAccessibilityValue: TimelinePositionLabel.appendingSpokenPercent(
+                        to: "\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))",
+                        currentMs: Int(scrubberDisplaySeconds * 1_000), durationMs: mediaDurationMs)
                 )
                 .tint(AppColors.accent)
                 .padding(.vertical, -PlaybackPositionSlider.rowGapOverlap)
@@ -1336,9 +1338,9 @@ struct PlaybackScreen: View {
     }
 
     private var textScrubberPercent: Int {
-        guard textLength > 0 else { return 0 }
+        // The Timeline's current line uses the same function, so the two can't disagree (#3862).
         let offset = textScrubState.displayedValue(canonicalValue: canonicalTextOffset, range: textScrubRange)
-        return max(0, min(100, Int((offset / Double(textLength) * 100).rounded())))
+        return TimelinePositionLabel.textScrubberPercent(offset: offset, length: textLength)
     }
 
     private var timeline: some View {
@@ -1421,10 +1423,7 @@ struct PlaybackScreen: View {
                                 selectedInterjection = interjection
                             },
                             toggleStar: {
-                                model.setInterjectionStarredForSharing(
-                                    interjection.id,
-                                    starred: interjection.isStarredForSharing != true
-                                )
+                                model.toggleStarredForSharing(interjection, place: .detail)
                             }
                         )
                         .accessibilityIdentifier("timeline.interjection.\(interjection.id)")

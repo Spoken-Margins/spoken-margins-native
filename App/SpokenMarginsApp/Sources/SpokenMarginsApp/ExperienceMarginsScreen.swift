@@ -568,7 +568,7 @@ struct ExperienceMarginsScreen: View, Equatable {
         }
         Button("Copy with Context", systemImage: "doc.on.doc") { model.copyInterjectionWithContext(row.interjection) }
         Button(row.interjection.isStarredForSharing == true ? "Unstar" : "Star", systemImage: "star") {
-            model.setInterjectionStarredForSharing(row.interjection.id, sessionId: row.interjection.sessionId, starred: row.interjection.isStarredForSharing != true)
+            model.setStarredForSharing(row.interjection, starred: row.interjection.isStarredForSharing != true, place: .marginsTab)
         }
     }
 

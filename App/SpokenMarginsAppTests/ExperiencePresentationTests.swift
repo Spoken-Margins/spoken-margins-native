@@ -64,6 +64,9 @@ final class ExperiencePresentationTests: XCTestCase {
                        "the reply follows its parent even though it was made later and the other Margin is closer in time")
         XCTAssertEqual(entries.map(\.depth), [0, 1, 0])
         XCTAssertEqual(entries[1].position, entries[0].position, "a reply sits at the place it answers")
+        XCTAssertEqual(entries[1].cornerLabel, entries[0].cornerLabel, "and its corner reads that place, not its own (#3862)")
+        XCTAssertNotEqual(entries[1].cornerLabel, "34%", "the reply was made at 34%, but the card stands at its parent's 30%")
+        XCTAssertEqual(entries[1].spokenPosition, entries[0].spokenPosition)
         XCTAssertTrue(entries[1].detail.hasPrefix("Reply to Ana · "), entries[1].detail)
         XCTAssertFalse(entries[0].detail.contains("Reply to"))
     }
