@@ -59,6 +59,7 @@ struct PlaybackScreen: View {
     private enum OptionsDestination { case item, timeline, export, margins, paste, sourceText }
     @State private var timelinePullTriggered = false
     @State private var playbackTick = 0 // bumped by each progress tick, so this screen follows the clock (#2074)
+    @StateObject private var nowScene = NowSceneController()
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
 
     /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
@@ -98,24 +99,32 @@ struct PlaybackScreen: View {
                                     }
                                     if model.isFirstMarginPromptShowing { FirstMarginPromptCard() }
                                     playbackHeader
+                                        // The Library arrow lives in the header; once following scrolls it away, the toolbar shows it (#4453).
+                                        .onScrollVisibilityChange(threshold: 0.01) { nowScene.headerIsVisible = $0 }
                                     capturePermissionRecovery
                                     importedCommentaryControl
                                     if model.selectedItem.isNativeAudio {
                                         PlaybackNowView()
+                                        if model.shouldShowGuidedOnboardingCoach {
+                                            GuidedOnboardingPlaybackCard {
+                                                openTimeline()
+                                            }
+                                        }
                                     } else {
-                                        PlaybackLivePassageView { offset in
+                                        // Below a long scene these would be out of reach, so they sit above the text (#4453).
+                                        recentMarginPreview
+                                        if model.shouldShowGuidedOnboardingCoach {
+                                            GuidedOnboardingPlaybackCard {
+                                                openTimeline()
+                                            }
+                                        }
+                                        PlaybackLivePassageView(scene: nowScene, proxy: proxy) { offset in
                                             sourceTextTarget = PlaybackTextReaderTarget.resolve(
                                                 text: model.selectedItem.text,
                                                 chapters: model.selectedItem.chapters,
                                                 offset: offset,
                                                 fallbackChapterId: model.currentChapter?.id
                                             )
-                                        }
-                                        recentMarginPreview
-                                    }
-                                    if model.shouldShowGuidedOnboardingCoach {
-                                        GuidedOnboardingPlaybackCard {
-                                            openTimeline()
                                         }
                                     }
                                 }
@@ -125,6 +134,22 @@ struct PlaybackScreen: View {
                                 .frame(maxWidth: .infinity, alignment: .top)
                             }
                             .scrollBounceBehavior(.always)
+                            // The sentences on screen, and the listener's own scrolling (a drag or a fling; a scroll the
+                            // view makes itself reports `.animating`), which stops the scene following playback (#4453).
+                            .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.1) { nowScene.sentencesOnScreen($0) }
+                            .onScrollPhaseChange { _, phase in
+                                switch phase {
+                                case .interacting, .decelerating: nowScene.listenerScrolled()
+                                case .idle: nowScene.scrollCameToRest()
+                                default: break
+                                }
+                            }
+                            .overlay(alignment: .bottom) {
+                                // Only over this item's own scene: not over a podcast, nor while another item plays.
+                                if !model.selectedItem.isNativeAudio, model.snapshot.itemId == model.selectedItem.id {
+                                    NowBackToPlayingButton(scene: nowScene)
+                                }
+                            }
                             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                                 // ScrollGeometry's container is the inset content viewport.
                                 // The offset calculation below expects the whole viewport.
@@ -213,7 +238,9 @@ struct PlaybackScreen: View {
             .toolbar {
                 // One meaning for the top-left arrow on every tab: leave the screen. The exception is the Timeline editor
                 // with the keyboard up, where the tab switch is hidden and this is the way back to Now (#4027).
-                let leading = PlaybackLeadingControl.control(pane: leadingControlPane, timelineEditorHasFocus: timelineDock.hidesDock)
+                let leading = PlaybackLeadingControl.control(
+                    pane: leadingControlPane, timelineEditorHasFocus: timelineDock.hidesDock,
+                    nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio)
                 if leading == .libraryExit {
                     ToolbarItem(placement: .topBarLeading) { libraryExitButton }
                 } else if leading == .returnToNow {
