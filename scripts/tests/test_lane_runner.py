@@ -356,7 +356,11 @@ class ReportTests(unittest.TestCase):
                 ('clone failure', clone, 74, 'INCONCLUSIVE'),
                 ('compile error', 'Foo.swift:3:1: error: cannot find Bar in scope\n** BUILD FAILED **\n', 65, 'FAIL'),
                 ('a version the PR cannot satisfy', 'xcodebuild: error: Could not resolve package dependencies:\n'
-                 '  Dependencies could not be resolved because root depends on Foo 9.0.0\n', 74, 'FAIL')):
+                 '  Dependencies could not be resolved because root depends on Foo 9.0.0\n', 74, 'FAIL'),
+                ('a clone line and a compile error in one log', clone + 'Foo.swift:3:1: error: cannot find Bar in scope\n'
+                 '** BUILD FAILED **\n', 65, 'FAIL'),
+                ('a clone line and failed build commands', clone + 'The following build commands failed:\n'
+                 '\tCompileSwift Foo.swift\n', 65, 'FAIL')):
             with self.subTest(name), tempfile.TemporaryDirectory() as temporary:
                 def fake(command, log, timeout, text=text, code=code):
                     log.write(text)
@@ -1050,7 +1054,11 @@ class T3PreparationTests(unittest.TestCase):
                 ('clone failure', 'xcodebuild: error: Could not resolve package dependencies:\n'
                  '  Failed to clone repository https://github.com/microsoft/onnxruntime-swift-package-manager.git\n',
                  'INCONCLUSIVE'),
-                ('compile error', 'Foo.swift:3:1: error: cannot find Bar in scope\n', 'FAIL')):
+                ('compile error', 'Foo.swift:3:1: error: cannot find Bar in scope\n', 'FAIL'),
+                ('a clone line and a compile error in one log',
+                 'xcodebuild: error: Could not resolve package dependencies:\n'
+                 '  Failed to clone repository https://github.com/x/y.git\n'
+                 'Foo.swift:3:1: error: cannot find Bar in scope\n** BUILD FAILED **\n', 'FAIL')):
             with self.subTest(name), tempfile.TemporaryDirectory() as temporary:
                 evidence = Path(temporary)
 
@@ -1068,6 +1076,36 @@ class T3PreparationTests(unittest.TestCase):
                     verdict, details = lane.prepare_t3_build({'app': ['T/A']}, 'runtime', evidence)
                 self.assertEqual(verdict, expected)
                 self.assertEqual(any('lane fault, not the PR' in line for line in details), expected == 'INCONCLUSIVE')
+
+    def test_a_clone_failure_next_to_a_compile_error_in_the_manifest_errors_still_fails(self):
+        summary = lane.summarize_manifest({'steps': [{'name': 'build-for-testing', 'exit_code': 65, 'errors': [
+            'Process exit 65', 'Foo.swift:3:1: error: cannot find Bar in scope',
+            'error: Failed to clone repository https://github.com/x/y.git']}]})
+        self.assertTrue(summary['build_failed'])
+        self.assertNotIn('package_fetch_fault', summary)
+        self.assertEqual(lane.t3_verdict([summary], ['failed_or_incomplete']), 'FAIL')
+
+    def test_a_fast_plan_that_could_not_fetch_a_package_is_inconclusive_and_says_to_run_it_again(self):
+        # #4512: the tools package of fast-mac-rest. verify-tests.py names the fault in the manifest.
+        with tempfile.TemporaryDirectory() as temporary:
+            def run(command, log, timeout):
+                output = Path(command[command.index('--output') + 1])
+                output.mkdir(parents=True, exist_ok=True)
+                (output / 'manifest.json').write_text(json.dumps({
+                    'status': 'failed_or_incomplete', 'lane_fault': 'a Swift package could not be fetched from GitHub (x)',
+                    'steps': []}))
+                return 1
+            verdict, details = lane.run_host_plan('fast-mac-rest', Path(temporary), run, None)
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertIn('Run it again.', details[0])
+        self.assertNotIn('open the lid', details[0])
+
+    def test_a_package_fetch_inconclusive_does_not_count_toward_the_auto_revert(self):
+        # Without its NOT_LANE_FAULTS entry, two of these after a lane merge would revert an unrelated lane change.
+        body = f'Lane report r — INCONCLUSIVE\n{lane.PACKAGE_FETCH_FAULT_WHY}\n'
+        reasons = [why for text, why in lane.NOT_LANE_FAULTS if text in body]
+        self.assertEqual(len(reasons), 1)
+        self.assertIn('#4512', reasons[0])
 
     def test_a_clone_failure_named_in_the_manifest_errors_is_a_lane_fault_too(self):
         summary = lane.summarize_manifest({'steps': [{'name': 'build-for-testing', 'exit_code': 74, 'errors': [

@@ -2903,7 +2903,7 @@ class PackageFetchRetryTests(unittest.TestCase):
     CLONE_FAILURE = ('xcodebuild: error: Could not resolve package dependencies:\n'
                      '  Failed to clone repository https://github.com/microsoft/onnxruntime-swift-package-manager.git\n')
 
-    def run_build(self, outcomes):
+    def run_build(self, outcomes, step_extra=None, step_name='build-for-testing', hosted=False):
         """Runs `build_for_testing` with one scripted outcome per attempt: (log text, fails)."""
         calls = []
         with tempfile.TemporaryDirectory() as temporary:
@@ -2912,17 +2912,22 @@ class PackageFetchRetryTests(unittest.TestCase):
             def command(name, args, **kw):
                 text, fails = outcomes[len(calls)]
                 calls.append(name)
-                run.manifest['steps'].append({'name': name, 'seconds': 1.0, 'errors': ['Process exit 74'] if fails else []})
+                run.manifest['steps'].append({'name': name, 'seconds': 1.0, 'errors': ['Process exit 74'] if fails else [],
+                                              **(step_extra or {})})
                 (run.output / f'{name}.log').write_text(text)
                 if fails:
                     raise RuntimeError('Process exit 74')
 
-            with patch.object(run, 'command', side_effect=command), patch.object(verification.time, 'sleep') as sleep:
+            environment = {'RUNNER_ENVIRONMENT': 'github-hosted' if hosted else 'self-hosted'}
+            printed = io.StringIO()
+            with patch.object(run, 'command', side_effect=command), patch.object(verification.time, 'sleep') as sleep, \
+                    patch.dict(os.environ, environment), contextlib.redirect_stdout(printed):
                 try:
-                    run.build_for_testing(['xcodebuild', 'build-for-testing'])
+                    run.command_retrying_fetch(step_name, ['xcodebuild', 'build-for-testing'])
                     error = None
                 except RuntimeError as failed:
                     error = failed
+            self.printed = printed.getvalue()
             return calls, run.manifest, sleep, error
 
     def test_a_clone_failure_is_tried_again_and_a_later_pass_leaves_no_failed_step(self):
@@ -2939,6 +2944,49 @@ class PackageFetchRetryTests(unittest.TestCase):
         self.assertEqual(len(calls), verification.PACKAGE_FETCH_ATTEMPTS)
         self.assertEqual(len(manifest['steps']), 1)
         self.assertTrue(manifest['steps'][0]['errors'])
+        self.assertIn('lane_fault', manifest)
+
+    def test_a_step_that_never_gets_its_package_says_the_lane_was_at_fault_and_a_hosted_run_annotates_it(self):
+        # The real wording, from hosted fast: Mac rest on #4411 (the tools package, not the app build).
+        tools_log = ("warning: 'onnxruntime-swift-package-manager': skipping cache due to an error: Failed to clone repository "
+                     "https://github.com/microsoft/onnxruntime-swift-package-manager.git:\n"
+                     "error: Failed to clone repository https://github.com/microsoft/onnxruntime-swift-package-manager.git:\n")
+        for hosted in (True, False):
+            with self.subTest(hosted=hosted):
+                calls, manifest, _, error = self.run_build([(tools_log, True)] * 3, step_name='tools', hosted=hosted)
+                self.assertIsNotNone(error)
+                self.assertEqual(calls, ['tools'] * 3)
+                self.assertIn('could not be fetched from GitHub', manifest['lane_fault'])
+                self.assertIn('Failed to clone repository', manifest['steps'][0]['package_fetch_fault'])
+                self.assertEqual('::error title=lane-fault::' in self.printed, hosted)
+
+    def test_a_later_pass_leaves_no_lane_fault_and_no_annotation(self):
+        _, manifest, _, error = self.run_build([(self.CLONE_FAILURE, True), ('ok\n', False)], hosted=True)
+        self.assertIsNone(error)
+        self.assertNotIn('lane_fault', manifest)
+        self.assertNotIn('lane-fault', self.printed)
+
+    def test_a_failing_test_that_mentions_the_clone_is_not_tried_again(self):
+        calls, manifest, sleep, error = self.run_build([(self.CLONE_FAILURE, True)], step_extra={'tests': {'T/a': {'status': 'failed'}}})
+        self.assertIsNotNone(error)
+        self.assertEqual(calls, ['build-for-testing'])
+        self.assertNotIn('lane_fault', manifest)
+        sleep.assert_not_called()
+
+    def test_a_build_that_ran_out_of_time_or_was_stopped_is_not_tried_again_whatever_its_log_says(self):
+        for extra in ({'interrupted': True}, {'interrupted': True, 'signalled': True}):
+            with self.subTest(extra=extra):
+                calls, manifest, sleep, error = self.run_build([(self.CLONE_FAILURE, True)], step_extra=extra)
+                self.assertIsNotNone(error)
+                self.assertEqual(calls, ['build-for-testing'])
+                self.assertTrue(manifest['steps'][0]['interrupted'], 'the record the report reads is kept')
+                sleep.assert_not_called()
+
+    def test_a_clone_line_beside_a_compile_error_is_not_tried_again(self):
+        calls, _, sleep, error = self.run_build([(self.CLONE_FAILURE + 'Foo.swift:3:1: error: cannot find Bar in scope\n', True)])
+        self.assertIsNotNone(error)
+        self.assertEqual(calls, ['build-for-testing'])
+        sleep.assert_not_called()
 
     def test_a_compile_error_or_a_version_conflict_is_not_tried_again(self):
         for text in ('Foo.swift:3:1: error: cannot find Bar in scope\n',

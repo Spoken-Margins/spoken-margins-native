@@ -859,16 +859,23 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
 # is the network or the host, never the PR's code, so a build that stopped on it is INCONCLUSIVE with a lane reason.
 # Narrow on purpose: "Could not resolve package dependencies" alone also names a PR's own bad version requirement.
 PACKAGE_FETCH_FAULT = re.compile(r'Failed to clone repository\b')
-PACKAGE_FETCH_FAULT_WHY = ('lane fault, not the PR: Swift package resolution could not fetch a package from GitHub, '
-                           'so the build never started compiling. Ask again with a new /lane request; the dispatcher does it once, '
-                           'and files a regression issue if the same fetch fails again.')
+# A compile error, or xcodebuild's list of failed build commands, means the PR's own code was reached and is wrong: a
+# clone line elsewhere in the same log (or echoed in a source excerpt) must not excuse it.
+OTHER_BUILD_FAILURE = re.compile(r':\d+:\d+: error:|^failed: |^The following build commands failed:', re.M)
+PACKAGE_FETCH_FAULT_MARK = 'lane fault, not the PR: Swift package resolution could not fetch a package'  # NOT_LANE_FAULTS reads it
+PACKAGE_FETCH_FAULT_WHY = (f'{PACKAGE_FETCH_FAULT_MARK} from GitHub, so the build never started compiling. Ask again '
+                           'with a new /lane request; the dispatcher does it once, and files a regression issue if the '
+                           'same fetch fails again.')
 
 
 def package_fetch_fault(log: Path) -> str | None:
-    """The `Failed to clone repository <url>` line of a build log, if that is what stopped the build."""
+    """The `Failed to clone repository <url>` line of a build log, if that is what stopped the build: nothing else in
+    the log is a compile error or a failed build command."""
     try:
         text = log.read_text(errors='replace')
     except OSError:
+        return None
+    if OTHER_BUILD_FAILURE.search(text):
         return None
     return next((line.strip() for line in text.splitlines() if PACKAGE_FETCH_FAULT.search(line)), None)
 
@@ -1055,8 +1062,10 @@ def run_host_plan(plan: str, evidence: Path, runner, changed: list[str] | None) 
                                 f'evidence: {log_path}']
     manifest = _read_manifest(output)
     if manifest.get('lane_fault'):  # #909: the Mac, not the PR (its lid is closed, so there is no sound output)
-        return 'INCONCLUSIVE', [f'host tests (--plan {plan}) — lane fault: {manifest["lane_fault"]}. Ask the owner to open '
-                                f'the lid or connect an audio output, then re-run. evidence: {log_path}']
+        again = ('Ask the owner to open the lid or connect an audio output, then re-run.'
+                 if str(manifest['lane_fault']).startswith('no audio output') else 'Run it again.')
+        return 'INCONCLUSIVE', [f'host tests (--plan {plan}) — lane fault: {manifest["lane_fault"]}. {again} '
+                                f'evidence: {log_path}']
     if code == 0 and manifest.get('status') == 'verified':
         # A suite the Mac could not run (no `go`, say) passed nothing: the report says so (#1033).
         return 'PASS', [f'{step["name"]} skipped: {reason}' for step in manifest.get('steps', [])
@@ -2995,8 +3004,9 @@ def summarize_manifest(manifest: dict, output: Path | None = None) -> dict:
         # under them, so the build log, where the runner has it, is read as well.
         fetch_fault = None
         if step.get('name') == 'build-for-testing' and errors:
-            fetch_fault = next((e for e in errors if PACKAGE_FETCH_FAULT.search(e)), None) or (
-                package_fetch_fault(output / 'build-for-testing.log') if output else None)
+            fetch_fault = None if any(OTHER_BUILD_FAILURE.search(e) for e in errors) else (
+                next((e for e in errors if PACKAGE_FETCH_FAULT.search(e)), None) or
+                (package_fetch_fault(output / 'build-for-testing.log') if output else None))
         if fetch_fault:
             summary['package_fetch_fault'] = fetch_fault
         summary['build_failed'] |= (step.get('name') == 'build-for-testing' and bool(errors)
@@ -3525,7 +3535,8 @@ NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'),
                    ('too: not this PR', 'a test broken on the base too, filed as its own issue (#1204)'),
                    # hosted_checks_missing's words for a lane-fault: a GitHub runner's network, not a lane change. Before
                    # #4085 it was a FAIL, which never counted toward the auto-revert (audit on 9d98b41).
-                   ("Runner fault, not this PR's code: run again", 'a GitHub-hosted runner fault, not a lane change (#4085)'))
+                   ("Runner fault, not this PR's code: run again", 'a GitHub-hosted runner fault, not a lane change (#4085)'),
+                   (PACKAGE_FETCH_FAULT_MARK, "a package that could not be fetched from GitHub, not a lane change (#4512)"))
 PENDING_T3_HOLD = re.compile(r'^not merged: held for T3:', re.M)
 LANE_MERGE_LOOKBACK = 300
 

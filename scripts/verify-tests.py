@@ -70,6 +70,7 @@ BUILD_SLOT_WAIT_SECONDS = 1800
 PACKAGE_FETCH_ATTEMPTS = 3
 PACKAGE_FETCH_PAUSES = (10, 30)  # seconds before the second and the third attempt
 PACKAGE_FETCH_FAULT = re.compile(r'Failed to clone repository\b')
+OTHER_BUILD_FAILURE = re.compile(r':\d+:\d+: error:|^The following build commands failed:', re.M)  # the PR's own code was reached
 
 # Xcode's compilation cache for the app build-for-testing (#1331). Every T3 builds in fresh DerivedData, so
 # without it each one recompiled every module. Measured on the lane Mac (Xcode 27.0, 2026-10-12): 57-73 s
@@ -1942,7 +1943,7 @@ class Run:
             self.skip('tools', why)
             return
         expected = {f'CoopPacketTests/{test}' for test in swift_tests(ROOT / TOOLS_PACKAGE / 'Tests/CoopPacketTests')}
-        self.command('tools', [*PACKAGE_RUNNER, '--tools'], timeout=TOOLS_TEST_TIMEOUT, expected=expected, tests=True)
+        self.command_retrying_fetch('tools', [*PACKAGE_RUNNER, '--tools'], timeout=TOOLS_TEST_TIMEOUT, expected=expected, tests=True)
 
     def hosted_sessionkit(self):
         """SessionKit's build and SessionKitCoreTests on a GitHub-hosted Mac (#1389), for hosted-portable.yml. No
@@ -1950,7 +1951,7 @@ class Run:
         core = {f'SessionKitCoreTests/{test}' for test in swift_tests(ROOT / 'Packages/SessionKit/Tests/SessionKitCoreTests')}
         if not core:
             raise RuntimeError('fast-hosted-sessionkit found no SessionKitCoreTests to run')
-        self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
+        self.command_retrying_fetch('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
         self.package_core(core)
         self.skip('package', 'SessionKitTests and SessionKitTraceTests need a sound output; the lane Mac runs them '
                              '(--plan fast-mac-rest)')
@@ -2110,7 +2111,7 @@ class Run:
             self.manifest['lane_fault'] = f'no audio output: {audio["why"]}'
             self.save()
             raise RuntimeError(f'lane fault, not the PR: {self.manifest["lane_fault"]}')
-        self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
+        self.command_retrying_fetch('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
         # Inside Codex's sandbox the audio tests are tolerated and the runner stays as it was: one serial step.
         core = {test for test in expected if test.startswith('SessionKitCoreTests/')}
         split = (bool(core) and not in_codex_sandbox()) or core_elsewhere
@@ -2251,7 +2252,7 @@ class Run:
             if require_build:
                 raise RuntimeError('Prepared Xcode build is missing or stale; refusing to build on a booted T3 device')
             stamp.unlink(missing_ok=True)
-            self.build_for_testing(base + compilation_cache_settings() + ['build-for-testing'])
+            self.command_retrying_fetch('build-for-testing', base + compilation_cache_settings() + ['build-for-testing'], timeout=900)
             log = self.output / 'build-for-testing.log'
             self.manifest['compilation_cache'] = compilation_cache_hits(log.read_text(errors='replace')) \
                 if log.is_file() else None
@@ -2264,27 +2265,40 @@ class Run:
                      str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
         return derived, identity
 
-    def build_for_testing(self, args):
-        """The `build-for-testing` step, tried again when Swift Package Manager could not clone a package (#4512).
+    def command_retrying_fetch(self, name, args, **kwargs):
+        """`command`, tried again when Swift Package Manager could not clone a package (#4512).
 
-        Only that failure is tried again, up to PACKAGE_FETCH_ATTEMPTS times; a compile error or any other failure
-        fails the step at once. The failed attempts leave the manifest's steps (so a later pass reads as a pass) and are
-        kept under `package_fetch_retries`; if every attempt fails, the last one stays, and the lane reports a fetch
-        fault, not a failed build."""
+        Only that failure is tried again, up to PACKAGE_FETCH_ATTEMPTS times: a compile error, a failing test, a step
+        that ran out of time or was stopped, and any other failure fail at once. A failed attempt that is tried again
+        leaves the manifest's steps (so a later pass reads as a pass) and is kept under `package_fetch_retries`. If every
+        attempt fails, the step stays as it failed and the run says the lane's network was at fault, not the PR: the
+        manifest's `lane_fault` (the lane's report reads it) and, on a GitHub-hosted runner, a `lane-fault` annotation,
+        which the lane's hosted checks read to run the check again once."""
         for attempt in range(1, PACKAGE_FETCH_ATTEMPTS + 1):
             try:
-                return self.command('build-for-testing', args, timeout=900)
+                return self.command(name, args, **kwargs)
             except RuntimeError:
-                log = self.output / 'build-for-testing.log'
-                fetch_fault = log.is_file() and PACKAGE_FETCH_FAULT.search(log.read_text(errors='replace'))
-                if attempt == PACKAGE_FETCH_ATTEMPTS or not fetch_fault:
+                failed = self.manifest['steps'][-1]  # `command` adds its step before anything can fail
+                log = self.output / f'{name}.log'
+                text = log.read_text(errors='replace') if log.is_file() else ''
+                fault = next((line.strip() for line in text.splitlines() if PACKAGE_FETCH_FAULT.search(line)), None)
+                if (not fault or OTHER_BUILD_FAILURE.search(text) or failed.get('name') != name or failed.get('tests')
+                        or failed.get('interrupted') or failed.get('signalled')):
                     raise
-                failed = self.manifest['steps'].pop()
+                if attempt == PACKAGE_FETCH_ATTEMPTS:
+                    why = f'a Swift package could not be fetched from GitHub ({fault[:200]}), so the PR was never judged'
+                    failed['package_fetch_fault'] = fault
+                    self.manifest['lane_fault'] = why
+                    self.save()
+                    if on_hosted_runner():
+                        print(f'::error title=lane-fault::{why}', flush=True)
+                    raise
+                self.manifest['steps'].pop()
                 pause = PACKAGE_FETCH_PAUSES[min(attempt, len(PACKAGE_FETCH_PAUSES)) - 1]
                 self.manifest.setdefault('package_fetch_retries', []).append(
-                    {'attempt': attempt, 'seconds': failed.get('seconds'), 'errors': failed.get('errors')})
+                    {'step': name, 'attempt': attempt, 'seconds': failed.get('seconds'), 'errors': failed.get('errors')})
                 self.save()
-                print(f'warning: build-for-testing could not clone a package (attempt {attempt} of '
+                print(f'warning: {name} could not clone a package (attempt {attempt} of '
                       f'{PACKAGE_FETCH_ATTEMPTS}); trying again in {pause}s', flush=True)
                 time.sleep(pause)
 
