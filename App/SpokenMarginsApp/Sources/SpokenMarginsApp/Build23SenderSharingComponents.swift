@@ -567,7 +567,7 @@ struct Build23PinnedStepLine: View {
                     .accessibilityIdentifier("build23.sender.review.placementStep.more")
             }
         }
-        .sheet(isPresented: $showsFullText) {
+        .trackedSheet(isPresented: $showsFullText) {
             VStack(alignment: .leading, spacing: 16) {
                 Text(ShareReviewCardWords.pinnedStepSheetTitle)
                     .font(.headline)
