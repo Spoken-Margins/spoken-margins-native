@@ -36,6 +36,7 @@ final class LiveSessionController: ObservableObject {
     /// Photo Margins whose picture has been handed to the page-number reader by this screen, so each is read once here
     /// even while the read has not finished or could not be done (#2708).
     private var pageReadsStarted: Set<String> = []
+    private var pageReadChain: Task<Void, Never>?
     /// Finish tapped on the Lock Screen card while a spoken Margin records (#3499); lives only while one records.
 
     init(sessionId: String? = nil, files: LiveSessionFileWorker = .shared, spokenCapture: LiveSessionSpokenCapture = .shared) {
@@ -306,15 +307,21 @@ final class LiveSessionController: ObservableObject {
     /// recorded as an offer, which the Margin screen shows with Keep and No; the words on the page are not kept.
     private func readPagesFromPhotos() {
         guard let current = session else { return }
+        var waiting: [(photo: LiveSessionPhoto, sessionId: String, marginId: String)] = []
         for margin in current.margins {
             guard let photo = margin.validPhoto, !pageReadsStarted.contains(margin.id),
                   current.needsPageRead(forMarginId: margin.id) else { continue }
             pageReadsStarted.insert(margin.id)
-            let sessionId = current.id
-            let marginId = margin.id
-            Task { [weak self] in
-                let outcome = await LiveSessionPagePhotoReader.read(photo)
-                self?.finishPageRead(outcome, sessionId: sessionId, marginId: marginId)
+            waiting.append((photo, current.id, margin.id))
+        }
+        guard !waiting.isEmpty else { return }
+        // One picture at a time, after any read already running: a session with many photos must not recognise them all at once.
+        let earlier = pageReadChain
+        pageReadChain = Task { [weak self] in
+            await earlier?.value
+            for item in waiting {
+                let outcome = await LiveSessionPagePhotoReader.read(item.photo)
+                self?.finishPageRead(outcome, sessionId: item.sessionId, marginId: item.marginId)
             }
         }
     }

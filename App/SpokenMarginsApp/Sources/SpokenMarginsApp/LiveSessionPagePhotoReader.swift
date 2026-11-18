@@ -26,6 +26,9 @@ enum LiveSessionPagePhotoReader {
         request.recognitionLevel = .accurate
         // A page number is digits; "correcting" them toward words would only make mistakes.
         request.usesLanguageCorrection = false
+        // Vision skips text shorter than about 3% of the picture by default; a page number in the footer of a whole-page
+        // photo is often a third of that.
+        request.minimumTextHeight = 0.008
         do {
             try VNImageRequestHandler(url: url, options: [:]).perform([request])
         } catch {
