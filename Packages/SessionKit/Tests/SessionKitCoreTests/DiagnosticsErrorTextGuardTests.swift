@@ -40,7 +40,6 @@ final class DiagnosticsErrorTextGuardTests: XCTestCase {
         ("Gate1AppModel+Feedback.swift", "rawMessage = String(describing: error)", "the bug report's raw text, which lands under recentFailure and never leaves"),
         ("Gate1AppModel+ImportInbox.swift", "quarantine(payloadID: payloadID, reason: error.localizedDescription)", "the import inbox row's reason"),
         ("Gate1AppModel+SourceWindowContext.swift", "let failure = String(describing: error)", "the Margin's transcription wording; the export line uses `diagnostic`"),
-        ("Gate1AppModel+ShareDrafts.swift", "Pause analysis was unavailable (", "text on the share screen"),
         ("LocalFoundationModels.swift", "String(reflecting: error).lowercased()", "decides which failure it is; not stored"),
         ("Gate1AppModel+MarginVoiceHold.swift", "String(describing: move)", "a hand-over case name, not an error"),
         ("Gate1AppModel.swift", "String(describing: newValue)", "a navigation case name, not an error"),
