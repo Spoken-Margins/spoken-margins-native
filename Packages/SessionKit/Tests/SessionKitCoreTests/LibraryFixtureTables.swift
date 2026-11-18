@@ -210,6 +210,14 @@ extension LibraryFixture {
                 members: (0..<10).map { ListMember(feedKey: "https://feed-\($0).example/feed") }
             ))
         }
+        // #4046: listening rules and Show less marks, priced the same way.
+        for index in 0..<20 {
+            try store.saveListeningRule(ListeningRule(
+                id: "listening-rule-\(index)", action: index % 4 == 0 ? .more : .skip, words: ["word\(index)*", "other"], scope: .any,
+                isOn: index % 2 == 0, createdAt: epoch
+            ))
+            try store.saveShowLessMark(ShowLessMark(feedKey: "https://feed-\(index % 10).example/feed", entryId: "entry-\(index)", title: "Episode \(index)", markedAt: epoch))
+        }
         for index in 1...min(6, scale.notes) {
             try store.saveInterjectionShareRevision(InterjectionShareRevision(
                 id: "revision-\(index)", interjectionId: "note-\(index)", itemId: itemIds[(index * 7) % itemIds.count], sessionId: "session-\(index)",

@@ -319,6 +319,8 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         case "feed_entry": return columns(FeedEntry.self, item: { _ in nil })
         case "item_collection": return columns(ItemCollection.self, item: { _ in nil })
         case "follow_list": return columns(FollowList.self, item: { _ in nil })
+        case "listening_rule": return columns(ListeningRule.self, item: { _ in nil })
+        case "show_less_mark": return columns(ShowLessMark.self, item: { _ in nil })
         case TranscriptTimes.recordKind: return columns(TranscriptTimes.self, item: { $0.itemId })
         default: return nil
         }
@@ -1602,6 +1604,42 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             }
             return changed
         }
+    }
+
+    /// Listening rules (#4046) are their own record kind with no item_id, so the shipped builds' readers never see them. A rule
+    /// does nothing until `isOn`. The record id is the rule id.
+    public func saveListeningRule(_ rule: ListeningRule) throws {
+        try save(kind: "listening_rule", id: rule.id, sessionId: nil, itemId: nil, value: rule)
+    }
+
+    /// Oldest first, then by id, so the order is the same on every read.
+    public func loadListeningRules() throws -> [ListeningRule] {
+        let rules: [ListeningRule] = try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["listening_rule"])
+        return rules.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+    }
+
+    public func loadListeningRule(id: String) throws -> ListeningRule? {
+        try loadOptional(kind: "listening_rule", id: id)
+    }
+
+    public func deleteListeningRule(id: String) throws {
+        try deleteRecord(kind: "listening_rule", id: id)
+    }
+
+    /// Show less marks (#4046). A mark's id is its entry id (else its item id), so marking an episode twice keeps one mark.
+    public func saveShowLessMark(_ mark: ShowLessMark) throws {
+        try save(kind: "show_less_mark", id: mark.id, sessionId: nil, itemId: nil, value: mark)
+    }
+
+    /// Oldest mark first, then by id.
+    public func loadShowLessMarks() throws -> [ShowLessMark] {
+        let marks: [ShowLessMark] = try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["show_less_mark"])
+        return marks.sorted { ($0.markedAt, $0.id) < ($1.markedAt, $1.id) }
+    }
+
+    /// "Undo Show less". Takes the mark for the entry or, with none, the item.
+    public func deleteShowLessMark(entryId: String?, itemId: String?) throws {
+        try deleteRecord(kind: "show_less_mark", id: ShowLessMark.id(entryId: entryId, itemId: itemId))
     }
 
     public func loadFeedSubscriptions() throws -> [FeedSubscription] {
