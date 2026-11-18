@@ -93,7 +93,7 @@ final class UnplacedMarginExportTests: XCTestCase {
         let none = try XCTUnwrap(markdown.range(of: "Thought u1."))
         XCTAssertLessThan(early.lowerBound, late.lowerBound)
         XCTAssertLessThan(late.lowerBound, none.lowerBound, markdown)
-        XCTAssertTrue(markdown.contains(SessionExportMarkdownRenderer.noPlaceSaved.capitalized) || markdown.localizedCaseInsensitiveContains("no place saved"), markdown)
+        XCTAssertTrue(markdown.contains("No place saved"), markdown)
     }
 
     // MARK: File names
@@ -153,7 +153,7 @@ final class UnplacedMarginExportTests: XCTestCase {
         let item = item()
         let margin = unplaced("u1", item: item, media: true)
         let export = try buildExport(engine(item: item, margins: [margin]), margin)
-        let note = try XCTUnwrap(export.interjections.first)
+        XCTAssertEqual(export.interjections.count, 1)
         let name = MarginExport.audioBaseName(itemTitle: item.title, margin: margin)
         XCTAssertTrue(name.contains("no place"), name)
         XCTAssertFalse(name.contains("0m00s"), name)
