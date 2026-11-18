@@ -656,10 +656,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(on_vps, {})
 
     def test_the_lane_hands_the_switch_to_the_automerge_and_release_runs_and_may_read_checks(self):
-        # The route job (hosted_merge_routing), the lane job (a T3 PASS merging on the hosted checks), the automerge
-        # job, its automerge-mac fallback and the release job (#2459).
+        # The route job (hosted_merge_routing), the automerge job, its automerge-mac fallback and the release job
+        # (#2459). The lane job no longer reads them: a T3 PASS merges nothing since #4572.
         for switch in (lane.HOSTED_FAST_SWITCH, lane.HOSTED_REST_SWITCH):
-            self.assertEqual(self.lane_yml.count(f'{switch}: ${{{{ vars.{switch} }}}}'), 5, switch)
+            self.assertEqual(self.lane_yml.count(f'{switch}: ${{{{ vars.{switch} }}}}'), 4, switch)
         self.assertIn('  checks: read\n', self.lane_yml)
 
 

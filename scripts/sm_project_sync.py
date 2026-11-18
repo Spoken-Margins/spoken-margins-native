@@ -261,7 +261,7 @@ def resumed_after(api, issue, merged_pull):
 def checking(rows, labels):
     attention = [f'PR #{r["number"]}: {f["code"]}' for r in rows for f in r['flags']
                  if f['severity'] == sm_status.RED or f['code'] in {
-                     'held-by-runner', 'inconclusive-on-head', 't3-unqueued', 'armed-no-lane-request', 'owner-tap'}]
+                     'held-by-runner', 'inconclusive-on-head', 't3-unqueued', 'owner-tap'}]
     # Not GitHub's mergeable_state: "blocked", "unstable" and "has_hooks" are normal while reviews or checks are
     # pending and flip between runs. A real conflict or red check is already a flag above.
     if labels & HOLD:
