@@ -57,7 +57,8 @@ public enum FolderLocationLabel {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return (nil, []) }
         // A trailing slash is just how a folder URL is written, and empty parts of the path are dropped below.
-        let slashed = trimmed + "/"
+        var slashed = trimmed + "/"
+        while slashed.contains("//") { slashed = slashed.replacingOccurrences(of: "//", with: "/") }
 
         if let range = slashed.range(of: iCloudDrive) {
             return ("iCloud Drive", components(of: String(slashed[range.upperBound...])))
@@ -81,7 +82,8 @@ public enum FolderLocationLabel {
         guard remainder.hasPrefix("Documents/") else { return nil }
         // The identifier's parts after "iCloud~" are `<a>~<b>`, or more; the app's own name is the last.
         guard let last = identifier.split(separator: "~").last, let first = last.first else { return nil }
-        let name = String(first).uppercased() + last.dropFirst()
+        let capital = String(first).uppercased()
+        let name = (capital.count == 1 ? capital : String(first)) + last.dropFirst()  // "ß" would become "SS"
         return (name, String(remainder.dropFirst("Documents/".count)))
     }
 

@@ -87,4 +87,17 @@ final class FolderLocationLabelTests: XCTestCase {
         XCTAssertEqual(FolderLocationLabel.spokenLabel(forPath: "/x/Mobile Documents/com~apple~CloudDocs/A/B/C/D"), "iCloud Drive, B, C, D")
         XCTAssertNil(FolderLocationLabel.spokenLabel(forPath: "/"))
     }
+
+    func testDoubledSlashesInsideAMarkerDoNotHideIt() {
+        XCTAssertEqual(FolderLocationLabel.label(forPath: "/a/Mobile Documents//com~apple~CloudDocs//Vault"),
+                       FolderLocationLabel.label(forPath: "/a/Mobile Documents/com~apple~CloudDocs/Vault"))
+        XCTAssertEqual(FolderLocationLabel.label(forPath: "/a/Mobile Documents/iCloud~md~obsidian//Documents/Vault"),
+                       FolderLocationLabel.label(forPath: "/a/Mobile Documents/iCloud~md~obsidian/Documents/Vault"))
+        XCTAssertEqual(FolderLocationLabel.label(forPath: "/a/File Provider Storage//Clippings"),
+                       FolderLocationLabel.label(forPath: "/a/File Provider Storage/Clippings"))
+    }
+
+    func testAnAppNameKeepsItsFirstLetterWhenCapitalizingWouldChangeItsLength() {
+        XCTAssertEqual(FolderLocationLabel.label(forPath: "/a/Mobile Documents/iCloud~ab~ßeta/Documents/V")?.hasPrefix("ßeta"), true)
+    }
 }
