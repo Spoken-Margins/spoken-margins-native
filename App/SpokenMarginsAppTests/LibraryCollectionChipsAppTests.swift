@@ -62,13 +62,19 @@ final class LibraryCollectionChipsAppTests: XCTestCase {
         let model = makeModel()
         let ids = try importItems(model, count: 3)
         let store = try XCTUnwrap(model.store)
+        guard case .saved = await model.libraryCollections.create(name: "Chosen", itemIDs: [ids[1]], store: store) else { return XCTFail() }
+        XCTAssertNotNil(model.libraryCollections.selection, "a collection is selected before the read")
         try store.saveItemCollection(ItemCollection(id: "collection-a", name: "A", itemIDs: [ids[0]], createdAt: Date()))
-        XCTAssertTrue(model.libraryCollections.collections.isEmpty, "nothing has read the store since the save")
+        XCTAssertEqual(model.libraryCollections.collections.count, 1, "nothing has read the store since the save")
 
         try model.refreshLibraryRows(store: store)
 
-        XCTAssertEqual(model.libraryCollections.collections.map(\.id), ["collection-a"], "read with the Library rows")
-        XCTAssertNil(model.libraryCollections.selection, "the selection is never restored: every launch opens on All")
+        XCTAssertEqual(Set(model.libraryCollections.collections.map(\.id)).contains("collection-a"), true, "read with the Library rows")
+        XCTAssertEqual(model.libraryCollections.collections.count, 2)
+        XCTAssertNotNil(model.libraryCollections.selection, "a read keeps the selection of a collection that still exists")
+
+        let relaunched = makeModel()
+        XCTAssertNil(relaunched.libraryCollections.selection, "the selection is never saved: every launch opens on All")
     }
 
     func testAnEmptyCollectionAndADoubleCreate() async throws {
@@ -86,5 +92,20 @@ final class LibraryCollectionChipsAppTests: XCTestCase {
             XCTFail("a second create with the same name makes no second collection")
         }
         XCTAssertEqual(try store.loadItemCollections().count, 1)
+    }
+
+    func testASaveOrDeleteStalesALibraryReadAlreadyInFlight() async throws {
+        let model = makeModel()
+        _ = try importItems(model, count: 2)
+        let store = try XCTUnwrap(model.store)
+        let before = model.libraryPresentationRevision
+
+        guard case .saved = await model.libraryCollections.create(name: "A", itemIDs: [], store: store) else { return XCTFail() }
+        XCTAssertGreaterThan(model.libraryPresentationRevision, before, "a read begun before the save must be read again")
+
+        let afterCreate = model.libraryPresentationRevision
+        let made = try XCTUnwrap(model.libraryCollections.collections.first)
+        guard case .saved = await model.libraryCollections.delete(made, store: store) else { return XCTFail() }
+        XCTAssertGreaterThan(model.libraryPresentationRevision, afterCreate)
     }
 }

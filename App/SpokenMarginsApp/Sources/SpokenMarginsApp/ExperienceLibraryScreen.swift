@@ -141,6 +141,8 @@ struct ExperienceLibraryScreen: View {
             CollectionItemsSheet(mode: mode)
                 .environmentObject(model)
         }
+        // On the screen, not on the chip row: the row lives in a list cell the list may recycle.
+        .collectionRenameAlert(collection: $renamingCollection, text: $collectionRenameText, commit: commitCollectionRename)
         .newMarginsOffer($pendingNewMarginsOffer)
         .task { if !isEdgeSwipePreview { await clipboardLink.refresh() } } // the swipe's preview reads nothing (#106)
         // Pictures of items from followed feeds: recorded off the main thread, and again whenever the Library's items change (#3864).
@@ -335,7 +337,6 @@ struct ExperienceLibraryScreen: View {
                     .accessibilityIdentifier("library.collections.problem")
             }
         }
-        .collectionRenameAlert(collection: $renamingCollection, text: $collectionRenameText, commit: commitCollectionRename)
     }
 
     private func commitCollectionRename() {

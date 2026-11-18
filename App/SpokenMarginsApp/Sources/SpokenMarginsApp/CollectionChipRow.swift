@@ -12,6 +12,9 @@ struct CollectionChipRow: View {
         var id: String { collection.id }
     }
 
+    // The selected state is in each chip's label ("Collection, HIST 210, selected, 12 items"), as the Design words it, so
+    // no .isSelected trait is added: VoiceOver would say it twice.
+
     /// The collections in chip order.
     let chips: [Chip]
     /// The selected collection's id; nil is All.
@@ -30,7 +33,6 @@ struct CollectionChipRow: View {
                     chipLabel("All", isSelected: selectedID == nil)
                 }
                 .accessibilityLabel(LibraryCollectionScope.chipAccessibilityLabel(name: nil, itemCount: allCount, isSelected: selectedID == nil))
-                .accessibilityAddTraits(selectedID == nil ? .isSelected : [])
                 .accessibilityIdentifier("library.collections.all")
 
                 ForEach(chips) { entry in
@@ -40,7 +42,6 @@ struct CollectionChipRow: View {
                     }
                     .accessibilityLabel(LibraryCollectionScope.chipAccessibilityLabel(
                         name: entry.collection.name, itemCount: entry.itemCount, isSelected: isSelected))
-                    .accessibilityAddTraits(isSelected ? .isSelected : [])
                     // The same actions for VoiceOver and Switch Control, which can't long-press (#1917, #3730).
                     .accessibilityAction(named: "Edit Items") { onEditItems(entry.collection) }
                     .accessibilityAction(named: "Rename") { onRename(entry.collection) }

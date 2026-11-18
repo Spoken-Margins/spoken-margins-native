@@ -31,6 +31,8 @@ struct CollectionItemsSheet: View {
     @State private var chosen: Set<String>
     /// The checklist's rows for the current search; recomputed when the search or the Library changes, not on every tick.
     @State private var rows: [LibraryItemRow] = []
+    /// False until the first checklist is built, so a Library with items never shows "No items match." for a frame.
+    @State private var rowsLoaded = false
     @State private var problem: String?
     /// Set the moment Create is tapped, so a second tap before the sheet closes makes no second collection.
     @State private var isSaving = false
@@ -74,7 +76,7 @@ struct CollectionItemsSheet: View {
                 Section {
                     if model.libraryItems.isEmpty {
                         Text("Your Library has no items yet.").foregroundStyle(AppColors.secondaryText)
-                    } else if rows.isEmpty {
+                    } else if rowsLoaded, rows.isEmpty {
                         Text("No items match.").foregroundStyle(AppColors.secondaryText)
                     }
                     ForEach(rows) { row in itemRow(row) }
@@ -145,6 +147,7 @@ struct CollectionItemsSheet: View {
 
     private func refreshRows() {
         rows = LibraryCollectionScope.checklistRows(model.libraryItems, search: search)
+        rowsLoaded = true
     }
 
     private func toggle(_ id: String) {

@@ -16,6 +16,9 @@ final class LibraryCollectionModel: ObservableObject {
     /// The collection the Library is narrowed to; nil is All.
     @Published private(set) var selection: ItemCollectionScope?
     private var willChangeRelay: AnyCancellable?
+    /// Called when this model's own save or delete changed the collections, so a Library read that began before it is
+    /// seen as stale and read again, never published over what was just saved.
+    var onLocalWrite: (() -> Void)?
 
     /// Sends `target` a change notification whenever the collections or the selection are about to change, so the
     /// model's views, which filter the Library by the selection, redraw (the Quick Folder's pattern, #981).
@@ -78,7 +81,10 @@ final class LibraryCollectionModel: ObservableObject {
         }
         switch result {
         case .failure(let error): return .failed(error)
-        case .success(let stored): publish(stored ?? collections.filter { $0.id != collection.id }); return .saved
+        case .success(let stored):
+            onLocalWrite?()
+            publish(stored ?? collections.filter { $0.id != collection.id })
+            return .saved
         }
     }
 
@@ -95,6 +101,7 @@ final class LibraryCollectionModel: ObservableObject {
         case .success(let stored):
             var local = collections
             if let index = local.firstIndex(where: { $0.id == collection.id }) { local[index] = collection } else { local.append(collection) }
+            onLocalWrite?()
             publish(stored ?? local)
             return nil
         }

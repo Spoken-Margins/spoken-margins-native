@@ -17,5 +17,7 @@ extension Gate1AppModel {
     /// Connects the collections to the model at launch, so its views redraw when the selection changes.
     func wireLibraryCollections() {
         libraryCollections.forwardWillChange(to: objectWillChange)
+        // A save or delete here stales any Library read already in flight, which carries the collections as they were.
+        libraryCollections.onLocalWrite = { [weak self] in self?.libraryPresentationRevision += 1 }
     }
 }
