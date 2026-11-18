@@ -1,0 +1,121 @@
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import package_watch as pw  # noqa: E402
+
+ONNX = 'https://github.com/Spoken-Margins/onnxruntime-swift-package-manager.git'
+MS = 'https://github.com/microsoft/onnxruntime-swift-package-manager.git'
+
+
+def pin(version='1.24.2', location=ONNX, branch=None, revision='b7fb7f7dea8a'):
+    return {'identity': 'x', 'location': location, 'version': version, 'branch': branch, 'revision': revision, 'files': []}
+
+
+def remote_of(table):
+    return lambda url: table.get(url)
+
+
+NONE = lambda slug: []  # noqa: E731
+SAME = lambda slug: slug  # noqa: E731
+
+
+class RangeTests(unittest.TestCase):
+    def test_ranges(self):
+        rows = [('0.9.16', '< 0.9.17', True), ('0.9.17', '< 0.9.17', False), ('0.9.20', '>= 0.9.0, < 0.9.20', False),
+                ('0.9.19', '>= 0.9.0, < 0.9.20', True), ('1.0.0', '= 1.0', True), ('2.0.0', '<= 1.9.9', False),
+                ('v1.2.3', '> 1.2', True), (None, '< 1.0', True), ('1.0.0', 'garbage', True)]
+        for version, spec, want in rows:
+            with self.subTest(version=version, spec=spec):
+                self.assertEqual(pw.in_range(version, spec), want)
+
+    def test_slug(self):
+        self.assertEqual(pw.github_slug('https://github.com/weichsel/ZIPFoundation.git'), 'weichsel/ZIPFoundation')
+        self.assertEqual(pw.github_slug('https://github.com/apple/swift-numerics'), 'apple/swift-numerics')
+        self.assertIsNone(pw.github_slug('https://gitlab.com/a/b'))
+
+    def test_newest_tag_ignores_non_versions(self):
+        self.assertEqual(pw.newest_tag(['v1.15.0', '1.24.2', 'nightly', 'v1.19.2']), '1.24.2')
+
+
+class FindingTests(unittest.TestCase):
+    def kinds(self, found):
+        return [kind for kind, _ in found]
+
+    def test_upstream_gone_behind_a_copy_is_flagged_once(self):
+        """#4512: Microsoft's repository answered 404 while our copy still worked."""
+        found = pw.findings_for(pin(), MS, remote_of({ONNX: {'tags': ['1.24.2'], 'heads': {}}}), NONE, SAME)
+        self.assertEqual(self.kinds(found), ['gone'])
+        self.assertIn('only source', found[0][1])
+
+    def test_source_we_build_from_gone(self):
+        found = pw.findings_for(pin(location=MS), MS, remote_of({}), NONE, SAME)
+        self.assertEqual(self.kinds(found), ['gone'])
+
+    def test_newer_upstream_tag(self):
+        table = {ONNX: {'tags': ['1.24.2'], 'heads': {}}, MS: {'tags': ['1.24.2', 'v1.30.0'], 'heads': {}}}
+        found = pw.findings_for(pin(), MS, remote_of(table), NONE, SAME)
+        self.assertEqual(self.kinds(found), ['newer'])
+
+    def test_same_version_is_quiet(self):
+        table = {ONNX: {'tags': ['1.24.2'], 'heads': {}}, MS: {'tags': ['1.24.2', 'v1.19.2'], 'heads': {}}}
+        self.assertEqual(pw.findings_for(pin(), MS, remote_of(table), NONE, SAME), [])
+
+    def test_branch_pin_moved(self):
+        url = 'https://github.com/mattmireles/kokoro-coreml'
+        table = {url: {'tags': [], 'heads': {'main': 'ffff0000'}}}
+        found = pw.findings_for(pin(version=None, location=url, branch='main', revision='aaaa1111'), url,
+                                remote_of(table), NONE, SAME)
+        self.assertEqual(self.kinds(found), ['newer'])
+
+    def test_renamed_upstream_is_moved(self):
+        table = {ONNX: {'tags': ['1.24.2'], 'heads': {}}, MS: {'tags': ['1.24.2'], 'heads': {}}}
+        found = pw.findings_for(pin(), MS, remote_of(table), NONE, lambda slug: 'microsoft/onnxruntime-spm')
+        self.assertEqual(self.kinds(found), ['moved'])
+
+    def test_advisory_covering_the_pin_is_flagged_and_an_old_one_is_not(self):
+        url = 'https://github.com/weichsel/ZIPFoundation.git'
+        table = {url: {'tags': ['0.9.20'], 'heads': {}}}
+
+        def advisories(slug):
+            return [{'ghsa_id': 'GHSA-old', 'severity': 'high', 'summary': 'path traversal',
+                     'vulnerabilities': [{'package': {'name': 'github.com/weichsel/ZIPFoundation'},
+                                          'vulnerable_version_range': '< 0.9.17'}]},
+                    {'ghsa_id': 'GHSA-new', 'severity': 'high', 'summary': 'zip slip',
+                     'vulnerabilities': [{'package': {'name': 'github.com/weichsel/ZIPFoundation'},
+                                          'vulnerable_version_range': '<= 0.9.20'}]}]
+        found = pw.findings_for(pin(version='0.9.20', location=url), url, remote_of(table), advisories, SAME)
+        self.assertEqual(self.kinds(found), ['advisory-other', 'advisory'])
+
+
+class ReportTests(unittest.TestCase):
+    def test_signature_is_stable_and_clean_when_nothing_flagged(self):
+        quiet = {'a': (pin(), ONNX, []), 'b': (pin(), ONNX, [('advisory-other', 'old')])}
+        text, sig, flagged = pw.report(quiet)
+        self.assertEqual((sig, flagged), ('clean', False))
+        loud = {'a': (pin(), MS, [('gone', 'x')])}
+        self.assertEqual(pw.report(loud)[1], pw.report(dict(loud))[1])
+        self.assertTrue(pw.report(loud)[2])
+
+    def test_collect_pins_merges_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ('a.resolved', 'b.resolved'):
+                Path(tmp, name).write_text(json.dumps({'pins': [
+                    {'identity': 'zip', 'location': 'https://github.com/w/Z.git', 'state': {'version': '0.9.20', 'revision': 'r'}}]}))
+            pins = pw.collect_pins(tmp, ('a.resolved', 'b.resolved', 'missing.resolved'))
+        self.assertEqual(list(pins), ['zip'])
+        self.assertEqual(pins['zip']['files'], ['a.resolved', 'b.resolved'])
+
+    def test_upstreams_file_names_every_copy_in_the_resolved_files(self):
+        copies = json.loads((pw.ROOT / pw.UPSTREAMS).read_text())['copies']
+        pins = pw.collect_pins()
+        for identity, entry in copies.items():
+            self.assertIn(identity, pins)
+            self.assertEqual(pins[identity]['location'].rstrip('/'), entry['copy'].rstrip('/'))
+
+
+if __name__ == '__main__':
+    unittest.main()
