@@ -9,7 +9,8 @@ import Foundation
 /// 1. A second file in the same pick with the same bytes is named under "Couldn't add" ("Same file as “x.pdf”").
 /// 2. A file whose SHA-256 matches a member is the same file, wherever it now sits: skipped. A link entry is the same by
 ///    its address, wherever it now sits in the list.
-/// 3. A member the listener removed stays removed, whether the same bytes, a changed file at its path, or its link.
+/// 3. A member the listener removed stays removed: the same bytes, or its link, are skipped. A changed file at its path is
+///    new content, so it is a newer copy like any other.
 /// 4. A member that failed is tried again, with the file as it is now.
 /// 5. A file at a member's path whose bytes changed is a newer copy, added right after the old one ("Updated copy").
 ///    The old item keeps its Margins.
@@ -97,9 +98,10 @@ public enum LibraryFolderMerge {
             }
             if let index = latestIndex(atPath: walked.key, in: record) {
                 let member = record.members[index]
-                // A failed or removed member is settled by its state whatever the bytes are now. A file whose bytes can't
-                // be read (a placeholder) is judged by its path alone. Otherwise the bytes differ: a newer copy.
-                if member.state == .failed || member.state == .removed || walked.sha256 == nil || member.sha256 == nil {
+                // A failed member is tried again whatever the bytes are now. A file whose bytes can't be compared (a
+                // placeholder, or a member that never had a hash) is judged by its path alone. Otherwise the bytes
+                // differ: a newer copy, even after the listener removed the older one (the same bytes never come back).
+                if member.state == .failed || walked.sha256 == nil || member.sha256 == nil {
                     settle(index, walked: walked, into: &record, jobs: &jobs, skipped: &skipped, makeItemID: makeItemID)
                     continue
                 }
@@ -125,6 +127,10 @@ public enum LibraryFolderMerge {
             skipped.append(.removedFromFolder(memberKey: member.key))
         case .added, .adding:
             skipped.append(.alreadyInFolder(memberKey: member.key))
+            var current = member
+            if current.sha256 == nil { current.sha256 = walked.sha256 } // a file that has finished downloading
+            record.members[index] = current
+            followTheFile(index, to: walked.key, in: &record)
         case .failed:
             var retried = member
             retried.state = .adding
@@ -133,8 +139,19 @@ public enum LibraryFolderMerge {
             retried.sha256 = walked.sha256
             if retried.itemID == nil, needsPreassignedID(walked.kind) { retried.itemID = makeItemID() }
             record.members[index] = retried
-            jobs.append(Job(memberKey: retried.key, walkMember: walked, itemID: retried.itemID, isRetry: true))
+            followTheFile(index, to: walked.key, in: &record)
+            jobs.append(Job(memberKey: record.members[index].key, walkMember: walked, itemID: retried.itemID, isRetry: true))
         }
+    }
+
+    /// A file member's key is its path, so a later change at the file's new place is seen as a newer copy of this member.
+    /// Moves the key when that is safe: the file is not a copy, nothing is a copy of it, and the path is free.
+    private static func followTheFile(_ index: Int, to path: String, in record: inout LibraryFolderRecord) {
+        let member = record.members[index]
+        guard member.kind != .link, member.key != path, member.updatedCopyOf == nil,
+              !record.members.contains(where: { $0.updatedCopyOf == member.key }),
+              !record.members.contains(where: { $0.key == path }) else { return }
+        record.members[index].key = path
     }
 
     private static func mergeLink(
@@ -147,8 +164,12 @@ public enum LibraryFolderMerge {
             return
         }
         guard let index = record.members.firstIndex(where: { $0.address == address }) else {
+            // Entries are numbered by place in the list, so an edited list can reuse a number an old entry still holds.
+            var key = walked.key
+            var suffix = 2
+            while record.members.contains(where: { $0.key == key }) { key = "\(walked.key)+\(suffix)"; suffix += 1 }
             let member = LibraryFolderRecord.Member(
-                key: walked.key, kind: .link, name: walked.title ?? address, address: address, addedAt: now)
+                key: key, kind: .link, name: walked.title ?? address, address: address, addedAt: now)
             insert(member, into: &record)
             jobs.append(Job(memberKey: member.key, walkMember: walked, itemID: nil, isRetry: false))
             return

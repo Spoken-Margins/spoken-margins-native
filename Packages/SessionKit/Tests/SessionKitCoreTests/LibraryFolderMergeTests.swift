@@ -104,7 +104,26 @@ final class LibraryFolderMergeTests: XCTestCase {
         let existing = record([member("1.pdf", "a", id: "i1")])
         let result = run(walk([file("moved/1.pdf", "a")]), existing: existing)
         XCTAssertTrue(result.jobs.isEmpty)
-        XCTAssertEqual(result.record.members.map(\.key), ["1.pdf"])
+        XCTAssertEqual(result.record.members.map(\.key), ["moved/1.pdf"], "the member follows its file")
+        XCTAssertEqual(result.record.members.map(\.itemID), ["i1"])
+    }
+
+    func testAFileThatMovedAndThenChangesIsANewerCopyAtItsNewPlace() {
+        let moved = run(walk([file("moved/1.pdf", "a")]), existing: record([member("1.pdf", "a", id: "i1")])).record
+        let changed = run(walk([file("moved/1.pdf", "a2")]), existing: moved)
+        XCTAssertEqual(changed.record.members.map(\.key), ["moved/1.pdf", "moved/1.pdf#updated-2"])
+        XCTAssertEqual(changed.record.members.last?.updatedCopyOf, "moved/1.pdf")
+        // And a different file now at the old path is new, not a copy of the one that left.
+        let other = run(walk([file("1.pdf", "unrelated")]), existing: moved)
+        XCTAssertEqual(other.record.members.map(\.key), ["1.pdf", "moved/1.pdf"].sorted { NaturalPathOrder.areInIncreasingOrder($0, $1) })
+        XCTAssertNil(other.record.members.first { $0.key == "1.pdf" }?.updatedCopyOf)
+    }
+
+    func testAMemberWithCopiesStaysPutWhenTheSameBytesShowUpElsewhere() {
+        let existing = record([member("1.pdf", "a", id: "i1"), member("1.pdf#updated-2", "a2", id: "i1b", copyOf: "1.pdf")])
+        let result = run(walk([file("elsewhere/1.pdf", "a")]), existing: existing)
+        XCTAssertEqual(result.record.members.map(\.key), ["1.pdf", "1.pdf#updated-2"])
+        XCTAssertTrue(result.jobs.isEmpty)
     }
 
     func testANewFileJoinsInItsPlaceInOrder() {
@@ -167,11 +186,12 @@ final class LibraryFolderMergeTests: XCTestCase {
         XCTAssertEqual(result.record.members[0].sha256, "new")
     }
 
-    func testAFailedMemberWhoseFileMovedIsTriedAgainUnderItsOldKey() {
+    func testAFailedMemberWhoseFileMovedIsTriedAgainAtItsNewPath() {
         let existing = record([member("1.pdf", "a", id: "i1", state: .failed)])
         let result = run(walk([file("sub/1.pdf", "a")]), existing: existing)
-        XCTAssertEqual(result.jobs.map(\.memberKey), ["1.pdf"])
-        XCTAssertEqual(result.record.members.map(\.key), ["1.pdf"])
+        XCTAssertEqual(result.jobs.map(\.memberKey), ["sub/1.pdf"], "the member follows its file")
+        XCTAssertEqual(result.record.members.map(\.key), ["sub/1.pdf"])
+        XCTAssertEqual(result.jobs.first?.itemID, "i1")
     }
 
     func testAFailedMemberThatNeverHadAnIDGetsOneForAFileKind() {
@@ -191,10 +211,23 @@ final class LibraryFolderMergeTests: XCTestCase {
         let existing = record([member("1.pdf", "a", id: "i1", state: .removed)])
         XCTAssertTrue(run(walk([file("1.pdf", "a")]), existing: existing).jobs.isEmpty, "same bytes, same path")
         XCTAssertTrue(run(walk([file("elsewhere/1.pdf", "a")]), existing: existing).jobs.isEmpty, "same bytes, new path")
-        let changed = run(walk([file("1.pdf", "changed")]), existing: existing)
-        XCTAssertTrue(changed.jobs.isEmpty, "changed bytes at the removed member's path")
-        XCTAssertEqual(changed.skipped, [.removedFromFolder(memberKey: "1.pdf")])
-        XCTAssertEqual(changed.record.members.map(\.state), [.removed])
+        XCTAssertEqual(run(walk([file("1.pdf", "a")]), existing: existing).skipped, [.removedFromFolder(memberKey: "1.pdf")])
+        XCTAssertEqual(run(walk([file("1.pdf", "a")]), existing: existing).record.members.map(\.state), [.removed])
+    }
+
+    func testNewContentAtARemovedMembersPathIsANewerCopyButTheRemovedBytesNeverReturn() {
+        // A daily file re-exported under one name must not be lost forever because today's was removed.
+        let existing = record([member("brief.pdf", "monday", id: "i1", state: .removed)])
+        let tuesday = run(walk([file("brief.pdf", "tuesday")]), existing: existing)
+        XCTAssertEqual(tuesday.record.members.map(\.key), ["brief.pdf", "brief.pdf#updated-2"])
+        XCTAssertEqual(tuesday.record.members.map(\.state), [.removed, .adding])
+        // The listener removes Tuesday's copy too; Wednesday's file is still new, and Monday's bytes still are not.
+        var removedBoth = tuesday.record
+        removedBoth.members[1].state = .removed
+        let wednesday = run(walk([file("brief.pdf", "wednesday")]), existing: removedBoth)
+        XCTAssertEqual(wednesday.record.members.last?.updatedCopyOf, "brief.pdf#updated-2")
+        XCTAssertEqual(wednesday.record.members.count, 3)
+        XCTAssertTrue(run(walk([file("brief.pdf", "monday")]), existing: removedBoth).jobs.isEmpty)
     }
 
     func testAnICloudPlaceholderIsJudgedByItsPath() {
@@ -204,6 +237,14 @@ final class LibraryFolderMergeTests: XCTestCase {
         XCTAssertTrue(run(walk([placeholder]), existing: present).jobs.isEmpty, "the file is already a member")
         let failed = record([member("1.pdf", nil, id: "i1", state: .failed)])
         XCTAssertEqual(run(walk([placeholder]), existing: failed).jobs.first?.isRetry, true)
+    }
+
+    func testAPlaceholderThatHasDownloadedFillsInItsHashAndIsNotAddedAgainElsewhere() {
+        let existing = record([member("1.pdf", nil, id: "i1")])
+        let downloaded = run(walk([file("1.pdf", "a")]), existing: existing)
+        XCTAssertTrue(downloaded.jobs.isEmpty)
+        XCTAssertEqual(downloaded.record.members.first?.sha256, "a")
+        XCTAssertTrue(run(walk([file("copy/1.pdf", "a")]), existing: downloaded.record).jobs.isEmpty, "same bytes elsewhere now match")
     }
 
     func testAMemberStillAddingCountsAsPresent() {
@@ -234,6 +275,22 @@ final class LibraryFolderMergeTests: XCTestCase {
         XCTAssertTrue(result.jobs.isEmpty)
         XCTAssertFalse(result.record.members.contains { $0.updatedCopyOf != nil })
         XCTAssertEqual(result.record.members.count, 2)
+    }
+
+    func testAnEditedListThatReusesANumberGetsAFreeKeyForTheNewEntry() {
+        // [A, B] became [B, C]: B is #001 now, and C is #002 while B's member still holds #002.
+        let existing = record([
+            member("brief.json#001", nil, id: "L1", kind: .link, address: "https://example.com/a"),
+            member("brief.json#002", nil, id: "L2", kind: .link, address: "https://example.com/b"),
+        ])
+        let result = run(walk([link("brief.json#001", "https://example.com/b"), link("brief.json#002", "https://example.com/c", title: "C")]),
+                         existing: existing)
+        let keys = result.record.members.map(\.key)
+        XCTAssertEqual(Set(keys).count, keys.count, "keys stay unique")
+        XCTAssertEqual(result.jobs.count, 1)
+        let job = result.jobs[0]
+        XCTAssertEqual(result.record.members.filter { $0.key == job.memberKey }.map(\.address), ["https://example.com/c"])
+        XCTAssertEqual(result.record.members.first { $0.address == "https://example.com/b" }?.itemID, "L2", "B is untouched")
     }
 
     func testAFailedLinkIsTriedAgainAndARemovedOneIsNot() {
