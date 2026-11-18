@@ -71,7 +71,7 @@ extension Gate1AppModel {
             }
             let remaining = moment.msUntilTarget(currentMediaTimeMs: moment.review == nil ? (marginMomentPositionMs ?? moment.startMediaTimeMs) : snapshot.currentMediaTimeMs)
             return PinnedMarginCard(subject: subject, stage: .comingUp(msRemaining: remaining), position: position, noun: sourceNoun,
-                nextPress: nextMarginPress, run: run)
+                nextPress: nextMarginPress, run: run, targetLeadInMs: moment.target.leadInMs)
         }
         if let saved = friendAnswerSavedCard { return saved }
         // Auto-play off still holds the slot: Next Margin is reachable between Margins and the title never moves.
@@ -80,7 +80,8 @@ extension Gate1AppModel {
         let arrival = sharedMarginArrival(next.prompt)
         return PinnedMarginCard(
             subject: .friend(SharedPacketArrival.senderName(next.prompt.senderLabel)), stage: .upNext(msRemaining: remaining, arrival: arrival),
-            position: PinnedMarginCard.position(next.prompt.index, of: next.prompt.count), noun: sourceNoun, nextPress: nextMarginPress)
+            position: PinnedMarginCard.position(next.prompt.index, of: next.prompt.count), noun: sourceNoun, nextPress: nextMarginPress,
+            targetLeadInMs: next.prompt.interjection.senderLeadInMs)
     }
 
     /// What the open source is called on the card: from the open item's own stored facts (the Library row's), else from
@@ -122,11 +123,15 @@ extension Gate1AppModel {
         if let moment = marginMoment {
             return moment.isPlayingMargin
                 ? .momentVoice(isReview: moment.isReview, isLastMargin: moment.unplayed.isEmpty)
-                : .momentLeadIn(isReview: moment.isReview, positionMs: snapshot.currentMediaTimeMs, targetMs: moment.target.mediaTimeMs)
+                : .momentLeadIn(
+                    isReview: moment.isReview, positionMs: snapshot.currentMediaTimeMs, targetMs: moment.target.mediaTimeMs,
+                    targetLeadInMs: moment.target.leadInMs)
         }
         guard let next = nextSharedMargin else { return nil }
         guard let ms = next.mediaTimeMs else { return nil }
-        return .sharedPlayback(positionMs: snapshot.currentMediaTimeMs, nextMarginMs: ms, arrival: sharedMarginArrival(next.prompt))
+        return .sharedPlayback(
+            positionMs: snapshot.currentMediaTimeMs, nextMarginMs: ms, arrival: sharedMarginArrival(next.prompt),
+            nextLeadInMs: next.prompt.interjection.senderLeadInMs)
     }
 
     /// The card's Next Margin: the first press goes to the next Margin's lead-in, the second goes straight to the

@@ -70,6 +70,10 @@
         "readAloud": {
           "description": "The sender's choice for a written Margin: false asks that the listener's phone not read it aloud. Optional. Written when false, and as true only when the sender's earlier share of the same Margin said false, so a listener's held copy can follow the sender back (#3472). A reader that does not know it reads the Margin aloud, as every build did before.",
           "type": "boolean"
+        },
+        "leadInMs": {
+          "description": "How much of the episode the sender asks their friend to hear before this Margin, in milliseconds (#4171). Optional. The sender's menu offers 5000 to 120000. Written when the length is not the 20000 default, and as 20000 only when the sender's earlier share of the same Margin used another length, so a listener's held copy can come back to the default. Readers clamp a value to 0 to 300000; a value that is not a whole number refuses the packet. A reader that does not know it uses each run-up's own length, as every build did before.",
+          "type": "integer", "minimum": 0, "maximum": 300000
         }
       }
     }

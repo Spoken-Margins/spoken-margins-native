@@ -131,10 +131,13 @@ extension Gate1AppModel {
                     } else {
                         self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, sessionId: interjection.sessionId, timeline: timeline)
                         self.diagnostics[transcriptionKey] = "complete:heard_audio:\(timeline.segments.count)_segments"
-                        if reportsResult { self.reportConfirmation("Source context recovered.") }
                     }
                     self.refreshSelectedItemInBackground()
                     self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
+                    // After the row refresh, so the banner reads the status the retry stored (#3856).
+                    if reportsResult, !timeline.segments.isEmpty {
+                        self.reportConfirmation(self.contextRetryResultMessage(sessionId: interjection.sessionId, interjectionId: interjection.id))
+                    }
                 }
             }
         }
@@ -189,7 +192,9 @@ extension Gate1AppModel {
                         self.heardSourceWindows.discardInBackground(Self.marginIdentity(interjection)) // #652: the context is ready without it
                         self.refreshSelectedItemInBackground()
                         self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
-                        if reportsResult { self.reportConfirmation("Source context recovered.") }
+                        if reportsResult {
+                            self.reportConfirmation(self.contextRetryResultMessage(sessionId: interjection.sessionId, interjectionId: interjection.id))
+                        }
                         self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "complete:stored_transcript"
                         self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", interjection)] = "stored_transcript"
                     }
@@ -303,7 +308,9 @@ extension Gate1AppModel {
                         ? "unavailable:\(reference.failure ?? "temporary_audio_unavailable")"
                         : "complete:\(reference.evidence.count)"
                     self.pendingSourceContextInterjectionIds.remove(identity)
-                    if reportsResult { self.reportConfirmation("Source context recovered.") }
+                    if reportsResult {
+                        self.reportConfirmation(self.contextRetryResultMessage(sessionId: interjection.sessionId, interjectionId: interjectionId))
+                    }
                 }
             } catch {
                 self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "failed:\(SafeErrorText.describe(error))"
