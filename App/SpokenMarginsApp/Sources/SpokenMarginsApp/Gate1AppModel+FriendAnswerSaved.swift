@@ -6,7 +6,7 @@ import SessionKit
 /// rows, which the Margins screen already holds, so it adds no store read.
 extension Gate1AppModel {
     /// The open item's live friend layers and the listener's own Margins on it.
-    private var friendItemFacts: (layers: [ImportedCommentaryLayer], localMargins: [Interjection]) {
+    var friendItemFacts: (layers: [ImportedCommentaryLayer], localMargins: [Interjection]) {
         let itemID = selectedItem.id
         var layers: [String: ImportedCommentaryLayer] = [:]
         for row in sharedMarginRows where row.layer.itemId == itemID { layers[row.layer.id] = row.layer }

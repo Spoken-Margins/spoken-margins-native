@@ -39,6 +39,7 @@ extension Gate1AppModel {
         retrySourceWindowContexts(itemId: itemId)
         resolveImportedPodcastCommentary(itemId: itemId, localURL: url)
         continueAfterPodcastDownload(itemId: itemId, url: url, store: store)
+        fillEpisodeLengthFromFile(itemId: itemId, url: url, store: store)
     }
 
     /// Placement reads the item off the main thread and decides later (#2507), so the deferral it records is not there

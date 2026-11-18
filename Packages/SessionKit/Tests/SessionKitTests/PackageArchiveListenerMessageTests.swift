@@ -53,4 +53,21 @@ final class PackageArchiveListenerMessageTests: XCTestCase {
     func testTheTechnicalDescriptionStaysForDiagnostics() {
         XCTAssertEqual(ArchiveError.manifestMissing.errorDescription, "The package has no manifest.")
     }
+
+    /// #3801: the failure sheet's file rows keep today's meaning, one row for each outcome.
+    func testEveryOutcomeHasItsOwnRowOnTheFailureSheet() {
+        typealias Content = PacketOpenFailureSheetContent
+        let expected: [(ArchiveError.ListenerOutcome, Content.Row)] = [
+            (.needsNewerApp, .fileNeedsNewerApp), (.tooLarge, .fileTooBig),
+            (.damaged, .fileDamaged), (.doesNotMatchLibrary, .fileDoesNotMatchLibrary),
+        ]
+        XCTAssertEqual(expected.count, ArchiveError.ListenerOutcome.allCases.count, "a new outcome needs a row")
+        for (outcome, row) in expected {
+            let content = Content(outcome)
+            XCTAssertEqual(content.row, row, "\(outcome)")
+            XCTAssertFalse(content.isRetryable, "\(outcome)")
+            XCTAssertFalse(content.offersReport, "\(outcome)")
+        }
+        XCTAssertEqual(Set(expected.map(\.0)), Set(ArchiveError.ListenerOutcome.allCases))
+    }
 }
