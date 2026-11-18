@@ -12,6 +12,7 @@ extension LibraryReadSnapshot {
                  friendMarginsArrivedAtByItemId: store.loadFriendMarginsArrivals(hiding: hiddenSenders))
         // A collection record that can't be read leaves the chips as they were; it never takes the Library's rows with it.
         snapshot.collections = try? store.loadItemCollections()
+        snapshot.libraryFolders = (try? store.loadLibraryFolders()) ?? []
         return snapshot
     }
 }

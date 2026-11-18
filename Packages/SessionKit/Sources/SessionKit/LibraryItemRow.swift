@@ -54,6 +54,9 @@ public struct LibraryItemRow: Identifiable, Hashable, Sendable {
     /// such session or it holds no media time. A text row never reads it. `continuePlaceMs` can't say this: it is nil
     /// for any in-progress row (#4062).
     public var continuationMediaTimeMs: Int?
+    /// The Library folder this item belongs to (#3769), set only where the list shows the item on its own (a search or a
+    /// filter), so its detail line can end "· in Daily Brief". Nil for an item in no folder.
+    public var folderName: String?
 
     public init(
         id: String,
