@@ -16,6 +16,10 @@ struct ExperienceTimelineRailScreen: View {
     @State private var followsPlayback = true
     @State private var selectedSource: PlaybackTimelineSourceView.Selection?
     @State private var selectedElement: SourceElement?
+    /// The table or figure picture open at full screen (#3895).
+    @State private var selectedClip: TimelineClipSelection?
+    /// Which rows of this item have a picture saved, from one listing of its clip folder.
+    @State private var clipSource = TimelineClipSource.none
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var entries: [TimelineRailEntry] = []
@@ -188,6 +192,9 @@ struct ExperienceTimelineRailScreen: View {
         .trackedSheet(item: $selectedElement) { element in
             PlaybackTimelineElementView(element: element)
         }
+        .trackedFullScreenCover(item: $selectedClip) { clip in
+            TimelineClipViewer(selection: clip, clips: clipSource)
+        }
         .trackedSheet(item: $selectedSharedMargin) { row in
             SharedMarginDetailView(row: row).environmentObject(model)
         }
@@ -200,7 +207,13 @@ struct ExperienceTimelineRailScreen: View {
     private var timelineRail: some View {
         PlaybackTimelineListView(entries: entries, currentIDs: currentEntryIDs,
                                  folding: folding, toggleChapter: toggleChapter,
-                                 perform: perform, details: details)
+                                 perform: perform, openClip: openClip, details: details)
+            .environment(\.timelineClips, clipSource)
+    }
+
+    private func openClip(_ entry: TimelineSourceContent.Entry) {
+        guard clipSource.has(floatId: entry.floatId), let selection = TimelineClipSelection(entry: entry) else { return }
+        selectedClip = selection
     }
 
     private var foldingRows: [TimelineChapterFolding.Row] { entries.map(\.foldingRow) }
@@ -449,6 +462,17 @@ struct ExperienceTimelineRailScreen: View {
     private func refreshEntries(from item: ItemDetailState) {
         entries = Self.makeEntries(from: item, sessionID: model.snapshot.sessionId, playbackDurationMs: model.snapshot.currentPlaybackDurationMs)
         folding.prune(to: foldingRows)
+        refreshClips(for: item)
+    }
+
+    /// Which of the item's tables and figures have a picture: one listing of its folder, and only for an item whose
+    /// document located any, so a page or a podcast does no disk work here (#3895).
+    private func refreshClips(for item: ItemDetailState) {
+        var next = TimelineClipSource.none
+        if item.timelineSource.entries.contains(where: { $0.floatId != nil }), let store = model.pdfClipStore() {
+            next = TimelineClipSource(store: store, itemId: item.id, available: store.available(forItem: item.id))
+        }
+        if next != clipSource { clipSource = next }
     }
 
     /// Replies sit directly under the Margin they answer, indented, at that Margin's place on the rail (#473).
@@ -592,6 +616,12 @@ struct ExperienceTimelineRailScreen: View {
     private func details(for action: TimelineRailEntry.Action) -> some View {
         if case .sharedMargin(let row) = action {
             Button("Shared Margin details", systemImage: "info.circle") { selectedSharedMargin = row }
+        }
+        // The same on long-press and as a VoiceOver action, where the picture itself can't be tapped (#3895).
+        if case .sourceText(let source) = action, clipSource.has(floatId: source.floatId) {
+            Button(TimelineClipPresentation.viewActionTitle(kind: source.floatKind), systemImage: "photo") {
+                openClip(source)
+            }
         }
         if case .sourceElement(let element) = action, let url = element.linkDestination {
             Button("Link details", systemImage: "info.circle") { selectedElement = element }

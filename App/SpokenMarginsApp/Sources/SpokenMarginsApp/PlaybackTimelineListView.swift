@@ -9,7 +9,10 @@ struct PlaybackTimelineListView<Details: View>: View {
     var folding = TimelineChapterFolding()
     var toggleChapter: (String) -> Void = { _ in }
     let perform: (TimelineRailEntry.Action) -> Void
+    /// Opens the picture of a table or figure row at full screen (#3895).
+    var openClip: (TimelineSourceContent.Entry) -> Void = { _ in }
     @ViewBuilder var details: (TimelineRailEntry.Action) -> Details
+    @Environment(\.timelineClips) private var clips
 
     var body: some View {
         let rows = entries.map(\.foldingRow)
@@ -23,7 +26,11 @@ struct PlaybackTimelineListView<Details: View>: View {
                     TimelineRailRow(entry: entry, isCurrent: currentIDs.contains(entry.id),
                                     isFirst: index == 0, isLast: index == visible.count - 1,
                                     hidden: summary,
-                                    action: { perform(entry.action) })
+                                    clip: TimelineRowClip(entry: entry, in: clips),
+                                    action: { perform(entry.action) },
+                                    openClip: {
+                                        if case .sourceText(let source) = entry.action { openClip(source) }
+                                    })
                         .equatable()
                         .contextMenu { details(entry.action) }
                         // The same actions for VoiceOver and Switch Control, which can't long-press (#1917).
@@ -85,11 +92,14 @@ private struct TimelineRailRow: View, Equatable {
     let isLast: Bool
     /// Set when this chapter is folded: what its hidden rows hold (#3895).
     var hidden: TimelineChapterFolding.HiddenSummary? = nil
+    /// Set when this table or figure has a picture saved (#3895).
+    var clip: TimelineRowClip? = nil
     let action: () -> Void
+    var openClip: () -> Void = {}
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.entry == rhs.entry && lhs.isCurrent == rhs.isCurrent && lhs.isFirst == rhs.isFirst && lhs.isLast == rhs.isLast
-            && lhs.hidden == rhs.hidden
+            && lhs.hidden == rhs.hidden && lhs.clip == rhs.clip
     }
 
     var body: some View {
@@ -137,6 +147,9 @@ private struct TimelineRailRow: View, Equatable {
                         .foregroundStyle(AppColors.text)
                         .multilineTextAlignment(.leading)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
+                    if let clip {
+                        TimelineClipPicture(floatId: clip.floatId, spokenLabel: clip.spokenLabel, open: openClip)
+                    }
                     Text(entry.detail)
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
@@ -166,9 +179,14 @@ private struct TimelineRailRow: View, Equatable {
             .padding(.bottom, 12)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(isCurrent ? "\(entry.currentLabel). " : "")\(entry.isNew ? "New to you. " : "")\(entry.provenanceLabel), \(entry.position) percent. \(entry.title). \(entry.detail)\(hiddenSpoken)")
+        .accessibilityLabel("\(isCurrent ? "\(entry.currentLabel). " : "")\(entry.isNew ? "New to you. " : "")\(entry.provenanceLabel), \(entry.position) percent. \(entry.title). \(entry.detail)\(clipSpoken)\(hiddenSpoken)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { action() }
+    }
+
+    /// What VoiceOver adds when the row has a picture: its label, so it is known before the "View" action is chosen.
+    private var clipSpoken: String {
+        clip.map { ". \($0.spokenLabel)" } ?? ""
     }
 
     /// What VoiceOver adds after a folded chapter's own words: what is hidden, and whether the playhead is in it.
