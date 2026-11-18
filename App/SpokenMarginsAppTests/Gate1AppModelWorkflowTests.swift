@@ -1135,7 +1135,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         }
         model.openItem(id: itemID)
 
-        model.setInterjectionStarredForSharing("margin-starred", starred: true)
+        model.setStarredForSharing(
+            try XCTUnwrap(model.selectedItem.interjections.first { $0.id == "margin-starred" }), starred: true, place: .manage)
         model.setInterjectionPrivateSharingNote(
             "margin-starred",
             note: String(repeating: "n", count: Gate1AppModel.privateSharingNoteCharacterLimit + 25)
@@ -1159,7 +1160,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(InterjectionSharingView.transcriptRequiresExpansion(fullHeight: 220, limitedHeight: 220))
         XCTAssertTrue(InterjectionSharingView.transcriptRequiresExpansion(fullHeight: 440, limitedHeight: 220))
 
-        reopened.setInterjectionStarredForSharing("margin-starred", starred: false)
+        reopened.setStarredForSharing(curated, starred: false, place: .manage)
         await reopened.settleItemReload() // the item detail reloads off the main thread after the star (#2505)
         reopened.prepareShareInterjections()
         XCTAssertEqual(reopened.sharingState.draftFilter, .all)
@@ -5159,7 +5160,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.visiblePrivateMarginRows.count, 1)
         XCTAssertEqual(found.interjection.sessionId, "retrieval-session")
         model.openMarginInTimeline(found)
-        model.setMarginStarred(found, starred: true)
+        model.setStarredForSharing(found.interjection, starred: true, place: .marginsTab)
         XCTAssertEqual(model.snapshot, before)
         XCTAssertEqual(try store.loadInterjections(sessionId: firstSession).first?.isStarredForSharing, original.isStarredForSharing)
         let reconstructed = try SQLiteSessionStore(path: url.path)
@@ -5221,7 +5222,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.syncPlaybackProgressForLifecycle()
         before = model.snapshot
         model.setInterjectionPrivateSharingNote(foreign.id, sessionId: foreign.sessionId, note: "Private foreign note")
-        model.setInterjectionStarredForSharing(foreign.id, sessionId: foreign.sessionId, starred: true)
+        model.setStarredForSharing(foreign, starred: true, place: .manage)
         model.deleteTranscript(interjection: foreign)
         let afterTranscript = try XCTUnwrap(store.loadInterjections(sessionId: foreign.sessionId).first)
         XCTAssertNil(afterTranscript.transcript)
