@@ -159,6 +159,69 @@ class ConflictCheckTests(unittest.TestCase):
         self.assertEqual(sorted(api.deleted), ['issues/7/labels/automerge', 'issues/7/labels/lane%3Aqueued'])
         self.assertEqual(api.cancelled, [50])  # the run already on a Mac keeps going
 
+    def test_a_pr_git_merges_but_github_calls_unmergeable_gets_a_hand_off_with_its_own_comment(self):
+        # #4538: GitHub builds no merge ref for it, so a label event starts no run and it sits armed and silent.
+        head = self.clean_pr()
+        pr = pull(8, head)
+        pr['mergeable'] = False
+        api = FakeApi([pr])
+        self.assertEqual(self.sweep(api), {8: []})
+        comments = [fields['body'] for path, fields in api.posted if path.endswith('/comments')]
+        self.assertEqual(len(comments), 1)
+        self.assertTrue(comments[0].startswith(conflicts.HANDOFF))
+        self.assertIn('not mergeable', comments[0])
+        self.assertIn('no lane run', comments[0].replace('starts no lane run', 'no lane run'))
+        self.assertIn(conflicts.marker(head, run_git(self.origin.bare, 'rev-parse', 'next'), 'no-merge-ref'), comments[0])
+        self.assertEqual([label['name'] for label in api.pulls[8]['labels']], ['needs-mac'])
+        self.assertEqual(api.deleted, ['issues/8/labels/automerge'])
+        self.assertEqual(self.sweep(api), {})  # no longer armed: nothing more to do
+
+    def test_the_github_only_hand_off_is_not_commented_twice_for_the_same_head_and_base(self):
+        head = self.clean_pr()
+        pr = pull(8, head)
+        pr['mergeable'] = False
+        api = FakeApi([pr])
+        self.sweep(api)
+        api.pulls[8]['labels'] = [{'name': 'automerge'}]  # re-armed by hand
+        self.sweep(api)
+        comments = [path for path, _ in api.posted if path.endswith('/comments')]
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(api.deleted, ['issues/8/labels/automerge', 'issues/8/labels/automerge'])
+
+    def test_an_unknown_or_true_mergeable_state_changes_nothing(self):
+        for state in (None, True):
+            with self.subTest(mergeable=state):
+                head = self.clean_pr(number=10, name=f'clean-{state}')
+                pr = pull(10, head)
+                pr['mergeable'] = state
+                api = FakeApi([pr])
+                self.assertEqual(self.sweep(api), {})
+                self.assertEqual((api.posted, api.deleted, api.cancelled), ([], [], []))
+
+    def test_a_pr_with_a_live_lane_run_for_its_head_is_left_to_finish(self):
+        head = self.clean_pr()
+        pr = pull(8, head)
+        pr['mergeable'] = False
+        api = FakeApi([pr], runs=[run(60, 8, head, 'in_progress')], jobs={60: [{'name': 'automerge', 'status': 'in_progress'}]})
+        self.assertEqual(self.sweep(api), {})
+        self.assertEqual((api.posted, api.deleted, api.cancelled), ([], [], []))
+
+    def test_a_real_conflict_is_still_the_conflict_hand_off_even_when_github_agrees(self):
+        head = self.conflicting_pr()
+        pr = pull(7, head)
+        pr['mergeable'] = False
+        api = FakeApi([pr])
+        self.assertEqual(self.sweep(api), {7: ['shared.txt']})
+        body = [fields['body'] for path, fields in api.posted if path.endswith('/comments')][0]
+        self.assertIn('does not merge cleanly', body)
+
+    def test_a_failure_reading_githubs_state_leaves_the_pr_as_it_was(self):
+        head = self.clean_pr()
+        api = FakeApi([pull(8, head)])
+        with mock.patch.object(conflicts, 'github_cannot_merge', side_effect=OSError('boom')):
+            self.assertEqual(self.sweep(api), {})
+        self.assertEqual((api.posted, api.deleted, api.cancelled), ([], [], []))
+
     def test_a_clean_merge_changes_nothing(self):
         head = self.clean_pr()
         api = FakeApi([pull(8, head)], runs=[run(60, 8, head)], jobs={60: [{'name': 'automerge', 'status': 'queued'}]})
