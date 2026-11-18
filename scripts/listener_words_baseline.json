@@ -10,9 +10,45 @@
   },
   {
    "kind": "words",
+   "text": "1 item",
+   "count": 1,
+   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
+  },
+  {
+   "kind": "words",
    "text": "Acoustic signatures: …. These are opaque matching evidence, not item audio.",
    "count": 1,
    "reason": "Lines of the packet's preview.md, which the importer compares byte for byte and the frozen last-shipped reader (Packages/SessionKit/Tests/ShippedReader) writes the same way, so new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A friend can open preview.md outside the app, so this is accepted for compatibility, not because nobody reads it."
+  },
+  {
+   "kind": "words",
+   "text": "Add items",
+   "count": 1,
+   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
+  },
+  {
+   "kind": "words",
+   "text": "Add items from your Library to see them here.",
+   "count": 1,
+   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
+  },
+  {
+   "kind": "words",
+   "text": "All items",
+   "count": 1,
+   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
+  },
+  {
+   "kind": "words",
+   "text": "All items, selected",
+   "count": 1,
+   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
+  },
+  {
+   "kind": "words",
+   "text": "Edit Items",
+   "count": 2,
+   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
   },
   {
    "kind": "words",
@@ -58,6 +94,12 @@
   },
   {
    "kind": "words",
+   "text": "No items match.",
+   "count": 1,
+   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
+  },
+  {
+   "kind": "words",
    "text": "Player item Mark",
    "count": 1,
    "reason": "Internal runtime profile display name (PlayerItemMargin.swift); never shown in the app, and only the profile id is exported."
@@ -73,6 +115,12 @@
    "text": "Use itemAudioOmitted; a source is a feed, while this flag describes the listened-to item's audio.",
    "count": 1,
    "reason": "Developer-facing note in SharingModels that names a field; not shown in the app."
+  },
+  {
+   "kind": "words",
+   "text": "Your Library has no items yet.",
+   "count": 1,
+   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
   },
   {
    "kind": "words",
@@ -163,6 +211,12 @@
    "text": "written-margin-item\\u{1f}…",
    "count": 1,
    "reason": "Hash seed for a file name, never displayed."
+  },
+  {
+   "kind": "words",
+   "text": "… items",
+   "count": 1,
+   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
   },
   {
    "kind": "words",

@@ -1845,6 +1845,72 @@ class VerificationTests(unittest.TestCase):
         self.assertNotIn('retry_failures', verification.test_records(
             failed.split('\n', 1)[1] + passed)[name])
 
+    def test_a_failed_line_says_which_assertion_tripped_when_the_log_kept_it(self):
+        # #3534: a hosted Mac run showed `Failed: <test>` and nothing else, and the package.log holding the assertion
+        # expired after 7 days, so nine failures could not be told apart.
+        name = 'SessionKitTests/KittenRendererTests/testALong'
+        test = 'SessionKitTests.KittenRendererTests testALong'
+        log = ("Test Case '-[SessionKitTests.KittenRendererTests testALong]' started.\n"
+               f"/Users/runner/work/x/KittenRendererTests.swift:218: error: -[{test}] : XCTAssertLessThanOrEqual "
+               'failed: ("1.4") is not less than or equal to ("1.0") - pause bar 1 s; SOAK 2.2x/3x bar, pause 1.40 s, '
+               'mem +12 MB, Apple M1 (Virtual), 3 cores\n'
+               f"/Users/runner/work/x/KittenRendererTests.swift:219: error: -[{test}] : XCTAssertGreaterThan "
+               'failed: ("2.2") is not greater than ("3.0") - speed bar; SOAK 2.2x/3x bar, pause 1.40 s\n'
+               "Test Case '-[SessionKitTests.KittenRendererTests testALong]' failed (341.0 seconds).\n")
+        records = verification.test_records(log)
+        errors = verification.reconcile({name}, records)
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(errors[0].startswith(f'Failed: {name} — XCTAssertLessThanOrEqual failed: '), errors[0])
+        self.assertIn('pause bar 1 s; SOAK 2.2x/3x bar, pause 1.40 s, mem +12 MB, Apple M1 (Virtual), 3 cores', errors[0])
+        self.assertIn(' | XCTAssertGreaterThan failed', errors[0])  # both failed assertions, in one line
+        self.assertNotIn('/Users', errors[0])
+        self.assertLessEqual(len(errors[0]), len(f'Failed: {name} — ') + verification.FAILURE_REASON_WIDTH)
+        # No message kept (a crash, or a log without error lines): the line is what it always was.
+        bare = verification.test_records(log.replace('error:', 'note:'))
+        self.assertEqual(verification.reconcile({name}, bare), [f'Failed: {name}'])
+        # The readers that pull the test name out of `Failed:` lines still find it.
+        import pipeline_events
+        line = f'Process exit 1; {errors[0]} (see /x/package.log)'
+        self.assertEqual(pipeline_events.FAILED[0].search(line).group(1), name)
+
+    def test_the_xunit_file_keeps_each_failure_message_for_the_failed_line(self):
+        # The parallel SessionKitCoreTests step reads results from the xunit file, not the log (#3534).
+        xml = (
+            '<testsuites><testsuite name="x">'
+            '<testcase classname="SessionKitCoreTests.AlphaTests" name="testOne()" time="0.1"/>'
+            '<testcase classname="SessionKitCoreTests.AlphaTests" name="testTwo()" time="0.2">'
+            '<failure message="/Users/runner/work/x/AlphaTests.swift:9: XCTAssertEqual failed: (&quot;1&quot;) is not equal to (&quot;2&quot;)"/>'
+            '</testcase></testsuite></testsuites>')
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'x.xml'
+            path.write_text(xml)
+            records = verification.xunit_records(path)
+        self.assertNotIn('retry_failures', records['SessionKitCoreTests/AlphaTests/testOne'])
+        self.assertEqual(verification.reconcile(set(records), records),
+                         ['Failed: SessionKitCoreTests/AlphaTests/testTwo — XCTAssertEqual failed: ("1") is not equal to ("2")'])
+
+    def test_the_linux_containers_paths_never_reach_a_failed_line(self):
+        # Review of #3534: the SessionKitCoreTests container mounts the checkout at /w, and hosted container jobs at /__w.
+        for text, expected in (
+                ('/w/Packages/SessionKit/Tests/X.swift:9 XCTAssertEqual failed', 'XCTAssertEqual failed'),
+                ('/w/Packages/X.swift:9: XCTAssertEqual failed', 'XCTAssertEqual failed'),
+                ('XCTAssertEqual failed ("file:///__w/spoken/spoken/a.json")', 'XCTAssertEqual failed ("<path>")'),
+                ('a and/or b, 3 w/o c, TCP/w', 'a and/or b, 3 w/o c, TCP/w')):  # prose with a slash is left alone
+            self.assertEqual(verification.clean_failure_message(text), expected, text)
+
+    def test_every_soak_assertion_carries_the_numbers_that_decide_it(self):
+        # #3534: the soak's SOAK line stays in a log that expires, so each assertion repeats the numbers and the CPU.
+        text = (Path(__file__).resolve().parents[2] / 'Packages/SessionKit/Tests/SessionKitTests/KittenRendererTests.swift').read_text()
+        body = text[text.index('func testALongArticleThroughTheFallbackVoiceNeverPausesOverOneSecond'):]
+        body = body[:body.index('\n    }\n')]
+        self.assertIn('let context = String(format: "SOAK', body)
+        for needle in ('speedBar', 'longestPause', 'cpuBrand()', 'activeProcessorCount'):
+            self.assertIn(needle, body[body.index('let context'):body.index('XCTAssertGreaterThan(rendered')])
+        asserts = re.findall(r'^\s*(XCTAssert\w+\(.*)$', body, re.M)
+        self.assertEqual(len(asserts), 5, asserts)
+        for line in asserts:
+            self.assertTrue(line.rstrip().endswith('\\(context)")'), line)
+
     def test_a_failure_message_loses_the_runners_paths_and_ids_wherever_they_sit(self):
         # Audit on e0ffbf2: a path inside the assertion text reached the report and the #2176 comment.
         uuid = '1A2B3C4D-0000-4000-8000-00000000ABCD'

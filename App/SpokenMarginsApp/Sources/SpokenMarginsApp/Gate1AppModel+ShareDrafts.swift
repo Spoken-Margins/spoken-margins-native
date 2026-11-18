@@ -206,7 +206,7 @@ extension Gate1AppModel {
         }
         let audioPath = sharingState.drafts[analysisIndex].interjection.audioPath
         let sourceURL = audioPath.flatMap(resolvedInterjectionAudioURL(for:))
-        var analysisFailure: String?
+        var analysisFailure: ShareCleanupWords.Failure?
         if let sourceURL {
             sharingState.drafts[analysisIndex].isAnalyzingPauses = true
             let analyzer = shareMarginSilenceAnalysisHandler
@@ -214,7 +214,7 @@ extension Gate1AppModel {
                 do {
                     return (try analyzer(sourceURL, aligned), nil as String?)
                 } catch {
-                    return ([], ListenerErrorText.message(for: error))
+                    return ([], SafeErrorText.describe(error))
                 }
             }.value
             guard !Task.isCancelled,
@@ -224,10 +224,14 @@ extension Gate1AppModel {
             }
             sharingState.drafts[current].isAnalyzingPauses = false
             sharingState.drafts[current].acousticPauseDecisions = analysis.0
-            analysisFailure = analysis.1
+            if let reason = analysis.1 {
+                analysisFailure = .pauseAnalysisUnavailable
+                // The reason is for a support report, not the screen (#3853).
+                diagnostics[Self.marginDiagnosticKey("shareCleanupFailure", sharingState.drafts[current].interjection)] = "pause_analysis:\(reason)"
+            }
             applyShareEditState(at: current, renderCleanedAudio: false)
         } else if audioPath != nil {
-            analysisFailure = "The saved voice recording is unavailable; reviewed text remains available."
+            analysisFailure = .recordingMissing
         }
 
         guard !Task.isCancelled,
@@ -238,9 +242,9 @@ extension Gate1AppModel {
             return false
         }
         if let analysisFailure {
-            let analysisMessage =
-                "Pause analysis was unavailable (\(analysisFailure)). Filler and manual text edits remain reviewable."
-            if let renderMessage = sharingState.drafts[finalIndex].preparationMessage {
+            let analysisMessage = analysisFailure.message
+            // A missing recording is said once, never wrapped in the pause line.
+            if analysisFailure != .recordingMissing, let renderMessage = sharingState.drafts[finalIndex].preparationMessage {
                 sharingState.drafts[finalIndex].preparationMessage = "\(renderMessage) \(analysisMessage)"
             } else {
                 sharingState.drafts[finalIndex].preparationMessage = analysisMessage
@@ -263,13 +267,14 @@ extension Gate1AppModel {
               let sourceURL = resolvedInterjectionAudioURL(for: sourcePath) else {
             sharingState.drafts[index].representationChoice = .textOnly
             sharingState.drafts[index].preparationMessage =
-                "Cleaned voice could not be prepared because the saved recording is unavailable. Reviewed text remains available."
+                ShareCleanupWords.Failure.recordingMissing.message
             return false
         }
         guard let root = try? applicationSupportDirectory()
             .appending(path: "SpokenMargins/ShareRevisions/\(UUID().uuidString)", directoryHint: .isDirectory) else {
             sharingState.drafts[index].preparationMessage =
-                "Cleaned voice storage is unavailable. Original voice and reviewed text remain available."
+                ShareCleanupWords.Failure.voiceNotPrepared.message
+            diagnostics[Self.marginDiagnosticKey("shareCleanupFailure", sharingState.drafts[index].interjection)] = "render_storage_unavailable"
             return false
         }
         sharingState.drafts[index].renderGeneration += 1
@@ -281,7 +286,7 @@ extension Gate1AppModel {
         do {
             result = (try await renderer(sourceURL, destination, decisions), nil)
         } catch {
-            result = (nil, ListenerErrorText.message(for: error))
+            result = (nil, SafeErrorText.describe(error))
         }
         guard !Task.isCancelled,
               bulkSharePreparationGeneration == bulkGeneration,
@@ -301,8 +306,8 @@ extension Gate1AppModel {
         sharingState.drafts[current].cleanedAudioDurationMs = nil
         sharingState.drafts[current].representationChoice =
             originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
-        sharingState.drafts[current].preparationMessage =
-            "Cleaned voice could not be prepared (\(result.failure ?? "unknown error")). Original voice or reviewed text remains available."
+        sharingState.drafts[current].preparationMessage = ShareCleanupWords.Failure.voiceNotPrepared.message
+        diagnostics[Self.marginDiagnosticKey("shareCleanupFailure", sharingState.drafts[current].interjection)] = "render:\(result.failure ?? "unknown")"
         return false
     }
 
@@ -466,16 +471,16 @@ extension Gate1AppModel {
             do {
                 result = (try analyzer(sourceURL, aligned), nil)
             } catch {
-                result = ([], ListenerErrorText.message(for: error))
+                result = ([], SafeErrorText.describe(error))
             }
             await MainActor.run {
                 guard let self,
                       let current = self.sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
                 self.sharingState.drafts[current].isAnalyzingPauses = false
                 self.sharingState.drafts[current].acousticPauseDecisions = result.0
-                if let failure = result.1 {
-                    self.sharingState.drafts[current].preparationMessage =
-                        "Pause analysis was unavailable (\(failure)). Filler and manual text edits remain reviewable."
+                if let reason = result.1 {
+                    self.sharingState.drafts[current].preparationMessage = ShareCleanupWords.Failure.pauseAnalysisUnavailable.message
+                    self.diagnostics[Self.marginDiagnosticKey("shareCleanupFailure", self.sharingState.drafts[current].interjection)] = "pause_analysis:\(reason)"
                 }
                 self.applyShareEditState(at: current)
             }
@@ -492,7 +497,7 @@ extension Gate1AppModel {
             if let index = sharingState.drafts.firstIndex(where: { $0.id == id }) {
                 sharingState.drafts[index].warning = [
                     shareAnchorWarning(for: sharingState.drafts[index].interjection),
-                    "The cleaned audio preview could not be prepared. You can still share original voice or text."
+                    ShareCleanupWords.Failure.previewNotPrepared.message
                 ].compactMap { $0 }.joined(separator: " ")
             }
             return
@@ -525,12 +530,12 @@ extension Gate1AppModel {
                     self?.sharingState.drafts[current].cleanedAudioDurationMs = nil
                     self?.sharingState.drafts[current].representationChoice =
                         self?.originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
-                    self?.sharingState.drafts[current].preparationMessage =
-                        "Cleaned voice could not be prepared. Original voice or reviewed text remains available."
+                    self?.sharingState.drafts[current].preparationMessage = ShareCleanupWords.Failure.voiceNotPrepared.message
                     if let interjection = self?.sharingState.drafts[current].interjection {
+                        self?.diagnostics[Self.marginDiagnosticKey("shareCleanupFailure", interjection)] = "render:\(SafeErrorText.describe(error))"
                         self?.sharingState.drafts[current].warning = [
                             self?.shareAnchorWarning(for: interjection),
-                            "Cleaned audio could not be regenerated. Original voice and reviewed text are still available."
+                            ShareCleanupWords.Failure.regenerationFailed.message
                         ].compactMap { $0 }.joined(separator: " ")
                     }
                 }

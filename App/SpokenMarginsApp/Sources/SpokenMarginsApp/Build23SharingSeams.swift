@@ -304,6 +304,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
 
     init(model: Gate1AppModel) {
         self.model = model
+        #if SM_SHARE_LINK_CREATION
+        ShareLinkPlayChecker.shared.connect(to: model)
+        #endif
         episodeRecovery = SharedEpisodeRecovery(services: SharedEpisodeRecovery.services(model: model))
         importedLayers = makeImportedLayers(from: model.selectedItem)
         reportEntries = ShareLinkReport.entries(for: model.selectedItem.importedCommentaryLayers)
