@@ -69,7 +69,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             // Tap 1 (#1507): Share on the playback screen opens the sheet on its review, with Share pinned.
             tap("playback.shareMargins.button")
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The Share Margins sheet did not open")
-            let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
+            let cleanUpQuestion = app.alerts["Remove ums and long pauses?"]
             if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
             XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 8), "Share did not open on the review step")
             // Tap 2 is Share here, which opens the iOS share sheet. It has to be on screen without scrolling.
@@ -156,7 +156,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             beginStep()
             tap("playback.shareMargins.button") // tap 1
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The Share sheet did not open")
-            XCTAssertFalse(app.alerts["Clean selected Margins automatically?"].waitForExistence(timeout: 2),
+            XCTAssertFalse(app.alerts["Remove ums and long pauses?"].waitForExistence(timeout: 2),
                            "The cleanup question showed on the reply sheet")
             XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 8), "The reply sheet did not open on its review")
             let heading = element("build23.sender.heading").label // "Share replies with <friend>", or "Share your Margins with <friend>" when none is linked as a reply (#3906)

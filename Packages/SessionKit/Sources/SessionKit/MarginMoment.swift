@@ -26,10 +26,13 @@ public struct MarginMomentAnchor: Sendable, Equatable {
     public let isYours: Bool
     /// A friend's written Margin, read aloud by the iPhone's voice; the pinned card says "wrote this", not "speaking" (#3365).
     public let isReadAloud: Bool
+    /// How much of the episode the sender chose to play before this Margin (#4171), already clamped to what a reader
+    /// accepts. Nil when the sender chose nothing, and the moment's own length applies (`MarginMomentSequence.leadInMs(for:)`).
+    public let leadInMs: Int?
 
     public init(
         marginId: String, mediaTimeMs: Int, label: String? = nil, isApproximate: Bool = false,
-        caption: String? = nil, isYours: Bool = false, isReadAloud: Bool = false
+        caption: String? = nil, isYours: Bool = false, isReadAloud: Bool = false, leadInMs: Int? = nil
     ) {
         self.marginId = marginId
         self.mediaTimeMs = mediaTimeMs
@@ -38,6 +41,7 @@ public struct MarginMomentAnchor: Sendable, Equatable {
         self.caption = caption
         self.isYours = isYours
         self.isReadAloud = isReadAloud
+        self.leadInMs = leadInMs.map(SenderLeadIn.clamped)
     }
 }
 
@@ -94,6 +98,9 @@ public struct MarginMomentSequence: Sendable, Equatable {
     public private(set) var target: MarginMomentAnchor
     public let startMediaTimeMs: Int
     public let review: Review?
+    /// The length a Margin without its own gets: the moment's or the review's. Zero marks a listening with no lead-in
+    /// at all (`CantPlayListening`), which no sender's length changes.
+    private let momentLeadInMs: Int
     public private(set) var phase: Phase = .leadIn
     /// Margins not yet played, in playback order.
     public private(set) var unplayed: [MarginMomentAnchor]
@@ -113,6 +120,7 @@ public struct MarginMomentSequence: Sendable, Equatable {
         self.target = target
         self.tickAdvanceLimitMs = tickAdvanceLimitMs
         review = nil
+        momentLeadInMs = leadInMs
         let start = Self.leadInStartMediaTimeMs(forTarget: target, leadInMs: leadInMs)
         startMediaTimeMs = start
         let others = otherMargins.filter { $0.marginId != target.marginId && $0.mediaTimeMs >= start }
@@ -133,18 +141,32 @@ public struct MarginMomentSequence: Sendable, Equatable {
         self.tickAdvanceLimitMs = tickAdvanceLimitMs
         target = playedMargin
         review = nil
+        momentLeadInMs = Self.defaultLeadInMs
         startMediaTimeMs = position
         phase = .listening
         unplayed = Self.inPlaybackOrder(otherMargins.filter { $0.marginId != playedMargin.marginId && $0.mediaTimeMs > position })
     }
 
-    /// Where the lead-in before `target` starts, by the single lead-in rule (#807).
+    /// The run-up before `anchor`: the sender's own length when the packet carried one, else `moment`, the length the
+    /// moment or review plays with (#4171). A moment with no lead-in (`moment` is 0) keeps none.
+    public static func effectiveLeadInMs(of anchor: MarginMomentAnchor, momentLeadInMs moment: Int) -> Int {
+        guard moment > 0 else { return moment }
+        return anchor.leadInMs ?? moment
+    }
+
+    /// The run-up before `anchor` in this moment or review.
+    public func leadInMs(for anchor: MarginMomentAnchor) -> Int {
+        Self.effectiveLeadInMs(of: anchor, momentLeadInMs: momentLeadInMs)
+    }
+
+    /// Where the lead-in before `target` starts, by the single lead-in rule (#807). The target's own length (the
+    /// sender's, #4171) wins over `leadInMs`, the moment's.
     public static func leadInStartMediaTimeMs(forTarget target: MarginMomentAnchor, leadInMs: Int = defaultLeadInMs) -> Int {
         ListeningMoment(
             use: .playThisMoment,
             margin: ListeningMoment.Margin(id: target.marginId, position: target.mediaTimeMs),
             source: .media(),
-            leadInMs: leadInMs
+            leadInMs: effectiveLeadInMs(of: target, momentLeadInMs: leadInMs)
         ).sourceStartPosition
     }
 
@@ -169,11 +191,12 @@ public struct MarginMomentSequence: Sendable, Equatable {
         guard let first = ordered.first else { return nil }
         self.itemId = itemId
         target = first
+        momentLeadInMs = leadInMs
         startMediaTimeMs = ListeningMoment(
             use: .reviewNewMargins,
             margin: ListeningMoment.Margin(id: first.marginId, position: first.mediaTimeMs),
             source: .media(),
-            leadInMs: leadInMs
+            leadInMs: Self.effectiveLeadInMs(of: first, momentLeadInMs: leadInMs)
         ).sourceStartPosition
         unplayed = ordered
         review = Review(count: ordered.count, returnToMediaTimeMs: returnToMediaTimeMs, resumesAtEnd: resumesAtEnd, leadInMs: leadInMs)

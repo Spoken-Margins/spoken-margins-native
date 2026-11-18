@@ -160,7 +160,10 @@ extension SharedMarginReview {
                     steps.append(Step(
                         anchor: MarginMomentAnchor(
                             marginId: parentMarginId(id), mediaTimeMs: at,
-                            isApproximate: place == nil && entry.isApproximate, caption: caption, isYours: true
+                            isApproximate: place == nil && entry.isApproximate, caption: caption, isYours: true,
+                            // The run-up before the pair is the sender's for the reply it leads into (#4171): the parent sorts
+                            // first at that place, so the review's start and the first hop are counted from it.
+                            leadInMs: entry.interjection.senderLeadInMs
                         ),
                         entry: nil, ownParent: parent
                     ))
@@ -168,7 +171,8 @@ extension SharedMarginReview {
                 if entry.isApproximate, let place = parentPlaces[id] {
                     replyAnchor = MarginMomentAnchor(
                         marginId: entry.marginId, mediaTimeMs: place, label: entry.senderLabel, isApproximate: true,
-                        caption: entry.replyContext?.caption, isReadAloud: entry.interjection.isWritten
+                        caption: entry.replyContext?.caption, isReadAloud: entry.interjection.isWritten,
+                        leadInMs: entry.interjection.senderLeadInMs
                     )
                 }
             }

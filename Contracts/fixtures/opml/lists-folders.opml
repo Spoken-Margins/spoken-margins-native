@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>Folders as lists</title></head>
+  <body>
+    <outline text="News">
+      <outline type="rss" text="The Daily" xmlUrl="https://feeds.simplecast.com/Sl5CSM3S"/>
+      <outline type="rss" text="Radiolab" xmlUrl="https://feeds.simplecast.com/EmVW7VGp"/>
+    </outline>
+    <outline text="Tech">
+      <outline text="AI">
+        <outline type="rss" text="Hard Fork" xmlUrl="https://feeds.simplecast.com/6HKOhNgS"/>
+      </outline>
+      <outline type="rss" text="Darknet Diaries" xmlUrl="https://feeds.megaphone.fm/darknetdiaries"/>
+    </outline>
+    <outline type="rss" text="Loose show" xmlUrl="https://example.com/loose.xml"/>
+  </body>
+</opml>
