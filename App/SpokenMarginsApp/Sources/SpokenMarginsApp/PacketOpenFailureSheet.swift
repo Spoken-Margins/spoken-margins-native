@@ -36,6 +36,7 @@ struct PacketOpenFailureSheet: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(AppColors.background)
         .presentationDetents([.medium])
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("packetOpenFailure.sheet")
         .onAppear { headlineHasFocus = true }
         // A failure that replaces this one is read out again, from its headline.
@@ -63,11 +64,11 @@ struct PacketOpenFailureSheet: View {
             .controlSize(.large)
             .disabled(isRetrying)
             .accessibilityIdentifier("packetOpenFailure.tryAgain")
-            Button("Close", action: close)
-                .frame(maxWidth: .infinity)
-                .controlSize(.large)
-                .minimumTapTarget()
-                .accessibilityIdentifier("packetOpenFailure.close")
+            Button(action: close) {
+                Text("Close").frame(maxWidth: .infinity).minimumTapTarget()
+            }
+            .controlSize(.large)
+            .accessibilityIdentifier("packetOpenFailure.close")
         } else {
             Button(action: close) {
                 Text("OK").frame(maxWidth: .infinity)
@@ -77,10 +78,10 @@ struct PacketOpenFailureSheet: View {
             .accessibilityIdentifier("packetOpenFailure.ok")
             if let id = content.reportLinkID, let url = ShareLinkReport.pageURL(forLinkId: id) {
                 // The share page's own report form, in Safari, as the report link on the item screen does.
-                Link("Report this link", destination: url)
-                    .frame(maxWidth: .infinity)
-                    .minimumTapTarget()
-                    .accessibilityIdentifier("packetOpenFailure.report")
+                Link(destination: url) {
+                    Text("Report this link").frame(maxWidth: .infinity).minimumTapTarget()
+                }
+                .accessibilityIdentifier("packetOpenFailure.report")
             }
         }
     }
@@ -94,7 +95,7 @@ private struct PacketOpenFailureSheetModifier: ViewModifier {
     @ObservedObject var drawer: CatalogDrawerModel
 
     func body(content: Content) -> some View {
-        content.sheet(
+        content.trackedSheet(
             item: Binding(get: { presenter.presented }, set: { if $0 == nil { presenter.close() } }),
             onDismiss: {
                 if presenter.takeCloseNotice() { drawer.friendFileFailed(at: FirstLaunchWelcomeOrder.Place(model)) }
