@@ -48,8 +48,11 @@ class PacksContractTests(unittest.TestCase):
         self.assertEqual(len(catalog["packs"]), 2)
         self.assertTrue(any("recentPublishedAt" in entry for entry in catalog["entries"]))
 
-    def test_a_pack_of_three_entries_fails_the_schema(self):
-        self.assertTrue(contracts.validate_file(INVALID, SCHEMA))
+    def test_a_pack_of_three_entries_fails_the_schema_for_that_reason(self):
+        errors = contracts.validate_file(INVALID, SCHEMA)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("packs", errors[0])
+        self.assertIn("too short", errors[0])
 
     def test_schema_bounds_on_a_pack(self):
         cases = {
@@ -82,6 +85,7 @@ class PacksContractTests(unittest.TestCase):
         errors = self.semantic_errors(catalog)
         self.assertEqual(len(errors), 1)
         self.assertIn("unknown entry 'pack-fixture-99'", errors[0])
+        self.assertTrue(errors[0].startswith(str(Path(tempfile.gettempdir()))), "the message names the catalog file, not a feed path")
 
     def test_two_packs_with_one_id_are_reported(self):
         catalog = fixture()

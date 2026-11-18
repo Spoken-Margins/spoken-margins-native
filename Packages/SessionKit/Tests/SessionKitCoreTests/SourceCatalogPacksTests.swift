@@ -98,13 +98,37 @@ final class SourceCatalogPacksTests: XCTestCase {
         XCTAssertNil(catalog.generatedAtDate)
     }
 
-    func testMoreThanTwentyDatesAreCutToTwenty() throws {
+    func testFractionalSecondsOfAnyLengthParse() throws {
+        let base = try XCTUnwrap(SourceCatalogDates.parse("2026-11-14T12:00:00Z"))
+        for (text, extra) in [(".5", 0.5), (".25", 0.25), (".250", 0.25), (".123456", 0.123456), (".000000001", 0.000000001)] {
+            let parsed = try XCTUnwrap(SourceCatalogDates.parse("2026-11-14T12:00:00\(text)Z"), text)
+            XCTAssertEqual(parsed.timeIntervalSince(base), extra, accuracy: 0.000001, text)
+        }
+        XCTAssertNotNil(SourceCatalogDates.parse("2026-11-14T05:00:00.5-07:00"))
+        XCTAssertNil(SourceCatalogDates.parse("2026-11-14T12:00:00.Z"))
+        XCTAssertNil(SourceCatalogDates.parse("2026-11-14T12:00:00.5"), "a time with no zone is not ISO 8601 date-time")
+    }
+
+    func testMoreThanTwentyDatesKeepTheNewestTwentyWhateverTheOrder() throws {
         var catalog = try Self.fixture()
         let index = try XCTUnwrap(catalog.entries.firstIndex { $0.id == "pack-fixture-01" })
-        catalog.entries[index].recentPublishedAt = (1...25).map { String(format: "2026-10-%02dT08:00:00Z", $0) }
+        // Days 1...25, shuffled, with one time that doesn't parse: the five oldest go, and so does the bad one.
+        var days = Array(1...25)
+        var generator = SeededGenerator(seed: 7)
+        days.shuffle(using: &generator)
+        catalog.entries[index].recentPublishedAt = days.map { String(format: "2026-10-%02dT08:00:00Z", $0) } + ["not a time"]
         let validated = try SourceCatalogValidator.validated(catalog)
-        XCTAssertEqual(validated.entries[index].recentPublishedAt?.count, 20)
-        XCTAssertEqual(validated.entries[index].recentPublishedAt?.first, "2026-10-01T08:00:00Z")
+        let kept = try XCTUnwrap(validated.entries[index].recentPublishedAt)
+        XCTAssertEqual(kept.count, 20)
+        XCTAssertEqual(kept, (6...25).reversed().map { String(format: "2026-10-%02dT08:00:00Z", $0) }, "newest first")
+        // Exactly 20 are left alone, bad times and all.
+        catalog.entries[index].recentPublishedAt = Array(repeating: "not a time", count: 20)
+        XCTAssertEqual(try SourceCatalogValidator.validated(catalog).entries[index].recentPublishedAt?.count, 20)
+    }
+
+    func testTheMetadataPathDecodesTheFixtureWithItsPacks() throws {
+        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.fixtureURL()))
+        XCTAssertEqual(catalog.packs?.map(\.id), ["curious-fixture", "science-fixture"])
     }
 
     // MARK: Pack validation
@@ -138,7 +162,12 @@ final class SourceCatalogPacksTests: XCTestCase {
         try run("an explicit entry is removed", [SourceCatalogPack(id: "p", title: "P", summary: "S", entryIds: [Self.id(9)] + ids.prefix(4))],
                 expect: [SourceCatalogPack(id: "p", title: "P", summary: "S", entryIds: Array(ids.prefix(4)))])
         try run("a repeated entry id counts once", [SourceCatalogPack(id: "p", title: "P", summary: "S", entryIds: [ids[0], ids[0], ids[1], ids[2]])], expect: [])
-        try run("empty id", [SourceCatalogPack(id: "", title: "P", summary: "S", entryIds: Array(ids.prefix(4)))], expect: [])
+        for badId in ["", "Curious", "-p", "p q", "p_q", "é", String(repeating: "a", count: 41)] {
+            try run("id \(badId.debugDescription) is not a lower-case slug", [SourceCatalogPack(id: badId, title: "P", summary: "S", entryIds: Array(ids.prefix(4)))], expect: [])
+        }
+        let id40 = String(repeating: "a", count: 40)
+        try run("an id of 40 is kept", [SourceCatalogPack(id: id40, title: "P", summary: "S", entryIds: Array(ids.prefix(4)))],
+                expect: [SourceCatalogPack(id: id40, title: "P", summary: "S", entryIds: Array(ids.prefix(4)))])
         try run("blank title", [SourceCatalogPack(id: "p", title: "  \n", summary: "S", entryIds: Array(ids.prefix(4)))], expect: [])
         try run("blank summary", [SourceCatalogPack(id: "p", title: "P", summary: "", entryIds: Array(ids.prefix(4)))], expect: [])
         let title40 = String(repeating: "t", count: 40)
@@ -149,6 +178,10 @@ final class SourceCatalogPacksTests: XCTestCase {
         try run("summary 91 goes, never shortened", [SourceCatalogPack(id: "p", title: "P", summary: summary90 + "s", entryIds: Array(ids.prefix(4)))], expect: [])
         try run("a title of 40 emoji counts characters, not bytes", [SourceCatalogPack(id: "p", title: String(repeating: "🎧", count: 40), summary: "S", entryIds: Array(ids.prefix(4)))],
                 expect: [SourceCatalogPack(id: "p", title: String(repeating: "🎧", count: 40), summary: "S", entryIds: Array(ids.prefix(4)))])
+        let family = "👨‍👩‍👧‍👦" // one character, seven scalars: JSON Schema counts scalars
+        try run("a title of 6 family emoji is 42 scalars, so it goes", [SourceCatalogPack(id: "p", title: String(repeating: family, count: 6), summary: "S", entryIds: Array(ids.prefix(4)))], expect: [])
+        try run("a title of 5 family emoji is 35 scalars, so it stays", [SourceCatalogPack(id: "p", title: String(repeating: family, count: 5), summary: "S", entryIds: Array(ids.prefix(4)))],
+                expect: [SourceCatalogPack(id: "p", title: String(repeating: family, count: 5), summary: "S", entryIds: Array(ids.prefix(4)))])
         try run("no packs left is an empty list, not nil", [], expect: [])
     }
 
@@ -196,5 +229,15 @@ final class SourceCatalogPacksTests: XCTestCase {
             provenance: [SourceCatalogProvenance(id: "p", kind: "hand_curated", url: nil, country: nil, appleGenreId: nil, chartUpdatedAt: nil, fetchedAt: "2026-11-14T12:00:00Z", note: nil)],
             subjects: [SourceCatalogSubject(id: "science", title: "Science")], starterRows: nil, packs: packs, entries: entries
         )
+    }
+}
+
+/// A repeatable shuffle, so a test of order doesn't depend on luck.
+private struct SeededGenerator: RandomNumberGenerator {
+    var state: UInt64
+    init(seed: UInt64) { state = seed }
+    mutating func next() -> UInt64 {
+        state = state &* 6364136223846793005 &+ 1442695040888963407
+        return state
     }
 }

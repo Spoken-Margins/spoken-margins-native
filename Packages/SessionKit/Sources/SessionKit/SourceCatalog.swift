@@ -254,13 +254,19 @@ public struct SourceCatalog: Codable, Equatable, Sendable {
 
 /// Reads the ISO 8601 times a catalog carries, with or without fractional seconds.
 enum SourceCatalogDates {
+    /// The formatter only reads three fractional digits, and the schema allows any number, so the fraction is taken
+    /// off first and added back.
     static func parse(_ raw: String) -> Date? {
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        if let date = plain.date(from: raw) { return date }
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fractional.date(from: raw)
+        var base = raw
+        var fraction = 0.0
+        if let match = raw.range(of: #"\.[0-9]+"#, options: .regularExpression) {
+            guard let value = Double("0" + raw[match]) else { return nil }
+            fraction = value
+            base.removeSubrange(match)
+        }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: base).map { $0.addingTimeInterval(fraction) }
     }
 }
 
@@ -306,7 +312,17 @@ public enum SourceCatalogValidator {
             if let artwork = entry.artworkURL, !isHTTPS(artwork) { entry.artworkURL = nil }
             if let website = entry.websiteURL, !isHTTPS(website) { entry.websiteURL = nil }
             if let dates = entry.recentPublishedAt, dates.count > SourceCatalogEntry.maxRecentPublishedDates {
-                entry.recentPublishedAt = Array(dates.prefix(SourceCatalogEntry.maxRecentPublishedDates))
+                // The schema gives no order, so keep the newest 20, not the first 20. A time that doesn't parse sorts last.
+                let newestFirst = dates.enumerated().sorted { lhs, rhs in
+                    let (left, right) = (SourceCatalogDates.parse(lhs.element), SourceCatalogDates.parse(rhs.element))
+                    switch (left, right) {
+                    case let (left?, right?): return left == right ? lhs.offset < rhs.offset : left > right
+                    case (.some, nil): return true
+                    case (nil, .some): return false
+                    case (nil, nil): return lhs.offset < rhs.offset
+                    }
+                }
+                entry.recentPublishedAt = newestFirst.prefix(SourceCatalogEntry.maxRecentPublishedDates).map(\.element)
             }
             return entry
         }
@@ -323,7 +339,7 @@ public enum SourceCatalogValidator {
     }
 
     /// Packs (#4285), cleaned the way the schema and `validate-contracts.py` say a pack must be: the first of two
-    /// packs with one id wins; a pack with no id, an empty or over-long title or an over-long summary goes; its entry
+    /// packs with one id wins; a pack whose id isn't a lower-case slug (as the schema says), or with an empty or over-long title or an over-long summary, goes; its entry
     /// ids lose repeats, unknown ids and entries the drawer doesn't offer (explicit, or not followable here), then
     /// keep the first 12; a pack left with fewer than 4 goes. A pack is dropped, never reworded.
     static func validatedPacks(_ packs: [SourceCatalogPack]?, offered: Set<String>) -> [SourceCatalogPack]? {
@@ -331,11 +347,12 @@ public enum SourceCatalogValidator {
         var seenPackIds = Set<String>()
         return packs.compactMap { pack in
             var pack = pack
-            guard !pack.id.isEmpty,
+            // Lengths count Unicode scalars, as JSON Schema's maxLength does, so the app and the contract agree.
+            guard pack.id.range(of: "^[a-z0-9][a-z0-9-]{0,39}$", options: .regularExpression) != nil,
                   !pack.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  pack.title.count <= SourceCatalogPack.maxTitleLength,
+                  pack.title.unicodeScalars.count <= SourceCatalogPack.maxTitleLength,
                   !pack.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  pack.summary.count <= SourceCatalogPack.maxSummaryLength,
+                  pack.summary.unicodeScalars.count <= SourceCatalogPack.maxSummaryLength,
                   seenPackIds.insert(pack.id).inserted else { return nil }
             var seenEntries = Set<String>()
             pack.entryIds = Array(pack.entryIds.filter { offered.contains($0) && seenEntries.insert($0).inserted }

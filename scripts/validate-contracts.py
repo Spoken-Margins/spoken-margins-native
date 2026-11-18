@@ -240,8 +240,8 @@ def validate_source_catalog(path: Path) -> list[str]:
     feeds = []
     for entry in catalog.get("entries", []):
         scheme, _, rest = entry["feedURL"].partition("://")
-        host, slash, path = rest.partition("/")
-        feeds.append(f"{scheme.lower()}://{host.lower()}{slash}{path}".rstrip("/"))
+        host, slash, feed_path = rest.partition("/")
+        feeds.append(f"{scheme.lower()}://{host.lower()}{slash}{feed_path}".rstrip("/"))
     if len(feeds) != len(set(feeds)):
         errors.append(f"{path}: duplicate feed URLs")
     for entry in catalog.get("entries", []):
