@@ -3046,6 +3046,7 @@ public final class SessionEngine {
             interjection.alignedTranscript = nil
             interjection.transcriptionStatus = "transcribed"
             interjection.cleanedTranscript = nil
+            interjection.tidyDecision = nil // new words, so a new proposal may be offered (#4339)
             interjection.displayText = transcript
         }
         return snapshot
@@ -3063,6 +3064,7 @@ public final class SessionEngine {
             interjection.alignedTranscript = alignedTranscript
             interjection.transcriptionStatus = "transcribed"
             interjection.cleanedTranscript = nil
+            interjection.tidyDecision = nil // new words, so a new proposal may be offered (#4339)
             interjection.displayText = alignedTranscript.text
         }
         return snapshot
@@ -3203,6 +3205,49 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// The listener approved a tidy version of their spoken Margin (#4339): the text goes where every reader already
+    /// looks (`cleanedTranscript`, shown as `displayText`) and the answer is kept. `transcript` and the recording are
+    /// not touched. Nothing is written when the transcript was deleted since the proposal was made, or when the Margin
+    /// has no transcript for the text to be a tidy of.
+    @discardableResult
+    public func useTidy(
+        interjectionId: String, sessionId: String? = nil, text: String, source: MarginTidySource
+    ) throws -> SessionSnapshot {
+        guard !transcriptWasDeleted(interjectionId, sessionId) else { return snapshot }
+        let decidedAt = now()
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            guard interjection.transcript != nil else { return }
+            interjection.cleanedTranscript = text
+            interjection.displayText = text
+            interjection.tidyDecision = MarginTidyDecision(choice: .usedTidy, source: source, decidedAt: decidedAt)
+        }
+        return snapshot
+    }
+
+    /// "Keep mine": the Margin stays as spoken and is not offered a tidy version again, until its transcript changes.
+    /// A Margin showing a tidy version is left alone (use `useOriginalWords` to go back).
+    @discardableResult
+    public func keepOriginal(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
+        let decidedAt = now()
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            guard interjection.tidyDecision?.choice != .usedTidy else { return }
+            interjection.tidyDecision = MarginTidyDecision(choice: .keptOriginal, decidedAt: decidedAt)
+        }
+        return snapshot
+    }
+
+    /// "Use my original words": drops the approved tidy and shows the transcript again. The decision is cleared too, so
+    /// the proposal is offered again.
+    @discardableResult
+    public func useOriginalWords(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            interjection.cleanedTranscript = nil
+            interjection.displayText = interjection.transcript
+            interjection.tidyDecision = nil
+        }
+        return snapshot
+    }
+
     @discardableResult
     public func deleteRepresentation(interjectionId: String, sessionId: String? = nil, representation: String) throws -> SessionSnapshot {
         if representation == "transcript" { transcriptsDeletedSinceRequest.insert(Self.transcriptKey(interjectionId, sessionId)) }
@@ -3210,10 +3255,13 @@ public final class SessionEngine {
             if representation == "cleanedTranscript" {
                 interjection.cleanedTranscript = nil
                 interjection.displayText = interjection.transcript
+                // A used tidy with no tidy text is a contradiction; a "kept mine" is the one answer that survives.
+                if interjection.tidyDecision?.choice == .usedTidy { interjection.tidyDecision = nil }
             } else if representation == "transcript" {
                 interjection.transcript = nil
                 interjection.alignedTranscript = nil
                 interjection.cleanedTranscript = nil
+                interjection.tidyDecision = nil
                 interjection.displayText = nil
                 // "pending" would promise a transcription no one is doing (#942). "failed" is stored so Build 29
                 // still opens the row; the app words it as a retry and Retry stays available while audio exists.

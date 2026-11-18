@@ -1354,6 +1354,8 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var replyTo: MarginReplyLink? = nil
     /// The packets this Margin went out in, so replies that come back link to it. Never exported.
     public var sharedAs: [MarginPacketIdentity]? = nil
+    /// The author's answer to the tidy version of this spoken Margin (#4339). Never exported. Build 29 ignores it.
+    public var tidyDecision: MarginTidyDecision? = nil
 
     public init(
         id: String,
@@ -1381,7 +1383,8 @@ public struct Interjection: Codable, Equatable, Sendable {
         privateSharingNote: String? = nil,
         captureKind: InterjectionCaptureKind? = nil,
         replyTo: MarginReplyLink? = nil,
-        sharedAs: [MarginPacketIdentity]? = nil
+        sharedAs: [MarginPacketIdentity]? = nil,
+        tidyDecision: MarginTidyDecision? = nil
     ) {
         self.id = id
         self.itemId = itemId
@@ -1409,6 +1412,7 @@ public struct Interjection: Codable, Equatable, Sendable {
         self.captureKind = captureKind
         self.replyTo = replyTo
         self.sharedAs = sharedAs
+        self.tidyDecision = tidyDecision
     }
 }
 

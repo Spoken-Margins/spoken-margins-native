@@ -14,7 +14,8 @@ public enum SyncFieldSchema {
 ///
 /// Fixed at birth: item key, created time, anchor, capture kind. Edited, one register each, merged field by field:
 /// `transcript`, `cleanedTranscript`, `displayText`, `privateSharingNote` (text, so a lost race keeps the other
-/// version), `status` and `isStarredForSharing`. The recording's path and bytes are not here (slice 5).
+/// version), `status`, `isStarredForSharing` and `tidyDecision` (#4339; a cleared answer is written as null, so
+/// "Use my original words" reaches the other phone). The recording's path and bytes are not here (slice 5).
 public enum MarginSync {
     public static let schemaVersion = 1
     public static let textFields = ["transcript", "cleanedTranscript", "displayText", "privateSharingNote"]
@@ -38,6 +39,9 @@ public enum MarginSync {
         if let starred = margin.isStarredForSharing {
             record.set("isStarredForSharing", .bool(starred), clock: &clock, wallMillis: wallMillis)
         }
+        if let decision = margin.tidyDecision {
+            record.set("tidyDecision", try SyncValue(encoding: decision), clock: &clock, wallMillis: wallMillis)
+        }
         return record
     }
 
@@ -56,6 +60,10 @@ public enum MarginSync {
         }
         if edited.isStarredForSharing != before.isStarredForSharing, let starred = edited.isStarredForSharing {
             record.set("isStarredForSharing", .bool(starred), clock: &clock, wallMillis: wallMillis)
+        }
+        if edited.tidyDecision != before.tidyDecision {
+            let value = edited.tidyDecision.flatMap { try? SyncValue(encoding: $0) } ?? .null
+            record.set("tidyDecision", value, clock: &clock, wallMillis: wallMillis)
         }
         if edited.status != before.status {
             record.set("status", .string(edited.status), clock: &clock, wallMillis: wallMillis)
@@ -78,6 +86,10 @@ public enum MarginSync {
         if let value = record["displayText"]?.stringValue { margin.displayText = value }
         if let value = record["privateSharingNote"]?.stringValue { margin.privateSharingNote = value }
         if let value = record["isStarredForSharing"]?.boolValue { margin.isStarredForSharing = value }
+        if let value = record["tidyDecision"] {
+            // An answer this build cannot read (a newer reading of the field) is left as the device has it.
+            if case .null = value { margin.tidyDecision = nil } else if let decision = try? value.decoded(as: MarginTidyDecision.self) { margin.tidyDecision = decision }
+        }
         if let value = record["status"]?.stringValue { margin.status = value }
         return margin
     }
