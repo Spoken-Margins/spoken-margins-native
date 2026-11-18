@@ -17,7 +17,7 @@ ROW_MENUS = {
     "PlaybackTimelineListView.swift": 1,
     "ExperienceMarginsScreen.swift": 2,  # own Margin rows, and shared Margin rows (Play this moment, Details)
     "ExperienceLibraryScreen.swift": 1,
-    "ExperienceSourcesScreen.swift": 1,
+    "ExperienceSourcesScreen.swift": 3,  # the row menu, the row "Lists…" menu and the chip Rename/Delete menu (#4046)
 }
 
 
