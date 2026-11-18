@@ -135,11 +135,17 @@ final class LibraryCollectionScopeTests: XCTestCase {
         XCTAssertFalse(CollectionChipRule.showsRow(itemCount: 0, collectionCount: 0))
     }
 
-    func testFifteenItemsOfWhichOneIsTrashedShowNoRowBecauseTheCallerCountsRows() {
-        let fifteenIncludingOneTrashed = (1...15).map { "item\($0)" }
-        let libraryRows = fifteenIncludingOneTrashed.dropLast().map { Row(id: $0) }
-        XCTAssertEqual(libraryRows.count, 14)
-        XCTAssertFalse(CollectionChipRule.showsRow(itemCount: libraryRows.count, collectionCount: 0))
+    func testChipsAreAlphabeticalLocalizedAndCaseInsensitiveWithTiesByID() {
+        let collections = [
+            collection("3", [], name: "zebra readings"),
+            collection("2", [], name: "Éclair club"),
+            collection("1", [], name: "apple course"),
+            collection("5", [], name: "Apple Course"),
+            collection("4", [], name: "HIST 210"),
+        ]
+        XCTAssertEqual(LibraryCollectionScope.chipOrder(collections).map(\.id), ["1", "5", "2", "4", "3"])
+        XCTAssertEqual(LibraryCollectionScope.chipOrder(collections.reversed()).map(\.id), ["1", "5", "2", "4", "3"], "input order never matters")
+        XCTAssertEqual(LibraryCollectionScope.chipOrder([]).map(\.id), [])
     }
 
     /// The record a build that already shipped collections wrote: this build must read it unchanged.

@@ -2,10 +2,10 @@ import Foundation
 
 /// Narrowing the Library by a collection (#4343, PR 1 of the Design). The Library's chip row picks an
 /// `ItemCollectionScope`, the same type the Margins tab already narrows by, so one collection means the same items on
-/// both tabs. Nothing in the app calls this yet.
+/// both tabs.
 ///
 /// "Items" here are the Library's own rows, which leave out Recently Deleted. `ItemCollection` keeps the ids of members
-/// that were deleted (`ItemCollection.swift:5-6`), so a collection's size is always counted against the rows, never from
+/// that were deleted (its doc comment), so a collection's size is always counted against the rows, never from
 /// `itemIDs.count`. A restored item is a row again and counts again.
 public enum LibraryCollectionScope {
     /// The rows in the selected collection, in the rows' own order. `nil` is All.
@@ -41,6 +41,15 @@ public enum LibraryCollectionScope {
         return collections.first { $0.id == current.collectionID }.map(ItemCollectionScope.init)
     }
 
+    /// The chips after All: collections in alphabetical order, localized and case-insensitive, ties by id so the
+    /// order never shuffles between launches (Design: "alphabetical").
+    public static func chipOrder(_ collections: [ItemCollection]) -> [ItemCollection] {
+        collections.sorted { lhs, rhs in
+            let ordered = lhs.name.localizedStandardCompare(rhs.name)
+            return ordered == .orderedSame ? lhs.id < rhs.id : ordered == .orderedAscending
+        }
+    }
+
     /// A chip tap: the collection with that id, or `nil` (All) when there is none.
     public static func selection(collectionID: String?, in collections: [ItemCollection]) -> ItemCollectionScope? {
         guard let collectionID else { return nil }
@@ -53,6 +62,7 @@ public enum LibraryCollectionScope {
 public enum CollectionChipRule {
     public static let itemThreshold = 15
 
+    /// `itemCount` is the number of Library rows, which the caller reads after Recently Deleted is left out.
     public static func showsRow(itemCount: Int, collectionCount: Int) -> Bool {
         collectionCount > 0 || itemCount >= itemThreshold
     }
