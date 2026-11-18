@@ -79,8 +79,15 @@ final class QuickFolderStatusTests: XCTestCase {
     func testTheSystemFormatterGivesTheNamedAbbreviatedAndFullForms() {
         let system = QuickFolderStatus(
             name: "C", lastCheckedAt: now.addingTimeInterval(-120), now: now, calendar: calendar, locale: Locale(identifier: "en_US"))
-        XCTAssertTrue(system.checkedText.hasPrefix("Checked 2 min"), system.checkedText)
-        XCTAssertEqual(system.spokenCheckedText, "checked 2 minutes ago")
+        // The system's own words, whatever the OS version spells them as, with no-break spaces read as spaces.
+        let plain = { (text: String) in
+            text.replacingOccurrences(of: "\u{00A0}", with: " ").replacingOccurrences(of: "\u{202F}", with: " ")
+        }
+        let short = plain(system.checkedText), spoken = plain(system.spokenCheckedText)
+        XCTAssertTrue(short.hasPrefix("Checked 2 min"), short)
+        XCTAssertTrue(spoken.hasPrefix("checked 2 minute"), spoken)
+        XCTAssertTrue(spoken.hasSuffix(" ago"), spoken)
+        XCTAssertLessThan(short.count, spoken.count + 1, "the abbreviated form is no longer than the spoken one")
     }
     #endif
 
