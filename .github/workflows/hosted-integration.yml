@@ -1,5 +1,5 @@
-# Hosted integration run (#1389 phase 2, part B): test each new tip of the trunk (SM_TRUNK, main since #1492) on a
-# GitHub-hosted Mac instead of the owner's, with the same script the Mac's launchd job runs
+# Hosted integration run (#1389 phase 2, part B), by hand only since #4573 (see `on:` below): test the trunk's tip
+# (SM_TRUNK, main since #1492) on a GitHub-hosted Mac instead of the owner's, with the same script the Mac's launchd job runs
 # (ops/testdesk/sm_integration_run.py --hosted): --plan app, two re-runs of any failing test on the same build, the scripted journeys in
 # TestPlans/scripted-journeys.json, then one `Lane report integration-<sha7>` on #184 with
 # `run by: hosted integration`. scripts/phone-build reads that report unchanged.
@@ -22,10 +22,11 @@
 # No secrets: a read-only checkout, and the job token may only comment on issues (#184).
 name: hosted-integration
 
+# Manual dispatch only since #4573 (owner, 2026-11-18): main-t3.yml is the trunk's one simulator run, on a schedule,
+# and records a `main-t3` commit status that the phone build and the release gate read (#4575). This run no longer
+# starts on a push; most of its push runs were cancelled by the next merge anyway. It still works when dispatched on
+# the trunk (it posts its #184 report as before) or on a branch to prove a change to it (it posts nothing).
 on:
-  push:
-    # Both trunks (#1492); the job runs only for the one SM_TRUNK names.
-    branches: [next, main]
   workflow_dispatch:
 
 permissions:

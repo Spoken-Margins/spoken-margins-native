@@ -736,6 +736,7 @@ struct LiveSessionView: View, Equatable {
             LiveSessionMarginDetailView(
                 margin: margin, sessionTitle: session.title,
                 position: LiveSessionMarginsList.positionLabel(for: margin, in: session),
+                photoPage: session.photoPageOffer(forMarginId: margin.id),
                 keepHeardPlace: { controller.keepHeardPlace(id: margin.id) },
                 declineHeardPlace: { controller.declineHeardPlace(id: margin.id) },
                 saveText: { controller.updateText(id: margin.id, text: $0) },

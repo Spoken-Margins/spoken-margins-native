@@ -54,7 +54,7 @@ struct ItemCollectionSheet: View {
                 } header: {
                     Text(item.title)
                 } footer: {
-                    Text("Deleting a collection keeps everything in it, and all Margins.")
+                    Text(ItemCollectionEditing.Wording.deleteKeepsEverything)
                 }
                 Section("New Collection") {
                     AppTextField("Name, such as HIST 210", text: $newName)
@@ -75,11 +75,7 @@ struct ItemCollectionSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { Button("Done") { dismiss() }.accessibilityIdentifier("collection.done.button") }
             .task { load() }
-            .alert("Rename Collection", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-                TextField("Name", text: $renameText)
-                Button("Cancel", role: .cancel) { renaming = nil }
-                Button("Rename", action: commitRename)
-            }
+            .collectionRenameAlert(collection: $renaming, text: $renameText, commit: commitRename)
         }
         .accessibilityIdentifier("collection.sheet")
     }
@@ -89,6 +85,7 @@ struct ItemCollectionSheet: View {
         guard let stored = try? model.store?.loadItemCollections() else { return }
         collections = stored
         model.marginCollectionQuery.refreshCollection(from: stored)
+        model.libraryCollections.publish(stored) // the Library's chip row follows a long-press change (#4343)
     }
 
     /// Saves one change, then reloads so the sheet and the Margins scope show what is stored.
@@ -118,8 +115,8 @@ struct ItemCollectionSheet: View {
             name: newName, itemID: item.id, id: "collection-\(UUID().uuidString)", now: Date(), in: collections
         ) else {
             problem = ItemCollectionEditing.normalizedName(newName) == nil
-                ? "Type a name for the collection."
-                : "You already have a collection with that name."
+                ? ItemCollectionEditing.Wording.nameRequired
+                : ItemCollectionEditing.Wording.nameTaken
             return
         }
         if commit({ try $0.saveItemCollection(created) }) { newName = "" }
@@ -134,7 +131,7 @@ struct ItemCollectionSheet: View {
         guard let collection = renaming else { return }
         renaming = nil
         guard let renamed = ItemCollectionEditing.renaming(collection, to: renameText, now: Date(), in: collections) else {
-            problem = "That name is empty or already used by another collection."
+            problem = ItemCollectionEditing.Wording.renameRefused
             return
         }
         commit { try $0.saveItemCollection(renamed) }
@@ -142,5 +139,18 @@ struct ItemCollectionSheet: View {
 
     private func delete(_ collection: ItemCollection) {
         commit { try $0.deleteItemCollection(id: collection.id) }
+    }
+}
+
+extension View {
+    /// The "Rename Collection" alert, shared by the Add to Collection sheet and the Library's collection chips (#4343), so
+    /// the two never differ. The alert's text field is the system's own, so it keeps a plain `TextField` (the placeholder
+    /// colour guard allows one in this file). `commit` reads the collection and the text, and clears the collection.
+    func collectionRenameAlert(collection: Binding<ItemCollection?>, text: Binding<String>, commit: @escaping () -> Void) -> some View {
+        alert("Rename Collection", isPresented: Binding(get: { collection.wrappedValue != nil }, set: { if !$0 { collection.wrappedValue = nil } })) {
+            TextField("Name", text: text)
+            Button("Cancel", role: .cancel) { collection.wrappedValue = nil }
+            Button("Rename", action: commit)
+        }
     }
 }

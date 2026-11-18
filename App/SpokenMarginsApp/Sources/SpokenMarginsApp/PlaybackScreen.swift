@@ -1423,10 +1423,7 @@ struct PlaybackScreen: View {
                                 selectedInterjection = interjection
                             },
                             toggleStar: {
-                                model.setInterjectionStarredForSharing(
-                                    interjection.id,
-                                    starred: interjection.isStarredForSharing != true
-                                )
+                                model.toggleStarredForSharing(interjection, place: .detail)
                             }
                         )
                         .accessibilityIdentifier("timeline.interjection.\(interjection.id)")

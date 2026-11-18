@@ -54,8 +54,10 @@ public enum MarginSync {
         for (name, text, old) in texts where text != old {
             if let text { record.set(name, .string(text), clock: &clock, wallMillis: wallMillis) }
         }
-        if edited.isStarredForSharing != before.isStarredForSharing, let starred = edited.isStarredForSharing {
-            record.set("isStarredForSharing", .bool(starred), clock: &clock, wallMillis: wallMillis)
+        // The listener's unstar stores nil, which means "off". It is written as false: skipping it left the record
+        // starred, so another phone kept the star (and brought it back with its next edit) after the listener took it off (#4173).
+        if edited.isStarredForSharing != before.isStarredForSharing {
+            record.set("isStarredForSharing", .bool(edited.isStarredForSharing == true), clock: &clock, wallMillis: wallMillis)
         }
         if edited.status != before.status {
             record.set("status", .string(edited.status), clock: &clock, wallMillis: wallMillis)

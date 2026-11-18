@@ -29,7 +29,6 @@ final class DiagnosticsErrorTextGuardTests: XCTestCase {
     /// Lines in the app where the listener is shown the text, or it is stored for a screen, never put in the export.
     /// Each entry is a file name and a fragment of the line, with why it is not export text.
     private static let shownToTheListener: [(file: String, fragment: String, why: String)] = [
-        ("ReadLaterModel.swift", "(error as? EditionError)?.localizedDescription", "the Read Later screen's own message"),
         ("SharedMarginsImportMessage.swift", "?? error.localizedDescription", "the listener's import message, cut to plain words after"),
         ("Gate1AppModel+RemoteProvider.swift", "LocalSummaryFailurePresentation(errorDescription: error.localizedDescription)", "the summary failure card"),
         ("Gate1AppModel+RemoteProvider.swift", "String(describing: error),", "the provider failure record, kept off the export under recentFailure"),

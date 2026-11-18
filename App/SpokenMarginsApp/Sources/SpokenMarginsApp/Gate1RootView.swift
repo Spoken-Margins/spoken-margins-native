@@ -310,7 +310,7 @@ struct InterjectionDetailView: View {
                         isOn: Binding(
                             get: { currentInterjection.isStarredForSharing == true },
                             set: {
-                                model.setInterjectionStarredForSharing(current.id, sessionId: current.sessionId, starred: $0)
+                                model.setStarredForSharing(current, starred: $0, place: .manage)
                             }
                         )
                     )

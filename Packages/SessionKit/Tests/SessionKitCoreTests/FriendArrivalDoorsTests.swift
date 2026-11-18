@@ -90,7 +90,7 @@ final class FriendArrivalDoorsTests: XCTestCase {
 
             let library = try libraryRows(store, LibraryQuery(listeningState: .unfinished, sort: .recentlyAdded))
             XCTAssertEqual(library.map(\.id), ["episode", "show-a", "show-b"], "\(how): in the default view, first")
-            XCTAssertEqual(library.first?.sharedMargins, SharedMarginTally(total: 2, new: 2))
+            XCTAssertEqual(library.first?.sharedMargins.counts, SharedMarginTally(total: 2, new: 2))
 
             let entries = try sharedEntries(store)
             let friends = FollowingFriends.friends(from: entries)

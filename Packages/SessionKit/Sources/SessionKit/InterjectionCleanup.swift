@@ -53,7 +53,9 @@ public enum DeterministicInterjectionCleanup {
     public static let isolatedPhraseBoundaryMs = 250
     private static let normalizationLocale = Locale(identifier: "en_US_POSIX")
 
-    private static let unambiguousFillers: Set<String> = [
+    /// The sounds that are never words, whatever surrounds them. The share cleanup removes them by their timings; the text tidy
+    /// (`MarginTidy`, #4339) removes the same ones from a transcript, so the two never disagree on what a filler is.
+    static let unambiguousFillers: Set<String> = [
         "um", "uhm", "uh", "ah", "ahh", "er", "erm"
     ]
 
