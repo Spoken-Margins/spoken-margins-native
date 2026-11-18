@@ -422,7 +422,6 @@ class HostedRunAutoTests(unittest.TestCase):
                 mock.patch.object(lane, 'hot_file_violations', return_value=[]), \
                 mock.patch.object(lane, 'host_build_folders') as folders, \
                 mock.patch.object(lane, 'sweep_merge_audit'), \
-                mock.patch.object(lane, 'dispatch_hosted_integration', return_value=''), \
                 mock.patch.object(lane, 'hosted_rest_checks',
                                   side_effect=wait_effect or (lambda *args, **kwargs: found)) as wait, \
                 mock.patch.object(lane, 'hosted_fast_checks') as pair, \
@@ -591,7 +590,6 @@ class HostedRunAutoTests(unittest.TestCase):
                 mock.patch.object(lane, 'inherited_check', return_value=lambda comments: []), \
                 mock.patch.object(lane, 'hot_file_violations', return_value=[]), \
                 mock.patch.object(lane, 'sweep_merge_audit'), \
-                mock.patch.object(lane, 'dispatch_hosted_integration', return_value=''), \
                 mock.patch.object(lane, 'hosted_web_check', return_value=(None, '')), \
                 mock.patch.object(lane, 'hosted_rest_checks') as wait, \
                 mock.patch.object(lane, 'run_ops', return_value=('PASS', [])) as ops, \

@@ -1908,34 +1908,6 @@ def sweep_merge_audit(tree: Path, base: str) -> None:
         print(f'merge-audit sweep skipped: {error!r}')
 
 
-# hosted-integration.yml tests the trunk's tip on a GitHub-hosted Mac (#1389), whichever branch that is (#1492).
-HOSTED_INTEGRATION_WORKFLOW = 'hosted-integration.yml'
-
-
-def dispatch_hosted_integration(base: str) -> str:
-    """Start hosted-integration on <base>'s new tip after the runner pushed it (#2127), and say what happened.
-
-    The runner pushes with the workflow token, and such a push starts no workflow, so hosted-integration's push
-    trigger never sees the runner's merges. A workflow_dispatch does start a run from that token. GitHub accepts it only once the workflow file is on the default branch (main);
-    until then it refuses, and the Mac's integration script tests the tip itself (sm_integration_run.py). While
-    LANE_HOSTED_APP is not `on` the run's job is skipped, at no cost. Best effort: never fails a job. Only inside
-    the lane job (GITHUB_ACTIONS and GH_TOKEN set), so tests and local runs dispatch nothing."""
-    if base != trunk():
-        return f'hosted integration not started: it tests {trunk()}, not {base}'
-    repo = os.environ.get('GH_REPO')
-    if os.environ.get('GITHUB_ACTIONS') != 'true' or not os.environ.get('GH_TOKEN') or not repo:
-        return 'hosted integration not started: not in a lane job'
-    try:
-        sent = subprocess.run(['gh', 'api', '-X', 'POST', f'repos/{repo}/actions/workflows/'
-                               f'{HOSTED_INTEGRATION_WORKFLOW}/dispatches', '-f', f'ref={base}'],
-                              capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.SubprocessError) as error:
-        return f'hosted integration not started: {error!r}'
-    if sent.returncode:
-        return f'hosted integration not started: {(sent.stderr or sent.stdout).strip()[-200:]}'
-    return f'hosted integration started on {base} ({HOSTED_INTEGRATION_WORKFLOW}, workflow_dispatch)'
-
-
 def next_moved(push_message: str) -> bool:
     """Whether a refused push means the branch moved (so testing again on its newest commit can help)."""
     return 'rejected' in push_message and any(
@@ -2260,7 +2232,7 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
         pushed, message = push_merge(ROOT, merge_sha, base)
         if pushed:
             sweep_merge_audit(ROOT, base)
-            print(f'[lane] {dispatch_hosted_integration(base)}', flush=True)
+            # No per-merge app run (#4616): main's simulator run is main-t3.yml on a schedule (#4573).
             return verdict, where, ran, details + [f'merged into {base} as {merge_sha[:7]}']
         if not next_moved(message):  # no permission, network: testing again wouldn't help
             return verdict, where, ran, details + [f'not merged: the push to {base} failed ({message}). A job '
@@ -3300,7 +3272,6 @@ def revert_merge(tree: Path, base: str, merge: dict, message: str,
             sha = subprocess.check_output(git + ['rev-parse', 'HEAD'], text=True).strip()
             pushed, why = push_merge(tree, sha, base)
             if pushed:
-                print(f'[lane] {dispatch_hosted_integration(base)}', flush=True)
                 return sha, ''
             if not next_moved(why):
                 return None, f'the push to {base} failed ({why})'

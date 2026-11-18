@@ -86,8 +86,9 @@ permissions:
   # write: a dispatched run's own check sits on the trunk's tip, so its verdict goes on the PR's head as a commit status
   # (#3501).
   statuses: write
-  # write: after pushing the trunk's new tip, the automerge and release runs start hosted-integration.yml on it
-  # (lane-runner.py dispatch_hosted_integration); without it GitHub answers 403.
+  # write: the automerge and release runs start hosted-portable.yml again on the PR when its checks are stale or
+  # missing (lane-runner.py dispatch_hosted_checks, #2459); without it GitHub answers 403. They no longer start
+  # hosted-integration.yml after a merge (#4616).
   actions: write
 
 jobs:
