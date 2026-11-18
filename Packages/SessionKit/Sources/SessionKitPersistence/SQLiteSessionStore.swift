@@ -318,6 +318,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         case "feed_subscription": return columns(FeedSubscription.self, item: { _ in nil })
         case "feed_entry": return columns(FeedEntry.self, item: { _ in nil })
         case "item_collection": return columns(ItemCollection.self, item: { _ in nil })
+        case LibraryFolderRecord.recordKind: return columns(LibraryFolderRecord.self, item: { _ in nil })
         case TranscriptTimes.recordKind: return columns(TranscriptTimes.self, item: { $0.itemId })
         default: return nil
         }
@@ -1565,6 +1566,27 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
 
     public func deleteItemCollection(id: String) throws {
         try deleteRecord(kind: "item_collection", id: id)
+    }
+
+    /// A Library folder's own details (#3769), beside its `ItemCollection` under the same ID. A new record kind with no
+    /// item_id: no table or index changes and schema 5 stays, an older build never queries the kind, and deleting an item
+    /// never deletes one.
+    public func saveLibraryFolder(_ folder: LibraryFolderRecord) throws {
+        try save(kind: LibraryFolderRecord.recordKind, id: folder.id, sessionId: nil, itemId: nil, value: folder)
+    }
+
+    /// Oldest import first, so the order is stable.
+    public func loadLibraryFolders() throws -> [LibraryFolderRecord] {
+        let folders: [LibraryFolderRecord] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;",
+            [LibraryFolderRecord.recordKind]
+        )
+        return folders.sorted { ($0.importedAt, $0.id) < ($1.importedAt, $1.id) }
+    }
+
+    /// Removes only the record. The collection and every item and Margin stay.
+    public func deleteLibraryFolder(id: String) throws {
+        try deleteRecord(kind: LibraryFolderRecord.recordKind, id: id)
     }
 
     public func loadFeedSubscriptions() throws -> [FeedSubscription] {
