@@ -95,11 +95,11 @@ enum Build23SenderPresentation {
     static func representationTitle(_ representation: ShareMarginRepresentationChoice) -> String {
         switch representation {
         case .original:
-            "Original"
+            ShareCleanupWords.asRecorded
         case .cleaned:
-            "Cleaned"
+            ShareCleanupWords.withoutUms
         case .textOnly:
-            "Text only"
+            ShareCleanupWords.wordsOnly
         }
     }
 
@@ -527,26 +527,22 @@ struct Build23MarginEditor: View {
                 }
 
                 if margin.isPreparing {
-                    Build23StatusLabel(icon: "hourglass", title: "Cleaning this Margin…", tint: AppColors.evergreen)
+                    Build23StatusLabel(icon: "hourglass", title: ShareCleanupWords.cleaning, tint: AppColors.evergreen)
                 } else if margin.canPrepareCleanup {
-                    Button("Clean this Margin", systemImage: "wand.and.stars") {
+                    Button(ShareCleanupWords.cleanButton, systemImage: "wand.and.stars") {
                         send(.prepareCleanup(id: margin.id))
                     }
                     .filledActionButton()
-                    .accessibilityHint("Removes proposed filler words and tightens pauses; every change remains reversible")
+                    .accessibilityHint(ShareCleanupWords.cleanButtonHint)
                     .accessibilityIdentifier("build23.sender.editor.prepare.\(margin.id)")
                 } else if margin.automaticCleanupEnabled {
                     Build23StatusLabel(
                         icon: "checkmark.circle.fill",
-                        title: "Cleanup applied — tap any changed word or pause below to restore it.",
+                        title: ShareCleanupWords.cleaned,
                         tint: AppColors.evergreen
                     )
-                } else if margin.reviewTokens.isEmpty {
-                    Build23StatusLabel(
-                        icon: "info.circle",
-                        title: "Automatic cleanup is unavailable because this Margin has no word-level timing. Text review remains available."
-                    )
                 }
+                // A Margin with no word-level timing shows nothing here: the sender can do nothing about it (#3853, #3839).
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Share as")
@@ -565,12 +561,12 @@ struct Build23MarginEditor: View {
                         )
                     ) {
                         if margin.hasOriginalVoice {
-                            Text("Original").tag(ShareMarginRepresentationChoice.original)
+                            Text(ShareCleanupWords.asRecorded).tag(ShareMarginRepresentationChoice.original)
                         }
                         if margin.hasCleanedVoice {
-                            Text("Cleaned").tag(ShareMarginRepresentationChoice.cleaned)
+                            Text(ShareCleanupWords.withoutUms).tag(ShareMarginRepresentationChoice.cleaned)
                         }
-                        Text("Text").tag(ShareMarginRepresentationChoice.textOnly)
+                        Text(ShareCleanupWords.wordsOnly).tag(ShareMarginRepresentationChoice.textOnly)
                     }
                     .segmentedUnlessLargeText()
                     .accessibilityIdentifier("build23.sender.representation.\(margin.id)")
@@ -950,7 +946,7 @@ struct Build23InlineTranscriptEditor: View {
         tokens.filter { $0.kind == .word && $0.isRemoved }.count
     }
 
-    private var tightenedPauseCount: Int {
+    private var shortenedPauseCount: Int {
         tokens.filter { $0.kind == .pause && $0.isRemoved }.count
     }
 
@@ -963,7 +959,7 @@ struct Build23InlineTranscriptEditor: View {
                 .font(.caption)
                 .foregroundStyle(AppColors.secondaryText)
 
-            if removedWordCount > 0 || tightenedPauseCount > 0 {
+            if removedWordCount > 0 || shortenedPauseCount > 0 {
                 Text(cleanupSummary)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.evergreen)
@@ -1035,11 +1031,7 @@ struct Build23InlineTranscriptEditor: View {
     }
 
     private var cleanupSummary: String {
-        let words = "\(removedWordCount) \(removedWordCount == 1 ? "word" : "words") removed"
-        let pauses = "\(tightenedPauseCount) \(tightenedPauseCount == 1 ? "pause" : "pauses") tightened"
-        if removedWordCount == 0 { return pauses }
-        if tightenedPauseCount == 0 { return words }
-        return "\(words) · \(pauses)"
+        ShareCleanupWords.changeSummary(wordsRemoved: removedWordCount, pausesShortened: shortenedPauseCount) ?? ""
     }
 }
 
@@ -1062,10 +1054,10 @@ struct Build23AudioPreviewControls: View {
 
                 Build23WrappingLayout(spacing: 8) {
                     if let originalURL {
-                        previewButton(title: "Original", url: originalURL)
+                        previewButton(title: ShareCleanupWords.asRecorded, url: originalURL)
                     }
                     if let cleanedURL {
-                        previewButton(title: "Cleaned", url: cleanedURL)
+                        previewButton(title: ShareCleanupWords.withoutUms, url: cleanedURL)
                     }
                 }
 

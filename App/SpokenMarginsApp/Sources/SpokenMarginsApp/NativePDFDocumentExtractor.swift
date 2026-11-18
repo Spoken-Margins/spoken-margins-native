@@ -15,6 +15,9 @@ struct NativePDFStructuredImport: Sendable {
     var document: StructuredDocument
     var title: String?
     var documentStructure: PDFDocumentStructure
+    /// JPEG pictures of the document's tables and figures by float id (#3895), cut now because the PDF is not kept.
+    /// The importer saves them under the item once it has an id, and only for the floats its stored document has.
+    var clips: [String: Data] = [:]
 }
 
 /// Keeps PDFKit's exact embedded text and authored outline as the canonical
@@ -86,7 +89,8 @@ enum NativePDFDocumentExtractor {
                 pageCount: document.pageCount,
                 analyzedPageCount: 0,
                 bibliography: PDFStructuredTextExtractor.bibliography(for: document)
-            )
+            ),
+            clips: structured.floats.isEmpty ? [:] : PDFClipRenderer.clips(for: structured.floats, in: document)
         )
     }
 
