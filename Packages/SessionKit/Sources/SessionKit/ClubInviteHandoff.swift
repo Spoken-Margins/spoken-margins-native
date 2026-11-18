@@ -13,13 +13,15 @@ public enum ClubInviteHandoff {
 
     /// What `url` carries. `.notAClubLink` means this is not a club hand-off at all, or its link is not on the share
     /// host or not a `/c/` link, so another handler may take it. `.incompleteOrDamaged` is a club link that cannot
-    /// open. A hand-off with a fragment of its own, or with the `link` named twice, is refused as `.notAClubLink`:
-    /// the key would sit outside the link, or two links would compete for the same tap.
+    /// open. A hand-off with a fragment of its own, a path, a port, a user, any other query item, or the `link` named twice
+    /// is refused as `.notAClubLink`: the key would sit outside the link, or two links would compete for the same tap,
+    /// and the page builds only the plain shape.
     public static func parse(_ url: URL) -> ClubInvite.Parsed {
         guard url.scheme?.lowercased() == scheme, url.host?.lowercased() == host, url.fragment == nil,
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let values = components.queryItems?.filter({ $0.name == "link" }), values.count == 1,
-              let text = values[0].value, let link = URL(string: text) else { return .notAClubLink }
+              components.path.isEmpty, components.port == nil, components.user == nil, components.password == nil,
+              let items = components.queryItems, items.count == 1, items[0].name == "link",
+              let text = items[0].value, let link = URL(string: text) else { return .notAClubLink }
         return ClubInvite.parse(link)
     }
 

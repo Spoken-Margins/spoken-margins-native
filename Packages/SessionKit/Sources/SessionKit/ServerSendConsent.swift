@@ -79,16 +79,21 @@ public enum ShareLinkConsentCopy {
 public enum ClubConsentCopy {
     public static let title = "Start or join a club?"
     public static let message = """
-        A club is a box on our server that you and your friends share. When you start or join one, your phone \
-        sends the club's name and each Margin you post to it, with its audio and text and a short excerpt of the \
-        source. All of it is locked on your phone with a key that is only in the invite link. We can't read it. \
-        Anyone who has the link can read the club and post to it, and the only way to take someone out is to start \
-        a new club.
+        A club is a box on our server that you and your friends share. Whoever starts a club sends its name and \
+        the name they chose for themselves. Everyone who posts sends each Margin with its audio and text, a short \
+        excerpt of the source, the source's title and address, and a random code made on your phone for that \
+        club, in the same kind of packet as a file. All of it is locked on your phone with a key that is only in \
+        the invite link. We can't read it, except in one case: if someone reports the club as abuse material, \
+        the report carries the whole link and we keep it for a year.
 
-        Our server keeps no list of members and no names, and your phone makes no code of its own for a club. It \
-        sees how big each post is and the day the club was last used. Like any website, it sees your network \
-        address for a moment, scrambled and kept only in memory. It deletes a club after 90 days with no post and \
-        no visit.
+        Anyone who has the link can read the club, from its first post, and post to it. A post can't be taken \
+        back, and there is no way to take someone out: you start a new club.
+
+        Our server keeps no list of members and no names, and your phone makes no code of its own for a club. \
+        Each time your phone looks at a club, the server sees the club's number and a proof that you have the \
+        link. It also sees how big each post is, their order and the day the club was last used. Like any \
+        website, it sees your network address, scrambled and kept only in memory, for up to an hour. It deletes \
+        a club after 90 days with no post and no visit, or after 7 days if nobody has posted.
 
         Your phone looks for new posts when you open the app or pull to refresh, not in the background.
 

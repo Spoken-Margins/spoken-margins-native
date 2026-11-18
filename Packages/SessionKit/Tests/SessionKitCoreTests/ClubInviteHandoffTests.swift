@@ -51,6 +51,10 @@ final class ClubInviteHandoffTests: XCTestCase {
             "a share link, not a club": "spokenmargins://club?link=\(shareLink)",
             "another site": "spokenmargins://club?link=https%3A%2F%2Fexample.org%2Fc%2F\(invite.id)%23\(invite.key.fragment)",
             "plain http": "spokenmargins://club?link=http%3A%2F%2F\(ProductServer.productionHost)%2Fc%2F\(invite.id)%23\(invite.key.fragment)",
+            "a path after the host": "spokenmargins://club/anything?link=\(link)",
+            "a port": "spokenmargins://club:80?link=\(link)",
+            "a user": "spokenmargins://someone@club?link=\(link)",
+            "another query item": "spokenmargins://club?link=\(link)&x=1",
             "not a URL": "spokenmargins://club?link=%20not%20a%20url",
         ]
         for (name, text) in cases {

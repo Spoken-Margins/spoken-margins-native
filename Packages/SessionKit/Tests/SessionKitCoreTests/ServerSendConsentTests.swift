@@ -75,11 +75,16 @@ final class ServerSendConsentTests: XCTestCase {
     /// The club alert says what `docs/design/club-mailbox.md` says the server holds and what a club cannot do.
     func testTheClubWordsNameWhatIsSentWhatTheServerKeepsAndWhatAClubCannotDo() {
         let text = ClubConsentCopy.message
-        for phrase in ["box on our server", "club's name", "audio and text", "excerpt of the source", "key that is only in the invite link",
-                       "We can't read it", "Anyone who has the link can read the club and post", "start a new club",
-                       "no list of members", "no names", "makes no code of its own", "how big each post is",
-                       "kept only in memory", "90 days with no post and no visit", "open the app or pull to refresh",
-                       "not in the background", "send a friend the file instead"] {
+        // Each thing design sections 2, 3, 5, 7 and 8 say a club sends, keeps or cannot do.
+        for phrase in ["box on our server", "sends its name and the name they chose", "Everyone who posts sends each Margin",
+                       "audio and text", "excerpt of the source", "source's title and address", "random code made on your phone for that club",
+                       "key that is only in the invite link", "We can't read it, except in one case", "reports the club as abuse material",
+                       "keep it for a year", "Anyone who has the link can read the club, from its first post, and post to it",
+                       "A post can't be taken back", "no way to take someone out", "start a new club",
+                       "no list of members", "no names", "makes no code of its own", "the club's number and a proof",
+                       "how big each post is, their order and the day the club was last used", "kept only in memory, for up to an hour",
+                       "90 days with no post and no visit", "7 days if nobody has posted",
+                       "open the app or pull to refresh", "not in the background", "send a friend the file instead"] {
             XCTAssertTrue(text.contains(phrase), "the club consent text should say: \(phrase)")
         }
         XCTAssertFalse(ClubConsentCopy.title.isEmpty)
