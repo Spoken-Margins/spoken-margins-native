@@ -137,7 +137,8 @@
         "label": { "description": "\"Figure 2\", \"Table 1\", \"Fig. S3\".", "type": ["string", "null"] },
         "pageIndex": { "type": "integer", "minimum": 0 },
         "bounds": { "$ref": "#/$defs/normalizedRect" },
-        "captionSegmentId": { "type": ["string", "null"] }
+        "captionSegmentId": { "type": ["string", "null"] },
+        "textSegmentId": { "description": "The segment that holds the table's or figure's own printed text, when the extractor found its place on the page (#3895). A segment that runs over a page break has one float per page. Absent when unknown.", "type": ["string", "null"] }
       }
     },
     "normalizedRect": {
