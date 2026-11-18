@@ -230,7 +230,10 @@ final class WatchContractAppTests: XCTestCase {
             screen.load()
             try await waitUntil { screen.session?.id == id }
             XCTAssertNil(screen.endedLine, "no line while it runs")
-            let began = Date()
+            // The Margin was begun a clear second before the End. The End crosses the wire as seconds since 1970, which moves
+            // a Date by a rounding step (about 100 ns), and `Date()` twice in a row is only nanoseconds apart: with no gap
+            // the stop time could land just before the begun time and the Margin was noted "after the session ended" (#4410).
+            let began = Date().addingTimeInterval(-1)
 
             _ = await receiver.handle(try overTheWire(envelope(.sessionEnd(id: id, endedAt: Date())))).value
             try await waitUntil { screen.hasEnded }
