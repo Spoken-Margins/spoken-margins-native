@@ -46,6 +46,7 @@ extension Gate1AppModel {
             documentStructure: extracted.documentStructure
         )
         let itemId = try await importBrowserTextInBackgroundOffMain(handoff, structuredDocument: extracted.document)
+        await savePDFClips(extracted.clips, itemId: itemId)
         diagnostics["lastRemotePDFImport"] = url.absoluteString
         markOnboardingSteps(onboardingSteps)
         return itemId
@@ -74,6 +75,7 @@ extension Gate1AppModel {
             documentStructure: extracted.documentStructure
         )
         let itemId = try await importBrowserTextInBackgroundOffMain(handoff, structuredDocument: extracted.document)
+        await savePDFClips(extracted.clips, itemId: itemId)
         diagnostics["lastSharedPDFImport"] = url.lastPathComponent
         markOnboardingSteps([.addedOwnSource, .addedFromSafari])
         return itemId
