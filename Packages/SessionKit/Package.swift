@@ -30,7 +30,7 @@ let package = Package(
     ],
     dependencies: [
         .package(
-            url: "https://github.com/microsoft/onnxruntime-swift-package-manager.git",
+            url: "https://github.com/Spoken-Margins/onnxruntime-swift-package-manager.git",
             exact: "1.24.2"
         ),
         .package(
