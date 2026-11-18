@@ -69,10 +69,23 @@ public enum FollowListWords {
     /// "Every show in News is Quiet." It sits above the Quiet section, which starts open.
     public static func allQuietNote(listName: String) -> String { "Every show in \(listName) is Quiet." }
 
-    /// What an empty list says before the list screen (PR 3) can offer **Add shows**.
-    public static func emptyListText(listName: String) -> String {
-        "No shows in \(listName) yet. Add one from a show’s page."
-    }
+    /// What an empty list says on Following and on its own screen. The **Add shows** button sits under it.
+    public static func emptyListText(listName: String) -> String { "No shows in \(listName) yet" }
+
+    /// The Lists screen's title, and the toolbar button's label.
+    public static let listsTitle = "Lists"
+
+    /// "3 shows", "1 show".
+    public static func showCount(_ count: Int) -> String { count == 1 ? "1 show" : "\(count) shows" }
+
+    public static let emptyListsTitle = "No lists yet"
+    public static let emptyListsDetail = "Group the shows you follow. A show can be in several lists. Tap a list on Following to see only its shows, or share it with a friend."
+
+    /// "Add shows to News".
+    public static func addShowsTitle(listName: String) -> String { "Add shows to \(listName)" }
+
+    /// A list's own screen, section "Shows (3)".
+    public static func showsHeader(count: Int) -> String { "Shows (\(count))" }
 
     /// "Delete News?"
     public static func deleteQuestion(listName: String) -> String { "Delete \(listName)?" }
