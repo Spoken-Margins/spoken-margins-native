@@ -60,7 +60,8 @@ public struct MarginTidyConditions: Equatable, Sendable {
 /// `AppleFoundationModelClient.tidyMargin`. Nothing here touches the network, and nothing is saved: a model rewrite is
 /// remembered for the app's run, keyed by the Margin and its words, so reopening a Margin doesn't ask again, and a Margin
 /// whose transcript changed is asked again. A filler-only answer is not remembered: it costs nothing to make, and a
-/// phone that was hot may be cool next time.
+/// phone that was hot may be cool next time. Two requests for the same Margin that overlap each ask the model; the card
+/// makes one request per open, so the second is not worth the bookkeeping.
 public actor MarginTidyProposer {
     /// The model's rewrite of `transcript`, given the passage before and after the Margin. Throws when it can't.
     public typealias Model = @Sendable (_ transcript: String, _ before: String, _ after: String) async throws -> String
@@ -89,6 +90,7 @@ public actor MarginTidyProposer {
         guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         let key = Key(marginId: marginId, transcript: transcript)
         if let kept = remembered[key] { return kept }
+        if Task.isCancelled { return nil }
 
         if let model, conditions().allowsModel {
             let context = BoundedAnchorContext.select(before: before, after: after)
