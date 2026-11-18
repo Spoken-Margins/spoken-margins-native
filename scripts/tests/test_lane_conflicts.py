@@ -73,7 +73,8 @@ class FakeApi:
             return self.pulls[int(path.split('/')[1])]
         if path.startswith('actions/workflows/lane.yml/runs?'):
             status = path.split('status=')[1].split('&')[0]
-            found = [run for run in self.runs if run['status'] == status]
+            event = path.split('event=')[1].split('&')[0]
+            found = [run for run in self.runs if run['status'] == status and run.get('event', 'pull_request') == event]
             return {'total_count': len(found), 'workflow_runs': found}
         if path.startswith('actions/runs/'):
             jobs = self.jobs.get(int(path.split('/')[2]), [])
@@ -112,8 +113,8 @@ def pull(number, head, labels=('automerge',), repo=REPO):
             'labels': [{'name': name} for name in labels]}
 
 
-def run(run_id, pr, head, status='queued'):
-    return {'id': run_id, 'status': status, 'display_title': f'lane pr={pr} head={head} lane=false auto=true'}
+def run(run_id, pr, head, status='queued', event='pull_request'):
+    return {'id': run_id, 'status': status, 'event': event, 'display_title': f'lane pr={pr} head={head} lane=false auto=true'}
 
 
 class ConflictCheckTests(unittest.TestCase):
@@ -230,6 +231,27 @@ class ConflictCheckTests(unittest.TestCase):
         api = FakeApi([pr], runs=[run(60, 8, head, 'in_progress')], jobs={60: [{'name': 'automerge', 'status': 'in_progress'}]})
         self.assertEqual(self.sweep(api), {})
         self.assertEqual((api.posted, api.deleted, api.cancelled), ([], [], []))
+
+    def test_a_dispatched_lane_run_for_its_head_is_left_to_finish_too(self):
+        # The release hand-off and the hosted audit dispatch lane.yml; those runs are not `pull_request` runs (#4538).
+        for status in ('queued', 'in_progress', 'waiting', 'pending'):
+            with self.subTest(status=status):
+                head = self.clean_pr(number=11, name=f'dispatched-{status}')
+                pr = pull(11, head)
+                pr['mergeable'] = False
+                api = FakeApi([pr], runs=[run(61, 11, head, status, event='workflow_dispatch')])
+                self.assertEqual(self.sweep(api), {})
+                self.assertEqual((api.posted, api.deleted, api.cancelled), ([], [], []))
+
+    def test_a_dispatched_run_for_another_head_or_a_finished_one_does_not_hold_the_hand_off(self):
+        head = self.clean_pr(number=12, name='other-runs')
+        pr = pull(12, head)
+        pr['mergeable'] = False
+        other = 'f' * 40
+        api = FakeApi([pr], runs=[run(62, 12, other, 'queued', event='workflow_dispatch'),
+                                  run(63, 12, head, 'completed', event='workflow_dispatch')])
+        self.assertEqual(self.sweep(api), {12: []})
+        self.assertTrue(api.deleted)
 
     def test_a_real_conflict_is_still_the_conflict_hand_off_even_when_github_agrees(self):
         head = self.conflicting_pr()

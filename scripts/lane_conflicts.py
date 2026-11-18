@@ -15,7 +15,7 @@ A second case (#4538): git merges the PR cleanly but GitHub reports it as not me
 `dirty`; seen with a history that has more than one merge base). GitHub builds no merge ref for such a PR and so
 starts no `pull_request` workflow for it: removing and re-adding `automerge` does nothing, and the PR sits armed
 and silent. The sweep treats it as a hand-off of its own, with a comment that says to merge the base into the
-branch, unless a lane run for that head is already waiting or running.
+branch, unless a lane run for that head, its own or one dispatched for it, is already waiting or running.
 
 It never pushes to a branch and never force-pushes. Any doubt (a fetch or merge error, a head that moved since
 the PR list, an API failure) changes nothing: the Mac's own merge check (lane-runner.py) still catches it.
@@ -179,6 +179,23 @@ def no_merge_ref_body(pr_base, base_sha, head):
             f'{marker(head, base_sha, "no-merge-ref")}')
 
 
+def live_lane_runs(api):
+    """Queued or running lane.yml runs of both kinds: a PR's own, and the ones dispatched for it (release hand-off, audit).
+
+    `lane_dedupe.active_runs` sees only `pull_request` runs, on purpose; a PR GitHub can't merge gets its run by
+    `workflow_dispatch`, and that run must not lose its label under it. More than a page, or an API error, raises.
+    """
+    import lane_dedupe
+    runs = dict(lane_dedupe.active_runs(api))
+    for status in lane_dedupe.ACTIVE:
+        page = api.get(f'actions/workflows/lane.yml/runs?event=workflow_dispatch&status={status}&per_page=100')
+        if page['total_count'] > len(page['workflow_runs']):
+            raise ValueError(f'more than one page of dispatched {status} runs')
+        for found in page['workflow_runs']:
+            runs[found['id']] = found
+    return runs
+
+
 def github_cannot_merge(api, pr, head):
     """True when GitHub says the PR can't be merged (`mergeable: false`) and no lane run for this head is live.
 
@@ -190,8 +207,8 @@ def github_cannot_merge(api, pr, head):
     if (current.get('state') != 'open' or current['head']['sha'] != head or current.get('mergeable') is not False
             or current.get('mergeable_state') not in (None, 'dirty')):
         return False
-    for run in lane_dedupe.active_runs(api).values():
-        info = lane_dedupe.parse_run_name(run.get('display_title'))
+    for found in live_lane_runs(api).values():
+        info = lane_dedupe.parse_run_name(found.get('display_title'))
         if info and info['pr'] == pr and info['head'] == head:
             return False
     return True
