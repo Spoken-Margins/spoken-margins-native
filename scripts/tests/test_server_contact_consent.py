@@ -88,6 +88,10 @@ CONTACTS = {
         "none needed here: it builds and reads an invite link and seals bytes, and makes no request. The club client takes its transport as a parameter, so the slice that wires one (club screens, #1799) must add its file here with the consent that gates creating or joining a club",
         None, 0,
     ),
+    KIT + "SessionKit/ClubInviteHandoff.swift": (
+        "none needed here: it reads and builds the spokenmargins://club address the invitation page opens and makes no request (`ProductServer` only names the host of the link it builds). The screen that joins from it must ask with `ClubConsentCopy` and `ServerSendConsent.hasConsented(to: .clubs)` before anything is sent, and add its file here",
+        None, 0,
+    ),
     KIT + "SessionKit/ShareLinkOpening.swift": (
         "none needed: the listener tapped a link they were sent; the request names that link only",
         None, 0,

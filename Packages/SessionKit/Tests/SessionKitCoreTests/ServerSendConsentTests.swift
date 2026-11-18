@@ -57,6 +57,35 @@ final class ServerSendConsentTests: XCTestCase {
         XCTAssertFalse(ShareLinkConsentCopy.title.isEmpty)
         XCTAssertNotEqual(ShareLinkConsentCopy.accept, ShareLinkConsentCopy.decline)
     }
+
+    /// A club is a different send from a share link, so agreeing to links does not cover it, and the other way round.
+    func testAgreeingToLinksDoesNotCoverClubsOrTheOtherWayRound() {
+        let defaults = freshDefaults()
+        ServerSendConsent.record(.shareLinks, in: defaults)
+        XCTAssertFalse(ServerSendConsent.hasConsented(to: .clubs, in: defaults))
+        ServerSendConsent.record(.clubs, in: defaults)
+        XCTAssertTrue(ServerSendConsent.hasConsented(to: .clubs, in: defaults))
+        ServerSendConsent.withdraw(.shareLinks, in: defaults)
+        XCTAssertTrue(ServerSendConsent.hasConsented(to: .clubs, in: defaults))
+        ServerSendConsent.withdraw(.clubs, in: defaults)
+        XCTAssertFalse(ServerSendConsent.hasConsented(to: .clubs, in: defaults))
+        XCTAssertEqual(ServerSendFeature.clubs.rawValue, "clubs")
+    }
+
+    /// The club alert says what `docs/design/club-mailbox.md` says the server holds and what a club cannot do.
+    func testTheClubWordsNameWhatIsSentWhatTheServerKeepsAndWhatAClubCannotDo() {
+        let text = ClubConsentCopy.message
+        for phrase in ["box on our server", "club's name", "audio and text", "excerpt of the source", "key that is only in the invite link",
+                       "We can't read it", "Anyone who has the link can read the club and post", "start a new club",
+                       "no list of members", "no names", "makes no code of its own", "how big each post is",
+                       "kept only in memory", "90 days with no post and no visit", "open the app or pull to refresh",
+                       "not in the background", "send a friend the file instead"] {
+            XCTAssertTrue(text.contains(phrase), "the club consent text should say: \(phrase)")
+        }
+        XCTAssertFalse(ClubConsentCopy.title.isEmpty)
+        XCTAssertNotEqual(ClubConsentCopy.accept, ClubConsentCopy.decline)
+        XCTAssertNotEqual(ClubConsentCopy.message, ShareLinkConsentCopy.message)
+    }
 }
 
 /// The upload itself refuses to start without the agreement, whoever calls it.
