@@ -180,6 +180,52 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         model.cancelSpokenMarginsPackageImport()
     }
 
+    /// #3782: a share link pasted into Paste & go, the copied-link card or the Link or Podcast form opens as a tapped
+    /// one does. It used to go to the article import and come back as a web page the app could not read.
+    @MainActor
+    func testAShareLinkPastedAnywhereOpensAsATappedLinkDoesAndNeverReachesTheLinkImport() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-share-link-paste")
+        let packageURL = root.appendingPathComponent("link.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-share-link-paste")
+        let key = ShareLinkSealing.Key.random()
+        let sealed = try ShareLinkSealing.seal(
+            packet: try Data(contentsOf: packageURL), preview: Data(#"{"schema":"spokenmargins.link-preview.v1"}"#.utf8), key: key
+        )
+        let link = try XCTUnwrap(ShareLinkSealing.linkURL(
+            base: URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)")!, key: key
+        )).absoluteString
+        let message = "Cole sent you a Margin. Hear it here: \(link) Get the app at https://spokenmargins.com/join"
+        let before = Gate1AppModel.PasteAndGoOutcome.openingShareLink
+
+        for (route, paste) in [
+            ("Paste & go", { (model: Gate1AppModel) in model.pasteAndGo(message) == before }),
+            ("the copied-link card", { (model: Gate1AppModel) in
+                guard case .link(let url) = ClipboardLinkOffer.pasteResult(for: message) else { return false }
+                return model.pasteAndGo(url.absoluteString) == before }),
+            ("the Link or Podcast form", { (model: Gate1AppModel) in
+                model.sourceLinkURL = link
+                return model.beginSourceLinkImportFromForm(startSession: false) && model.sourceLinkURL.isEmpty
+                    && model.sourceLinkImportState == "success" }),
+        ] {
+            let requested = ShareLinkRequestLog()
+            let folder = root.appendingPathComponent(route.replacingOccurrences(of: " ", with: "-"))
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let model = shareLinkModel(root: folder) { url, _ in
+                requested.record(url)
+                return (200, sealed.packet)
+            }
+
+            XCTAssertTrue(paste(model), route)
+            try await waitForShareLink(model) { model.spokenMarginsPackageImportReview != nil }
+
+            XCTAssertEqual(model.spokenMarginsPackageImportReview?.shareLinkId, Self.shareLinkID, route)
+            XCTAssertEqual(requested.urls.map(\.absoluteString),
+                           ["https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)/packet"], route)
+            XCTAssertNotEqual(model.sourceLinkImportState, "resolving", "\(route): the link import never ran")
+            model.cancelSpokenMarginsPackageImport()
+        }
+    }
+
     /// #1967: no connection is not an expired link, and the banner offers Retry.
     @MainActor
     func testAShareLinkOpenedOfflineSaysSoAndOffersARetry() async throws {
