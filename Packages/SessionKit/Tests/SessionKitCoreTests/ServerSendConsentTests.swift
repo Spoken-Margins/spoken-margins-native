@@ -57,6 +57,40 @@ final class ServerSendConsentTests: XCTestCase {
         XCTAssertFalse(ShareLinkConsentCopy.title.isEmpty)
         XCTAssertNotEqual(ShareLinkConsentCopy.accept, ShareLinkConsentCopy.decline)
     }
+
+    /// A club is a different send from a share link, so agreeing to links does not cover it, and the other way round.
+    func testAgreeingToLinksDoesNotCoverClubsOrTheOtherWayRound() {
+        let defaults = freshDefaults()
+        ServerSendConsent.record(.shareLinks, in: defaults)
+        XCTAssertFalse(ServerSendConsent.hasConsented(to: .clubs, in: defaults))
+        ServerSendConsent.record(.clubs, in: defaults)
+        XCTAssertTrue(ServerSendConsent.hasConsented(to: .clubs, in: defaults))
+        ServerSendConsent.withdraw(.shareLinks, in: defaults)
+        XCTAssertTrue(ServerSendConsent.hasConsented(to: .clubs, in: defaults))
+        ServerSendConsent.withdraw(.clubs, in: defaults)
+        XCTAssertFalse(ServerSendConsent.hasConsented(to: .clubs, in: defaults))
+        XCTAssertEqual(ServerSendFeature.clubs.rawValue, "clubs")
+    }
+
+    /// The club alert says what `docs/design/club-mailbox.md` says the server holds and what a club cannot do.
+    func testTheClubWordsNameWhatIsSentWhatTheServerKeepsAndWhatAClubCannotDo() {
+        let text = ClubConsentCopy.message
+        // Each thing design sections 2, 3, 5, 7 and 8 say a club sends, keeps or cannot do.
+        for phrase in ["box on our server", "sends its name and the name they chose", "Everyone who posts sends each Margin",
+                       "audio and text", "excerpt of the source", "source's title and address", "random code made on your phone for that club",
+                       "key that is only in the invite link", "We can't read it, except in one case", "reports the club as abuse material",
+                       "keep it for a year", "Anyone who has the link can read the club, from its first post, and post to it",
+                       "A post can't be taken back", "no way to take someone out", "start a new club",
+                       "no list of members", "no names", "makes no code of its own", "the club's number and a proof",
+                       "how big each post is, their order and the day the club was last used", "kept only in memory, for up to an hour",
+                       "90 days with no post and no visit", "7 days if nobody has posted",
+                       "open the app or pull to refresh", "not in the background", "send a friend the file instead"] {
+            XCTAssertTrue(text.contains(phrase), "the club consent text should say: \(phrase)")
+        }
+        XCTAssertFalse(ClubConsentCopy.title.isEmpty)
+        XCTAssertNotEqual(ClubConsentCopy.accept, ClubConsentCopy.decline)
+        XCTAssertNotEqual(ClubConsentCopy.message, ShareLinkConsentCopy.message)
+    }
 }
 
 /// The upload itself refuses to start without the agreement, whoever calls it.

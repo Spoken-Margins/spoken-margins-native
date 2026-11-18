@@ -138,6 +138,24 @@ final class MarginCommentPlanTests: XCTestCase {
         XCTAssertEqual(plan.entries.map(\.sentenceText), ["First one.", "The effect held."])
     }
 
+    func testEachEntryCarriesTheTextJustBeforeItsSentence() throws {
+        let long = String(repeating: "Earlier words go on and on. ", count: 8)
+        let text = "Opening line. Then the effect held.\n\n" + long + "The last one is here."
+        let plan = MarginCommentPlan.make(
+            itemId: itemId, document: document(text),
+            margins: [
+                margin("first", at: 0, transcript: "a"),
+                margin("second", at: try offset(of: "Then", in: text), transcript: "b"),
+                margin("last", at: try offset(of: "The last", in: text), transcript: "c")
+            ]
+        )
+        XCTAssertEqual(plan.entries.map(\.precedingText.count), [0, "Opening line. ".count, MarginCommentPlan.precedingLength])
+        XCTAssertEqual(plan.entries[1].precedingText, "Opening line. ")
+        XCTAssertTrue(plan.entries[2].precedingText.hasSuffix("Earlier words go on and on. "))
+        let none = MarginCommentPlan.make(itemId: itemId, document: document(""), margins: [margin(at: 0, transcript: "x")])
+        XCTAssertEqual(none.entries.first?.precedingText, "")
+    }
+
     func testAStartInTheGapBetweenParagraphsMovesToTheNextWords() throws {
         let text = "First paragraph here.\n\nSecond paragraph here."
         let gap = try offset(of: "\n\n", in: text) + 1

@@ -50,6 +50,37 @@ public enum LibraryCollectionScope {
         }
     }
 
+    /// What the Library body is with this selection (#4343): the existing states, plus "Nothing in HIST 210 yet." for an
+    /// empty collection. "Caught up" is read over the collection's own rows, so a collection of finished readings shows
+    /// the Library's finished state and its Show completed button, never the empty-collection state.
+    public static func screenState<Row: LibraryQueryRow>(
+        accessError: String?,
+        rows: [Row],
+        query: LibraryQuery,
+        in selection: ItemCollectionScope?
+    ) -> LibraryScreenState {
+        let scoped = Self.rows(rows, in: selection)
+        return LibraryScreenState.resolve(
+            accessError: accessError,
+            itemCount: rows.count,
+            isCaughtUp: LibraryQueryEngine.libraryIsCaughtUp(scoped, query: query),
+            visibleCount: LibraryQueryEngine.visibleLibraryItems(scoped, query: query).count,
+            collectionItemCount: selection == nil ? nil : scoped.count)
+    }
+
+    /// What a chip says to VoiceOver: "Collection, HIST 210, selected, 12 items", and "All items" for All (Design).
+    public static func chipAccessibilityLabel(name: String?, itemCount: Int, isSelected: Bool) -> String {
+        guard let name else { return isSelected ? "All items, selected" : "All items" }
+        let items = itemCount == 1 ? "1 item" : "\(itemCount) items"
+        return "Collection, \(name), " + (isSelected ? "selected, " : "") + items
+    }
+
+    /// The rows the New collection and Edit Items checklist offers: every Library row, completed ones too, narrowed by
+    /// the sheet's search with the Library's own matching (title, source, author). The Library's order is kept.
+    public static func checklistRows<Row: LibraryQueryRow>(_ rows: [Row], search: String) -> [Row] {
+        LibraryQueryEngine.visibleLibraryItems(rows, query: LibraryQuery(query: search, listeningState: .all))
+    }
+
     /// A chip tap: the collection with that id, or `nil` (All) when there is none.
     public static func selection(collectionID: String?, in collections: [ItemCollection]) -> ItemCollectionScope? {
         guard let collectionID else { return nil }
