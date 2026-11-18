@@ -8,6 +8,8 @@ private func response(_ request: URLRequest, status: Int, body: String = "{}") -
     (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
 }
 
+private let articleBody = #"{"results":[{"id":"a1","title":"One","source_url":"https://example.com/one","category":"article"}],"nextPageCursor":null}"#
+
 /// #944: Read Later said "Connected" because a token was stored, even after the service rejected it.
 /// These drive the real `ReadLaterPickerCore` with injected responses and an in-memory token store.
 /// They were app-hosted tests of `ReadLaterModel` before #318 moved its logic into SessionKit.
@@ -174,40 +176,105 @@ final class ReadLaterPickerCoreTests: XCTestCase {
         XCTAssertFalse(model.isLoading)
     }
 
-    /// The app's `ObservableObject` shell redraws on this callback; it must come before each change, as `@Published` does.
+    /// Holds a transport call until the test lets it go, and ignores cancellation, so the late answer really arrives.
+    private final class Gate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var entered = false
+        private var continuation: CheckedContinuation<Void, Never>?
+        var hasEntered: Bool { lock.withLock { entered } }
+        func wait() async {
+            await withCheckedContinuation { (next: CheckedContinuation<Void, Never>) in
+                lock.withLock { entered = true; continuation = next }
+            }
+        }
+        func open() {
+            let next: CheckedContinuation<Void, Never>? = lock.withLock {
+                let held = continuation
+                continuation = nil
+                return held
+            }
+            next?.resume()
+        }
+    }
+
+    private func waitUntil(timeout: Duration = .seconds(30), _ condition: () -> Bool) async {
+        let deadline = ContinuousClock.now + timeout
+        while !condition(), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(condition())
+    }
+
+    /// The shell redraws SwiftUI from this callback, so it must fire before each change (the old value is still
+    /// readable) and for the fetch's own result, as `@Published` did.
     func testOnWillChangeFiresBeforeEachChangeIncludingTheFetchResult() async {
         let tokens = Tokens()
-        let body = #"{"results":[],"nextPageCursor":null}"#
-        let model = core(tokens) { request in response(request, status: 200, body: body) }
+        let model = core(tokens) { request in response(request, status: 200, body: articleBody) }
         var fired = 0
-        model.onWillChange = { fired += 1 }
+        var tokenSeenAtFirstChange: String?
+        model.onWillChange = {
+            fired += 1
+            if tokenSeenAtFirstChange == nil { tokenSeenAtFirstChange = model.token }
+        }
         model.token = "typed"
         XCTAssertEqual(fired, 1)
+        XCTAssertEqual(tokenSeenAtFirstChange, "", "the callback runs before the new token is stored")
         model.connect()
+        let beforeFetchResult = fired
         await settle(model)
-        XCTAssertGreaterThan(fired, 3)
+        XCTAssertGreaterThan(fired, beforeFetchResult, "the fetch's own result must publish too")
+        XCTAssertEqual(model.documents.map(\.id), ["reader:a1"])
         let afterFetch = fired
         model.service = .raindrop
         XCTAssertEqual(fired, afterFetch + 1)
     }
 
-    func testLeavingTheServiceMidFetchDropsTheLateAnswer() async {
+    func testAFetchListsTheArticlesAndAMoreRequestWithoutACursorDoesNothing() async {
         let tokens = Tokens()
         tokens.stored[.reader] = "token"
-        let body = #"{"results":[],"nextPageCursor":null}"#
+        let model = core(tokens) { request in response(request, status: 200, body: articleBody) }
+        model.refresh()
+        await settle(model)
+        XCTAssertEqual(model.documents.map(\.title), ["One"])
+        XCTAssertTrue(model.loaded)
+        XCTAssertNil(model.nextCursor)
+        XCTAssertEqual(model.status, "1 articles. Choose Add to import a copy; the service is not changed.")
+        model.refresh(more: true)
+        XCTAssertFalse(model.isLoading)
+        XCTAssertEqual(model.documents.count, 1)
+    }
+
+    /// The generation guard: an answer that arrives after the listener left the service must not fill the list or
+    /// change the line, yet the service did accept the token, so coming back shows "Connected".
+    func testALateAnswerAfterLeavingTheServiceDoesNotFillTheListButStillVerifiesTheToken() async {
+        let tokens = Tokens()
+        tokens.stored[.reader] = "token"
+        let gate = Gate()
         let model = core(tokens) { request in
-            try await Task.sleep(for: .milliseconds(30))
-            return response(request, status: 200, body: body)
+            await gate.wait()
+            return response(request, status: 200, body: articleBody)
         }
         model.refresh()
         XCTAssertTrue(model.isLoading)
+        await waitUntil { gate.hasEntered }
+
         model.service = .raindrop
         model.selectService()
-        XCTAssertFalse(model.isLoading)
         model.service = .reader
         model.selectService()
-        try? await Task.sleep(for: .milliseconds(150))
+        let lineAfterLeaving = model.status
+        XCTAssertEqual(lineAfterLeaving, "Token saved — connection not checked. Refresh to choose articles.")
         XCTAssertFalse(model.isLoading)
+
+        gate.open()
+        // The answer lands on the main actor after this sleep; nothing it does may show.
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(model.documents.isEmpty)
         XCTAssertFalse(model.loaded)
+        XCTAssertFalse(model.isLoading)
+        XCTAssertEqual(model.status, lineAfterLeaving)
+
+        model.selectService()
+        XCTAssertEqual(model.statusSymbol, .connected)
     }
 }

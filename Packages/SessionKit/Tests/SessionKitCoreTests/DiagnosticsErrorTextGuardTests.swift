@@ -54,7 +54,6 @@ final class DiagnosticsErrorTextGuardTests: XCTestCase {
     private static let sessionKitShownToTheListener: [(file: String, fragment: String, why: String)] = [
         ("SessionEngine.swift", "snapshot.lastFailure = \"transcription_failed:", "lastFailure is a blocked export key (keyMayContainUserContent)"),
         ("SessionEngine.swift", "snapshot.lastFailure = \"\\(publisherAudio", "lastFailure is a blocked export key (keyMayContainUserContent)"),
-        ("ReadLaterPickerCore.swift", "(error as? EditionError)?.localizedDescription", "the Read Later screen's own message (moved from the app's ReadLaterModel, #318)"),
         ("OPML.swift", "?? error.localizedDescription", "the import result's reason the listener reads; the app passes `describe`"),
     ]
 
