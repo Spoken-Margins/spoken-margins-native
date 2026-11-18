@@ -2525,6 +2525,11 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
     /// malformed text), and the hidden-list conditions are added to the same WHERE. A Margin naming several parents
     /// counts once. A fork whose first resolvable parent is another friend's Margin counts here too if any parent is the
     /// listener's: a small difference from the review's own label, which takes the first, and only in the count.
+    /// Only the listener's active Margins are parents (the reply graph drops a deleted one: it is neither a parent nor a
+    /// reply), and only those that were shared at all are parsed for their identities. Parents are looked for on the same
+    /// item, as the review's own context is (`SharedMarginReview.ownMargins(itemId:)`); the graph looks across the
+    /// Library, so a reply imported under another row of the same episode is a reply there and not here. A list element
+    /// that is not an object (a shape a later build might write) matches nothing instead of failing the read.
     static let sharedMarginRepliesSQL = """
         SELECT layer.item_id, COUNT(DISTINCT note.id)
         FROM records AS note
@@ -2533,9 +2538,14 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
          AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
         JOIN json_each(CASE WHEN json_valid(note.payload) THEN note.payload ELSE '{}' END, '$.replyLinks') AS link
         JOIN records AS own ON own.kind = 'interjection' AND own.item_id = layer.item_id
+         AND CASE WHEN json_valid(own.payload)
+                  THEN json_extract(own.payload, '$.status') = 'active' AND json_extract(own.payload, '$.sharedAs') IS NOT NULL
+                  ELSE 0 END
         JOIN json_each(CASE WHEN json_valid(own.payload) THEN own.payload ELSE '{}' END, '$.sharedAs') AS identity
-          ON json_extract(identity.value, '$.packageDigest') = json_extract(link.value, '$.parentPackageDigest')
-         AND json_extract(identity.value, '$.packageScopedId') = json_extract(link.value, '$.parentPackageScopedId')
+          ON CASE WHEN json_type(identity.value) = 'object' AND json_type(link.value) = 'object'
+                  THEN json_extract(identity.value, '$.packageDigest') = json_extract(link.value, '$.parentPackageDigest')
+                   AND json_extract(identity.value, '$.packageScopedId') = json_extract(link.value, '$.parentPackageScopedId')
+                  ELSE 0 END
         WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
           AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
         GROUP BY layer.item_id;
