@@ -529,9 +529,15 @@ public actor FollowedSourceCoordinator {
                 policy: subscription.state == .muted ? nil : subscription.newItemPolicy
             )
             // An episode a rule skips, or the listener marked Show less, stays in Following but is not added on its own.
+            // If the stored episodes can't be read, nothing is added this time: they are still in Following, and an
+            // episode a rule set aside must not be added because a read failed. The feed is not marked failed for it.
             if !toAdd.isEmpty, let setAside {
-                let skipped = setAside(try repository.loadFeedEntries(subscriptionId: subscription.id), subscription)
-                toAdd.removeAll { skipped.contains($0.id) }
+                if let stored = try? repository.loadFeedEntries(subscriptionId: subscription.id) {
+                    let skipped = setAside(stored, subscription)
+                    toAdd.removeAll { skipped.contains($0.id) }
+                } else {
+                    toAdd = []
+                }
             }
             subscription.lastRefreshAt = now
             try repository.saveFeedSubscription(subscription)

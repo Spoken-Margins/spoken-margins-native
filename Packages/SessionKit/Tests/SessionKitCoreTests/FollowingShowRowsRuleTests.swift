@@ -76,6 +76,12 @@ final class FollowingShowRowsRuleTests: XCTestCase {
         }
         XCTAssertEqual(before.rows.first?.pickCount, 0)
         XCTAssertNil(before.rows.first?.pickLabel)
+        // The rows themselves, pinned: newest episode first, and each row on its own newest episode.
+        XCTAssertEqual(before.rows.map(\.id), ["a", "b"])
+        XCTAssertEqual(before.rows.map(\.newestEntryID), ["a3", "b2"])
+        XCTAssertEqual(before.rows.map(\.playEntryID), ["a3", "b2"])
+        XCTAssertEqual(before.rows.map(\.newCount), [2, 1])
+        XCTAssertEqual(before.quiet.map(\.newestEntryID), ["q1"])
     }
 
     func testEpisodesCarryNoFlagsWithNoRules() {

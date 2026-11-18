@@ -86,6 +86,27 @@ final class FollowedSourceSetAsideTests: XCTestCase {
         XCTAssertEqual(calls.all.count, 0, "no new episode, so no evaluation")
     }
 
+    /// A repository whose entry read fails after the feed has been followed.
+    private final class FailingEntryReads: InMemorySessionRepository, @unchecked Sendable {
+        nonisolated(unsafe) var failReads = false
+        override func loadFeedEntries(subscriptionId: String?) throws -> [FeedEntry] {
+            if failReads { throw URLError(.cannotDecodeContentData) }
+            return try super.loadFeedEntries(subscriptionId: subscriptionId)
+        }
+    }
+
+    func testAFailedReadAddsNothingAndDoesNotMarkTheFeedFailed() async throws {
+        let repository = FailingEntryReads()
+        let coordinator = coordinator(repository, setAside: { _, _ in [] })
+        _ = try await follow(coordinator)
+        SetAsideFeedURLProtocol.titles = [1: "Garden notes", 2: "Maps and more", 3: "Crypto weekly"]
+        // The refresh's own reads work until the entries are saved; only the evaluator's read fails.
+        repository.failReads = true
+        let added = await coordinator.refreshStale(force: true)
+        repository.failReads = false
+        XCTAssertEqual(added, [], "an episode a rule might set aside is never added because a read failed")
+    }
+
     func testTheRealEvaluatorSetsAsideWhatARuleSkips() async throws {
         let rule = ListeningRule(id: "r", action: .skip, words: ["crypto"], isOn: true)
         let coordinator = coordinator(InMemorySessionRepository(), setAside: { entries, subscription in
