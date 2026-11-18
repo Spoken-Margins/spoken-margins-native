@@ -1142,6 +1142,19 @@ class T3PreparationTests(unittest.TestCase):
             ('xcodebuild unsatisfiable requirement', 'xcodebuild: error: Could not resolve package dependencies:\n  requirement 9.9\n', False),
             ('failed build commands', f'{clone}\nThe following build commands failed:\n', False),
             ('empty', '', False),
+            # The audit on 840d288: git's own output sits indented under the clone failure.
+            ('git detail lines under an xcodebuild clone failure',
+             'xcodebuild: error: Could not resolve package dependencies:\n  Failed to clone repository https://x/y.git:\n'
+             "    Cloning into bare repository '/Users/runner/x'...\n    error: RPC failed; curl 92 HTTP/2 stream 0 was not "
+             'closed cleanly: CANCEL (err 8)\n    fatal: early EOF\n', True),
+            ('git detail lines under a SwiftPM clone failure',
+             "error: Failed to clone repository https://x/y.git:\n    Cloning into bare repository 'x'...\n"
+             '    error: RPC failed; HTTP 500 curl 22\n    fatal: early EOF\n', True),
+            ('the same git block, then a link failure of the PR before it',
+             'error: link command failed with exit code 1\n'
+             "error: Failed to clone repository https://x/y.git:\n    error: RPC failed; curl 92\n", False),
+            ('a summary error after the resolution failure', f'{clone}\nerror: fatalError\n', True),
+            ('a clone error after a link failure', f'error: link command failed with exit code 1\n{clone}\n', False),
         ]
         for name, text, expected in table:
             with self.subTest(name):
@@ -1162,6 +1175,20 @@ class T3PreparationTests(unittest.TestCase):
         self.assertFalse(summary['build_failed'])
         self.assertIn('Failed to clone repository', summary['package_fetch_fault'])
         self.assertEqual(lane.t3_verdict([summary], ['failed_or_incomplete']), 'INCONCLUSIVE')
+
+    def test_the_build_log_decides_when_the_step_errors_lost_their_indentation(self):
+        # The step's error lines are stripped, so git's `error: RPC failed` looks like an error of the PR; the log keeps
+        # it indented under the clone failure (the audit on 840d288).
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            (output / 'build-for-testing.log').write_text(
+                'xcodebuild: error: Could not resolve package dependencies:\n  Failed to clone repository https://x/y.git:\n'
+                '    error: RPC failed; curl 92 HTTP/2 stream 0 was not closed cleanly\n    fatal: early EOF\n')
+            summary = lane.summarize_manifest({'steps': [{'name': 'build-for-testing', 'exit_code': 74, 'errors': [
+                'xcodebuild: error: Could not resolve package dependencies:', 'error: RPC failed; curl 92 HTTP/2 stream 0']}]},
+                output)
+        self.assertFalse(summary['build_failed'])
+        self.assertIn('Failed to clone repository', summary['package_fetch_fault'])
 
     def test_a_clone_boot_gets_the_first_boot_tolerance_because_the_clone_never_booted(self):
         """#1359: with first_boot=False every cloned T3 boot stopped on SpringBoard's early change."""

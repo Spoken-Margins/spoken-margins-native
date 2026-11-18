@@ -79,11 +79,21 @@ _PACKAGE_RESOLUTION_ERROR = re.compile(r'error: (?:Failed to clone repository\b|
 
 
 def has_other_failure(text):
-    """True when `text` holds an error that is not package resolution's own (see OTHER_BUILD_FAILURE)."""
+    """True when `text` holds an error that is not package resolution's own (see OTHER_BUILD_FAILURE).
+
+    Only a line at the left margin can be one: SwiftPM and xcodebuild print git's own output (`error: RPC failed`,
+    `fatal: early EOF`) indented under the clone failure, and that is the clone failing, not the PR. And once package
+    resolution has failed, nothing of the PR's own code has run, so an `error:` line after it (a summary line, say) is
+    no other failure; one before it is."""
     if OTHER_BUILD_FAILURE.search(text):
         return True
-    return any(_ERROR_LINE.search(line) and not _PACKAGE_RESOLUTION_ERROR.search(line)
-               for line in (raw.strip() for raw in text.splitlines()) if not line.startswith('warning:'))
+    for line in text.splitlines():
+        if not line or line[0].isspace() or line.startswith('warning:') or not _ERROR_LINE.search(line):
+            continue
+        if _PACKAGE_RESOLUTION_ERROR.search(line):
+            return False
+        return True
+    return False
 
 
 def package_fetch_fault_line(text):

@@ -873,11 +873,21 @@ PACKAGE_FETCH_FAULT_WHY = (f'{PACKAGE_FETCH_FAULT_MARK} from GitHub, so the buil
 
 
 def has_other_failure(text: str) -> bool:
-    """True when `text` holds an error that is not package resolution's own (see OTHER_BUILD_FAILURE)."""
+    """True when `text` holds an error that is not package resolution's own (see OTHER_BUILD_FAILURE).
+
+    Only a line at the left margin can be one: SwiftPM and xcodebuild print git's own output (`error: RPC failed`,
+    `fatal: early EOF`) indented under the clone failure, and that is the clone failing, not the PR. And once package
+    resolution has failed, nothing of the PR's own code has run, so an `error:` line after it (a summary line, say) is
+    no other failure; one before it is."""
     if OTHER_BUILD_FAILURE.search(text):
         return True
-    return any(_ERROR_LINE.search(line) and not _PACKAGE_RESOLUTION_ERROR.search(line)
-               for line in (raw.strip() for raw in text.splitlines()) if not line.startswith('warning:'))
+    for line in text.splitlines():
+        if not line or line[0].isspace() or line.startswith('warning:') or not _ERROR_LINE.search(line):
+            continue
+        if _PACKAGE_RESOLUTION_ERROR.search(line):
+            return False
+        return True
+    return False
 
 
 def package_fetch_fault_line(text: str) -> str | None:
@@ -3024,10 +3034,11 @@ def summarize_manifest(manifest: dict, output: Path | None = None) -> dict:
         # under them, so the build log, where the runner has it, is read as well.
         fetch_fault = None
         if step.get('name') == 'build-for-testing' and errors:
-            errors_text = '\n'.join(errors)
-            fetch_fault = None if has_other_failure(errors_text) else (
-                package_fetch_fault_line(errors_text) or
-                (package_fetch_fault(output / 'build-for-testing.log') if output else None))
+            log = output / 'build-for-testing.log' if output else None
+            # The step's error lines are stripped of their indentation, which is what tells git's own output under a
+            # clone failure from an error of the PR's; so the build log decides when the runner has it.
+            fetch_fault = package_fetch_fault_line(log.read_text(errors='replace') if log and log.is_file()
+                                                   else '\n'.join(errors))
         if fetch_fault:
             summary['package_fetch_fault'] = fetch_fault
         summary['build_failed'] |= (step.get('name') == 'build-for-testing' and bool(errors)

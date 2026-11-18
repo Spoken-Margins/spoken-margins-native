@@ -2988,6 +2988,15 @@ class PackageFetchRetryTests(unittest.TestCase):
         self.assertEqual(calls, ['build-for-testing'])
         sleep.assert_not_called()
 
+    def test_git_output_under_a_clone_failure_does_not_make_it_the_prs_failure(self):
+        # The audit on 840d288: git's `error: RPC failed` sits indented under the clone line and was read as another failure.
+        nested = (self.CLONE_FAILURE + "    Cloning into bare repository '/Users/runner/x'...\n"
+                  '    error: RPC failed; curl 92 HTTP/2 stream 0 was not closed cleanly: CANCEL (err 8)\n    fatal: early EOF\n')
+        calls, manifest, sleep, error = self.run_build([(nested, True), (nested, True), ('** TEST BUILD SUCCEEDED **\n', False)])
+        self.assertIsNone(error)
+        self.assertEqual(calls, ['build-for-testing'] * 3)
+        self.assertEqual(len(manifest['package_fetch_retries']), 2)
+
     def test_a_cache_warning_about_a_clone_does_not_excuse_a_failure_of_the_pr_itself(self):
         # The audit on 4366e8f: SwiftPM warns "skipping cache due to an error: Failed to clone", fetches another way,
         # and then the PR's own build fails with an error that has no file:line (a link failure, a manifest error).
