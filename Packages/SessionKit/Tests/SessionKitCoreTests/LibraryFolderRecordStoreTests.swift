@@ -114,7 +114,9 @@ final class LibraryFolderRecordStoreTests: XCTestCase {
         }
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
         XCTAssertEqual(SQLiteSessionStore.currentSchemaVersion, 5)
-        XCTAssertEqual(try Self.schemaObjects(atPath: path), try Self.build29SchemaObjects(), "no table, column or index is added")
+        let schemaNow = try Self.schemaObjects(atPath: path)
+        let schemaOfBuild29 = try Self.build29SchemaObjects()
+        XCTAssertEqual(schemaNow, schemaOfBuild29, "no table, column or index is added")
         XCTAssertEqual(try store.listItems().map(\.id), libraryBefore)
         XCTAssertEqual(try SQLiteSessionStore(path: path).listItems().map(\.id), libraryBefore, "and after a reopen")
         XCTAssertEqual(try store.quarantinedRecordCount(), 0)
