@@ -166,6 +166,15 @@ final class CatalogDrawerModel: ObservableObject {
         recordFriendFileArrival()
     }
 
+    /// The sheet that said a friend's link or file could not be opened has closed. The drawer that file withdrew comes
+    /// back: at once on the Library, otherwise at the next visit. Nothing is held back by that file any more, so Done
+    /// with nothing picked plays the Welcome sample as on any first launch (#3801).
+    func friendFileFailed(at place: FirstLaunchWelcomeOrder.Place) {
+        // A failure that lands before the root view notes the launch must not be replayed as an arrival by `noteLaunch`.
+        hasFriendFileArrived = false
+        apply(welcomeOrder.friendFileFailed(place: place))
+    }
+
     private func recordFriendFileArrival() {
         apply(welcomeOrder.friendFileArrived(drawerHasPicks: isFirstRunOpening && !picks.isEmpty))
         if welcomeOrder.defersDrawer { defaults.set(true, forKey: Self.deferredByFriendFileKey) }
@@ -726,6 +735,7 @@ extension FirstLaunchWelcomeOrder.Place {
     init(_ model: Gate1AppModel) {
         let covered = model.spokenMarginsPackageImportReview != nil || model.isTermsOfUsePresented || model.isHelpPresented
             || model.isSharingInterjectionsPresented || model.writtenMarginDraft != nil || model.snapshot.isRecording
+            || model.packetOpenFailures.presented != nil
         if covered {
             self = .elsewhere
         } else if model.screen == .home {
@@ -760,7 +770,9 @@ private struct FirstLaunchWelcomeOrderModifier: ViewModifier {
 }
 
 extension View {
+    /// Also hosts the sheet for a friend's link or file that failed to open, because closing it brings the drawer back (#3801).
     func firstLaunchWelcomeOrder(model: Gate1AppModel, drawer: CatalogDrawerModel) -> some View {
         modifier(FirstLaunchWelcomeOrderModifier(model: model, drawer: drawer))
+            .packetOpenFailureSheet(model: model, drawer: drawer)
     }
 }

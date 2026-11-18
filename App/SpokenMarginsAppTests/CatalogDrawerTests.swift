@@ -407,6 +407,60 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertTrue(drawer.isPresented, "back after the second friend's item")
     }
 
+    /// #3801: a friend's link that failed on a first launch leaves no empty Library: the drawer it withdrew is back
+    /// once the failure sheet closes, and Done with nothing picked plays the Welcome sample as on any first launch.
+    func testAFailedFriendFileBringsTheDrawerBackOnTheLibraryAndDonePlaysTheWelcomeSample() async throws {
+        let defaults = try freshDefaults()
+        var started: [(ids: [String], allowsWelcome: Bool)] = []
+        let drawer = try makeDrawer(defaults: defaults, log: FollowLog()) { ids, allowsWelcome in started.append((ids, allowsWelcome)) }
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        XCTAssertFalse(drawer.isPresented, "withdrawn for the friend's file")
+        drawer.didDismiss()
+        XCTAssertTrue(defaults.bool(forKey: CatalogDrawerModel.deferredByFriendFileKey))
+
+        drawer.friendFileFailed(at: .library)
+
+        XCTAssertTrue(drawer.isPresented, "the Library is not left empty")
+        XCTAssertFalse(defaults.bool(forKey: CatalogDrawerModel.deferredByFriendFileKey), "spent as the drawer opens")
+        drawer.finish()
+        drawer.didDismiss()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started.map(\.allowsWelcome), [true], "no friend's item is in the Library, so the Welcome sample may play")
+    }
+
+    /// #3801: a failure that closes while the listener is elsewhere owes the drawer for the next visit to the Library.
+    func testAFailedFriendFileClosedElsewhereBringsTheDrawerBackAtTheNextLibraryVisit() throws {
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog())
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.didDismiss()
+
+        drawer.friendFileFailed(at: .elsewhere)
+        XCTAssertFalse(drawer.isPresented)
+        drawer.listenerMoved(to: .library)
+        XCTAssertTrue(drawer.isPresented)
+    }
+
+    /// #3801: a failure that lands before the root view has noted the launch is not replayed as an arrival.
+    func testAFriendFileThatFailedBeforeTheRootViewAppearedDoesNotHoldTheDrawerBack() throws {
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog())
+        drawer.friendFileArrived()
+        drawer.friendFileFailed(at: .library)
+        drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.settleFirstRun(at: .library)
+        XCTAssertTrue(drawer.isPresented, "nothing is waiting on a friend's item")
+    }
+
+    /// #3801: a failure with no drawer withdrawn (it was not owed, or the listener has picks) changes nothing.
+    func testAFailedFriendFileWithNoDrawerOwedChangesNothing() throws {
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog())
+        drawer.noteLaunch(libraryWasEmptyAtLaunch: false, followedSourceCount: 3)
+        drawer.settleFirstRun(at: .library)
+        drawer.friendFileFailed(at: .library)
+        XCTAssertFalse(drawer.isPresented)
+    }
+
     func testADrawerWithPicksStaysButDonePlaysNothingOverTheFriendsItem() async throws {
         let log = FollowLog()
         var started: [[String]] = []
