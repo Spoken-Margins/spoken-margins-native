@@ -591,6 +591,19 @@ How it is used:
 
 - **Sharing a link may read the publisher once, in the background, to check the link plays (#4454, 2026-11-17).** Asked "OK for one background read of the publisher?" (tapping Share link counts as his action for one read of the post's page, for a Substack item, and the first 1 KB of the episode's audio, once per link, with no cookies and never through our server), he answered: "yes". This is the same reading as the Timeline pictures call above: his tap is the action, and the read is the listener's own, never a background crawl. The rest of the check's Design stands: the phone loads the link in a hidden web view, the read goes through the app's own transport and never the relay, and no part of it runs in a build without link creation.
 
+## 2026-11-18
+
+- **Timeline folding starts with only the playing chapter open (#4586, 2026-11-18).** Folding shipped in #4446 with every chapter open on first view. He said: "The timeline view can get pretty darn complicated if everything is included and expanded to start. So I think our default should be only expanding the current chapter being read, with the option for the user to collapse the current chapter being read in the timeline view or expanding other chapters." Offered the follow rule (when playback moves on, the chapter just left folds and the new one opens, unless the listener toggled either by hand), he answered: "I like your two proposed directions."
+  - This replaces "first open (nothing folded)" in #3895's folding Design. Hand toggles win over the automatic rule while the Timeline is open; nothing is stored.
+
+- **PDF figures: find picture-only figures from their caption; OCR and image detection deferred (#4587, 2026-11-18).** Told that #3895's clip Design gives no clip to a figure with no printed text inside it, and that the Vision path (`RecognizeDocumentsRequest`, OCR for scanned PDFs) is never called at import, he said: "I am okay with not doing OCR right now, and also having image detection in PDFs deferred. I feel like a lot of images are usually indicated as figures, so I think we might be able to catch that."
+  - Chosen: a "Figure N" caption locates the figure as the empty band between it and the nearest body text, with #3895's rejection rules (never guess a box). This amends point 8 of #3895's clip Design.
+  - Not now: OCR of scanned PDFs, general image detection, turning on the Vision extractor at import.
+
+- **The table or figure clip also shows on the Now tab (#4588, 2026-11-18).** Asked whether the clip should show on the Now tab as well as the Timeline, he said: "I do think that showing it in now is probably a good idea", and accepted the proposed placement (a card in the scrollable scene where the table or figure is read) with "I like your two proposed directions." It follows #4476 (whole scene) and #3895's visible PR; its Design comment comes before `ready`.
+
+- **Owner amendments to a Design go in their own issues (2026-11-18).** He asked that decisions recorded against an issue not be lost when a PR closes that issue. So an amendment to an open issue's Design, decided after its Design comment, gets its own issue (linked from the original), and its decision goes in this file; a comment on the original alone is not enough, because `Closes #N` closes it with the comment unread.
+
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
   - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.
