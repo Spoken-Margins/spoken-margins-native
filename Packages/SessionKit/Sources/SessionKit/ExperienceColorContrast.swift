@@ -478,7 +478,9 @@ public enum AppColorContrastAudit {
         .init(name: "filter selected label", foreground: PlaybackSegmentPalette.selectedLabel,
               background: PlaybackSegmentPalette.filterSelectedPill, minimumRatio: 4.5),
         .init(name: "segment unselected label on tray", foreground: PlaybackSegmentPalette.unselectedLabel,
-              background: PlaybackSegmentPalette.tray, minimumRatio: 4.5)
+              background: PlaybackSegmentPalette.tray, minimumRatio: 4.5),
+        .init(name: "segment selected bar on pill", foreground: PlaybackSegmentPalette.selectedLabel,
+              background: PlaybackSegmentPalette.paneSelectedPill, minimumRatio: 3)
     ]
 
     /// The app's one tint (#3733). `evergreen` is the asset catalog's global accent and the root `.tint`, so every
@@ -629,13 +631,7 @@ public enum AppColorContrastAudit {
         .init(pair: "input fill on panel", appearance: "light", since: "2026-10-17", fixedBy: "#1922"),
         .init(pair: "input fill on panel", appearance: "dark", since: "2026-10-17", fixedBy: "#1922"),
         .init(pair: "input fill on app background", appearance: "light", since: "2026-10-17", fixedBy: "#1922"),
-        .init(pair: "input fill on app background", appearance: "dark", since: "2026-10-17", fixedBy: "#1922"),
-        // The selected pane's pill is 1.69:1 against its tray, and the selected filter's white words are 3.41:1 on its
-        // pill (#3735). Both appearances are the same: the plate is fixed.
-        .init(pair: "pane switch selected fill against tray", appearance: "light", since: "2026-11-13", fixedBy: "#3735"),
-        .init(pair: "pane switch selected fill against tray", appearance: "dark", since: "2026-11-13", fixedBy: "#3735"),
-        .init(pair: "filter selected label", appearance: "light", since: "2026-11-13", fixedBy: "#3735"),
-        .init(pair: "filter selected label", appearance: "dark", since: "2026-11-13", fixedBy: "#3735")
+        .init(pair: "input fill on app background", appearance: "dark", since: "2026-10-17", fixedBy: "#1922")
     ]
 
 

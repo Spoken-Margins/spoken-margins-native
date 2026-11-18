@@ -175,6 +175,11 @@ public enum LibraryQueryEngine {
         }
     }
 
+    /// Whether the row is a PDF by the Library's "PDF" filter rule (#4338).
+    public static func isPDF<Row: LibraryQueryRow>(_ row: Row) -> Bool {
+        libraryContentType(for: row) == .pdf
+    }
+
     private static func libraryContentType<Row: LibraryQueryRow>(for row: Row) -> LibraryContentTypeFilter {
         LibraryRowWording.contentType(mediaType: row.mediaType, sourceReference: row.sourceReference, sourceReferenceType: row.sourceReferenceType)
     }

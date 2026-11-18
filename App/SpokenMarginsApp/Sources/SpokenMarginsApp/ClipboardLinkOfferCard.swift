@@ -254,6 +254,11 @@ struct ClipboardLinkOfferCard: View {
             announce("Adding \(ClipboardLinkOffer.displayHost(of: url)) to the Library")
         case .addedText:
             clipboard.markHandled()
+        case .openingShareLink:
+            // The link's own import review (or its failure sheet) takes over; the card is done, as after any paste.
+            message = nil
+            clipboard.markHandled()
+            announce("Opening your friend's Margins")
         case .notAdded(let reason):
             message = reason
             announce(reason)

@@ -203,6 +203,21 @@ extension LibraryFixture {
             try store.saveItemCollection(ItemCollection(id: "collection-\(index)", name: "Collection \(index)", itemIDs: Array(articles.prefix(20 + index)), createdAt: epoch))
             counts.collections += 1
         }
+        // #4046: follow lists, so their reads are priced against rows, not an empty table.
+        for index in 0..<3 {
+            try store.saveFollowList(FollowList(
+                id: "follow-list-\(index)", name: "List \(index)", createdAt: epoch,
+                members: (0..<10).map { ListMember(feedKey: "https://feed-\($0).example/feed") }
+            ))
+        }
+        // #4046: listening rules and Show less marks, priced the same way.
+        for index in 0..<20 {
+            try store.saveListeningRule(ListeningRule(
+                id: "listening-rule-\(index)", action: index % 4 == 0 ? .more : .skip, words: ["word\(index)*", "other"], scope: .any,
+                isOn: index % 2 == 0, createdAt: epoch
+            ))
+            try store.saveShowLessMark(ShowLessMark(feedKey: "https://feed-\(index % 10).example/feed", entryId: "entry-\(index)", title: "Episode \(index)", markedAt: epoch))
+        }
         for index in 1...min(6, scale.notes) {
             try store.saveInterjectionShareRevision(InterjectionShareRevision(
                 id: "revision-\(index)", interjectionId: "note-\(index)", itemId: itemIds[(index * 7) % itemIds.count], sessionId: "session-\(index)",

@@ -43,6 +43,11 @@ final class SharedMarginTallyTests: XCTestCase {
         )
     }
 
+    /// The counts alone: these tests are about which Margins count; the sender names have their own test.
+    private func shape(_ tallies: [String: SharedMarginTally]) -> [String: SharedMarginTally] {
+        tallies.mapValues { SharedMarginTally(total: $0.total, new: $0.new) }
+    }
+
     private func item(_ id: String) -> Item {
         Item(id: id, title: "Title \(id)", mediaType: "text", text: "Words.", externalReference: nil, status: "ready")
     }
@@ -65,14 +70,14 @@ final class SharedMarginTallyTests: XCTestCase {
         _ = try store.importCommentaryLayer(layer("lost", item: nil), interjections: [margin("m7", layer: "lost")])
         _ = try store.markImportedCommentaryInterjectionHeard(id: "m6", at: imported)
 
-        XCTAssertEqual(try store.loadSharedMarginTallies(), [
+        XCTAssertEqual(shape(try store.loadSharedMarginTallies()), [
             "a": SharedMarginTally(total: 3, new: 3),
             "b": SharedMarginTally(total: 1, new: 1),
             "e": SharedMarginTally(total: 1, new: 0)
         ])
 
         _ = try store.markImportedCommentaryInterjectionHeard(id: "m2", at: imported)
-        XCTAssertEqual(try SQLiteSessionStore(path: path).loadSharedMarginTallies()["a"], SharedMarginTally(total: 3, new: 2),
+        XCTAssertEqual(try SQLiteSessionStore(path: path).loadSharedMarginTallies()["a"].map { SharedMarginTally(total: $0.total, new: $0.new) }, SharedMarginTally(total: 3, new: 2),
                        "hearing one Margin takes one off the new count, across a reopen")
     }
 
@@ -95,22 +100,22 @@ final class SharedMarginTallyTests: XCTestCase {
         _ = try store.importCommentaryLayer(senderLayer("ben2", item: "c", sender: ben), interjections: [margin("m5", layer: "ben2")])
 
         XCTAssertEqual(try store.loadSharedMarginTallies(hiding: HiddenSenders()), try store.loadSharedMarginTallies())
-        XCTAssertEqual(try store.loadSharedMarginTallies()["a"], SharedMarginTally(total: 3, new: 3))
+        XCTAssertEqual(try store.loadSharedMarginTallies()["a"].map { SharedMarginTally(total: $0.total, new: $0.new) }, SharedMarginTally(total: 3, new: 3))
 
         var hidden = HiddenSenders()
         hidden.hide(ben)
-        XCTAssertEqual(try store.loadSharedMarginTallies(hiding: hidden), [
+        XCTAssertEqual(shape(try store.loadSharedMarginTallies(hiding: hidden)), [
             "a": SharedMarginTally(total: 2, new: 2), "b": SharedMarginTally(total: 1, new: 1)
         ], "Ben's Margins are gone from both items; the layer with no sender id still counts")
 
         hidden.hideMargin("m1")
-        XCTAssertEqual(try store.loadSharedMarginTallies(hiding: hidden), [
+        XCTAssertEqual(shape(try store.loadSharedMarginTallies(hiding: hidden)), [
             "a": SharedMarginTally(total: 1, new: 1), "b": SharedMarginTally(total: 1, new: 1)
         ], "one Margin hidden on its own leaves its neighbour")
 
         hidden.hideMargin("m2")
         hidden.hideMargin("m4")
-        XCTAssertEqual(try store.loadSharedMarginTallies(hiding: hidden), [:], "an item with nothing left has no row")
+        XCTAssertEqual(shape(try store.loadSharedMarginTallies(hiding: hidden)), [:], "an item with nothing left has no row")
 
         hidden.unhide(ben)
         hidden.unhideMargin("m1")
@@ -124,11 +129,14 @@ final class SharedMarginTallyTests: XCTestCase {
     func testTheCountFindsEachLayerByPrimaryKeyInsteadOfScanningLayersPerMargin() throws {
         let path = FileManager.default.temporaryDirectory.appending(path: "shared-tally-plan-\(UUID().uuidString).sqlite").path
         defer { for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) } }
-        let plan = try SQLiteSessionStore(path: path).sharedMarginTalliesQueryPlan()
-        let layerSteps = plan.filter { $0.contains("layer") }
-        // The primary key is (kind, id); SQLite names its index sqlite_autoindex_records_1.
-        XCTAssertTrue(layerSteps.contains { $0.hasPrefix("SEARCH layer") && $0.contains("(kind=? AND id=?)") }, "plan: \(plan)")
-        XCTAssertFalse(layerSteps.contains { $0.hasPrefix("SCAN") }, "plan: \(plan)")
+        // The counts, and the names read beside them (#3794): both find each layer by key.
+        for sql in [SQLiteSessionStore.sharedMarginTalliesSQL, SQLiteSessionStore.sharedMarginSendersSQL] {
+            let plan = try SQLiteSessionStore(path: path).sharedMarginTalliesQueryPlan(of: sql)
+            let layerSteps = plan.filter { $0.contains("layer") }
+            // The primary key is (kind, id); SQLite names its index sqlite_autoindex_records_1.
+            XCTAssertTrue(layerSteps.contains { $0.hasPrefix("SEARCH layer") && $0.contains("(kind=? AND id=?)") }, "plan: \(plan)")
+            XCTAssertFalse(layerSteps.contains { $0.hasPrefix("SCAN") }, "plan: \(plan)")
+        }
     }
 
     /// #4101: Recently Added brings an item forward by when a friend's Margins arrived. Real SQLite, one grouped read.

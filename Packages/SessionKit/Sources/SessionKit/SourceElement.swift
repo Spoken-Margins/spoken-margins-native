@@ -5,7 +5,7 @@ import Crypto
 #endif
 import Foundation
 
-/// A picture, embed or link an imported article carries, anchored to its place in the item's text (#2032).
+/// A picture, embed, link or table an imported article carries, anchored to its place in the item's text (#2032).
 ///
 /// The import used to drop all three: a picture line was removed and a link kept only its words. Timeline
 /// shows these as rows (#1624), so the import keeps them here, apart from the text. `start` indexes the item's
@@ -14,6 +14,9 @@ import Foundation
 public struct SourceElement: Codable, Equatable, Sendable, Identifiable {
     public enum Kind: String, Codable, Sendable {
         case picture, embed, link
+        /// A Markdown table. Its lines stay in the text as they always were; `rows` keeps its cells so Timeline can
+        /// draw it as a table. A build from before tables skips this kind (`SourceElementsRecord` reads lossily).
+        case table
     }
 
     public var id: String
@@ -21,19 +24,23 @@ public struct SourceElement: Codable, Equatable, Sendable, Identifiable {
     /// Where the element sits in the item's text: the start of the passage it belongs to, or of the words of a link.
     public var start: Int
     /// What the Timeline row says: a picture's caption (else its alt text, else "Picture"), an embed's service
-    /// ("YouTube video"), or a link's own words.
+    /// ("YouTube video"), a link's own words, or a table's column headings.
     public var label: String
     /// The picture's alt text, kept apart from its caption for screen readers.
     public var altText: String?
+    /// The picture, embed or link address. Empty for a table, which has none.
     public var url: String
+    /// A table's cells, header row first. Nil for every other kind.
+    public var rows: [[String]]?
 
-    public init(id: String, kind: Kind, start: Int, label: String, altText: String? = nil, url: String) {
+    public init(id: String, kind: Kind, start: Int, label: String, altText: String? = nil, url: String, rows: [[String]]? = nil) {
         self.id = id
         self.kind = kind
         self.start = start
         self.label = label
         self.altText = altText
         self.url = url
+        self.rows = rows
     }
 }
 
@@ -81,7 +88,7 @@ public protocol SourceElementsRepository {
     func loadSourceElements(itemId: String) throws -> SourceElementsRecord?
 }
 
-/// Finds the pictures, embeds and links in the Markdown a readable page was captured as. The parser calls this
+/// Finds the pictures, embeds, links and tables in the Markdown a readable page was captured as. The parser calls this
 /// line by line while it cleans the text, so each element lands on the cleaned text it belongs to.
 enum SourceElementCapture {
     struct Image: Equatable {
@@ -227,14 +234,76 @@ enum SourceElementCapture {
         }?.name
     }
 
-    /// Whether the page is a Substack post: its own address, or pictures served from Substack's image host,
-    /// which a publication on its own domain still uses. Phase 1 of #2032 covers these only.
-    static func isSubstackPage(sourceURL: String, markdown: String) -> Bool {
-        if let host = URLComponents(string: sourceURL)?.host?.lowercased(),
-           host == "substack.com" || host.hasSuffix(".substack.com") {
-            return true
+    /// Whether a page's Markdown is read for its pictures, embeds, links and tables: any web page. Phase 1 of #2032
+    /// read Substack pages only; the owner asked for every article (2026-11-14).
+    static func capturesElements(sourceURL: String) -> Bool {
+        webURL(sourceURL) != nil
+    }
+
+    /// Whether `line` opens a GFM table: a row with a pipe in it, then a divider (`| --- | :-: |`, outer pipes
+    /// optional, one dash or more) with as many cells. A divider needs a pipe, so a pipe line over a `---` break or
+    /// Setext underline is not a table.
+    static func opensTable(at index: Int, in lines: [String]) -> Bool {
+        guard index + 1 < lines.count, isTableRow(lines[index]), let columns = dividerColumns(lines[index + 1]) else {
+            return false
         }
-        return markdown.contains("substackcdn.com") || markdown.contains("substack-post-media")
+        return tableCells(lines[index]).count == columns
+    }
+
+    /// Whether `line` can be a table row: it has a pipe that isn't escaped. GFM rows needn't start with one.
+    static func isTableRow(_ line: String) -> Bool {
+        var previous: Character?
+        for character in line where !character.isWhitespace {
+            if character == "|", previous != "\\" { return true }
+            previous = character
+        }
+        return false
+    }
+
+    /// How many columns a divider line has, or nil when it isn't one.
+    static func dividerColumns(_ line: String) -> Int? {
+        var trimmed = Substring(line.trimmingCharacters(in: .whitespaces))
+        guard trimmed.contains("|") else { return nil }
+        if trimmed.hasPrefix("|") { trimmed.removeFirst() }
+        if trimmed.hasSuffix("|") { trimmed.removeLast() }
+        let cells = trimmed.split(separator: "|", omittingEmptySubsequences: false)
+        let isDividerCell = { (cell: Substring) in
+            cell.trimmingCharacters(in: .whitespaces).range(of: #"^:?-+:?$"#, options: .regularExpression) != nil
+        }
+        return cells.allSatisfy(isDividerCell) ? cells.count : nil
+    }
+
+    /// The cells of a table row, cleaned the way the text is. An escaped pipe (`\|`) stays inside its cell.
+    static func tableCells(_ line: String) -> [String] {
+        var trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("|") { trimmed.removeFirst() }
+        if trimmed.hasSuffix("|"), !trimmed.hasSuffix("\\|") { trimmed.removeLast() }
+        var cells: [String] = []
+        var current = ""
+        var previous: Character?
+        for character in trimmed {
+            if character == "|", previous != "\\" {
+                cells.append(current)
+                current = ""
+            } else {
+                current.append(character)
+            }
+            previous = character
+        }
+        cells.append(current)
+        return cells.map { cleanedLabel($0.replacingOccurrences(of: "\\|", with: "|")) }
+    }
+
+    /// A table: its rows (the divider line dropped, short rows padded to the header's width) and a label made of its
+    /// column headings. Nil when the header has no words.
+    static func table(_ rawRows: [String]) -> (label: String, rows: [[String]])? {
+        // The second line is the divider; a later line of dashes is a body row.
+        let rows = rawRows.enumerated().filter { $0.offset != 1 }.map { tableCells($0.element) }
+        guard let header = rows.first, header.contains(where: { !$0.isEmpty }) else { return nil }
+        let width = rows.map(\.count).max() ?? header.count
+        let padded = rows.map { $0 + Array(repeating: "", count: width - $0.count) }
+        let headings = header.filter { !$0.isEmpty }
+        return (shortened(headings.joined(separator: " · ")), padded)
     }
 
     static func shortened(_ text: String) -> String {
@@ -273,6 +342,8 @@ enum SourceElementCapture {
                 guard seenLinks.insert(element.url).inserted else { continue }
             case .picture, .embed:
                 guard seenPictures.insert(element.url).inserted else { continue }
+            case .table:
+                break
             }
             var copy = element
             copy.start = min(max(0, element.start), textLength)
