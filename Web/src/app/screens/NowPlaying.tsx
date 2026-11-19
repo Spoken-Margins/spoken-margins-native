@@ -480,8 +480,9 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const share = async (how: 'save' | 'send') => {
     setBusy(true);
     try {
-      // The typed name goes on this file whether or not the browser could keep it; a failed save has already said so.
-      void keepName();
+      // The typed name goes on this file whether or not the browser could keep it; a failed save has already said so, and
+      // never throws. It is awaited so a page closed or reloaded the moment the file lands still has the name (#4107).
+      await keepName();
       const written = await services.packets.writePacket(episode, toWrite, show, senderForPacket(name));
       // Remember which Margin went out under which packet name, so a reply to it can be found later (#4174). Hidden, and
       // never a reason to hold the file back: if the browser can't save it, the link is simply missing.
