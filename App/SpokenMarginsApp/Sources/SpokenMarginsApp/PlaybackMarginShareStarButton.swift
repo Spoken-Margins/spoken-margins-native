@@ -1,4 +1,5 @@
 import SwiftUI
+// Named Playback* because it draws with AppColors.watch*, which only the always-dark playback files may use (ExperienceColorContrastTests).
 import SessionKit
 
 /// The sharing star on one of the listener's own Margin rows while they listen (#4173). One tap fills it, a second clears
