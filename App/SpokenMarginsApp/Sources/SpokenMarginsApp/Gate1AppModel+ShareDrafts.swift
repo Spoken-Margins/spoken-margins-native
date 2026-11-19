@@ -115,8 +115,12 @@ extension Gate1AppModel {
     var shareStarTally: ShareStarTallyStore { ShareStarTallyStore() }
 
     /// One `share.selection` Diagnostics line for a send tap (#4173): how the sheet started, what will be written, and how
-    /// the star was used since the last send. Counts only. A retry logs again; the last line is the one that counts.
+    /// the star was used since the last send. Counts only. A retry logs again, with the same star counts when the first
+    /// send reset them; the last line is the one that counts.
     func recordShareSelection(now: Date = Date()) {
+        let stored = shareStarTally.load()
+        let counted = stored.isEmpty ? (sharingState.starTallyAtLastSend ?? stored) : stored
+        sharingState.starTallyAtLastSend = counted
         let included = SharedMarginTextRequirement.shareable(sharingState.drafts.filter(\.isIncluded), text: \.approvedTranscript).0
         let writtenIDs = Set(included.map(\.id))
         let margins = sharingState.drafts.map {
@@ -124,7 +128,7 @@ extension Gate1AppModel {
         }
         recordDeveloperDiagnostic(ShareSelectionDiagnostics.kind, ShareSelectionDiagnostics.fields(
             opened: sharingState.openedFrom, margins: margins,
-            secondsInSheet: now.timeIntervalSince(sharingState.openedAt), tally: shareStarTally.load()))
+            secondsInSheet: now.timeIntervalSince(sharingState.openedAt), tally: counted))
     }
 
     /// The system share sheet now shows the packet or the link, so the star counts start again (#4173). A link that

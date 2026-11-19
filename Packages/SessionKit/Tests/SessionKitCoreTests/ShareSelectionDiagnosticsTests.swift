@@ -78,7 +78,7 @@ final class ShareSelectionDiagnosticsTests: XCTestCase {
     func testHowTheSheetWasOpened() {
         typealias D = ShareSelectionDiagnostics
         XCTAssertEqual(D.opened(isReplyBack: true, isSingleMargin: false, hasStarredCandidates: false), .replies)
-        // A reply sheet never starts from stars, whatever is starred.
+        // Replies are reported as replies even when the offer holds no linked reply and preselects by stars.
         XCTAssertEqual(D.opened(isReplyBack: true, isSingleMargin: false, hasStarredCandidates: true), .replies)
         XCTAssertEqual(D.opened(isReplyBack: false, isSingleMargin: true, hasStarredCandidates: true), .single)
         XCTAssertEqual(D.opened(isReplyBack: false, isSingleMargin: true, hasStarredCandidates: false), .single)

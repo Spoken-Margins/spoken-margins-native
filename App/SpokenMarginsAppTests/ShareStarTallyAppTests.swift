@@ -130,4 +130,22 @@ final class ShareStarTallyAppTests: XCTestCase {
 
         XCTAssertTrue(fixture.model.shareStarTally.load().isEmpty)
     }
+
+    /// A retry after cancelling the system share sheet logs the counts the first send had, not zeros.
+    func testARetryAfterTheCountsWereResetLogsTheSameCounts() throws {
+        let fixture = try makeFixture(margins: ["m1", "m2"])
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        fixture.model.setStarredForSharing(try shown(fixture, "m1"), starred: true, place: .now)
+        fixture.model.prepareShareInterjections()
+
+        fixture.model.recordShareSelection()
+        fixture.model.shareSheetPresented()
+        fixture.model.recordShareSelection()
+
+        let lines = fixture.model.playbackEventRecording.events.filter { $0.kind == "share.selection" }
+        XCTAssertEqual(lines.compactMap { $0.fields["starsNow"] }, ["1", "1"])
+        fixture.model.prepareShareInterjections() // a new sheet starts clean
+        fixture.model.recordShareSelection()
+        XCTAssertEqual(fixture.model.playbackEventRecording.events.filter { $0.kind == "share.selection" }.last?.fields["starsNow"], "0")
+    }
 }
