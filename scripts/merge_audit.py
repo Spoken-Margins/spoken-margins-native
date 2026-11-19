@@ -10,6 +10,10 @@ Codex or Claude audit naming the head says "No blocking findings". T3 reports do
 merge since #4572. Otherwise it adds the `merge-audit` label and says on the PR what was missing.
 Commits pushed to next without any pull request get a `merge-audit` issue. It never reverts anything.
 
+A PR is matched to a push by its merge commit. The recently-closed list GitHub returns is ordered by last update, so in a busy hour
+(lane comments and labels touch many PRs) a PR merged a minute ago can fall outside any page of it. The push audit therefore
+asks GitHub which PRs a pushed commit belongs to, and the sweep reads pages until it passes the window (#4668).
+
 The owner may merge directly; they remove the label. The lead session surveys open `merge-audit`
 labels each morning (docs/workstreams/kickoff.md).
 
@@ -60,6 +64,7 @@ LABEL = 'merge-audit'
 LABEL_COLOR = 'b60205'
 LABEL_DESCRIPTION = 'Merged into next without a triage-desk merge check (remove if the owner merged it)'
 ZERO = '0' * 40
+MAX_CLOSED_PAGES = 10  # 1,000 PRs: more than any window of updates the sweep reads
 # The lane runner's report and audit formats (scripts/lane-runner.py: BOT, REPORT, MARKER, AUDITS,
 # AUDIT_SHA, CLEAN_AUDIT). Reports count only from the runner's bot; agents post as the owner.
 LANE_BOT = 'github-actions[bot]'
@@ -164,8 +169,9 @@ def classify_push(pushed: list[str], head: str, recent: list[dict], base: str | 
     """Which merged PRs this push brought in, and whether its tip came from no PR at all.
 
     recent are recently closed PRs into <base> (the trunk by default). A PR belongs to this push when its merge commit (merge,
-    squash or rebase) is one of the pushed commits. GitHub's commit-to-PR lookup can't be used: for
-    commits not on the default branch (main) it returns only open PRs.
+    squash or rebase) is one of the pushed commits. `recent` is only a window of recently updated PRs, so
+    merges_in_push widens it with GitHub's commit-to-PR lookup (which names merged PRs only for commits on the
+    default branch, as the trunk now is).
     """
     pushed_set, base = set(pushed), base or trunk()
     merged = {p['number']: p for p in recent
@@ -173,6 +179,28 @@ def classify_push(pushed: list[str], head: str, recent: list[dict], base: str | 
               and (p.get('base') or {}).get('ref') == base}
     tip_from_pr = any(p['merge_commit_sha'] == head for p in merged.values())
     return merged, not tip_from_pr
+
+
+MAX_COMMIT_LOOKUPS = 50
+
+
+def merges_in_push(github: 'GitHub', pushed: list[str], head: str, base: str | None = None) -> tuple[dict, bool]:
+    """classify_push on the recently-closed list, then on what GitHub says about each commit the list left unexplained.
+
+    The list is a window of the most recently updated PRs, so it can miss a PR merged a minute ago (#4668): a burst of
+    hand merges flagged 13 of them as "no pull request". Asking about the commit itself doesn't depend on that
+    window; the tip goes first, since it alone decides whether the push is direct.
+    """
+    base = base or trunk()
+    recent = github.recently_closed_into(base)
+    merged, direct = classify_push(pushed, head, recent, base)
+    explained = {p['merge_commit_sha'] for p in merged.values()}
+    unknown = [head] + [sha for sha in pushed if sha != head]
+    asked = [sha for sha in unknown if sha not in explained][:MAX_COMMIT_LOOKUPS]
+    if not asked:
+        return merged, direct
+    extra = [pull for sha in asked for pull in github.pulls_for_commit(sha)]
+    return classify_push(pushed, head, recent + extra, base)
 
 
 class GitHub:
@@ -199,9 +227,25 @@ class GitHub:
         except (RuntimeError, ValueError):
             return [after]  # a force-push: audit the head only
 
-    def recently_closed_into(self, base: str) -> list[dict]:
-        return json.loads(self.api(f'repos/{self.repo}/pulls?state=closed&base={base}&sort=updated&direction=desc'
-                                   '&per_page=50'))
+    def recently_closed_into(self, base: str, since: datetime.datetime | None = None) -> list[dict]:
+        """Closed PRs into base, most recently updated first. With `since`, every page is read until one holds a PR
+        last updated before it: a PR merged since then was updated at or after its merge, so none is missed."""
+        found: list[dict] = []
+        for page in range(1, MAX_CLOSED_PAGES + 1):
+            batch = json.loads(self.api(f'repos/{self.repo}/pulls?state=closed&base={base}&sort=updated'
+                                        f'&direction=desc&per_page=100&page={page}'))
+            found += batch
+            if since is None or len(batch) < 100 or any(parse_time(p['updated_at']) < since for p in batch):
+                break
+        return found
+
+    def pulls_for_commit(self, sha: str) -> list[dict]:
+        """The PRs GitHub associates with a commit. For a commit on the default branch this includes the merged PR
+        whose merge commit it is; the caller keeps only those that match."""
+        try:
+            return json.loads(self.api(f'repos/{self.repo}/commits/{sha}/pulls'))
+        except (RuntimeError, ValueError):
+            return []
 
     def ensure_label(self) -> None:
         self.api(f'repos/{self.repo}/labels', '-f', f'name={LABEL}', '-f', f'color={LABEL_COLOR}',
@@ -252,17 +296,18 @@ def main(argv=None) -> int:
     github = GitHub(os.environ['GH_REPO'])
     if args.sweep_hours is not None:
         now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None, microsecond=0)
-        for pull in sorted(recently_merged(github.recently_closed_into(base), args.sweep_hours, now, base),
+        since = now - datetime.timedelta(hours=args.sweep_hours)
+        for pull in sorted(recently_merged(github.recently_closed_into(base, since), args.sweep_hours, now, base),
                            key=lambda p: p['number']):
             audit_pull(github, pull, args.dry_run, base)
         return 0
     if not (args.before and args.after):
         parser.error('--before and --after are required unless --sweep-hours is given')
     pushed = github.pushed_commits(args.before, args.after)
-    merged, direct = classify_push(pushed, args.after, github.recently_closed_into(base), base)
-    if direct:  # the PR list can lag a merge by a moment
+    merged, direct = merges_in_push(github, pushed, args.after, base)
+    if direct:  # GitHub can lag a merge by a moment
         time.sleep(10)
-        merged, direct = classify_push(pushed, args.after, github.recently_closed_into(base), base)
+        merged, direct = merges_in_push(github, pushed, args.after, base)
     for _, pull in sorted(merged.items()):
         audit_pull(github, pull, args.dry_run, base)
     if direct:

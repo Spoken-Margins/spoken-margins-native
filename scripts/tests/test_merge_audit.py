@@ -87,6 +87,89 @@ class PushTests(unittest.TestCase):
         self.assertEqual((merged, direct), ({}, True))
 
 
+class FakePulls(audit.GitHub):
+    """The two PR lookups merge_audit makes, answered from lists: the recently-updated window and the per-commit table."""
+
+    def __init__(self, closed, by_commit=None, pages=None):
+        self.repo, self.closed, self.by_commit, self.asked, self.pages_read = 'o/r', closed, by_commit or {}, [], 0
+
+    def api(self, *args, check=True):
+        path = args[0]
+        if '/commits/' in path:
+            sha = path.split('/commits/')[1].split('/')[0]
+            self.asked.append(sha)
+            return json.dumps(self.by_commit.get(sha, []))
+        page = int(path.split('&page=')[1])
+        self.pages_read += 1
+        return json.dumps(self.closed[(page - 1) * 100:page * 100])
+
+
+class BusyHourTests(unittest.TestCase):
+    """#4668: 13 PRs hand-merged in 100 s were each flagged "reached main without a pull request".
+
+    Lane comments and labels touch many PRs, so a PR merged a minute ago sat outside the 50 most recently updated.
+    """
+
+    def pr(self, number, merge_sha, updated='2026-11-18T18:36:00Z', base='main'):
+        return {'number': number, 'merge_commit_sha': merge_sha, 'base': {'ref': base}, 'merged_at': MERGED_AT,
+                'updated_at': updated, 'head': {'sha': HEAD}}
+
+    def busy_hour(self, n=60):
+        return [self.pr(1000 + i, f'other{i}', updated='2026-11-18T18:40:00Z') for i in range(n)]
+
+    def test_a_merged_pr_outside_the_recently_updated_window_is_not_a_direct_push(self):
+        merged_pr = self.pr(4488, 'merge4488')
+        github = FakePulls(self.busy_hour(), {'merge4488': [merged_pr]})
+        merged, direct = audit.merges_in_push(github, ['merge4488'], 'merge4488', 'main')
+        self.assertEqual((sorted(merged), direct), ([4488], False))
+        # What the push audit did before: only the window, with 60 newer PRs ahead of this one.
+        _, direct_in_window = audit.classify_push(['merge4488'], 'merge4488', github.recently_closed_into('main')[:50],
+                                                  'main')
+        self.assertTrue(direct_in_window)
+
+    def test_a_commit_pushed_straight_to_main_is_still_direct(self):
+        github = FakePulls(self.busy_hour(), {})
+        merged, direct = audit.merges_in_push(github, ['c1', 'c2'], 'c2', 'main')
+        self.assertEqual((merged, direct), ({}, True))
+        self.assertEqual(github.asked[0], 'c2')  # the tip is asked about first
+
+    def test_a_commit_that_belongs_to_some_other_prs_branch_does_not_explain_the_tip(self):
+        # The lookup also names PRs a commit sits inside; only one whose merge commit was pushed counts.
+        inside = self.pr(77, 'merge77')
+        github = FakePulls([], {'local': [inside]})
+        merged, direct = audit.merges_in_push(github, ['local'], 'local', 'main')
+        self.assertEqual((merged, direct), ({}, True))
+
+    def test_a_pr_the_window_already_has_costs_no_lookups(self):
+        github = FakePulls([self.pr(5, 'm5')])
+        merged, direct = audit.merges_in_push(github, ['m5'], 'm5', 'main')
+        self.assertEqual((sorted(merged), direct, github.asked), ([5], False, []))
+
+    def test_lookups_are_capped_and_a_failed_lookup_is_no_match(self):
+        shas = [f'c{i}' for i in range(120)]
+        github = FakePulls([], {})
+        audit.merges_in_push(github, shas, shas[-1], 'main')
+        self.assertEqual(len(github.asked), audit.MAX_COMMIT_LOOKUPS)
+        broken = audit.GitHub('o/r')
+        broken.api = lambda *a, **k: (_ for _ in ()).throw(RuntimeError('404'))
+        self.assertEqual(broken.pulls_for_commit('c1'), [])
+
+    def test_the_sweep_reads_pages_until_it_passes_the_window(self):
+        import datetime
+        newer = [self.pr(i, f'm{i}', updated='2026-11-18T19:00:00Z') for i in range(250)]
+        older = [self.pr(9000 + i, f'o{i}', updated='2026-11-18T10:00:00Z') for i in range(250)]
+        github = FakePulls(newer + older)
+        found = github.recently_closed_into('main', datetime.datetime(2026, 11, 18, 18, 0, 0))
+        self.assertEqual(github.pages_read, 3)  # 100 + 100 + a page holding the first older PR
+        self.assertEqual(len(found), 300)
+        self.assertTrue({p['number'] for p in newer} <= {p['number'] for p in found})
+
+    def test_without_a_window_the_list_is_one_page(self):
+        github = FakePulls(self.busy_hour(250))
+        self.assertEqual(len(github.recently_closed_into('main')), 100)
+        self.assertEqual(github.pages_read, 1)
+
+
 class SweepTests(unittest.TestCase):
     """The sweep after each runner merge: the runner's token-made merges start no push run (decision 3)."""
 
