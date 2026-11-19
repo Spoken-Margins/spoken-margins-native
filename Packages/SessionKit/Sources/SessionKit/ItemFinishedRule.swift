@@ -65,7 +65,9 @@ public enum ItemFinishedRule {
         [first, second].compactMap { $0 }.max()
     }
 
-    private static func lastListening(of session: Session) -> Date? {
+    /// When a session's listening last happened: its completion, else the later of its updated and created stamps. nil for a
+    /// session saved with no timestamps at all.
+    static func lastListening(of session: Session) -> Date? {
         session.completedAt ?? [session.updatedAt, session.createdAt].compactMap({ $0 }).max()
     }
 
