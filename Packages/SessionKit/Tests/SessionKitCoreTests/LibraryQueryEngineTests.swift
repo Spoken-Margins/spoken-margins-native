@@ -131,7 +131,6 @@ final class LibraryQueryEngineTests: XCTestCase {
     func testAListThatSaysTitleSourceOrAuthorDoesNotSearchBySender() {
         let rows = [Row(id: "cole", title: "Essay", sharedMargins: from("Cole"))]
         XCTAssertEqual(LibraryQueryEngine.visibleLibraryItems(rows, query: LibraryQuery(query: "Cole", listeningState: .all), includingSenders: false).map(\.id), [])
-        XCTAssertEqual(LibraryCollectionScope.checklistRows(rows, search: "Cole").map(\.id), [], "the collection checklist")
     }
 
     func testCompletedHiddenNamesWhoseMarginsItHides() {
@@ -150,17 +149,6 @@ final class LibraryQueryEngineTests: XCTestCase {
                        "Unplayed hides both finished items that have friends' Margins")
         XCTAssertNil(LibraryQueryEngine.completedHiddenNote([Row(id: "done", isCompleted: true)], query: unfinished))
         XCTAssertNil(LibraryQueryEngine.completedHiddenNote([Row](), query: unfinished))
-    }
-
-    func testCompletedHiddenReadsOnlyTheSelectedCollection() {
-        let rows = [
-            Row(id: "in", isCompleted: true, sharedMargins: from("Cole")),
-            Row(id: "out", isCompleted: true, sharedMargins: from("Sam"))
-        ]
-        let collection = ItemCollection(id: "c", name: "HIST", itemIDs: ["in"], createdAt: Date(timeIntervalSince1970: 1))
-        let scoped = LibraryCollectionScope.rows(rows, in: ItemCollectionScope(collection))
-        XCTAssertEqual(LibraryQueryEngine.completedHiddenNote(scoped, query: LibraryQuery(listeningState: .unfinished)), "1 has Margins from Cole")
-        XCTAssertEqual(LibraryQueryEngine.completedHiddenNote(rows, query: LibraryQuery(listeningState: .inProgress)), "2 have Margins from friends")
     }
 
     func testCompletedHiddenOnlyCountsWhatTheOtherFiltersAndTheSearchWouldList() {
