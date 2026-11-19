@@ -3550,10 +3550,14 @@ public final class SessionEngine {
             timeline: exportTimeline(interjections: interjections, turns: turns),
             interjections: interjections.map { interjection in
                 let resolvedContext: SourceAnchorContext?
+                // A moved Margin captured with no playback position has no place, so no source passage, page, offset or
+                // media time goes with it: its stored zeros would read as 0% or 0:00 (#4233).
+                let placed = interjection.hasPlace
                 let shouldResolveNativeContext = Self.isNativeAudioSource(item)
                     && interjection.targetType == .item
                     && interjection.anchor.mediaTimeMs != nil
                     && sourceTimeline != nil
+                    && placed
                 if shouldResolveNativeContext,
                    interjection.targetType == .item,
                    let mediaTimeMs = interjection.anchor.mediaTimeMs,
@@ -3582,23 +3586,23 @@ public final class SessionEngine {
                             text: generatedTurnNavigationText(for: $0)
                         )
                     } ?? interjection.roughPercent,
-                    anchorBefore: shouldResolveNativeContext
+                    anchorBefore: !placed ? "" : shouldResolveNativeContext
                         ? resolvedContext?.anchorBefore ?? ""
                         : turnContext?.before ?? interjection.anchor.anchorBefore,
-                    anchorAfter: shouldResolveNativeContext
+                    anchorAfter: !placed ? "" : shouldResolveNativeContext
                         ? resolvedContext?.anchorAfter ?? ""
                         : turnContext?.after ?? interjection.anchor.anchorAfter,
-                    mediaTimeMs: interjection.anchor.mediaTimeMs,
+                    mediaTimeMs: placed ? interjection.anchor.mediaTimeMs : nil,
                     transcriptionStatus: interjection.transcriptionStatus,
                     transcript: interjection.captureKind == .written
                         ? interjection.transcript
                         : interjection.cleanedTranscript ?? interjection.transcript,
                     audioPath: nil,
                     captureKind: interjection.captureKind,
-                    page: interjection.targetType == .item
+                    page: interjection.targetType == .item && placed
                         ? pageDocument?.pageNumber(atCharacter: interjection.anchor.startChar)
                         : nil,
-                    sourceCharOffset: interjection.targetType == .item ? interjection.anchor.startChar : nil,
+                    sourceCharOffset: interjection.targetType == .item && placed ? interjection.anchor.startChar : nil,
                     noPlace: interjection.hasPlace ? nil : true
                 )
             }
@@ -3805,8 +3809,9 @@ public final class SessionEngine {
     }
 
     private func exportTimeline(interjections: [Interjection], turns: [ConversationTurn]) -> [ExportTimelineEntry] {
+        // A Margin with no place (#4233) has no percent to give: its stored 0 would read as the start of the item.
         let sourceInterjections = interjections.filter { $0.targetType == .item }.map {
-            ExportTimelineEntry(type: "interjection", interjectionId: $0.id, turnId: nil, targetType: $0.targetType.rawValue, targetId: $0.targetId, percent: $0.roughPercent, chapterId: nil)
+            ExportTimelineEntry(type: "interjection", interjectionId: $0.id, turnId: nil, targetType: $0.targetType.rawValue, targetId: $0.targetId, percent: $0.hasPlace ? $0.roughPercent : nil, chapterId: nil)
         }
         let exportedTurnIds = Set(turns.map(\.id))
         let turnEntries = turns.flatMap { turn -> [ExportTimelineEntry] in
