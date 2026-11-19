@@ -68,7 +68,7 @@ extension Gate1AppModel {
             if case .added = outcome { added += 1 } else { failed += 1 }
             if let error = await libraryCollections.saveImport(collection, record: record, store: store) {
                 // The items are saved; the next launch puts any that missed the collection back in (`LibraryFolderLaunchRule`).
-                diagnostics["collectionImportSaveFailure"] = String(describing: error)
+                diagnostics["collectionImportSaveFailure"] = SafeErrorText.describe(error)
             }
         }
         _ = try? await reloadLibraryRowsOffMain(store: store)
