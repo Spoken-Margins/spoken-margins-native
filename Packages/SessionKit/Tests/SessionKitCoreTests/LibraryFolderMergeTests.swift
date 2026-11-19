@@ -119,6 +119,35 @@ final class LibraryFolderMergeTests: XCTestCase {
         XCTAssertNil(other.record.members.first { $0.key == "1.pdf" }?.updatedCopyOf)
     }
 
+    func testABackupThatSortsAheadDoesNotTakeTheMembersKeyOrMakeItsFileTheDuplicate() {
+        let existing = record([member("brief.pdf", "a", id: "i1")])
+        let picked = run(walk([file("Archive/brief.pdf", "a"), file("brief.pdf", "a")]), existing: existing)
+        XCTAssertEqual(picked.record.members.map(\.key), ["brief.pdf"], "the member stays at its own file")
+        XCTAssertEqual(picked.record.notAdded.map(\.key), ["Archive/brief.pdf"], "the backup is the duplicate")
+        XCTAssertEqual(picked.record.notAdded.first?.reason, "Same file as “brief.pdf”")
+        XCTAssertTrue(picked.jobs.isEmpty)
+        // Later the member's own file changes: that is its newer copy, not an unrelated file.
+        let changed = run(walk([file("Archive/brief.pdf", "a"), file("brief.pdf", "b")]), existing: picked.record)
+        XCTAssertEqual(changed.record.members.map(\.key), ["brief.pdf", "brief.pdf#updated-2"])
+        XCTAssertEqual(changed.record.members.last?.updatedCopyOf, "brief.pdf")
+    }
+
+    func testACopyAheadOfAFileThatMovedAwayStillLetsTheMemberFollowTheFirstCopy() {
+        // The file is gone from its old path, so the first copy in the walk is where it went.
+        let existing = record([member("brief.pdf", "a", id: "i1")])
+        let result = run(walk([file("Archive/brief.pdf", "a"), file("Archive/brief 2.pdf", "a")]), existing: existing)
+        XCTAssertEqual(result.record.members.map(\.key), ["Archive/brief.pdf"])
+        XCTAssertTrue(result.jobs.isEmpty)
+    }
+
+    func testAChangedFileAtTheMembersPathKeepsItsKeyWhileAnUnchangedBackupIsSkipped() {
+        let existing = record([member("brief.pdf", "a", id: "i1")])
+        let result = run(walk([file("Archive/brief.pdf", "a"), file("brief.pdf", "b")]), existing: existing)
+        XCTAssertEqual(result.record.members.map(\.key), ["brief.pdf", "brief.pdf#updated-2"])
+        XCTAssertEqual(result.record.members.last?.updatedCopyOf, "brief.pdf")
+        XCTAssertEqual(result.jobs.map(\.memberKey), ["brief.pdf#updated-2"])
+    }
+
     func testAMemberWithCopiesStaysPutWhenTheSameBytesShowUpElsewhere() {
         let existing = record([member("1.pdf", "a", id: "i1"), member("1.pdf#updated-2", "a2", id: "i1b", copyOf: "1.pdf")])
         let result = run(walk([file("elsewhere/1.pdf", "a")]), existing: existing)

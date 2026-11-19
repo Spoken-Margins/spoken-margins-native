@@ -80,7 +80,8 @@ public enum LibraryFolderMerge {
         var shaFirstSeenInPick: [String: String] = [:]
         var addressesInPick = Set<String>()
 
-        for walked in walk.members {
+        let walkKeys = Set(walk.members.filter { $0.kind != .link }.map(\.key))
+        for walked in inWalkOrderWithEachMembersOwnFileFirst(walk.members, in: record) {
             if walked.kind == .link {
                 mergeLink(walked, into: &record, jobs: &jobs, skipped: &skipped, addressesInPick: &addressesInPick, now: now)
                 continue
@@ -92,7 +93,7 @@ public enum LibraryFolderMerge {
                 }
                 shaFirstSeenInPick[sha] = fileName(walked.key)
                 if let index = record.members.firstIndex(where: { $0.sha256 == sha }) {
-                    settle(index, walked: walked, into: &record, jobs: &jobs, skipped: &skipped, makeItemID: makeItemID)
+                    settle(index, walked: walked, walkKeys: walkKeys, into: &record, jobs: &jobs, skipped: &skipped, makeItemID: makeItemID)
                     continue
                 }
             }
@@ -102,7 +103,7 @@ public enum LibraryFolderMerge {
                 // placeholder, or a member that never had a hash) is judged by its path alone. Otherwise the bytes
                 // differ: a newer copy, even after the listener removed the older one (the same bytes never come back).
                 if member.state == .failed || walked.sha256 == nil || member.sha256 == nil {
-                    settle(index, walked: walked, into: &record, jobs: &jobs, skipped: &skipped, makeItemID: makeItemID)
+                    settle(index, walked: walked, walkKeys: walkKeys, into: &record, jobs: &jobs, skipped: &skipped, makeItemID: makeItemID)
                     continue
                 }
                 addUpdatedCopy(of: index, walked: walked, into: &record, jobs: &jobs, now: now, makeItemID: makeItemID)
@@ -115,10 +116,35 @@ public enum LibraryFolderMerge {
 
     // MARK: - Pieces
 
+    /// The walk's own order, except that when several files in one pick have the same bytes and one of them sits at the
+    /// path of a member with those bytes, that file comes first. It is the file the member stands for; the others are its
+    /// copies (a backup in a folder that sorts ahead of it must not become the member, and the member's file the duplicate).
+    private static func inWalkOrderWithEachMembersOwnFileFirst(
+        _ members: [LibraryFolderWalk.Member], in record: LibraryFolderRecord
+    ) -> [LibraryFolderWalk.Member] {
+        var ordered = members
+        var firstIndexBySHA: [String: Int] = [:]
+        var index = 0
+        while index < ordered.count {
+            let walked = ordered[index]
+            defer { index += 1 }
+            guard walked.kind != .link, let sha = walked.sha256 else { continue }
+            guard let first = firstIndexBySHA[sha] else { firstIndexBySHA[sha] = index; continue }
+            let isMembersOwnFile = record.members.contains { $0.kind != .link && $0.key == walked.key && $0.sha256 == sha }
+            let firstIsMembersOwnFile = record.members.contains { $0.kind != .link && $0.key == ordered[first].key && $0.sha256 == sha }
+            if isMembersOwnFile, !firstIsMembersOwnFile {
+                ordered.remove(at: index)
+                ordered.insert(walked, at: first)
+                firstIndexBySHA[sha] = first
+            }
+        }
+        return ordered
+    }
+
     /// A member already stands for this walk member (the same bytes, or the same path with nothing to compare). A removed
     /// or present one means skip; a failed one is tried again.
     private static func settle(
-        _ index: Int, walked: LibraryFolderWalk.Member, into record: inout LibraryFolderRecord,
+        _ index: Int, walked: LibraryFolderWalk.Member, walkKeys: Set<String>, into record: inout LibraryFolderRecord,
         jobs: inout [Job], skipped: inout [Skip], makeItemID: () -> String
     ) {
         let member = record.members[index]
@@ -130,7 +156,7 @@ public enum LibraryFolderMerge {
             var current = member
             if current.sha256 == nil { current.sha256 = walked.sha256 } // a file that has finished downloading
             record.members[index] = current
-            followTheFile(index, to: walked.key, in: &record)
+            followTheFile(index, to: walked.key, walkKeys: walkKeys, in: &record)
         case .failed:
             var retried = member
             retried.state = .adding
@@ -139,16 +165,17 @@ public enum LibraryFolderMerge {
             retried.sha256 = walked.sha256
             if retried.itemID == nil, needsPreassignedID(walked.kind) { retried.itemID = makeItemID() }
             record.members[index] = retried
-            followTheFile(index, to: walked.key, in: &record)
+            followTheFile(index, to: walked.key, walkKeys: walkKeys, in: &record)
             jobs.append(Job(memberKey: record.members[index].key, walkMember: walked, itemID: retried.itemID, isRetry: true))
         }
     }
 
     /// A file member's key is its path, so a later change at the file's new place is seen as a newer copy of this member.
     /// Moves the key when that is safe: the file is not a copy, nothing is a copy of it, and the path is free.
-    private static func followTheFile(_ index: Int, to path: String, in record: inout LibraryFolderRecord) {
+    /// A file still at the member's own path in this walk has not moved, so a copy of it elsewhere never takes its key.
+    private static func followTheFile(_ index: Int, to path: String, walkKeys: Set<String>, in record: inout LibraryFolderRecord) {
         let member = record.members[index]
-        guard member.kind != .link, member.key != path, member.updatedCopyOf == nil,
+        guard member.kind != .link, member.key != path, !walkKeys.contains(member.key), member.updatedCopyOf == nil,
               !record.members.contains(where: { $0.updatedCopyOf == member.key }),
               !record.members.contains(where: { $0.key == path }) else { return }
         record.members[index].key = path
