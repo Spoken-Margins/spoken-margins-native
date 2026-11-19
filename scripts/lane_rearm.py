@@ -150,3 +150,5 @@ def main(argv=None, api=None, out=sys.stdout) -> int:
 
 if __name__ == '__main__':
     sys.exit(main())
+
+# live proof of the rearm job, 2026-11-19 (throwaway, never merged to main)
