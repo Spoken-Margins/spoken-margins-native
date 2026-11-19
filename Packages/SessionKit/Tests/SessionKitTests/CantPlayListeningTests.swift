@@ -182,10 +182,12 @@ final class CantPlayListeningTests: XCTestCase {
         }
     }
 
-    /// Every beat's real voice starts, in order, and plays to its end. The words never share a Margin's id, so the
-    /// app's heard-marking (it looks the started id up among the Margins) marks the Margins and never the words.
+    /// Every beat's real voice starts, in order, and plays to its end. `onVoiceStarted` fires for the words too, but they
+    /// never share a Margin's id, so a handler that marks heard by looking the started id up among the Margins (the
+    /// Review's) can never mark the words. The can't-play listening itself sets no handler: it marks nothing heard
+    /// (owner, 2026-11-06, #3392).
     @MainActor
-    func testARealVoicePlaysEachWordsAndMarginInOrderAndOnlyTheMarginsAreMarkedHeard() throws {
+    func testARealVoicePlaysEachWordsAndMarginInOrderAndNoWordsShareAMarginsId() throws {
         let beats = plan([entry("a", prefix: "One."), entry("b", prefix: "Two.")])
         let voices = try RealVoices(beats: beats)
         defer { try? FileManager.default.removeItem(at: voices.directory) }
@@ -202,7 +204,7 @@ final class CantPlayListeningTests: XCTestCase {
         XCTAssertEqual(listening.unavailableVoices, [])
 
         let marginIds = Set(beats.map(\.marginId))
-        XCTAssertEqual(listening.startedIDs.filter(marginIds.contains), beats.map(\.marginId), "the Margins the app marks heard")
+        XCTAssertEqual(listening.startedIDs.filter(marginIds.contains), beats.map(\.marginId), "the Margins a heard lookup would find")
         XCTAssertTrue(listening.startedIDs.filter { !marginIds.contains($0) }.allSatisfy(CantPlayListening.isContextId),
                       "everything else that sounded is words")
 
