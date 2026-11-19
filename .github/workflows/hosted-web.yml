@@ -30,9 +30,15 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
-    # The web app, the share-link page its specs drive on the real server (#3355), and this file, so a change to the job
-    # proves itself. A PR that touches none of them starts no job.
-    paths: ['Web/**', 'research/B4/server/internal/links/**', '.github/workflows/hosted-web.yml']
+    # No paths filter: a required check must report on every PR and merge group, and a workflow a paths filter skips
+    # leaves its check pending, which would block the merge queue (#4693). The `changes` job below (hosted Linux,
+    # seconds) decides instead: the web app, the share-link page its specs drive on the real server (#3355), and this
+    # file, so a change to the job proves itself. With none of them changed, `web` and `rearm` are skipped, and a
+    # skipped job reports success.
+  # GitHub's merge queue (#4693): harmless until the "protect main" ruleset requires the queue.
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
 
 permissions:
   contents: read
@@ -42,10 +48,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    # Does the diff reach the web app? A PR: its merge commit against parent 1. A merge group: everything the group
+    # adds to main's tip (base_sha), so a group whose head entry is not a web change still tests a web PR ahead of it.
+    # A dispatch, or any trouble reading the diff: yes.
+    name: 'hosted web: changes'
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      web: ${{ steps.diff.outputs.web }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Changed web paths
+        id: diff
+        env:
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          list="$RUNNER_TEMP/changed-files.txt"
+          if [ -n "$QUEUE_BASE" ]; then
+            git diff --name-only --no-renames "$QUEUE_BASE" HEAD > "$list" || rm -f "$list"
+          elif [ "$GITHUB_EVENT_NAME" = pull_request ] && git rev-parse --verify --quiet HEAD^2 > /dev/null; then
+            git diff --name-only --no-renames "$(git merge-base HEAD^1 HEAD^2)" HEAD^2 > "$list" || rm -f "$list"
+          fi
+          if [ ! -f "$list" ]; then
+            echo "web=true" | tee -a "$GITHUB_OUTPUT"
+          elif grep -qE '^(Web/|research/B4/server/internal/links/|\.github/workflows/hosted-web\.yml$)' "$list"; then
+            echo "web=true" | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "web=false" | tee -a "$GITHUB_OUTPUT"
+          fi
+
   web:
     # Same-repo PRs only, as in every other workflow. Always true for workflow_dispatch.
     name: 'hosted web: build and Playwright'
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: changes
+    if: >-
+      !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.web == 'true' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     # The image the other hosted Mac jobs use (hosted-app-macos.yml), with Google Chrome installed.
     runs-on: xcode-27
     timeout-minutes: 30
@@ -186,8 +229,10 @@ jobs:
     # a failure or a cancel, so the PR gets its report (a PASS, or a FAIL it can be fixed from). The script comes from the PR's base
     # (the trunk, or the lane-check/** base under test), never the PR's head, and the head reaches the shell only through env. Same-repo runs only.
     name: rearm
-    needs: [web]
-    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    needs: [changes, web]
+    # Not in a merge group (the queue merges, not the lane), and not when `web` had nothing to test (the PR's other
+    # workflows re-arm it, as before the paths filter moved into `changes`).
+    if: always() && github.event_name != 'merge_group' && needs.changes.outputs.web == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:

@@ -60,8 +60,14 @@ on:
         default: ''
   pull_request:
     branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
-    # Docs-only PRs are T0 (scripts/test-scope.py): the lane runs nothing for them and never waits for these checks.
-    paths-ignore: ['**/*.md', 'docs/**', 'research/**', 'Design/**', 'references/**', 'Site/**', 'Contracts/docs/**']
+    # No paths filter: a required check must report on every PR and every merge group, and a workflow a paths filter
+    # skips leaves its checks pending, which would block the merge queue. Docs-only changes (the old paths-ignore
+    # list) are now skipped at the job level by the `scope` job's `docs_only` output; a skipped job reports success.
+  # GitHub's merge queue (#4693): each queued entry is tested here as main plus the PRs ahead of it plus itself, on a
+  # gh-readonly-queue/main/... branch. Harmless until the "protect main" ruleset requires the queue.
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
 
 permissions:
   contents: read
@@ -76,9 +82,12 @@ jobs:
     # same guard as every other job keeps the rule in one place). Always true for workflow_dispatch.
     # And, for a PR, only once the lane takes hosted results (LANE_HOSTED_FAST, above).
     name: 'hosted fast: portable'
+    # Waits for `scope` (about 20 seconds) only to learn whether the change is docs-only.
+    needs: scope
     if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on')
+      !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.docs_only != 'true' &&
+      (github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -210,6 +219,7 @@ jobs:
     outputs:
       mac: ${{ steps.scope.outputs.mac }}
       reason: ${{ steps.scope.outputs.reason }}
+      docs_only: ${{ steps.scope.outputs.docs_only }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -219,13 +229,19 @@ jobs:
         id: scope
         env:
           BASE: ${{ inputs.base }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
-          # A PR: the merge commit's parent 1 is the base, parent 2 the PR's head (the changed-files rule of the
-          # Mac rest job). A dispatch with a base: the dispatched commit against that base's tip. A dispatch without
-          # a base has no diff to look at, so the Mac checks run.
+          # A merge group: everything the group adds to main's tip (its base_sha), not only the last PR's diff, so a
+          # group whose head entry is docs-only still runs the Mac checks for a Swift PR ahead of it (the queue merges
+          # the whole group on the head's result). A PR: the merge commit's parent 1 is the base, parent 2 the PR's
+          # head (the changed-files rule of the Mac rest job). A dispatch with a base: the dispatched commit against
+          # that base's tip. A dispatch without a base has no diff to look at, so the Mac checks run.
           list="$RUNNER_TEMP/changed-files.txt"
           rule="$RUNNER_TEMP/test-scope.py"
-          if git rev-parse --verify --quiet HEAD^2 > /dev/null; then
+          if [ -n "$QUEUE_BASE" ]; then
+            git diff --name-only --no-renames "$QUEUE_BASE" HEAD > "$list" || rm -f "$list"
+            git show "$QUEUE_BASE:scripts/test-scope.py" > "$rule" 2> /dev/null || rm -f "$rule"
+          elif git rev-parse --verify --quiet HEAD^2 > /dev/null; then
             git diff --name-only --no-renames "$(git merge-base HEAD^1 HEAD^2)" HEAD^2 > "$list" || rm -f "$list"
             git show HEAD^1:scripts/test-scope.py > "$rule" 2> /dev/null || rm -f "$rule"
           elif [ -n "$BASE" ]; then
@@ -239,6 +255,17 @@ jobs:
             { echo "mac=true"; echo "reason=no changed-file list or base rule, so the Mac checks run"; } | tee -a "$GITHUB_OUTPUT"
           fi
           grep -q '^mac=' "$GITHUB_OUTPUT" || echo "mac=true" >> "$GITHUB_OUTPUT"
+          # Docs-only: every changed path is one the old paths-ignore list skipped. No list says false.
+          if [ -s "$list" ] && python3 -c '
+          import sys
+          docs = ("docs/", "research/", "Design/", "references/", "Site/", "Contracts/docs/")
+          paths = [p.strip() for p in open(sys.argv[1]) if p.strip()]
+          sys.exit(0 if paths and all(p.endswith(".md") or p.startswith(docs) for p in paths) else 1)
+          ' "$list"; then
+            echo "docs_only=true" | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=false" | tee -a "$GITHUB_OUTPUT"
+          fi
 
   sessionkit:
     name: 'hosted fast: SessionKit core'
@@ -413,8 +440,15 @@ jobs:
       # What the lane's own run gets (lane-runner.py changed_paths_for_tests): every path the PR changes against its
       # merge base with the base, both sides of a rename. A dispatch without a base runs every step.
       - name: Changed files
+        env:
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
-          if git rev-parse --verify --quiet HEAD^2 > /dev/null; then
+          # A merge group: everything the group adds to main's tip, as in the `scope` job.
+          if [ -n "$QUEUE_BASE" ]; then
+            git diff --name-only --no-renames "$QUEUE_BASE" HEAD > "$RUNNER_TEMP/changed-files.txt"
+            echo "CHANGED_ARGS=--changed-files $RUNNER_TEMP/changed-files.txt" >> "$GITHUB_ENV"
+            echo "$(grep -c . "$RUNNER_TEMP/changed-files.txt" || true) changed files in the merge group"
+          elif git rev-parse --verify --quiet HEAD^2 > /dev/null; then
             git diff --name-only --no-renames "$(git merge-base HEAD^1 HEAD^2)" HEAD^2 > "$RUNNER_TEMP/changed-files.txt"
             echo "CHANGED_ARGS=--changed-files $RUNNER_TEMP/changed-files.txt" >> "$GITHUB_ENV"
             echo "$(grep -c . "$RUNNER_TEMP/changed-files.txt" || true) changed files"
