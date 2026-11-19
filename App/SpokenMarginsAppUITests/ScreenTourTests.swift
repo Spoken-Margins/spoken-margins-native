@@ -245,8 +245,9 @@ final class ScreenTourTests: XCTestCase {
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
         // The story depends on the review starting, running through and ending, so they fail the tour when they don't
         // happen (#3713). Sam's fixture voice is about 2 s, too short a window for a poll to be sure of catching
-        // review.playing, so that capture stays cosmetic; the lead-in card (about 20 s) is what proves the review began,
-        // and the reply step below fails unless this Margin was heard, because then it would read "1 reply and 1 new Margin".
+        // review.playing, so that capture stays cosmetic; the lead-in card (about 20 s) is what proves the review began.
+        // The reply step below backs it up only loosely: it fails if Sam's first Margin was never heard anywhere in this
+        // loop ("1 reply and 1 new Margin"), but Next Margin at 5:00 also marks it heard.
         captureRequired(element("review.comingUp"), timeout: 12, "26-now-review-lead-in",
                         "Now tab during the review's lead-in, the pinned card above the title (#3220)",
                         failure: "The review never started after Hear Sam's Margins first")
@@ -284,7 +285,7 @@ final class ScreenTourTests: XCTestCase {
         let replyCount = element("item.friendIntro.count")
         XCTAssertTrue(replyCount.waitForExistence(timeout: 10), "The item doesn't say a reply from Sam is waiting")
         XCTAssertTrue(replyCount.label.hasPrefix("1 reply to your Margin ·"),
-                      "Sam's reply is not the one Margin waiting, so his first was never heard: \(replyCount.label)")
+                      "Sam's reply is not the one Margin waiting, so his first was never heard in this loop: \(replyCount.label)")
         capture("30-reply-arrival", "Sam's reply: the episode's screen as it opens (\"Replies from Sam\", \"1 reply to your Margin\")")
         // The packet opened the item on its own, with no tab bar under it: back to the tabs first.
         tapButton("item.home.button")
