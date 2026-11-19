@@ -246,7 +246,7 @@ final class ScreenTourTests: XCTestCase {
         // The story depends on the review starting, running through and ending, so they fail the tour when they don't
         // happen (#3713). Sam's fixture voice is about 2 s, too short a window for a poll to be sure of catching
         // review.playing, so that capture stays cosmetic; the lead-in card (about 20 s) is what proves the review began,
-        // and the reply step below fails unless this Margin was heard, because then it would count two new Margins.
+        // and the reply step below fails unless this Margin was heard, because then it would read "1 reply and 1 new Margin".
         captureRequired(element("review.comingUp"), timeout: 12, "26-now-review-lead-in",
                         "Now tab during the review's lead-in, the pinned card above the title (#3220)",
                         failure: "The review never started after Hear Sam's Margins first")
@@ -279,10 +279,12 @@ final class ScreenTourTests: XCTestCase {
         try relaunchOpening("sharing-loop-sam-reply", markingListenerMarginShared: true)
         XCTAssertTrue(element("item.screen").waitForExistence(timeout: 20), "Sam's reply did not open its episode")
         XCTAssertFalse(element("build23.recipient.experience").exists, "Sam's reply opened the Import sheet")
-        // The reply is the one Margin from Sam that hasn't been heard: the item says so (#3219).
+        // The reply is the one Margin from Sam that hasn't been heard: the item says so (#3219). Only the all-replies line
+        // proves that; "1 reply and 1 new Margin" also starts "1 reply" and means Sam's first Margin was never heard (#3713).
         let replyCount = element("item.friendIntro.count")
         XCTAssertTrue(replyCount.waitForExistence(timeout: 10), "The item doesn't say a reply from Sam is waiting")
-        XCTAssertTrue(replyCount.label.hasPrefix("1 reply"), "Sam's reply is not the one new reply: \(replyCount.label)")
+        XCTAssertTrue(replyCount.label.hasPrefix("1 reply to your Margin ·"),
+                      "Sam's reply is not the one Margin waiting, so his first was never heard: \(replyCount.label)")
         capture("30-reply-arrival", "Sam's reply: the episode's screen as it opens (\"Replies from Sam\", \"1 reply to your Margin\")")
         // The packet opened the item on its own, with no tab bar under it: back to the tabs first.
         tapButton("item.home.button")
