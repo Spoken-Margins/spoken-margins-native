@@ -706,6 +706,16 @@ class VerificationTests(unittest.TestCase):
                 self.assertTrue(self.ops_ran)
                 self.assertFalse(self.skipped_steps(manifest))
 
+    def test_every_test_that_runs_the_host_steps_copes_with_a_checkout_that_has_no_node_modules(self):
+        # #4643: run.host_steps() stops before any step when node_modules is missing, as on a hosted Mac. A test
+        # that runs it for real must make a folder or patch node_modules_installed, or it passes in a developer's
+        # worktree and fails on the lane. The audit of #4646 found test_sessionkit_steps this way.
+        for source in sorted(SCRIPTS.glob('tests/test_*.py')):
+            text = source.read_text()
+            if re.search(r'\.host_steps\(\)', text) and 'patch.object(run' + ", 'host_steps'" not in text:
+                with self.subTest(module=source.name):
+                    self.assertIn('node_modules', text, f'{source.name} runs host_steps() with the real check')
+
     def test_the_readers_run_names_modules_that_exist_and_would_catch_an_app_change(self):
         for name in verification.RUNNER_TEST_READERS:
             module, _, cls = name.partition('.')
