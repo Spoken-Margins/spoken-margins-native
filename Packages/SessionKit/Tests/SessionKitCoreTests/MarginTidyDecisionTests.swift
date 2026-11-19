@@ -22,7 +22,7 @@ final class MarginTidyDecisionTests: XCTestCase {
         let (store, engine) = try makeEngine(path: path)
         try store.saveInterjection(margin())
 
-        _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "The result was not 12 percent.", source: .fillers)
+        _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "The result was not 12 percent.", basedOn: Self.spoken, source: .fillers)
 
         let reopened = try SQLiteSessionStore(path: path)
         let saved = try XCTUnwrap(try reopened.loadInterjections(sessionId: "session-A").first)
@@ -51,7 +51,7 @@ final class MarginTidyDecisionTests: XCTestCase {
         let (store, engine) = try makeEngine(path: path)
         let before = margin()
         try store.saveInterjection(before)
-        _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", source: .onDeviceAI)
+        _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", basedOn: Self.spoken, source: .onDeviceAI)
 
         _ = try engine.useOriginalWords(interjectionId: "m1", sessionId: "session-A")
 
@@ -65,14 +65,14 @@ final class MarginTidyDecisionTests: XCTestCase {
     func testKeepMineDoesNotOverwriteAnApprovedTidyAndUseTidyAfterKeepMineWins() throws {
         let (store, engine) = try makeEngine(path: makePath())
         try store.saveInterjection(margin())
-        _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", source: .fillers)
+        _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", basedOn: Self.spoken, source: .fillers)
         _ = try engine.keepOriginal(interjectionId: "m1", sessionId: "session-A")
         XCTAssertEqual(try loaded(store).tidyDecision?.choice, .usedTidy, "a stale Keep mine tap does not undo an approval")
 
         let (store2, engine2) = try makeEngine(path: makePath())
         try store2.saveInterjection(margin())
         _ = try engine2.keepOriginal(interjectionId: "m1", sessionId: "session-A")
-        _ = try engine2.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", source: .fillers)
+        _ = try engine2.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", basedOn: Self.spoken, source: .fillers)
         XCTAssertEqual(try loaded(store2).tidyDecision?.choice, .usedTidy, "the listener can change their mind from the details screen")
         XCTAssertEqual(try loaded(store2).displayText, "Tidy.")
     }
@@ -81,7 +81,7 @@ final class MarginTidyDecisionTests: XCTestCase {
         for aligned in [false, true] {
             let (store, engine) = try makeEngine(path: makePath())
             try store.saveInterjection(margin())
-            _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", source: .fillers)
+            _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", basedOn: Self.spoken, source: .fillers)
 
             if aligned {
                 let text = AlignedInterjectionTranscript(text: "Fresh words", segments: [])
@@ -105,7 +105,7 @@ final class MarginTidyDecisionTests: XCTestCase {
     func testDeletingTheTranscriptClearsTheAnswerAndDeletingOnlyTheTidyKeepsAKeepMine() throws {
         let (store, engine) = try makeEngine(path: makePath())
         try store.saveInterjection(margin())
-        _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", source: .fillers)
+        _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", basedOn: Self.spoken, source: .fillers)
         _ = try engine.deleteRepresentation(interjectionId: "m1", sessionId: "session-A", representation: "transcript")
         let deleted = try loaded(store)
         XCTAssertNil(deleted.tidyDecision)
@@ -119,7 +119,7 @@ final class MarginTidyDecisionTests: XCTestCase {
 
         let (store3, engine3) = try makeEngine(path: makePath())
         try store3.saveInterjection(margin())
-        _ = try engine3.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", source: .fillers)
+        _ = try engine3.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", basedOn: Self.spoken, source: .fillers)
         _ = try engine3.deleteRepresentation(interjectionId: "m1", sessionId: "session-A", representation: "cleanedTranscript")
         XCTAssertNil(try loaded(store3).tidyDecision, "a used tidy with no tidy text would be a contradiction")
     }
@@ -129,7 +129,7 @@ final class MarginTidyDecisionTests: XCTestCase {
         try store.saveInterjection(margin())
         _ = try engine.deleteRepresentation(interjectionId: "m1", sessionId: "session-A", representation: "transcript")
         let afterDelete = try loaded(store)
-        _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", source: .fillers)
+        _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", basedOn: Self.spoken, source: .fillers)
         XCTAssertEqual(try loaded(store), afterDelete, "a proposal made before Delete Transcript cannot bring words back")
 
         var noTranscript = margin()
@@ -138,8 +138,35 @@ final class MarginTidyDecisionTests: XCTestCase {
         noTranscript.displayText = nil
         noTranscript.cleanedTranscript = nil
         try store.saveInterjection(noTranscript)
-        _ = try engine.useTidy(interjectionId: "m2", sessionId: "session-A", text: "Tidy.", source: .fillers)
+        _ = try engine.useTidy(interjectionId: "m2", sessionId: "session-A", text: "Tidy.", basedOn: Self.spoken, source: .fillers)
         XCTAssertEqual(try store.loadInterjections(sessionId: "session-A").first { $0.id == "m2" }, noTranscript)
+    }
+
+    func testAnApprovalOfAProposalMadeFromOtherWordsWritesNothing() throws {
+        // Delete Transcript, Retry, a new transcript lands, then the tap on the old card: the Margin has words, so a
+        // "has a transcript" check passes, but they are not the words the tidy version was made from.
+        let (store, engine) = try makeEngine(path: makePath())
+        try store.saveInterjection(margin())
+        _ = try engine.deleteRepresentation(interjectionId: "m1", sessionId: "session-A", representation: "transcript")
+        _ = try engine.transcriptionRequested(interjectionId: "m1", sessionId: "session-A")
+        _ = try engine.transcriptionCompleted(interjectionId: "m1", sessionId: "session-A", transcript: "Fresh words")
+        let afterRetry = try loaded(store)
+
+        _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", basedOn: Self.spoken, source: .fillers)
+
+        XCTAssertEqual(try loaded(store), afterRetry, "a tidy of old words is never saved onto the new transcript")
+
+        // The same without a delete: a new transcription lands between showing the proposal and the tap.
+        let (store2, engine2) = try makeEngine(path: makePath())
+        try store2.saveInterjection(margin())
+        _ = try engine2.transcriptionCompleted(interjectionId: "m1", sessionId: "session-A", transcript: "Fresh words")
+        let afterNew = try loaded(store2)
+        _ = try engine2.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", basedOn: Self.spoken, source: .onDeviceAI)
+        XCTAssertEqual(try loaded(store2), afterNew)
+
+        // A proposal made from the words the Margin has now still goes through.
+        _ = try engine2.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy fresh words.", basedOn: "Fresh words", source: .onDeviceAI)
+        XCTAssertEqual(try loaded(store2).displayText, "Tidy fresh words.")
     }
 
     func testAnAnswerOnOneMarginLeavesTheOthersAndTheSameIdInAnotherSessionAlone() throws {
@@ -152,7 +179,7 @@ final class MarginTidyDecisionTests: XCTestCase {
         sameId.sessionId = "session-B"
         try store.saveInterjection(sameId)
 
-        _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", source: .fillers)
+        _ = try engine.useTidy(interjectionId: "m1", sessionId: "session-A", text: "Tidy.", basedOn: Self.spoken, source: .fillers)
 
         XCTAssertNil(try store.loadInterjections(sessionId: "session-B").first { $0.id == "m2" }?.tidyDecision)
         XCTAssertNil(try store.loadInterjections(sessionId: "session-B").first { $0.id == "m1" }?.tidyDecision)

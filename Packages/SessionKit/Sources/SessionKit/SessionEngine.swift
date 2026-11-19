@@ -3207,16 +3207,17 @@ public final class SessionEngine {
 
     /// The listener approved a tidy version of their spoken Margin (#4339): the text goes where every reader already
     /// looks (`cleanedTranscript`, shown as `displayText`) and the answer is kept. `transcript` and the recording are
-    /// not touched. Nothing is written when the transcript was deleted since the proposal was made, or when the Margin
-    /// has no transcript for the text to be a tidy of.
+    /// not touched. `basedOn` is the transcript the proposal was made from: nothing is written unless the Margin still
+    /// has exactly those words, so a proposal made from words that were since deleted or re-transcribed (Retry, or a
+    /// new transcription landing before the tap) can never be saved onto a different transcript.
     @discardableResult
     public func useTidy(
-        interjectionId: String, sessionId: String? = nil, text: String, source: MarginTidySource
+        interjectionId: String, sessionId: String? = nil, text: String, basedOn transcript: String, source: MarginTidySource
     ) throws -> SessionSnapshot {
         guard !transcriptWasDeleted(interjectionId, sessionId) else { return snapshot }
         let decidedAt = now()
         try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
-            guard interjection.transcript != nil else { return }
+            guard interjection.transcript == transcript else { return }
             interjection.cleanedTranscript = text
             interjection.displayText = text
             interjection.tidyDecision = MarginTidyDecision(choice: .usedTidy, source: source, decidedAt: decidedAt)
