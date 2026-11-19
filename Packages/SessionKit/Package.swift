@@ -72,6 +72,8 @@ let package = Package(
             name: "SessionKitSupertonic",
             dependencies: [
                 "SessionKit",
+                // `SupertonicOutputGuard`'s default stand-in is the iOS voice's `SystemVoiceChunkRenderer` (#318).
+                "SessionKitAudio",
                 "SessionKitSpeechFrontEnd",
                 .product(
                     name: "onnxruntime",
