@@ -180,6 +180,42 @@ final class PDFClipLocatorTests: XCTestCase {
         XCTAssertEqual(document.segments.first?.floatId, document.floats.first?.id)
     }
 
+    /// #4338: PDFs added before the original was kept have no source hash; the same words re-imported now carry one.
+    func testReimportThatOnlyAddsASourceHashKeepsOneItemEvenWhileItIsOpenAndPlaying() throws {
+        func document(sourceSHA256: String?) -> StructuredDocument {
+            StructuredDocumentBuilder.build(lines: [
+                .init(text: "Paper", role: .title, pageIndex: 0),
+                .init(text: "We measured sleep in adults.", role: .body, pageIndex: 0),
+            ], engine: "test", version: 2, pageCount: 1, sourceSHA256: sourceSHA256)
+        }
+        let legacy = document(sourceSHA256: nil), hashed = document(sourceSHA256: String(repeating: "ab", count: 32))
+        XCTAssertEqual(legacy.text, hashed.text)
+        XCTAssertNotEqual(legacy, hashed)
+        XCTAssertEqual(legacy.comparedOnReimport, hashed.comparedOnReimport)
+        // Another paper with the same hash field filled is still another paper.
+        let other = StructuredDocumentBuilder.build(lines: [
+            .init(text: "Paper", role: .title, pageIndex: 0),
+            .init(text: "We measured sleep in children.", role: .body, pageIndex: 0),
+        ], engine: "test", version: 2, pageCount: 1, sourceSHA256: String(repeating: "ab", count: 32))
+        XCTAssertNotEqual(hashed.comparedOnReimport, other.comparedOnReimport)
+
+        let repository = InMemorySessionRepository()
+        let handoff = BrowserTextHandoff(
+            captureMode: .markdownFile, source: .init(url: "shared-file://share-sheet/Paper.pdf", title: "Paper"),
+            text: legacy.text, contentFormat: .plainText)
+        let first = BrowserTextImporter(repository: repository, openItemIds: [], isPlaybackActive: false, publisherPlayback: [:])
+        guard case .records(let item, _, _, _) = try first.outcomeAndPersist(handoff, structuredDocument: legacy, upgrade: .skip) else {
+            return XCTFail("expected records")
+        }
+        let held = BrowserTextImporter(repository: repository, openItemIds: [item.id], isPlaybackActive: true, publisherPlayback: [:])
+        guard case .records(let again, _, _, _) = try held.outcomeAndPersist(handoff, structuredDocument: hashed, upgrade: .skip) else {
+            return XCTFail("expected records")
+        }
+        XCTAssertEqual(again.id, item.id, "no -edition- copy for the same words")
+        XCTAssertEqual(try repository.listItems().count, 1)
+        XCTAssertEqual(try repository.loadStructuredDocument(itemId: item.id), hashed, "the hash is saved")
+    }
+
     func testReimportThatOnlyAddsClipRegionsKeepsOneItemEvenWhileItIsOpenAndPlaying() throws {
         func document(withBounds: Bool) -> StructuredDocument {
             StructuredDocumentBuilder.build(lines: [

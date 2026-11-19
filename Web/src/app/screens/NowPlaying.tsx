@@ -59,7 +59,7 @@ function LandingOffer({ landing }: { landing?: Landing }) {
         className="button button-primary"
         onClick={() => {
           player.seek(landing.at);
-          player.toggle();
+          player.play();
         }}
       >
         <PlayIcon size={18} />
@@ -89,16 +89,22 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
         <strong>{line.title}</strong>
         {line.position && <span> · {line.position}</span>}
       </p>
-      <p className="arrived-margin-text">
-        {margin.author ? <strong>{margin.author}</strong> : null} {formatClock(margin.atSeconds)}: {words}
-      </p>
-      {voiced && <p className="arrived-margin-note">Your device’s voice is reading {possessive(senderName(margin.author))} words.</p>}
-      {blocked && (
+      {/* Above the words, so a long Margin never pushes it off the screen (owner, 2026-11-18). */}
+      {blocked ? (
         <button type="button" className="button button-primary" onClick={player.playArrived}>
           <PlayIcon size={18} />
           Play {margin.author ? `${leading(possessive(senderName(margin.author)))}` : 'this'} Margin
         </button>
+      ) : (
+        // Pause only holds a Margin; this is how to be done with it and carry on with the episode (#4473).
+        <button type="button" className="button" data-testid="skip-margin" onClick={player.skipMargin}>
+          Skip this Margin
+        </button>
       )}
+      <p className="arrived-margin-text">
+        {margin.author ? <strong>{margin.author}</strong> : null} {formatClock(margin.atSeconds)}: {words}
+      </p>
+      {voiced && <p className="arrived-margin-note">Your device’s voice is reading {possessive(senderName(margin.author))} words.</p>}
     </div>
   );
 }
@@ -183,12 +189,25 @@ function MarginCue({ margins, saved }: { margins: readonly Margin[]; /** The lis
         className="button button-primary margin-cue-skip"
         onClick={() => {
           player.seek(cue.skip.to);
-          if (!player.playing) player.toggle();
+          player.play();
         }}
       >
         <SkipIcon />
         {cue.skip.label}
       </button>
+      {cue.startEarlier && (
+        <button
+          type="button"
+          className="button margin-cue-skip"
+          data-testid="margin-cue-earlier"
+          onClick={() => {
+            player.seek((cue.startEarlier as { to: number }).to);
+            if (!player.playing) player.toggle();
+          }}
+        >
+          Start a minute earlier
+        </button>
+      )}
     </section>
   );
 }
@@ -787,7 +806,7 @@ function RecordMargin({
     started.current = true;
     // The episode pauses while you speak, so the Margin records your voice, not the show.
     resumeAfter.current = player.playing || resumeAfterInterrupt;
-    if (player.playing) player.toggle();
+    player.pause();
     services.recorder
       .start()
       .then((r) => {
@@ -820,7 +839,7 @@ function RecordMargin({
   }, [recording]);
 
   const resume = () => {
-    if (resumeAfter.current && !player.playing) player.toggle();
+    if (resumeAfter.current) player.play();
     resumeAfter.current = false;
   };
 
@@ -929,7 +948,7 @@ function RecordMargin({
             type="button"
             className="button button-primary"
             onClick={() => {
-              if (resumeAfter.current && !player.playing) player.toggle();
+              if (resumeAfter.current) player.play();
               onWriteInstead();
             }}
           >

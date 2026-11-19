@@ -161,7 +161,8 @@ extension PlaybackBarLayout.Mark {
     /// The listener's own Margin on a podcast bar measured in seconds. Uses the recorded time, else the rough
     /// percent, as the Timeline does. Margins on a summary or assistant turn aren't on the source's bar.
     public static func media(_ interjection: Interjection, durationSeconds: Double) -> Self? {
-        guard interjection.targetType == .item else { return nil }
+        // A moved Margin with no saved place has no mark: its zeros would draw it at the start (#4233).
+        guard interjection.targetType == .item, interjection.hasPlace else { return nil }
         let seconds = interjection.anchor.mediaTimeMs.map { Double(max(0, $0)) / 1_000 }
             ?? Double(interjection.roughPercent) / 100 * durationSeconds
         return Self(id: interjection.id, position: seconds, kind: .own)
@@ -184,7 +185,7 @@ extension PlaybackBarLayout.Mark {
 
     /// The listener's own Margin on a text bar measured in characters.
     public static func text(_ interjection: Interjection) -> Self? {
-        guard interjection.targetType == .item else { return nil }
+        guard interjection.targetType == .item, interjection.hasPlace else { return nil }
         return Self(id: interjection.id, position: Double(max(0, interjection.anchor.startChar)), kind: .own)
     }
 

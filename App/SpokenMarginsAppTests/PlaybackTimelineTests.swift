@@ -171,6 +171,40 @@ final class PlaybackTimelineTests: XCTestCase {
         XCTAssertEqual(folding.visibleRows(in: rows).count, rows.count)
     }
 
+    /// #4586: a PDF's Timeline opens with only the playing chapter expanded, built from the real rail rows, and
+    /// playback moving into the next chapter folds the first and opens the second.
+    func testTimelineOpensWithOnlyThePlayingChapterExpandedAndFollowsPlayback() {
+        let text = "Intro.\n\nTable A | B\n\nText in figure\n\nSecond chapter body.\n\nSecond table | C"
+        let tableStart = (text as NSString).range(of: "Table A").location
+        let figureStart = (text as NSString).range(of: "Text in").location
+        let secondStart = (text as NSString).range(of: "Second chapter").location
+        let table2Start = (text as NSString).range(of: "Second table").location
+        let document = StructuredDocument(
+            extraction: .init(engine: "test", version: 1, sourceSHA256: nil, pageCount: 2, textSHA256: nil),
+            text: text,
+            segments: [
+                .init(id: "table", role: .table, range: .init(start: tableStart, length: 9), pageIndex: 0),
+                .init(id: "figure", role: .figureText, range: .init(start: figureStart, length: 14), pageIndex: 0),
+                .init(id: "table2", role: .table, range: .init(start: table2Start, length: 14), pageIndex: 1)
+            ], markers: [])
+        var item = ItemDetailState(id: "pdf2", title: "Paper", text: text).includingTimelineSource(document)
+        item.chapters = [
+            Chapter(id: "c1", title: "1 Introduction", startChar: 0, endChar: secondStart, percent: 0),
+            Chapter(id: "c2", title: "2 Method", startChar: secondStart, endChar: text.count, percent: 70)
+        ]
+        let rows = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil).map(\.foldingRow)
+        let c1 = "source.chapter.c1", c2 = "source.chapter.c2"
+        XCTAssertEqual(rows.filter(\.isChapter).map(\.id), [c1, c2])
+
+        var folding = TimelineChapterFolding()
+        folding.sync(rows: rows, currentIDs: [c1])
+        XCTAssertEqual(folding.foldedChapterIDs, [c2], "the playing chapter is open, the other is folded")
+        XCTAssertEqual(folding.visibleRows(in: rows).count, rows.count - TimelineChapterFolding.members(in: rows)[c2]!.count)
+
+        folding.sync(rows: rows, currentIDs: [c2])
+        XCTAssertEqual(folding.foldedChapterIDs, [c1], "playback entered the second chapter")
+    }
+
     /// #2032: pictures, embeds and links an imported Substack page kept are Timeline rows, in text order and
     /// labelled; a page that kept none shows none, and ordinary paragraphs still get no row of their own.
     func testTimelineShowsKeptPicturesEmbedsAndLinksAndNoEmptyRows() throws {

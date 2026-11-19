@@ -2110,6 +2110,9 @@ public final class SessionEngine {
               stored.status == "active" else {
             throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
         }
+        // A moved Margin with no saved place has no moment to go to. Say so before any publisher or narration lookup reads
+        // its zero anchor as "the start of the item" (#4233).
+        guard stored.hasPlace else { throw MarginPlaceError.noPlace }
 
         // An article playing its publisher's recording hears the Margin there too (#547).
         let item = try repository.loadItem(id: originalSession.itemId)

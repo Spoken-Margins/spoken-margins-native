@@ -23,7 +23,8 @@ struct ExperienceTimelineRailScreen: View {
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var entries: [TimelineRailEntry] = []
-    /// Chapters the listener folded (#3895). Kept for this item while the screen is open.
+    /// Which chapters are folded (#3895): all but the playing one when the Timeline opens, then following playback
+    /// unless the listener handled a chapter by hand (#4586). Kept for this item while the screen is open.
     @State private var folding = TimelineChapterFolding()
     @State private var playbackTick = 0 // bumped by each progress tick: the current row follows the playhead (#2074)
     @FocusState private var responseEditorFocused: Bool
@@ -120,9 +121,16 @@ struct ExperienceTimelineRailScreen: View {
                 refreshEntries(from: item)
             }
             .onChange(of: model.selectedItem.id) { _, _ in
+                // A new item starts again: only its playing chapter open, no hand toggles carried over (#4586).
                 folding = TimelineChapterFolding()
+                refreshEntries(from: model.selectedItem)
                 followsPlayback = true
                 focusTimeline(using: proxy)
+            }
+            .onChange(of: currentEntryIDs) { _, _ in
+                // Playback moved into another chapter: fold the one it left and open the one it entered, unless
+                // the listener handled either by hand (#4586). The rail follow below reads the result.
+                withMotion(.snappy) { folding.sync(rows: foldingRows, currentIDs: currentEntryIDs) }
             }
             .onChange(of: currentEntryID) { _, _ in
                 guard onReturnToPlayback != nil && followsPlayback else { return }
@@ -498,7 +506,8 @@ struct ExperienceTimelineRailScreen: View {
 
     private func refreshEntries(from item: ItemDetailState) {
         entries = Self.makeEntries(from: item, sessionID: model.snapshot.sessionId, playbackDurationMs: model.snapshot.currentPlaybackDurationMs)
-        folding.prune(to: foldingRows)
+        // Applies the starting state the first time the rail has chapters, and keeps folds in step with rows.
+        folding.sync(rows: foldingRows, currentIDs: currentEntryIDs)
         refreshClips(for: item)
     }
 

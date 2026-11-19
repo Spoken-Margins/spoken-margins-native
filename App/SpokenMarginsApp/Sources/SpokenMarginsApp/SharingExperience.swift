@@ -60,6 +60,12 @@ struct InterjectionSharingState {
     /// Where the sheet starts (#1507). The playback screen's Share sets `.reviewDefaults`, so the sheet opens on
     /// the review with Share pinned; `begin` reads it once and resets it.
     var entry: ShareSheetEntry = .chooseMargins
+    /// How the sheet got its starting selection, and when it opened, for the `share.selection` Diagnostics line (#4173).
+    var openedFrom: ShareOpenedFrom = .all
+    var openedAt = Date()
+    /// The star counts the last send tap on this sheet logged. The counts start again once the system sheet shows, so a
+    /// retry after cancelling it logs these instead of zeros (#4173).
+    var starTallyAtLastSend: ShareStarTally?
 }
 
 struct SpokenMarginsPackageImportReview: Identifiable {

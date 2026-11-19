@@ -72,6 +72,8 @@ let package = Package(
             name: "SessionKitSupertonic",
             dependencies: [
                 "SessionKit",
+                // `SupertonicOutputGuard`'s default stand-in is the iOS voice's `SystemVoiceChunkRenderer` (#318).
+                "SessionKitAudio",
                 "SessionKitSpeechFrontEnd",
                 .product(
                     name: "onnxruntime",
@@ -157,7 +159,9 @@ let package = Package(
                 "SessionKitTestInputs",
                 "SubstackCanaryCore",
                 .product(name: "ZIPFoundation", package: "ZIPFoundation")
-            ]
+            ],
+            // Test fixtures read by path (#filePath), not bundled resources.
+            exclude: ["Fixtures"]
         ),
         // Tests that need Apple frameworks (AVFoundation, ShazamKit, onnxruntime). Mac only.
         .testTarget(
