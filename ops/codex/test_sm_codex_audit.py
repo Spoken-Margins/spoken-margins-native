@@ -998,6 +998,34 @@ class HostedAudit(unittest.TestCase):
         self.assertIn("pr=7", command)
         self.assertEqual(run.call_count, 1)  # no label change: it would start nothing
 
+    def test_after_an_audit_the_merge_policy_check_on_the_head_runs_again(self):
+        # #4693: a workflow_dispatch check doesn't satisfy a required check, so the PR's own pull_request run reruns.
+        head = "a" * 40
+        runs = {"workflow_runs": [{"id": 11, "status": "completed", "created_at": "2026-11-19T10:00:00Z"},
+                                  {"id": 12, "status": "completed", "created_at": "2026-11-19T11:00:00Z"}]}
+        calls = []
+
+        def run(cmd, **kwargs):
+            calls.append(cmd)
+            return SimpleNamespace(returncode=0, stdout=json.dumps(runs), stderr="")
+        with patch.object(A, "run", side_effect=run):
+            self.assertEqual(A.rerun_merge_policy(head), "merge policy check re-run")
+        self.assertIn(f"event=pull_request&head_sha={head}", calls[0][2])
+        self.assertIn("merge-policy.yml", calls[0][2])
+        self.assertEqual(calls[1][:4], ["gh", "run", "rerun", "12"])
+
+    def test_the_merge_policy_rerun_leaves_a_running_check_and_a_missing_workflow_alone(self):
+        for answer, said in ((SimpleNamespace(returncode=0, stdout=json.dumps({"workflow_runs": [
+                                 {"id": 1, "status": "in_progress", "created_at": "x"}]}), stderr=""),
+                              "merge policy check still running"),
+                             (SimpleNamespace(returncode=0, stdout='{"workflow_runs": []}', stderr=""),
+                              "no merge policy check to re-run"),
+                             (SimpleNamespace(returncode=1, stdout="", stderr="HTTP 404: Not Found"),
+                              "no merge policy check to re-run")):
+            with self.subTest(said=said), patch.object(A, "run", return_value=answer) as run:
+                self.assertEqual(A.rerun_merge_policy("b" * 40), said)
+                self.assertEqual(run.call_count, 1)
+
     def test_a_tap_alert_that_can_t_be_dispatched_is_tried_again_and_said_on_the_pr(self):
         # Nothing asks again for this audit, so the PR would wait for a tap nobody was told about.
         answers = []

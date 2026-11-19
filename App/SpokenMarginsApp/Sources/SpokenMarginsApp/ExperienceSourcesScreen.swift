@@ -190,7 +190,7 @@ struct ExperienceSourcesScreen: View, Equatable {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button(action: { model.refreshQuickAddFeed() }) {
+                    Button(action: { model.refreshQuickAddFeed(trigger: .refreshButton) }) {
                         Group {
                             if inputs.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
                         }
@@ -260,7 +260,7 @@ struct ExperienceSourcesScreen: View, Equatable {
                 QuickFolderFilesScreen(artwork: artwork)
                     .miniPlayerKeepOut()
             }
-            .task { if !isEdgeSwipePreview { model.refreshQuickAddFeed(force: false) } } // the swipe's preview fetches nothing (#106)
+            .task { if !isEdgeSwipePreview { model.refreshQuickAddFeed(force: false, trigger: .tabAppear) } } // the swipe's preview fetches nothing (#106)
             // The catalog gives followed shows their artwork (#773).
             .task { if !isEdgeSwipePreview { await catalogDrawer.loadSnapshot() } }
             .background { FollowingShowRowsReload(model: model) }

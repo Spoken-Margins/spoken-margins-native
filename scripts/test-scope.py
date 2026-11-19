@@ -52,6 +52,7 @@ BUILD_FILES = ('project.yml', 'SpokenMarginsNative.xcodeproj/', 'Config/')
 LANE_PREFIXES = ('.github/workflows/', 'scripts/lane')
 LANE_FILES = {'scripts/xcodebuild-lane', 'scripts/host-test-lane', 'scripts/install-lane-guard.py',
               'scripts/test-scope.py', 'scripts/hot_file_ratchet.py', 'scripts/merge_audit.py',
+              'scripts/merge_policy.py', 'scripts/signoff_check.py',  # the merge queue's rules (#4693)
               'scripts/verify-tests.py', 'scripts/trunk.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan'}
 LANE_NOTE = ('Lane change: the runner merges it only after a Codex or Claude audit of the head that says "No blocking '
              'findings". The audit runs by itself once the automerge run passes. A change to scripts/lane-runner.py or '

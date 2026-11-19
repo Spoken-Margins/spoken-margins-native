@@ -273,6 +273,73 @@ final class SharedMarginAppExportTests: XCTestCase {
         XCTAssertEqual(Set(scoped.flatMap { $0 }), ["margin-0001", "margin-0002"])
     }
 
+    /// The sender's run-up length (#4171, PR 4a): a draft set to a minute puts `leadInMs` on that Margin's record and
+    /// nothing on the others, the saved share remembers it, and the next share's draft starts there. Taking it back
+    /// says 20 s out loud once. No screen sets it yet; this drives the draft the row will use.
+    func testASharedMarginsRunUpLengthTravelsIsRememberedAndCanBeTakenBack() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "shared-margin-app-lead-in-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let db = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: db)
+        model.resetAndSeed()
+        model.importTitle = "Harbour notes"
+        model.importText = "The tide went out at dawn. Nobody on the pier noticed the boat had gone. By noon the harbour master was asking questions."
+        model.importTextItem()
+        let itemID = model.selectedItem.id
+        let store = try SQLiteSessionStore(path: db.path)
+        let itemText = try XCTUnwrap(store.loadItem(id: itemID).text)
+        let first = try characterRange(of: "Nobody on the pier", in: itemText)
+        let second = try characterRange(of: "harbour master", in: itemText)
+        let margins = [
+            margin(id: "margin-lead-1", itemID: itemID, roughPercent: 31,
+                   anchor: Anchor(anchorType: .text, startChar: first.lowerBound, endChar: first.upperBound,
+                                  anchorBefore: "The tide went out at dawn.", anchorAfter: "noticed the boat had gone."),
+                   audioPath: nil, transcript: "I saw that too."),
+            margin(id: "margin-lead-2", itemID: itemID, roughPercent: 77,
+                   anchor: Anchor(anchorType: .text, startChar: second.lowerBound, endChar: second.upperBound,
+                                  anchorBefore: "By noon the", anchorAfter: "was asking questions."),
+                   audioPath: nil, transcript: "He always asks too late.")
+        ]
+        for margin in margins { try store.saveInterjection(margin) }
+        model.selectedItem.interjections = margins
+
+        /// Shares both Margins, with `lengths` set on the drafts by Margin id, and returns each record's `leadInMs`.
+        func share(_ name: String, setting lengths: [String: Int]) async throws -> [Int?] {
+            model.prepareShareInterjections()
+            for (id, ms) in lengths {
+                let index = try XCTUnwrap(model.sharingState.drafts.firstIndex { $0.id == id })
+                model.sharingState.drafts[index].leadInMs = ms
+            }
+            await model.exportSharedInterjections(presentsReadySheet: false)
+            XCTAssertNil(model.sharingState.errorMessage, name)
+            let packetURL = try XCTUnwrap(model.sharedSpokenMarginsPackageURL, name)
+            defer { try? FileManager.default.removeItem(at: packetURL) }
+            let packet = try SpokenMarginsPackageArchive.read(from: packetURL, extractingAssetsTo: root.appending(path: "read-\(name)"))
+            return packet.commentaryLayers.flatMap(\.interjections).map(\.leadInMs)
+        }
+
+        let untouched = try await share("untouched", setting: [:])
+        XCTAssertEqual(untouched, [nil, nil], "no length chosen: the packet an older build writes")
+        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), [:])
+
+        let minute = try await share("minute", setting: ["margin-lead-1": 60_000])
+        XCTAssertEqual(minute, [60_000, nil])
+        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), ["margin-lead-1": 60_000])
+
+        model.prepareShareInterjections()
+        XCTAssertEqual(model.sharingState.drafts.map(\.leadInMs), [60_000, SenderLeadIn.defaultMs], "the next share starts where the friend was last told")
+        let again = try await share("again", setting: [:])
+        XCTAssertEqual(again, [60_000, nil], "left alone, a re-share keeps the friend's copy at a minute")
+
+        let back = try await share("back", setting: ["margin-lead-1": SenderLeadIn.defaultMs])
+        XCTAssertEqual(back, [SenderLeadIn.defaultMs, nil], "taking it back is said out loud")
+        let done = try await share("done", setting: [:])
+        XCTAssertEqual(done, [nil, nil], "after that, nothing more to say")
+        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), ["margin-lead-1": SenderLeadIn.defaultMs])
+    }
+
     /// The archive is now written while the main thread stays free (#2510), so a second tap can arrive mid-build.
     /// It must do nothing: no second packet, no error banner over the one being built.
     func testASecondExportWhileOneIsRunningDoesNothing() async throws {

@@ -30,6 +30,7 @@ extension Gate1AppModel {
     func bootstrapLibraryIfNeeded() {
         guard pendingUITestingSeed != nil || (libraryItems.isEmpty && store == nil) else { return }
         SessionShareFiles.removeLeftovers() // files of a multi-session share whose sheet died with the app (#1528)
+        removeInterruptedPDFOriginalWrites() // temporary files of an original PDF a quit cut short (#4338)
         do {
             let store = try requireStore()
             libraryAccessError = nil

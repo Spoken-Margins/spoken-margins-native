@@ -56,7 +56,7 @@ public enum MarginMarkdownShare {
         let (export, markdown) = try note(for: margin, engine: engine)
         guard !markdown.isEmpty, let note = export.interjections.first else { return nil }
         return MarginMarkdownFile(
-            fileName: "Margin - \(safeName(export.item.title)) - \(position(of: note)).md",
+            fileName: "Margin - \(safeName(export.item.title)) - \(margin.hasPlace ? position(of: note) : noPlaceName(createdAt: margin.createdAt)).md",
             markdown: markdown
         )
     }
@@ -96,6 +96,8 @@ public enum MarginMarkdownShare {
     /// that didn't know the recording's length saved 0%), so it only orders Margins with
     /// neither position, after the rest.
     static func sourceOrder(_ margin: Interjection, timed: Bool) -> (Int, Int) {
+        // A Margin with no place (#4233) follows every other, ties going by capture time as for the rest.
+        guard margin.hasPlace else { return (2, 0) }
         guard margin.targetType == .item else { return (1, margin.roughPercent) }
         guard timed else { return (0, margin.anchor.startChar) }
         return margin.anchor.mediaTimeMs.map { (0, $0) } ?? (1, margin.roughPercent)
@@ -115,6 +117,19 @@ public enum MarginMarkdownShare {
     /// No colon: Files and some share targets treat `:` as a path separator.
     static func position(of note: ExportInterjection) -> String {
         position(mediaTimeMs: note.mediaTimeMs, roughPercent: note.roughPercent)
+    }
+
+    /// What a file name says in place of a position for a Margin moved with none (#4233): `no place - 2026-11-17 143005`,
+    /// its capture time to the second, so two of them on one item never share a name. No colon, as above.
+    static func noPlaceName(
+        createdAt: Date, calendar: Calendar = .current, timeZone: TimeZone = .current
+    ) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = timeZone
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HHmmss"
+        return "no place - " + formatter.string(from: createdAt)
     }
 
     static func position(mediaTimeMs: Int?, roughPercent: Int) -> String {
