@@ -1,4 +1,5 @@
 """The lane report's machine-readable event line (#2378): what it carries, and that it never carries text."""
+import inspect
 import json
 from pathlib import Path
 import sys
@@ -7,7 +8,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_lane_runner import FakeGitHub, HEAD, MERGE, comment, lane, runner_report  # noqa: E402
+from test_lane_runner import HEAD, comment, lane  # noqa: E402
 import lane_event  # noqa: E402
 
 BASE = 'd' * 40
@@ -144,7 +145,8 @@ class ParseTests(unittest.TestCase):
 
 
 class HoldTests(unittest.TestCase):
-    """#4089: a report held for T3 says so, and a hold is not a runner fault."""
+    """#4089: a report held for T3 said so, and a hold is not a runner fault. The runner holds nothing for T3 since
+    #4572, but lane_event still reads the key on the reports from before it."""
 
     def test_a_hold_is_not_a_fault_and_says_so(self):
         event = build(verdict='INCONCLUSIVE', hold=True, runs=[])
@@ -260,70 +262,9 @@ class RunnerTests(unittest.TestCase):
             note = lane.event_note('PASS', 'T3', HEAD, BASE, 100, None, '2023-11-14T22:13:20Z')  # 1_700_000_000
         self.assertEqual(lane_event.parse(note)['queue_seconds'], 200)
 
-    def test_the_automerge_run_a_t3_pass_releases_counts_only_its_own_steps(self):
-        # The T3 job's steps are in STEP_RUNS when merge_after_t3 runs in the same process; its report must not repeat them.
-        t3_request = comment(f'/lane T3\ncommit: {HEAD[:7]}\ntests: SupertonicSpeechTests')
-        github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[t3_request])
-        lane.note_step('app tests (T3)', 'PASS', 300.0)
-        lane.note_step('LFS files', 'PASS', 2.0)
-
-        def auto(*args, **kwargs):
-            lane.note_step('host tests', 'PASS', 40.0)
-            return 'PASS', 'x', 'host tests', ['merged into main as abc1234']
-        github._comments.append(comment(lane.report('pr5-r1', 'INCONCLUSIVE', HEAD, MERGE, 'auto', 'x', 1, 'x',
-                                                    [lane.HELD_FOR_T3[0]], 'none', '/e', 'n',
-                                                    lane.identity('auto', HEAD, MERGE, []), event=''),
-                                        login='github-actions[bot]'))
-        github._comments.append(runner_report('PASS', lane.identity('T3', HEAD, MERGE, ['SupertonicSpeechTests'])))
-        with mock.patch.object(lane, 'run_auto', side_effect=auto), \
-                mock.patch.object(lane, 'fetch_base', return_value=MERGE), mock.patch.object(lane, 'clean_tree'), \
-                mock.patch('builtins.print'), tempfile.TemporaryDirectory() as evidence:
-            released = lane.merge_after_t3(github, 5, 'main', HEAD, 'pr5-r43-auto', Path(evidence), MERGE,
-                                           'started by the T3 PASS')
-        event = lane_event.parse(released)
-        self.assertIsNotNone(event, released)
-        self.assertEqual((event['tier'], [step['step'] for step in event['steps']]), ('auto', ['host tests']))
-
-    def test_held_for_t3_report_reads_the_line_the_auto_revert_reads(self):
-        held = ['not merged: held for T3: the /lane T3 request for this head (abc) has no lane report yet.']
-        self.assertTrue(lane.held_for_t3_report('INCONCLUSIVE', held))
-        self.assertTrue(lane.held_for_t3_report('INCONCLUSIVE', ['moved', *held]))
-        for verdict, lines in (('FAIL', held), ('PASS', held), ('INCONCLUSIVE', []),
-                               ('INCONCLUSIVE', ['no Mac build slot was free']),
-                               # other "not merged" holds are not the T3 hold (is_hold, the green/red rule, is broader)
-                               ('INCONCLUSIVE', ['not merged by the runner: it touches .github/']),
-                               ('INCONCLUSIVE', ['not merged: the PR moved on']),
-                               ('INCONCLUSIVE', ['not merged: no Codex or Claude audit of its head']),
-                               # words in the middle of a line, as the "checks did not finish" note has them: a fault
-                               ('INCONCLUSIVE', ['The checks did not finish, so: ' + held[0]]),
-                               ('INCONCLUSIVE', ['  not merged: held for T3: indented test output'])):
-            with self.subTest(verdict=verdict, lines=lines):
-                self.assertFalse(lane.held_for_t3_report(verdict, lines))
-
-    def test_a_held_report_is_no_fault_to_the_event_the_ledger_or_the_auto_revert(self):
-        lane.STEP_RUNS.clear()
-        held = ['not merged: held for T3: the /lane T3 request for this head (abc1234) has no lane report yet.']
-        wanted = lane.identity('auto', HEAD, BASE, [])
-        note = lane.event_note('INCONCLUSIVE', 'auto', HEAD, BASE, 0, None, hold=lane.held_for_t3_report('INCONCLUSIVE', held))
-        body = lane.report('pr1-r1', 'INCONCLUSIVE', HEAD, BASE, 'auto', 'hosted', 0, 'nothing', held, 'none', '/e', 'n',
-                           wanted, event=note)
-        event = lane_event.parse(body)
-        self.assertEqual((event['fault'], event['hold'], event['steps']), (False, True, []))
-        # The ledger takes its results from the step runs, and a hold ran no step: nothing for it to call a fault.
-        import lane_ledger
-        with tempfile.TemporaryDirectory() as state:
-            self.assertEqual(lane_ledger.record_runs(Path(state), list(lane.STEP_RUNS), 1, HEAD), [])
-            self.assertEqual(json.loads(lane_ledger.path(Path(state)).read_text())['steps'], {})
-        # The auto-revert already reads a hold as no fault (PENDING_T3_HOLD), and still reads a runner fault as one.
-        self.assertEqual(lane.lane_report_verdict(body)[0], False)
-        fault = lane.report('pr1-r2', 'INCONCLUSIVE', HEAD, BASE, 'auto', 'hosted', 0, 'nothing',
-                            ['The lane itself failed: x'], 'none', '/e', 'n', wanted)
-        self.assertEqual(lane.lane_report_verdict(fault)[0], True)
-        # "The checks did not finish" is a fault that also waits for T3: its event line keeps fault true.
-        unfinished = ['The checks did not finish, so: ' + held[0]]
-        self.assertFalse(lane.held_for_t3_report('INCONCLUSIVE', unfinished))
-        self.assertEqual(lane.lane_report_verdict(lane.report('pr1-r3', 'INCONCLUSIVE', HEAD, BASE, 'auto', 'x', 0, 'nothing',
-                                                              unfinished, 'none', '/e', 'n', wanted))[0], True)
+    def test_the_runner_no_longer_marks_any_report_held(self):
+        # #4572: the only report the runner marked `hold` was the one held for T3, which no run writes now.
+        self.assertNotIn('hold', inspect.signature(lane.event_note).parameters)
 
     def test_a_failing_measurement_leaves_the_report_without_a_line(self):
         with mock.patch.object(lane_event, 'build', side_effect=RuntimeError('boom')):
