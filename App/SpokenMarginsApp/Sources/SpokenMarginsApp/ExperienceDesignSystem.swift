@@ -450,3 +450,9 @@ extension AppColors {
     /// Warning copy and its icon, in place of the system orange (#1920).
     static let warningText = dynamicColor(AppSemanticColorRGB.warningText)
 }
+
+extension AppColors {
+    /// The system's unread blue, light and dark: the one colour for something new to the listener (#4698). Never green
+    /// or orange, so it reads for red-green colour blindness beside the evergreen.
+    static let unread = Color(uiColor: .systemBlue)
+}
