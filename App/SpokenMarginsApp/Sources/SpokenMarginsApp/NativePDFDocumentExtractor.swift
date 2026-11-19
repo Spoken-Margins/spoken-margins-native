@@ -1,6 +1,7 @@
 import Foundation
 import PDFKit
 import SessionKit
+import SessionKitPersistence
 import UIKit
 import Vision
 
@@ -15,6 +16,9 @@ struct NativePDFStructuredImport: Sendable {
     var document: StructuredDocument
     var title: String?
     var documentStructure: PDFDocumentStructure
+    /// The PDF's bytes when the import read them whole, so the import path can keep the original (#4338). The document's
+    /// `extraction.sourceSHA256` is the hash of these bytes.
+    var originalData: Data?
     /// JPEG pictures of the document's tables and figures by float id (#3895), cut now because the PDF is not kept.
     /// The importer saves them under the item once it has an id, and only for the floats its stored document has.
     var clips: [String: Data] = [:]
@@ -64,22 +68,28 @@ enum NativePDFDocumentExtractor {
         return try baselineExtraction(from: document)
     }
 
-    static func extractStructured(from url: URL) throws -> NativePDFStructuredImport {
+    /// Extracts from a file on disk, which PDFKit reads as it needs (a batch of large PDFs never holds their bytes). The
+    /// caller hashes the same file (`SourceCatalogVerifier.sha256(ofFileAt:)`) and passes it, so the document records the
+    /// hash of the file that is kept (#4338). Nil records none.
+    static func extractStructured(fromFile url: URL, sourceSHA256: String?) throws -> NativePDFStructuredImport {
         guard let document = PDFDocument(url: url) else {
             throw PDFStructuredTextExtractor.ExtractionError.unreadableDocument
         }
-        return try structuredExtraction(from: document)
+        return try structuredExtraction(from: document, originalData: nil, sourceSHA256: sourceSHA256)
     }
 
+    /// Extracts from bytes already in memory (a downloaded PDF), and hands them back to be kept (#4338).
     static func extractStructured(from data: Data) throws -> NativePDFStructuredImport {
         guard let document = PDFDocument(data: data) else {
             throw PDFStructuredTextExtractor.ExtractionError.unreadableDocument
         }
-        return try structuredExtraction(from: document)
+        return try structuredExtraction(from: document, originalData: data, sourceSHA256: PDFOriginalStore.sha256(of: data))
     }
 
-    private static func structuredExtraction(from document: PDFDocument) throws -> NativePDFStructuredImport {
-        let structured = try PDFStructuredTextExtractor.structuredDocument(from: document)
+    private static func structuredExtraction(
+        from document: PDFDocument, originalData: Data?, sourceSHA256: String?
+    ) throws -> NativePDFStructuredImport {
+        let structured = try PDFStructuredTextExtractor.structuredDocument(from: document, sourceSHA256: sourceSHA256)
         return NativePDFStructuredImport(
             document: structured,
             title: PDFStructuredTextExtractor.itemTitle(for: document, structured: structured),
@@ -90,6 +100,7 @@ enum NativePDFDocumentExtractor {
                 analyzedPageCount: 0,
                 bibliography: PDFStructuredTextExtractor.bibliography(for: document)
             ),
+            originalData: originalData,
             clips: structured.floats.isEmpty ? [:] : PDFClipRenderer.clips(for: structured.floats, in: document)
         )
     }

@@ -164,6 +164,15 @@ public struct StructuredDocument: Codable, Equatable, Sendable {
         }
         return copy
     }
+
+    /// What a re-import compares: the document without clip regions (#3895) and without the hash of the PDF file it
+    /// came from (#4338). The hash is nil on every PDF added before the original was kept, and differs when a publisher
+    /// serves the same words in new bytes, so neither makes the words a different paper.
+    public var comparedOnReimport: StructuredDocument {
+        var copy = withoutClipGeometry
+        copy.extraction.sourceSHA256 = nil
+        return copy
+    }
 }
 
 /// One line of extracted text with the role the extractor gave it.
