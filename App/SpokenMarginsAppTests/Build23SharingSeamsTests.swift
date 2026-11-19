@@ -176,9 +176,8 @@ final class Build23SharingSeamsTests: XCTestCase {
         XCTAssertNil(coordinator.snapshot.pinnedStep)
     }
 
-    /// #3839 audit: the post-resume sample landing while the packet builds must not turn the preview stale; the sender
-    /// changed nothing, so they must not be sent back with "Your selection changed".
-    func testEvidenceLandingMidBuildDoesNotMakeThePreviewStale() async throws {
+    /// A coordinator on review for one podcast Margin whose post-resume sample has not landed yet.
+    private func coordinatorWithPendingEvidence() async throws -> (Build23SharingCoordinator, Gate1AppModel) {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         let itemID = model.selectedItem.id
@@ -194,18 +193,51 @@ final class Build23SharingSeamsTests: XCTestCase {
         coordinator.send(.begin)
         coordinator.send(.advanceToReview)
         try await waitUntilQuiet(coordinator)
-        coordinator.send(.buildRecipientPreview)
-        XCTAssertEqual(coordinator.snapshot.stage, .recipientPreview)
+        return (coordinator, model)
+    }
 
+    private func landEvidence(in model: Gate1AppModel) {
         model.selectedItem.interjections[0].podcastAnchorEvidence = [
             CapturedPodcastAnchorEvidence(id: "evidence", localPath: "/unused", durationMs: 12_000, anchorOffsetMs: 4_000)
         ]
         model.selectedItem.interjections[0].podcastAnchorEvidenceCaptureStatus = .ready
+    }
+
+    /// #3839 audit: the post-resume sample landing while the packet builds must not turn the preview stale; the sender
+    /// changed nothing, so they must not be sent back with "Your selection changed".
+    func testEvidenceLandingMidBuildDoesNotMakeThePreviewStale() async throws {
+        let (coordinator, model) = try await coordinatorWithPendingEvidence()
+        coordinator.send(.buildRecipientPreview)
+        XCTAssertEqual(coordinator.snapshot.stage, .recipientPreview)
+        landEvidence(in: model)
 
         try await waitForSharingPreview(coordinator)
         XCTAssertNotNil(coordinator.snapshot.verifiedPreview, "the preview must reach ready, not stale")
         XCTAssertEqual(coordinator.snapshot.stage, .recipientPreview)
         if let url = coordinator.snapshot.verifiedPreview?.fileURL { try? FileManager.default.removeItem(at: url) }
+    }
+
+    /// #3839 second audit: the same landing after the system share sheet closed (stage back on review, packet kept) or
+    /// after "Back to selection" must not show "Your selection changed" or move the sender. The old packet is dropped
+    /// quietly, so the next Share builds one that carries the evidence.
+    func testEvidenceLandingAfterSharingOrGoingBackIsNotAChangedSelection() async throws {
+        for returning in [Build23SenderAction.returnFromSystemShare, .returnToSelect] {
+            let (coordinator, model) = try await coordinatorWithPendingEvidence()
+            coordinator.send(.buildRecipientPreview)
+            try await waitForSharingPreview(coordinator)
+            let builtURL = coordinator.snapshot.verifiedPreview?.fileURL
+            defer { if let builtURL { try? FileManager.default.removeItem(at: builtURL) } }
+            if returning == .returnFromSystemShare { coordinator.send(.presentSystemShare) }
+            coordinator.send(returning)
+            let stageBefore = coordinator.snapshot.stage
+
+            landEvidence(in: model)
+            try await waitUntilQuiet(coordinator)
+
+            XCTAssertNotEqual(coordinator.snapshot.previewState, .stale, "\(returning): evidence is not a changed selection")
+            XCTAssertEqual(coordinator.snapshot.stage, stageBefore, "\(returning): the sender must stay where they are")
+            XCTAssertNil(coordinator.snapshot.verifiedPreview, "\(returning): a packet built without the evidence is dropped")
+        }
     }
 
     func testSenderStageVocabularyIsFrozenInReleaseOrder() {

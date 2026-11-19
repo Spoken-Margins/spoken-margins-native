@@ -787,10 +787,15 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
 
     /// Evidence the stored Margin gained since the sheet opened goes into the draft, so the packet carries what the
     /// card says is ready (#3839). Only the evidence moves; a change reaches `sharingState` once and the next pass sees none.
-    /// Once a packet is being built or has been built the draft is frozen: evidence landing then would change the
-    /// fingerprint with nothing the sender did and send them back with a false "Your selection changed".
-    private func refreshDraftEvidence() {
-        guard stage == .select || stage == .review else { return }
+    ///
+    /// Evidence is not something the sender chose, so it never reports as a change of the selection (twice the audit
+    /// found a path where it did): while a packet is being built or the system share sheet is open the draft is frozen,
+    /// and where the packet is kept (back on review or selection) a packet built without the new evidence is dropped
+    /// quietly, with no "Your selection changed" and no change of stage, so the next Share builds one that carries it.
+    /// Returns whether the draft changed.
+    @discardableResult
+    private func refreshDraftEvidence() -> Bool {
+        guard stage == .select || stage == .review else { return false }
         let stored = Dictionary(model.selectedItem.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var drafts = model.sharingState.drafts
         var changed = false
@@ -798,10 +803,13 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             if let margin = stored[drafts[index].id], drafts[index].refreshAnchorEvidence(from: margin) { changed = true }
         }
         if changed { model.sharingState.drafts = drafts }
+        return changed
     }
 
     private func modelDidChange() {
-        refreshDraftEvidence()
+        if refreshDraftEvidence(), verifiedPreview != nil {
+            discardPreview(resetTo: stage)
+        }
         if verifiedPreview != nil,
            previewFingerprint != currentDraftFingerprint() {
             discardPreview(resetTo: .review)
