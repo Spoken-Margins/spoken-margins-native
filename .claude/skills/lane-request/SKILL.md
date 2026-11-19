@@ -25,6 +25,8 @@ It compares your branch (uncommitted files included) with `origin/main`, prints 
 
 ## 3. Ask the lane
 
+A PR doesn't need a T3 to merge: arm it per section 4, and ask for a T3 only when you want to see the app tests pass. The request is answered and reported, but it never holds the merge (#4572), and `main` gets a scheduled T3 (`main-t3`, #4573).
+
 1. Push your branch. The lane tests the pushed commit, not your working tree, and merges the newest `main` in itself. Merge `origin/main` in first only if the PR conflicts with `main` (AGENTS.md, "Merge `main` into a branch only when you must").
 2. On your draft PR into `main`, post the request exactly in the format from test-lane.md, then add the `lane:queued` label:
 
