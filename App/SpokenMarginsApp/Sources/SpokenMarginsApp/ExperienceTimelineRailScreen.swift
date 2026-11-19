@@ -193,7 +193,7 @@ struct ExperienceTimelineRailScreen: View {
             PlaybackTimelineElementView(element: element)
         }
         .trackedFullScreenCover(item: $selectedClip) { clip in
-            TimelineClipViewer(selection: clip, clips: clipSource)
+            TimelineClipViewer(selection: clip)
         }
         .trackedSheet(item: $selectedSharedMargin) { row in
             SharedMarginDetailView(row: row).environmentObject(model)
@@ -213,7 +213,7 @@ struct ExperienceTimelineRailScreen: View {
     }
 
     private func openClip(_ entry: TimelineSourceContent.Entry) {
-        guard clipSource.has(floatId: entry.floatId), let selection = TimelineClipSelection(entry: entry) else { return }
+        guard let selection = TimelineClipSelection(entry: entry, source: clipSource) else { return }
         selectedClip = selection
     }
 
@@ -511,6 +511,9 @@ struct ExperienceTimelineRailScreen: View {
             return
         }
         let itemId = item.id
+        // The rows are this item's now. Pictures listed for another item are not theirs: ids like `float-p1-1`
+        // repeat across PDFs, so drop them until this item's own listing arrives.
+        if clipSource.itemId != itemId, clipSource != .none { clipSource = .none }
         Task {
             let available = await Task.detached(priority: .utility) { store.available(forItem: itemId) }.value
             // The listener may have moved to another item while the folder was read.

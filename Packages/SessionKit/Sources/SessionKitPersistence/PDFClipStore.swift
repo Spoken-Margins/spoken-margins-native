@@ -40,8 +40,12 @@ public struct PDFClipStore: Sendable {
     /// nothing. An item with no folder of its own, or no clips, has none.
     public struct Available: Equatable, Sendable {
         fileprivate let names: Set<String>
+        /// When the item's clip folder was last replaced, in seconds since 1970; 0 when it has none. A re-import
+        /// swaps the folder for a new one, so the same float ids can name different pictures: a reader that keeps
+        /// what it decoded compares this to know the files changed under it.
+        public let stamp: Double
 
-        public static let none = Available(names: [])
+        public static let none = Available(names: [], stamp: 0)
 
         public var isEmpty: Bool { names.isEmpty }
 
@@ -54,7 +58,8 @@ public struct PDFClipStore: Sendable {
     public func available(forItem itemId: String) -> Available {
         guard let folder = folder(forItem: itemId),
               let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return .none }
-        return Available(names: Set(names.filter { $0.hasSuffix(".jpg") }))
+        let modified = (try? FileManager.default.attributesOfItem(atPath: folder.path)[.modificationDate]) as? Date
+        return Available(names: Set(names.filter { $0.hasSuffix(".jpg") }), stamp: modified?.timeIntervalSince1970 ?? 0)
     }
 
     /// The saved JPEG of a float's clip, or nil when there is none or it can't be read.

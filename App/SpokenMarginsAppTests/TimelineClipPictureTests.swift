@@ -48,10 +48,10 @@ final class TimelineClipPictureTests: XCTestCase {
                                  detail: text, action: .sourceText(entry))
     }
 
-    private func source(clips: [String: Data], floatIds: [String]) throws -> TimelineClipSource {
+    private func source(clips: [String: Data], floatIds: [String], itemId: String = "item-1") throws -> TimelineClipSource {
         let store = PDFClipStore(directory: base.appending(path: "PDFClips", directoryHint: .isDirectory))
-        try store.replaceClips(clips, forItem: "item-1", document: document(floatIds: floatIds))
-        return TimelineClipSource(store: store, itemId: "item-1", available: store.available(forItem: "item-1"))
+        try store.replaceClips(clips, forItem: itemId, document: document(floatIds: floatIds))
+        return TimelineClipSource(store: store, itemId: itemId, available: store.available(forItem: itemId))
     }
 
     func testARowGetsAPictureOnlyWhenItsFloatHasOneSaved() throws {
@@ -93,14 +93,41 @@ final class TimelineClipPictureTests: XCTestCase {
     }
 
     func testTheViewerSelectionNamesTheRowsOwnWords() throws {
+        let clips = try source(clips: ["float-p1-1": jpeg(width: 100, height: 100)], floatIds: ["float-p1-1"])
         let row = try tableRow(floatId: "float-p1-1")
         guard case .sourceText(let entry) = row.action else { return XCTFail("a source text row") }
-        let selection = try XCTUnwrap(TimelineClipSelection(entry: entry))
-        XCTAssertEqual(selection.id, "float-p1-1")
+        let selection = try XCTUnwrap(TimelineClipSelection(entry: entry, source: clips))
+        XCTAssertEqual(selection.id, clips.pictureKey(forFloat: "float-p1-1"))
         XCTAssertEqual(selection.title, "Table 1")
         XCTAssertEqual(selection.spokenLabel, "Table 1, clip of the table, page 1")
 
         guard case .sourceText(let plain) = try tableRow(floatId: nil).action else { return XCTFail("a source text row") }
-        XCTAssertNil(TimelineClipSelection(entry: plain))
+        XCTAssertNil(TimelineClipSelection(entry: plain, source: clips), "no float, no picture")
+        XCTAssertNil(TimelineClipSelection(entry: entry, source: .none), "a source that has no such picture")
+    }
+
+    /// Clip ids come from page and position, so two PDFs both have a `float-p1-1`. A picture is the item's, the
+    /// folder's version and the float, never the float alone (the audit of #4599).
+    func testTwoItemsWithTheSameFloatIdAreTwoPictures() async throws {
+        let a = try source(clips: ["float-p1-1": jpeg(width: 400, height: 100)], floatIds: ["float-p1-1"], itemId: "paper-a")
+        let b = try source(clips: ["float-p1-1": jpeg(width: 100, height: 400)], floatIds: ["float-p1-1"], itemId: "paper-b")
+
+        XCTAssertNotEqual(a.pictureKey(forFloat: "float-p1-1"), b.pictureKey(forFloat: "float-p1-1"))
+        let row = try tableRow(floatId: "float-p1-1")
+        let rowA = try XCTUnwrap(TimelineRowClip(entry: row, in: a))
+        let rowB = try XCTUnwrap(TimelineRowClip(entry: row, in: b))
+        XCTAssertNotEqual(rowA, rowB, "the same row against another item's source is another row, so it redraws")
+        XCTAssertNotEqual(rowA.key, rowB.key, "and its picture reloads")
+
+        let pictureA = await rowA.source.rowImage(forFloat: rowA.floatId)
+        let pictureB = await rowB.source.rowImage(forFloat: rowB.floatId)
+        XCTAssertGreaterThan(try XCTUnwrap(pictureA).size.width, try XCTUnwrap(pictureA).size.height, "A is wide")
+        XCTAssertGreaterThan(try XCTUnwrap(pictureB).size.height, try XCTUnwrap(pictureB).size.width, "B is tall")
+
+        // Opened from A, the viewer stays A's even after the Timeline moves to B.
+        guard case .sourceText(let entry) = row.action else { return XCTFail("a source text row") }
+        let selection = try XCTUnwrap(TimelineClipSelection(entry: entry, source: a))
+        XCTAssertEqual(selection.source.itemId, "paper-a")
+        XCTAssertNotEqual(selection, TimelineClipSelection(entry: entry, source: b))
     }
 }

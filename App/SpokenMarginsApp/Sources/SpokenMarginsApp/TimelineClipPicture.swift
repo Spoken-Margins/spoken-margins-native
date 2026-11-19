@@ -19,6 +19,13 @@ struct TimelineClipSource: Equatable {
 
     func has(floatId: String?) -> Bool { available.contains(floatId: floatId) }
 
+    /// What a picture is, apart from where it sits: the item, the file's name and the folder's version. Clip ids come
+    /// from page and position (`float-p1-1`), so two PDFs share them; a picture, and anything that keeps one decoded,
+    /// is keyed by all three, never by the float id alone.
+    func pictureKey(forFloat floatId: String) -> String {
+        "\(itemId)/\(available.stamp)/\(floatId)"
+    }
+
     /// The picture decoded for a row, off the main thread.
     func rowImage(forFloat floatId: String) async -> UIImage? {
         await image(forFloat: floatId, maxPixelSize: 900)
@@ -49,28 +56,37 @@ extension EnvironmentValues {
     }
 }
 
-/// The picture a row draws: set only on a row whose float has a clip saved.
+/// The picture a row draws: set only on a row whose float has a clip saved. It carries the source that said so, so
+/// the picture is read from the same item the row was decided against, and the row redraws when the source changes.
 struct TimelineRowClip: Equatable {
+    let source: TimelineClipSource
     let floatId: String
     let spokenLabel: String
+
+    var key: String { source.pictureKey(forFloat: floatId) }
 
     init?(entry: TimelineRailEntry, in clips: TimelineClipSource) {
         guard case .sourceText(let source) = entry.action, let floatId = source.floatId,
               clips.has(floatId: floatId), let spoken = source.clipSpokenLabel else { return nil }
+        self.source = clips
         self.floatId = floatId
         spokenLabel = spoken
     }
 }
 
-/// The picture a viewer opens: which float, and the words every surface says for it.
+/// The picture a viewer opens: which float of which item's folder, and the words every surface says for it. It holds
+/// the source it was opened from, so the viewer shows the picture the listener tapped even if the Timeline moves to
+/// another item behind it.
 struct TimelineClipSelection: Identifiable, Equatable {
+    let source: TimelineClipSource
     let floatId: String
     let title: String
     let spokenLabel: String
-    var id: String { floatId }
+    var id: String { source.pictureKey(forFloat: floatId) }
 
-    init?(entry: TimelineSourceContent.Entry) {
-        guard let floatId = entry.floatId else { return nil }
+    init?(entry: TimelineSourceContent.Entry, source: TimelineClipSource) {
+        guard let floatId = entry.floatId, source.has(floatId: floatId) else { return nil }
+        self.source = source
         self.floatId = floatId
         title = entry.label ?? TimelineClipPresentation.noun(for: entry.floatKind).capitalized
         spokenLabel = TimelineClipPresentation.spokenLabel(kind: entry.floatKind, label: entry.label, pageIndex: entry.pageIndex)
@@ -89,9 +105,7 @@ extension TimelineSourceContent.Entry {
 /// the row is its text exactly as it was before a picture existed. Tapping it opens the viewer; tapping the rest of the
 /// row does what it always did.
 struct TimelineClipPicture: View {
-    @Environment(\.timelineClips) private var clips
-    let floatId: String
-    let spokenLabel: String
+    let clip: TimelineRowClip
     let open: () -> Void
     @State private var image: UIImage?
 
@@ -107,12 +121,15 @@ struct TimelineClipPicture: View {
                     .contentShape(Rectangle())
                     .onTapGesture(perform: open)
                     .accessibilityHidden(true) // the row reads the picture's label; the action opens it
-                    .accessibilityIdentifier("timeline.clip.\(floatId)")
+                    .accessibilityIdentifier("timeline.clip.\(clip.floatId)")
             }
         }
         .padding(.top, image == nil ? 0 : 4)
-        .task(id: floatId) {
-            image = await clips.rowImage(forFloat: floatId)
+        // Keyed by item, folder version and float, so a row that now belongs to another item, or whose file was
+        // replaced by a re-import, drops what it had and reads again; it never keeps another picture's pixels.
+        .task(id: clip.key) {
+            image = nil
+            image = await clip.source.rowImage(forFloat: clip.floatId)
         }
     }
 }
@@ -120,7 +137,6 @@ struct TimelineClipPicture: View {
 /// A table or figure at full screen: pinch to zoom, double-tap to zoom in and back, Done (#3895).
 struct TimelineClipViewer: View {
     let selection: TimelineClipSelection
-    let clips: TimelineClipSource
     @Environment(\.dismiss) private var dismiss
     @State private var image: UIImage?
     @State private var finished = false
@@ -153,8 +169,8 @@ struct TimelineClipViewer: View {
                 }
             }
         }
-        .task(id: selection.floatId) {
-            image = await clips.fullImage(forFloat: selection.floatId)
+        .task(id: selection.id) {
+            image = await selection.source.fullImage(forFloat: selection.floatId)
             finished = true
         }
         .accessibilityIdentifier("timeline.clip.viewer")

@@ -204,6 +204,30 @@ final class PDFClipStoreTests: XCTestCase {
         XCTAssertEqual(store.available(forItem: "item-a"), .none)
     }
 
+    func testTheListingChangesWhenTheFolderIsReplacedEvenWithTheSameFileNames() throws {
+        let (store, base) = makeStore()
+        defer { try? FileManager.default.removeItem(at: base) }
+        XCTAssertEqual(store.available(forItem: "item-a").stamp, 0, "no folder, no stamp")
+
+        let first = Data([0xFF, 0xD8, 0x01, 0xFF, 0xD9])
+        try store.replaceClips(["float-p1-1": first], forItem: "item-a", document: document(floatIds: ["float-p1-1"]))
+        let listed = store.available(forItem: "item-a")
+        XCTAssertGreaterThan(listed.stamp, 0)
+        XCTAssertEqual(store.available(forItem: "item-a"), listed, "nothing changed, nothing differs")
+
+        // Put the folder's date far in the past, as if the first import was long ago, then re-import the same
+        // float ids with new pictures: the file names are the same, the listing is not.
+        let folder = try XCTUnwrap(store.folder(forItem: "item-a"))
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_000)], ofItemAtPath: folder.path)
+        let old = store.available(forItem: "item-a")
+        XCTAssertEqual(old.stamp, 1_000)
+        try store.replaceClips(["float-p1-1": Data([0xFF, 0xD8, 0x02, 0xFF, 0xD9])], forItem: "item-a",
+                               document: document(floatIds: ["float-p1-1"]))
+        let after = store.available(forItem: "item-a")
+        XCTAssertTrue(after.contains(floatId: "float-p1-1"))
+        XCTAssertNotEqual(after, old, "a reader that kept the old pictures can tell the files changed")
+    }
+
     func testTheSavedJPEGIsReadBackByFloatOrIsNil() throws {
         let (store, base) = makeStore()
         defer { try? FileManager.default.removeItem(at: base) }

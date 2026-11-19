@@ -166,7 +166,7 @@ private struct TimelineRailRow: View, Equatable {
                         .multilineTextAlignment(.leading)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
                     if let clip {
-                        TimelineClipPicture(floatId: clip.floatId, spokenLabel: clip.spokenLabel, open: openClip)
+                        TimelineClipPicture(clip: clip, open: openClip)
                     }
                     Text(entry.detail)
                         .font(.subheadline)
