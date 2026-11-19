@@ -22,8 +22,11 @@ final class RuleSuggesterTests: XCTestCase {
         EpisodeEvidence(id: id, feedKey: feed, title: title, at: ago(days: days), positive: true)
     }
 
-    private func show(title: String = "Daily Dispatch", entries: [FeedEntry] = []) -> RuleSuggestionShow {
-        RuleSuggestionShow(id: "show-a", member: member, title: title, entries: entries)
+    /// Ten episodes about nothing in particular: the learner needs a show's episodes to judge how often a word comes up.
+    private var quietEntries: [FeedEntry] { (1...10).map { entry($0, "Harbour notes \($0)") } }
+
+    private func show(title: String = "Daily Dispatch", entries: [FeedEntry]? = nil) -> RuleSuggestionShow {
+        RuleSuggestionShow(id: "show-a", member: member, title: title, entries: entries ?? quietEntries)
     }
 
     private func entry(_ id: Int, _ title: String) -> FeedEntry {
@@ -52,7 +55,7 @@ final class RuleSuggesterTests: XCTestCase {
         XCTAssertEqual(suggest(withMark).first?.strength, 5)
         // Two marks are weight 6 but only two episodes.
         XCTAssertTrue(suggest([marked("1", "Crypto crash"), marked("2", "Why crypto wins")]).isEmpty, "needs 3 episodes")
-        // Weight 4 from three episodes: a mark and two quiet ones with the weights the builder gives.
+        // Weight 4 from three episodes, one of them carrying two quiet signals at once.
         let three = [
             EpisodeEvidence(id: "1", feedKey: feed, title: "Crypto crash", at: ago(days: 5), finishedNoMargin: true, addedNeverPlayed: true),
             quiet("2", "Why crypto wins"), quiet("3", "Crypto again"),
@@ -69,8 +72,8 @@ final class RuleSuggesterTests: XCTestCase {
         XCTAssertTrue(blocked.isEmpty)
         // A positive episode about something else doesn't block.
         XCTAssertEqual(suggest(fourQuiet + [positive("p", "Gardening")]).map(\.word), ["crypto"])
-        // A positive episode older than 90 days is outside the window.
-        XCTAssertEqual(suggest(fourQuiet + [positive("p", "Crypto, a good one", days: 91)]).map(\.word), ["crypto"])
+        // A Margin left long ago still vetoes: the window limits what argues for a rule, not what argues against.
+        XCTAssertTrue(suggest(fourQuiet + [positive("p", "Crypto, a good one", days: 400)]).isEmpty)
     }
 
     func testTheNinetyDayWindowKeepsDayNinetyAndDropsDayNinetyOne() {
@@ -123,13 +126,29 @@ final class RuleSuggesterTests: XCTestCase {
 
     func testCandidateWordTable() {
         let words = RuleSuggester.candidateWords(in: "Crypto, ART & Café: Trump's 2024 episode! Weekly don't AI x-ray 比特币 Évolution CRYPTO")
-        XCTAssertEqual(words, ["crypto", "cafe", "trump", "evolution"], "folded, deduplicated, letters only; stopwords, short words and numbers out")
+        XCTAssertEqual(words, ["crypto", "cafe", "evolution"], "folded, deduplicated, letters only; stopwords, short words, numbers and apostrophe words out")
+        // Whatever the learner offers, a skip rule on it matches the title it came from.
+        for word in words {
+            XCTAssertTrue(ListeningRuleMatcher(words: [word]).matches(title: "Crypto, ART & Café: Évolution"), word)
+        }
         XCTAssertTrue(RuleSuggester.candidateWords(in: "").isEmpty)
         XCTAssertTrue(RuleSuggester.candidateWords(in: "The and for with").isEmpty)
         XCTAssertEqual(RuleSuggester.candidateWords(in: "word"), ["word"], "exactly four letters")
         XCTAssertTrue(RuleSuggester.candidateWords(in: "abc").isEmpty, "three letters")
         XCTAssertEqual(RuleSuggester.candidateWords(in: "CAFÉ café Cafe"), ["cafe"], "the same word from another source folds to one")
         XCTAssertEqual(RuleSuggester.candidateWords(in: String(repeating: "a", count: 200)).count, 1, "length is checked when a rule is made, not here")
+    }
+
+    func testPossessiveTitlesAreNotOfferedBecauseARuleOnTheBareWordWouldSkipNothing() {
+        let evidence = [quiet("1", "Trump's trial"), quiet("2", "Trump's tariffs"), quiet("3", "Trump's deal"), quiet("4", "Trump's wall")]
+        XCTAssertFalse(ListeningRuleMatcher(words: ["trump"]).matches(title: "Trump's trial"), "the premise")
+        XCTAssertTrue(suggest(evidence).isEmpty)
+        XCTAssertTrue(suggest(evidence, show: show(title: "Trump's Pod")).isEmpty)
+    }
+
+    func testAShowWhoseEpisodesAreNotKnownGetsNoSuggestion() {
+        XCTAssertTrue(suggest(fourQuiet, show: show(entries: [])).isEmpty, "no way to tell how often the show says the word")
+        XCTAssertEqual(suggest(fourQuiet).map(\.word), ["crypto"])
     }
 
     func testAVeryLongWordIsNeverOfferedBecauseARuleCouldNotHoldIt() {
@@ -216,7 +235,7 @@ final class RuleSuggesterTests: XCTestCase {
     }
 
     func testEveryShowGetsItsOwnSuggestions() {
-        let second = RuleSuggestionShow(id: "show-b", member: ListMember(feedKey: "https://b.example/feed"), title: "Other", entries: [])
+        let second = RuleSuggestionShow(id: "show-b", member: ListMember(feedKey: "https://b.example/feed"), title: "Other", entries: quietEntries)
         let evidence = fourQuiet + [
             quiet("b1", "Baking one", feedKey: "https://b.example/feed"), quiet("b2", "Baking two", feedKey: "https://b.example/feed"),
             quiet("b3", "Baking three", feedKey: "https://b.example/feed"), quiet("b4", "Baking four", feedKey: "https://b.example/feed"),
@@ -228,7 +247,42 @@ final class RuleSuggesterTests: XCTestCase {
 
     // MARK: Builder and suggester together
 
-    func testMarksAndQuietSignalsFromTheBuilderLeadToASuggestion() {
+    func testQuietSignalsFromTheBuilderLeadToASuggestionAndAMarginVetoesIt() {
+        let day = 86_400.0
+        func item(_ id: String, addedDaysAgo: Double) -> Item {
+            Item(id: id, title: "Item \(id)", mediaType: "text", text: "Body", externalReference: nil, status: "ready", createdAt: now.addingTimeInterval(-day * addedDaysAgo))
+        }
+        func played(_ id: String, daysAgo: Double, finished: Bool) -> Session {
+            let last = now.addingTimeInterval(-day * daysAgo)
+            return Session(id: "s-\(id)", itemId: id, createdAt: last, updatedAt: last, completedAt: finished ? last : nil,
+                           status: finished ? "finished" : "in_progress", phase: finished ? .finished : .itemPlayback,
+                           currentTargetType: .itemTextTTS, currentTargetId: id, position: Position(), completionPercent: finished ? 100 : 30, playbackRate: 1)
+        }
+        let episodes = [
+            RuleEvidenceEpisode(item: item("f", addedDaysAgo: 30), feedKey: feed, title: "Crypto crash"),
+            RuleEvidenceEpisode(item: item("s", addedDaysAgo: 30), feedKey: feed, title: "Why crypto wins"),
+            RuleEvidenceEpisode(item: item("n", addedDaysAgo: 30), feedKey: feed, title: "Crypto again"),
+            RuleEvidenceEpisode(item: item("m", addedDaysAgo: 30), feedKey: feed, title: "Crypto, still"),
+        ]
+        let sessions = [played("f", daysAgo: 20, finished: true), played("s", daysAgo: 20, finished: false)]
+        let evidence = RuleEvidenceBuilder.build(episodes: episodes, sessions: sessions, margins: [], marks: [], now: now)
+        XCTAssertEqual(evidence.filter { $0.finishedNoMargin }.count, 1)
+        XCTAssertEqual(evidence.filter { $0.stoppedEarly }.count, 1)
+        XCTAssertEqual(evidence.filter { $0.addedNeverPlayed }.count, 2)
+        let found = suggest(evidence)
+        XCTAssertEqual(found.map(\.word), ["crypto"])
+        XCTAssertEqual(found.first?.reason, .quiet(4))
+
+        let margin = Interjection(
+            id: "m1", itemId: "m", sessionId: "s", targetType: .item, targetId: "m", createdAt: now.addingTimeInterval(-day * 2), roughPercent: 0,
+            anchor: Anchor(anchorType: .text, startChar: 0, endChar: 1, anchorBefore: "", anchorAfter: ""), audioPath: nil, audioStatus: "none",
+            transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil, displayText: "Worth hearing", status: "active"
+        )
+        let vetoed = RuleEvidenceBuilder.build(episodes: episodes, sessions: sessions, margins: [margin], marks: [], now: now)
+        XCTAssertTrue(suggest(vetoed).isEmpty, "a Margin on one of them says the listener did want something from this word")
+    }
+
+    func testMarksFromTheBuilderLeadToASuggestion() {
         let day = 86_400.0
         let titles = ["Crypto crash", "Crypto boom", "Crypto winter"]
         let marks = titles.enumerated().map { ShowLessMark(feedKey: feed, entryId: "m\($0.offset)", title: $0.element, markedAt: now.addingTimeInterval(-day * Double($0.offset + 1))) }

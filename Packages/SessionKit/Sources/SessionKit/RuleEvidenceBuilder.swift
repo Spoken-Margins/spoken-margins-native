@@ -124,8 +124,14 @@ public enum RuleEvidenceBuilder {
             var evidence = EpisodeEvidence(id: id, feedKey: episode.feedKey, title: episode.title, publishedAt: episode.publishedAt, at: .distantPast, positive: positive)
             var dates: [Date] = []
 
+            // A mark is for this episode when it names the item or the entry. A caller that found no feed entry for the item still
+            // has its mark, which names the entry, so the same feed and the same title count as the same episode too.
+            let foldedTitle = ListeningRuleMatcher.Pattern.tokens(of: episode.title)
             let matching = marks.filter { mark in
-                mark.itemId == item.id || (nonEmpty(episode.entryId).map { $0 == mark.entryId } ?? false)
+                mark.itemId == item.id
+                    || (nonEmpty(episode.entryId).map { $0 == mark.entryId } ?? false)
+                    || (mark.feedKey == episode.feedKey && !foldedTitle.isEmpty
+                        && ListeningRuleMatcher.Pattern.tokens(of: mark.title) == foldedTitle)
             }
             if !matching.isEmpty {
                 evidence.showLess = true

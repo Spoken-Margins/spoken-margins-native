@@ -67,6 +67,22 @@ final class RuleEvidenceBuilderTests: XCTestCase {
         XCTAssertEqual(Set(build([episode(i, entryId: "e1")], marks: [byEntry, other]).map(\.id)), ["e1", "e9"])
     }
 
+    func testAMarkMadeFromTheShowScreenFindsTheItemEvenWhenTheCallerFoundNoEntry() {
+        // The item has no matched entry, the mark names one: the same feed and the same title are the same episode.
+        let i = item("i1", addedDaysAgo: 30)
+        let mark = ShowLessMark(feedKey: feed, entryId: "e1", title: "  CRYPTO crash ", markedAt: ago(days: 2))
+        let evidence = build([episode(i, entryId: nil, title: "Crypto Crash")], marks: [mark])
+        XCTAssertEqual(evidence.count, 1, "one episode, not a mark row plus an item row")
+        XCTAssertTrue(evidence[0].showLess)
+        XCTAssertTrue(evidence[0].addedNeverPlayed)
+        XCTAssertEqual(evidence[0].weight, RuleEvidenceBuilder.showLessWeight + RuleEvidenceBuilder.quietWeight)
+        // Another show's episode with the same title, or another title, is not it.
+        let otherShow = ShowLessMark(feedKey: "https://b.example/feed", entryId: "e1", title: "Crypto crash", markedAt: ago(days: 2))
+        XCTAssertEqual(build([episode(i, title: "Crypto crash")], marks: [otherShow]).count, 2)
+        let otherTitle = ShowLessMark(feedKey: feed, entryId: "e2", title: "Gardening", markedAt: ago(days: 2))
+        XCTAssertEqual(build([episode(i, title: "Crypto crash")], marks: [otherTitle]).count, 2)
+    }
+
     func testAnEpisodeWithNoSignalLeavesNoEvidence() {
         XCTAssertTrue(build([episode(item("i1", addedDaysAgo: 1))]).isEmpty, "added yesterday: not yet 14 days")
     }

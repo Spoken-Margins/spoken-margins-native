@@ -87,12 +87,13 @@ public struct RuleSuggestion: Equatable, Sendable, Identifiable {
 /// word the listener keeps passing over in one show, and offers a skip rule. No model and no network; the clock is an input.
 ///
 /// A suggestion (show, word) needs all of:
-/// - a weight sum of 4 or more, over 3 or more episodes whose titles carry the word;
-/// - no positive episode (one the listener left a Margin on, or shared) whose title carries it;
+/// - a weight sum of 4 or more, over 3 or more episodes whose titles a skip rule on the word would match;
+/// - no positive episode (one the listener left a Margin on, or shared), of any age, whose title carries it;
 /// - a match on at most half of the show's last 30 episodes, so a word the show says all the time isn't offered.
 ///
 /// A word is a candidate when it is at least four letters, folded, not on the stopword list and not a word of the show's own
-/// title. Evidence older than 90 days is not read. The thresholds are cautious first numbers and live here.
+/// title. Evidence older than 90 days is not read, except that a positive episode vetoes its words whatever its age. A show
+/// whose episodes aren't known gets no suggestion. The thresholds are cautious first numbers and live here.
 public enum RuleSuggester {
     public static let windowDays = 90
     public static let minimumWeight = 4
@@ -117,7 +118,8 @@ public enum RuleSuggester {
         var suggestions: [RuleSuggestion] = []
 
         for show in shows {
-            let episodes = evidence.filter { $0.at >= cutoff && show.member.matches(feedKey: $0.feedKey) }
+            let ofShow = evidence.filter { show.member.matches(feedKey: $0.feedKey) }
+            let episodes = ofShow.filter { $0.at >= cutoff }
             guard episodes.count >= minimumEpisodes else { continue }
             let showTitleWords = Set(ListeningRuleMatcher.Pattern.tokens(of: show.title))
             let covering = skipRules
@@ -131,11 +133,18 @@ public enum RuleSuggester {
                 }
             }
 
+            // Without the show's episodes there is no way to tell how often it says the word, so nothing is offered.
             let window = ListeningRuleEvaluator.windowIndices(show.entries).map { show.entries[$0] }
+            guard !window.isEmpty else { continue }
             let windowTexts = window.map { ListeningRuleText(title: $0.title, summary: $0.summary) }
+            // A Margin or a share on an episode about the word vetoes it for good, so the veto reads all the evidence, not just
+            // the 90-day window.
+            let vetoed = Set(ofShow.filter(\.positive).flatMap { candidateWords(in: $0.title) })
             for (word, carrying) in byWord {
-                if carrying.contains(where: \.positive) { continue }
-                let signalled = carrying.filter { $0.weight > 0 }
+                if vetoed.contains(word) { continue }
+                // Only episodes the rule would itself match count, so a suggested rule always skips what the listener passed over.
+                let matcher = ListeningRuleMatcher(words: [word])
+                let signalled = carrying.filter { $0.weight > 0 && matcher.matches(title: $0.title) }
                 let strength = signalled.reduce(0) { $0 + $1.weight }
                 guard strength >= minimumWeight, signalled.count >= minimumEpisodes else { continue }
                 guard case .valid = ListeningRuleWords.validate([word]) else { continue }
@@ -143,7 +152,6 @@ public enum RuleSuggester {
                 if silenced.contains(key) { continue }
                 let wordText = ListeningRuleText(title: word, summary: nil)
                 if covering.contains(where: { $0.matches(wordText) }) { continue }
-                let matcher = ListeningRuleMatcher(words: [word])
                 let matched = windowTexts.filter { matcher.matches($0) }.count
                 guard Double(matched) <= Double(windowTexts.count) * maximumShareOfShow else { continue }
                 let marked = signalled.filter(\.showLess).count
@@ -163,13 +171,12 @@ public enum RuleSuggester {
     }
 
     /// The words of a title the learner may offer, once each: folded, at least four letters, nothing but letters (a number or a
-    /// word with an inner apostrophe says nothing about a topic; a trailing 's is dropped, so "Trump's" is "trump"), and not a
+    /// word with an apostrophe says nothing a rule could match back: the rule `trump` does not match "Trump's"), and not a
     /// stopword.
     static func candidateWords(in title: String) -> Set<String> {
         var words = Set<String>()
         for token in ListeningRuleMatcher.Pattern.tokens(of: title) {
-            var word = token
-            if word.hasSuffix("'s") { word.removeLast(2) }
+            let word = token
             guard word.count >= minimumWordLength, word.allSatisfy(\.isLetter), !RuleSuggesterStopwords.contains(word) else { continue }
             words.insert(word)
         }
