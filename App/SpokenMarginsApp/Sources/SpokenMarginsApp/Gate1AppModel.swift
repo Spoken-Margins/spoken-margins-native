@@ -437,6 +437,8 @@ final class Gate1AppModel: ObservableObject {
     var databaseURLOverride: URL?
     let gate2CompactControls: Gate2CompactControlController
     let localFoundationModelClient: any LocalFoundationModelClient
+    /// Offers a spoken Margin's author a tidy version (#4339); one per app run so a model rewrite is asked for once.
+    let marginTidyProposer: MarginTidyProposer
     let streamingSpeechQueue = StreamingSpeechQueue(speech: SystemSpeechPlaybackClient())
     var speechPlaybackClient: AudioPlaybackClient?
     var sessionAudioPlaybackClient: AudioPlaybackClient?
@@ -617,7 +619,14 @@ final class Gate1AppModel: ObservableObject {
         self.microphoneAccess = MarginMicrophoneAccess(recorderInjected: recordingClient != nil, request: microphonePermissionRequest, status: microphonePermissionStatus)
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.gate2CompactControls = gate2CompactControls
-        self.localFoundationModelClient = UITestingHooks.localFoundationModelClient ?? localFoundationModelClient
+        let foundationModelClient = UITestingHooks.localFoundationModelClient ?? localFoundationModelClient
+        self.localFoundationModelClient = foundationModelClient
+        self.marginTidyProposer = MarginTidyProposer(
+            model: { transcript, before, after in
+                try await foundationModelClient.tidyMargin(transcript: transcript, before: before, after: after)
+            },
+            conditions: { MarginTidyConditions.currentDevice() }
+        )
         self.databaseURLOverride = databaseURLOverride
         self.trashUndoDismissDelay = trashUndoDismissDelay
         if let interjectionTranscriptionHandler {
