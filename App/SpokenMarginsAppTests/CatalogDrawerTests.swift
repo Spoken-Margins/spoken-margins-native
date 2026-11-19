@@ -569,6 +569,31 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertTrue(drawer.showsFriendLinkCard)
     }
 
+    /// A pasted link that fails while the drawer has picks (it never withdrew): the card returns for another paste, and
+    /// Done plays the pick again because no friend's item arrived.
+    func testAPastedLinkThatFailsOverADrawerWithPicksBringsTheCardBackAndDonePlaysAgain() async throws {
+        var started: [[String]] = []
+        let drawer = try makeDrawer(
+            defaults: try freshDefaults(), log: FollowLog(), startFirstListen: { ids, _ in started.append(ids) },
+            libraryHoldsFriendPacket: { false })
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        await drawer.load()
+        try await pollUntil { drawer.showsFriendLinkCard }
+        drawer.toggleFollow(try XCTUnwrap(drawer.entries.first))
+        drawer.pasteIntoFriendLinkCard(friendLink)
+        XCTAssertFalse(drawer.showsFriendLinkCard)
+        XCTAssertTrue(drawer.isPresented, "the listener has a pick, so the sheet stays")
+
+        drawer.friendFileFailed(at: .library)
+
+        try await pollUntil { drawer.showsFriendLinkCard }
+        XCTAssertTrue(drawer.showsFriendLinkCard, "another paste is possible")
+        drawer.finish()
+        drawer.didDismiss()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started.count, 1, "no friend's item arrived, so Done plays the pick")
+    }
+
     func testADrawerWithPicksStaysButDonePlaysNothingOverTheFriendsItem() async throws {
         let log = FollowLog()
         var started: [[String]] = []

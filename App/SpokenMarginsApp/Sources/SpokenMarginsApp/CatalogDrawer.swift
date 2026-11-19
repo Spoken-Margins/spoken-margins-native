@@ -186,6 +186,12 @@ final class CatalogDrawerModel: ObservableObject {
         // A failure that lands before the root view notes the launch must not be replayed as an arrival by `noteLaunch`.
         hasFriendFileArrived = false
         apply(welcomeOrder.friendFileFailed(place: place))
+        // A drawer that stayed up (the listener had picks) was never withdrawn, so nothing above brought it back: no friend's
+        // item came, so Done may play again, and the card returns for another paste (#3782).
+        if isPresented, isFirstRunOpening {
+            friendFileOpenedUnderneath = false
+            refreshFriendLinkCard()
+        }
     }
 
     private func recordFriendFileArrival() {

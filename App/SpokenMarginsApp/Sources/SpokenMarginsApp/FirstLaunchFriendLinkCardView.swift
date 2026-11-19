@@ -9,10 +9,9 @@ import SwiftUI
 /// one line under the button. Follows `ClipboardLinkOfferCard`'s surface and Paste button.
 struct FirstLaunchFriendLinkCardView: View {
     @ObservedObject var drawer: CatalogDrawerModel
-    @AccessibilityFocusState private var noteHasFocus: Bool
 
     var body: some View {
-        ExperienceSurface(tint: AppColors.evergreen.opacity(0.5), padding: 14) {
+        ExperienceSurface(tint: AppColors.evergreen.opacity(0.5), padding: 10) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(FirstLaunchFriendLinkCard.headline)
                     .font(.headline)
@@ -29,7 +28,6 @@ struct FirstLaunchFriendLinkCardView: View {
                         .font(.footnote)
                         .foregroundStyle(AppColors.warningText)
                         .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityFocused($noteHasFocus)
                         .accessibilityIdentifier("catalog.friendLink.note")
                 }
             }

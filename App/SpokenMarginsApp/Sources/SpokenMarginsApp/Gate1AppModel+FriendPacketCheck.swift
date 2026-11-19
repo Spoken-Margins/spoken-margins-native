@@ -6,7 +6,6 @@ extension Gate1AppModel {
     /// card (#3782). The read runs off the main thread; with no store open the answer is yes, so the card stays hidden
     /// rather than offering a paste to a Library that can't take one. The rule is `FirstLaunchFriendLinkCard`'s.
     func libraryHoldsFriendPacket() async -> Bool {
-        _ = run { _ in } // makes sure the store is open, as the all-Margins export does
         guard let store else { return true }
         return await Task.detached(priority: .userInitiated) { () -> Bool in
             guard let layers = try? store.loadImportedCommentaryLayers() else { return true }
