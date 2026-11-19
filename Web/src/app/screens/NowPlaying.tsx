@@ -455,7 +455,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const [sendable] = useState(canSendFiles);
   // Inside the Android app (#3009) one button writes the file and opens Android's share sheet, which can also save it.
   const [bridge] = useState(() => capacitorBridge());
-  // After a friend's Margins, Share offers "Send replies to <friend>" (#2168, as the app's #3221): the replies and the
+  // After a friend's Margins, Share offers "Share replies with <friend>" (#2168, as the app's #3221): the replies and the
   // Margins made since this page opened picked, older notes unpicked, the friend's own never listed. With no offer Share is as before.
   const offer = replyBackOffer(margins);
   // With no offer, a starred Margin of the listener's own turns Share into a list of their Margins, the starred ones picked (#4172).

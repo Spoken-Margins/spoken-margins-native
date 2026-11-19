@@ -131,7 +131,7 @@ struct Build23SharingSnapshot: Equatable {
     let preparationFailures: Int
     let autoCleanSelectedEnabled: Bool
     let needsAutoCleanDecision: Bool
-    /// The sheet was opened as "Send replies to <friend>" (#3792): its review is a receipt, not an editor.
+    /// The sheet was opened as "Share replies with <friend>" (#3792, #3906): its review is a receipt, not an editor.
     let isReplyBack: Bool
     let previewState: Build23SharingPreviewState
     let verifiedPreview: Build23VerifiedRecipientPreview?
@@ -288,7 +288,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     @Published private(set) var pendingRecipientSourceRequest: Build23RecipientSourceRequest?
 
     private let model: Gate1AppModel
-    /// The sheet's heading: "Send replies to Ana" when it was opened to send replies back (#3221).
+    /// The sheet's heading: "Share replies with Ana" (or "Share your Margins with Ana" when none is a reply) when it was opened to share replies back (#3221, #3906).
     var senderHeading: String { model.sharingState.replyBackTitle ?? "Share Margins" }
     /// Recovers a private-feed packet's episode from the recipient's own feed (#454).
     let episodeRecovery: SharedEpisodeRecovery
