@@ -29,8 +29,10 @@ public struct SkimStop: Sendable, Equatable {
         SkimStop(kind: .chapter, id: chapter.id, position: chapter.startMs)
     }
 
-    /// The listener's own Margin, or nil when it has no position in `unit`.
+    /// The listener's own Margin, or nil when it has no position in `unit`. A moved Margin with no saved place has
+    /// none: its zeros are not a stop (#4233).
     public static func margin(_ margin: Interjection, unit: SkimStops.PositionUnit) -> SkimStop? {
+        guard margin.hasPlace else { return nil }
         let position: Int?
         switch unit {
         case .milliseconds: position = margin.anchor.mediaTimeMs
