@@ -5,7 +5,8 @@ On 2026-11-17 Microsoft's onnxruntime-swift-package-manager repository went 404 
 for a day. #4568 builds it from a copy in the Spoken-Margins organization; a copy is only safe if we notice when the
 original changes. For every package pinned in a Package.resolved, this reports:
 
-  gone       the source we build from, or the upstream of a copy, does not answer `git ls-remote`
+  gone       the source we build from does not answer `git ls-remote`
+  upstream-gone  the upstream of a copy we build from does not answer (the copy is now the only source)
   moved      GitHub answers for the upstream under another owner/name (a rename or transfer)
   newer      the upstream has a release tag newer than the pinned version, or a branch pin's branch moved on
   advisory   GitHub's advisory database lists a Swift advisory whose affected range covers the pinned version
@@ -18,7 +19,11 @@ original changes. For every package pinned in a Package.resolved, this reports:
                                                   findings changed since the last report on that issue)
 
 Copies and their upstreams are listed in docs/legal/package-upstreams.json. A package not listed there is its own
-upstream. Standard library only, plus `git` on PATH.
+upstream. The same file's "accepted" table records a known state with a reason, so the weekly report stops
+re-opening it (#4579): `"upstream-gone": "<why>"` for a copy whose upstream is gone, and
+`"newer": {"through": "<tag>", "why": "<why>"}` for a pin kept on purpose, which flags again when a tag newer than
+`through` appears. A source that is gone, a moved repository and an advisory can never be accepted. An accepted
+finding is still listed, as `accepted-<kind>`, with its reason. Standard library only, plus `git` on PATH.
 """
 import argparse
 import hashlib
@@ -42,7 +47,8 @@ UPSTREAMS = 'docs/legal/package-upstreams.json'
 API = 'https://api.github.com'
 TITLE = 'Package watch: an upstream Swift package changed'
 MARKER = re.compile(r'<!-- package-watch: (\S+) -->')
-FLAGGED = ('gone', 'moved', 'newer', 'advisory')
+FLAGGED = ('gone', 'upstream-gone', 'moved', 'newer', 'advisory')
+NEWER_TAG = re.compile(r'^upstream tag (\S+) is newer than the pinned ')  # the text findings_for writes for a tag pin
 SEMVER = re.compile(r'^v?(\d+)\.(\d+)(?:\.(\d+))?$')
 
 
@@ -107,7 +113,7 @@ def findings_for(pin, upstream, remote, advisories, repo_info):
         out.append(('gone', f"we build from {pin['location']}, which does not answer"))
     up = source if upstream == pin['location'] else remote(upstream)
     if up is None and upstream != pin['location']:
-        out.append(('gone', f'the upstream {upstream} does not answer; our copy is now the only source'))
+        out.append(('upstream-gone', f'the upstream {upstream} does not answer; our copy is now the only source'))
     slug = github_slug(upstream)
     if slug and up is not None:
         full = repo_info(slug)
@@ -129,6 +135,29 @@ def findings_for(pin, upstream, remote, advisories, repo_info):
             hit = any(in_range(pin['version'], spec) for spec in ranges) if ranges else True
             text = f"{adv.get('ghsa_id')} ({adv.get('severity')}): {adv.get('summary')}; affected {', '.join(ranges) or 'unknown'}"
             out.append(('advisory' if hit else 'advisory-other', text))
+    return out
+
+
+def apply_accepted(found, accepted):
+    """Move findings the owner's team has accepted out of the flagged kinds. `accepted` is the package's entry in the
+    "accepted" table. Only `upstream-gone` (a reason) and `newer` (`through` tag and a reason) can be accepted; a
+    `newer` finding with a tag past `through`, or with an unreadable table entry, stays flagged."""
+    out = []
+    accepted = accepted if isinstance(accepted, dict) else {}
+    for kind, text in found:
+        entry = accepted.get(kind)
+        if kind == 'upstream-gone' and isinstance(entry, str) and entry.strip():
+            out.append((f'accepted-{kind}', f'{text} (accepted: {entry.strip()})'))
+        elif kind == 'newer' and isinstance(entry, dict) and str(entry.get('why', '')).strip():
+            tag = NEWER_TAG.match(text)
+            latest = tag.group(1) if tag else None
+            through = version_key(str(entry.get('through', '')))
+            if latest and through and version_key(latest) <= through:
+                out.append((f'accepted-{kind}', f"{text} (accepted through {entry['through']}: {str(entry['why']).strip()})"))
+            else:
+                out.append((kind, text))
+        else:
+            out.append((kind, text))
     return out
 
 
@@ -223,11 +252,13 @@ def main(argv=None):
     parser.add_argument('--issue', action='store_true')
     parser.add_argument('--run-url', default='')
     args = parser.parse_args(argv)
-    upstreams = json.loads((ROOT / UPSTREAMS).read_text()).get('copies', {})
+    table = json.loads((ROOT / UPSTREAMS).read_text())
+    upstreams, accepted = table.get('copies', {}), table.get('accepted', {})
     results = {}
     for identity, pin in collect_pins().items():
         upstream = upstreams.get(identity, {}).get('upstream', pin['location'])
-        results[identity] = (pin, upstream, findings_for(pin, upstream, git_remote, gh_advisories, gh_repo_name))
+        found = findings_for(pin, upstream, git_remote, gh_advisories, gh_repo_name)
+        results[identity] = (pin, upstream, apply_accepted(found, (accepted or {}).get(identity, {})))
     text, sig, flagged = report(results)
     print(text)
     if args.json:
