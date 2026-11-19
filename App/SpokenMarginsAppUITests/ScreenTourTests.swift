@@ -281,11 +281,13 @@ final class ScreenTourTests: XCTestCase {
         XCTAssertTrue(element("item.screen").waitForExistence(timeout: 20), "Sam's reply did not open its episode")
         XCTAssertFalse(element("build23.recipient.experience").exists, "Sam's reply opened the Import sheet")
         // The reply is the one Margin from Sam that hasn't been heard: the item says so (#3219). Only the all-replies line
-        // proves that; "1 reply and 1 new Margin" also starts "1 reply" and means Sam's first Margin was never heard (#3713).
+        // proves that; "1 reply and 1 new Margin" also starts "1 reply" and means Sam's first Margin was never heard (#3713),
+        // and "1 Margin" means the reply didn't find the listener's Margin it answers.
         let replyCount = element("item.friendIntro.count")
         XCTAssertTrue(replyCount.waitForExistence(timeout: 10), "The item doesn't say a reply from Sam is waiting")
         XCTAssertTrue(replyCount.label.hasPrefix("1 reply to your Margin ·"),
-                      "Sam's reply is not the one Margin waiting, so his first was never heard in this loop: \(replyCount.label)")
+                      "Sam's reply is not the one Margin waiting: \"1 reply and 1 new Margin\" means his first was never heard, "
+                          + "\"1 Margin\" that the reply lost its parent. It reads: \(replyCount.label)")
         capture("30-reply-arrival", "Sam's reply: the episode's screen as it opens (\"Replies from Sam\", \"1 reply to your Margin\")")
         // The packet opened the item on its own, with no tab bar under it: back to the tabs first.
         tapButton("item.home.button")
