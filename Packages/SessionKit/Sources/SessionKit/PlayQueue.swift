@@ -20,6 +20,26 @@ public struct PlayQueue: Codable, Equatable, Sendable {
         itemIds.insert(itemId, at: 0)
     }
 
+    /// Puts `itemIds` first, in the order given (#3769, Play all). An item already queued moves forward to its place among
+    /// them, one that appears twice in `itemIds` counts once, and everything else keeps its order behind them. Called twice
+    /// with the same ids, it leaves the queue as it was.
+    public mutating func playNext(contentsOf itemIds: some Sequence<String>) {
+        var seen = Set<String>()
+        let front = itemIds.filter { seen.insert($0).inserted }
+        guard !front.isEmpty else { return }
+        self.itemIds.removeAll { seen.contains($0) }
+        self.itemIds.insert(contentsOf: front, at: 0)
+    }
+
+    /// Puts each of `itemIds` last, in the order given (#4720, Add to Queue). An item already queued keeps its place.
+    /// Returns how many were added, for the banner's count.
+    @discardableResult
+    public mutating func append(contentsOf itemIds: some Sequence<String>) -> Int {
+        let before = self.itemIds.count
+        for itemId in itemIds { append(itemId) }
+        return self.itemIds.count - before
+    }
+
     /// Puts `itemId` last. An item already queued keeps its place.
     public mutating func append(_ itemId: String) {
         guard !itemIds.contains(itemId) else { return }

@@ -18,6 +18,9 @@ public struct LibraryReadSnapshot: Sendable {
     /// The listener's collections, read in the same pass so the Library's chip row draws with the rows and never
     /// snaps in after them (#4343). Nil when they were not read; a caller then keeps the collections it has.
     public var collections: [ItemCollection]?
+    /// The records of collections imported from a folder or a titled link list (#3769), read in the same pass so such a
+    /// collection's row shows "Adding 3 of 24…" with its items. Nil when they were not read.
+    public var libraryFolders: [LibraryFolderRecord]?
 
     /// The items not in Recently Deleted, in the snapshot's order: what `listItemSummaries()` returns. A caller that
     /// already holds the snapshot asks this instead of reading the item table again (#2507).
