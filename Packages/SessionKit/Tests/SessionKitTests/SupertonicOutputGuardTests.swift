@@ -188,11 +188,17 @@ final class SupertonicOutputGuardTests: XCTestCase {
     // #288: a render that timed out was still checked when it finished, and a flagged chunk was
     // written by a second speech synthesizer while the iOS voice read the article live. The live
     // voice then went silent. A render nobody waits for is dropped instead of re-read.
+    /// The stand-in fails at once rather than asking the real iOS voice, so a regression fails here without waiting
+    /// on Apple's speech service.
     func testACancelledRenderIsNotReadByTheIOSVoice() async throws {
         let reports = Reports()
         let guardRenderer = SupertonicOutputGuard(
             wrapping: FixedLengthRenderer(template: try template(), seconds: 20), systemVoiceIdentifier: nil,
-            onReplacement: { reports.add($0) }
+            onReplacement: { reports.add($0) },
+            standIn: { _, _, _, _ in
+                XCTFail("a cancelled render was handed to the iOS voice")
+                throw CancellationError()
+            }
         )
         let text = babbleText
         let render = Task {
