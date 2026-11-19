@@ -16,6 +16,12 @@ public enum SenderLeadIn {
         min(max(ms, range.lowerBound), range.upperBound)
     }
 
+    /// The length the sender's share sheet starts a Margin at: the length its newest share wrote, else the default. A stored
+    /// length is clamped to what a reader accepts, so a hand-edited or future value can't start the sheet outside it.
+    public static func startingMs(lastSent: Int?) -> Int {
+        lastSent.map(clamped) ?? defaultMs
+    }
+
     /// The value to write on a Margin's record, or nil to write no key.
     ///
     /// - A length other than the default is written.
