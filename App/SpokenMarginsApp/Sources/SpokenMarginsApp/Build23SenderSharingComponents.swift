@@ -590,8 +590,9 @@ struct Build23MarginEditor: View {
     let send: (Build23SenderAction) -> Void
     @State private var showsPositionContext = false
 
-    /// The one badge a card can wear: it explains why the Margin won't go. Every Margin on this step is otherwise included.
+    /// The one badge a card can wear: it explains why the Margin is waiting or won't go. Every Margin on this step is otherwise included.
     private var badge: String? {
+        if let waiting = margin.waitingBadge { return waiting }
         if margin.isLeftOutForMissingText { return "Left out: no transcript yet" }
         return margin.isIncluded ? nil : "Not included"
     }

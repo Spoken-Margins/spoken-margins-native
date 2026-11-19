@@ -240,6 +240,101 @@ final class Build23SharingSeamsTests: XCTestCase {
         }
     }
 
+    /// A coordinator on review for one voice Margin whose transcript is still pending (#3839).
+    private func coordinatorWithPendingWords() async throws -> (Build23SharingCoordinator, Gate1AppModel, URL) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "words-wait-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let audio = root.appending(path: "voice.m4a")
+        try Data([0]).write(to: audio)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let itemID = model.selectedItem.id
+        model.selectedItem.interjections = [Interjection(
+            id: "margin-words-wait", itemId: itemID, sessionId: "session-test", targetType: .item, targetId: itemID,
+            createdAt: Date(timeIntervalSince1970: 1), roughPercent: 25,
+            anchor: Anchor(anchorType: .text, startChar: 0, endChar: 5, anchorBefore: "Before", anchorAfter: "After"),
+            audioPath: audio.path, audioStatus: "recorded", transcriptionStatus: "pending", transcript: nil,
+            cleanedTranscript: nil, displayText: nil, status: "active"
+        )]
+        let coordinator = Build23SharingCoordinator(model: model)
+        coordinator.send(.begin)
+        coordinator.send(.advanceToReview)
+        try await waitUntilQuiet(coordinator)
+        return (coordinator, model, root)
+    }
+
+    private func wordsArrive(in model: Gate1AppModel, _ words: String = "Keep going.") {
+        model.selectedItem.interjections[0].transcript = words
+        model.selectedItem.interjections[0].displayText = words
+        model.selectedItem.interjections[0].transcriptionStatus = "transcribed"
+        model.selectedItem.interjections[0].alignedTranscript = AlignedInterjectionTranscript(text: words, segments: [
+            .init(id: "keep", text: "Keep", startMs: 0, endMs: 300), .init(id: "going", text: "going.", startMs: 400, endMs: 800)
+        ])
+    }
+
+    /// #3839: a Margin recorded seconds ago has no words yet. The card says so and the bar says so above Share link; when
+    /// the words land the draft is rebuilt from the stored Margin, the step and the badge go, and nothing is reopened.
+    func testAMarginWaitingOnItsWordsSaysSoAndIsRebuiltWhenTheyArrive() async throws {
+        let (coordinator, model, root) = try await coordinatorWithPendingWords()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let waiting = try XCTUnwrap(coordinator.snapshot.margins.first)
+        XCTAssertEqual(waiting.waitingBadge, "Waiting for words")
+        XCTAssertEqual(waiting.steps.first?.icon, .words)
+        XCTAssertEqual(waiting.steps.first?.text, "Getting this Margin's words ready. It's added when they're ready.")
+        XCTAssertTrue(waiting.isShowingPlaceholder, "a voice Margin goes with stand-in words while it waits (#3027)")
+        XCTAssertEqual(coordinator.snapshot.pinnedStep?.text, "Getting the words ready for your new Margin. A few seconds.")
+        XCTAssertTrue(coordinator.snapshot.canAdvance, "Share is never blocked by the wait")
+
+        wordsArrive(in: model)
+        try await pollUntil { coordinator.snapshot.margins.first?.reviewedText == "Keep going." }
+
+        let arrived = try XCTUnwrap(coordinator.snapshot.margins.first)
+        XCTAssertEqual(arrived.reviewedText, "Keep going.")
+        XCTAssertFalse(arrived.isShowingPlaceholder)
+        XCTAssertNil(arrived.waitingBadge)
+        XCTAssertEqual(arrived.steps, [])
+        XCTAssertNil(coordinator.snapshot.pinnedStep)
+        XCTAssertTrue(arrived.isIncluded)
+        XCTAssertEqual(coordinator.snapshot.stage, .review, "the sender stays where they are")
+        XCTAssertNotEqual(coordinator.snapshot.previewState, .stale)
+    }
+
+    /// What the sender typed while the words were pending stays; the words arriving never take it away.
+    func testWordsArrivingNeverTakeAwayWhatTheSenderTyped() async throws {
+        let (coordinator, model, root) = try await coordinatorWithPendingWords()
+        defer { try? FileManager.default.removeItem(at: root) }
+        coordinator.send(.setReviewedWords(id: "margin-words-wait", text: "My own words"))
+        XCTAssertEqual(coordinator.snapshot.margins.first?.reviewedText, "My own words")
+
+        wordsArrive(in: model)
+        try await pollUntil { coordinator.snapshot.margins.first?.waitingBadge == nil }
+        try await waitUntilQuiet(coordinator)
+
+        XCTAssertEqual(coordinator.snapshot.margins.first?.reviewedText, "My own words")
+        XCTAssertEqual(coordinator.snapshot.margins.first?.steps, [], "the step still clears: the stored Margin has its words")
+        XCTAssertNil(coordinator.snapshot.pinnedStep)
+    }
+
+    /// A Margin the sender left out stays left out when its words arrive, and a Margin whose transcription failed shows
+    /// no step: it goes with its stand-in words.
+    func testRebuildKeepsALeftOutMarginOutAndAFailedTranscriptionShowsNoStep() async throws {
+        let (coordinator, model, root) = try await coordinatorWithPendingWords()
+        defer { try? FileManager.default.removeItem(at: root) }
+        coordinator.send(.setIncluded(id: "margin-words-wait", included: false))
+        XCTAssertNil(coordinator.snapshot.pinnedStep, "a Margin that isn't going doesn't hold the bar")
+        wordsArrive(in: model)
+        try await pollUntil { coordinator.snapshot.margins.first?.reviewedText == "Keep going." }
+        XCTAssertEqual(coordinator.snapshot.margins.first?.isIncluded, false)
+
+        let (failed, failedModel, failedRoot) = try await coordinatorWithPendingWords()
+        defer { try? FileManager.default.removeItem(at: failedRoot) }
+        failedModel.selectedItem.interjections[0].transcriptionStatus = "failed"
+        try await pollUntil { failed.snapshot.margins.first?.waitingBadge == nil }
+        XCTAssertEqual(failed.snapshot.margins.first?.steps, [])
+        XCTAssertNil(failed.snapshot.pinnedStep)
+        XCTAssertTrue(failed.snapshot.margins.first?.isShowingPlaceholder == true)
+    }
+
     func testSenderStageVocabularyIsFrozenInReleaseOrder() {
         XCTAssertEqual(
             Build23SharingStage.allCases.map(\.rawValue),

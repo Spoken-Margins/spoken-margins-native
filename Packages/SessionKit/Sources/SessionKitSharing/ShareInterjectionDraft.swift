@@ -261,6 +261,41 @@ extension ShareInterjectionDraft {
         return true
     }
 
+    /// Whether the sender has changed nothing that a rebuild from the arrived words would overwrite: the words, the
+    /// version, the read-aloud switch, the run-up, the placement words, and any cleanup. Whether the Margin is included
+    /// is not an edit (it follows the Choose step), so a rebuild keeps it.
+    public func isUnedited(hasVoice: Bool, itemTitle: String?, timeZone: TimeZone = .current) -> Bool {
+        let baseline = Self.initial(
+            for: interjection, isIncluded: isIncluded, hasVoice: hasVoice, itemTitle: itemTitle,
+            lastSentReadAloud: previousReadAloud, lastSentLeadInMs: previousLeadInMs, timeZone: timeZone)
+        return approvedTranscript == baseline.approvedTranscript
+            && representationChoice == baseline.representationChoice
+            && readAloud == baseline.readAloud
+            && leadInMs == baseline.leadInMs
+            && anchorBefore == baseline.anchorBefore
+            && anchorAfter == baseline.anchorAfter
+            && editHistory == [.original] && editHistoryIndex == 0
+            && cleanup == nil && cleanedAudioURL == nil
+            && !isAnalyzingPauses && !isPreparingCleanup
+    }
+
+    /// Rebuilds this draft from the stored Margin once its words have arrived (#3839): the text, the timing, whether it
+    /// can be cleaned. It happens only when the draft was made while the words were pending and the sender has changed
+    /// nothing since (`isUnedited`), so it never takes their edits away. The Margin stays included or not as it was.
+    /// Returns whether the draft changed.
+    @discardableResult
+    public mutating func adoptArrivedWords(
+        from stored: Interjection, hasVoice: Bool, itemTitle: String?, timeZone: TimeZone = .current
+    ) -> Bool {
+        guard stored.id == interjection.id,
+              interjection.transcriptionStatus == "pending", stored.transcriptionStatus != "pending",
+              isUnedited(hasVoice: hasVoice, itemTitle: itemTitle, timeZone: timeZone) else { return false }
+        self = Self.initial(
+            for: stored, isIncluded: isIncluded, hasVoice: hasVoice, itemTitle: itemTitle,
+            lastSentReadAloud: previousReadAloud, lastSentLeadInMs: previousLeadInMs, timeZone: timeZone)
+        return true
+    }
+
     public mutating func restoreOriginal(hasOriginalAudio: Bool) {
         editHistory = [.original]
         editHistoryIndex = 0

@@ -307,6 +307,108 @@ final class ShareInterjectionDraftTests: XCTestCase {
         XCTAssertFalse(draft.refreshAnchorEvidence(from: other), "another Margin's evidence is never taken")
     }
 
+    // MARK: Words arriving (#3839)
+
+    private func pendingVoiceMargin() -> Interjection {
+        Interjection(
+            id: "voice", itemId: "item", sessionId: "session", targetType: .item, targetId: "item",
+            createdAt: Date(timeIntervalSince1970: 1_790_000_000), roughPercent: 10,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "Before", anchorAfter: "After", mediaTimeMs: 61_000),
+            audioPath: "voice.m4a", audioStatus: "recorded", transcriptionStatus: "pending", transcript: nil,
+            cleanedTranscript: nil, displayText: nil, status: "active")
+    }
+
+    private func arrived(_ margin: Interjection, status: String = "transcribed", words: String = "Keep going.") -> Interjection {
+        var stored = margin
+        stored.transcriptionStatus = status
+        stored.transcript = status == "transcribed" ? words : nil
+        stored.displayText = status == "transcribed" ? words : nil
+        stored.alignedTranscript = status == "transcribed" ? AlignedInterjectionTranscript(text: words, segments: [
+            .init(id: "keep", text: "Keep", startMs: 0, endMs: 300), .init(id: "going", text: "going.", startMs: 400, endMs: 800)
+        ]) : nil
+        return stored
+    }
+
+    private func pendingDraft(isIncluded: Bool = true) -> ShareInterjectionDraft {
+        ShareInterjectionDraft.initial(for: pendingVoiceMargin(), isIncluded: isIncluded, hasVoice: true, itemTitle: "Episode")
+    }
+
+    func testAnUneditedDraftIsRebuiltFromTheWordsThatArrive() throws {
+        var draft = pendingDraft()
+        XCTAssertTrue(draft.isShowingPlaceholder, "a pending voice Margin starts with the stand-in words")
+        XCTAssertTrue(draft.adoptArrivedWords(from: arrived(draft.interjection), hasVoice: true, itemTitle: "Episode"))
+        XCTAssertEqual(draft.approvedTranscript, "Keep going.")
+        XCTAssertFalse(draft.isShowingPlaceholder)
+        XCTAssertNil(draft.warning)
+        XCTAssertEqual(draft.interjection.transcriptionStatus, "transcribed")
+        XCTAssertNotNil(draft.interjection.alignedTranscript, "the timing arrives with the words, so ums can be removed")
+        XCTAssertEqual(draft.representationChoice, .original)
+        XCTAssertFalse(draft.adoptArrivedWords(from: arrived(draft.interjection), hasVoice: true, itemTitle: "Episode"), "once rebuilt, nothing is pending")
+    }
+
+    func testRebuildKeepsWhetherTheMarginIsIncluded() {
+        var left = pendingDraft(isIncluded: false)
+        XCTAssertTrue(left.adoptArrivedWords(from: arrived(left.interjection), hasVoice: true, itemTitle: "Episode"))
+        XCTAssertFalse(left.isIncluded)
+        var kept = pendingDraft(isIncluded: true)
+        kept.setIncluded(true)
+        XCTAssertTrue(kept.adoptArrivedWords(from: arrived(kept.interjection), hasVoice: true, itemTitle: "Episode"))
+        XCTAssertTrue(kept.isIncluded)
+    }
+
+    func testRebuildKeepsTheLastSentChoicesTheDraftStartedWith() {
+        var draft = ShareInterjectionDraft.initial(
+            for: pendingVoiceMargin(), isIncluded: true, hasVoice: true, itemTitle: "Episode",
+            lastSentReadAloud: false, lastSentLeadInMs: 8_000)
+        XCTAssertTrue(draft.adoptArrivedWords(from: arrived(draft.interjection), hasVoice: true, itemTitle: "Episode"))
+        XCTAssertFalse(draft.readAloud)
+        XCTAssertEqual(draft.previousReadAloud, false)
+        XCTAssertEqual(draft.leadInMs, SenderLeadIn.startingMs(lastSent: 8_000))
+        XCTAssertEqual(draft.previousLeadInMs, 8_000)
+    }
+
+    /// Each row is something the sender may have done while the words were pending; the words arriving must not undo it.
+    func testAnyEditTheSenderMadeStopsTheRebuild() {
+        let edits: [(String, (inout ShareInterjectionDraft) -> Void)] = [
+            ("their own words", { $0.setReviewedWords("My own words") }),
+            ("words only", { $0.setRepresentation(.textOnly, hasOriginalAudio: true) }),
+            ("read aloud off", { $0.readAloud = false }),
+            ("run-up changed", { $0.leadInMs += 1_000 }),
+            ("words just before", { $0.setAnchorBefore("Something else") }),
+            ("words just after", { $0.setAnchorAfter("Something else") }),
+            ("cleanup running", { $0.isPreparingCleanup = true }),
+            ("an edit recorded", { $0.editHistory.append(ShareMarginEditState(automaticCleanupEnabled: true)); $0.editHistoryIndex = 1 })
+        ]
+        for (name, edit) in edits {
+            var draft = pendingDraft()
+            edit(&draft)
+            let before = draft.approvedTranscript
+            XCTAssertFalse(draft.adoptArrivedWords(from: arrived(draft.interjection), hasVoice: true, itemTitle: "Episode"), name)
+            XCTAssertEqual(draft.approvedTranscript, before, name)
+            XCTAssertEqual(draft.interjection.transcriptionStatus, "pending", name)
+        }
+    }
+
+    func testOnlyAPendingDraftForTheSameMarginIsRebuilt() {
+        var done = pendingDraft()
+        done.interjection.transcriptionStatus = "transcribed"
+        XCTAssertFalse(done.adoptArrivedWords(from: arrived(done.interjection), hasVoice: true, itemTitle: "Episode"))
+        var draft = pendingDraft()
+        var other = arrived(draft.interjection)
+        other.id = "another"
+        XCTAssertFalse(draft.adoptArrivedWords(from: other, hasVoice: true, itemTitle: "Episode"))
+        XCTAssertFalse(draft.adoptArrivedWords(from: draft.interjection, hasVoice: true, itemTitle: "Episode"), "still pending")
+    }
+
+    func testAFailedTranscriptionRebuildsToTheSameStandInWords() {
+        var draft = pendingDraft()
+        let placeholder = draft.approvedTranscript
+        XCTAssertTrue(draft.adoptArrivedWords(from: arrived(draft.interjection, status: "failed"), hasVoice: true, itemTitle: "Episode"))
+        XCTAssertEqual(draft.approvedTranscript, placeholder, "a voice Margin still goes, with its stand-in words (#3027)")
+        XCTAssertEqual(draft.interjection.transcriptionStatus, "failed")
+        XCTAssertNil(draft.warning)
+    }
+
     private func makeDraft() -> ShareInterjectionDraft {
         let text = "um Keep going."
         var interjection = Interjection(
