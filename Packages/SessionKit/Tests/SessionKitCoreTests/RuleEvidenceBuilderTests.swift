@@ -83,6 +83,37 @@ final class RuleEvidenceBuilderTests: XCTestCase {
         XCTAssertEqual(build([episode(i, title: "Crypto crash")], marks: [otherTitle]).count, 2)
     }
 
+    func testOneMarkIsAboutOneEpisodeEvenWhenARerunSharesItsTitle() {
+        // An encore: the same title under a new entry id, both copies in the Library. The listener marked only e1.
+        let a = episode(item("a", addedDaysAgo: 30), entryId: "e1", title: "Crypto Q and A")
+        let b = episode(item("b", addedDaysAgo: 30), entryId: "e2", title: "Crypto Q and A")
+        let mark = ShowLessMark(feedKey: feed, entryId: "e1", title: "Crypto Q and A", markedAt: ago(days: 2))
+        let evidence = build([a, b], marks: [mark])
+        XCTAssertEqual(evidence.filter(\.showLess).map(\.id), ["e1"], "only the episode the mark names")
+        XCTAssertEqual(evidence.reduce(0) { $0 + $1.weight }, 3 + 1 + 1, "one mark, plus a quiet signal on each copy")
+        // With the order reversed the answer is the same: the mark names its entry, not whichever copy comes first.
+        XCTAssertEqual(build([b, a], marks: [mark]).filter(\.showLess).map(\.id), ["e1"])
+    }
+
+    func testTheTitleFallbackIsOnlyForAnEpisodeWithNoEntryAndOnlyForOneOfThem() {
+        // Two Library copies of one episode, neither matched to an entry: the one mark counts on the first only.
+        let first = episode(item("a", addedDaysAgo: 30), title: "Crypto crash")
+        let second = episode(item("b", addedDaysAgo: 30), title: "Crypto crash")
+        let mark = ShowLessMark(feedKey: feed, entryId: "e1", title: "Crypto crash", markedAt: ago(days: 2))
+        XCTAssertEqual(build([first, second], marks: [mark]).filter(\.showLess).map(\.id), ["a"])
+        // A mark that names an episode with an entry is never moved to an entryless copy of it.
+        let named = episode(item("n", addedDaysAgo: 30), entryId: "e1", title: "Crypto crash")
+        XCTAssertEqual(build([first, named], marks: [mark]).filter(\.showLess).map(\.id), ["e1"])
+    }
+
+    func testAMarkMadeFromAnItemNeverAttachesToAnotherItemByTitle() {
+        let marked = ShowLessMark(feedKey: feed, itemId: "gone", title: "Crypto crash", markedAt: ago(days: 2))
+        let other = episode(item("other", addedDaysAgo: 30), title: "Crypto crash")
+        let evidence = build([other], marks: [marked])
+        XCTAssertEqual(evidence.count, 2, "its own row, and the other item's quiet row")
+        XCTAssertEqual(evidence.filter(\.showLess).map(\.id), ["gone"])
+    }
+
     func testAnEpisodeWithNoSignalLeavesNoEvidence() {
         XCTAssertTrue(build([episode(item("i1", addedDaysAgo: 1))]).isEmpty, "added yesterday: not yet 14 days")
     }

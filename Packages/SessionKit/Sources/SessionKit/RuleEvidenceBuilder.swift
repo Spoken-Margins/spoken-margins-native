@@ -106,11 +106,12 @@ public enum RuleEvidenceBuilder {
         let marginsByItem = Dictionary(grouping: margins, by: \.itemId)
         let stoppedBefore = now.addingTimeInterval(-Double(stoppedEarlyDays) * 86_400)
         let addedBefore = now.addingTimeInterval(-Double(neverPlayedDays) * 86_400)
+        let assignedMarks = assignMarks(marks, to: episodes)
         var usedMarkIds = Set<String>()
         var result: [EpisodeEvidence] = []
         var seenIds = Set<String>()
 
-        for episode in episodes {
+        for (index, episode) in episodes.enumerated() {
             let item = episode.item
             let id = nonEmpty(episode.entryId) ?? item.id
             guard seenIds.insert(id).inserted else { continue }
@@ -124,15 +125,7 @@ public enum RuleEvidenceBuilder {
             var evidence = EpisodeEvidence(id: id, feedKey: episode.feedKey, title: episode.title, publishedAt: episode.publishedAt, at: .distantPast, positive: positive)
             var dates: [Date] = []
 
-            // A mark is for this episode when it names the item or the entry. A caller that found no feed entry for the item still
-            // has its mark, which names the entry, so the same feed and the same title count as the same episode too.
-            let foldedTitle = ListeningRuleMatcher.Pattern.tokens(of: episode.title)
-            let matching = marks.filter { mark in
-                mark.itemId == item.id
-                    || (nonEmpty(episode.entryId).map { $0 == mark.entryId } ?? false)
-                    || (mark.feedKey == episode.feedKey && !foldedTitle.isEmpty
-                        && ListeningRuleMatcher.Pattern.tokens(of: mark.title) == foldedTitle)
-            }
+            let matching = assignedMarks[index] ?? []
             if !matching.isEmpty {
                 evidence.showLess = true
                 usedMarkIds.formUnion(matching.map(\.id))
@@ -163,6 +156,39 @@ public enum RuleEvidenceBuilder {
         return result.sorted { lhs, rhs in
             lhs.at == rhs.at ? lhs.id < rhs.id : lhs.at > rhs.at
         }
+    }
+
+    /// Which episode each Show less mark is about, by position in `episodes`. A mark is about at most one episode, so one tap
+    /// never counts twice. Two passes:
+    /// 1. A mark belongs to the episode whose item or feed entry it names.
+    /// 2. A mark made from the Show screen names an entry and no item. If the caller found no feed entry for the item, that
+    ///    mark still belongs to it when the feed and the folded title are the same, but only an episode with no entry of its
+    ///    own and only a mark pass 1 left over, and only the first such episode, so a rerun posted under the same title with a
+    ///    new entry id, or two Library copies of one episode, are never both counted.
+    static func assignMarks(_ marks: [ShowLessMark], to episodes: [RuleEvidenceEpisode]) -> [Int: [ShowLessMark]] {
+        var assigned: [Int: [ShowLessMark]] = [:]
+        var claimed = Set<String>()
+        for (index, episode) in episodes.enumerated() {
+            for mark in marks where !claimed.contains(mark.id) {
+                let namesItem = mark.itemId == episode.item.id
+                let namesEntry = nonEmpty(episode.entryId).map { $0 == mark.entryId } ?? false
+                if namesItem || namesEntry {
+                    claimed.insert(mark.id)
+                    assigned[index, default: []].append(mark)
+                }
+            }
+        }
+        for (index, episode) in episodes.enumerated() where nonEmpty(episode.entryId) == nil {
+            let folded = ListeningRuleMatcher.Pattern.tokens(of: episode.title)
+            guard !folded.isEmpty else { continue }
+            for mark in marks where !claimed.contains(mark.id) && mark.itemId == nil && mark.feedKey == episode.feedKey {
+                if ListeningRuleMatcher.Pattern.tokens(of: mark.title) == folded {
+                    claimed.insert(mark.id)
+                    assigned[index, default: []].append(mark)
+                }
+            }
+        }
+        return assigned
     }
 
     private static func nonEmpty(_ value: String?) -> String? {
