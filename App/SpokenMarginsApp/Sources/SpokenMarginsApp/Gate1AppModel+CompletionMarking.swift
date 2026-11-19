@@ -21,6 +21,24 @@ extension Gate1AppModel {
         }
     }
 
+    /// The second mark complete (#4289): a finished item with a friend's new Margins leaves the Library's Unfinished view
+    /// once the listener says they're done with those Margins. Only the heard time changes (what playing a Margin
+    /// records); nothing is removed, and the item's own completion is untouched.
+    func markItemMarginsHeard(id: String) {
+        guard !rejectNavigationOrSessionMutationWhileRecording("mark_item_margins_heard") else { return }
+        do {
+            let store = try requireStore()
+            guard try ItemMarginsHeard.markHeard(itemId: id, hiding: hiddenSenders.current, in: store) > 0 else { return }
+            refreshLibraryRowsInBackground(mustPublish: true)
+            refreshMarginRowsInBackground(forItem: id)
+            try reloadSelectedItemAfterCompletionChange(id: id, store: store)
+            let title = libraryItems.first { $0.id == id }?.title ?? selectedItem.title
+            reportConfirmation(ManualCompletionMessages.marginsHeard(title: title))
+        } catch {
+            reportFailure(error, context: "Mark Margins heard failed")
+        }
+    }
+
     /// The open item screen shows the completion state too. It reloads off the main thread when it is the active item;
     /// a selection that isn't the active item (rare) keeps the direct read (#2505).
     private func reloadSelectedItemAfterCompletionChange(id: String, store: SQLiteSessionStore) throws {

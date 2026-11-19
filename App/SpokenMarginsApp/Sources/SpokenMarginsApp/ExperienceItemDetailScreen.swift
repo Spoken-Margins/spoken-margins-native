@@ -363,6 +363,9 @@ struct ExperienceItemDetailScreen: View {
                 case .markUnfinished:
                     Button("Mark Not Complete", systemImage: "arrow.uturn.backward.circle") { model.markItemUnfinished(id: row.id) }
                         .accessibilityIdentifier("item.markUnfinished.button")
+                case .markMarginsHeard:
+                    Button("Mark Margins Heard", systemImage: "checkmark.bubble") { model.markItemMarginsHeard(id: row.id) }
+                        .accessibilityIdentifier("item.markMarginsHeard.button")
                 case .playNext:
                     Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { model.queuePlayNext(itemId: row.id) }
                         .accessibilityIdentifier("item.playNext.button")
@@ -386,18 +389,24 @@ struct ExperienceItemDetailScreen: View {
         if let row = model.libraryItems.first(where: { $0.id == model.selectedItem.id }),
            let action = ItemQuickAction.completionAction(for: row) {
             Button {
-                if action == .markComplete { model.markItemCompleted(id: row.id) } else { model.markItemUnfinished(id: row.id) }
+                switch action {
+                case .markComplete: model.markItemCompleted(id: row.id)
+                case .markMarginsHeard: model.markItemMarginsHeard(id: row.id)
+                default: model.markItemUnfinished(id: row.id)
+                }
             } label: {
                 Label(
-                    action == .markComplete ? "Mark complete" : "Mark not complete",
-                    systemImage: action == .markComplete ? "checkmark.circle" : "arrow.uturn.backward.circle"
+                    action == .markComplete ? "Mark complete" : action == .markMarginsHeard ? "Mark Margins heard" : "Mark not complete",
+                    systemImage: action == .markComplete ? "checkmark.circle" : action == .markMarginsHeard ? "checkmark.bubble" : "arrow.uturn.backward.circle"
                 )
                 .frame(maxWidth: .infinity, minHeight: 40)
                 .expandedHitArea(vertical: 2)
             }
             .buttonStyle(.bordered)
             .tint(AppColors.evergreen)
-            .accessibilityIdentifier(action == .markComplete ? "item.markCompleteVisible.button" : "item.markUnfinishedVisible.button")
+            .accessibilityIdentifier(
+                action == .markComplete ? "item.markCompleteVisible.button"
+                    : action == .markMarginsHeard ? "item.markMarginsHeardVisible.button" : "item.markUnfinishedVisible.button")
         }
     }
 
