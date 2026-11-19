@@ -15,6 +15,11 @@ final class LibraryCollectionModel: ObservableObject {
     @Published private(set) var collections: [ItemCollection] = []
     /// The collection the Library is narrowed to; nil is All.
     @Published private(set) var selection: ItemCollectionScope?
+    /// What each imported folder or link list remembers (#3769), keyed by its collection's ID; read with the Library.
+    @Published private(set) var folders: [LibraryFolderRecord] = []
+    /// Set while a folder or link list is being imported as a collection, so the importers it calls report to it
+    /// instead of putting up a banner per file (#3769).
+    var importCapture: CollectionImportCapture?
     private var willChangeRelay: AnyCancellable?
     /// Called when this model's own save or delete changed the collections, so a Library read that began before it is
     /// seen as stale and read again, never published over what was just saved.
@@ -35,8 +40,9 @@ final class LibraryCollectionModel: ObservableObject {
 
     /// The collections as the store has them after a Library read or a save. A selected collection that is gone falls
     /// back to All; one that changed keeps its place with its current members.
-    func publish(_ stored: [ItemCollection]) {
+    func publish(_ stored: [ItemCollection], folders storedFolders: [LibraryFolderRecord]? = nil) {
         if stored != collections { collections = stored }
+        if let storedFolders, storedFolders != folders { folders = storedFolders }
         let next = LibraryCollectionScope.selection(selection, afterCollectionsChanged: stored)
         if next != selection { selection = next }
     }
@@ -85,6 +91,30 @@ final class LibraryCollectionModel: ObservableObject {
             onLocalWrite?()
             publish(stored ?? collections.filter { $0.id != collection.id })
             return .saved
+        }
+    }
+
+    /// An import's collection and record (#3769): the collection first, then the record, so an interruption between the
+    /// two leaves an ordinary collection (`LibraryFolderRecord`'s write order). Saved before the first file and after each.
+    func saveImport(_ collection: ItemCollection, record: LibraryFolderRecord, store: SQLiteSessionStore) async -> Error? {
+        let result = await Self.offMain { () -> Result<([ItemCollection]?, [LibraryFolderRecord]?), Error> in
+            do {
+                try store.saveItemCollection(collection)
+                try store.saveLibraryFolder(record)
+            } catch { return .failure(error) }
+            return .success((try? store.loadItemCollections(), try? store.loadLibraryFolders()))
+        }
+        switch result {
+        case .failure(let error):
+            return error
+        case .success(let (stored, storedFolders)):
+            var local = collections
+            if let index = local.firstIndex(where: { $0.id == collection.id }) { local[index] = collection } else { local.append(collection) }
+            var localFolders = folders
+            if let index = localFolders.firstIndex(where: { $0.id == record.id }) { localFolders[index] = record } else { localFolders.append(record) }
+            onLocalWrite?()
+            publish(stored ?? local, folders: storedFolders ?? localFolders)
+            return nil
         }
     }
 
