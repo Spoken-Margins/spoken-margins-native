@@ -740,7 +740,6 @@ struct ExperienceLibraryCompactRow: View {
         .background(AppColors.secondaryText, in: RoundedRectangle(cornerRadius: height * 0.34, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: height * 0.34, style: .continuous).strokeBorder(AppColors.bone, lineWidth: size * 0.18))
         .fixedSize()
-        .accessibilityIdentifier("library.margins.\(row.id)")
     }
 
     @ViewBuilder private var iconTileArtwork: some View {
