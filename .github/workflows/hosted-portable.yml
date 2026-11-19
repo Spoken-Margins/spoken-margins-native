@@ -350,10 +350,16 @@ jobs:
     # Mac's OS but has no Xcode 27, and Xcode 26.6 does not compile SessionKit's tests (run 39836269608). #2469 tracks it.
     name: 'hosted fast: Mac rest'
     needs: scope
+    # Merge queue (#4693): with the repository variable MERGE_QUEUE_MAC set to `queue-only`, this job runs in the
+    # merge queue and on a dispatch, never on a PR push. On a PR it is then skipped, which reports success, so the
+    # one required check name passes on the PR and is earned in the queue: one Mac run per merge instead of one per
+    # push. For an early Mac run on a PR, dispatch this workflow on its branch (`gh workflow run hosted-portable.yml
+    # --ref <branch>`). Unset (today), PRs run it as before, because the lane still merges on it. The variable goes
+    # on in the same hour the ruleset starts requiring the queue.
     if: >-
       !cancelled() && needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && (github.event_name != 'pull_request' ||
       ((github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on') &&
-       vars.LANE_HOSTED_MAC_REST == 'on'))
+       vars.MERGE_QUEUE_MAC != 'queue-only' && vars.LANE_HOSTED_MAC_REST == 'on'))
     runs-on: xcode-27
     # SessionKit's build (cached dependencies) and SessionKitCoreTests (the `sessionkit` job's 40 minutes before they
     # moved here, #2596), its two serial targets, and the compatibility checks when the diff reaches them (the lane's

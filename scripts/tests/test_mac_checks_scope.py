@@ -516,6 +516,15 @@ class WorkflowScopeTests(unittest.TestCase):
                 self.assertNotIn('paths-ignore', on['pull_request'])
                 self.assertEqual(on['merge_group'], {'types': ['checks_requested'], 'branches': ['main']})
 
+    def test_with_the_queue_switch_on_mac_rest_skips_pr_pushes_only(self):
+        # #4693: MERGE_QUEUE_MAC=queue-only keeps the Mac job off PR pushes; merge groups and dispatches still run it.
+        condition = self.jobs['mac-rest']['if']
+        self.assertIn("vars.MERGE_QUEUE_MAC != 'queue-only'", condition)
+        pr_part = condition.split("github.event_name != 'pull_request' ||", 1)
+        self.assertEqual(len(pr_part), 2, condition)
+        self.assertIn("vars.MERGE_QUEUE_MAC != 'queue-only'", pr_part[1])
+        self.assertNotIn('MERGE_QUEUE_MAC', pr_part[0])
+
     def test_the_scope_job_asks_the_rule_for_the_mac_verdict(self):
         text = (ROOT / '.github/workflows/hosted-portable.yml').read_text()
         self.assertIn('--mac-required', text)
