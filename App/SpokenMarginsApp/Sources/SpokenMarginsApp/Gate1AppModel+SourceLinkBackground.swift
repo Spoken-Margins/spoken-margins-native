@@ -103,7 +103,7 @@ extension Gate1AppModel {
         let fetched = FetchedPageMemo() // the voiceover lookup reads the post page from here (#810)
         let resolution = try await LinkArticleFallback.resolve(
             request, url: url, resolver: sourceLinkResolver, remembering: fetched, allowsArticle: feedEntry == nil,
-            using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }
+            using: listenerReadablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }
         )
         guard case .podcast(let result) = resolution else {
             if case .article(let article) = resolution {

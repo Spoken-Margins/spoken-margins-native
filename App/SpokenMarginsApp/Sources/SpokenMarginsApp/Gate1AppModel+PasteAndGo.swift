@@ -50,7 +50,7 @@ extension Gate1AppModel {
     /// offers Safari and returns nil, so the caller still shows the resolver's own "no audio" result.
     func readLinkAsArticleOrOfferSafari(_ url: URL, after result: LinkResolutionResult, startSession: Bool) async -> BrowserTextHandoff? {
         do {
-            return try await LinkArticleFallback.article(for: url, after: result, startSession: startSession, using: readablePageExtractor) {
+            return try await LinkArticleFallback.article(for: url, after: result, startSession: startSession, using: listenerReadablePageExtractor) {
                 diagnostics["lastSourceLinkArticleFallback"] = $0
             }
         } catch {

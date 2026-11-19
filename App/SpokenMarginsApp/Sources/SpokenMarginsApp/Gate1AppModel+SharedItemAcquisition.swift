@@ -17,7 +17,7 @@ extension Gate1AppModel {
     private func fetchArticleForImportedPackage(_ url: URL, expecting item: SharedItemIdentity) async throws -> String {
         let handoff: BrowserTextHandoff
         do {
-            handoff = try await readablePageExtractor.extract(url: url)
+            handoff = try await listenerReadablePageExtractor.extract(url: url)
         } catch {
             if error is URLError { throw error } // offline and timeouts get the connection message
             diagnostics["lastSharedArticleAcquisition"] = "failed:\(SafeErrorText.describe(error))"
