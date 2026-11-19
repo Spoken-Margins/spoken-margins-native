@@ -148,7 +148,8 @@ final class PaperNoteAnswerEngineTests: XCTestCase {
         XCTAssertEqual(after.activeInterjectionCount, 1)
         XCTAssertEqual(after.status, before.status, "writing is not playback")
         XCTAssertEqual(after.progressPercent, before.progressPercent)
-        XCTAssertEqual(rig.engine.currentSession?.position, before.sessionId.flatMap { _ in Position(charOffset: 0) })
+        XCTAssertEqual(rig.engine.currentSession?.position, Position(charOffset: 0), "the playhead did not move")
+        XCTAssertEqual(try rig.store.loadSession(id: "s1")?.position, Position(charOffset: 0))
     }
 
     func testAnAnswerOnAnotherSessionLeavesTheCurrentSessionAndPlaybackAlone() throws {
@@ -345,6 +346,16 @@ final class PaperNoteAnswerEngineTests: XCTestCase {
         let place = offset(of: "This fits earlier work.")
         let newer = session("new", at: place, percent: 70, updatedAt: 20)
         try assertAnswerAtWhereYouAre(sessions: [older, newer], expectedStart: place, expectedPage: 4)
+    }
+
+    func testASessionPlayingAGeneratedTurnHasNoPlaceInThePaper() throws {
+        var turn = session("s1", at: 12, percent: 20)
+        for type in [TargetType.assistantTurnTTS, .summaryTurnTTS] {
+            turn.currentTargetType = type
+            XCTAssertThrowsError(
+                try PaperNotePlace.resolve(item: makeRig(sessions: []).item, document: makeDocument(), session: turn, choice: .whereYouAre)
+            ) { XCTAssertEqual($0 as? PaperNotePlace.Failure, .placeNotInPaper) }
+        }
     }
 
     func testAPaperNeverStartedHasNoWhereYouAre() throws {

@@ -21,8 +21,12 @@ public enum PaperNotePlace {
         case noText
         /// "Where you are" needs a listening session, and the listener has not started this paper.
         case noSession
-        /// The page is not one of the paper's pages, or the document has no text on it or after it.
+        /// The page is not one of the paper's pages, or the document has no text on it or after it (so a last page
+        /// with no text of its own is refused).
         case noSuchPage(Int)
+        /// The session is playing a generated answer or summary, whose saved place counts characters of that
+        /// turn, not of the paper. The caller offers the other two places.
+        case placeNotInPaper
     }
 
     /// The session "Where you are" reads: the one Continue would resume, by the same rules as Play. An item added
@@ -50,6 +54,9 @@ public enum PaperNotePlace {
             return sentences.first?.lowerBound ?? 0
         case .whereYouAre:
             guard let session else { throw Failure.noSession }
+            guard session.currentTargetType != .assistantTurnTTS, session.currentTargetType != .summaryTurnTTS else {
+                throw Failure.placeNotInPaper
+            }
             let place = max(0, session.position.charOffset)
             if session.completionPercent >= ItemFinishedRule.listenedPercent || place >= characters.count {
                 return sentences.last?.lowerBound ?? 0
