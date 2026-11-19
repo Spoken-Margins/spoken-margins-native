@@ -74,6 +74,7 @@ struct ReadCostReport {
             ("loadListeningRules()", { _ = try store.loadListeningRules() }),
             ("loadListeningRule(id:)", { _ = try store.loadListeningRule(id: "listening-rule-0") }),
             ("loadShowLessMarks()", { _ = try store.loadShowLessMarks() }),
+            ("loadRuleSuggestionStates()", { _ = try store.loadRuleSuggestionStates() }),
             ("loadFeedSubscriptions()", { _ = try store.loadFeedSubscriptions() }),
             ("loadFeedEntries(all)", { _ = try store.loadFeedEntries(subscriptionId: nil) }),
             ("loadFeedEntries(one source)", { _ = try store.loadFeedEntries(subscriptionId: "feed-1") }),

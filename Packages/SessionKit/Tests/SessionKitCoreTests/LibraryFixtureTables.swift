@@ -226,6 +226,13 @@ extension LibraryFixture {
             ))
             try store.saveShowLessMark(ShowLessMark(feedKey: "https://feed-\(index % 10).example/feed", entryId: "entry-\(index)", title: "Episode \(index)", markedAt: epoch))
         }
+        // #4046: rule suggestions put off or refused, priced the same way.
+        for index in 0..<20 {
+            try store.saveRuleSuggestionState(RuleSuggestionState(
+                key: RuleSuggestionState.key(feedKey: "https://feed-\(index % 10).example/feed", word: "word\(index)"),
+                snoozedUntil: index % 2 == 0 ? epoch.addingTimeInterval(86_400) : nil, never: index % 2 == 1
+            ))
+        }
         for index in 1...min(6, scale.notes) {
             try store.saveInterjectionShareRevision(InterjectionShareRevision(
                 id: "revision-\(index)", interjectionId: "note-\(index)", itemId: itemIds[(index * 7) % itemIds.count], sessionId: "session-\(index)",
