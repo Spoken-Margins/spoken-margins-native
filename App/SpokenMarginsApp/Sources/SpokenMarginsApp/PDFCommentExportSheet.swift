@@ -31,9 +31,10 @@ struct PDFCommentExportSheet: View {
                     }
                 }
                 .safeAreaInset(edge: .bottom, spacing: 0) { exportButton }
+                .miniPlayerKeepOut()
         }
         .task { await export.load() }
-        .sheet(item: $export.shareFile, onDismiss: {
+        .trackedSheet(item: $export.shareFile, onDismiss: {
             // Every way the share sheet can close ends here, after it is gone.
             if let count = export.shareSheetClosed() {
                 onExported(count)
@@ -96,6 +97,7 @@ struct PDFCommentExportSheet: View {
                         Button("Try again") { export.dismissFailure() }
                             .accessibilityIdentifier("pdfExport.tryAgain.button")
                     }
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("pdfExport.writeFailed")
                 }
             }
