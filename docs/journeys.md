@@ -56,9 +56,11 @@ A step that is true for "whatever state" (or "any", "every") must have a test fo
 ## J2 — Podcast playback survives relaunch
 
 1. Add a podcast episode and let it download.
+   - Pass: once added, the Library row shows the episode's length, and the item screen's first pill shows the same length.
 2. Play it, then scrub to about 20:00.
    - Pass: audio continues from 20:00.
 3. Pause, force-quit the app, and reopen it.
+   - Pass: the Library row and the item screen's length pill show the same length after reopening.
 4. Scrub to a different point, or jump to a chapter, before pressing play. Then press play.
    - Pass: playback starts at the new point. There is no "seek failed" error and it does not jump back.
 

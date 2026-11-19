@@ -358,6 +358,10 @@ struct ExperienceItemDetailScreen: View {
 
     @ViewBuilder
     private var metadataPills: some View {
+        // The item's total length, first (#4186): the same words the Library row uses, always the total, never the time left.
+        if let length = lengthPillWords {
+            metadataPill(length.visible, systemImage: "clock", accessibilityLabel: length.spoken)
+        }
         if let episodeTitle = episodeLinkStatus.episodeTitle {
             metadataPill("Episode: \(episodeTitle)", systemImage: "link")
         }
@@ -383,6 +387,18 @@ struct ExperienceItemDetailScreen: View {
                 systemImage: "tablecells"
             )
         }
+    }
+
+    /// Nil for a meeting transcript (its meeting line gives the length) and for text with no character count.
+    private var lengthPillWords: (visible: String, spoken: String)? {
+        let item = model.selectedItem
+        return ItemLengthWords.pill(
+            isNativeAudio: item.isNativeAudio,
+            isMeetingTranscript: item.externalReferenceType == TranscriptItemText.referenceType,
+            textCharacterCount: item.lengthTextCharacterCount,
+            lengthMs: item.lengthMs,
+            playbackSpeed: model.speechPlaybackRateMultiplier
+        )
     }
 
     private var chapterCount: Int {
@@ -1026,8 +1042,9 @@ struct ExperienceItemDetailScreen: View {
         }
     }
 
-    private func metadataPill(_ text: String, systemImage: String) -> some View {
+    private func metadataPill(_ text: String, systemImage: String, accessibilityLabel: String? = nil) -> some View {
         Label(text, systemImage: systemImage)
+            .accessibilityLabel(accessibilityLabel ?? text)
             .font(.caption.weight(.semibold))
             .foregroundStyle(AppColors.secondaryText)
             .lineLimit(1)
