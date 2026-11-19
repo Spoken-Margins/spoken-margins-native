@@ -437,8 +437,7 @@ final class Gate1AppModel: ObservableObject {
     var databaseURLOverride: URL?
     let gate2CompactControls: Gate2CompactControlController
     let localFoundationModelClient: any LocalFoundationModelClient
-    /// Offers a spoken Margin's author a tidy version (#4339); one per app run so a model rewrite is asked for once.
-    let marginTidyProposer: MarginTidyProposer
+    let marginTidyProposer: MarginTidyProposer // #4339: one per app run, so a model rewrite is asked for once
     let streamingSpeechQueue = StreamingSpeechQueue(speech: SystemSpeechPlaybackClient())
     var speechPlaybackClient: AudioPlaybackClient?
     var sessionAudioPlaybackClient: AudioPlaybackClient?
@@ -619,14 +618,8 @@ final class Gate1AppModel: ObservableObject {
         self.microphoneAccess = MarginMicrophoneAccess(recorderInjected: recordingClient != nil, request: microphonePermissionRequest, status: microphonePermissionStatus)
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.gate2CompactControls = gate2CompactControls
-        let foundationModelClient = UITestingHooks.localFoundationModelClient ?? localFoundationModelClient
-        self.localFoundationModelClient = foundationModelClient
-        self.marginTidyProposer = MarginTidyProposer(
-            model: { transcript, before, after in
-                try await foundationModelClient.tidyMargin(transcript: transcript, before: before, after: after)
-            },
-            conditions: { MarginTidyConditions.currentDevice() }
-        )
+        self.localFoundationModelClient = UITestingHooks.localFoundationModelClient ?? localFoundationModelClient
+        self.marginTidyProposer = .forApp(client: UITestingHooks.localFoundationModelClient ?? localFoundationModelClient)
         self.databaseURLOverride = databaseURLOverride
         self.trashUndoDismissDelay = trashUndoDismissDelay
         if let interjectionTranscriptionHandler {
@@ -1071,10 +1064,6 @@ final class Gate1AppModel: ObservableObject {
         return sharedMarginRows.filter {
             marginCollectionQuery.includes(itemID: $0.layer.itemId) && marginCollectionQuery.matches([$0.interjection.approvedTranscript, $0.itemTitle, $0.collectionLabel])
         }
-    }
-
-    func marginSourceContext(_ row: MarginRow) -> String? {
-        MarginCollection.sourceContext(anchorBefore: row.interjection.anchor.anchorBefore, anchorAfter: row.interjection.anchor.anchorAfter)
     }
 
     /// Opens the Margin a notes-folder link names (#171).

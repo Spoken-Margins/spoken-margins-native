@@ -4,6 +4,11 @@ import SessionKit
 /// The Tidy version card's actions (#4339). The rules live in SessionKit (`MarginTidyCardState`, `MarginTidyProposer`,
 /// `SessionEngine.useTidy`); this file only carries the author's tap to the engine and the proposer's answer to the card.
 extension Gate1AppModel {
+    /// The Margin's source passage before and after it, for the details screen's "Context from" row.
+    func marginSourceContext(_ row: MarginRow) -> String? {
+        MarginCollection.sourceContext(anchorBefore: row.interjection.anchor.anchorBefore, anchorAfter: row.interjection.anchor.anchorAfter)
+    }
+
     /// The tidy version to offer for a Margin that says `transcript`, asked of the app-wide proposer, which runs off the
     /// main actor and remembers a model rewrite for this run.
     func marginTidyProposal(for margin: Interjection, transcript: String) async -> MarginTidyProposal? {
@@ -39,6 +44,18 @@ extension Gate1AppModel {
             snapshot = try engine.useOriginalWords(interjectionId: margin.id, sessionId: margin.sessionId)
         }
         refreshMarginRowsInBackground(forItem: margin.itemId)
+    }
+}
+
+extension MarginTidyProposer {
+    /// The app's proposer: the on-device model client's rewrite, offered only while the phone is cool and not in Low Power Mode.
+    static func forApp(client: any LocalFoundationModelClient) -> MarginTidyProposer {
+        MarginTidyProposer(
+            model: { transcript, before, after in
+                try await client.tidyMargin(transcript: transcript, before: before, after: after)
+            },
+            conditions: { MarginTidyConditions.currentDevice() }
+        )
     }
 }
 
