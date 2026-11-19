@@ -59,6 +59,11 @@
     "captureKind": { "type": ["string", "null"], "enum": ["audio", "written", null] },
     "isStarredForSharing": { "type": ["boolean", "null"] },
     "privateSharingNote": { "type": ["string", "null"], "maxLength": 500 },
+    "paperRole": {
+      "description": "The Paper note slot this Margin fills (#4340). Local to the listener; never in a packet.",
+      "type": ["string", "null"],
+      "enum": ["purpose", "keyFinding", "evidence", null]
+    },
     "replyTo": {
       "description": "Set when this Margin answers someone's shared Margin (#472).",
       "type": ["object", "null"],

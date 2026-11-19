@@ -1,0 +1,235 @@
+{
+ "schemaVersion": "source-catalog.v1",
+ "catalogId": "fixture-packs-small",
+ "contentVersion": 1,
+ "title": "Packs fixture",
+ "generatedAt": "2026-09-28T12:19:05Z",
+ "locale": "en-US",
+ "provenance": [
+  {
+   "id": "fixture-hand-curated",
+   "kind": "hand_curated",
+   "fetchedAt": "2026-11-14T12:00:00Z",
+   "note": "Invented entries for the packs contract tests."
+  }
+ ],
+ "subjects": [
+  {
+   "id": "science",
+   "title": "Science"
+  },
+  {
+   "id": "society-culture",
+   "title": "Society & Culture"
+  },
+  {
+   "id": "writers",
+   "title": "Writers"
+  }
+ ],
+ "packs": [
+  {
+   "id": "curious-fixture",
+   "title": "The curious fixture",
+   "summary": "A small pack of shows and writers for the contract tests.",
+   "entryIds": [
+    "pack-fixture-01",
+    "pack-fixture-02",
+    "pack-fixture-03",
+    "pack-fixture-05"
+   ]
+  },
+  {
+   "id": "science-fixture",
+   "title": "Science fixture",
+   "summary": "Evidence first.",
+   "entryIds": [
+    "pack-fixture-07",
+    "pack-fixture-01",
+    "pack-fixture-04",
+    "pack-fixture-06",
+    "pack-fixture-08"
+   ]
+  }
+ ],
+ "entries": [
+  {
+   "id": "pack-fixture-01",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Daily Science",
+   "author": "Author 1",
+   "feedURL": "https://feeds.example.com/pack-fixture-01.xml",
+   "subjects": [
+    "science"
+   ],
+   "provenanceIds": [
+    "fixture-hand-curated"
+   ],
+   "recentPublishedAt": [
+    "2026-11-13T08:00:00Z",
+    "2026-11-12T08:00:00Z",
+    "2026-11-11T08:00:00Z",
+    "2026-11-10T08:00:00Z",
+    "2026-11-09T08:00:00Z",
+    "2026-11-08T08:00:00Z",
+    "2026-11-07T08:00:00Z",
+    "2026-11-06T08:00:00Z"
+   ]
+  },
+  {
+   "id": "pack-fixture-02",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Weekly Ideas",
+   "author": "Author 2",
+   "feedURL": "https://feeds.example.com/pack-fixture-02.xml",
+   "subjects": [
+    "society-culture"
+   ],
+   "provenanceIds": [
+    "fixture-hand-curated"
+   ],
+   "recentPublishedAt": [
+    "2026-11-13T08:00:00Z",
+    "2026-11-06T08:00:00Z"
+   ]
+  },
+  {
+   "id": "pack-fixture-03",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Slow Questions",
+   "author": "Author 3",
+   "feedURL": "https://feeds.example.com/pack-fixture-03.xml",
+   "subjects": [
+    "society-culture"
+   ],
+   "provenanceIds": [
+    "fixture-hand-curated"
+   ],
+   "recentPublishedAt": [
+    "2026-09-01T08:00:00.500Z",
+    "2026-08-01T08:00:00Z"
+   ]
+  },
+  {
+   "id": "pack-fixture-04",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Lab Notes",
+   "author": "Author 4",
+   "feedURL": "https://feeds.example.com/pack-fixture-04.xml",
+   "subjects": [
+    "science"
+   ],
+   "provenanceIds": [
+    "fixture-hand-curated"
+   ]
+  },
+  {
+   "id": "pack-fixture-05",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "The Weekly Essay",
+   "author": "Author 5",
+   "feedURL": "https://feeds.example.com/pack-fixture-05.xml",
+   "subjects": [
+    "writers"
+   ],
+   "provenanceIds": [
+    "fixture-hand-curated"
+   ],
+   "recentPublishedAt": [
+    "2026-11-12T08:00:00Z",
+    "2026-11-05T08:00:00Z"
+   ]
+  },
+  {
+   "id": "pack-fixture-06",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "Field Dispatch",
+   "author": "Author 6",
+   "feedURL": "https://feeds.example.com/pack-fixture-06.xml",
+   "subjects": [
+    "writers"
+   ],
+   "provenanceIds": [
+    "fixture-hand-curated"
+   ],
+   "recentPublishedAt": [
+    "2026-11-10T08:00:00Z"
+   ]
+  },
+  {
+   "id": "pack-fixture-07",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Evidence Hour",
+   "author": "Author 7",
+   "feedURL": "https://feeds.example.com/pack-fixture-07.xml",
+   "subjects": [
+    "science"
+   ],
+   "provenanceIds": [
+    "fixture-hand-curated"
+   ],
+   "recentPublishedAt": [
+    "2026-11-13T08:00:00Z",
+    "2026-11-11T08:00:00Z",
+    "2026-11-09T08:00:00Z",
+    "2026-11-07T08:00:00Z",
+    "2026-11-05T08:00:00Z",
+    "2026-11-03T08:00:00Z"
+   ]
+  },
+  {
+   "id": "pack-fixture-08",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Long Talks",
+   "author": "Author 8",
+   "feedURL": "https://feeds.example.com/pack-fixture-08.xml",
+   "subjects": [
+    "society-culture"
+   ],
+   "provenanceIds": [
+    "fixture-hand-curated"
+   ],
+   "recentPublishedAt": [
+    "2026-11-12T08:00:00Z",
+    "2026-11-02T08:00:00Z"
+   ]
+  },
+  {
+   "id": "pack-fixture-09",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Adults Only",
+   "author": "Author 9",
+   "feedURL": "https://feeds.example.com/pack-fixture-09.xml",
+   "subjects": [
+    "society-culture"
+   ],
+   "provenanceIds": [
+    "fixture-hand-curated"
+   ],
+   "explicit": true
+  },
+  {
+   "id": "pack-fixture-10",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Unpackaged Show",
+   "author": "Author 10",
+   "feedURL": "https://feeds.example.com/pack-fixture-10.xml",
+   "subjects": [
+    "science"
+   ],
+   "provenanceIds": [
+    "fixture-hand-curated"
+   ]
+  }
+ ]
+}
