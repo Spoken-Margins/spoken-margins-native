@@ -287,6 +287,8 @@ public enum AppColorContrastAudit {
     public static let textBackgroundPairs: [Pair] = [
         .init(name: "reading body on bone", foreground: AppSemanticColorRGB.text, background: AppSemanticColorRGB.bone, minimumRatio: 4.5),
         .init(name: "reading secondary on bone", foreground: AppSemanticColorRGB.secondaryText, background: AppSemanticColorRGB.bone, minimumRatio: 4.5),
+        // The Library row's Margins tag: the count in bone on a secondaryText fill (#4698).
+        .init(name: "bone on secondaryText", foreground: AppSemanticColorRGB.bone, background: AppSemanticColorRGB.secondaryText, minimumRatio: 4.5),
         .init(name: "listening body", foreground: AppSemanticColorRGB.white, background: AppSemanticColorRGB.listeningBackground, minimumRatio: 4.5),
         .init(name: "listening secondary", foreground: AppSemanticColorRGB.listeningSecondary, background: AppSemanticColorRGB.listeningBackground, minimumRatio: 4.5),
         .init(name: "recording status", foreground: AppSemanticColorRGB.listeningAccent, background: AppSemanticColorRGB.listeningBackground, minimumRatio: 4.5),
@@ -351,6 +353,8 @@ public enum AppColorContrastAudit {
         .init(name: "coral icon on panel", foreground: AppSemanticColorRGB.coral, background: AppSemanticColorRGB.panel, minimumRatio: 3),
         .init(name: "coral icon on soft green", foreground: AppSemanticColorRGB.coral, background: AppSemanticColorRGB.softGreen, minimumRatio: 3),
         .init(name: "ochre icon on bone", foreground: AppSemanticColorRGB.ochreText, background: AppSemanticColorRGB.bone, minimumRatio: 3),
+        // The Library row's unread dot for a friend's unheard Margins: a shape, on the row (#4698).
+        .init(name: "unread dot on bone", foreground: AppSystemColorRGB.blue, background: AppSemanticColorRGB.bone, minimumRatio: 3),
         .init(name: "ochre icon on panel", foreground: AppSemanticColorRGB.ochreText, background: AppSemanticColorRGB.panel, minimumRatio: 3),
         .init(name: "ochre icon on soft green", foreground: AppSemanticColorRGB.ochreText, background: AppSemanticColorRGB.softGreen, minimumRatio: 3),
         .init(name: "warning icon on panel", foreground: AppSemanticColorRGB.warningText, background: AppSemanticColorRGB.panel, minimumRatio: 3),
