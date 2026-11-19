@@ -120,14 +120,16 @@ class BusyHourTests(unittest.TestCase):
 
     def test_a_merged_pr_outside_the_recently_updated_window_is_not_a_direct_push(self):
         merged_pr = self.pr(4488, 'merge4488')
-        # The PR is in the closed list, but behind 60 PRs updated more recently: past the 50 the audit used to read.
-        github = FakePulls(self.busy_hour() + [merged_pr], {'merge4488': [merged_pr]})
+        # The PR is in the closed list, but behind 120 PRs updated more recently: past the 50 the audit used to read,
+        # and past the 100 of the one page it reads now, so only the per-commit lookup can find it.
+        github = FakePulls(self.busy_hour(120) + [merged_pr], {'merge4488': [merged_pr]})
         old_window = github.recently_closed_into('main')[:50]
         self.assertNotIn(4488, [p['number'] for p in old_window])
         _, direct_in_window = audit.classify_push(['merge4488'], 'merge4488', old_window, 'main')
         self.assertTrue(direct_in_window)  # what the push audit decided before: a false "no pull request"
         merged, direct = audit.merges_in_push(github, ['merge4488'], 'merge4488', 'main')
         self.assertEqual((sorted(merged), direct), ([4488], False))
+        self.assertEqual(github.asked, ['merge4488'])  # the lookup, not the window, found it
 
     def test_a_commit_pushed_straight_to_main_is_still_direct(self):
         github = FakePulls(self.busy_hour(), {})
@@ -147,10 +149,39 @@ class BusyHourTests(unittest.TestCase):
         merged, direct = audit.merges_in_push(github, ['m5'], 'm5', 'main')
         self.assertEqual((sorted(merged), direct, github.asked), ([5], False, []))
 
+    def test_a_merge_pushes_its_branch_commits_but_only_the_merge_commit_is_asked_about(self):
+        """A PR with 12 branch commits, merged by hand: the tip is explained by the window, so no lookup at all; if the
+        window missed it, one lookup (the tip), never one per branch commit."""
+        branch = [f'b{i}' for i in range(12)]
+        compare = {'commits': [{'sha': sha, 'parents': [{'sha': 'x'}]} for sha in branch]
+                   + [{'sha': 'merge9', 'parents': [{'sha': 'a'}, {'sha': 'b0'}]}]}
+        github = FakePulls([self.pr(9, 'merge9')], {'merge9': [self.pr(9, 'merge9')]})
+        github.api_compare = json.dumps(compare)
+        orig = github.api
+        github.api = lambda *a, **k: github.api_compare if '/compare/' in a[0] else orig(*a, **k)
+        pushed = github.pushed_commits('before', 'merge9')
+        self.assertEqual(len(pushed), 13)
+        merged, direct = audit.merges_in_push(github, pushed, 'merge9', 'main')
+        self.assertEqual((sorted(merged), direct, github.asked), ([9], False, []))
+        # window misses it: one lookup, for the tip
+        github = FakePulls([], {'merge9': [self.pr(9, 'merge9')]})
+        github.parent_counts = {c['sha']: len(c['parents']) for c in compare['commits']}
+        merged, direct = audit.merges_in_push(github, pushed, 'merge9', 'main')
+        self.assertEqual((sorted(merged), direct, github.asked), ([9], False, ['merge9']))
+
+    def test_the_lookups_stop_at_their_time_budget_so_the_flag_is_still_written(self):
+        shas = [f'm{i}' for i in range(10)]
+        github = FakePulls([], {})
+        clock = iter([0, 1, 2, 100, 101, 102, 103, 104, 105, 106, 107, 108])
+        with mock.patch.object(audit.time, 'monotonic', side_effect=lambda: next(clock)):
+            merged, direct = audit.merges_in_push(github, shas, shas[-1], 'main')
+        self.assertEqual((merged, direct), ({}, True))
+        self.assertLess(len(github.asked), len(shas))  # out of budget after the first couple
+
     def test_lookups_are_capped_and_a_failed_lookup_is_no_match(self):
         shas = [f'c{i}' for i in range(120)]
         github = FakePulls([], {})
-        audit.merges_in_push(github, shas, shas[-1], 'main')
+        audit.merges_in_push(github, shas, shas[-1], 'main')  # no compare data: every commit might be a merge
         self.assertEqual(len(github.asked), audit.MAX_COMMIT_LOOKUPS)
         broken = audit.GitHub('o/r')
         calls = []

@@ -182,24 +182,31 @@ def classify_push(pushed: list[str], head: str, recent: list[dict], base: str | 
 
 
 MAX_COMMIT_LOOKUPS = 50
+LOOKUP_BUDGET_SECONDS = 90  # the job's timeout is 5 minutes; the flag must still be written after the lookups
 
 
 def merges_in_push(github: 'GitHub', pushed: list[str], head: str, base: str | None = None) -> tuple[dict, bool]:
-    """classify_push on the recently-closed list, then on what GitHub says about each commit the list left unexplained.
+    """classify_push on the recently-closed list, then on what GitHub says about each merge commit the list left unexplained.
 
     The list is a window of the most recently updated PRs, so it can miss a PR merged a minute ago (#4668): a burst of
     hand merges flagged 13 of them as "no pull request". Asking about the commit itself doesn't depend on that
-    window; the tip goes first, since it alone decides whether the push is direct.
+    window. Only the tip and commits with two or more parents are asked about (a PR's own branch commits are never
+    its merge commit), tip first since it alone decides whether the push is direct, at most MAX_COMMIT_LOOKUPS and
+    LOOKUP_BUDGET_SECONDS of waiting, so a GitHub outage can't keep the flag from being written.
     """
     base = base or trunk()
     recent = github.recently_closed_into(base)
     merged, direct = classify_push(pushed, head, recent, base)
     explained = {p['merge_commit_sha'] for p in merged.values()}
-    unknown = [head] + [sha for sha in pushed if sha != head]
-    asked = [sha for sha in unknown if sha not in explained][:MAX_COMMIT_LOOKUPS]
-    if not asked:
+    candidates = [head] + [sha for sha in pushed if sha != head and github.is_merge_commit(sha)]
+    asked = [sha for sha in candidates if sha not in explained][:MAX_COMMIT_LOOKUPS]
+    extra, deadline = [], time.monotonic() + LOOKUP_BUDGET_SECONDS
+    for sha in asked:
+        if time.monotonic() > deadline:
+            break
+        extra += github.pulls_for_commit(sha)
+    if not extra:
         return merged, direct
-    extra = [pull for sha in asked for pull in github.pulls_for_commit(sha)]
     return classify_push(pushed, head, recent + extra, base)
 
 
@@ -217,11 +224,16 @@ class GitHub:
         out = self.api('--paginate', '--jq', '.[] | @json', path)
         return [json.loads(line) for line in out.splitlines() if line.strip()]
 
+    def is_merge_commit(self, sha: str) -> bool:
+        """Whether the commit has two or more parents. Unknown (no compare data, e.g. a force-push) counts as yes."""
+        return getattr(self, 'parent_counts', {}).get(sha, 2) >= 2
+
     def pushed_commits(self, before: str, after: str) -> list[str]:
         if before == ZERO:
             return [after]
         try:
             compare = json.loads(self.api(f'repos/{self.repo}/compare/{before}...{after}'))
+            self.parent_counts = {c['sha']: len(c.get('parents') or [1, 2]) for c in compare.get('commits', [])}
             shas = [c['sha'] for c in compare.get('commits', [])]
             return shas or [after]
         except (RuntimeError, ValueError):
