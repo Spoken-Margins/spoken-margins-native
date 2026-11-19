@@ -172,4 +172,35 @@ final class ItemCollectionEditingTests: XCTestCase {
         XCTAssertEqual(query.text, "wages")
         XCTAssertEqual(query.filter, .starred)
     }
+
+    // MARK: New collection and Edit Items (#4343)
+
+    func testCreatingWithManyItemsKeepsTheirOrderOnceEachAndAllowsNone() {
+        let made = ItemCollectionEditing.creating(name: " HIST  210 ", itemIDs: ["b", "a", "b"], id: "c", now: now, in: [])
+        XCTAssertEqual(made?.name, "HIST 210")
+        XCTAssertEqual(made?.itemIDs, ["b", "a"])
+        XCTAssertEqual(ItemCollectionEditing.creating(name: "Empty", itemIDs: [], id: "e", now: now, in: [])?.itemIDs, [])
+        XCTAssertNil(ItemCollectionEditing.creating(name: "  ", itemIDs: ["a"], id: "x", now: now, in: []))
+        XCTAssertNil(ItemCollectionEditing.creating(name: "hist 210", itemIDs: ["a"], id: "x", now: now, in: [collection("c", "HIST 210")]))
+    }
+
+    func testSettingItemsAddsInTheLibrarysOrderAndRemovesUntickedOnes() {
+        let course = collection("c", "HIST 210", ["a", "b"])
+        let edited = ItemCollectionEditing.settingItems(["a", "d", "c"], in: course, choosable: ["a", "b", "c", "d"], now: later)
+        XCTAssertEqual(edited.itemIDs, ["a", "c", "d"])
+        XCTAssertEqual(edited.updatedAt, later)
+        XCTAssertEqual(edited.id, "c")
+    }
+
+    func testSettingItemsKeepsMembersTheChecklistCannotShowSoARestoredItemComesBack() {
+        let course = collection("c", "HIST 210", ["trashed", "a"])
+        let edited = ItemCollectionEditing.settingItems(["a"], in: course, choosable: ["a", "b"], now: later)
+        XCTAssertEqual(edited.itemIDs, ["trashed", "a"])
+        XCTAssertEqual(edited.updatedAt, now, "Nothing changed, so nothing is bumped")
+    }
+
+    func testSettingItemsIgnoresAChosenIdTheChecklistNeverOffered() {
+        let course = collection("c", "HIST 210", [])
+        XCTAssertEqual(ItemCollectionEditing.settingItems(["ghost"], in: course, choosable: ["a"], now: later).itemIDs, [])
+    }
 }

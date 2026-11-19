@@ -22,6 +22,12 @@ struct ExperienceLibraryScreen: View {
     /// The item whose Continue is waiting on the "hear new Margins first?" question (#474).
     @State private var pendingNewMarginsOffer: NewMarginsOfferRequest?
     @State private var collectionItem: LibraryItemRow?
+    /// The New collection / Edit Items sheet from the chip row (#4343).
+    @State private var collectionSheet: CollectionItemsSheet.Mode?
+    @State private var renamingCollection: ItemCollection?
+    @State private var collectionRenameText = ""
+    /// What a chip's rename or delete could not do, shown under the chips until the next tap there.
+    @State private var collectionProblem: String?
     /// A spoken note opened from its row: it has its own screen, not the text item screen (#3108).
     @State private var openedNote: SpokenNoteOpening?
     /// Export of a spoken note from its row: its words alone, or its audio and words, through the share sheet (#3660).
@@ -131,6 +137,12 @@ struct ExperienceLibraryScreen: View {
             ItemCollectionSheet(item: item)
                 .environmentObject(model)
         }
+        .trackedSheet(item: $collectionSheet) { mode in
+            CollectionItemsSheet(mode: mode)
+                .environmentObject(model)
+        }
+        // On the screen, not on the chip row: the row lives in a list cell the list may recycle.
+        .collectionRenameAlert(collection: $renamingCollection, text: $collectionRenameText, commit: commitCollectionRename)
         .newMarginsOffer($pendingNewMarginsOffer)
         .task { if !isEdgeSwipePreview { await clipboardLink.refresh() } } // the swipe's preview reads nothing (#106)
         // Pictures of items from followed feeds: recorded off the main thread, and again whenever the Library's items change (#3864).
@@ -236,11 +248,15 @@ struct ExperienceLibraryScreen: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AppSearchField("Search title, source, or author", text: $model.libraryQuery.query, identifier: "library.search.field")
+            AppSearchField("Search title, source, author, or friend", text: $model.libraryQuery.query, identifier: "library.search.field")
 
             HStack(spacing: 8) {
                 libraryFiltersMenu
                 sortMenu
+            }
+
+            if showsCollectionChips {
+                collectionChipRow
             }
 
             HStack(alignment: .top) {
@@ -258,13 +274,22 @@ struct ExperienceLibraryScreen: View {
                 }
             }
             if model.libraryHidesCompleted {
+                let friendNote = model.libraryCompletedHiddenNote
                 ViewThatFits(in: .horizontal) {
                     HStack {
                         Text("Completed hidden")
+                        if let friendNote {
+                            // The dot only separates the two texts on the screen; VoiceOver reads them as two items.
+                            Text("·").accessibilityHidden(true)
+                            Text(friendNote).accessibilityIdentifier("library.completed.friendNote")
+                        }
                         completedVisibilityButton
                     }
                     VStack(alignment: .leading) {
                         Text("Completed hidden")
+                        if let friendNote {
+                            Text(friendNote).accessibilityIdentifier("library.completed.friendNote")
+                        }
                         completedVisibilityButton
                     }
                 }
@@ -275,6 +300,88 @@ struct ExperienceLibraryScreen: View {
             }
         }
         .onChange(of: model.libraryQuery) { _, _ in model.libraryQueryChanged() }
+    }
+
+    // MARK: Collection chips (#4343)
+
+    /// Once any collection exists, or from 15 items (Design default 3). The count is the Library's rows, which leave out
+    /// Recently Deleted and include finished ones.
+    private var showsCollectionChips: Bool {
+        CollectionChipRule.showsRow(itemCount: model.libraryItems.count, collectionCount: model.libraryCollections.collections.count)
+    }
+
+    private var collectionChips: [CollectionChipRow.Chip] {
+        LibraryCollectionScope.chipOrder(model.libraryCollections.collections).map {
+            CollectionChipRow.Chip(collection: $0, itemCount: LibraryCollectionScope.itemCount(in: $0, among: model.libraryItems))
+        }
+    }
+
+    private var selectedCollection: ItemCollection? {
+        guard let id = model.libraryCollections.selection?.collectionID else { return nil }
+        return model.libraryCollections.collections.first { $0.id == id }
+    }
+
+    private var collectionChipRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            CollectionChipRow(
+                chips: collectionChips,
+                selectedID: model.libraryCollections.selection?.collectionID,
+                allCount: model.libraryItems.count,
+                onSelect: { id in
+                    collectionProblem = nil
+                    model.libraryCollections.select(collectionID: id)
+                },
+                onNew: { collectionSheet = .create },
+                onEditItems: { collectionSheet = .edit($0) },
+                onRename: { collection in
+                    collectionRenameText = collection.name
+                    renamingCollection = collection
+                },
+                onDelete: deleteCollection
+            )
+            if let collectionProblem {
+                Text(collectionProblem)
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityIdentifier("library.collections.problem")
+            }
+        }
+    }
+
+    private func commitCollectionRename() {
+        guard let collection = renamingCollection else { return }
+        renamingCollection = nil
+        guard let store = model.store else { return }
+        let name = collectionRenameText
+        Task {
+            switch await model.libraryCollections.rename(collection, to: name, store: store) {
+            case .saved:
+                collectionProblem = nil
+                model.marginCollectionQuery.refreshCollection(from: model.libraryCollections.collections)
+            case .needsName, .nameTaken:
+                collectionProblem = ItemCollectionEditing.Wording.renameRefused
+            case .failed(let error):
+                model.reportFailure(error, context: "Collection change failed")
+                collectionProblem = ItemCollectionEditing.Wording.saveFailed
+            }
+        }
+    }
+
+    /// No confirmation, like the shipped sheet: deleting a collection keeps every item and Margin in it.
+    private func deleteCollection(_ collection: ItemCollection) {
+        guard let store = model.store else { return }
+        Task {
+            switch await model.libraryCollections.delete(collection, store: store) {
+            case .saved:
+                collectionProblem = nil
+                model.marginCollectionQuery.refreshCollection(from: model.libraryCollections.collections)
+            case .failed(let error):
+                model.reportFailure(error, context: "Collection change failed")
+                collectionProblem = ItemCollectionEditing.Wording.saveFailed
+            case .needsName, .nameTaken:
+                break
+            }
+        }
     }
 
     /// The text alone is about 20 pt tall, and a text-only button's hit area is only its text, so its hit area grows to
@@ -368,11 +475,11 @@ struct ExperienceLibraryScreen: View {
 
     /// A build that can't open the Library shows that, never the empty state (#1969).
     private var screenState: LibraryScreenState {
-        LibraryScreenState.resolve(
+        LibraryCollectionScope.screenState(
             accessError: model.libraryAccessError,
-            itemCount: model.libraryItems.count,
-            isCaughtUp: model.libraryIsCaughtUp,
-            visibleCount: model.visibleLibraryItems.count
+            rows: model.libraryItems,
+            query: model.libraryQuery,
+            in: model.libraryCollections.selection
         )
     }
 
@@ -398,6 +505,15 @@ struct ExperienceLibraryScreen: View {
                 actionTitle: "Show completed"
             ) { model.showCompletedLibraryItems() }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+        case .emptyCollection:
+            let name = selectedCollection?.name ?? "this collection"
+            SMExperienceEmptyState(
+                systemImage: "tray",
+                title: "Nothing in \(name) yet.",
+                detail: "Add items from your Library to see them here.",
+                actionTitle: "Add items"
+            ) { if let collection = selectedCollection { collectionSheet = .edit(collection) } }
+            .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
         case .noMatches:
             SMExperienceEmptyState(
                 systemImage: "magnifyingglass",
@@ -416,6 +532,7 @@ struct ExperienceLibraryScreen: View {
                     row: row,
                     artworkURL: itemArtwork.url(forItem: row.id),
                     isCurrentItem: entry.isCurrent,
+                    isLoadedItem: entry.isCurrent && model.activePlaybackItemId == row.id,
                     playbackSpeed: model.speechPlaybackRateMultiplier,
                     spokenNoteFolders: model.marginOutput.spokenNotes,
                     onOpen: { openRow(row) },
@@ -488,7 +605,8 @@ struct ExperienceLibraryScreen: View {
     }
 }
 
-private struct ExperienceLibraryCompactRow: View {
+/// A Library row. Internal so the app-hosted height test can lay it out (#4062); the screen is its only caller.
+struct ExperienceLibraryCompactRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     // The icon tile scales with the text, up to twice its size, so a large glyph is not cut by a fixed frame (#1937).
     @ScaledMetric(relativeTo: .body) private var iconWidth: CGFloat = 38
@@ -498,6 +616,9 @@ private struct ExperienceLibraryCompactRow: View {
     /// The item's thumbnail, from its own feed entry or its show; nil keeps the icon (#3864).
     var artworkURL: URL?
     var isCurrentItem = false
+    /// The item has a session loaded in the player now, not only the one the Continue card offers: only it carries the
+    /// speaker glyph and the "Now playing" value (#4062).
+    var isLoadedItem = false
     /// The listener's speech speed, for a text item's estimated length (#305).
     var playbackSpeed: Double = 1
     /// Which spoken notes were saved to the export folder, for the "Exported" word on a finished note (#3661).
@@ -546,7 +667,25 @@ private struct ExperienceLibraryCompactRow: View {
         }
     }
 
-    @ViewBuilder private var iconTile: some View {
+    /// The tile, with a small speaker glyph on the item that is loaded now in place of the label line the row used to
+    /// carry above its title (#4062). The tile stays hidden from VoiceOver; the open button says "Now playing".
+    private var iconTile: some View {
+        iconTileArtwork
+            .overlay(alignment: .bottomTrailing) {
+                if isLoadedItem {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(AppColors.onEvergreen)
+                        .frame(width: 18, height: 18)
+                        .background(AppColors.evergreen, in: Circle())
+                        .overlay(Circle().strokeBorder(AppColors.bone, lineWidth: 1.5))
+                        .offset(x: 4, y: 4)
+                }
+            }
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private var iconTileArtwork: some View {
         let width = min(max(iconWidth, 38), 76)
         let height = min(max(iconHeight, 44), 88)
         if let artworkURL {
@@ -575,11 +714,6 @@ private struct ExperienceLibraryCompactRow: View {
     private var openButton: some View {
         Button(action: onOpen) {
             VStack(alignment: .leading, spacing: 3) {
-                if isCurrentItem {
-                    Label(currentItemLabel, systemImage: "play.circle.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppColors.evergreen)
-                }
                 Text(row.title)
                     .font(.headline)
                     .foregroundStyle(AppColors.text)
@@ -589,29 +723,28 @@ private struct ExperienceLibraryCompactRow: View {
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
                     .multilineTextAlignment(.leading)
-                ownMarginsLine
-                sharedMarginsLine
+                marginsLine
             }
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Title, progress, byline and kind, Margins, then whether it is the item playing (#4062).
+        .accessibilityLabel(openAccessibilityLabel)
+        .accessibilityValue(isLoadedItem ? "Now playing" : "")
         .accessibilityIdentifier("library.row.\(row.id)")
     }
 
     private var playButton: some View {
         Button(action: onPlay) {
-            LibraryRowPlayLabel(isReadyOffline: row.offlineState == .readyOffline, isPreparing: row.startupAudioState == .preparing)
+            LibraryRowPlayLabel(
+                isReadyOffline: row.offlineState == .readyOffline, isPreparing: row.startupAudioState == .preparing,
+                progress: lines.ringFraction)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(playActionTitle)
-        .accessibilityValue(
-            row.startupAudioState == .preparing
-                ? "Preparing audio, \(startupProgressDescription). Playback can start now."
-                : row.startupAudioState == .waiting ? "Waiting to prepare audio. Playback can start now."
-                : (row.offlineState == .readyOffline ? "Ready offline" : "Ready to start")
-        )
+        .accessibilityValue(playAccessibilityValue)
         .accessibilityIdentifier("queue.start.\(row.id)")
     }
 
@@ -743,8 +876,31 @@ private struct ExperienceLibraryCompactRow: View {
         }
     }
 
+    /// The words of the row's progress and Margins lines: time left, the ring's fraction, yours and a friend's (#4062).
+    /// Worked out from the row alone, which the one Library read already filled, never from the store.
+    private var lines: LibraryRowLines {
+        LibraryRowLines(row: row, playbackSpeed: playbackSpeed, isExported: isSavedToExportFolder)
+    }
+
+    /// The progress words come first ("about 24 min left", "Completed"), then byline, kind and status as before. The
+    /// separate percent is gone: the words say how much is left and the ring shows the fraction (#4062).
     private var detail: LibraryRowDetail {
-        LibraryRowDetail(byline: sourceByline, kind: mediaLabel, length: lengthLabel, listening: listeningLabel, status: statusDetail)
+        LibraryRowDetail(byline: sourceByline, kind: mediaLabel, length: lines.progress, listening: nil, status: statusDetail)
+    }
+
+    private var openAccessibilityLabel: String {
+        [row.title, lines.progressSpoken, detail.rest.isEmpty ? nil : detail.rest, lines.marginsSpoken]
+            .compactMap { $0 }.joined(separator: ". ")
+    }
+
+    private var playAccessibilityValue: String {
+        let readiness = row.startupAudioState == .preparing
+            ? "Preparing audio, \(startupProgressDescription). Playback can start now."
+            : row.startupAudioState == .waiting ? "Waiting to prepare audio. Playback can start now."
+            : (row.offlineState == .readyOffline ? "Ready offline" : "Ready to start")
+        // A row not started or finished keeps its value as it was; an item in progress says how far along it is.
+        guard lines.ringFraction != nil, let spoken = lines.progressSpoken else { return readiness }
+        return "\(spoken). \(readiness)"
     }
 
     /// One line, except at the largest non-accessibility size, where a status such as "Opening audio unavailable ·
@@ -766,32 +922,55 @@ private struct ExperienceLibraryCompactRow: View {
         }
     }
 
-    /// How many Margins the listener has made here, so a nearly-finished item can be cleared without opening it to look (#2394).
-    /// Quiet at zero. The count is words; the icon is only a hint.
-    @ViewBuilder private var ownMarginsLine: some View {
-        if let line = LibraryRowWording.marginCountLine(row.marginCount) {
-            Label(line, systemImage: "bubble.left")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(AppColors.secondaryText)
-                .accessibilityIdentifier("library.margins.\(row.id)")
+    /// One Margins line for both kinds (#4062): "2 yours" and a friend's part, "2 Margins" alone, or just the friend's
+    /// part. It is one line when it fits and two stacked lines when it doesn't, and never cuts a count off. At
+    /// accessibility sizes the parts always stack. The words carry the meaning; the icons are only a hint.
+    @ViewBuilder private var marginsLine: some View {
+        let lines = lines
+        if lines.hasMarginsLine {
+            if let own = lines.ownMargins, let friend = lines.friendMargins {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 2) { ownPart(own); friendPart(friend) }
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 6) {
+                            ownPart(own)
+                            Text("·").accessibilityHidden(true)
+                            friendPart(friend)
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
+                        VStack(alignment: .leading, spacing: 2) { ownPart(own); friendPart(friend) }
+                    }
+                }
+            } else if let own = lines.ownMargins {
+                ownPart(own)
+            } else if let friend = lines.friendMargins {
+                friendPart(friend)
+            }
         }
     }
 
-    /// Where a friend left Margins, and whether any are new (#1792). The words carry it, not the color.
-    @ViewBuilder private var sharedMarginsLine: some View {
-        if let line = row.sharedMargins.libraryLine {
-            HStack(spacing: 6) {
-                Image(systemName: "person.2.fill")
-                    .accessibilityHidden(true)
-                Text(line)
-                if row.sharedMargins.new > 0 { NewMarginBadge() }
-            }
+    /// How many Margins the listener has made here, so a nearly-finished item can be cleared without opening it to look (#2394).
+    private func ownPart(_ line: String) -> some View {
+        Label(line, systemImage: "bubble.left")
             .font(.caption.weight(.semibold))
-            .foregroundStyle(AppColors.evergreen)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(row.sharedMargins.accessibilityLine ?? line)
-            .accessibilityIdentifier("library.sharedMargins.\(row.id)")
+            .foregroundStyle(AppColors.secondaryText)
+            .accessibilityIdentifier("library.margins.\(row.id)")
+    }
+
+    /// Where a friend left Margins, and whether any are new (#1792). The words carry it, not the color.
+    private func friendPart(_ line: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "person.2.fill")
+                .accessibilityHidden(true)
+            Text(line)
+            if lines.friendMarginsAreNew { NewMarginBadge() }
         }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(AppColors.evergreen)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(row.sharedMargins.senderAccessibilityLine ?? line)
+        .accessibilityIdentifier("library.sharedMargins.\(row.id)")
     }
 
     private var sourceByline: String? {
@@ -803,32 +982,12 @@ private struct ExperienceLibraryCompactRow: View {
         return row.hasContinuationSession ? "Continue \(row.title)" : "Start \(row.title)"
     }
 
-    private var currentItemLabel: String {
-        if (row.continuationProgressPercent ?? 0) >= ItemFinishedRule.atEndPercent { return "Finished" }
-        return row.hasContinuationSession ? (dynamicTypeSize.isAccessibilitySize ? "Resume" : "Continue listening") : "Current"
-    }
-
     private var mediaSymbol: String { row.mediaSymbol }
-
-    /// "about 25 min" for a text item at the listener's speed (#305); podcasts show none.
-    private var lengthLabel: String? {
-        ListeningTimeEstimator.libraryTotalText(textCharacterCount: row.textCharacterCount, playbackSpeed: playbackSpeed)
-    }
 
     /// A finished spoken note that was saved to the export folder says so, in words (#3661).
     private var isSavedToExportFolder: Bool {
         guard let noteId = row.spokenNoteId else { return false }
         return !spokenNoteFolders.savedFolders(forNoteId: noteId).isEmpty
-    }
-
-    private var listeningLabel: String? {
-        if row.isCompleted {
-            isSavedToExportFolder ? "Completed · Exported" : "Completed"
-        } else if let progress = row.continuationProgressPercent {
-            "\(progress)%"
-        } else {
-            nil
-        }
     }
 
     private var mediaLabel: String {
@@ -892,6 +1051,11 @@ struct LibraryRowPlayLabel: View {
     @ScaledMetric(relativeTo: .body) private var diameter: CGFloat = 40
     let isReadyOffline: Bool
     let isPreparing: Bool
+    /// How far the listener is through an item in progress, 0...1; nil draws no ring (#4062). The ring sits inside the
+    /// circle's own edge, so the button keeps its size and the 44 pt hit area. The row's words say the same thing.
+    var progress: Double?
+
+    private static let ringWidth: CGFloat = 2.5
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -899,6 +1063,7 @@ struct LibraryRowPlayLabel: View {
                 .foregroundStyle(AppColors.evergreen)
                 .frame(width: min(max(diameter, 40), 80), height: min(max(diameter, 40), 80))
                 .background(AppColors.softGreen, in: Circle())
+                .overlay { ring }
             if isPreparing {
                 ProgressView()
                     .controlSize(.mini)
@@ -908,5 +1073,20 @@ struct LibraryRowPlayLabel: View {
             }
         }
         .minimumTapTarget()
+    }
+
+    /// A thin full track in the separator colour and an arc for the fraction listened, from the top, clockwise.
+    @ViewBuilder private var ring: some View {
+        if let progress {
+            ZStack {
+                Circle().strokeBorder(AppColors.border, lineWidth: Self.ringWidth)
+                Circle()
+                    .inset(by: Self.ringWidth / 2)
+                    .trim(from: 0, to: min(max(progress, 0), 1))
+                    .stroke(AppColors.evergreen, style: StrokeStyle(lineWidth: Self.ringWidth, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            .accessibilityHidden(true)
+        }
     }
 }

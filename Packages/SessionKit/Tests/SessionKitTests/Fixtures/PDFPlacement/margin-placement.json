@@ -1,0 +1,210 @@
+{
+ "documentText": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife. However little known the feelings or views of such a man may be on his first entering a neighbourhood, this truth is so well fixed in the minds of the surrounding families, that he is considered the rightful property of some one or other of their daughters. Mr. Bennet replied that he had not.\n\nWe repeated the measurement three times to be sure. The interference between the two waves was the surprise of the whole experiment.\n\nThe committee met on a cold Tuesday. It voted to build the new bridge at the narrow crossing. Nobody spoke against it, because the old ford had drowned two carters that spring and a good dog. The bridge opened in June. Children ran across it before the paint was dry.\n\nThe harvest was early that year. The river had risen higher than anyone remembered, and by the time the last cart crossed the ford the water was already at the axles of the oxen. Nobody went back for the rest.\n\nThe first day ended without an answer. We went home.\n\nThe second day ended the same way. We went home.\n\nThe old lighthouse stood at the edge of the cliff for two hundred years. Its keeper never once left it.",
+ "pages": [
+  {
+   "index": 0,
+   "kind": "text",
+   "rotation": 0,
+   "startsAt": 0,
+   "lines": [
+    {
+     "text": "It is a truth universally acknowledged, that a single man in possession of",
+     "x": 72,
+     "y": 720,
+     "joinsNext": false
+    },
+    {
+     "text": "a good fortune, must be in want of a wife. However little known the feelings",
+     "x": 72,
+     "y": 704,
+     "joinsNext": false
+    },
+    {
+     "text": "or views of such a man may be on his first entering a neighbourhood, this",
+     "x": 72,
+     "y": 688,
+     "joinsNext": false
+    },
+    {
+     "text": "truth is so well fixed in the minds of the surrounding families, that he is",
+     "x": 72,
+     "y": 672,
+     "joinsNext": false
+    },
+    {
+     "text": "considered the rightful property of some one or other of their daughters.",
+     "x": 72,
+     "y": 656,
+     "joinsNext": false
+    },
+    {
+     "text": "Mr. Bennet replied that he had not.",
+     "x": 72,
+     "y": 640,
+     "joinsNext": false
+    }
+   ]
+  },
+  {
+   "index": 1,
+   "kind": "text",
+   "rotation": 0,
+   "startsAt": 413,
+   "lines": [
+    {
+     "text": "We repeated the measurement three times to be sure. The inter-",
+     "x": 72,
+     "y": 720,
+     "joinsNext": true
+    },
+    {
+     "text": "ference between the two waves was the surprise of the whole experiment.",
+     "x": 72,
+     "y": 704,
+     "joinsNext": false
+    }
+   ]
+  },
+  {
+   "index": 2,
+   "kind": "text",
+   "rotation": 0,
+   "startsAt": 547,
+   "lines": [
+    {
+     "text": "The committee met on a cold Tuesday.",
+     "x": 72,
+     "y": 720,
+     "joinsNext": false
+    },
+    {
+     "text": "It voted to build the new bridge at",
+     "x": 72,
+     "y": 704,
+     "joinsNext": false
+    },
+    {
+     "text": "the narrow crossing. Nobody spoke",
+     "x": 72,
+     "y": 688,
+     "joinsNext": false
+    },
+    {
+     "text": "against it, because the old ford had",
+     "x": 72,
+     "y": 672,
+     "joinsNext": false
+    },
+    {
+     "text": "drowned two carters that spring and",
+     "x": 72,
+     "y": 656,
+     "joinsNext": false
+    },
+    {
+     "text": "a good dog. The bridge opened in June.",
+     "x": 330,
+     "y": 720,
+     "joinsNext": false
+    },
+    {
+     "text": "Children ran across it before the",
+     "x": 330,
+     "y": 704,
+     "joinsNext": false
+    },
+    {
+     "text": "paint was dry.",
+     "x": 330,
+     "y": 688,
+     "joinsNext": false
+    }
+   ]
+  },
+  {
+   "index": 3,
+   "kind": "text",
+   "rotation": 0,
+   "startsAt": 816,
+   "lines": [
+    {
+     "text": "The harvest was early that year. The river had risen higher than anyone",
+     "x": 72,
+     "y": 170,
+     "joinsNext": false
+    },
+    {
+     "text": "remembered, and by the time the last cart crossed the ford the water",
+     "x": 72,
+     "y": 154,
+     "joinsNext": false
+    }
+   ]
+  },
+  {
+   "index": 4,
+   "kind": "text",
+   "rotation": 0,
+   "startsAt": 957,
+   "lines": [
+    {
+     "text": "was already at the axles of the oxen. Nobody went back for the rest.",
+     "x": 72,
+     "y": 720,
+     "joinsNext": false
+    }
+   ]
+  },
+  {
+   "index": 5,
+   "kind": "text",
+   "rotation": 0,
+   "startsAt": 1027,
+   "lines": [
+    {
+     "text": "The first day ended without an answer. We went home.",
+     "x": 72,
+     "y": 720,
+     "joinsNext": false
+    },
+    {
+     "text": "The second day ended the same way. We went home.",
+     "x": 72,
+     "y": 688,
+     "joinsNext": false
+    }
+   ]
+  },
+  {
+   "index": 6,
+   "kind": "text",
+   "rotation": 90,
+   "startsAt": 1131,
+   "lines": [
+    {
+     "text": "The old lighthouse stood at the edge of the cliff for two hundred years.",
+     "x": 110,
+     "y": 100,
+     "joinsNext": false
+    },
+    {
+     "text": "Its keeper never once left it.",
+     "x": 126,
+     "y": 100,
+     "joinsNext": false
+    }
+   ]
+  },
+  {
+   "index": 7,
+   "kind": "scan",
+   "rotation": 0,
+   "startsAt": 1234,
+   "lines": []
+  }
+ ],
+ "lineHeight": {
+  "ascent": 12,
+  "descent": 4
+ }
+}

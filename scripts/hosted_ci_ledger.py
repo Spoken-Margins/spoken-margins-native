@@ -1,7 +1,7 @@
 """Hosted CI cost and catch (#2459, #2596): what the hosted checks cost, how long hosted Macs queue, and what they catch.
 
 lane_ledger.py only sees the build Mac's lane. The hosted checks (hosted-portable.yml: portable, SessionKit core,
-Mac rest; hosted-app-macos.yml; hosted-integration.yml) run on GitHub, so this reads their runs from the Actions
+Mac rest; hosted-app-macos.yml; hosted-integration.yml; main-t3.yml, #4573) run on GitHub, so this reads their runs from the Actions
 API in bulk and writes the raw jobs to one JSON file, then summarises that file. Nothing is read into an agent's context.
 
     python3 scripts/hosted_ci_ledger.py fetch [--days 7] [--out FILE]   # Actions API -> FILE (raw runs and jobs)
@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = 'Spoken-Margins/spoken-margins-native'
-WORKFLOWS = ('hosted-portable.yml', 'hosted-app-macos.yml', 'hosted-integration.yml')
+WORKFLOWS = ('hosted-portable.yml', 'hosted-app-macos.yml', 'hosted-integration.yml', 'main-t3.yml')
 MAC_LABEL_PREFIXES = ('xcode', 'macos')
 PAIR = ('hosted fast: portable', 'hosted fast: SessionKit core')
 MAC_REST = 'hosted fast: Mac rest'
