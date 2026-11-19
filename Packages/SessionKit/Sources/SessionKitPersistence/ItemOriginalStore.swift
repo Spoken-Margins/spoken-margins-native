@@ -71,6 +71,62 @@ public struct ItemOriginalStore: Sendable {
         return destination
     }
 
+    /// A copy of a picked file, made while its access is open and not yet the item's original. It is a temporary file in the
+    /// item's folder (`removeInterruptedWrites` clears one left behind), so a batch of large PDFs holds file addresses and
+    /// hashes, never the bytes. `commit` makes it the original once the item is saved; `discard` removes it.
+    public struct Staged: Equatable, Sendable {
+        public let itemId: String
+        public let kind: Kind
+        public let url: URL
+        /// The SHA-256 of the staged bytes, lower-case hex: the value to record as `Extraction.sourceSHA256`.
+        public let sha256: String
+    }
+
+    /// Copies `source` into a temporary file in the item's folder, a chunk at a time, and hashes it.
+    public func stage(copying source: URL, itemId: String, kind: Kind = .pdf) throws -> Staged {
+        guard let folder = folderURL(itemId: itemId) else { throw StoreError.noItemId }
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+        let temporary = folder.appendingPathComponent(kind.fileName + "." + UUID().uuidString + Self.temporarySuffix)
+        do {
+            guard fileManager.createFile(atPath: temporary.path, contents: nil) else { throw CocoaError(.fileWriteUnknown) }
+            let input = try FileHandle(forReadingFrom: source)
+            defer { try? input.close() }
+            let output = try FileHandle(forWritingTo: temporary)
+            defer { try? output.close() }
+            while let chunk = try input.read(upToCount: 1 << 20), !chunk.isEmpty {
+                try output.write(contentsOf: chunk)
+            }
+            try output.synchronize()
+            return Staged(itemId: itemId, kind: kind, url: temporary, sha256: try SourceCatalogVerifier.sha256(ofFileAt: temporary))
+        } catch {
+            try? fileManager.removeItem(at: temporary)
+            throw error
+        }
+    }
+
+    /// Makes a staged file the item's original, replacing the one it had (of either kind). Returns the file's URL.
+    @discardableResult
+    public func commit(_ staged: Staged) throws -> URL {
+        guard let folder = folderURL(itemId: staged.itemId) else { throw StoreError.noItemId }
+        let destination = folder.appendingPathComponent(staged.kind.fileName)
+        guard rename(staged.url.path, destination.path) == 0 else {
+            let reason = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            try? FileManager.default.removeItem(at: staged.url)
+            throw reason
+        }
+        for other in Kind.allCases where other != staged.kind {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(other.fileName))
+        }
+        clearTemporaryFiles(in: folder, olderThan: Self.abandonedAfter, now: Date())
+        return destination
+    }
+
+    /// Removes a staged file that will not become an original (its item did not save). Nothing to remove is not an error.
+    public func discard(_ staged: Staged) {
+        try? FileManager.default.removeItem(at: staged.url)
+    }
+
     /// The item's kept original, or nil when this iPhone has none (an item added before the copy was kept, or synced from
     /// another iPhone) or the item has no id.
     public func url(itemId: String) -> URL? {

@@ -59,8 +59,10 @@ extension Gate1AppModel {
     /// A PDF the share sheet saved to the app group (#828 returns the new item for the pending-share message).
     func importLocalSharedPDFInBackground(url: URL) async throws -> String {
         #if canImport(PDFKit)
-        let extracted = try await Task.detached(priority: .userInitiated) {
-            try NativePDFDocumentExtractor.extractStructured(from: url)
+        let (extracted, sourceSHA256) = try await Task.detached(priority: .userInitiated) {
+            // The file is hashed a chunk at a time and read by PDFKit from disk; its bytes are never held (#4338).
+            let hash = try? SourceCatalogVerifier.sha256(ofFileAt: url)
+            return (try NativePDFDocumentExtractor.extractStructured(fromFile: url, sourceSHA256: hash), hash)
         }.value
         let fileTitle = url.deletingPathExtension().lastPathComponent
         let title = extracted.title ?? (fileTitle.isEmpty ? "Shared PDF" : fileTitle)
@@ -76,7 +78,7 @@ extension Gate1AppModel {
             documentStructure: extracted.documentStructure
         )
         let itemId = try await importBrowserTextInBackgroundOffMain(handoff, structuredDocument: extracted.document)
-        if let original = extracted.originalData { await keepOriginalPDF(original, itemId: itemId) } // #4338
+        await keepOriginalPDF(copying: url, itemId: itemId, expectedSHA256: sourceSHA256) // #4338
         await savePDFClips(extracted.clips, itemId: itemId)
         diagnostics["lastSharedPDFImport"] = url.lastPathComponent
         markOnboardingSteps([.addedOwnSource, .addedFromSafari])

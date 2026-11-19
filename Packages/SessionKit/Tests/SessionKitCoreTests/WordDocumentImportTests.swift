@@ -209,4 +209,34 @@ final class WordDocumentImportTests: XCTestCase {
         XCTAssertNil(store.url(itemId: "item-1"))
         XCTAssertNil(store.kind(itemId: "item-1"))
     }
+
+    /// A Files import stages each picked file in its item's folder and commits it once the item saves, so a batch holds
+    /// no bytes (#4338). A staged Word file must commit as `original.docx` and leave the item one original either way.
+    func testAStagedWordFileCommitsAsTheDocxOriginalAndAnItemKeepsOneOriginal() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("word-staged-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ItemOriginalStore(root: root)
+        let docx = try fixture("plain-paragraphs.docx")
+        let picked = root.appendingPathComponent("picked/Essay.docx")
+        try FileManager.default.createDirectory(at: picked.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try docx.write(to: picked)
+        let folder = try XCTUnwrap(store.folderURL(itemId: "item-1"))
+
+        try store.write(Data("%PDF-1.7 earlier".utf8), itemId: "item-1")
+        let staged = try store.stage(copying: picked, itemId: "item-1", kind: .docx)
+        XCTAssertEqual(staged.sha256, ItemOriginalStore.sha256(of: docx))
+        XCTAssertEqual(store.kind(itemId: "item-1"), .pdf, "not the original until it is committed")
+        let url = try store.commit(staged)
+        XCTAssertEqual(url.lastPathComponent, "original.docx")
+        XCTAssertEqual(store.kind(itemId: "item-1"), .docx)
+        XCTAssertEqual(try Data(contentsOf: url), docx)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["original.docx"])
+
+        let pdfPicked = root.appendingPathComponent("picked/Paper.pdf")
+        let pdf = Data("%PDF-1.7 re-imported".utf8)
+        try pdf.write(to: pdfPicked)
+        try store.commit(try store.stage(copying: pdfPicked, itemId: "item-1"))
+        XCTAssertEqual(store.kind(itemId: "item-1"), .pdf)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["original.pdf"])
+    }
 }

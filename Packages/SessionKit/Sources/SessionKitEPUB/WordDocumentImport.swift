@@ -40,15 +40,15 @@ public enum WordDocumentImport {
     /// The extensions this import takes. A `.doc` is taken only to be refused with its own sentence.
     public static let fileExtensions: Set<String> = ["docx", "doc"]
 
-    /// The most of a picked file that is read: the original is held in memory until it's kept.
+    /// The most of a picked file that is read: the whole file is in memory while its text is read.
     public static let maximumFileBytes = 100 * 1_024 * 1_024
 
     public static func handles(_ url: URL) -> Bool {
         fileExtensions.contains(url.pathExtension.lowercased())
     }
 
-    /// Reads a picked Word file from disk: its text, and its bytes to keep as the original. The size is checked before
-    /// the file is read. The caller holds the file's security-scoped access.
+    /// Reads a picked Word file from disk: its text, and its bytes. The size is checked before the file is read. The
+    /// caller holds the file's security-scoped access.
     public static func read(url: URL) throws -> (imported: ImportedSourceText, original: Data) {
         if let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > maximumFileBytes {
             throw Failure.tooLarge

@@ -27,6 +27,27 @@ extension Gate1AppModel {
         }
     }
 
+    /// Keeps a copy of the file at `url` as the original of item `itemId`, off the main thread and a chunk at a time, so no
+    /// import ever holds a PDF's bytes. `expectedSHA256` is the hash the item's document recorded; a file that changed since
+    /// is not kept (the copy would not be the file the text came from). A failure is only noted in diagnostics.
+    func keepOriginalPDF(copying url: URL, itemId: String, expectedSHA256: String?) async {
+        do {
+            let store = try pdfOriginalStore()
+            try await Self.offMain {
+                let staged = try store.stage(copying: url, itemId: itemId)
+                if let expectedSHA256, staged.sha256 != expectedSHA256 {
+                    store.discard(staged)
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                try store.commit(staged)
+                return ()
+            }
+            diagnostics["lastPDFOriginalKept"] = itemId
+        } catch {
+            diagnostics["lastPDFOriginalKeepFailure"] = SafeErrorText.describe(error)
+        }
+    }
+
     /// Clears the temporary files a quit left in `ItemOriginals/`, off the main thread. It never touches a kept PDF, and
     /// only a temporary file untouched for ten minutes, so an import running now is safe.
     func removeInterruptedPDFOriginalWrites() {

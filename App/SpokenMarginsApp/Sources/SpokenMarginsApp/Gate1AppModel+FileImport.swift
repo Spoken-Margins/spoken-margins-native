@@ -176,9 +176,10 @@ extension Gate1AppModel {
         statusMessage = sourceImportProgressMessage ?? "Importing sources…"
         lastError = nil
 
+        let originalStore = try? pdfOriginalStore()
         sourceImportTask = Task { [weak self] in
             let batch = await Task.detached(priority: .userInitiated) {
-                await Self.prepareObsidianImports(requests)
+                await Self.prepareObsidianImports(requests, originalStore: originalStore)
             }.value
             scopedAccess.forEach { entry in
                 if entry.didAccess {
@@ -190,16 +191,16 @@ extension Gate1AppModel {
             let saved: Result<SavedObsidianBatch, Error>
             do {
                 let store = try self.requireStore()
-                let originalStore = try? self.pdfOriginalStore()
                 let clipStore = self.pdfClipStore()
                 let written = try await Self.offMain {
-                    Self.saveObsidianImports(
-                        batch.prepared, originals: batch.originals, originalStore: originalStore, store: store, clipStore: clipStore)
+                    Self.saveObsidianImports(batch.prepared, staged: batch.staged, originalStore: originalStore, store: store, clipStore: clipStore)
                 }
                 saved = self.hangTelemetry.labels.scoped("obsidianImportFinish") {
                     Result { try self.completeObsidianMarkdownImport(batch, written: written, store: store) }
                 }
             } catch {
+                // Nothing was saved, so no staged copy will become an original.
+                if let originalStore { batch.staged.values.forEach(originalStore.discard) }
                 saved = .failure(error)
             }
             await self.finishObsidianMarkdownImport(
@@ -216,32 +217,46 @@ extension Gate1AppModel {
         }
     }
 
-    private nonisolated static func prepareObsidianImports(_ requests: [ObsidianImportRequest]) async -> ObsidianImportBatch {
+    private nonisolated static func prepareObsidianImports(
+        _ requests: [ObsidianImportRequest], originalStore: PDFOriginalStore?
+    ) async -> ObsidianImportBatch {
         var prepared: [PreparedObsidianImport] = []
         var failures: [String] = []
         var rawFailures: [String] = []
-        var originals: [String: KeptOriginal] = [:]
+        var staged: [String: PDFOriginalStore.Staged] = [:]
+        var stagingFailures: [String] = []
         for request in requests {
+            var stagedCopy: PDFOriginalStore.Staged?
             do {
-                let (imported, original) = try await importableText(from: request.url)
+                let read = try await importableText(
+                    from: request.url, itemId: request.itemId, originalStore: originalStore, stagingFailures: &stagingFailures)
+                stagedCopy = read.1
                 prepared.append(try SourceFileItemBuilder.prepare(
-                    imported, fileURL: request.url, itemId: request.itemId, createdAt: Date()
+                    read.0, fileURL: request.url, itemId: request.itemId, createdAt: Date()
                 ))
-                // Held until the item is saved: the picked file's access ends before then (#4338).
-                originals[request.itemId] = original
+                // A file address and a hash, not the bytes: a batch of large PDFs stays small (#4338).
+                staged[request.itemId] = stagedCopy
             } catch {
+                if let stagedCopy { originalStore?.discard(stagedCopy) }
                 failures.append("\(request.url.lastPathComponent)\n\(ListenerErrorText.message(for: error))")
                 rawFailures.append("\(request.url.lastPathComponent): \(error)")
             }
         }
-        return ObsidianImportBatch(prepared: prepared, failures: failures, rawFailures: rawFailures, originals: originals)
+        return ObsidianImportBatch(
+            prepared: prepared, failures: failures, rawFailures: rawFailures, staged: staged, stagingFailures: stagingFailures)
     }
 
-    /// The file's text and, for a PDF or a Word document, its bytes to keep beside the item (#4338, #4594).
-    private nonisolated static func importableText(from url: URL) async throws -> (ImportedSourceText, original: KeptOriginal?) {
+    /// The file's text and, for a PDF or a Word document, a staged copy to keep beside the item (#4338, #4594). The picked
+    /// file's access is open here and ends before the item is saved, so the copy is made now, a chunk at a time. A PDF's
+    /// text is read from the copy so the hash recorded on the document is the hash of the file that is kept. When no copy
+    /// can be made, the text is read from the picked file as before and the import goes on without an original.
+    private nonisolated static func importableText(
+        from url: URL, itemId: String, originalStore: PDFOriginalStore?, stagingFailures: inout [String]
+    ) async throws -> (ImportedSourceText, PDFOriginalStore.Staged?) {
         if WordDocumentImport.handles(url) {
-            let read = try WordDocumentImport.read(url: url)
-            return (read.imported, KeptOriginal(data: read.original, kind: .docx))
+            // Read first, so a refused file stages nothing; the bytes go once it's read, and the batch holds only the copy.
+            let imported = try WordDocumentImport.read(url: url).imported
+            return (imported, stage(url, itemId: itemId, kind: .docx, originalStore: originalStore, failures: &stagingFailures))
         }
         guard url.pathExtension.lowercased() == "pdf" else {
             return (ImportedSourceText(
@@ -250,21 +265,39 @@ extension Gate1AppModel {
             ), nil)
         }
         #if canImport(PDFKit)
+        let staged = stage(url, itemId: itemId, kind: .pdf, originalStore: originalStore, failures: &stagingFailures)
         do {
-            let extracted = try NativePDFDocumentExtractor.extractStructured(from: url)
+            let extracted = try NativePDFDocumentExtractor.extractStructured(fromFile: staged?.url ?? url, sourceSHA256: staged?.sha256)
             return (ImportedSourceText(
                 text: extracted.document.text,
                 documentStructure: extracted.documentStructure,
                 structuredDocument: extracted.document,
                 title: extracted.title,
                 clips: extracted.clips
-            ), extracted.originalData.map { KeptOriginal(data: $0, kind: .pdf) })
+            ), staged)
         } catch PDFStructuredTextExtractor.ExtractionError.noExtractableText {
+            if let staged { originalStore?.discard(staged) }
             throw SourceFileImportError.pdfHasNoExtractableText
+        } catch {
+            if let staged { originalStore?.discard(staged) }
+            throw error
         }
         #else
         throw SourceFileImportError.pdfImportUnavailable
         #endif
+    }
+
+    /// A copy of the picked file in its item's folder, or nil with the reason added to `failures`.
+    private nonisolated static func stage(
+        _ url: URL, itemId: String, kind: PDFOriginalStore.Kind, originalStore: PDFOriginalStore?, failures: inout [String]
+    ) -> PDFOriginalStore.Staged? {
+        do {
+            guard let originalStore else { throw CocoaError(.fileNoSuchFile) }
+            return try originalStore.stage(copying: url, itemId: itemId, kind: kind)
+        } catch {
+            failures.append(SafeErrorText.describe(error))
+            return nil
+        }
     }
 
     /// What `completeObsidianMarkdownImport` leaves for the finish: the saved items, the failures, and where the listener was.
@@ -281,7 +314,7 @@ extension Gate1AppModel {
     private func completeObsidianMarkdownImport(
         _ batch: ObsidianImportBatch, written: SavedObsidianImports, store: SQLiteSessionStore
     ) throws -> SavedObsidianBatch {
-        if let reason = written.originalKeepFailures.first { diagnostics["lastPDFOriginalKeepFailure"] = reason } // #4338
+        if let reason = (batch.stagingFailures + written.originalKeepFailures).first { diagnostics["lastPDFOriginalKeepFailure"] = reason } // #4338
         let saved = SavedObsidianBatch(
             imported: written.imported, failures: batch.failures + written.failures,
             rawFailures: batch.rawFailures + written.rawFailures,
@@ -303,10 +336,12 @@ extension Gate1AppModel {
 
     /// Saves each prepared file's item, map and document off the main actor (#2509): the text can be megabytes.
     private nonisolated static func saveObsidianImports(
-        _ prepared: [PreparedObsidianImport], originals: [String: KeptOriginal], originalStore: ItemOriginalStore?,
+        _ prepared: [PreparedObsidianImport], staged: [String: PDFOriginalStore.Staged], originalStore: PDFOriginalStore?,
         store: SQLiteSessionStore, clipStore: PDFClipStore?
     ) -> SavedObsidianImports {
         var result = SavedObsidianImports()
+        var unsaved = staged
+        defer { if let originalStore { unsaved.values.forEach(originalStore.discard) } } // an item that did not save keeps no copy
         for prepared in prepared {
             do {
                 try store.saveItem(prepared.item)
@@ -320,10 +355,10 @@ extension Gate1AppModel {
                 }
                 result.imported.append(prepared.item)
                 // After the item is saved, so a failed save leaves no original behind. A failed write loses only the copy.
-                if let original = originals[prepared.item.id] {
+                if let copy = unsaved.removeValue(forKey: prepared.item.id) {
                     do {
                         guard let originalStore else { throw CocoaError(.fileNoSuchFile) }
-                        try originalStore.write(original.data, itemId: prepared.item.id, kind: original.kind)
+                        try originalStore.commit(copy)
                     } catch {
                         result.originalKeepFailures.append(SafeErrorText.describe(error))
                     }
