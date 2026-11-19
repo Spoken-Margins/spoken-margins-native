@@ -133,6 +133,12 @@ extension Gate1AppModel {
 
     /// A tapped share link (https on the share host): download, unseal, then the usual import review (#488).
     func openShareLink(_ url: URL) {
+        // The listener's own link, not the failure sheet's Try Again: it takes the opener over from any Try Again.
+        packetOpenFailures.anotherLinkStarted()
+        startShareLinkOpen(url)
+    }
+
+    private func startShareLinkOpen(_ url: URL) {
         guard let link = ShareLinkURL(url: url) else {
             shareLinkOpener.cancel() // the last thing the listener opened is this, so an earlier download says nothing
             packetOpenFailures.present(PacketOpenFailureSheetContent(unparsedShareHostURL: url), retry: nil)
@@ -153,7 +159,7 @@ extension Gate1AppModel {
             fail: { [weak self] failure in
                 self?.diagnostics["lastShareLink"] = "failed"
                 let content = PacketOpenFailureSheetContent(failure, linkID: link.id)
-                let retry: (@MainActor () -> Void)? = content.isRetryable ? { [weak self] in self?.openShareLink(url) } : nil
+                let retry: (@MainActor () -> Void)? = content.isRetryable ? { [weak self] in self?.startShareLinkOpen(url) } : nil
                 self?.packetOpenFailures.present(content, retry: retry)
             }
         )

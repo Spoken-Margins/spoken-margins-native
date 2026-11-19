@@ -280,6 +280,44 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         model.cancelSpokenMarginsPackageImport()
     }
 
+    /// The audit on PR #4597: a second friend's link tapped while a Try Again runs takes the opener over, so closing the
+    /// old sheet afterwards must not stop it. It used to cancel whatever the opener was running: the new link, silently.
+    @MainActor
+    func testClosingTheOldSheetDoesNotStopALinkTappedDuringItsTryAgain() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-share-link-replaces-try-again")
+        let packageURL = root.appendingPathComponent("second.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-share-link-second")
+        let key = ShareLinkSealing.Key.random()
+        let sealed = try ShareLinkSealing.seal(
+            packet: try Data(contentsOf: packageURL), preview: Data(#"{"schema":"spokenmargins.link-preview.v1"}"#.utf8), key: key
+        )
+        let secondID = "fedcba9876543210fedcba9876543210"
+        let model = shareLinkModel(root: root) { url, _ in
+            if url.absoluteString.contains(secondID) { return (200, sealed.packet) }
+            throw URLError(.notConnectedToInternet)
+        }
+        let first = try XCTUnwrap(ShareLinkSealing.linkURL(
+            base: URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)")!, key: .random()
+        ))
+        let second = try XCTUnwrap(ShareLinkSealing.linkURL(
+            base: URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(secondID)")!, key: key
+        ))
+
+        model.handleIncomingURL(first)
+        try await waitForShareLink(model) { model.packetOpenFailures.presented?.content.row == .offline }
+        model.packetOpenFailures.tryAgain()
+        XCTAssertTrue(model.packetOpenFailures.isRetrying)
+        model.handleIncomingURL(second)
+        XCTAssertFalse(model.packetOpenFailures.isRetrying, "the Try Again's open was dropped for the second link")
+        XCTAssertFalse(model.packetOpenFailures.presented?.showsTryAgain ?? true, "the first link's Try Again is gone")
+        model.packetOpenFailures.tryAgain()
+        model.packetOpenFailures.close()
+
+        try await waitForShareLink(model) { model.spokenMarginsPackageImportReview != nil }
+        XCTAssertNotNil(model.spokenMarginsPackageImportReview, "the second link opened")
+        model.cancelSpokenMarginsPackageImport()
+    }
+
     /// #3801: a Try Again that fails differently swaps the words in place, on the same sheet; the latest wins.
     @MainActor
     func testATryAgainThatFailsDifferentlySwapsTheSheetsWordsInPlace() async throws {
