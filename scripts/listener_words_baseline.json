@@ -130,6 +130,12 @@
   },
   {
    "kind": "words",
+   "text": "None of the … items in “…” could be added.",
+   "count": 1,
+   "reason": "#3769 folder import summary: a picked folder holds mixed sources (PDFs, articles, audio), so there is no single source noun; same wording rule as #4343 collections"
+  },
+  {
+   "kind": "words",
    "text": "Player item Mark",
    "count": 1,
    "reason": "Internal runtime profile display name (PlayerItemMargin.swift); never shown in the app, and only the profile id is exported."
@@ -145,6 +151,12 @@
    "text": "Select Items",
    "count": 1,
    "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
+  },
+  {
+   "kind": "words",
+   "text": "The 1 item in “…” couldn't be added.",
+   "count": 1,
+   "reason": "#3769 folder import summary: a picked folder holds mixed sources (PDFs, articles, audio), so there is no single source noun; same wording rule as #4343 collections"
   },
   {
    "kind": "words",
