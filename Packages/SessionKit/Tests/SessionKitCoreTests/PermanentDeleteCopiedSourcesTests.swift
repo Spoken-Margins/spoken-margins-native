@@ -38,6 +38,8 @@ final class PermanentDeleteCopiedSourcesTests: XCTestCase {
             PermanentDeletePurge.Root(name: ItemOwnedFiles.pdfClipsRoot, url: clips),
             PermanentDeletePurge.Root(name: ItemOwnedFiles.preparedAudioRoot, url: prepared),
             PermanentDeletePurge.Root(name: ItemOwnedFiles.listeningEditionsRoot, url: editions),
+            // Every item's targets name its kept original (#4338), so the app, and a test that stands for it, registers the root.
+            PermanentDeletePurge.Root(name: ItemOwnedFiles.itemOriginalsRoot, url: support.appending(path: "ItemOriginals", directoryHint: .isDirectory)),
         ]
         if let removeFile { return PermanentDeletePurge(journalDirectory: journal, roots: roots, removeFile: removeFile) }
         return PermanentDeletePurge(journalDirectory: journal, roots: roots)
