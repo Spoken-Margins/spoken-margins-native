@@ -453,6 +453,7 @@ extension AppColors {
 
 extension AppColors {
     /// The system's unread blue, light and dark: the one colour for something new to the listener (#4698). Never green
-    /// or orange, so it reads for red-green colour blindness beside the evergreen.
-    static let unread = Color(uiColor: .systemBlue)
+    /// or orange, so it reads for red-green colour blindness beside the evergreen. Built from the audit's own values, so
+    /// `AppColorContrastAudit` measures the dot against the row.
+    static let unread = dynamicColor(AppSystemColorRGB.blue)
 }
