@@ -140,15 +140,33 @@ final class ManifestBoundTests: XCTestCase {
     }
 
     /// The failure names what filled the manifest, and the listener is told what to do, not "manifest".
+    /// The error is the one the archive throws for a real manifest over its cap, not one built by hand (#3712). The
+    /// builder caps every collection and link now, so the oversized link goes into the prepared manifest directly.
     func testAnExportFailureNamesWhatFilledTheManifest() throws {
-        let prepared = try SpokenMarginsPackageBuilder.prepare(
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fitting = try SpokenMarginsPackageBuilder.prepare(
             packageId: "failure-package", createdAt: fixedDate,
-            item: SharedItemIdentity(itemType: .text, canonicalURL: "https://example.com/" + String(repeating: "x", count: 300), title: "Article"),
+            item: SharedItemIdentity(itemType: .text, canonicalURL: "https://example.com/article", title: "Article"),
             itemTransportSelection: .reference, selections: sixMargins(evidenceID: nil)
         )
-        let failure = SharedPacketExportFailure(error: SpokenMarginsPackageArchiveError.manifestTooLarge, prepared: prepared)
+        let longURL = "https://example.com/" + String(repeating: "x", count: manifestLimit)
+        let prepared = PreparedSpokenMarginsPackage(
+            manifest: try manifest(fitting.manifest, canonicalURL: longURL),
+            artifactData: fitting.artifactData, assetFiles: fitting.assetFiles
+        )
+        var thrown: Error?
+        XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(prepared, to: root.appendingPathComponent("too-large.spokenmargins"))) {
+            thrown = $0
+        }
+        guard case .manifestTooLarge? = thrown as? SpokenMarginsPackageArchiveError else {
+            return XCTFail("expected the archive's own manifestTooLarge, got \(String(describing: thrown))")
+        }
+        let failure = SharedPacketExportFailure(error: try XCTUnwrap(thrown), prepared: prepared)
         XCTAssertTrue(failure.diagnostic.contains(":manifestTooLarge;artifacts="), failure.diagnostic)
-        XCTAssertTrue(failure.diagnostic.contains("artifacts=1;assets=0;longestURL=320;manifestBytes="), failure.diagnostic)
+        XCTAssertTrue(failure.diagnostic.contains("artifacts=1;assets=0;longestURL=\(longURL.count);manifestBytes="), failure.diagnostic)
+        let manifestBytes = try XCTUnwrap(failure.diagnostic.components(separatedBy: "manifestBytes=").last.flatMap { Int($0) })
+        XCTAssertGreaterThan(manifestBytes, manifestLimit, "the diagnostic reports the size that overflowed")
         XCTAssertFalse(failure.listenerMessage.localizedCaseInsensitiveContains("manifest"))
         XCTAssertTrue(failure.listenerMessage.contains("fewer"), failure.listenerMessage)
 
@@ -158,6 +176,16 @@ final class ManifestBoundTests: XCTestCase {
     }
 
     // MARK: Helpers
+
+    /// The same manifest with another item link, through its JSON: the manifest's item is immutable.
+    private func manifest(_ manifest: SpokenMarginsPackageManifest, canonicalURL: String) throws -> SpokenMarginsPackageManifest {
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: SpokenMarginsPackageArchive.encodeManifest(manifest)) as? [String: Any])
+        var item = try XCTUnwrap(json["item"] as? [String: Any])
+        XCTAssertNotNil(item["canonicalURL"], "the item's link key")
+        item["canonicalURL"] = canonicalURL
+        json["item"] = item
+        return try SpokenMarginsPackageArchive.decodeManifest(JSONSerialization.data(withJSONObject: json))
+    }
 
     private func sixMargins(evidenceID: String?) -> [ReviewedInterjectionSelection] {
         (1...6).map { index in
