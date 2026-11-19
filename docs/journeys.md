@@ -180,7 +180,7 @@ The whole loop (#3222, part of #3216), with an eye on the human side: how many t
 1. The sender adds a podcast episode by searching for its name, and plays well into it.
    - Pass: the episode is in the Library and plays. Record taps from launch to the first audio.
 2. The sender records two Margins, one after the other.
-   - Pass: each saves on the item without leaving the playback screen, and the episode carries on.
+   - Pass: each saves on the item without leaving the playback screen, and the episode carries on. With a third Margin recorded, the sender taps the star at the right of two of the three rows in Nearby Margins (the Margins pane has the same star): each fills at once, its row reads "My Margin · Starred", the episode does not pause, and no sheet opens (#4173). Share then starts from the two stars ("Margin 1 of 2"). With nothing starred, Share starts with every Margin selected, as before.
 3. The sender taps Share and sends the Margins to the friend.
    - Pass: Review shows what your friend gets, with the file size, and Share opens the system share sheet. Record the packet size at this send, the seconds from Preview what your friend gets to the size showing, and the taps from the playback screen to the share sheet. The route is Share on the playback screen, then Share on the review (#1507): two taps, with no scrolling; more than two is a fail. From the item screen the route is Share in its header (or Share Margins in its options menu), then Share on the review (#4229): also two taps. With nothing of the listener's own to send, that Share shows the "Nothing to share yet" alert instead.
 4. The friend (second simulator) opens the packet. They have not added the episode beforehand.

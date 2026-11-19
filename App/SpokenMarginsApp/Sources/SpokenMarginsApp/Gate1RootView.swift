@@ -523,6 +523,7 @@ enum AppColors {
     static let watchBackground = dynamicColor(AppSemanticColorRGB.watchBackground)
     static let watchControl = dynamicColor(AppSemanticColorRGB.watchControl)
     static let watchSecondary = dynamicColor(AppSemanticColorRGB.listeningSecondary)
+    static let watchStar = dynamicColor(AppSemanticColorRGB.watchStar)
     static let dangerText = dynamicColor(AppSemanticColorRGB.dangerText)
     static let dangerBackground = dynamicColor(AppSemanticColorRGB.dangerBackground)
     static let interjectText = dynamicColor(AppSemanticColorRGB.captureText)
