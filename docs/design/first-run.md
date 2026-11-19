@@ -176,15 +176,15 @@ Unchanged in shape, and mostly built (#3291, #3247). The only additions here: th
 
 ### The slices to build now
 
-| | Slice | Size | Where | Depends on |
-|---|---|---|---|---|
-| A | SessionKit: the arrival from Cole and the "first Margin heard" event, with the one-time migration. Host tests. | M | Cloud | Nothing |
-| B | The welcome piece and Cole's welcome Margin, bundled | M | Mac, plus Cole (20 seconds) | Nothing |
-| C | A cold install is an arrival from Cole: welcome item replaces both seeds and the manifest, the drawer stops opening on launch, the tour card goes for new installs, J11 updated | M | Cloud, captures on the lane | A, B |
-| D | Hear it land: play a newly saved first Margin back in place, and fire the event | M | Cloud, captures on the lane | A |
-| E | Ask for Speech Recognition after the first Margin plays back | S | Cloud | D |
+| | Slice | Issue | Size | Where | Depends on |
+|---|---|---|---|---|---|
+| A | SessionKit: the arrival from Cole and the "first Margin heard" event, with the one-time migration. Host tests. | #4711 | M | Cloud | Nothing |
+| B | The welcome piece and Cole's welcome Margin, bundled | #4712 | M | Mac, plus Cole (20 seconds) | Nothing |
+| C | A cold install is an arrival from Cole: welcome item replaces both seeds and the manifest, the drawer stops opening on launch, the tour card goes for new installs, J11 updated | #4714 | M | Cloud, captures on the lane | A, B, D |
+| D | Hear it land: play a newly saved first Margin back in place, and fire the event | #4713 | M | Cloud, captures on the lane | A |
+| E | Ask for Speech Recognition after the first Margin plays back | #4715 | S | Cloud | D |
 
-#4672 ("Where should this go?") waits on A for its trigger and on D for the event to fire in practice.
+#4672 ("Where should this go?") waits on A (#4711) for its trigger and on D (#4713) for the event to fire in practice.
 
 **Cole's recording (slice B).** One spoken Margin, about 20 seconds (15 to 25 is fine), recorded on his phone on the welcome item at the "talking back" moment, then sent as a packet the usual way (J5). What it says: who he is, why he made the app, that this is a Margin pinned to this moment, and a question to the listener, ending with "your turn". He agreed on 5 October; this is the same recording.
 
