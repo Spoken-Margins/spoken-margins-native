@@ -7,7 +7,8 @@ final class ShareStarTallyTests: XCTestCase {
     private func freshDefaults() -> UserDefaults {
         let suite = "ShareStarTallyTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        // Only the name crosses into the teardown closure: UserDefaults itself is a data-race error in Swift 6.
+        addTeardownBlock { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
         return defaults
     }
 
