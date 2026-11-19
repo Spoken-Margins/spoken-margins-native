@@ -545,6 +545,8 @@ class Workflow(unittest.TestCase):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
                 head, _, job = text.partition('\n  owner-tap-alert:\n')
                 self.assertTrue(job, 'no owner-tap-alert job')
+                # Read this job only. A job after it (the rearm job, which needs `actions: write`) is not the alert's.
+                job = re.split(r'\n  [A-Za-z0-9_-]+:\n', job, maxsplit=1)[0] + '\n'
                 self.assertIn('    name: owner-tap-alert\n', job)
                 self.assertIn(f'    needs: {needs}\n', job)
                 self.assertIn('    if: always() && github.event.pull_request.head.repo.full_name == github.repository\n',
