@@ -146,9 +146,9 @@ test('an item with no friend Margins never has a card, so the notice is the sent
   assert.equal(shown(true, 0), true);
 });
 
-test('a clip the browser refuses without a tap waits for one; other rejections skip it', () => {
+test('a clip the browser refuses without a tap waits for one, one paused while loading holds, others skip (#4473)', () => {
   assert.equal(clipRejection('NotAllowedError'), 'wait-for-tap');
   assert.equal(clipRejection('NotSupportedError'), 'skip');
-  assert.equal(clipRejection('AbortError'), 'skip');
+  assert.equal(clipRejection('AbortError'), 'held');
   assert.equal(clipRejection(undefined), 'skip');
 });
