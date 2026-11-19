@@ -617,10 +617,18 @@ MAC_APP_READS = (
     # The same, and VoiceCatalogCoordinatorTests, which is compiled out on Linux (canImport(CryptoKit)).
     'App/SpokenMarginsApp/Resources/VoiceCatalog/',
 )
-# Swift inputs and the machinery of the Mac jobs. Every workflow counts: they are the jobs' own definitions.
+# Swift inputs and the machinery of the Mac jobs.
 MAC_PREFIXES = MAC_READS + ('Packages/', 'Config/', 'TestPlans/', 'SpokenMarginsNative.xcodeproj/',
-                            '.github/workflows/', '.github/actions/', 'ops/disk/', 'ops/power/')
-MAC_FILES = {'project.yml', 'Package.swift', 'Package.resolved', 'requirements-dev.txt', '.nvmrc'}
+                            '.github/actions/', 'ops/disk/', 'ops/power/')
+# The workflows that define a job on a Mac: a change to one is a change to a Mac job, so the Mac checks prove it.
+# A workflow whose jobs all run on ubuntu-latest (merge-policy.yml, merge-queue-dequeued.yml, ...) needs no Mac: its
+# tests run in the portable Linux job. Until 2026-11-19 every workflow counted, and a Linux-only workflow PR held a
+# hosted Mac for about 30 minutes (#4724). test_mac_checks_scope.py fails when a workflow with any other runner is
+# missing here, so a new Mac workflow can't slip out of the rule.
+MAC_WORKFLOWS = frozenset('.github/workflows/' + name for name in (
+    'hosted-app-macos.yml', 'hosted-integration.yml', 'hosted-portable.yml', 'hosted-web.yml', 'lane.yml',
+    'main-t3.yml', 'phone-build.yml', 'shipped-build-compat.yml'))
+MAC_FILES = {'project.yml', 'Package.swift', 'Package.resolved', 'requirements-dev.txt', '.nvmrc'} | MAC_WORKFLOWS
 # scripts/ files that drive the Mac jobs, or that the Apple-tool runner tests (verify-tests.py
 # PORTABLE_RUNNER_TESTS_LEFT_OUT) exercise: matched on the file name, in scripts/ and scripts/tests/.
 MAC_SCRIPT_NAME = re.compile(r'lane|verif|test-scope|test_scope|phone|sim[_-]|sessionkit|xcode|host|audio|freeze|'
