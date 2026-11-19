@@ -15,32 +15,34 @@ public enum ShareReviewSteps {
         /// The Margin already carries anchor evidence, whatever its status.
         public var hasEvidence: Bool
         public var evidenceStatus: PodcastAnchorEvidenceCaptureStatus?
-        /// "pending", "failed", or a finished status.
+        /// "pending", "failed", or a finished status ("transcribed", "complete").
         public var transcriptionStatus: String
         /// The sheet's item is the one playing, and playback is active.
         public var playingThisItem: Bool
+        /// The Margin's recording can be found. Without it nothing is making words for it, so it never waits on them.
+        public var hasVoice: Bool
 
         public init(
             isNativeAudio: Bool, hasEvidence: Bool, evidenceStatus: PodcastAnchorEvidenceCaptureStatus?,
-            transcriptionStatus: String, playingThisItem: Bool
+            transcriptionStatus: String, playingThisItem: Bool, hasVoice: Bool = true
         ) {
             self.isNativeAudio = isNativeAudio
             self.hasEvidence = hasEvidence
             self.evidenceStatus = evidenceStatus
             self.transcriptionStatus = transcriptionStatus
             self.playingThisItem = playingThisItem
+            self.hasVoice = hasVoice
         }
 
-        /// One stored Margin as the review sees it. `includesWordsWait` is false until the draft is rebuilt when the words
-        /// arrive (#3839, PR 3): a "waiting for words" step that nothing clears would stay on the card, so until then
-        /// today's no-transcript line and badge stand and the Margin reports its words as done.
-        public init(_ interjection: Interjection, isNativeAudio: Bool, playingThisItem: Bool, includesWordsWait: Bool = false) {
+        /// One stored Margin as the review sees it.
+        public init(_ interjection: Interjection, isNativeAudio: Bool, playingThisItem: Bool, hasVoice: Bool = true) {
             self.init(
                 isNativeAudio: isNativeAudio,
                 hasEvidence: !(interjection.podcastAnchorEvidence ?? []).isEmpty,
                 evidenceStatus: interjection.podcastAnchorEvidenceCaptureStatus,
-                transcriptionStatus: includesWordsWait ? interjection.transcriptionStatus : "done",
-                playingThisItem: playingThisItem
+                transcriptionStatus: interjection.transcriptionStatus,
+                playingThisItem: playingThisItem,
+                hasVoice: hasVoice
             )
         }
 
@@ -49,7 +51,7 @@ public enum ShareReviewSteps {
             isNativeAudio && !hasEvidence && evidenceStatus == .pendingPostResumeSample
         }
 
-        var waitsOnWords: Bool { transcriptionStatus == "pending" }
+        var waitsOnWords: Bool { transcriptionStatus == "pending" && hasVoice }
     }
 
     public enum Icon: Equatable, Sendable {
@@ -89,13 +91,11 @@ public enum ShareReviewSteps {
         }
     }
 
-    public static let failedTranscriptLine = "No transcript yet, so this Margin can't be shared. Retry its transcription in Margin detail."
-
-    /// A badge for a Margin that can't go yet: waiting for words, or left out because they failed. nil otherwise.
-    public static func badge(_ margin: Margin) -> String? {
-        if margin.waitsOnWords { return "Waiting for words" }
-        if margin.transcriptionStatus == "failed" { return "Left out: no transcript yet" }
-        return nil
+    /// The badge for a Margin whose words are still being made. A Margin whose transcription failed has no badge here:
+    /// a voice Margin goes with placeholder words (#3027), and one with neither words nor voice is left out, which the
+    /// card already says (`SharedMarginTextRequirement.reviewWarningText`).
+    public static func waitingBadge(_ margin: Margin) -> String? {
+        margin.waitsOnWords ? "Waiting for words" : nil
     }
 
     // MARK: Pinned bar

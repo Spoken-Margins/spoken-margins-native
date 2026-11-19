@@ -68,7 +68,7 @@ final class ShareReviewStepsTests: XCTestCase {
 
     func testAMarginWaitingOnItsWordsHasAStepABadgeAndTheWordsLine() {
         let m = margin(status: .pendingPostResumeSample, words: "pending")
-        XCTAssertEqual(ShareReviewSteps.badge(m), "Waiting for words")
+        XCTAssertEqual(ShareReviewSteps.waitingBadge(m), "Waiting for words")
         XCTAssertEqual(ShareReviewSteps.cardSteps(m).map(\.icon), [.words, .clock], "words first, then the moment")
         XCTAssertEqual(ShareReviewSteps.cardSteps(margin(words: "pending")),
             [.init(icon: .words, text: "Getting this Margin's words ready. It's added when they're ready.")])
@@ -85,14 +85,30 @@ final class ShareReviewStepsTests: XCTestCase {
             "Getting the words ready for your new Margin. A few seconds.")
     }
 
-    func testAFailedTranscriptKeepsTodaysLineAndBadgeAndShowsNoStep() {
+    /// A voice Margin whose transcription failed goes with placeholder words (#3027), so it has no badge and no step; the
+    /// card's warning for a Margin with neither words nor voice is `SharedMarginTextRequirement.reviewWarningText`.
+    func testAFailedTranscriptShowsNoStepAndNoWaitingBadge() {
         let m = margin(words: "failed")
-        XCTAssertEqual(ShareReviewSteps.badge(m), "Left out: no transcript yet")
+        XCTAssertNil(ShareReviewSteps.waitingBadge(m))
         XCTAssertEqual(ShareReviewSteps.cardSteps(m), [])
         XCTAssertNil(ShareReviewSteps.pinnedLine([m]))
-        XCTAssertEqual(ShareReviewSteps.failedTranscriptLine,
-            "No transcript yet, so this Margin can't be shared. Retry its transcription in Margin detail.")
-        XCTAssertNil(ShareReviewSteps.badge(margin()))
+        XCTAssertNil(ShareReviewSteps.waitingBadge(margin()))
+        for finished in ["transcribed", "complete"] {
+            XCTAssertNil(ShareReviewSteps.waitingBadge(margin(words: finished)), finished)
+        }
+    }
+
+    /// A Margin whose recording can't be found (a Watch import with no audio) will never get words: no badge, no step,
+    /// no "a few seconds".
+    func testAMarginWithNoRecordingNeverWaitsOnWords() {
+        var pending = margin(words: "pending")
+        pending.hasVoice = false
+        XCTAssertNil(ShareReviewSteps.waitingBadge(pending))
+        XCTAssertEqual(ShareReviewSteps.cardSteps(pending), [])
+        XCTAssertNil(ShareReviewSteps.pinnedLine([pending]))
+        let fromStored = ShareReviewSteps.Margin(stored(words: "pending"), isNativeAudio: true, playingThisItem: true, hasVoice: false)
+        XCTAssertNil(ShareReviewSteps.waitingBadge(fromStored))
+        XCTAssertNotNil(ShareReviewSteps.waitingBadge(ShareReviewSteps.Margin(stored(words: "pending"), isNativeAudio: true, playingThisItem: true)))
     }
 
     func testThePinnedStepCarriesTheIconOfTheWaitItNames() {
@@ -137,13 +153,15 @@ final class ShareReviewStepsTests: XCTestCase {
         XCTAssertNil(ShareReviewSteps.cardNote(m))
     }
 
-    func testTheWordsWaitIsOffUntilTheDraftRebuildLands() {
-        let pending = stored(status: .pendingPostResumeSample, words: "pending")
-        let off = ShareReviewSteps.Margin(pending, isNativeAudio: true, playingThisItem: true)
-        XCTAssertNil(ShareReviewSteps.badge(off), "no badge a rebuild would never clear")
-        XCTAssertEqual(ShareReviewSteps.cardSteps(off).map(\.icon), [.clock])
-        let on = ShareReviewSteps.Margin(pending, isNativeAudio: true, playingThisItem: true, includesWordsWait: true)
-        XCTAssertEqual(ShareReviewSteps.badge(on), "Waiting for words")
+    func testAStoredMarginPendingOnItsWordsWaitsAndClearsWhenTheyArrive() {
+        var margin = stored(status: .pendingPostResumeSample, words: "pending")
+        let waiting = ShareReviewSteps.Margin(margin, isNativeAudio: true, playingThisItem: true)
+        XCTAssertEqual(ShareReviewSteps.waitingBadge(waiting), "Waiting for words")
+        XCTAssertEqual(ShareReviewSteps.cardSteps(waiting).map(\.icon), [.words, .clock])
+        margin.transcriptionStatus = "transcribed"
+        let arrived = ShareReviewSteps.Margin(margin, isNativeAudio: true, playingThisItem: true)
+        XCTAssertNil(ShareReviewSteps.waitingBadge(arrived))
+        XCTAssertEqual(ShareReviewSteps.cardSteps(arrived).map(\.icon), [.clock])
     }
 
     func testAStepClearsWhenTheStoredMarginGainsEvidence() {

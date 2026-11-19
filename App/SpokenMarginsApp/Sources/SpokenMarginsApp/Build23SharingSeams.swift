@@ -72,6 +72,8 @@ struct Build23SharingMarginSnapshot: Identifiable, Equatable {
     var readAloud = true
     /// What this Margin is still waiting on, read live from the stored Margin (#3839). Empty when nothing is pending.
     var steps: [ShareReviewSteps.Step] = []
+    /// "Waiting for words" while the Margin's transcript is still being made (#3839); nil otherwise.
+    var waitingBadge: String? = nil
     /// The quiet note under the card about where the Margin will land. Nil for an article, a PDF or a placed Margin.
     var placementNote: String? = nil
 }
@@ -392,7 +394,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         let margins = state.drafts.map { draft in
             let originalVoiceURL = model.originalAudioURL(forShareDraft: draft.id)
             let reviewMargin = ShareReviewSteps.Margin(
-                stored[draft.id] ?? draft.interjection, isNativeAudio: isNativeAudio, playingThisItem: playing)
+                stored[draft.id] ?? draft.interjection, isNativeAudio: isNativeAudio, playingThisItem: playing,
+                hasVoice: originalVoiceURL != nil)
             if draft.isIncluded { waiting.append(reviewMargin) }
             return Build23SharingMarginSnapshot(
                 id: draft.id,
@@ -421,6 +424,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 isShowingPlaceholder: draft.isShowingPlaceholder,
                 readAloud: draft.readAloud,
                 steps: ShareReviewSteps.cardSteps(reviewMargin),
+                waitingBadge: ShareReviewSteps.waitingBadge(reviewMargin),
                 placementNote: ShareReviewSteps.cardNote(reviewMargin)
             )
         }
@@ -744,7 +748,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         guard stage == .review,
               snapshot.canAdvance else { return }
         // The packet carries the evidence that exists when Share is tapped; the fingerprint is taken after it.
-        refreshDraftEvidence()
+        refreshDraftsFromStoredMargins()
         previewGeneration += 1
         let generation = previewGeneration
         let fingerprint = currentDraftFingerprint()
@@ -795,29 +799,41 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         }
     }
 
-    /// Evidence the stored Margin gained since the sheet opened goes into the draft, so the packet carries what the
-    /// card says is ready (#3839). Only the evidence moves; a change reaches `sharingState` once and the next pass sees none.
+    /// What the stored Margin gained since the sheet opened goes into the draft, so the packet carries what the card says
+    /// is ready (#3839): its anchor evidence, and, when its words have arrived and the sender has changed nothing, the
+    /// words themselves (the draft is rebuilt from the stored Margin; see `ShareInterjectionDraft.adoptArrivedWords`).
+    /// A sender's edits are never taken away. Nothing here starts a cleanup: a Margin whose words land late is cleaned
+    /// with its own "Remove ums and pauses" button, because the bulk "Clean automatically" pass touches every included
+    /// draft, Words-only and already-undone ones too, and the audit found it overriding both. A change reaches
+    /// `sharingState` once and the next pass sees none.
     ///
-    /// Evidence is not something the sender chose, so it never reports as a change of the selection (twice the audit
+    /// None of this is something the sender chose, so it never reports as a change of the selection (twice the audit
     /// found a path where it did): while a packet is being built or the system share sheet is open the draft is frozen,
-    /// and where the packet is kept (back on review or selection) a packet built without the new evidence is dropped
+    /// and where the packet is kept (back on review or selection) a packet built without the new content is dropped
     /// quietly, with no "Your selection changed" and no change of stage, so the next Share builds one that carries it.
-    /// Returns whether the draft changed.
+    /// Returns whether a draft changed.
     @discardableResult
-    private func refreshDraftEvidence() -> Bool {
+    private func refreshDraftsFromStoredMargins() -> Bool {
         guard stage == .select || stage == .review else { return false }
         let stored = Dictionary(model.selectedItem.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var drafts = model.sharingState.drafts
         var changed = false
         for index in drafts.indices {
-            if let margin = stored[drafts[index].id], drafts[index].refreshAnchorEvidence(from: margin) { changed = true }
+            guard let margin = stored[drafts[index].id] else { continue }
+            if drafts[index].refreshAnchorEvidence(from: margin) { changed = true }
+            if margin.transcriptionStatus != "pending", drafts[index].interjection.transcriptionStatus != margin.transcriptionStatus,
+               drafts[index].adoptArrivedWords(
+                from: margin, hasVoice: model.originalAudioURL(forShareDraft: drafts[index].id) != nil,
+                itemTitle: model.selectedItem.title) {
+                changed = true
+            }
         }
         if changed { model.sharingState.drafts = drafts }
         return changed
     }
 
     private func modelDidChange() {
-        if refreshDraftEvidence(), verifiedPreview != nil {
+        if refreshDraftsFromStoredMargins(), verifiedPreview != nil {
             discardPreview(resetTo: stage)
         }
         if verifiedPreview != nil,

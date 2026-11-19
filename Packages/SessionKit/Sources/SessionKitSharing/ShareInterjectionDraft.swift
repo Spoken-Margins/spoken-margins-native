@@ -261,6 +261,44 @@ extension ShareInterjectionDraft {
         return true
     }
 
+    /// Takes the Margin's words when they arrive after the sheet opened (#3839): the text, the timing and whether it can
+    /// be cleaned. Only the words are replaced, and only if the sender has not written their own: while the draft still
+    /// shows the stand-in words, the stored Margin goes in whole and the stand-in becomes the real words. Everything else
+    /// the sender chose stays as they left it (the version, the read-aloud switch, the run-up, the placement words,
+    /// whether the Margin is included, and what a re-share started from). Words the sender typed stay, with no timing
+    /// taken, so nothing they wrote is ever overwritten.
+    ///
+    /// Works from a draft whose copy of the Margin is still pending, or failed when a retry lands, and a stored Margin
+    /// that is no longer pending. Returns whether the draft changed.
+    @discardableResult
+    public mutating func adoptArrivedWords(
+        from stored: Interjection, hasVoice: Bool, itemTitle: String?, timeZone: TimeZone = .current
+    ) -> Bool {
+        let standsIn = isShowingPlaceholder || !SharedMarginTextRequirement.hasReviewedText(approvedTranscript)
+        guard stored.id == interjection.id,
+              stored.transcriptionStatus != "pending",
+              ["pending", "failed"].contains(interjection.transcriptionStatus),
+              interjection.transcriptionStatus != stored.transcriptionStatus,
+              standsIn,
+              editHistory == [.original], cleanup == nil, !isAnalyzingPauses, !isPreparingCleanup else { return false }
+        let before = Self.initial(
+            for: interjection, isIncluded: isIncluded, hasVoice: hasVoice, itemTitle: itemTitle,
+            lastSentReadAloud: previousReadAloud, lastSentLeadInMs: previousLeadInMs, timeZone: timeZone)
+        let arrived = Self.initial(
+            for: stored, isIncluded: isIncluded, hasVoice: hasVoice, itemTitle: itemTitle,
+            lastSentReadAloud: previousReadAloud, lastSentLeadInMs: previousLeadInMs, timeZone: timeZone)
+        // The placement words follow the new words only if the sender never changed them.
+        if anchorBefore == before.anchorBefore, anchorAfter == before.anchorAfter {
+            anchorBefore = arrived.anchorBefore
+            anchorAfter = arrived.anchorAfter
+        }
+        interjection = stored
+        approvedTranscript = arrived.approvedTranscript
+        placeholderText = arrived.placeholderText
+        warning = arrived.warning
+        return true
+    }
+
     public mutating func restoreOriginal(hasOriginalAudio: Bool) {
         editHistory = [.original]
         editHistoryIndex = 0
