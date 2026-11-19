@@ -733,6 +733,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     private func buildRecipientPreview() {
         guard stage == .review,
               snapshot.canAdvance else { return }
+        // The packet carries the evidence that exists when Share is tapped; the fingerprint is taken after it.
+        refreshDraftEvidence()
         previewGeneration += 1
         let generation = previewGeneration
         let fingerprint = currentDraftFingerprint()
@@ -785,7 +787,10 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
 
     /// Evidence the stored Margin gained since the sheet opened goes into the draft, so the packet carries what the
     /// card says is ready (#3839). Only the evidence moves; a change reaches `sharingState` once and the next pass sees none.
+    /// Once a packet is being built or has been built the draft is frozen: evidence landing then would change the
+    /// fingerprint with nothing the sender did and send them back with a false "Your selection changed".
     private func refreshDraftEvidence() {
+        guard stage == .select || stage == .review else { return }
         let stored = Dictionary(model.selectedItem.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var drafts = model.sharingState.drafts
         var changed = false

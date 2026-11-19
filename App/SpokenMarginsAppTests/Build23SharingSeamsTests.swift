@@ -176,6 +176,38 @@ final class Build23SharingSeamsTests: XCTestCase {
         XCTAssertNil(coordinator.snapshot.pinnedStep)
     }
 
+    /// #3839 audit: the post-resume sample landing while the packet builds must not turn the preview stale; the sender
+    /// changed nothing, so they must not be sent back with "Your selection changed".
+    func testEvidenceLandingMidBuildDoesNotMakeThePreviewStale() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let itemID = model.selectedItem.id
+        model.selectedItem.interjections = [Interjection(
+            id: "margin-evidence-mid-build", itemId: itemID, sessionId: "session-test", targetType: .item, targetId: itemID,
+            createdAt: Date(timeIntervalSince1970: 1), roughPercent: 25,
+            anchor: Anchor(anchorType: .text, startChar: 0, endChar: 5, anchorBefore: "Before", anchorAfter: "After"),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "A reviewed Margin.",
+            cleanedTranscript: nil, displayText: nil, status: "active",
+            podcastAnchorEvidenceCaptureStatus: .pendingPostResumeSample
+        )]
+        let coordinator = Build23SharingCoordinator(model: model)
+        coordinator.send(.begin)
+        coordinator.send(.advanceToReview)
+        try await waitUntilQuiet(coordinator)
+        coordinator.send(.buildRecipientPreview)
+        XCTAssertEqual(coordinator.snapshot.stage, .recipientPreview)
+
+        model.selectedItem.interjections[0].podcastAnchorEvidence = [
+            CapturedPodcastAnchorEvidence(id: "evidence", localPath: "/unused", durationMs: 12_000, anchorOffsetMs: 4_000)
+        ]
+        model.selectedItem.interjections[0].podcastAnchorEvidenceCaptureStatus = .ready
+
+        try await waitForSharingPreview(coordinator)
+        XCTAssertNotNil(coordinator.snapshot.verifiedPreview, "the preview must reach ready, not stale")
+        XCTAssertEqual(coordinator.snapshot.stage, .recipientPreview)
+        if let url = coordinator.snapshot.verifiedPreview?.fileURL { try? FileManager.default.removeItem(at: url) }
+    }
+
     func testSenderStageVocabularyIsFrozenInReleaseOrder() {
         XCTAssertEqual(
             Build23SharingStage.allCases.map(\.rawValue),
