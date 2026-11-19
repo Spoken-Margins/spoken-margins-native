@@ -78,12 +78,13 @@ final class ZoteroPaperReaderTests: XCTestCase {
     }
 
     func testPapersSortByWhenTheyJoinedNotWhenTheyWerePublished() throws {
-        let entries = try page().entries
+        let page = try page()
+        let entries = page.entries
         let joined = entries.compactMap(\.dateJoined)
         XCTAssertEqual(joined.count, entries.count)
         XCTAssertEqual(joined, joined.sorted(by: >))
         XCTAssertEqual(entries.first?.id, "zotero:2205533:34FJELMP", "added 2025-09-09, the newest in the page")
-        XCTAssertEqual(try entry("34FJELMP", in: try page()).year, 2000, "published in 2000")
+        XCTAssertEqual(try entry("34FJELMP", in: page).year, 2000, "published in 2000")
     }
 
     func testReadingWithoutTheAttachmentsListStillGivesPapers() throws {
@@ -95,7 +96,8 @@ final class ZoteroPaperReaderTests: XCTestCase {
     func testTodaysFeedParserDoesNotReadZoteroJSON() throws {
         // The Design's PR 1 question for Zotero: what does the existing follow make of this? Nothing: the response is a
         // JSON array, not a JSON Feed, so it goes down the XML path and fails. Zotero needs its own reader.
-        XCTAssertThrowsError(try FeedParser().parse(data: fixture("zotero-group-collection"), contentType: "application/json")) {
+        let bytes = try fixture("zotero-group-collection")
+        XCTAssertThrowsError(try FeedParser().parse(data: bytes, contentType: "application/json")) {
             XCTAssertEqual($0 as? FeedParserError, .malformed)
         }
     }
