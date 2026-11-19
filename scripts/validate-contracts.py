@@ -57,6 +57,7 @@ PATH_SCHEMA_RULES = [
     ("fixtures/voice-model-catalog/neighbour-inputs.json", "voice-model-catalog-neighbour-inputs.schema.json"),
     ("fixtures/podcast-search/test-names.json", "podcast-search-test-list.schema.json"),
     ("fixtures/podcast-search/itunes-responses/*.json", "itunes-search-response.schema.json"),
+    ("fixtures/feeds/zotero-*.json", "zotero-library-item.schema.json", "array"),
     ("traces/*.json", "session-trace.schema.json"),
 ]
 
@@ -240,8 +241,8 @@ def validate_source_catalog(path: Path) -> list[str]:
     feeds = []
     for entry in catalog.get("entries", []):
         scheme, _, rest = entry["feedURL"].partition("://")
-        host, slash, path = rest.partition("/")
-        feeds.append(f"{scheme.lower()}://{host.lower()}{slash}{path}".rstrip("/"))
+        host, slash, feed_path = rest.partition("/")
+        feeds.append(f"{scheme.lower()}://{host.lower()}{slash}{feed_path}".rstrip("/"))
     if len(feeds) != len(set(feeds)):
         errors.append(f"{path}: duplicate feed URLs")
     for entry in catalog.get("entries", []):
@@ -257,6 +258,21 @@ def validate_source_catalog(path: Path) -> list[str]:
         for entry_id in row["entryIds"]:
             if entry_id not in entry_ids:
                 errors.append(f"{path}: starter row {row['subjectId']} names unknown entry {entry_id!r}")
+    # Packs (#4285): the app drops what these rules reject, so a catalog that fails here would ship a smaller pack
+    # than its builder meant. A pack names only entries the drawer offers: followable and not explicit.
+    offered = {
+        entry["id"] for entry in catalog.get("entries", [])
+        if entry["kind"] in ("podcast_feed", "article_feed") and entry.get("explicit") is not True
+    }
+    pack_ids = [pack["id"] for pack in catalog.get("packs", [])]
+    if len(pack_ids) != len(set(pack_ids)):
+        errors.append(f"{path}: duplicate pack ids")
+    for pack in catalog.get("packs", []):
+        for entry_id in pack["entryIds"]:
+            if entry_id not in entry_ids:
+                errors.append(f"{path}: pack {pack['id']} names unknown entry {entry_id!r}")
+            elif entry_id not in offered:
+                errors.append(f"{path}: pack {pack['id']} names {entry_id!r}, which the drawer does not offer (explicit or not followable)")
     return errors
 
 

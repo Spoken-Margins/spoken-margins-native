@@ -28,6 +28,12 @@ public enum ManualCompletionMessages {
         return name.isEmpty ? "Marked unfinished." : "Marked \(name) unfinished."
     }
 
+    /// After Mark Margins Heard (#4289).
+    public static func marginsHeard(title: String) -> String {
+        let name = shortened(title)
+        return name.isEmpty ? "Marked Margins heard." : "Marked Margins on \(name) heard."
+    }
+
     /// VoiceOver names the whole item with the action, not the shortened title.
     public static func undoAccessibilityLabel(title: String) -> String {
         let name = flattened(title)

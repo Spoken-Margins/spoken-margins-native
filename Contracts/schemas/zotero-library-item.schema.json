@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "zotero-library-item.schema.json",
+  "title": "One item of a recorded Zotero web API list response (third-party)",
+  "description": "Zotero's `items/top` and `items?itemType=attachment` answers as recorded, so fields are open. Only what ZoteroPaperReader reads is constrained. The fixture files are arrays of these.",
+  "type": "object",
+  "required": ["key", "data"],
+  "properties": {
+    "key": {"type": "string", "pattern": "^[A-Z0-9]{8}$"},
+    "data": {
+      "type": "object",
+      "required": ["itemType"],
+      "properties": {
+        "itemType": {"type": "string"},
+        "title": {"type": "string"},
+        "abstractNote": {"type": "string"},
+        "DOI": {"type": "string"},
+        "url": {"type": "string"},
+        "dateAdded": {"type": "string"},
+        "parentItem": {"type": "string"},
+        "linkMode": {"type": "string"},
+        "contentType": {"type": "string"}
+      }
+    }
+  }
+}

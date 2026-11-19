@@ -69,6 +69,8 @@ struct ReadCostReport {
             ("loadItemCollections()", { _ = try store.loadItemCollections() }),
             ("loadFollowLists()", { _ = try store.loadFollowLists() }),
             ("loadFollowList(id:)", { _ = try store.loadFollowList(id: "follow-list-0") }),
+            ("loadListLinks()", { _ = try store.loadListLinks() }),
+            ("loadListLink(id:)", { _ = try store.loadListLink(id: "list-link-0") }),
             ("loadListeningRules()", { _ = try store.loadListeningRules() }),
             ("loadListeningRule(id:)", { _ = try store.loadListeningRule(id: "listening-rule-0") }),
             ("loadShowLessMarks()", { _ = try store.loadShowLessMarks() }),

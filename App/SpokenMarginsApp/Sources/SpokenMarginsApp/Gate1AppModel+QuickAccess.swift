@@ -80,9 +80,9 @@ extension Gate1AppModel {
                 quickAccessFileToDismiss: file))
     }
 
-    func refreshQuickAddFeed(force: Bool = true) {
+    func refreshQuickAddFeed(force: Bool = true, trigger: FollowedRefreshTrigger) {
         refreshQuickAccessFolder()
-        refreshFollowedSources(force: force)
+        refreshFollowedSources(force: force, trigger: trigger)
     }
 
     /// Pull-down refresh on Following (#1438): the toolbar button's refresh, awaited so the spinner stays until
@@ -90,6 +90,6 @@ extension Gate1AppModel {
     /// the list redraws can't cut it short; a pull while a refresh runs returns at once and starts no second one.
     func pullToRefreshFollowing() async {
         refreshQuickAccessFolder()
-        _ = await Task { [self] in await self.performFollowedSourceRefresh(force: true) }.value
+        _ = await Task { [self] in await self.performFollowedSourceRefresh(force: true, trigger: .pull) }.value
     }
 }

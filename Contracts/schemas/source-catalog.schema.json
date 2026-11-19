@@ -60,6 +60,21 @@
         "additionalProperties": false
       }
     },
+    "packs": {
+      "type": "array",
+      "description": "Persona packs (#4285): a few shows and writers picked for one kind of listener, followed together from the first-run drawer. Pack ids are unique and every entryId names an entry the drawer offers (followable, not explicit); the app and scripts/validate-contracts.py check both, which JSON Schema can't. Older readers ignore this field.",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "summary", "entryIds"],
+        "properties": {
+          "id": {"$ref": "#/$defs/subjectId"},
+          "title": {"type": "string", "minLength": 1, "maxLength": 40},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 90, "description": "One line on who the pack is for."},
+          "entryIds": {"type": "array", "minItems": 4, "maxItems": 12, "uniqueItems": true, "items": {"$ref": "#/$defs/entryId"}}
+        },
+        "additionalProperties": false
+      }
+    },
     "entries": {
       "type": "array", "minItems": 1, "maxItems": 2000,
       "items": {"$ref": "#/$defs/entry"}
@@ -84,6 +99,11 @@
         "summary": {"type": "string", "maxLength": 600},
         "subjects": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"$ref": "#/$defs/subjectId"}, "description": "First is the primary subject."},
         "explicit": {"type": "boolean"},
+        "recentPublishedAt": {
+          "type": "array", "maxItems": 20,
+          "description": "When the newest items of the feed were published, in no particular order, as of the catalog's generatedAt. The phone counts these to say how often a source publishes (#4285); it never needs the feed to do so. Older readers ignore this field.",
+          "items": {"type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"}
+        },
         "chartPositions": {
           "type": "array", "maxItems": 40,
           "items": {

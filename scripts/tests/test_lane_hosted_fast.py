@@ -158,30 +158,6 @@ class HostedRecordsTests(unittest.TestCase):
                 self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
                 self.assertFalse(any('/annotations' in call for call in checks.calls))
 
-    def test_the_app_build_cannot_be_run_again_so_a_fault_there_stays_a_fail(self):
-        # Audit on 9d98b41: dispatch() starts hosted-portable.yml, never the app build, so a marked fault on it would
-        # report INCONCLUSIVE on every re-add of automerge and never reach FAIL.
-        name = next(iter(lane.HOSTED_APP_CHECK))
-
-        class AppChecks(FakeChecks):
-            def api(self, path):
-                self.calls.append(path)
-                if '/actions/workflows/' in path:
-                    return json.dumps({'workflow_runs': [{'check_suite_id': 77}]})
-                if '/annotations' in path:
-                    return json.dumps(self.annotations[1])
-                return json.dumps({'check_runs': self.runs[name]})
-        run = {'id': 1, 'status': 'completed', 'conclusion': 'failure', 'app': {'slug': 'github-actions'},
-               'check_suite': {'id': 77}, 'started_at': '2026-10-18T10:00:00Z'}
-        checks = AppChecks({}, {1: [self.lane_fault()]})
-        checks.runs = {name: [run]}
-        found, why = lane.hosted_fast_records(checks, self.HEAD, {name: None})
-        self.assertIsNone(found)
-        self.assertIn('ended failure', why)
-        self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
-        self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
-        self.assertFalse(any('/annotations' in call for call in checks.calls))
-
     def test_a_passing_check_reads_no_extra_annotations(self):
         checks = passing(self.HEAD)
         lane.hosted_fast_records(checks, self.HEAD)
@@ -390,12 +366,15 @@ class HostedChecksStandTests(unittest.TestCase):
         self.assertEqual(why, '')
         self.assertTrue(all(len(record['moved']) == 1 for record in found.values()))
         lines = lane.hosted_fast_lines(found)
-        self.assertTrue(all('1 commit since touch none of this PR' in line for line in lines))
+        self.assertTrue(all('moved 1 commit since, and this PR still merges cleanly' in line for line in lines))
         self.assertIn(tested[:7], lane.hosted_fast_ran(found))
 
-    def test_next_touching_the_prs_files_or_a_global_input_means_the_whole_plan(self):
-        # #2596 (Default taken 5): only the PR's own files and what every PR is built from make a hosted check stale.
-        for name, path in (('the PR\'s file', 'pr.txt'), ('project.yml', 'project.yml'),
+    def test_next_touching_the_prs_files_or_a_global_input_still_lets_a_clean_merge_stand(self):
+        # 2026-11-19: every move of next that touched project.yml, a lockfile or the PR's own file made the check
+        # stale and started hosted-portable.yml again (115 cancelled to 47 passed in one afternoon). Main's own
+        # scheduled run (#4573) catches merge skew now, as #4572 took per-PR T3 off the merge, so a check stands
+        # while the PR still merges cleanly onto the newest next.
+        for name, path in (('a file the PR did not touch', 'other-pr.txt'), ('project.yml', 'project.yml'),
                            ('Package.swift', 'Packages/SessionKit/Package.swift'),
                            ('Package.resolved', 'Package.resolved'), ('package-lock.json', 'web/package-lock.json'),
                            ('package.json', 'package.json')):
@@ -404,9 +383,18 @@ class HostedChecksStandTests(unittest.TestCase):
                 head, tested, tree = self.pr()
                 newest = self.move_next(path)
                 found, why = self.stands(head, newest, self.records(head, tested, tree))
-                self.assertIsNone(found)
-                self.assertIn(f'tested it on main at {tested[:7]}', why)
-                self.assertTrue(lane.HOSTED_STALE.search(why), why)
+                self.assertEqual(why, '')
+                self.assertEqual(set(found), set(lane.HOSTED_FAST_CHECKS))
+
+    def test_a_pr_that_conflicts_with_the_newest_next_does_not_stand(self):
+        head, tested, tree = self.pr()
+        newest = self.move_next('pr.txt', 'someone else wrote this file first\n')
+        self.assertIsNone(lane.merged_tree(self.tree, newest, head))
+        found, why = self.stands(head, newest, self.records(head, tested, tree))
+        self.assertIsNone(found)
+        self.assertIn(f'tested it on main at {tested[:7]}', why)
+        self.assertIn('conflicts with', why)
+        self.assertTrue(lane.HOSTED_STALE.search(why), why)  # a conflict is started again, as a stale check was
 
     def test_next_moving_in_scripts_or_workflows_lets_a_hosted_check_stand(self):
         # 6 of 7 fallbacks on 2026-10-24 were a scripts/ file merged by someone else while the check ran.
@@ -656,10 +644,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(on_vps, {})
 
     def test_the_lane_hands_the_switch_to_the_automerge_and_release_runs_and_may_read_checks(self):
-        # The route job (hosted_merge_routing), the lane job (a T3 PASS merging on the hosted checks), the automerge
-        # job, its automerge-mac fallback and the release job (#2459).
+        # The route job (hosted_merge_routing), the automerge job, its automerge-mac fallback and the release job
+        # (#2459). The lane job no longer reads them: a T3 PASS merges nothing since #4572.
         for switch in (lane.HOSTED_FAST_SWITCH, lane.HOSTED_REST_SWITCH):
-            self.assertEqual(self.lane_yml.count(f'{switch}: ${{{{ vars.{switch} }}}}'), 5, switch)
+            self.assertEqual(self.lane_yml.count(f'{switch}: ${{{{ vars.{switch} }}}}'), 4, switch)
         self.assertIn('  checks: read\n', self.lane_yml)
 
 

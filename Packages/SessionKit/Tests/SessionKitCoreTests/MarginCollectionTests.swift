@@ -143,10 +143,13 @@ final class MarginCollectionTests: XCTestCase {
         XCTAssertEqual(entries.privateRows.first?.id, "session::same")
         XCTAssertEqual(entries.sharedRows.first?.id, "shared::layer::same")
         let rows = try appSource("ExperienceModels.swift")
+        // `SharedMarginRow` moved into SessionKit with the other plain row values (#318).
+        let sharedRows = TestInputs.withoutComments(try String(
+            contentsOf: TestInputs.packageURL("Sources/SessionKit/ExperiencePresentation.swift"), encoding: .utf8))
         // `playSharedMarginMoment` lives in the voice-playback extension (moved out of the model file for #3961).
         let sharedMoment = try appSource("Gate1AppModel+MarginVoicePlayback.swift")
         XCTAssertTrue(rows.contains(#"var id: String { "\(interjection.sessionId)::\(interjection.id)" }"#))
-        XCTAssertTrue(rows.contains(#"var id: String { "shared::\(layer.id)::\(interjection.id)" }"#))
+        XCTAssertTrue(sharedRows.contains(#"public var id: String { "shared::\(layer.id)::\(interjection.id)" }"#))
         let curation = try appSource("Gate1AppModel+MarginCuration.swift")
         XCTAssertTrue(curation.contains(#"static func marginIdentity(_ interjection: Interjection) -> String {"# + "\n" + #"        "\(interjection.sessionId)::\(interjection.id)""#))
         XCTAssertTrue(sharedMoment.contains(#"let targetID = "shared::\(row.layer.id)::\(row.interjection.id)""#))
