@@ -553,3 +553,42 @@ jobs:
             exit 0
           fi
           python3 scripts/owner_tap_alert.py --pr "$PR"
+
+  rearm:
+    # Start the merge run of each armed PR on this head again, now that this workflow run is over (lane-runner.py
+    # WAITING, scripts/lane_rearm.py). It is a job here, not a workflow_run workflow, because GitHub starts no
+    # workflow_run for a run that GITHUB_TOKEN caused, and the lane's own dispatches of this workflow are such runs:
+    # their PRs would never have been started again. A dispatch sent with GITHUB_TOKEN does start lane.yml. It waits for
+    # every other job, so the PR's last check has recorded before the merge run reads it. `always()` also runs it after
+    # a failure or a cancel, so the PR gets its report (a PASS, or a FAIL it can be fixed from). The script comes from the PR's base
+    # (the trunk, or the lane-check/** base under test), never the PR's head, and the head reaches the shell only through env. Same-repo runs only. Its outcome is read from the
+    # check jobs only: owner-tap-alert and linux-retry-tally run `always()` and end `success` even when every check skipped.
+    name: rearm
+    needs: [portable, scope, sessionkit, mac-rest, stop-macs-on-red, linux-retry-tally, owner-tap-alert]
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: write  # dispatching lane.yml
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.base.ref || inputs.base || vars.SM_TRUNK || 'main' }}
+          persist-credentials: false
+          sparse-checkout: scripts/lane_rearm.py
+          sparse-checkout-cone-mode: false
+      - name: Start the merge run of each armed PR on this head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RESULTS: ${{ needs.portable.result }} ${{ needs.scope.result }} ${{ needs.sessionkit.result }} ${{ needs.mac-rest.result }}
+        run: |
+          if [ ! -f scripts/lane_rearm.py ]; then
+            echo "::notice::scripts/lane_rearm.py is not on the trunk; nothing started."
+            exit 0
+          fi
+          python3 scripts/lane_rearm.py --head "$HEAD_SHA" --results "$RESULTS"

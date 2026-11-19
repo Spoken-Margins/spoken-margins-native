@@ -1471,7 +1471,7 @@ def hosted_fast_lines(found: dict) -> list[str]:
 # Eight minutes, then the job exits and lets the runner go. Until 2026-11-19 it waited up to two hours on the theory that
 # a Linux wait costs nothing (#3501), but each waiting job holds one of the org's 20 concurrent hosted slots: 8 of 15
 # running Linux jobs were sleepers while 84 Linux and 22 Mac jobs queued behind them. A job that still has unfinished
-# checks at the end of this wait returns WAITING and reports nothing; workflow_run's lane-rearm.yml starts the merge run
+# checks at the end of this wait returns WAITING and reports nothing; the rearm job (last job of hosted-portable.yml and hosted-web.yml) starts the merge run
 # again when hosted-portable.yml or hosted-web.yml finishes on the head (scripts/lane_rearm.py). Long enough for the
 # missing-check grace (5 minutes) plus a poll, so a check that never started is still started again by this job.
 HOSTED_REST_WAIT = 8 * 60
@@ -1495,7 +1495,7 @@ HOSTED_STALE = re.compile(r'" tested (a tree that is not|it on .+ and .+ since: 
 HOSTED_WORKFLOW = 'hosted-portable.yml'
 HOSTED_REDISPATCHES = 3  # fresh runs per job when next keeps moving under them; then the job reports, or the Mac takes it
 NEEDS_MAC = 'NEEDS_MAC'  # the hosted automerge job's cue to hand the run to lane.yml's automerge-mac job
-WAITING = 'WAITING'  # the hosted job's cue that it ended its wait with checks still running: no report, lane-rearm.yml runs it again
+WAITING = 'WAITING'  # the hosted job's cue that it ended its wait with checks still running: no report, the rearm job runs it again
 WAITING_ON = 'waiting for hosted checks that are still running: '  # starts hosted_rest_checks' reason for a WAITING exit
 MOVED_ON = 'stopped waiting for the hosted checks: '
 
@@ -1548,7 +1548,7 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
 
     def out_of_time(why: str) -> tuple[None, str]:
         # With run_again (the hosted job, no Mac to fall back on) a check that is still queued or running, or a fresh
-        # run that has not shown up yet, is not a failure: the job lets its runner go, and lane-rearm.yml starts it
+        # run that has not shown up yet, is not a failure: the job lets its runner go, and the rearm job starts it
         # again when that run finishes. Anything else is waited out and reported, as before.
         if run_again and (NOT_FINISHED in why or (dispatches and HOSTED_MISSING.search(why))):
             return None, f'{WAITING_ON}{why} (after {duration(clock() - started)})'
@@ -1627,7 +1627,7 @@ def hosted_web_check(github, tree: Path, base: str, head: str, alive=lambda: Non
     runs, or for <grace> while it hasn't shown up, this waits up to <wait> seconds (HOSTED_REST_WAIT in a lane job, else
     none); it waits on hosted Linux, which holds no Mac. Any doubt holds the merge.
     exit_waiting (the hosted job): a run still queued or running when the wait ends gives (WAITING, ...), and the
-    job lets its runner go; lane-rearm.yml runs it again when hosted-web.yml finishes on the head."""
+    job lets its runner go; the rearm job runs it again when hosted-web.yml finishes on the head."""
     env = os.environ if env is None else env
     if wait is None:
         wait = HOSTED_REST_WAIT if env.get('GITHUB_ACTIONS') == 'true' else 0
@@ -3761,7 +3761,7 @@ def main(argv=None) -> int:
             verdict, where, ran, details = run_auto(github, pull, args.pr, args.base, head, base_sha, evidence,
                                                     comments, labels, context=context,
                                                     checked=audit_checked, **({'hosted': True} if args.hosted else {}))
-            if verdict == WAITING:  # no report and no label change: lane-rearm.yml runs this again when the checks finish
+            if verdict == WAITING:  # no report and no label change: the rearm job runs this again when the checks finish
                 print(f'Letting the runner go, still waiting: {"; ".join(details)}', flush=True)
                 return 0
             if verdict == NEEDS_MAC:  # no report here: lane.yml's automerge-mac job runs it on the build Mac (#2459)
