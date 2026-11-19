@@ -27,7 +27,7 @@ extension Gate1AppModel {
                 collections[index] = resolved.collection
                 kept.append(resolved.record)
             } catch {
-                diagnostics["collectionImportLaunchFailure"] = String(describing: error)
+                diagnostics["collectionImportLaunchFailure"] = SafeErrorText.describe(error)
                 kept.append(folder)
             }
         }
