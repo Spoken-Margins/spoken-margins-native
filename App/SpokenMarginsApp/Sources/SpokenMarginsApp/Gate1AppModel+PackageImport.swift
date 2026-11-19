@@ -146,6 +146,7 @@ extension Gate1AppModel {
         }
         diagnostics["lastShareLink"] = link.key == nil ? "opening:no_key" : "opening"
         let sheetWords = packetOpenFailures.generation
+        let tryAgain: @MainActor () -> Void = { [weak self] in self?.startShareLinkOpen(url) }
         shareLinkOpener.open(
             link,
             stage: { [weak self] file in
@@ -159,8 +160,7 @@ extension Gate1AppModel {
             fail: { [weak self] failure in
                 self?.diagnostics["lastShareLink"] = "failed"
                 let content = PacketOpenFailureSheetContent(failure, linkID: link.id)
-                let retry: (@MainActor () -> Void)? = content.isRetryable ? { [weak self] in self?.startShareLinkOpen(url) } : nil
-                self?.packetOpenFailures.present(content, retry: retry)
+                self?.packetOpenFailures.present(content, retry: content.isRetryable ? tryAgain : nil)
             }
         )
     }
