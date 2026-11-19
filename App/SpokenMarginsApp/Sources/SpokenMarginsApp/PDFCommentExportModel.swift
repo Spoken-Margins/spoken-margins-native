@@ -37,6 +37,9 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
     /// The file the share sheet is showing. Kept apart from `shareFile` (which the sheet's binding clears on any dismissal)
     /// so the temporary folder is removed and the state restored however the sheet closes.
     private var offered: PDFCommentShareFile?
+    /// Whether the share sheet reported the file as sent. Only recorded here; `shareSheetClosed` acts on it, once the sheet
+    /// is gone, so the order of the sheet's two callbacks never matters.
+    private var reportedSent = false
 
     init(
         itemId: String, itemTitle: String, original: URL, margins: [Interjection],
@@ -80,7 +83,10 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
             state = PDFCommentExportState(plan: plan, spots: preview.spots, authorName: author)
         case .failure(let error):
             state = PDFCommentExportState(plan: MarginCommentPlan(entries: []), spots: [:], authorName: author)
-            if case PDFCommentWriter.Failure.refused = error { state.markLocked() } else { state.markUnreadable() }
+            switch error {
+            case PDFCommentWriter.Failure.refused(.locked): state.markLocked()
+            default: state.markUnreadable() // unreadable, or a file with no pages
+            }
         }
     }
 
@@ -111,23 +117,31 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
             switch built {
             case .success(let file):
                 offered = file
+                reportedSent = false
                 shareFile = file
             case .failure: state.endExport(failed: true)
             }
         }
     }
 
-    /// The share sheet closed, by sending, by Cancel or by swiping it away; it may be reported more than once. `completed`
-    /// is whether the listener sent the file somewhere. The temporary copy goes either way; a cancelled sheet returns to
-    /// the full list with nothing changed. Returns the number of comments sent, once, when the file was sent.
-    func shareSheetClosed(completed: Bool) -> Int? {
+    /// The share sheet's own report: the listener sent the file somewhere (`completed`) or did not. It only records it.
+    func shareSheetReported(completed: Bool) {
+        if completed { reportedSent = true }
+    }
+
+    /// The share sheet is gone, however it closed (sending, Cancel, a swipe). Safe to call more than once. The temporary
+    /// copy is removed; a cancelled sheet returns to the full list with nothing changed. Returns the number of comments
+    /// sent, once, when the listener sent the file.
+    func shareSheetClosed() -> Int? {
         guard let file = offered else { return nil }
         offered = nil
         shareFile = nil
         let folder = file.folder
         Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: folder) }
         state.endExport(failed: false)
-        guard completed else { return nil }
+        let sent = reportedSent
+        reportedSent = false
+        guard sent else { return nil }
         defaults.set(state.authorForComments, forKey: Self.authorDefaultsKey)
         return file.commentCount
     }

@@ -83,13 +83,13 @@ public struct PDFCommentExportState: Equatable, Sendable {
     public static let authorNameLimit = 80
 
     /// - Parameters:
-    ///   - plan: the listener's own Margins, in page order.
+    ///   - plan: the listener's own Margins, in text order.
     ///   - spots: where each Margin of the plan was placed, by Margin id, or nil while placement is still running.
     ///   - authorName: the name last used on comments, or empty.
     public init(plan: MarginCommentPlan, spots: [String: Spot]?, authorName: String = "") {
         self.authorName = authorName
         self.phase = spots == nil ? .loading : .ready
-        self.rows = plan.entries.map { entry in
+        let built: [(page: Int?, row: Row)] = plan.entries.map { entry in
             let status: RowStatus
             let page: Int?
             switch entry.status {
@@ -115,14 +115,23 @@ public struct PDFCommentExportState: Equatable, Sendable {
                 }
             }
             let words = entry.commentText.trimmingCharacters(in: .whitespacesAndNewlines)
-            return Row(
+            let row = Row(
                 id: entry.marginId,
                 pageLabel: page.map { "p. \($0 + 1)" },
                 text: words.isEmpty ? "Spoken Margin" : words,
                 status: status,
                 isIncluded: status.canBeIncluded
             )
+            return (page, row)
         }
+        // By the page each comment lands on, then the plan's order (the text order), so a comment found on the page before
+        // its hint still reads in page order. A row with no page known goes last.
+        self.rows = built.enumerated()
+            .sorted { lhs, rhs in
+                let (left, right) = (lhs.element.page ?? Int.max, rhs.element.page ?? Int.max)
+                return left != right ? left < right : lhs.offset < rhs.offset
+            }
+            .map(\.element.row)
     }
 
     // MARK: - What the sheet reads

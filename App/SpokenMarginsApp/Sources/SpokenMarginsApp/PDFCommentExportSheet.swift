@@ -26,26 +26,27 @@ struct PDFCommentExportSheet: View {
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button("Cancel") { dismiss() }
-                            .disabled(export.state.phase == .exporting)
+                            .disabled(export.state.phase == .exporting && export.shareFile == nil)
                             .accessibilityIdentifier("pdfExport.cancel.button")
                     }
                 }
                 .safeAreaInset(edge: .bottom, spacing: 0) { exportButton }
         }
         .task { await export.load() }
-        .sheet(item: $export.shareFile, onDismiss: { _ = export.shareSheetClosed(completed: false) }) { file in
-            #if canImport(UIKit)
-            PDFCommentShareView(file: file.url) { completed in
-                if let count = export.shareSheetClosed(completed: completed) {
-                    onExported(count)
-                    dismiss()
-                }
+        .sheet(item: $export.shareFile, onDismiss: {
+            // Every way the share sheet can close ends here, after it is gone.
+            if let count = export.shareSheetClosed() {
+                onExported(count)
+                dismiss()
             }
+        }) { file in
+            #if canImport(UIKit)
+            PDFCommentShareView(file: file.url) { completed in export.shareSheetReported(completed: completed) }
             #else
             EmptyView()
             #endif
         }
-        .interactiveDismissDisabled(export.state.phase == .exporting)
+        .interactiveDismissDisabled(export.state.phase == .exporting && export.shareFile == nil)
         .accessibilityIdentifier("pdfExport.sheet")
     }
 
@@ -183,14 +184,19 @@ struct PDFCommentExportSheet: View {
 }
 
 #if canImport(UIKit)
-/// The system share sheet for the finished copy. `onClosed` says whether the listener sent the file somewhere.
+/// The system share sheet for the finished copy. `onClosed` says whether the listener sent the file somewhere; the sheet
+/// then closes itself, and the presenting sheet's `onDismiss` does the rest.
 private struct PDFCommentShareView: UIViewControllerRepresentable {
+    @Environment(\.dismiss) private var dismiss
     let file: URL
     let onClosed: (Bool) -> Void
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let controller = UIActivityViewController(activityItems: [file], applicationActivities: nil)
-        controller.completionWithItemsHandler = { _, completed, _, _ in onClosed(completed) }
+        controller.completionWithItemsHandler = { _, completed, _, _ in
+            onClosed(completed)
+            dismiss()
+        }
         return controller
     }
 

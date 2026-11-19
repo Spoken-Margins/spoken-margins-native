@@ -197,7 +197,10 @@ struct ExperienceItemDetailScreen: View {
                 }
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
-            .task(id: model.selectedItem.id) { await refreshKeptPDFOriginal() }
+            // Runs again when the item's Library row arrives, so the entry is not missed on a screen opened before the row.
+            .task(id: "\(model.selectedItem.id)|\(model.libraryItems.contains { $0.id == model.selectedItem.id })") {
+                await refreshKeptPDFOriginal()
+            }
             .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
             .onDisappear {
                 WrittenMarginReadings.leftItemScreen(model.selectedItem.id)

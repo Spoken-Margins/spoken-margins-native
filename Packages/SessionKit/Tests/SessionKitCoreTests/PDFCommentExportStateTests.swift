@@ -38,9 +38,24 @@ final class PDFCommentExportStateTests: XCTestCase {
         XCTAssertEqual(sheet.rows[0].pageLabel, "p. 4")
     }
 
-    func testRowsKeepThePlansOrder() {
+    func testRowsAreInPageOrderAndKeepThePlansOrderWithinAPage() {
         let sheet = state([entry("z", "one", page: 0), entry("a", "two", page: 1), entry("m", "three", page: 1)])
         XCTAssertEqual(sheet.rows.map(\.id), ["z", "a", "m"])
+    }
+
+    func testACommentFoundOnThePageBeforeItsHintStillReadsInPageOrder() {
+        // The locator may land a later sentence on the page before its hint: the list follows where comments land.
+        let sheet = state(
+            [entry("early", "one", page: 3), entry("late", "two", page: 4), entry("scan", "three", page: 7)],
+            spots: ["early": .sentence(page: 3), "late": .sentence(page: 2), "scan": .pageNote(page: 7)]
+        )
+        XCTAssertEqual(sheet.rows.map(\.id), ["late", "early", "scan"])
+        XCTAssertEqual(sheet.rows.map(\.pageLabel), ["p. 3", "p. 4", "p. 8"])
+    }
+
+    func testARowWithNoPageKnownGoesLast() {
+        let sheet = state([entry("none", "", page: nil, status: .noTranscript), entry("a", "x", page: 5), entry("b", "y", page: 1)])
+        XCTAssertEqual(sheet.rows.map(\.id), ["b", "a", "none"])
     }
 
     func testAMarginWithNoWordsShowsAPlaceholderNotABlankRow() {

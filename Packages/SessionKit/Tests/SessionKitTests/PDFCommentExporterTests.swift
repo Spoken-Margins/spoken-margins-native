@@ -52,7 +52,9 @@ final class PDFCommentExporterTests: XCTestCase {
     func testThePreviewFeedsTheSheetsRows() throws {
         let preview = try PDFCommentExporter.preview(source: source, plan: plan())
         let state = PDFCommentExportState(plan: plan(), spots: preview.spots)
-        XCTAssertEqual(state.rows.map(\.status), [.onItsSentence, .pageNoExactSpot(page: 1), .transcriptPending])
+        // In page order: m1 and the pending m3 are on page 1 (m3 by its hint), m2's note is on page 2.
+        XCTAssertEqual(state.rows.map(\.id), ["m1", "m3", "m2"])
+        XCTAssertEqual(state.rows.map(\.status), [.onItsSentence, .transcriptPending, .pageNoExactSpot(page: 1)])
         XCTAssertEqual(state.includedIds, ["m1", "m2"])
     }
 
