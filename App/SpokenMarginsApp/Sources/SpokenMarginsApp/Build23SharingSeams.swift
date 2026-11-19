@@ -802,7 +802,10 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     /// What the stored Margin gained since the sheet opened goes into the draft, so the packet carries what the card says
     /// is ready (#3839): its anchor evidence, and, when its words have arrived and the sender has changed nothing, the
     /// words themselves (the draft is rebuilt from the stored Margin; see `ShareInterjectionDraft.adoptArrivedWords`).
-    /// A sender's edits are never taken away. A change reaches `sharingState` once and the next pass sees none.
+    /// A sender's edits are never taken away. Nothing here starts a cleanup: a Margin whose words land late is cleaned
+    /// with its own "Remove ums and pauses" button, because the bulk "Clean automatically" pass touches every included
+    /// draft, Words-only and already-undone ones too, and the audit found it overriding both. A change reaches
+    /// `sharingState` once and the next pass sees none.
     ///
     /// None of this is something the sender chose, so it never reports as a change of the selection (twice the audit
     /// found a path where it did): while a packet is being built or the system share sheet is open the draft is frozen,
@@ -815,7 +818,6 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         let stored = Dictionary(model.selectedItem.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var drafts = model.sharingState.drafts
         var changed = false
-        var arrivedWords = false
         for index in drafts.indices {
             guard let margin = stored[drafts[index].id] else { continue }
             if drafts[index].refreshAnchorEvidence(from: margin) { changed = true }
@@ -824,15 +826,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 from: margin, hasVoice: model.originalAudioURL(forShareDraft: drafts[index].id) != nil,
                 itemTitle: model.selectedItem.title) {
                 changed = true
-                arrivedWords = arrivedWords || drafts[index].interjection.alignedTranscript != nil
             }
         }
         if changed { model.sharingState.drafts = drafts }
-        // Words that arrive late make the Margin cleanable, and the sender's "Clean automatically" choice covers it too:
-        // the pass at open skipped it because it had no timing then.
-        if arrivedWords {
-            model.prepareAutomaticallyCleanedShareDraftsIfEnabled()
-        }
         return changed
     }
 
