@@ -333,27 +333,55 @@ final class ShareInterjectionDraftTests: XCTestCase {
         ShareInterjectionDraft.initial(for: pendingVoiceMargin(), isIncluded: isIncluded, hasVoice: true, itemTitle: "Episode")
     }
 
-    func testAnUneditedDraftIsRebuiltFromTheWordsThatArrive() throws {
+    func testTheWordsThatArriveReplaceTheStandInWordsAndBringTheTiming() throws {
         var draft = pendingDraft()
         XCTAssertTrue(draft.isShowingPlaceholder, "a pending voice Margin starts with the stand-in words")
         XCTAssertTrue(draft.adoptArrivedWords(from: arrived(draft.interjection), hasVoice: true, itemTitle: "Episode"))
         XCTAssertEqual(draft.approvedTranscript, "Keep going.")
         XCTAssertFalse(draft.isShowingPlaceholder)
+        XCTAssertNil(draft.placeholderText)
         XCTAssertNil(draft.warning)
         XCTAssertEqual(draft.interjection.transcriptionStatus, "transcribed")
         XCTAssertNotNil(draft.interjection.alignedTranscript, "the timing arrives with the words, so ums can be removed")
         XCTAssertEqual(draft.representationChoice, .original)
-        XCTAssertFalse(draft.adoptArrivedWords(from: arrived(draft.interjection), hasVoice: true, itemTitle: "Episode"), "once rebuilt, nothing is pending")
+        XCTAssertFalse(draft.adoptArrivedWords(from: arrived(draft.interjection), hasVoice: true, itemTitle: "Episode"), "once taken, nothing is pending")
     }
 
-    func testRebuildKeepsWhetherTheMarginIsIncluded() {
-        var left = pendingDraft(isIncluded: false)
-        XCTAssertTrue(left.adoptArrivedWords(from: arrived(left.interjection), hasVoice: true, itemTitle: "Episode"))
-        XCTAssertFalse(left.isIncluded)
-        var kept = pendingDraft(isIncluded: true)
-        kept.setIncluded(true)
-        XCTAssertTrue(kept.adoptArrivedWords(from: arrived(kept.interjection), hasVoice: true, itemTitle: "Episode"))
-        XCTAssertTrue(kept.isIncluded)
+    func testTheWordsArriveWhateverElseTheSenderChangedAndTheirChoicesStay() {
+        let choices: [(String, (inout ShareInterjectionDraft) -> Void)] = [
+            ("words only", { $0.setRepresentation(.textOnly, hasOriginalAudio: true) }),
+            ("read aloud off", { $0.readAloud = false }),
+            ("run-up changed", { $0.leadInMs += 1_000 }),
+            ("left out", { $0.setIncluded(false) })
+        ]
+        for (name, choose) in choices {
+            var draft = pendingDraft()
+            choose(&draft)
+            let (representation, readAloud, leadIn, included) = (draft.representationChoice, draft.readAloud, draft.leadInMs, draft.isIncluded)
+            XCTAssertTrue(draft.adoptArrivedWords(from: arrived(draft.interjection), hasVoice: true, itemTitle: "Episode"), name)
+            XCTAssertEqual(draft.approvedTranscript, "Keep going.", "\(name): the words still arrive")
+            XCTAssertEqual(draft.representationChoice, representation, name)
+            XCTAssertEqual(draft.readAloud, readAloud, name)
+            XCTAssertEqual(draft.leadInMs, leadIn, name)
+            XCTAssertEqual(draft.isIncluded, included, name)
+        }
+    }
+
+    func testPlacementWordsTheSenderEditedStayAndUntouchedOnesFollowTheNewWords() {
+        var edited = pendingDraft()
+        edited.setAnchorBefore("Something else")
+        edited.setAnchorAfter("Another thing")
+        let (before, after) = (edited.anchorBefore, edited.anchorAfter)
+        XCTAssertNotEqual(before, "Before")
+        XCTAssertTrue(edited.adoptArrivedWords(from: arrived(edited.interjection), hasVoice: true, itemTitle: "Episode"))
+        XCTAssertEqual(edited.anchorBefore, before)
+        XCTAssertEqual(edited.anchorAfter, after)
+        var untouched = pendingDraft()
+        let expected = ShareInterjectionDraft.initial(
+            for: arrived(untouched.interjection), isIncluded: true, hasVoice: true, itemTitle: "Episode")
+        XCTAssertTrue(untouched.adoptArrivedWords(from: arrived(untouched.interjection), hasVoice: true, itemTitle: "Episode"))
+        XCTAssertEqual(untouched.anchorBefore, expected.anchorBefore)
+        XCTAssertEqual(untouched.anchorAfter, expected.anchorAfter)
     }
 
     func testRebuildKeepsTheLastSentChoicesTheDraftStartedWith() {
@@ -367,29 +395,21 @@ final class ShareInterjectionDraftTests: XCTestCase {
         XCTAssertEqual(draft.previousLeadInMs, 8_000)
     }
 
-    /// Each row is something the sender may have done while the words were pending; the words arriving must not undo it.
-    func testAnyEditTheSenderMadeStopsTheRebuild() {
-        let edits: [(String, (inout ShareInterjectionDraft) -> Void)] = [
-            ("their own words", { $0.setReviewedWords("My own words") }),
-            ("words only", { $0.setRepresentation(.textOnly, hasOriginalAudio: true) }),
-            ("read aloud off", { $0.readAloud = false }),
-            ("run-up changed", { $0.leadInMs += 1_000 }),
-            ("words just before", { $0.setAnchorBefore("Something else") }),
-            ("words just after", { $0.setAnchorAfter("Something else") }),
-            ("cleanup running", { $0.isPreparingCleanup = true }),
-            ("an edit recorded", { $0.editHistory.append(ShareMarginEditState(automaticCleanupEnabled: true)); $0.editHistoryIndex = 1 })
-        ]
-        for (name, edit) in edits {
-            var draft = pendingDraft()
-            edit(&draft)
-            let before = draft.approvedTranscript
-            XCTAssertFalse(draft.adoptArrivedWords(from: arrived(draft.interjection), hasVoice: true, itemTitle: "Episode"), name)
-            XCTAssertEqual(draft.approvedTranscript, before, name)
-            XCTAssertEqual(draft.interjection.transcriptionStatus, "pending", name)
-        }
+    /// Words the sender wrote over the stand-in are theirs: the arriving words take none of it and bring no timing.
+    func testWordsTheSenderTypedStayAndClearingThemLetTheArrivingWordsIn() {
+        var draft = pendingDraft()
+        draft.setReviewedWords("My own words")
+        XCTAssertFalse(draft.adoptArrivedWords(from: arrived(draft.interjection), hasVoice: true, itemTitle: "Episode"))
+        XCTAssertEqual(draft.approvedTranscript, "My own words")
+        XCTAssertEqual(draft.interjection.transcriptionStatus, "pending")
+        XCTAssertNil(draft.interjection.alignedTranscript)
+        draft.setReviewedWords("")
+        XCTAssertTrue(draft.isShowingPlaceholder, "clearing their words brings the stand-in back")
+        XCTAssertTrue(draft.adoptArrivedWords(from: arrived(draft.interjection), hasVoice: true, itemTitle: "Episode"))
+        XCTAssertEqual(draft.approvedTranscript, "Keep going.")
     }
 
-    func testOnlyAPendingDraftForTheSameMarginIsRebuilt() {
+    func testOnlyAPendingOrFailedDraftForTheSameMarginTakesWords() {
         var done = pendingDraft()
         done.interjection.transcriptionStatus = "transcribed"
         XCTAssertFalse(done.adoptArrivedWords(from: arrived(done.interjection), hasVoice: true, itemTitle: "Episode"))
@@ -400,13 +420,27 @@ final class ShareInterjectionDraftTests: XCTestCase {
         XCTAssertFalse(draft.adoptArrivedWords(from: draft.interjection, hasVoice: true, itemTitle: "Episode"), "still pending")
     }
 
-    func testAFailedTranscriptionRebuildsToTheSameStandInWords() {
+    /// Failed first, then a retry in Margin detail lands while the sheet is still open.
+    func testAFailedTranscriptionKeepsTheStandInWordsAndALaterRetryStillLandsTheWords() {
         var draft = pendingDraft()
         let placeholder = draft.approvedTranscript
         XCTAssertTrue(draft.adoptArrivedWords(from: arrived(draft.interjection, status: "failed"), hasVoice: true, itemTitle: "Episode"))
         XCTAssertEqual(draft.approvedTranscript, placeholder, "a voice Margin still goes, with its stand-in words (#3027)")
         XCTAssertEqual(draft.interjection.transcriptionStatus, "failed")
         XCTAssertNil(draft.warning)
+        XCTAssertTrue(draft.adoptArrivedWords(from: arrived(draft.interjection), hasVoice: true, itemTitle: "Episode"))
+        XCTAssertEqual(draft.approvedTranscript, "Keep going.")
+        XCTAssertEqual(draft.interjection.transcriptionStatus, "transcribed")
+    }
+
+    func testCleanupInFlightHoldsTheWordsBack() {
+        for hold in [{ (d: inout ShareInterjectionDraft) in d.isPreparingCleanup = true },
+                     { (d: inout ShareInterjectionDraft) in d.editHistory.append(ShareMarginEditState(automaticCleanupEnabled: true)); d.editHistoryIndex = 1 }] {
+            var draft = pendingDraft()
+            hold(&draft)
+            XCTAssertFalse(draft.adoptArrivedWords(from: arrived(draft.interjection), hasVoice: true, itemTitle: "Episode"))
+            XCTAssertTrue(draft.isShowingPlaceholder)
+        }
     }
 
     private func makeDraft() -> ShareInterjectionDraft {

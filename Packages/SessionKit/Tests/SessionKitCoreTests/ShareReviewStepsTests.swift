@@ -98,6 +98,19 @@ final class ShareReviewStepsTests: XCTestCase {
         }
     }
 
+    /// A Margin whose recording can't be found (a Watch import with no audio) will never get words: no badge, no step,
+    /// no "a few seconds".
+    func testAMarginWithNoRecordingNeverWaitsOnWords() {
+        var pending = margin(words: "pending")
+        pending.hasVoice = false
+        XCTAssertNil(ShareReviewSteps.waitingBadge(pending))
+        XCTAssertEqual(ShareReviewSteps.cardSteps(pending), [])
+        XCTAssertNil(ShareReviewSteps.pinnedLine([pending]))
+        let fromStored = ShareReviewSteps.Margin(stored(words: "pending"), isNativeAudio: true, playingThisItem: true, hasVoice: false)
+        XCTAssertNil(ShareReviewSteps.waitingBadge(fromStored))
+        XCTAssertNotNil(ShareReviewSteps.waitingBadge(ShareReviewSteps.Margin(stored(words: "pending"), isNativeAudio: true, playingThisItem: true)))
+    }
+
     func testThePinnedStepCarriesTheIconOfTheWaitItNames() {
         let moment = margin(status: .pendingPostResumeSample, playing: true)
         XCTAssertEqual(ShareReviewSteps.pinnedStep([moment])?.icon, .clock)

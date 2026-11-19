@@ -394,7 +394,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         let margins = state.drafts.map { draft in
             let originalVoiceURL = model.originalAudioURL(forShareDraft: draft.id)
             let reviewMargin = ShareReviewSteps.Margin(
-                stored[draft.id] ?? draft.interjection, isNativeAudio: isNativeAudio, playingThisItem: playing)
+                stored[draft.id] ?? draft.interjection, isNativeAudio: isNativeAudio, playingThisItem: playing,
+                hasVoice: originalVoiceURL != nil)
             if draft.isIncluded { waiting.append(reviewMargin) }
             return Build23SharingMarginSnapshot(
                 id: draft.id,
@@ -814,15 +815,24 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         let stored = Dictionary(model.selectedItem.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var drafts = model.sharingState.drafts
         var changed = false
+        var arrivedWords = false
         for index in drafts.indices {
             guard let margin = stored[drafts[index].id] else { continue }
             if drafts[index].refreshAnchorEvidence(from: margin) { changed = true }
-            if margin.transcriptionStatus != "pending", drafts[index].interjection.transcriptionStatus == "pending",
+            if margin.transcriptionStatus != "pending", drafts[index].interjection.transcriptionStatus != margin.transcriptionStatus,
                drafts[index].adoptArrivedWords(
                 from: margin, hasVoice: model.originalAudioURL(forShareDraft: drafts[index].id) != nil,
-                itemTitle: model.selectedItem.title) { changed = true }
+                itemTitle: model.selectedItem.title) {
+                changed = true
+                arrivedWords = arrivedWords || drafts[index].interjection.alignedTranscript != nil
+            }
         }
         if changed { model.sharingState.drafts = drafts }
+        // Words that arrive late make the Margin cleanable, and the sender's "Clean automatically" choice covers it too:
+        // the pass at open skipped it because it had no timing then.
+        if arrivedWords {
+            model.prepareAutomaticallyCleanedShareDraftsIfEnabled()
+        }
         return changed
     }
 

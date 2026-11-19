@@ -19,26 +19,30 @@ public enum ShareReviewSteps {
         public var transcriptionStatus: String
         /// The sheet's item is the one playing, and playback is active.
         public var playingThisItem: Bool
+        /// The Margin's recording can be found. Without it nothing is making words for it, so it never waits on them.
+        public var hasVoice: Bool
 
         public init(
             isNativeAudio: Bool, hasEvidence: Bool, evidenceStatus: PodcastAnchorEvidenceCaptureStatus?,
-            transcriptionStatus: String, playingThisItem: Bool
+            transcriptionStatus: String, playingThisItem: Bool, hasVoice: Bool = true
         ) {
             self.isNativeAudio = isNativeAudio
             self.hasEvidence = hasEvidence
             self.evidenceStatus = evidenceStatus
             self.transcriptionStatus = transcriptionStatus
             self.playingThisItem = playingThisItem
+            self.hasVoice = hasVoice
         }
 
         /// One stored Margin as the review sees it.
-        public init(_ interjection: Interjection, isNativeAudio: Bool, playingThisItem: Bool) {
+        public init(_ interjection: Interjection, isNativeAudio: Bool, playingThisItem: Bool, hasVoice: Bool = true) {
             self.init(
                 isNativeAudio: isNativeAudio,
                 hasEvidence: !(interjection.podcastAnchorEvidence ?? []).isEmpty,
                 evidenceStatus: interjection.podcastAnchorEvidenceCaptureStatus,
                 transcriptionStatus: interjection.transcriptionStatus,
-                playingThisItem: playingThisItem
+                playingThisItem: playingThisItem,
+                hasVoice: hasVoice
             )
         }
 
@@ -47,7 +51,7 @@ public enum ShareReviewSteps {
             isNativeAudio && !hasEvidence && evidenceStatus == .pendingPostResumeSample
         }
 
-        var waitsOnWords: Bool { transcriptionStatus == "pending" }
+        var waitsOnWords: Bool { transcriptionStatus == "pending" && hasVoice }
     }
 
     public enum Icon: Equatable, Sendable {

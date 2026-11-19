@@ -261,38 +261,41 @@ extension ShareInterjectionDraft {
         return true
     }
 
-    /// Whether the sender has changed nothing that a rebuild from the arrived words would overwrite: the words, the
-    /// version, the read-aloud switch, the run-up, the placement words, and any cleanup. Whether the Margin is included
-    /// is not an edit (it follows the Choose step), so a rebuild keeps it.
-    public func isUnedited(hasVoice: Bool, itemTitle: String?, timeZone: TimeZone = .current) -> Bool {
-        let baseline = Self.initial(
-            for: interjection, isIncluded: isIncluded, hasVoice: hasVoice, itemTitle: itemTitle,
-            lastSentReadAloud: previousReadAloud, lastSentLeadInMs: previousLeadInMs, timeZone: timeZone)
-        return approvedTranscript == baseline.approvedTranscript
-            && representationChoice == baseline.representationChoice
-            && readAloud == baseline.readAloud
-            && leadInMs == baseline.leadInMs
-            && anchorBefore == baseline.anchorBefore
-            && anchorAfter == baseline.anchorAfter
-            && editHistory == [.original] && editHistoryIndex == 0
-            && cleanup == nil && cleanedAudioURL == nil
-            && !isAnalyzingPauses && !isPreparingCleanup
-    }
-
-    /// Rebuilds this draft from the stored Margin once its words have arrived (#3839): the text, the timing, whether it
-    /// can be cleaned. It happens only when the draft was made while the words were pending and the sender has changed
-    /// nothing since (`isUnedited`), so it never takes their edits away. The Margin stays included or not as it was.
-    /// Returns whether the draft changed.
+    /// Takes the Margin's words when they arrive after the sheet opened (#3839): the text, the timing and whether it can
+    /// be cleaned. Only the words are replaced, and only if the sender has not written their own: while the draft still
+    /// shows the stand-in words, the stored Margin goes in whole and the stand-in becomes the real words. Everything else
+    /// the sender chose stays as they left it (the version, the read-aloud switch, the run-up, the placement words,
+    /// whether the Margin is included, and what a re-share started from). Words the sender typed stay, with no timing
+    /// taken, so nothing they wrote is ever overwritten.
+    ///
+    /// Works from a draft whose copy of the Margin is still pending, or failed when a retry lands, and a stored Margin
+    /// that is no longer pending. Returns whether the draft changed.
     @discardableResult
     public mutating func adoptArrivedWords(
         from stored: Interjection, hasVoice: Bool, itemTitle: String?, timeZone: TimeZone = .current
     ) -> Bool {
+        let standsIn = isShowingPlaceholder || !SharedMarginTextRequirement.hasReviewedText(approvedTranscript)
         guard stored.id == interjection.id,
-              interjection.transcriptionStatus == "pending", stored.transcriptionStatus != "pending",
-              isUnedited(hasVoice: hasVoice, itemTitle: itemTitle, timeZone: timeZone) else { return false }
-        self = Self.initial(
+              stored.transcriptionStatus != "pending",
+              ["pending", "failed"].contains(interjection.transcriptionStatus),
+              interjection.transcriptionStatus != stored.transcriptionStatus,
+              standsIn,
+              editHistory == [.original], cleanup == nil, !isAnalyzingPauses, !isPreparingCleanup else { return false }
+        let before = Self.initial(
+            for: interjection, isIncluded: isIncluded, hasVoice: hasVoice, itemTitle: itemTitle,
+            lastSentReadAloud: previousReadAloud, lastSentLeadInMs: previousLeadInMs, timeZone: timeZone)
+        let arrived = Self.initial(
             for: stored, isIncluded: isIncluded, hasVoice: hasVoice, itemTitle: itemTitle,
             lastSentReadAloud: previousReadAloud, lastSentLeadInMs: previousLeadInMs, timeZone: timeZone)
+        // The placement words follow the new words only if the sender never changed them.
+        if anchorBefore == before.anchorBefore, anchorAfter == before.anchorAfter {
+            anchorBefore = arrived.anchorBefore
+            anchorAfter = arrived.anchorAfter
+        }
+        interjection = stored
+        approvedTranscript = arrived.approvedTranscript
+        placeholderText = arrived.placeholderText
+        warning = arrived.warning
         return true
     }
 

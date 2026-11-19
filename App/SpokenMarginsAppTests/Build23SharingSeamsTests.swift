@@ -299,20 +299,25 @@ final class Build23SharingSeamsTests: XCTestCase {
         XCTAssertNotEqual(coordinator.snapshot.previewState, .stale)
     }
 
-    /// What the sender typed while the words were pending stays; the words arriving never take it away.
-    func testWordsArrivingNeverTakeAwayWhatTheSenderTyped() async throws {
+    /// The sender's other choices never hold the words back, and words they typed stay (#3839 review).
+    func testWordsArriveWhateverElseTheSenderChangedAndTypedWordsStay() async throws {
         let (coordinator, model, root) = try await coordinatorWithPendingWords()
         defer { try? FileManager.default.removeItem(at: root) }
-        coordinator.send(.setReviewedWords(id: "margin-words-wait", text: "My own words"))
-        XCTAssertEqual(coordinator.snapshot.margins.first?.reviewedText, "My own words")
-
+        coordinator.send(.setRepresentation(id: "margin-words-wait", choice: .textOnly))
         wordsArrive(in: model)
-        try await pollUntil { coordinator.snapshot.margins.first?.waitingBadge == nil }
-        try await waitUntilQuiet(coordinator)
+        try await pollUntil { coordinator.snapshot.margins.first?.reviewedText == "Keep going." }
+        XCTAssertEqual(coordinator.snapshot.margins.first?.representation, .textOnly, "their choice stays")
+        XCTAssertEqual(coordinator.snapshot.margins.first?.isShowingPlaceholder, false)
 
-        XCTAssertEqual(coordinator.snapshot.margins.first?.reviewedText, "My own words")
-        XCTAssertEqual(coordinator.snapshot.margins.first?.steps, [], "the step still clears: the stored Margin has its words")
-        XCTAssertNil(coordinator.snapshot.pinnedStep)
+        let (typed, typedModel, typedRoot) = try await coordinatorWithPendingWords()
+        defer { try? FileManager.default.removeItem(at: typedRoot) }
+        typed.send(.setReviewedWords(id: "margin-words-wait", text: "My own words"))
+        wordsArrive(in: typedModel)
+        try await pollUntil { typed.snapshot.margins.first?.waitingBadge == nil }
+        try await waitUntilQuiet(typed)
+        XCTAssertEqual(typed.snapshot.margins.first?.reviewedText, "My own words")
+        XCTAssertEqual(typed.snapshot.margins.first?.steps, [], "the step still clears: the stored Margin has its words")
+        XCTAssertNil(typed.snapshot.pinnedStep)
     }
 
     /// A Margin the sender left out stays left out when its words arrive, and a Margin whose transcription failed shows
@@ -329,7 +334,8 @@ final class Build23SharingSeamsTests: XCTestCase {
         let (failed, failedModel, failedRoot) = try await coordinatorWithPendingWords()
         defer { try? FileManager.default.removeItem(at: failedRoot) }
         failedModel.selectedItem.interjections[0].transcriptionStatus = "failed"
-        try await pollUntil { failed.snapshot.margins.first?.waitingBadge == nil }
+        try await pollUntil { failedModel.sharingState.drafts.first?.interjection.transcriptionStatus == "failed" }
+        XCTAssertEqual(failedModel.sharingState.drafts.first?.interjection.transcriptionStatus, "failed", "the draft took the stored Margin")
         XCTAssertEqual(failed.snapshot.margins.first?.steps, [])
         XCTAssertNil(failed.snapshot.pinnedStep)
         XCTAssertTrue(failed.snapshot.margins.first?.isShowingPlaceholder == true)
