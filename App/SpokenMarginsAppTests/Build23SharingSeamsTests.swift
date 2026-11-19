@@ -120,6 +120,126 @@ final class Build23SharingSeamsTests: XCTestCase {
         XCTAssertEqual(coordinator.stage, .share)
     }
 
+    /// #3839: the moment step reads the stored Margin and whether this item is playing each time, so it clears when the
+    /// sample lands without the sheet reopening, says "Play the episode" while the item is paused or another one plays,
+    /// and a flip of playback reaches the sheet.
+    func testTheMomentStepFollowsTheStoredMarginAndPlaybackWithoutReopening() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: root.appending(path: "library.sqlite"))
+        model.resetAndSeed()
+        let itemID = model.selectedItem.id
+        model.selectedItem.isNativeAudio = true
+        model.selectedItem.interjections = [Interjection(
+            id: "margin-just-recorded", itemId: itemID, sessionId: "session-test", targetType: .item, targetId: itemID,
+            createdAt: Date(), roughPercent: 40,
+            anchor: Anchor(anchorType: .text, startChar: 0, endChar: 5, anchorBefore: "Before", anchorAfter: "After"),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "Just recorded.",
+            cleanedTranscript: nil, displayText: nil, status: "active",
+            podcastAnchorEvidenceCaptureStatus: .pendingPostResumeSample
+        )]
+        let coordinator = Build23SharingCoordinator(model: model)
+        coordinator.send(.begin)
+        coordinator.send(.advanceToReview)
+        try await waitUntilQuiet(coordinator)
+
+        func firstStep() -> String? { coordinator.snapshot.margins.first?.steps.first?.text }
+        XCTAssertEqual(coordinator.snapshot.margins.first?.steps.first?.icon, .clock)
+        XCTAssertTrue(firstStep()?.hasPrefix("Play the episode for about 12 seconds") == true, "paused: \(String(describing: firstStep()))")
+        XCTAssertTrue(coordinator.snapshot.pinnedStep?.text.hasPrefix("Play the episode") == true)
+
+        // Another item playing does not count as this one.
+        model.snapshot.itemId = "another-episode"
+        model.snapshot.status = .playing
+        XCTAssertTrue(firstStep()?.hasPrefix("Play the episode") == true, "another item plays: \(String(describing: firstStep()))")
+
+        // This item playing changes the words, and the change reaches the sheet.
+        var notifications = 0
+        let subscription = coordinator.objectWillChange.sink { notifications += 1 }
+        defer { withExtendedLifetime(subscription) {} }
+        model.snapshot.itemId = itemID
+        let clock = ContinuousClock()
+        let start = clock.now
+        while notifications == 0, clock.now - start < .seconds(10) { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThan(notifications, 0, "playback of this item starting must reach the sheet")
+        XCTAssertTrue(firstStep()?.hasPrefix("Finding the exact moment for this Margin") == true, String(describing: firstStep()))
+        XCTAssertTrue(coordinator.snapshot.pinnedStep?.text.hasPrefix("Finding the exact moment for your new Margin") == true)
+
+        // The sample lands in the stored Margin: no step, no pinned line, nothing reopened.
+        model.selectedItem.interjections[0].podcastAnchorEvidence = [
+            CapturedPodcastAnchorEvidence(id: "evidence", localPath: "/unused", durationMs: 12_000, anchorOffsetMs: 4_000)
+        ]
+        model.selectedItem.interjections[0].podcastAnchorEvidenceCaptureStatus = .ready
+        XCTAssertEqual(coordinator.snapshot.margins.first?.steps, [])
+        XCTAssertNil(coordinator.snapshot.margins.first?.placementNote)
+        XCTAssertNil(coordinator.snapshot.pinnedStep)
+    }
+
+    /// A coordinator on review for one podcast Margin whose post-resume sample has not landed yet.
+    private func coordinatorWithPendingEvidence() async throws -> (Build23SharingCoordinator, Gate1AppModel) {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let itemID = model.selectedItem.id
+        model.selectedItem.interjections = [Interjection(
+            id: "margin-evidence-mid-build", itemId: itemID, sessionId: "session-test", targetType: .item, targetId: itemID,
+            createdAt: Date(timeIntervalSince1970: 1), roughPercent: 25,
+            anchor: Anchor(anchorType: .text, startChar: 0, endChar: 5, anchorBefore: "Before", anchorAfter: "After"),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "A reviewed Margin.",
+            cleanedTranscript: nil, displayText: nil, status: "active",
+            podcastAnchorEvidenceCaptureStatus: .pendingPostResumeSample
+        )]
+        let coordinator = Build23SharingCoordinator(model: model)
+        coordinator.send(.begin)
+        coordinator.send(.advanceToReview)
+        try await waitUntilQuiet(coordinator)
+        return (coordinator, model)
+    }
+
+    private func landEvidence(in model: Gate1AppModel) {
+        model.selectedItem.interjections[0].podcastAnchorEvidence = [
+            CapturedPodcastAnchorEvidence(id: "evidence", localPath: "/unused", durationMs: 12_000, anchorOffsetMs: 4_000)
+        ]
+        model.selectedItem.interjections[0].podcastAnchorEvidenceCaptureStatus = .ready
+    }
+
+    /// #3839 audit: the post-resume sample landing while the packet builds must not turn the preview stale; the sender
+    /// changed nothing, so they must not be sent back with "Your selection changed".
+    func testEvidenceLandingMidBuildDoesNotMakeThePreviewStale() async throws {
+        let (coordinator, model) = try await coordinatorWithPendingEvidence()
+        coordinator.send(.buildRecipientPreview)
+        XCTAssertEqual(coordinator.snapshot.stage, .recipientPreview)
+        landEvidence(in: model)
+
+        try await waitForSharingPreview(coordinator)
+        XCTAssertNotNil(coordinator.snapshot.verifiedPreview, "the preview must reach ready, not stale")
+        XCTAssertEqual(coordinator.snapshot.stage, .recipientPreview)
+        if let url = coordinator.snapshot.verifiedPreview?.fileURL { try? FileManager.default.removeItem(at: url) }
+    }
+
+    /// #3839 second audit: the same landing after the system share sheet closed (stage back on review, packet kept) or
+    /// after "Back to selection" must not show "Your selection changed" or move the sender. The old packet is dropped
+    /// quietly, so the next Share builds one that carries the evidence.
+    func testEvidenceLandingAfterSharingOrGoingBackIsNotAChangedSelection() async throws {
+        for returning in [Build23SenderAction.returnFromSystemShare, .returnToSelect] {
+            let (coordinator, model) = try await coordinatorWithPendingEvidence()
+            coordinator.send(.buildRecipientPreview)
+            try await waitForSharingPreview(coordinator)
+            let builtURL = coordinator.snapshot.verifiedPreview?.fileURL
+            defer { if let builtURL { try? FileManager.default.removeItem(at: builtURL) } }
+            if returning == .returnFromSystemShare { coordinator.send(.presentSystemShare) }
+            coordinator.send(returning)
+            let stageBefore = coordinator.snapshot.stage
+
+            landEvidence(in: model)
+            try await waitUntilQuiet(coordinator)
+
+            XCTAssertNotEqual(coordinator.snapshot.previewState, .stale, "\(returning): evidence is not a changed selection")
+            XCTAssertEqual(coordinator.snapshot.stage, stageBefore, "\(returning): the sender must stay where they are")
+            XCTAssertNil(coordinator.snapshot.verifiedPreview, "\(returning): a packet built without the evidence is dropped")
+        }
+    }
+
     func testSenderStageVocabularyIsFrozenInReleaseOrder() {
         XCTAssertEqual(
             Build23SharingStage.allCases.map(\.rawValue),

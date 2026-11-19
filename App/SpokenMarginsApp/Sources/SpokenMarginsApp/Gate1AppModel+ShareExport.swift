@@ -19,10 +19,6 @@ import PDFKit
 #endif
 
 extension Gate1AppModel {
-    func shareAnchorWarning(for interjection: Interjection) -> String? {
-        SharedMarginExport.anchorWarning(for: interjection, isNativeAudio: selectedItem.isNativeAudio)
-    }
-
     /// Builds the packet for the included drafts. The Margin voice files' durations are read, and the whole archive
     /// is written, off the main thread (#2510, #2256); everything else stays on it, and the result lands on the
     /// model exactly as before. A second call while one is running does nothing. Returns the packet's file, or nil

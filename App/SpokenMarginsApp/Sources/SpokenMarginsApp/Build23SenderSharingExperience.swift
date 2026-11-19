@@ -120,6 +120,10 @@ struct Build23SenderSharingExperience: View {
         .safeAreaInset(edge: .bottom) {
             if snapshot.stage != .share {
                 VStack(alignment: .leading, spacing: 8) {
+                    // The step the sender can act on sits directly above the button that ends the task (#3839).
+                    if let step = snapshot.pinnedStep {
+                        Build23PinnedStepLine(step: step)
+                    }
                     linkStatusLines
                     primaryAction(snapshot)
                         .controlSize(.large)

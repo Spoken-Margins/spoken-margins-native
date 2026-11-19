@@ -5,7 +5,8 @@ import Foundation
 /// button, in the pinned bar. Share is never blocked by one: the Margin still places by its words.
 ///
 /// The rule works from the stored Margin and whether the sheet's episode is playing, nothing else, so it can be
-/// tested as a table. Nothing in the app calls it yet.
+/// tested as a table. The sheet reads the stored Margin each time the model publishes it, never the copy the draft took
+/// when the sheet opened, so a step clears by itself when its wait ends.
 public enum ShareReviewSteps {
     /// One Margin as the review sees it.
     public struct Margin: Equatable, Sendable {
@@ -28,6 +29,19 @@ public enum ShareReviewSteps {
             self.evidenceStatus = evidenceStatus
             self.transcriptionStatus = transcriptionStatus
             self.playingThisItem = playingThisItem
+        }
+
+        /// One stored Margin as the review sees it. `includesWordsWait` is false until the draft is rebuilt when the words
+        /// arrive (#3839, PR 3): a "waiting for words" step that nothing clears would stay on the card, so until then
+        /// today's no-transcript line and badge stand and the Margin reports its words as done.
+        public init(_ interjection: Interjection, isNativeAudio: Bool, playingThisItem: Bool, includesWordsWait: Bool = false) {
+            self.init(
+                isNativeAudio: isNativeAudio,
+                hasEvidence: !(interjection.podcastAnchorEvidence ?? []).isEmpty,
+                evidenceStatus: interjection.podcastAnchorEvidenceCaptureStatus,
+                transcriptionStatus: includesWordsWait ? interjection.transcriptionStatus : "done",
+                playingThisItem: playingThisItem
+            )
         }
 
         /// The Margin's moment is still being found.
@@ -101,5 +115,10 @@ public enum ShareReviewSteps {
             return "Finding the exact moment for \(who). Keep the episode playing a few more seconds."
         }
         return "Play the episode for about 12 seconds so your friend hears \(who) at the exact moment. Sharing now may put \(one ? "it" : "them") a few seconds off."
+    }
+
+    /// The pinned line with the icon of the wait it names: words when any Margin waits on its words, else the clock.
+    public static func pinnedStep(_ margins: [Margin]) -> Step? {
+        pinnedLine(margins).map { Step(icon: margins.contains(where: \.waitsOnWords) ? .words : .clock, text: $0) }
     }
 }

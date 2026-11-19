@@ -20,7 +20,7 @@ final class ShareDraftLeadInTests: XCTestCase {
 
     private func draft(_ id: String = "margin-1", lastSentLeadInMs: Int? = nil) -> ShareInterjectionDraft {
         ShareInterjectionDraft.initial(
-            for: margin(id: id), isIncluded: true, hasVoice: false, itemTitle: "T", anchorWarning: nil,
+            for: margin(id: id), isIncluded: true, hasVoice: false, itemTitle: "T",
             lastSentLeadInMs: lastSentLeadInMs
         )
     }
@@ -79,7 +79,7 @@ final class ShareDraftLeadInTests: XCTestCase {
 
     func testEditingTheDraftNeverTouchesTheLength() {
         var edited = draft(lastSentLeadInMs: 45_000)
-        edited.restoreOriginal(hasOriginalAudio: false, anchorWarning: nil)
+        edited.restoreOriginal(hasOriginalAudio: false)
         edited.setIncluded(false)
         edited.setReviewedWords("Other words.")
         XCTAssertEqual(edited.leadInMs, 45_000)
