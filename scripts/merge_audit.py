@@ -171,7 +171,7 @@ def classify_push(pushed: list[str], head: str, recent: list[dict], base: str | 
     recent are recently closed PRs into <base> (the trunk by default). A PR belongs to this push when its merge commit (merge,
     squash or rebase) is one of the pushed commits. `recent` is only a window of recently updated PRs, so
     merges_in_push widens it with GitHub's commit-to-PR lookup (which names merged PRs only for commits on the
-    default branch, as the trunk now is).
+    default branch, as the trunk now is). On any other base it names only open PRs, so the window alone decides there.
     """
     pushed_set, base = set(pushed), base or trunk()
     merged = {p['number']: p for p in recent
@@ -242,10 +242,14 @@ class GitHub:
     def pulls_for_commit(self, sha: str) -> list[dict]:
         """The PRs GitHub associates with a commit. For a commit on the default branch this includes the merged PR
         whose merge commit it is; the caller keeps only those that match."""
-        try:
-            return json.loads(self.api(f'repos/{self.repo}/commits/{sha}/pulls'))
-        except (RuntimeError, ValueError):
-            return []
+        for attempt in range(2):  # one retry: a transient 5xx here would flag a real merge as a direct push
+            try:
+                return json.loads(self.api(f'repos/{self.repo}/commits/{sha}/pulls'))
+            except (RuntimeError, ValueError):
+                if attempt:
+                    return []
+                time.sleep(2)
+        return []
 
     def ensure_label(self) -> None:
         self.api(f'repos/{self.repo}/labels', '-f', f'name={LABEL}', '-f', f'color={LABEL_COLOR}',

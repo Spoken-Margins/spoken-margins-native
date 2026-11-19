@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import merge_audit as audit  # noqa: E402
@@ -90,7 +91,7 @@ class PushTests(unittest.TestCase):
 class FakePulls(audit.GitHub):
     """The two PR lookups merge_audit makes, answered from lists: the recently-updated window and the per-commit table."""
 
-    def __init__(self, closed, by_commit=None, pages=None):
+    def __init__(self, closed, by_commit=None):
         self.repo, self.closed, self.by_commit, self.asked, self.pages_read = 'o/r', closed, by_commit or {}, [], 0
 
     def api(self, *args, check=True):
@@ -119,13 +120,14 @@ class BusyHourTests(unittest.TestCase):
 
     def test_a_merged_pr_outside_the_recently_updated_window_is_not_a_direct_push(self):
         merged_pr = self.pr(4488, 'merge4488')
-        github = FakePulls(self.busy_hour(), {'merge4488': [merged_pr]})
+        # The PR is in the closed list, but behind 60 PRs updated more recently: past the 50 the audit used to read.
+        github = FakePulls(self.busy_hour() + [merged_pr], {'merge4488': [merged_pr]})
+        old_window = github.recently_closed_into('main')[:50]
+        self.assertNotIn(4488, [p['number'] for p in old_window])
+        _, direct_in_window = audit.classify_push(['merge4488'], 'merge4488', old_window, 'main')
+        self.assertTrue(direct_in_window)  # what the push audit decided before: a false "no pull request"
         merged, direct = audit.merges_in_push(github, ['merge4488'], 'merge4488', 'main')
         self.assertEqual((sorted(merged), direct), ([4488], False))
-        # What the push audit did before: only the window, with 60 newer PRs ahead of this one.
-        _, direct_in_window = audit.classify_push(['merge4488'], 'merge4488', github.recently_closed_into('main')[:50],
-                                                  'main')
-        self.assertTrue(direct_in_window)
 
     def test_a_commit_pushed_straight_to_main_is_still_direct(self):
         github = FakePulls(self.busy_hour(), {})
@@ -151,8 +153,24 @@ class BusyHourTests(unittest.TestCase):
         audit.merges_in_push(github, shas, shas[-1], 'main')
         self.assertEqual(len(github.asked), audit.MAX_COMMIT_LOOKUPS)
         broken = audit.GitHub('o/r')
-        broken.api = lambda *a, **k: (_ for _ in ()).throw(RuntimeError('404'))
-        self.assertEqual(broken.pulls_for_commit('c1'), [])
+        calls = []
+        broken.api = lambda *a, **k: calls.append(a) or (_ for _ in ()).throw(RuntimeError('502'))
+        with mock.patch.object(audit.time, 'sleep'):
+            self.assertEqual(broken.pulls_for_commit('c1'), [])
+        self.assertEqual(len(calls), 2)  # one retry
+
+    def test_one_transient_failure_is_retried(self):
+        answers = iter([RuntimeError('502'), '[{"number": 3}]'])
+
+        def api(*args, **kwargs):
+            answer = next(answers)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        github = audit.GitHub('o/r')
+        github.api = api
+        with mock.patch.object(audit.time, 'sleep'):
+            self.assertEqual(github.pulls_for_commit('c1'), [{'number': 3}])
 
     def test_the_sweep_reads_pages_until_it_passes_the_window(self):
         import datetime
