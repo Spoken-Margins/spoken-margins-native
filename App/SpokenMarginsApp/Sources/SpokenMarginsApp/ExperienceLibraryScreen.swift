@@ -542,6 +542,7 @@ struct ExperienceLibraryScreen: View {
                     },
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },
+                    onMarkMarginsHeard: { model.markItemMarginsHeard(id: row.id) },
                     onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },
                     onPlayNext: { model.queuePlayNext(itemId: row.id) },
                     queueAction: QueueRowAction.action(forItem: row.id, queuedItemIds: playQueue.itemIds),
@@ -626,6 +627,8 @@ struct ExperienceLibraryCompactRow: View {
     let onPlay: () -> Void
     let onComplete: () -> Void
     let onMarkUnfinished: () -> Void
+    /// The second mark complete: a finished row with a friend's new Margins (#4289).
+    let onMarkMarginsHeard: () -> Void
     let onPrepareOffline: () -> Void
     let onPlayNext: () -> Void
     /// Add to Queue, or Remove from Queue when the item is queued: one name on the swipe, the menu and VoiceOver (#4044).
@@ -767,10 +770,14 @@ struct ExperienceLibraryCompactRow: View {
         .contextMenu {
             Button("Open", systemImage: "arrow.right", action: onOpen)
             Button(playActionTitle, systemImage: "play", action: onPlay)
-            if !row.isCompleted {
-                Button("Mark Complete", systemImage: "checkmark.circle", action: onComplete)
-            } else if row.canMarkUnfinished {
-                Button("Mark Unfinished", systemImage: "arrow.uturn.backward.circle", action: onMarkUnfinished)
+            ForEach(ItemQuickAction.completionActions(for: row), id: \.self) { action in
+                switch action {
+                case .markComplete: Button("Mark Complete", systemImage: "checkmark.circle", action: onComplete)
+                case .markMarginsHeard:
+                    Button("Mark Margins Heard", systemImage: "checkmark.bubble", action: onMarkMarginsHeard)
+                        .accessibilityIdentifier("library.markMarginsHeard.\(row.id)")
+                default: Button("Mark Unfinished", systemImage: "arrow.uturn.backward.circle", action: onMarkUnfinished)
+                }
             }
             if row.offlineState != .readyOffline {
                 Button("Prepare Offline", systemImage: "arrow.down.circle", action: onPrepareOffline)
@@ -804,10 +811,17 @@ struct ExperienceLibraryCompactRow: View {
                 Button(action: onComplete) { Label("Complete", systemImage: "checkmark.circle.fill") }
                     .tint(AppColors.swipeEvergreen)
                     .accessibilityIdentifier("library.complete.\(row.id)")
-            } else if row.canMarkUnfinished {
-                Button(action: onMarkUnfinished) { Label("Unfinished", systemImage: "arrow.uturn.backward.circle.fill") }
-                    .tint(AppColors.swipeOchre)
-                    .accessibilityIdentifier("library.unfinished.\(row.id)")
+            } else {
+                if ItemQuickAction.completionActions(for: row).contains(.markMarginsHeard) {
+                    Button(action: onMarkMarginsHeard) { Label("Margins Heard", systemImage: "checkmark.bubble.fill") }
+                        .tint(AppColors.swipeEvergreen)
+                        .accessibilityIdentifier("library.marginsHeard.\(row.id)")
+                }
+                if row.canMarkUnfinished {
+                    Button(action: onMarkUnfinished) { Label("Unfinished", systemImage: "arrow.uturn.backward.circle.fill") }
+                        .tint(AppColors.swipeOchre)
+                        .accessibilityIdentifier("library.unfinished.\(row.id)")
+                }
             }
             // Second, so a long swipe still takes the first button; on a row with no other button it is the only one and
             // allowsFullSwipe is false (#4044).
@@ -831,10 +845,12 @@ struct ExperienceLibraryCompactRow: View {
         }
         .accessibilityAction(named: playActionTitle, onPlay)
         .accessibilityActions {
-            if !row.isCompleted {
-                Button("Mark Complete", action: onComplete)
-            } else if row.canMarkUnfinished {
-                Button("Mark Unfinished", action: onMarkUnfinished)
+            ForEach(ItemQuickAction.completionActions(for: row), id: \.self) { action in
+                switch action {
+                case .markComplete: Button("Mark Complete", action: onComplete)
+                case .markMarginsHeard: Button("Mark Margins Heard", action: onMarkMarginsHeard)
+                default: Button("Mark Unfinished", action: onMarkUnfinished)
+                }
             }
             Button("Play Next", action: onPlayNext)
             Button(queueAction.title, action: onAddToQueue)

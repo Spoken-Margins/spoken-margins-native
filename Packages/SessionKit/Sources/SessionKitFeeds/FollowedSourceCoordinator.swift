@@ -76,10 +76,21 @@ public actor FollowedSourceCoordinator {
     private var artwork: FollowingArtworkStore
     /// The picture of each Library item that came from a followed feed, in a second side file (#3864).
     private var itemArtworkRecord: ItemArtworkFile
+    /// The entry ids of one show that the listener's rules and Show less marks set aside (#4046): its stored episodes, the
+    /// show. "Add everything new" leaves them out. Nil, as it is until the app passes the evaluator, sets nothing aside.
+    public typealias SetAside = @Sendable ([FeedEntry], FeedSubscription) -> Set<String>
+    private let setAside: SetAside?
+    /// Whether the listener marked an episode "Not for me" (#4285): asked with the feed's normalized key and one of
+    /// the episode's own keys (GUID, page address, audio address). A marked episode is saved as `.dismissed`, so
+    /// unfollowing and following again, which deletes the stored entries, can't bring it back.
+    private let suppressedEntry: (@Sendable (_ feedKey: String, _ entryKey: String) -> Bool)?
 
     public init(repository: any SessionRepository, session: URLSession? = nil, artworkFile: URL? = nil,
-                itemArtworkFile: URL? = nil, signals: ListeningSignalRecorder?) {
+                itemArtworkFile: URL? = nil, setAside: SetAside? = nil, signals: ListeningSignalRecorder?,
+                suppressedEntry: (@Sendable (_ feedKey: String, _ entryKey: String) -> Bool)? = nil) {
         self.repository = repository
+        self.setAside = setAside
+        self.suppressedEntry = suppressedEntry
         self.artwork = FollowingArtworkStore(file: artworkFile)
         // Not read here: this init runs on the caller's thread, which is the main thread in the app. The first
         // call into the actor reads it.
@@ -523,6 +534,15 @@ public actor FollowedSourceCoordinator {
                 new: saved.entries, existing: saved.previous,
                 policy: subscription.state == .muted ? nil : subscription.newItemPolicy
             )
+            // An episode a rule skips, or the listener marked Show less, stays in Following but is not added on its own.
+            // The stored episodes are what `save` just wrote plus the ones it kept from before (imported and dismissed
+            // tombstones), so there is no second read that could fail and drop an episode for good.
+            if !toAdd.isEmpty, let setAside {
+                let retained = Set(saved.entries.map(\.id))
+                let kept = saved.previous.filter { !retained.contains($0.id) && $0.state != .unseen && $0.state != .seen }
+                let skipped = setAside(saved.entries + kept, subscription)
+                toAdd.removeAll { skipped.contains($0.id) }
+            }
             subscription.lastRefreshAt = now
             try repository.saveFeedSubscription(subscription)
             try repository.saveFeedRefreshState(FeedRefreshState(
@@ -673,10 +693,11 @@ public actor FollowedSourceCoordinator {
         let retainedIDs = Set(retainedItems.map { Self.entryID(subscriptionID: subscription.id, itemID: $0.id) })
 
         let seenAt = Date()
+        let feedKey = FeedURLKey.make(subscription.source.canonicalURL)
         var saved: [FeedEntry] = []
         for item in retainedItems {
             let id = Self.entryID(subscriptionID: subscription.id, itemID: item.id)
-            let entry = FeedEntry(
+            var entry = FeedEntry(
                 id: id,
                 subscriptionId: subscription.id,
                 canonicalURL: item.url,
@@ -693,6 +714,11 @@ public actor FollowedSourceCoordinator {
                 episodeGUID: item.guid,
                 firstSeenAt: FollowBaseline.firstSeenAt(existing: existing[id], followMoment: followMoment, now: seenAt)
             )
+            // Before anything reads the state (Add every new item takes `.unseen` entries only). An episode the
+            // listener already added stays imported.
+            if entry.state != .imported, entry.state != .dismissed, isMarkedNotForMe(entry, feedKey: feedKey) {
+                entry.state = .dismissed
+            }
             try repository.saveFeedEntry(entry)
             saved.append(entry)
             // Every retained entry, stored or not: the recorder publishes each one once, so entries
@@ -707,6 +733,12 @@ public actor FollowedSourceCoordinator {
             try repository.deleteFeedEntry(id: entry.id)
         }
         return (saved, existingEntries)
+    }
+
+    private func isMarkedNotForMe(_ entry: FeedEntry, feedKey: String?) -> Bool {
+        guard let suppressedEntry, let feedKey else { return false }
+        return NotForMeStore.entryKeys(guid: entry.episodeGUID, canonicalURL: entry.canonicalURL, audioURL: entry.audioURL)
+            .contains { suppressedEntry(feedKey, $0) }
     }
 
     private static func entryID(subscriptionID: String, itemID: String) -> String {

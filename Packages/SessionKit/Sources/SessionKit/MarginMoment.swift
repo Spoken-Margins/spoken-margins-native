@@ -389,9 +389,10 @@ extension Interjection {
         status == "active" && captureKind != .written && targetType == .item && audioPath != nil
     }
 
-    /// A spoken Margin on the item with a media time and a saved voice, which a Margin moment plays inline.
+    /// A spoken Margin on the item with a media time and a saved voice, which a Margin moment plays inline. A moved
+    /// Margin with no saved place has no media time of its own, whatever its anchor holds (#4233).
     public var isInlineSpokenMargin: Bool {
-        isSpokenItemMargin && anchor.mediaTimeMs != nil
+        isSpokenItemMargin && hasPlace && anchor.mediaTimeMs != nil
     }
 }
 

@@ -52,7 +52,7 @@ extension Gate1AppModel {
         }
         do {
             selectedItem = try loadItemDetail(id: margin.itemId, store: requireStore())
-            prepareShareInterjections(candidates: [margin])
+            prepareShareInterjections(candidates: [margin], isSingleMargin: true)
             if isSharingInterjectionsPresented {
                 sharingState.draftsPreparedForExport = true
                 sharingState.entry = .reviewDefaults
@@ -66,7 +66,7 @@ extension Gate1AppModel {
 
     /// `replyBack` turns the sheet into "Send replies to <friend>" (#3221): `source` is the offer's own list, the
     /// replies start included and the listener's other new Margins start out, and nothing else is listed.
-    func prepareShareInterjections(candidates source: [Interjection], replyBack: ReplyBackOffer? = nil) {
+    func prepareShareInterjections(candidates source: [Interjection], replyBack: ReplyBackOffer? = nil, isSingleMargin: Bool = false) {
         cancelBulkSharePreparation()
         let candidates = source.filter {
             $0.status == "active" && $0.targetType == .item
@@ -78,6 +78,8 @@ extension Gate1AppModel {
         let hasStarredCandidates = replyBack == nil && candidates.contains { $0.isStarredForSharing == true }
         sharingState = InterjectionSharingState(isPreparing: true)
         sharingState.replyBackTitle = replyBack?.title
+        sharingState.openedFrom = ShareSelectionDiagnostics.opened(
+            isReplyBack: replyBack != nil, isSingleMargin: isSingleMargin, hasStarredCandidates: hasStarredCandidates)
         sharingState.draftFilter = hasStarredCandidates ? .starred : .all
         isSharingInterjectionsPresented = true
         // The summary: the sheet needs the address, the type and whether there is text, not the article (#2506).
@@ -106,6 +108,32 @@ extension Gate1AppModel {
             )
         }
         sharingState.isPreparing = false
+    }
+
+    /// Where the sharing star's counts are kept (#4173): on this phone, as four numbers.
+    var shareStarTally: ShareStarTallyStore { ShareStarTallyStore() }
+
+    /// One `share.selection` Diagnostics line for a send tap (#4173): how the sheet started, what will be written, and how
+    /// the star was used since the last send. Counts only. A retry logs again, with the same star counts when the first
+    /// send reset them; the last line is the one that counts.
+    func recordShareSelection(now: Date = Date()) {
+        let stored = shareStarTally.load()
+        let counted = stored.isEmpty ? (sharingState.starTallyAtLastSend ?? stored) : stored
+        sharingState.starTallyAtLastSend = counted
+        let included = SharedMarginTextRequirement.shareable(sharingState.drafts.filter(\.isIncluded), text: \.approvedTranscript).0
+        let writtenIDs = Set(included.map(\.id))
+        let margins = sharingState.drafts.map {
+            ShareSelectionDiagnostics.Margin(isStarred: $0.interjection.isStarredForSharing == true, isWritten: writtenIDs.contains($0.id))
+        }
+        recordDeveloperDiagnostic(ShareSelectionDiagnostics.kind, ShareSelectionDiagnostics.fields(
+            opened: sharingState.openedFrom, margins: margins,
+            secondsInSheet: now.timeIntervalSince(sharingState.openedAt), tally: counted))
+    }
+
+    /// The system share sheet now shows the packet or the link, so the star counts start again (#4173). A link that
+    /// fails never gets here, so its retry logs the same counts again.
+    func shareSheetPresented() {
+        shareStarTally.reset()
     }
 
     var bulkSharePreparationEligibleCount: Int {

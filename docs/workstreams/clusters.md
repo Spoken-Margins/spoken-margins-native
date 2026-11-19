@@ -39,7 +39,7 @@ Yesterday these failed late, at the rollup, and forced refactors. Run them befor
 - `.venv/bin/python scripts/verify-tests.py --plan fast`, at most one per cluster at a time. A sub-PR may use `--plan fast --changed-files`, which skips the hot-file ratchet, so a sub-PR touching Swift also runs `scripts/hot_file_ratchet.py` directly. Run one full `--plan fast` on the cluster branch before the rollup. A plan that gives up waiting for a Mac slot ran no tests. The Mac has two host-test slots.
 - The hot-file ratchet and the main-thread-reads guard (both run in `--plan fast`; if one fails, fix the design, don't raise the ceiling).
 - For app changes, both builds from "Verification" in AGENTS.md.
-- If the change needs simulator tests, say so in the sub-PR, and ask for `/lane T3` once on the rollup with every needed test on its `tests:` line.
+- If the change needs simulator tests, say so in the sub-PR. A `/lane T3` request is optional and never holds the merge (#4572); ask once on the rollup, with every needed test on its `tests:` line, only to see them pass before `main`'s scheduled `main-t3` run does.
 - When a diff changes a shared predicate or its callers, that `tests:` line names every class that reaches any caller. The runner adds only what `scripts/test-scope.py` suggests, and that script doesn't follow callers. On 2026-11-05 #3412's line left out `LocalAudioListeningPackageTests`, so a Skim side effect reached `main` and showed only in the hosted integration run.
 
 ## Rollup PRs
