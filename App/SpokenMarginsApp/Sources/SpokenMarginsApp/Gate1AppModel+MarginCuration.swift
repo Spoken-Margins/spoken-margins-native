@@ -142,8 +142,12 @@ extension Gate1AppModel {
     private func writeStar(_ interjection: Interjection, place: ShareStarPlace, _ edit: (inout Interjection) -> Void) {
         do {
             let store = try requireStore()
+            var wasStarred = false
             guard let updated = try store.updateInterjection(
-                id: interjection.id, sessionId: interjection.sessionId, itemId: interjection.itemId, edit
+                id: interjection.id, sessionId: interjection.sessionId, itemId: interjection.itemId, { margin in
+                    wasStarred = margin.isStarredForSharing == true
+                    edit(&margin)
+                }
             ) else {
                 throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
             }
@@ -157,7 +161,9 @@ extension Gate1AppModel {
             refreshMarginRow(sessionId: updated.sessionId, interjectionId: updated.id)
             refreshSelectedItemInBackground()
             diagnostics["shareCuration:\(updated.id)"] = updated.isStarredForSharing == true ? "starred" : "unstarred"
-            _ = place // counted by ShareStarTally in the next slice (#4173 PR 2)
+            // Counted on a change only, so a menu item that sets what is already set adds nothing (#4173).
+            let isStarred = updated.isStarredForSharing == true
+            if isStarred != wasStarred { shareStarTally.record(place, turnedOn: isStarred) }
         } catch {
             reportFailure(error, context: "Margin sharing star could not be saved")
         }
