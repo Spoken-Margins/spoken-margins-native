@@ -58,7 +58,7 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
             try store.saveFeedEntry(FeedEntry(id: "refresh-marker", subscriptionId: subscription.id,
                 canonicalURL: "https://publisher.example/other", title: "Other", state: .unseen))
             XCTAssertFalse(model.isRefreshingFollowedSources, "a refresh already running would swallow this one")
-            await model.performFollowedSourceRefresh(force: false)
+            await model.performFollowedSourceRefresh(force: false, trigger: .localChange)
             XCTAssertTrue(model.followedSourceEntries.contains { $0.id == "refresh-marker" })
         }
         XCTAssertEqual(try store.loadFeedSubscriptions(), originalSubscriptions)

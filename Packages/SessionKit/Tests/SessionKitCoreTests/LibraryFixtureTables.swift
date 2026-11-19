@@ -210,6 +210,14 @@ extension LibraryFixture {
                 members: (0..<10).map { ListMember(feedKey: "https://feed-\($0).example/feed") }
             ))
         }
+        // #4046 PR 6: each list has a web address with a waiting change, priced the same way.
+        for index in 0..<3 {
+            try store.saveListLink(ListLink(
+                id: "list-link-\(index)", listId: "follow-list-\(index)", url: "https://lists.example/\(index).opml", title: "Link \(index)",
+                lastCheckedAt: epoch, statusAt: epoch,
+                acceptedMembers: (0..<10).map { ListMember(feedKey: "https://feed-\($0).example/feed") },
+                pending: ListProposal(added: [ProposedShow(member: ListMember(feedKey: "https://new-\(index).example/feed"), feedURL: "https://new-\(index).example/feed", title: "New")], removed: [], checkedAt: epoch)))
+        }
         // #4046: listening rules and Show less marks, priced the same way.
         for index in 0..<20 {
             try store.saveListeningRule(ListeningRule(

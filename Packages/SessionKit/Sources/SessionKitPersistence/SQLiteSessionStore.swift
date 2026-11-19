@@ -320,6 +320,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         case "feed_entry": return columns(FeedEntry.self, item: { _ in nil })
         case "item_collection": return columns(ItemCollection.self, item: { _ in nil })
         case "follow_list": return columns(FollowList.self, item: { _ in nil })
+        case "follow_list_link": return columns(ListLink.self, item: { _ in nil })
         case "listening_rule": return columns(ListeningRule.self, item: { _ in nil })
         case "show_less_mark": return columns(ShowLessMark.self, item: { _ in nil })
         case TranscriptTimes.recordKind: return columns(TranscriptTimes.self, item: { $0.itemId })
@@ -1595,9 +1596,44 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try loadOptional(kind: "follow_list", id: id)
     }
 
-    /// Deleting a list never unfollows a show.
+    /// Deleting a list never unfollows a show. Its web addresses go with it, in the same transaction, so a deleted list can
+    /// never be checked again (#4046 PR 6).
     public func deleteFollowList(id: String) throws {
-        try deleteRecord(kind: "follow_list", id: id)
+        try withTransaction {
+            for link in try loadListLinks() where link.listId == id { try deleteRecord(kind: "follow_list_link", id: link.id) }
+            try deleteRecord(kind: "follow_list", id: id)
+        }
+    }
+
+    /// List links (#4046 PR 6): a list's web address with its last accepted copy and any waiting change. Their own record
+    /// kind with no item_id, so the shipped builds' readers never see them. The record id is the link id.
+    public func saveListLink(_ link: ListLink) throws {
+        try save(kind: "follow_list_link", id: link.id, sessionId: nil, itemId: nil, value: link)
+    }
+
+    /// Oldest address first by id, so the order is the same on every read.
+    public func loadListLinks() throws -> [ListLink] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["follow_list_link"])
+    }
+
+    public func loadListLink(id: String) throws -> ListLink? {
+        try loadOptional(kind: "follow_list_link", id: id)
+    }
+
+    public func deleteListLink(id: String) throws {
+        try deleteRecord(kind: "follow_list_link", id: id)
+    }
+
+    /// Writes a check's result onto the link as it is stored now, in one transaction (`ListLink.merging`), so what the
+    /// listener changed while the network answered is kept. A link deleted meanwhile stays deleted. Returns what was saved.
+    @discardableResult
+    public func saveCheckedListLink(_ checked: ListLink) throws -> ListLink? {
+        try withTransaction {
+            guard let current = try loadListLink(id: checked.id) else { return nil }
+            let merged = current.merging(checked: checked)
+            try saveListLink(merged)
+            return merged
+        }
     }
 
     /// Takes a show out of every list it is in, in one transaction (unfollow does this). A list left with no members stays.
