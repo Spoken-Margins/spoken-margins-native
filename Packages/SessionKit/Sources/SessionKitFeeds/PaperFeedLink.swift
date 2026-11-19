@@ -135,20 +135,25 @@ public enum PaperFeedLink: Equatable, Sendable {
     // MARK: Zotero
 
     /// Words that follow the group in a web address and are never its name.
+    private static let filterParameters: Set<String> = ["q", "qmode", "tag", "itemtype", "itemkey"]
+
     private static let zoteroSections: Set<String> = ["collections", "items", "library", "tags", "search", "settings", "members"]
 
     private static func recognizeZotero(_ link: ParsedLink) -> PaperFeedLink {
         let segments = link.segments
-        guard let first = segments.first?.lowercased() else { return .rejected(.zoteroNotUnderstood) }
+        // The site's own pages (its blog feed, downloads, support) are not lists, and the existing follow may know them.
+        guard let first = segments.first?.lowercased() else { return .notAPaperLink }
         if first == "users" { return .rejected(.zoteroPrivateLibrary) }
         if first != "groups" {
             // zotero.org/<username>/library, /items or /collections is a person's own library.
             if segments.count >= 2, ["library", "items", "collections"].contains(segments[1].lowercased()) {
                 return .rejected(.zoteroPrivateLibrary)
             }
-            return .rejected(.zoteroNotUnderstood)
+            return .notAPaperLink
         }
-        guard segments.count >= 2, let groupID = Int(segments[1]), groupID > 0, segments[1].allSatisfy(\.isASCII)
+        // A filter in an API address would follow a different list than the one pasted.
+        if !link.query.keys.allSatisfy({ !filterParameters.contains($0.lowercased()) }) { return .rejected(.zoteroNotUnderstood) }
+        guard segments.count >= 2, segments[1].utf8.allSatisfy({ $0 >= 0x30 && $0 <= 0x39 }), let groupID = Int(segments[1]), groupID > 0
         else { return .rejected(.zoteroNotUnderstood) }
         var rest = Array(segments.dropFirst(2))
         // zotero.org/groups/<id>/<name>/...: the name is for people to read and is dropped.
@@ -213,7 +218,8 @@ private struct ParsedLink {
         guard !text.isEmpty, text.count <= PaperFeedLink.longestLink,
               !text.contains(where: { $0.isWhitespace || $0.isNewline })
         else { return nil }
-        if let schemeEnd = text.range(of: "://") {
+        let beforePath = text.prefix { $0 != "/" && $0 != "?" && $0 != "#" }
+        if beforePath.hasSuffix(":"), text.dropFirst(beforePath.count).hasPrefix("//"), let schemeEnd = text.range(of: "://") {
             let scheme = text[..<schemeEnd.lowerBound].lowercased()
             guard scheme == "http" || scheme == "https" else { return nil }
             text = String(text[schemeEnd.upperBound...])

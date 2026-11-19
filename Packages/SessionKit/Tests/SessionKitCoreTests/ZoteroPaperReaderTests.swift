@@ -72,8 +72,6 @@ final class ZoteroPaperReaderTests: XCTestCase {
     }
 
     func testAPaperWithNoDOIOrAddressOpensItsZoteroPage() throws {
-        let paper = try entry("T52IAELZ", in: try page())
-        XCTAssertEqual(paper.pageURL?.absoluteString, "https://doi.org/10.1037/0012-1649.42.3.391")
         let program = try entry("GFSR2MSD", in: try page())
         XCTAssertNil(program.doi)
         XCTAssertEqual(program.pageURL?.absoluteString, "https://www.zotero.org/groups/test_items_library/items/GFSR2MSD")
@@ -285,15 +283,43 @@ final class ZoteroPaperReaderTests: XCTestCase {
         XCTAssertFalse(page.entries.contains { $0.title == "Paper 510" }, "the tied papers past the cap are dropped")
     }
 
+    func testOneUnreadableRowCostsOnlyThatRow() throws {
+        let bytes = Data(#"[{"key":"A","data":{"itemType":"book","title":"x"}},{"key":"B","data":{"title":"y"}},{"data":{"itemType":"book","title":"z"}},7]"#.utf8)
+        let page = try ZoteroPaperReader.read(items: bytes, groupID: 1)
+        XCTAssertEqual(page.entries.map(\.id), ["zotero:1:A"])
+        XCTAssertEqual(page.skippedCount, 3)
+    }
+
+    func testABrokenAttachmentsPageLeavesThePapersListed() throws {
+        let items = try json([item(extra: ["abstractNote": "Words."])])
+        for bad in [Data(), Data("nope".utf8), Data(#"{"message":"slow down"}"#.utf8), Data(#"[{"key":"X"}]"#.utf8)] {
+            let page = try ZoteroPaperReader.read(items: items, attachments: [bad], groupID: 1)
+            XCTAssertEqual(page.entries.map(\.status), [.abstractOnly])
+        }
+        let good = try json([attachment(mode: "linked_url", type: "application/pdf", url: "https://example.org/p.pdf")])
+        let mixed = try ZoteroPaperReader.read(items: items, attachments: [Data("nope".utf8), good], groupID: 1)
+        XCTAssertEqual(mixed.entries.map(\.status), [.pdf], "a good page after a bad one still counts")
+    }
+
+    func testAddressesWithAUserNameAreNotKept() throws {
+        let pdf = attachment(mode: "linked_url", type: "application/pdf", url: "https://u:p@h.example/a.pdf")
+        let page = try read([item(extra: ["url": "https://user@h.example/a"])], [pdf])
+        XCTAssertNil(page.entries.first?.pageURL)
+        XCTAssertNil(page.entries.first?.pdfURL)
+    }
+
+    func testADOIWithCharactersThatEndAPathStaysOneDOIInItsAddress() throws {
+        let page = try read([item(extra: ["DOI": "10.1000/a#b?c%d"])])
+        XCTAssertEqual(page.entries.first?.doi, "10.1000/a#b?c%d")
+        XCTAssertEqual(page.entries.first?.pageURL?.absoluteString, "https://doi.org/10.1000/a%23b%3Fc%25d")
+    }
+
     func testNotJSONAndTooLargeAreErrorsNotCrashes() throws {
         XCTAssertThrowsError(try ZoteroPaperReader.read(items: Data("<html>".utf8), groupID: 1)) {
             XCTAssertEqual($0 as? ZoteroPaperReaderError, .notZoteroJSON)
         }
         XCTAssertThrowsError(try ZoteroPaperReader.read(items: Data("{\"message\":\"forbidden\"}".utf8), groupID: 1)) {
             XCTAssertEqual($0 as? ZoteroPaperReaderError, .notZoteroJSON, "an error object is not a list")
-        }
-        XCTAssertThrowsError(try ZoteroPaperReader.read(items: Data("[]".utf8), attachments: [Data("nope".utf8)], groupID: 1)) {
-            XCTAssertEqual($0 as? ZoteroPaperReaderError, .notZoteroJSON)
         }
         XCTAssertThrowsError(try ZoteroPaperReader.read(items: Data(count: ZoteroPaperReader.maximumBytes + 1), groupID: 1)) {
             XCTAssertEqual($0 as? ZoteroPaperReaderError, .responseTooLarge)

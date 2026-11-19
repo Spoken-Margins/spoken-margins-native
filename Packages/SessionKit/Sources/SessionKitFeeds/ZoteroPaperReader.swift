@@ -74,18 +74,21 @@ public enum ZoteroPaperReader {
             throw ZoteroPaperReaderError.responseTooLarge
         }
         let decoder = JSONDecoder()
-        let records: [Record]
-        do { records = try decoder.decode([Record].self, from: items) } catch { throw ZoteroPaperReaderError.notZoteroJSON }
+        let rows: [Lossy<Record>]
+        do { rows = try decoder.decode([Lossy<Record>].self, from: items) } catch { throw ZoteroPaperReaderError.notZoteroJSON }
+        let records = rows.compactMap(\.value)
         var children: [String: [Record]] = [:]
         for page in attachments {
-            guard let rows = try? decoder.decode([Record].self, from: page) else { throw ZoteroPaperReaderError.notZoteroJSON }
-            for row in rows {
+            // Attachments only decide a paper's status. A page that fails (an error body, a cut-off reply) leaves
+            // those papers as abstract-only or link-only and never costs the list.
+            guard let rows = try? decoder.decode([Lossy<Record>].self, from: page) else { continue }
+            for row in rows.compactMap(\.value) {
                 guard let parent = row.data.parentItem else { continue }
                 children[parent, default: []].append(row)
             }
         }
         var entries: [PaperEntry] = []
-        var skipped = 0
+        var skipped = rows.count - records.count
         for record in records {
             guard let entry = entry(from: record, children: children[record.key] ?? [], groupID: groupID) else {
                 skipped += 1
@@ -137,7 +140,7 @@ public enum ZoteroPaperReader {
             abstract: abstract,
             pdfURL: pdfURL,
             storedPDFAttachmentKey: storedKey,
-            pageURL: doi.flatMap { URL(string: "https://doi.org/\($0)") }
+            pageURL: doi.flatMap(doiAddress)
                 ?? webURL(data.url)
                 ?? webURL(record.links?.alternate?.href),
             dateJoined: data.dateAdded.flatMap(date(from:))
@@ -194,6 +197,11 @@ public enum ZoteroPaperReader {
         return text
     }
 
+    /// The DOI's address, with characters that would end the path (`#`, `?`, `%`) escaped so they stay in the DOI.
+    static func doiAddress(_ doi: String) -> URL? {
+        doi.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed).flatMap { URL(string: "https://doi.org/\($0)") }
+    }
+
     private static func pmid(fromExtra extra: String?) -> String? {
         guard let extra else { return nil }
         for line in extra.split(whereSeparator: \.isNewline) {
@@ -207,7 +215,8 @@ public enum ZoteroPaperReader {
 
     private static func webURL(_ text: String?) -> URL? {
         guard let text = clean(text), let url = URL(string: text), let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https", url.host?.isEmpty == false
+              scheme == "http" || scheme == "https", url.host?.isEmpty == false,
+              url.user == nil, url.password == nil
         else { return nil }
         return url
     }
@@ -225,6 +234,12 @@ public enum ZoteroPaperReader {
     }
 
     // MARK: The JSON, as little of it as is read
+
+    /// One row that doesn't read is dropped; the rest of the page stands.
+    struct Lossy<Wrapped: Decodable>: Decodable {
+        var value: Wrapped?
+        init(from decoder: Decoder) throws { value = try? Wrapped(from: decoder) }
+    }
 
     struct Record: Decodable {
         var key: String

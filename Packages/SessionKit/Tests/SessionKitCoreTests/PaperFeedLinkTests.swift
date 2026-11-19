@@ -20,6 +20,9 @@ final class PaperFeedLinkTests: XCTestCase {
             ("https://www.zotero.org:443/groups/2205533/x/collections/DMKBHP6P", "the default port"),
             ("https://www.zotero.org/groups/2205533/x/collections/DMKBHP6P?utm_source=mail&foo=bar", "extra query parameters"),
             ("https://www.zotero.org/groups/2205533/x/collections/DMKBHP6P#anchor", "a fragment"),
+            ("www.zotero.org/groups/2205533/x/collections/DMKBHP6P?u=https://a.example", "no scheme, with :// inside the query"),
+            ("www.zotero.org/groups/2205533/x/collections/DMKBHP6P#https://a.example", "no scheme, with :// inside the fragment"),
+            ("https://api.zotero.org/groups/2205533/collections/DMKBHP6P/items/top?format=json&limit=5&start=10&sort=title", "paging and sort parameters"),
             ("https://www.zotero.org/groups/2205533/Caf\u{00E9}%20readings/collections/DMKBHP6P", "a Unicode group name, part encoded"),
             ("https://www.zotero.org/groups/2205533/\u{4E2D}\u{6587}\u{5C0F}\u{7EC4}/collections/DMKBHP6P", "a Unicode group name, raw"),
             ("https://api.zotero.org/groups/2205533/collections/DMKBHP6P/items/top?format=json&limit=25", "the API address"),
@@ -58,10 +61,19 @@ final class PaperFeedLinkTests: XCTestCase {
         XCTAssertTrue(PaperFeedLinkProblem.zoteroPrivateLibrary.message.contains("private"))
     }
 
-    func testZoteroAddressesThatAreNotAListSayZoteroCouldntFindIt() {
+    func testZoteroSitePagesFallThroughToTheExistingFollow() {
         for pasted in [
             "https://www.zotero.org/",
             "https://www.zotero.org/support/kb",
+            "https://www.zotero.org/blog/feed/",
+            "https://www.zotero.org/download"
+        ] {
+            XCTAssertEqual(PaperFeedLink.recognize(pasted), .notAPaperLink, pasted)
+        }
+    }
+
+    func testGroupAddressesThatAreNotAListSayZoteroCouldntFindIt() {
+        for pasted in [
             "https://www.zotero.org/groups/",
             "https://www.zotero.org/groups/test_items_library",
             "https://www.zotero.org/groups/2205533/test_items_library/collections",
@@ -71,7 +83,13 @@ final class PaperFeedLinkTests: XCTestCase {
             "https://www.zotero.org/groups/2205533/test_items_library/tags/biology",
             "https://www.zotero.org/groups/0/test_items_library",
             "https://www.zotero.org/groups/-5/test_items_library",
-            "https://www.zotero.org/groups/\u{0662}\u{0662}/x"
+            "https://www.zotero.org/groups/\u{0662}\u{0662}/x",
+            "https://www.zotero.org/groups/+123/x",
+            "https://www.zotero.org/groups/%2B123/x",
+            "https://api.zotero.org/groups/2205533/items?q=foo&tag=bar",
+            "https://api.zotero.org/groups/2205533/collections/DMKBHP6P/items/top?tag=biology",
+            "https://api.zotero.org/groups/2205533/items?itemType=book",
+            "https://api.zotero.org/groups/2205533/items?itemKey=T52IAELZ"
         ] {
             XCTAssertEqual(PaperFeedLink.recognize(pasted), .rejected(.zoteroNotUnderstood), pasted)
         }
