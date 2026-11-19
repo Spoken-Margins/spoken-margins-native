@@ -27,6 +27,13 @@ extension Gate1AppModel {
         }
     }
 
+    /// The item's kept PDF, or nil when this iPhone has none. The check is a file lookup, so it runs off the main thread
+    /// (the item screen asks it to decide whether "Export PDF with Margins" is offered, #4338).
+    func keptPDFOriginalURL(itemId: String) async -> URL? {
+        guard let store = try? pdfOriginalStore() else { return nil }
+        return await Task.detached(priority: .userInitiated) { store.url(itemId: itemId) }.value
+    }
+
     /// Clears the temporary files a quit left in `ItemOriginals/`, off the main thread. It never touches a kept PDF, and
     /// only a temporary file untouched for ten minutes, so an import running now is safe.
     func removeInterruptedPDFOriginalWrites() {
