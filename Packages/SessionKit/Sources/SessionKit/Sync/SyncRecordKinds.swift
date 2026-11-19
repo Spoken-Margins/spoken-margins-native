@@ -14,11 +14,12 @@ public enum SyncFieldSchema {
 ///
 /// Fixed at birth: item key, created time, anchor, capture kind. Edited, one register each, merged field by field:
 /// `transcript`, `cleanedTranscript`, `displayText`, `privateSharingNote` (text, so a lost race keeps the other
-/// version), `status` and `isStarredForSharing`. The recording's path and bytes are not here (slice 5).
+/// version), `status`, `isStarredForSharing` and `paperRole` (#4340; an empty string means the role was taken off). The recording's path and bytes are not here (slice 5).
 public enum MarginSync {
     public static let schemaVersion = 1
     public static let textFields = ["transcript", "cleanedTranscript", "displayText", "privateSharingNote"]
     static let birthFields = ["itemKey", "createdAt", "anchor", "captureKind"]
+    static let paperRoleField = "paperRole"
 
     public static func record(
         for margin: Interjection, itemKey: String, clock: inout SyncClock, wallMillis: Int64
@@ -37,6 +38,9 @@ public enum MarginSync {
         }
         if let starred = margin.isStarredForSharing {
             record.set("isStarredForSharing", .bool(starred), clock: &clock, wallMillis: wallMillis)
+        }
+        if let role = margin.paperRole {
+            record.set(paperRoleField, .string(role.rawValue), clock: &clock, wallMillis: wallMillis)
         }
         return record
     }
@@ -59,6 +63,9 @@ public enum MarginSync {
         if edited.isStarredForSharing != before.isStarredForSharing {
             record.set("isStarredForSharing", .bool(edited.isStarredForSharing == true), clock: &clock, wallMillis: wallMillis)
         }
+        if edited.paperRole != before.paperRole {
+            record.set(paperRoleField, .string(edited.paperRole?.rawValue ?? ""), clock: &clock, wallMillis: wallMillis)
+        }
         if edited.status != before.status {
             record.set("status", .string(edited.status), clock: &clock, wallMillis: wallMillis)
         }
@@ -80,6 +87,10 @@ public enum MarginSync {
         if let value = record["displayText"]?.stringValue { margin.displayText = value }
         if let value = record["privateSharingNote"]?.stringValue { margin.privateSharingNote = value }
         if let value = record["isStarredForSharing"]?.boolValue { margin.isStarredForSharing = value }
+        // An empty string is a role taken off; a role this build doesn't know is left as the device has it.
+        if let value = record[paperRoleField]?.stringValue {
+            if value.isEmpty { margin.paperRole = nil } else if let role = PaperNoteRole(rawValue: value) { margin.paperRole = role }
+        }
         if let value = record["status"]?.stringValue { margin.status = value }
         return margin
     }

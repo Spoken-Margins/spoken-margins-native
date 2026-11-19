@@ -497,7 +497,7 @@ test('Reply on a friend’s row moves to its moment and opens the composer answe
   await context.close();
 });
 
-test('Play or Pause while the friend’s clip is playing drops the clip and its card, so it stops answering that Margin (#4107, B4)', async ({ browser }) => {
+test('Pause while the friend’s clip is playing holds it with its card; Play carries it on, and its end clears the card (#4473, #4107)', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);
   await page.goto(LINK);
@@ -508,9 +508,16 @@ test('Play or Pause while the friend’s clip is playing drops the clip and its 
   await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 124; });
   const arrived = playing.getByTestId('arrived-margin');
   await expect(arrived).toContainText('Web fixture is speaking', { timeout: 30_000 });
-  await playing.getByRole('button', { name: 'Play', exact: true }).or(playing.getByRole('button', { name: 'Pause', exact: true })).click();
-  // The clip is cut and the card goes with it; nothing is left that a later Margin could be taken to answer.
-  await expect(arrived).toHaveCount(0);
+  // The friend's voice is what is sounding: the main button says Pause (#4473), and Pause holds the clip, card and all.
+  const main = playing.locator('.play-button');
+  await expect(main).toHaveAccessibleName('Pause');
+  await main.click();
+  await expect(main).toHaveAccessibleName('Play');
+  await expect(arrived).toContainText('Web fixture is speaking');
+  // Play carries the clip on; when it ends the card goes, so nothing is left that a later Margin could be taken to answer.
+  await main.click();
+  await expect(main).toHaveAccessibleName('Pause');
+  await expect(arrived).toHaveCount(0, { timeout: 30_000 });
   await context.close();
 });
 
@@ -657,7 +664,8 @@ test('when the episode can’t load and the browser refuses a clip that starts l
     const play = HTMLMediaElement.prototype.play;
     let refused = false;
     HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
-      if (!refused && !this.hasAttribute('data-testid')) {
+      // The moment of silence the player plays from a tap to ready its clip element (#4472) is not a clip.
+      if (!refused && !this.hasAttribute('data-testid') && !this.src.startsWith('data:audio/wav')) {
         refused = true;
         return Promise.reject(new DOMException('refused', 'NotAllowedError'));
       }
