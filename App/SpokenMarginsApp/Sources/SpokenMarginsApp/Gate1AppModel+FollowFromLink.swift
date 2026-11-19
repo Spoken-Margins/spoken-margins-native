@@ -90,7 +90,7 @@ extension Gate1AppModel {
                 FollowPasteDecision.followedMessage(showTitle: title, wasAlreadyFollowed: wasAlreadyFollowed),
                 action: undo, fileID: fileID, line: line)
             // The first look at the new show's episodes can wait on the network; the sheet does not.
-            refreshFollowedSources(force: true)
+            refreshFollowedSources(force: true, trigger: .afterFollow)
             return .followed
         } catch {
             if let coordinator = followedSourceCoordinator {

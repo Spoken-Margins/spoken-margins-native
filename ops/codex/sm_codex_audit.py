@@ -178,7 +178,7 @@ RISKY_PATTERNS = {
         r"^\.github/workflows/",
         r"^scripts/lane",
         r"^scripts/(xcodebuild-lane|host-test-lane|install-lane-guard\.py|test-scope\.py"
-        r"|hot_file_ratchet\.py|merge_audit\.py|verify-tests\.py|trunk\.py)$",
+        r"|hot_file_ratchet\.py|merge_audit\.py|merge_policy\.py|signoff_check\.py|verify-tests\.py|trunk\.py)$",
         r"^TestPlans/(AppBehavior|AudioAdapters)\.xctestplan$",
     ],
 }
@@ -1153,6 +1153,38 @@ def touches_owner_tap(files: list[dict] | None) -> bool:
     return any(p in OWNER_TAP_FILES or p.startswith(OWNER_TAP_PREFIXES) for p in paths)
 
 
+MERGE_POLICY_WORKFLOW = "merge-policy.yml"
+
+
+def rerun_merge_policy(head: str) -> str:
+    """Re-run the newest pull_request run of the merge policy check on <head>, now that its audit is posted (#4693).
+
+    The check reads the audit when it runs, so it stays red until it runs again. A workflow_dispatch run's check does
+    not satisfy a required check, so this re-runs the PR's own pull_request run, which keeps its event. Returns what
+    happened, for the log. Nothing to re-run (no run yet, or main without the workflow) is not a failure; a run still
+    going is left alone, since it may already have read the audit."""
+    try:
+        res = run(["gh", "api", f"repos/{REPO}/actions/workflows/{MERGE_POLICY_WORKFLOW}/runs"
+                   f"?event=pull_request&head_sha={head}&per_page=5"], cwd=REPO_ROOT, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"merge policy re-run failed: {str(exc)[:80]}"
+    if res.returncode:
+        return "no merge policy check to re-run" if "Not Found" in res.stderr else \
+            f"merge policy re-run failed: {res.stderr.strip()[:80]}"
+    try:
+        runs = json.loads(res.stdout or "{}").get("workflow_runs") or []
+    except ValueError:
+        return "merge policy re-run failed: the run list was not JSON"
+    if not runs:
+        return "no merge policy check to re-run"
+    newest = max(runs, key=lambda r: r.get("created_at") or "")
+    if newest.get("status") != "completed":
+        return "merge policy check still running"
+    done = run(["gh", "run", "rerun", str(newest["id"]), "--repo", REPO], cwd=REPO_ROOT, check=False)
+    return "merge policy check re-run" if done.returncode == 0 else \
+        f"merge policy re-run failed: {done.stderr.strip()[:80]}"
+
+
 def request_tap_check(number: int) -> str:
     """Re-add owner-tap-check so a fresh `labeled` event starts the alert check; a failure is only logged. In a workflow
     a label change starts no run, so it dispatches the alert check instead."""
@@ -1387,6 +1419,8 @@ def audit_batch(batch: list[dict]) -> None:
             usage_run.checkpoint(targets=targets)
             if res.returncode == 0:
                 clear_failure(n)
+                if in_a_workflow():
+                    results.append(f"#{n} {rerun_merge_policy(head)}")
                 if touches_owner_tap(c.get("files")):
                     results.append(f"#{n} {request_tap_check(n)}")
             else:  # the head is still unaudited, so count it or every tick pays for the same audit again (#1456)

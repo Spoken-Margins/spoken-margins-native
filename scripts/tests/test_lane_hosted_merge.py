@@ -114,6 +114,30 @@ class HostedRestChecksTests(unittest.TestCase):
         self.assertEqual(waited, 20 * 30)  # longer than the Mac's old 15-minute limit would have mattered for
         self.assertEqual(dispatched, [])
 
+    def test_a_check_still_running_at_the_end_of_the_wait_lets_the_runner_go(self):
+        # 2026-11-19: 8 of the 15 running Linux jobs were automerge jobs asleep for up to two hours on the org's 20 slots.
+        (found, why), waited, dispatched = self.wait([(None, RUNNING)], wait=8 * 60, run_again=True)
+        self.assertIsNone(found)
+        self.assertTrue(why.startswith(lane.WAITING_ON), why)
+        self.assertLessEqual(waited, 8 * 60)
+        self.assertEqual(dispatched, [])
+
+    def test_a_check_started_again_and_still_not_there_at_the_end_lets_the_runner_go(self):
+        (found, why), waited, dispatched = self.wait([(None, MISSING)], wait=8 * 60, run_again=True)
+        self.assertIsNone(found)
+        self.assertEqual(len(dispatched), 1)  # the job still starts a check that never ran
+        self.assertTrue(why.startswith(lane.WAITING_ON), why)
+
+    def test_without_run_again_the_end_of_the_wait_is_still_a_plain_timeout(self):
+        # The Mac fallback path (LANE_HOSTED_MAC_REST off) hands the run to the build Mac instead.
+        (found, why), _, _ = self.wait([(None, RUNNING)], wait=8 * 60, run_again=False)
+        self.assertIsNone(found)
+        self.assertFalse(why.startswith(lane.WAITING_ON), why)
+
+    def test_the_hosted_wait_is_a_few_minutes_not_hours(self):
+        self.assertLessEqual(lane.HOSTED_REST_WAIT, 10 * 60)
+        self.assertGreater(lane.HOSTED_REST_WAIT, lane.HOSTED_MISSING_GRACE)  # a missing check is still started again
+
     def test_a_failed_check_ends_the_wait_at_once(self):
         (found, why), waited, _ = self.wait([(None, FAILED)])
         self.assertIsNone(found)
@@ -425,7 +449,6 @@ class HostedRunAutoTests(unittest.TestCase):
         for web, expected, says in (([self.web_run('failure')], 'FAIL', 'ended failure'),
                                     ([self.web_run('timed_out')], 'FAIL', 'ended timed_out'),
                                     ([self.web_run('cancelled')], 'INCONCLUSIVE', 'ended cancelled'),
-                                    ([self.web_run(None, 'in_progress')], 'INCONCLUSIVE', lane.NOT_FINISHED),
                                     ([], 'INCONCLUSIVE', 'check ran')):
             with self.subTest(says=says):
                 (verdict, where, ran, details), github, wait, push = self.web_merge(web)
@@ -433,6 +456,14 @@ class HostedRunAutoTests(unittest.TestCase):
                 push.assert_not_called()
                 self.assertEqual(github.posted, [])  # no merge check on the PR either
                 self.assertTrue(any(line.startswith('not merged: ') and says in line for line in details), details)
+
+    def test_a_web_pr_whose_playwright_is_still_running_lets_its_runner_go(self):
+        # Before: the job slept on a hosted Linux slot until Playwright ended, or reported INCONCLUSIVE.
+        (verdict, where, ran, details), github, wait, push = self.web_merge([self.web_run(None, 'in_progress')])
+        self.assertEqual(verdict, lane.WAITING)
+        push.assert_not_called()
+        self.assertEqual(github.posted, [])
+        self.assertTrue(any(lane.NOT_FINISHED in line for line in details), details)
 
     def test_a_swift_and_web_pr_waits_for_playwright_too(self):
         with mock.patch.object(FakeGitHub, 'api', lambda github, path: json.dumps({'check_runs': []})):

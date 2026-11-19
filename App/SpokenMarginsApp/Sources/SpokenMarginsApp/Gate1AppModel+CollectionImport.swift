@@ -134,9 +134,21 @@ extension Gate1AppModel {
     /// Text, Markdown and PDF, read and saved off the main actor the way a pick of them is, under the ID the record holds.
     private func importCollectionDocument(_ url: URL, itemID: String, store: SQLiteSessionStore) async throws -> LibraryCollectionImport.Outcome {
         let request = ObsidianImportRequest(url: url, itemId: itemID)
-        let batch = await Task.detached(priority: .userInitiated) { await Self.prepareObsidianImports([request]) }.value
+        let originalStore = try? pdfOriginalStore()
+        let batch = await Task.detached(priority: .userInitiated) {
+            await Self.prepareObsidianImports([request], originalStore: originalStore)
+        }.value
         let clipStore = pdfClipStore()
-        let written = try await Self.offMain { Self.saveObsidianImports(batch.prepared, store: store, clipStore: clipStore) }
+        let written: SavedObsidianImports
+        do {
+            written = try await Self.offMain {
+                Self.saveObsidianImports(batch.prepared, staged: batch.staged, originalStore: originalStore, store: store, clipStore: clipStore)
+            }
+        } catch {
+            // Nothing was saved, so no staged copy will become an original (#4338).
+            if let originalStore { batch.staged.values.forEach(originalStore.discard) }
+            throw error
+        }
         guard written.imported.contains(where: { $0.id == itemID }) else {
             // A failure line is "file name\nreason"; the collection's "Couldn't add" list already names the file.
             let line = (batch.failures + written.failures).first ?? LibraryCollectionImport.noItemReason

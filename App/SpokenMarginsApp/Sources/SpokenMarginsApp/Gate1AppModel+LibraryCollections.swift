@@ -22,9 +22,9 @@ extension Gate1AppModel {
             rows: libraryItems, collections: libraryCollections.collections, imported: libraryCollections.folders)
     }
 
-    /// What "Completed hidden" adds when the finished items it hides hold a friend's Margins (#3794), or nil.
-    var libraryCompletedHiddenNote: String? {
-        LibraryQueryEngine.completedHiddenNote(libraryItems, query: libraryQuery)
+    /// How many finished items the listening filter hides, for the line at the end of the Library (#4698).
+    var libraryCompletedHiddenCount: Int {
+        LibraryQueryEngine.completedHiddenCount(libraryItems, query: libraryQuery)
     }
 
     /// Whether the default view has nothing left to do, with a collection counted as one row in the Collections view.
