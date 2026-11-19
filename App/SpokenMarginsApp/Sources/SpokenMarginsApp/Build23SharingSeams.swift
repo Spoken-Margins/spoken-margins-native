@@ -678,6 +678,16 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         stage = newStage
     }
 
+    /// A send tap: one `share.selection` Diagnostics line (#4173).
+    func recordShareSelection() {
+        model.recordShareSelection()
+    }
+
+    /// The system share sheet now shows the packet or the link: the star counts start again (#4173).
+    func recordSystemShareShown() {
+        model.shareSheetPresented()
+    }
+
     /// The share sheet sent the verified packet (logged as an I4 `share` for its item, #483).
     func recordSystemShareCompleted(packetURL: URL) {
         model.listeningSignals.share(packetURL: packetURL)
