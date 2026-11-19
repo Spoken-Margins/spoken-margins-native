@@ -60,6 +60,12 @@ public struct ShareInterjectionDraft: Identifiable {
     /// The choice the sender's last text share of this Margin carried (#3472), or `nil` if it was never shared as text.
     /// When it was "no" and the switch is now on, the packet says "yes" so the listener's held copy follows.
     public var previousReadAloud: Bool?
+    /// How much of the episode the sender asks their friend to hear before this Margin, in milliseconds (#4171). It
+    /// starts at the length this Margin was last shared with, else the 20 s default. Nothing on screen sets it yet.
+    public var leadInMs = SenderLeadIn.defaultMs
+    /// The length the sender's last share of this Margin wrote, or `nil` if none ever did. With `leadInMs` it decides
+    /// what the packet writes (`SenderLeadIn.valueToWrite`).
+    public var previousLeadInMs: Int?
 
     public init(
         interjection: Interjection,
@@ -125,6 +131,7 @@ extension ShareInterjectionDraft {
         hasVoice: Bool,
         itemTitle: String?,
         lastSentReadAloud: Bool? = nil,
+        lastSentLeadInMs: Int? = nil,
         timeZone: TimeZone = .current
     ) -> ShareInterjectionDraft {
         let words = SharedMarginTextRequirement.initialReviewedText(for: interjection)
@@ -149,7 +156,16 @@ extension ShareInterjectionDraft {
         // A re-share keeps the switch where the sender last put it for this Margin (#3472).
         draft.readAloud = lastSentReadAloud ?? true
         draft.previousReadAloud = lastSentReadAloud
+        // So does the run-up length (#4171): a re-share starts from the length the friend was last given.
+        draft.leadInMs = SenderLeadIn.startingMs(lastSent: lastSentLeadInMs)
+        draft.previousLeadInMs = lastSentLeadInMs
         return draft
+    }
+
+    /// What this share writes for the Margin's run-up length, or `nil` to write none. The packet and the saved share
+    /// both use this one value, so the next share's "previous" is exactly what the friend was told.
+    public var leadInToWrite: Int? {
+        SenderLeadIn.valueToWrite(chosen: leadInMs, previous: previousLeadInMs)
     }
 
     /// The listener's words for a Margin that started with placeholder words. Clearing them brings the placeholder

@@ -195,6 +195,19 @@ function MarginCue({ margins, saved }: { margins: readonly Margin[]; /** The lis
         <SkipIcon />
         {cue.skip.label}
       </button>
+      {cue.startEarlier && (
+        <button
+          type="button"
+          className="button margin-cue-skip"
+          data-testid="margin-cue-earlier"
+          onClick={() => {
+            player.seek((cue.startEarlier as { to: number }).to);
+            if (!player.playing) player.toggle();
+          }}
+        >
+          Start a minute earlier
+        </button>
+      )}
     </section>
   );
 }
