@@ -261,6 +261,52 @@ final class PreviousRunExitTests: XCTestCase {
     }
     """
 
+    private let diskWriteWithStacks = """
+    {
+      "timeStampBegin" : "2026-11-14 09:00:00",
+      "timeStampEnd" : "2026-11-14 10:00:00",
+      "diskWriteExceptionDiagnostics" : [
+        {
+          "callStackTree" : {
+            "callStackPerThread" : true,
+            "callStacks" : [
+              {
+                "threadAttributed" : true,
+                "callStackRootFrames" : [
+                  { "binaryName" : "SpokenMarginsApp", "binaryUUID" : "AAAA0000-0000-0000-0000-000000000001",
+                    "offsetIntoBinaryTextSegment" : 256, "sampleCount" : 40,
+                    "subFrames" : [
+                      { "binaryName" : "Foundation", "binaryUUID" : "FFFF", "offsetIntoBinaryTextSegment" : 7, "sampleCount" : 40,
+                        "subFrames" : [
+                          { "binaryName" : "SpokenMarginsApp", "binaryUUID" : "AAAA0000-0000-0000-0000-000000000001",
+                            "offsetIntoBinaryTextSegment" : 512, "sampleCount" : 40, "subFrames" : [] }
+                        ] }
+                    ] }
+                ]
+              }
+            ]
+          },
+          "diagnosticMetaData" : { "writesCaused" : "1073.74 MB" }
+        }
+      ]
+    }
+    """
+
+    func testADiskWriteFlagKeepsTheAppsFramesThatDidTheWriting() {
+        let exit = PreviousRunExit.summarize(diagnosticPayloads: [data(diskWriteWithStacks)], metricPayloads: [],
+                                             appBinaryNames: ["SpokenMarginsApp"])
+        XCTAssertEqual(exit.fields["diskWriteFrames"], "0x200,0x100", "512 inside 256, innermost first")
+        XCTAssertEqual(exit.fields["diskWriteFramesBinary"], "AAAA0000-0000-0000-0000-000000000001")
+        XCTAssertEqual(exit.fields["diskWrites"], "1073.74 MB")
+        XCTAssertEqual(exit.fields["diskWriteExceptions"], "1")
+    }
+
+    func testADiskWriteFlagWithNoAppBinaryNamesKeepsNoFrames() {
+        let exit = PreviousRunExit.summarize(diagnosticPayloads: [data(diskWriteWithStacks)], metricPayloads: [])
+        XCTAssertNil(exit.fields["diskWriteFrames"])
+        XCTAssertEqual(exit.fields["diskWrites"], "1073.74 MB")
+    }
+
     func testAHangKeepsTheAppsFramesOfTheHeaviestPathInnermostFirst() {
         let exit = PreviousRunExit.summarize(diagnosticPayloads: [data(hangWithStacks)], metricPayloads: [],
                                              appBinaryNames: ["SpokenMarginsApp"])

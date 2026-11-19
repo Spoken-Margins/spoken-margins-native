@@ -253,6 +253,7 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
                             let trimmedSilence = TimeInterval(samples.count - kept.count) / TimeInterval(sampleRate)
                             let audioURL = outputDirectory.appending(path: "supertonic-\(UUID().uuidString).wav")
                             try writeWavFile(audioURL.path, kept, sampleRate)
+                            DiskWriteLedgerStore.shared.record(fileAt: audioURL, source: .speechRender)
                             generatedAudioURLs.insert(audioURL)
                             continuation.resume(returning: SupertonicNarrationResult(
                                 audioURL: audioURL,

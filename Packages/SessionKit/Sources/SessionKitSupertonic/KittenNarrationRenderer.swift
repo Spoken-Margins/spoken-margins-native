@@ -154,6 +154,7 @@ public final class KittenNarrationRenderer: @unchecked Sendable {
                             let trimmedSilence = TimeInterval(samples.count - kept.count) / TimeInterval(rate)
                             let audioURL = outputDirectory.appending(path: "kitten-\(UUID().uuidString).wav")
                             try writeWavFile(audioURL.path, kept, rate)
+                            DiskWriteLedgerStore.shared.record(fileAt: audioURL, source: .speechRender)
                             generatedAudioURLs.insert(audioURL)
                             continuation.resume(returning: SupertonicNarrationResult(
                                 audioURL: audioURL,

@@ -49,6 +49,7 @@ enum SupertonicPreparedAudioAssembler {
             sourceText: sourceText,
             destination: pcmTemporary
         )
+        DiskWriteLedgerStore.shared.record(fileAt: pcmTemporary, source: .speechAssembly)
         guard let exporter = AVAssetExportSession(
             asset: AVURLAsset(url: pcmTemporary),
             presetName: AVAssetExportPresetAppleM4A
@@ -59,6 +60,7 @@ enum SupertonicPreparedAudioAssembler {
         if fileManager.fileExists(atPath: destination.path) {
             try fileManager.removeItem(at: destination)
         }
+        DiskWriteLedgerStore.shared.record(fileAt: encodedTemporary, source: .speechAssembly)
         try fileManager.moveItem(at: encodedTemporary, to: destination)
         var audio = destination
         var audioValues = URLResourceValues()

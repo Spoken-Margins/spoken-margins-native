@@ -104,6 +104,7 @@ public actor PhononNarrationRenderer {
         let trimmedSilence = TimeInterval(samples.count - kept.count) / TimeInterval(rate)
         let audioURL = outputDirectory.appending(path: "phonon-\(UUID().uuidString).wav")
         try writeWavFile(audioURL.path, kept, rate)
+        DiskWriteLedgerStore.shared.record(fileAt: audioURL, source: .speechRender)
         generatedAudioURLs.insert(audioURL)
         return SupertonicNarrationResult(
             audioURL: audioURL,

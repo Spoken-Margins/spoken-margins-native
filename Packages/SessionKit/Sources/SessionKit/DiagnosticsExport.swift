@@ -28,6 +28,8 @@ public enum DiagnosticsExport {
         public var pendingAIJobs: Int
         /// `PresentationLedger.summaryText`: how many sheets and covers were built again while open (#4337).
         public var screenRebuilds: String
+        /// `DiskWriteLedger.summaryText`: bytes the app wrote, by source and day (#4389).
+        public var diskWritesBySource: String
 
         public init(
             developerBuild: String,
@@ -38,7 +40,8 @@ public enum DiagnosticsExport {
             sessionPhase: String,
             targetType: String?,
             pendingAIJobs: Int,
-            screenRebuilds: String = PresentationLedger().summaryText
+            screenRebuilds: String = PresentationLedger().summaryText,
+            diskWritesBySource: String = DiskWriteLedger().summaryText
         ) {
             self.developerBuild = developerBuild
             self.developerRecording = developerRecording
@@ -49,6 +52,7 @@ public enum DiagnosticsExport {
             self.targetType = targetType
             self.pendingAIJobs = pendingAIJobs
             self.screenRebuilds = screenRebuilds
+            self.diskWritesBySource = diskWritesBySource
         }
     }
 
@@ -217,6 +221,8 @@ public enum DiagnosticsExport {
         safe["pendingAIJobs"] = "\(fixed.pendingAIJobs)"
         // Places in the app's own source and counts, so nothing the listener chose; set last so no live entry stands in for it (#4337).
         safe["screenRebuilds"] = fixed.screenRebuilds
+        // Source names, UTC days and megabytes, so nothing the listener chose; set last so no live entry stands in for it (#4389).
+        safe["diskWritesBySource"] = fixed.diskWritesBySource
         return safe
     }
 
