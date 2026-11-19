@@ -39,7 +39,8 @@ public enum EpisodeLinkPaste {
         case rightEpisode = "right_episode"
         /// Plays, but it is a different episode from the one named.
         case wrongEpisode = "wrong_episode"
-        /// Plays, but the line named no episode title to check against.
+        /// Plays, but there is nothing to check it against: the line named no episode title, or the link is a
+        /// bare audio file whose only title is its file name.
         case unchecked
         /// The resolver could not turn the link into a playable episode.
         case failed
@@ -128,6 +129,8 @@ public enum EpisodeLinkPaste {
     /// What the resolver's `result` means for `entry`.
     public static func verdict(for entry: Entry, result: LinkResolutionResult) -> Verdict {
         guard result.status == .playable, let candidate = result.selectedCandidate else { return .failed }
+        // A bare audio file has only its file name for a title, so it plays but can't be checked.
+        if candidate.sourceLink.provider == "direct_audio" { return .unchecked }
         guard let claimed = entry.claimedTitle, !normalizedTokens(claimed).isEmpty else { return .unchecked }
         return titlesMatch(claimed, candidate.title) ? .rightEpisode : .wrongEpisode
     }

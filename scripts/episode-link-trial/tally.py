@@ -134,8 +134,8 @@ def main() -> None:
         answered[condition] += 1
         if not any(r["file"] == path.name for r in rows):
             empty[condition] += 1
-    marked = collections.Counter(r["condition"] for r in rows if r["markedShowLink"])
-    reasons = collections.Counter(f"{r['kind']}: {r['failureReason'] or r['status']}" for r in rows if r["outcome"] in ("failed", "invented"))
+    marked = collections.Counter(r["condition"] for r in rows if r.get("markedShowLink"))
+    reasons = collections.Counter(f"{r['kind']}: {r.get('failureReason') or r.get('error') and 'error' or r['status']}" for r in rows if r["outcome"] in ("failed", "invented"))
 
     conditions = sorted(by_condition)
     summary = [

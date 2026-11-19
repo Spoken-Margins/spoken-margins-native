@@ -106,6 +106,9 @@ final class EpisodeLinkPasteTests: XCTestCase {
         XCTAssertEqual(EpisodeLinkPaste.verdict(for: entry, result: result(.playable, title: "Something Else Entirely")), .wrongEpisode)
         XCTAssertEqual(EpisodeLinkPaste.verdict(for: entry, result: result(.needsReview, title: nil)), .failed)
         XCTAssertEqual(EpisodeLinkPaste.verdict(for: entry, result: result(.playable, title: nil)), .failed)
+        var audioFile = result(.playable, title: "0b7c3d2c c5fa 4d7c")
+        audioFile.selectedCandidate?.sourceLink.provider = "direct_audio"
+        XCTAssertEqual(EpisodeLinkPaste.verdict(for: entry, result: audioFile), .unchecked, "a file name is not a title")
         var untitled = entry
         untitled.claimedTitle = nil
         XCTAssertEqual(EpisodeLinkPaste.verdict(for: untitled, result: result(.playable, title: "Anything")), .unchecked)
