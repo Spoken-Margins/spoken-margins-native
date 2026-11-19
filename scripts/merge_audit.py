@@ -5,9 +5,9 @@ Run by .github/workflows/merge-audit.yml on every push to next. For each pull re
 push, it passes when the PR has an issue comment that starts with "**Merge check (triage desk)",
 contains the first 7 characters of the merged head commit, and was posted before the merge.
 A hand merge without that comment also passes when, before the merge, the head had what the owner's
-hand-merge rule asks for (#742): the newest lane report the runner posted on the head says PASS, so does
-the newest T3 report on the head if there is one, and the newest Codex or Claude audit naming the head says "No
-blocking findings". Otherwise it adds the `merge-audit` label and says on the PR what was missing.
+hand-merge rule asks for (#742): the newest lane report the runner posted on the head says PASS, and the newest
+Codex or Claude audit naming the head says "No blocking findings". T3 reports don't count either way: a T3 holds no
+merge since #4572. Otherwise it adds the `merge-audit` label and says on the PR what was missing.
 Commits pushed to next without any pull request get a `merge-audit` issue. It never reverts anything.
 
 The owner may merge directly; they remove the label. The lead session surveys open `merge-audit`
@@ -128,14 +128,11 @@ def hand_merge_gap(comments: list[dict], head_sha: str, merged_at: str) -> str |
     """
     sha7, merged = head_sha[:7], parse_time(merged_at)
     missing = []
-    reports = lane_reports(comments, head_sha, merged)
-    t3 = [verdict for verdict, tier in reports if tier == 'T3']
+    reports = [(verdict, tier) for verdict, tier in lane_reports(comments, head_sha, merged) if tier != 'T3']
     if not reports:
         missing.append(f'no lane report on `{sha7}`')
     elif reports[-1][0] != 'PASS':
         missing.append(f'the newest lane report on `{sha7}` is {reports[-1][0]}')
-    elif t3 and t3[-1] != 'PASS':
-        missing.append(f'the newest T3 lane report on `{sha7}` is {t3[-1]}')
     verdict = audit_verdict(comments, head_sha, merged)
     if verdict is None:
         missing.append(f'no Codex or Claude audit of `{sha7}`')

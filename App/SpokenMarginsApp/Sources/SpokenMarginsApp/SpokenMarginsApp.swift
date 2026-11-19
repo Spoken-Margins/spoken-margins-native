@@ -124,7 +124,7 @@ struct SpokenMarginsApp: App {
         #endif
         #if canImport(BackgroundTasks) && canImport(UIKit)
         // The same refresh as in the foreground, with the same six-hour staleness (#170).
-        FollowedSourceBackgroundRefreshController.shared.install { [weak model] in await model?.performFollowedSourceRefresh(force: false) }
+        FollowedSourceBackgroundRefreshController.shared.install { [weak model] in await model?.performFollowedSourceRefresh(force: false, trigger: .background) }
         #endif
         // A voice download iOS finished or woke the app for in the background carries on (#1819).
         BackgroundVoiceModelTransport.shared.onBackgroundEvents = { [weak model] in
@@ -154,7 +154,7 @@ struct SpokenMarginsApp: App {
                         guard let model else { throw CancellationError() }
                         _ = try await model.followCatalogFeed(feedURL, refreshAfter: false)
                     },
-                    didFollow: { model?.refreshFollowedSources(force: false) }
+                    didFollow: { model?.refreshFollowedSources(force: false, trigger: .afterFollow) }
                 )
             },
             searcher: CatalogDrawerModel.makeSearcher(),

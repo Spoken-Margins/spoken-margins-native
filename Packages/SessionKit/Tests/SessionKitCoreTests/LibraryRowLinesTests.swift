@@ -118,12 +118,12 @@ final class LibraryRowLinesTests: XCTestCase {
     // MARK: Margins line
 
     func testTheMarginsLineIsOneLineWithTheOwnPartShortenedBesideAFriends() {
-        let shared = SharedMarginTally(total: 3, new: 1)
+        let shared = SharedMarginTally(total: 3, new: 1, senders: [.init(key: "c", name: "Cole", count: 3)])
         let both = lines(text(marginCount: 2, shared: shared))
         XCTAssertEqual(both.ownMargins, "2 yours")
-        XCTAssertEqual(both.friendMargins, "3 shared Margins · 1 new")
+        XCTAssertEqual(both.friendMargins, "3 Margins from Cole · 1 new")
         XCTAssertTrue(both.friendMarginsAreNew)
-        XCTAssertEqual(both.marginsSpoken, "2 of your Margins. 3 Margins from other listeners, 1 new to you")
+        XCTAssertEqual(both.marginsSpoken, "2 of your Margins. 3 Margins from Cole, 1 new to you")
         XCTAssertTrue(both.hasMarginsLine)
 
         let own = lines(text(marginCount: 2))
@@ -136,20 +136,28 @@ final class LibraryRowLinesTests: XCTestCase {
 
         let friends = lines(text(shared: shared))
         XCTAssertNil(friends.ownMargins)
-        XCTAssertEqual(friends.friendMargins, "3 shared Margins · 1 new")
-        XCTAssertEqual(friends.marginsSpoken, "3 Margins from other listeners, 1 new to you")
+        XCTAssertEqual(friends.friendMargins, "3 Margins from Cole · 1 new")
+        XCTAssertEqual(friends.marginsSpoken, "3 Margins from Cole, 1 new to you")
 
         let none = lines(text())
         XCTAssertFalse(none.hasMarginsLine)
         XCTAssertNil(none.marginsSpoken)
     }
 
+    func testARowWhoseSenderIsUnknownSaysAFriend() {
+        let unnamed = lines(text(shared: SharedMarginTally(total: 2, new: 2)))
+        XCTAssertEqual(unnamed.friendMargins, "2 new Margins from a friend")
+        XCTAssertEqual(unnamed.marginsSpoken, "2 new Margins from a friend")
+        let replies = lines(text(shared: SharedMarginTally(total: 2, new: 0, senders: [.init(key: "s", name: "Sam", count: 2)], replies: 2)))
+        XCTAssertEqual(replies.friendMargins, "2 replies from Sam")
+    }
+
     func testNothingIsCalledNewUnlessItIs() {
-        let heard = lines(text(marginCount: 2, shared: SharedMarginTally(total: 3, new: 0)))
+        let heard = lines(text(marginCount: 2, shared: SharedMarginTally(total: 3, new: 0, senders: [.init(key: "c", name: "Cole", count: 3)])))
         XCTAssertFalse(heard.friendMarginsAreNew)
-        XCTAssertEqual(heard.friendMargins, "3 shared Margins")
+        XCTAssertEqual(heard.friendMargins, "3 Margins from Cole")
         XCTAssertEqual(heard.ownMargins, "2 yours")
-        XCTAssertEqual(heard.marginsSpoken, "2 of your Margins. 3 Margins from other listeners")
+        XCTAssertEqual(heard.marginsSpoken, "2 of your Margins. 3 Margins from Cole")
         XCTAssertFalse(lines(text(shared: .none)).friendMarginsAreNew)
         XCTAssertFalse(lines(text(marginCount: -3)).hasMarginsLine, "a negative count is no count")
     }

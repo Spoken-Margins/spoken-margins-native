@@ -25,6 +25,10 @@ final class FollowingFirstScreenTests: XCTestCase {
         try store.saveFeedEntry(FeedEntry(id: "show-old", subscriptionId: "show", canonicalURL: "https://show.example/1", audioURL: "https://show.example/1.mp3", title: "Older", publishedAt: now.addingTimeInterval(-3600)))
 
         await model.reloadFollowedSourceEntries()
+        // The subscriptions are published by whichever read started last (`StoreReader.latestFeedSubscriptions` returns nil to
+        // an older one), and a read begun by the model's own setup can land after this call returns, so wait for the published
+        // state before asserting it (#4593). The assertions below name what is still missing if it never arrives.
+        try await pollUntil { model.feedSubscriptions.map(\.id) == ["show"] && model.followedSourceEntries.count == 2 }
 
         XCTAssertEqual(model.followedSourceEntries.map(\.id), ["show-new", "show-old"], "newest first, as the refresh round orders them")
         XCTAssertEqual(model.feedSubscriptions.map(\.id), ["show"])

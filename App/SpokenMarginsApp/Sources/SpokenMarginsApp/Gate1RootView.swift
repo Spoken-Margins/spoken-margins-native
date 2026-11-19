@@ -77,7 +77,7 @@ struct Gate1RootView: View {
         }
         .trackedSheet(isPresented: $catalogDrawer.isPresented, onDismiss: {
             catalogDrawer.didDismiss()
-            model.refreshFollowedSources(force: false)
+            model.refreshFollowedSources(force: false, trigger: .afterFollow)
         }) {
             CatalogDrawerView()
                 .environmentObject(catalogDrawer)

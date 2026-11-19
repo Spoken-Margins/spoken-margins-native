@@ -29,6 +29,7 @@ public enum ItemOwnedFiles {
     public static func itemOriginalsFolderName(itemId: String) -> String? {
         itemId.isEmpty ? nil : ListeningEdition.digest(itemId)
     }
+
     /// `SpokenMargins/PDFClips/` under Application Support: one folder per item, holding the pictures of a PDF's tables
     /// and figures that its Timeline shows (#3895).
     public static let pdfClipsRoot = "PDFClips"

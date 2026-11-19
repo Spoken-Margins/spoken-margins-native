@@ -115,7 +115,7 @@ Once the repo is public, anyone can file an issue, comment, or open a fork PR. T
 
 | Automation | Reads | Can do | Guard today | Needed before public |
 |---|---|---|---|---|
-| Lane runner (`lane-runner.py` via `lane.yml`) | PR comments (`/lane` requests, lane reports), labels | Runs tests on the Mac, lifts the T3 hold, merges | Same-repo PRs only; a maintainer adds the label | PR #1797: trust only OWNER, MEMBER, COLLABORATOR and `github-actions[bot]` comments |
+| Lane runner (`lane-runner.py` via `lane.yml`) | PR comments (`/lane` requests, lane reports), labels | Runs tests on the Mac, merges | Same-repo PRs only; a maintainer adds the label | PR #1797: trust only OWNER, MEMBER, COLLABORATOR and `github-actions[bot]` comments |
 | `linux-t1.yml`, `lane.yml` lane-open jobs | PR code | Runs a PR's code on the VPS | `linux-t1` has no fork guard | PR #1791: same-repo guard plus the runner-side job-started hook (not installed). Owner's merge tap. |
 | `merge-audit.yml` | Pushes to `next` | Labels | Only writers can push | None |
 | Audit (`sm_codex_audit.py`) | PR title, description, diff, comments | Posts the verdict that lets audio, persistence, packet and lane PRs merge | Read-only tools, `dontAsk` | Audit only same-repo PRs by collaborators; quote PR text inside a marked data block; never let text in the PR set the verdict wording. |

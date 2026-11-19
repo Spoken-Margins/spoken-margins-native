@@ -21,6 +21,7 @@ extension PlaybackLivePassage.Margin {
     public init?(own note: Interjection, itemID: String, textLength: Int) {
         let anchor = note.anchor
         guard textLength > 0, note.itemId == itemID, note.status == "active", note.targetType == .item,
+              note.hasPlace, // A moved Margin with no saved place is not a passage mark (#4233).
               anchor.startChar >= 0, anchor.startChar <= anchor.endChar,
               anchor.endChar <= textLength else { return nil }
         switch anchor.anchorType {
