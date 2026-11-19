@@ -442,6 +442,31 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertTrue(drawer.isPresented)
     }
 
+    /// The audit on PR #4597: a failure closed away from the Library, then a kill before the Library, owes the drawer to
+    /// the next launch without holding it back, so Done with nothing picked there plays the Welcome sample.
+    func testAFailedFriendFileClosedElsewhereThenAKillOwesTheNextLaunchADrawerThatPlaysTheWelcomeSample() async throws {
+        let defaults = try freshDefaults()
+        let drawer = try makeDrawer(defaults: defaults, log: FollowLog())
+        drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.settleFirstRun(at: .elsewhere)
+        drawer.friendFileArrived()
+        drawer.friendFileFailed(at: .elsewhere)
+        XCTAssertFalse(drawer.isPresented)
+        XCTAssertFalse(defaults.bool(forKey: CatalogDrawerModel.deferredByFriendFileKey), "no friend's item came of it")
+        XCTAssertTrue(defaults.bool(forKey: CatalogDrawerModel.owedAfterFriendFileFailedKey))
+
+        // Killed before the Library. The next launch has the Welcome sample in the Library, so it is not empty.
+        var started: [(ids: [String], allowsWelcome: Bool)] = []
+        let next = try makeDrawer(defaults: defaults, log: FollowLog()) { ids, allowsWelcome in started.append((ids, allowsWelcome)) }
+        next.presentIfFirstRun(libraryWasEmptyAtLaunch: false, followedSourceCount: 0)
+        XCTAssertTrue(next.isPresented, "still owed")
+        XCTAssertFalse(defaults.bool(forKey: CatalogDrawerModel.owedAfterFriendFileFailedKey), "spent as the drawer opens")
+        next.finish()
+        next.didDismiss()
+        await next.playFirstListenIfRequested()
+        XCTAssertEqual(started.map(\.allowsWelcome), [true], "no friend's item is in the Library, so the Welcome sample may play")
+    }
+
     /// #3801: a failure that lands before the root view has noted the launch is not replayed as an arrival.
     func testAFriendFileThatFailedBeforeTheRootViewAppearedDoesNotHoldTheDrawerBack() throws {
         let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog())
