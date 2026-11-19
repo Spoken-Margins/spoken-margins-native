@@ -158,30 +158,6 @@ class HostedRecordsTests(unittest.TestCase):
                 self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
                 self.assertFalse(any('/annotations' in call for call in checks.calls))
 
-    def test_the_app_build_cannot_be_run_again_so_a_fault_there_stays_a_fail(self):
-        # Audit on 9d98b41: dispatch() starts hosted-portable.yml, never the app build, so a marked fault on it would
-        # report INCONCLUSIVE on every re-add of automerge and never reach FAIL.
-        name = next(iter(lane.HOSTED_APP_CHECK))
-
-        class AppChecks(FakeChecks):
-            def api(self, path):
-                self.calls.append(path)
-                if '/actions/workflows/' in path:
-                    return json.dumps({'workflow_runs': [{'check_suite_id': 77}]})
-                if '/annotations' in path:
-                    return json.dumps(self.annotations[1])
-                return json.dumps({'check_runs': self.runs[name]})
-        run = {'id': 1, 'status': 'completed', 'conclusion': 'failure', 'app': {'slug': 'github-actions'},
-               'check_suite': {'id': 77}, 'started_at': '2026-10-18T10:00:00Z'}
-        checks = AppChecks({}, {1: [self.lane_fault()]})
-        checks.runs = {name: [run]}
-        found, why = lane.hosted_fast_records(checks, self.HEAD, {name: None})
-        self.assertIsNone(found)
-        self.assertIn('ended failure', why)
-        self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
-        self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
-        self.assertFalse(any('/annotations' in call for call in checks.calls))
-
     def test_a_passing_check_reads_no_extra_annotations(self):
         checks = passing(self.HEAD)
         lane.hosted_fast_records(checks, self.HEAD)
@@ -656,10 +632,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(on_vps, {})
 
     def test_the_lane_hands_the_switch_to_the_automerge_and_release_runs_and_may_read_checks(self):
-        # The route job (hosted_merge_routing), the lane job (a T3 PASS merging on the hosted checks), the automerge
-        # job, its automerge-mac fallback and the release job (#2459).
+        # The route job (hosted_merge_routing), the automerge job, its automerge-mac fallback and the release job
+        # (#2459). The lane job no longer reads them: a T3 PASS merges nothing since #4572.
         for switch in (lane.HOSTED_FAST_SWITCH, lane.HOSTED_REST_SWITCH):
-            self.assertEqual(self.lane_yml.count(f'{switch}: ${{{{ vars.{switch} }}}}'), 5, switch)
+            self.assertEqual(self.lane_yml.count(f'{switch}: ${{{{ vars.{switch} }}}}'), 4, switch)
         self.assertIn('  checks: read\n', self.lane_yml)
 
 

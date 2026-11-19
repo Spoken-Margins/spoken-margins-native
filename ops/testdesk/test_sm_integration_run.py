@@ -1944,9 +1944,10 @@ class MacDefersToHostedTests(unittest.TestCase):
         self.assertEqual((ops.posted, ops.comments, ops.reverts), ([], [], []))
         self.assertFalse(any(c[:3] == ['git', 'worktree', 'add'] for c in ops.calls))
 
-    def test_a_tip_with_no_hosted_run_is_tested_here_as_when_off(self):
-        # #2127: the lane runner's merges are pushed with the workflow token, which starts no workflows. A tip
-        # with no hosted run, or one whose run ended without a report, would otherwise go untested.
+    def test_a_tip_with_no_hosted_run_is_left_to_main_t3(self):
+        # #4573: hosted-integration.yml no longer runs on a push, so no tip has a hosted run. Before, such a tip went
+        # to the Mac (#2127); now main-t3.yml tests the trunk on a schedule, and the Mac must not run --plan app on
+        # every tip instead.
         cases = [('no run', []), ('a run that ended without a report', [{'status': 'completed', 'conclusion': 'failure'}]),
                  ('runs unreadable', None)]
         for name, runs in cases:
@@ -1954,10 +1955,10 @@ class MacDefersToHostedTests(unittest.TestCase):
                 ops = HostedOps(tmp, [manifest({TEST: 'passed'})], runs=runs,
                                 bodies=[report_comment(OLD[:7], 'PASS', by=run.HOSTED_RUN_BY)])
                 ops, verdict, state = self.tick(tmp, [], [], ops=ops)
-                self.assertEqual(verdict, 'PASS')
-                self.assertEqual(len(ops.posted), 1)
-                self.assertIn(f'run by: {run.RUN_BY}', ops.posted[0])
-                self.assertIn('the Mac tests it', (ops.home / 'log.txt').read_text())
+                self.assertEqual(verdict, 'deferred')
+                self.assertEqual(ops.posted, [])
+                self.assertFalse(any(c[:3] == ['git', 'worktree', 'add'] for c in ops.calls))
+                self.assertIn('main-t3.yml tests the trunk on a schedule', (ops.home / 'log.txt').read_text())
 
     def test_a_tip_the_hosted_run_has_or_may_soon_have_is_left_to_it(self):
         cases = [('queued', {'runs': [{'status': 'queued', 'conclusion': None}]}),

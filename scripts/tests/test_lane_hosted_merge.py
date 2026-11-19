@@ -1,7 +1,8 @@
 """#2459: merging runs on hosted Linux and on three hosted checks, so the owner's Mac runs no automerge job.
 
 Before: every automerge job for a Mac diff queued for the build Mac (21 queued on 2026-10-22), waited there up to 15
-minutes for the hosted pair, ran --plan fast-mac-rest for about 8 minutes, and a PR held for T3 then reported held.
+minutes for the hosted pair, ran --plan fast-mac-rest for about 8 minutes, and a PR held for T3 then reported held
+(the T3 hold itself is gone since #4572).
 """
 import inspect
 import json
@@ -264,40 +265,6 @@ class HostedRestChecksTests(unittest.TestCase):
         self.assertEqual(found, STOOD)
         self.assertEqual(dispatched, [0.0])
 
-    APP = next(iter(lane.HOSTED_APP_CHECK))
-    WITH_APP = {**CHECKS, **lane.HOSTED_APP_CHECK}
-
-    def test_a_cancelled_app_build_starts_no_fresh_hosted_run(self):
-        # #3555 audit on 432241e: dispatch() starts hosted-portable.yml, never the app build, so a cancelled build was
-        # "started again" three times (three hosted-macOS runs that could not change it) over up to two hours.
-        cancelled = f'"{self.APP}" ended cancelled on {HEAD[:7]}'
-        (found, why), waited, dispatched = self.wait([(None, cancelled)], checks=self.WITH_APP, run_again=True)
-        self.assertEqual((found, waited, dispatched), (None, 0, []))
-        verdict, _, _, details = lane.hosted_checks_missing(why, 'INCONCLUSIVE')
-        self.assertEqual(verdict, 'INCONCLUSIVE')
-        self.assertTrue(any('Re-run the app build' in line for line in details), details)
-
-    def test_a_skipped_app_build_starts_no_fresh_run_and_does_not_blame_the_scope_job(self):
-        skipped = f'"{self.APP}" ended skipped on {HEAD[:7]}'
-        (found, why), _, dispatched = self.wait([(None, skipped)], checks=self.WITH_APP, run_again=True)
-        self.assertEqual((found, dispatched), (None, []))
-        self.assertNotIn(lane.HOSTED_SCOPE_CLASH, why)
-
-    def test_a_missing_app_build_is_waited_out_for_the_grace_then_ends_with_no_fresh_run(self):
-        missing = f'no "{self.APP}" check ran on {HEAD[:7]}'
-        (found, why), waited, dispatched = self.wait([(None, missing)], checks=self.WITH_APP, run_again=True)
-        self.assertEqual((found, dispatched), (None, []))
-        self.assertGreaterEqual(waited, lane.HOSTED_MISSING_GRACE)
-        self.assertLess(waited, lane.HOSTED_MISSING_GRACE + 60)
-        self.assertIn('close and reopen', lane.hosted_checks_missing(why, 'INCONCLUSIVE')[3][0])
-
-    def test_an_app_build_that_shows_up_within_the_grace_is_still_taken(self):
-        missing = f'no "{self.APP}" check ran on {HEAD[:7]}'
-        running = f'"{self.APP}" {lane.NOT_FINISHED} on {HEAD[:7]}'
-        (found, why), _, dispatched = self.wait([(None, missing)] * 3 + [(None, running), (STOOD, '')],
-                                                checks=self.WITH_APP, run_again=True)
-        self.assertEqual((found, dispatched), (STOOD, []))
-
     def test_with_no_mac_a_failed_read_is_waited_out_and_starts_nothing(self):
         # #3501 audit: a read that failed (a 502, or the token's hourly limit) says nothing about the checks. Starting
         # them again would spend a hosted Mac and more of the same limit.
@@ -421,7 +388,6 @@ class HostedRunAutoTests(unittest.TestCase):
                 mock.patch.object(lane, 'hot_file_violations', return_value=[]), \
                 mock.patch.object(lane, 'host_build_folders') as folders, \
                 mock.patch.object(lane, 'sweep_merge_audit'), \
-                mock.patch.object(lane, 'dispatch_hosted_integration', return_value=''), \
                 mock.patch.object(lane, 'hosted_rest_checks',
                                   side_effect=wait_effect or (lambda *args, **kwargs: found)) as wait, \
                 mock.patch.object(lane, 'hosted_fast_checks') as pair, \
@@ -488,13 +454,23 @@ class HostedRunAutoTests(unittest.TestCase):
         self.assertEqual(verdict, 'PASS')
         push.assert_called_once()
 
-    def test_a_pr_held_for_t3_is_reported_held_without_waiting_or_testing(self):
+    def test_a_pr_that_asked_for_t3_merges_on_the_hosted_checks_like_any_other(self):
+        # #4572: before, it was reported "held for T3" without waiting or testing.
         (verdict, where, ran, details), github, wait, push = self.run_auto([self.T3_ASKED])
-        self.assertEqual(verdict, 'INCONCLUSIVE')
-        self.assertTrue(any(lane.PENDING_T3_HOLD.match(line) for line in details), details)
-        self.assertEqual(ran, 'nothing')
-        wait.assert_not_called()
-        push.assert_not_called()
+        self.assertEqual(verdict, 'PASS')
+        wait.assert_called_once()
+        push.assert_called_once()
+        self.assertFalse(any('held for T3' in line for line in details), details)
+
+    def test_an_app_diff_merges_on_the_fast_checks_with_no_app_build(self):
+        # Owner, 2026-11-18 (#4572): before, an App/ diff also waited for hosted-app-macos.yml's build (#3539).
+        (verdict, where, ran, details), github, wait, push = self.run_auto(
+            paths=('App/SpokenMarginsApp/Sources/SpokenMarginsApp/A.swift',))
+        self.assertEqual(verdict, 'PASS')
+        push.assert_called_once()
+        self.assertEqual(wait.call_args.kwargs['checks'], lane.HOSTED_PORTABLE_CHECK)
+        self.assertFalse(any('app build (T2' in line for line in details), details)
+        self.assertIn(lane.NO_APP_BUILD_PER_PR, details)
 
     def test_the_three_hosted_checks_merge_it_with_no_test_here(self):
         (verdict, where, ran, details), github, wait, push = self.run_auto()
@@ -548,15 +524,13 @@ class HostedRunAutoTests(unittest.TestCase):
         self.assertEqual(verdict, 'FAIL')
         push.assert_not_called()
 
-    def test_with_mac_rest_off_a_pr_held_for_t3_is_reported_held_on_linux(self):
-        # Before: "The current diff requires the Mac", and the build Mac ran its host tests only to report held.
+    def test_with_mac_rest_off_a_pr_that_asked_for_t3_goes_to_the_mac_like_any_other(self):
+        # #4572: before, it was reported "held for T3" on Linux; now it takes the same path as a PR with no request.
         with mock.patch.dict(lane.os.environ, {'LANE_HOSTED_MAC_REST': ''}):
-            (verdict, where, ran, details), github, wait, push = self.run_auto([self.T3_ASKED], env=PAIR_ONLY)
-        self.assertEqual(verdict, 'INCONCLUSIVE')
-        self.assertTrue(any(lane.PENDING_T3_HOLD.match(line) for line in details), details)
-        self.assertEqual((where, ran), ('hosted Linux runner', 'nothing'))
-        wait.assert_not_called()
-        push.assert_not_called()
+            asked = self.run_auto([self.T3_ASKED], found=(None, MISSING), env=PAIR_ONLY)
+            plain = self.run_auto([], found=(None, MISSING), env=PAIR_ONLY)
+        self.assertEqual(asked[0][0], plain[0][0])
+        self.assertEqual(asked[0][0], lane.NEEDS_MAC)
 
     def test_with_mac_rest_off_the_mac_gets_the_run_only_after_the_pair_passed(self):
         pair = {name: STOOD[name] for name in lane.HOSTED_FAST_CHECKS}
@@ -592,7 +566,6 @@ class HostedRunAutoTests(unittest.TestCase):
                 mock.patch.object(lane, 'inherited_check', return_value=lambda comments: []), \
                 mock.patch.object(lane, 'hot_file_violations', return_value=[]), \
                 mock.patch.object(lane, 'sweep_merge_audit'), \
-                mock.patch.object(lane, 'dispatch_hosted_integration', return_value=''), \
                 mock.patch.object(lane, 'hosted_web_check', return_value=(None, '')), \
                 mock.patch.object(lane, 'hosted_rest_checks') as wait, \
                 mock.patch.object(lane, 'run_ops', return_value=('PASS', [])) as ops, \
@@ -619,29 +592,6 @@ class HostedMainTests(unittest.TestCase):
             self.assertNotIn('reported=true', output.read_text())
         self.assertEqual(github.posted, [])
         self.assertEqual(github.label_changes, [])
-
-
-class MergeAfterT3Tests(unittest.TestCase):
-    def test_a_t3_pass_merges_on_standing_hosted_checks_instead_of_handing_off_to_the_mac(self):
-        held = runner_tests.runner_report('INCONCLUSIVE', lane.identity('auto', HEAD, MERGE, []))
-        held['body'] = held['body'].replace('crashes:', 'not merged: held for T3: waiting.\ncrashes:')
-        github = FakeGitHub(labels=('automerge',), comments=[held])
-        hand_off = mock.Mock(return_value='https://example.test/release')
-        with tempfile.TemporaryDirectory() as temporary, \
-                mock.patch.dict(lane.os.environ, ON), \
-                mock.patch.object(lane, 'TESTED_RECORD', Path(temporary) / 'tested.json'), \
-                mock.patch.object(lane, 'clean_tree'), \
-                mock.patch.object(lane, 'fetch_base', return_value=MERGE), \
-                mock.patch.object(lane, 'hosted_web_check', return_value=(None, '')), \
-                mock.patch.object(lane, 'hosted_rest_checks', return_value=(STOOD, '')), \
-                mock.patch.object(lane, 'run_auto', return_value=('PASS', 'host only', 'x',
-                                                                   [f'merged into main as {MERGE[:7]}'])) as auto:
-            self.assertTrue(lane.held_for_t3(github.comments(), HEAD))
-            lane.merge_after_t3(github, 5, 'main', HEAD, 'r1', Path(temporary) / 'e', MERGE, 'started by T3',
-                                hand_off=hand_off)
-        hand_off.assert_not_called()
-        self.assertTrue(auto.call_args.kwargs.get('rest_hosted'))
-        self.assertEqual(auto.call_args.kwargs.get('rest_wait'), 0)
 
 
 if __name__ == '__main__':

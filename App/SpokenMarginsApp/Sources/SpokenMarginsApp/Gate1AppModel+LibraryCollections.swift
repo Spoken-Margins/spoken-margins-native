@@ -9,6 +9,11 @@ extension Gate1AppModel {
         LibraryCollectionScope.visibleLibraryItems(libraryItems, query: libraryQuery, in: libraryCollections.selection)
     }
 
+    /// What "Completed hidden" adds when the finished items it hides hold a friend's Margins (#3794), or nil.
+    var libraryCompletedHiddenNote: String? {
+        LibraryQueryEngine.completedHiddenNote(LibraryCollectionScope.rows(libraryItems, in: libraryCollections.selection), query: libraryQuery)
+    }
+
     /// Whether every row in scope is finished, read over the collection's own rows when one is selected.
     var libraryIsCaughtUp: Bool {
         LibraryQueryEngine.libraryIsCaughtUp(LibraryCollectionScope.rows(libraryItems, in: libraryCollections.selection), query: libraryQuery)

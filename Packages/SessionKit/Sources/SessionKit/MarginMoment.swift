@@ -60,6 +60,8 @@ public struct MarginMomentSequence: Sendable, Equatable {
     /// Progress ticks arrive every 0.5 s, so even 3× playback advances well under this. A bigger forward move
     /// is a seek or skip, and skipping over a Margin shouldn't play it.
     public static let maxTickAdvanceMs = 4_000
+    /// How far short of a run-up's start the playhead may be and still count as inside it (`startEarlierPlan`).
+    public static let runUpSeekSlackMs = 1_000
     /// The same limit for this moment's clock; a text clock reads in characters, so its limit differs (see `MarginMomentClock`).
     public let tickAdvanceLimitMs: Int
 
@@ -96,7 +98,8 @@ public struct MarginMomentSequence: Sendable, Equatable {
     public let itemId: String
     /// The chosen Margin; in a review, the one playing now or next.
     public private(set) var target: MarginMomentAnchor
-    public let startMediaTimeMs: Int
+    /// Where the source starts for the current run-up. `restartLonger` moves it earlier (#4171).
+    public private(set) var startMediaTimeMs: Int
     public let review: Review?
     /// The length a Margin without its own gets: the moment's or the review's. Zero marks a listening with no lead-in
     /// at all (`CantPlayListening`), which no sender's length changes.
@@ -106,6 +109,12 @@ public struct MarginMomentSequence: Sendable, Equatable {
     public private(set) var unplayed: [MarginMomentAnchor]
     /// The Margin whose voice has the floor, with its place in the source (#866: Add Margin records there).
     public private(set) var playing: MarginMomentAnchor?
+    /// Run-ups the listener lengthened with "Start a minute earlier" (#4171), by Margin. They win over the sender's length
+    /// and the moment's, and are not clamped to what a packet may carry: each press adds a minute.
+    private var lengthenedLeadInMs: [String: Int] = [:]
+    /// A Margin of this review had the floor before a restart put it back among the unplayed, so Stop still treats the
+    /// review as one the listener has heard something of (`hasReachedAMargin`).
+    private var reachedBeforeRestart = false
 
     /// `otherMargins` are the item's spoken Margins when the moment starts. Margins recorded later aren't
     /// included, so a new Margin never replays right after it's saved.
@@ -156,7 +165,8 @@ public struct MarginMomentSequence: Sendable, Equatable {
 
     /// The run-up before `anchor` in this moment or review.
     public func leadInMs(for anchor: MarginMomentAnchor) -> Int {
-        Self.effectiveLeadInMs(of: anchor, momentLeadInMs: momentLeadInMs)
+        if momentLeadInMs > 0, let lengthened = lengthenedLeadInMs[anchor.marginId] { return lengthened }
+        return Self.effectiveLeadInMs(of: anchor, momentLeadInMs: momentLeadInMs)
     }
 
     /// Where the lead-in before `target` starts, by the single lead-in rule (#807). The target's own length (the
@@ -205,7 +215,7 @@ public struct MarginMomentSequence: Sendable, Equatable {
     public var isReview: Bool { review != nil }
 
     /// A Margin of this review has had the floor, so the source is no longer at the spot the review first took it to.
-    public var hasReachedAMargin: Bool { review.map { unplayed.count < $0.count } ?? false }
+    public var hasReachedAMargin: Bool { review.map { reachedBeforeRestart || unplayed.count < $0.count } ?? false }
 
     /// Where the source goes when the listener stops the review, nil to leave it where it is. A review stopped before
     /// any Margin played undoes its hop, back to the listener's place. After that the listener has heard something and
@@ -308,6 +318,60 @@ public struct MarginMomentSequence: Sendable, Equatable {
         if next.mediaTimeMs <= stoppedAt { return .playNow(play(next)) }
         phase = .leadIn
         return .continueSource
+    }
+
+    /// "Start a minute earlier" (#4171), if it is on offer now: the plan for the Margin that is playing, or for the target
+    /// while its run-up plays. Nil when there is nothing earlier to start from, for a listening with no lead-in at all,
+    /// and in a review between Margins, where the playhead is not yet inside the target's run-up (the hop button is
+    /// showing and a restart would move the listener forward). `currentMediaTimeMs` nil is before the first reading.
+    public func startEarlierPlan(currentMediaTimeMs: Int?) -> StartEarlier.Plan? {
+        guard momentLeadInMs > 0 else { return nil }
+        let margin: MarginMomentAnchor
+        switch phase {
+        case .playingMargin:
+            guard let playing else { return nil }
+            margin = playing
+        case .leadIn:
+            margin = target
+            let runUp = leadInMs(for: margin)
+            if let current = currentMediaTimeMs {
+                // A second of slack at the start: a seek to the run-up's start can land just short of it.
+                guard current >= margin.mediaTimeMs - runUp - Self.runUpSeekSlackMs, current <= margin.mediaTimeMs else { return nil }
+            } else if hasReachedAMargin {
+                return nil
+            }
+        case .listening:
+            return nil
+        }
+        return StartEarlier.plan(for: margin, runUpMs: leadInMs(for: margin))
+    }
+
+    /// Plays `marginId` again with a run-up of `leadInMs`: the chosen Margin is `target` and `unplayed` again, the Margins
+    /// after it that had not played stay, and a review keeps its count, its return place and what it has heard. The
+    /// caller ends a playing voice without advancing the review and seeks to the returned start. Nil when `marginId` is
+    /// neither the Margin playing nor the target in its run-up.
+    @discardableResult
+    public mutating func restartLonger(marginId: String, leadInMs lengthened: Int) -> Int? {
+        guard momentLeadInMs > 0 else { return nil }
+        let margin: MarginMomentAnchor
+        if case .playingMargin = phase, let playing, playing.marginId == marginId {
+            margin = playing
+            if review != nil { reachedBeforeRestart = true }
+        } else if phase == .leadIn, target.marginId == marginId {
+            margin = target
+        } else {
+            return nil
+        }
+        lengthenedLeadInMs[marginId] = max(0, lengthened)
+        // A review plays its Margins in its own order. A plain moment plays by time, and the longer run-up must not play a
+        // Margin that sits before this one, so only those after it stay.
+        let later = unplayed.filter { $0.marginId != marginId && (review != nil || $0.mediaTimeMs > margin.mediaTimeMs) }
+        unplayed = review != nil ? [margin] + later : Self.inPlaybackOrder([margin] + later)
+        playing = nil
+        target = margin
+        phase = .leadIn
+        startMediaTimeMs = max(0, margin.mediaTimeMs - max(0, lengthened))
+        return startMediaTimeMs
     }
 
     private mutating func play(_ margin: MarginMomentAnchor) -> MarginMomentAnchor {

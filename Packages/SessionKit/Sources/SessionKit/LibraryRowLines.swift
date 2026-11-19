@@ -22,11 +22,11 @@ public struct LibraryRowLines: Equatable, Sendable {
     public let ringFraction: Double?
     /// The listener's own Margins, as the Margins line shows them: "2 yours" beside a friend's part, "2 Margins" alone.
     public let ownMargins: String?
-    /// The friend's part: the row's `SharedMarginTally.libraryLine`, or the words a caller passes in (#3794 owns them).
+    /// The friend's part: the row's `SharedMarginTally.senderLine` ("2 new Margins from Cole"), or the words a caller passes in.
     public let friendMargins: String?
     /// True when any of the friend's Margins is unheard, so the line shows its New badge. Never true without a count.
     public let friendMarginsAreNew: Bool
-    /// What VoiceOver says for the whole Margins line: "2 of your Margins. 3 Margins from other listeners, 1 new to you".
+    /// What VoiceOver says for the whole Margins line: "2 of your Margins. 3 Margins from Cole, 1 new to you".
     public let marginsSpoken: String?
 
     /// Whether the row has a Margins line at all.
@@ -35,7 +35,7 @@ public struct LibraryRowLines: Equatable, Sendable {
     /// - Parameters:
     ///   - playbackSpeed: the listener's speed, for a text item's estimate.
     ///   - isExported: a finished spoken note saved to the export folder says so.
-    ///   - friendLine: the friend's part in the words of the day; defaults to the tally's own line.
+    ///   - friendLine: the friend's part; defaults to the tally's sender line.
     ///   - friendSpokenLine: its VoiceOver words; defaults to the tally's own when the line is the tally's, else to the line itself.
     public init(
         row: LibraryItemRow,
@@ -49,9 +49,9 @@ public struct LibraryRowLines: Equatable, Sendable {
         progressSpoken = words?.spoken
         ringFraction = Self.inProgress(row) ? Double(min(max(row.continuationProgressPercent ?? 0, 0), 100)) / 100 : nil
 
-        let friend = friendLine ?? row.sharedMargins.libraryLine
+        let friend = friendLine ?? row.sharedMargins.senderLine
         // Words a caller passes are spoken as passed unless it says otherwise: the tally's own spoken words describe its own line.
-        let friendSpoken = friendSpokenLine ?? (friendLine == nil ? row.sharedMargins.accessibilityLine : friendLine)
+        let friendSpoken = friendSpokenLine ?? (friendLine == nil ? row.sharedMargins.senderAccessibilityLine : friendLine)
         let ownCount = max(0, row.marginCount)
         friendMargins = friend
         friendMarginsAreNew = friend != nil && row.sharedMargins.new > 0
