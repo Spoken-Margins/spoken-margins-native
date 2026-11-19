@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitPersistence
 
 /// Following's stored state (#1865), held as one value so `Gate1AppModel.swift` doesn't grow (hot-file ratchet).
 struct FollowingShowsState {
@@ -9,6 +10,9 @@ struct FollowingShowsState {
     var looked = FollowingLookedMarkers()
     /// Which imported episodes are in the Library and whether each is finished; a row previews the next one worth hearing.
     var libraryEpisodes: [String: FollowingLibraryEpisode] = [:]
+    /// The listener's rules, lists and Show less marks (#4046), which set episodes aside before a row is built. Empty until
+    /// the first read, and while none is on, Following is exactly what it was without them.
+    var ruleInputs = FollowingRuleInputs()
     /// Following's rows, built off the main thread whenever the entries, shows or looked times change.
     var listCache = FollowingShowList()
     /// Counts reloads of `entries`, so a Show screen knows when to rebuild its episodes.
@@ -24,6 +28,7 @@ extension Gate1AppModel {
     var followingShowEntries: [FeedEntry] { get { followingShows.entries } set { followingShows.entries = newValue } }
     var followingLooked: FollowingLookedMarkers { get { followingShows.looked } set { followingShows.looked = newValue } }
     var followingLibraryEpisodes: [String: FollowingLibraryEpisode] { get { followingShows.libraryEpisodes } set { followingShows.libraryEpisodes = newValue } }
+    var followingRuleInputs: FollowingRuleInputs { get { followingShows.ruleInputs } set { followingShows.ruleInputs = newValue } }
     var followingShowListCache: FollowingShowList { get { followingShows.listCache } set { followingShows.listCache = newValue } }
     var followingShowRevision: Int { get { followingShows.revision } set { followingShows.revision = newValue } }
     var followingLookedLoaded: Bool { get { followingShows.lookedLoaded } set { followingShows.lookedLoaded = newValue } }
@@ -78,10 +83,12 @@ extension Gate1AppModel {
                 library = FollowingLibraryEpisodes.resolve(
                     entries: entries, items: items, sessions: sessions, importedEntryIds: importedEntries.entryIds())
             }
-            return (entries, saved, followed, library)
+            // Rules and marks are read with the entries, so a row is never built from new episodes and old rules.
+            return (entries, saved, followed, library, FollowingRuleInputs.load(from: store))
         }.value
         followingShowEntries = result.0
         followingLibraryEpisodes = result.3
+        followingRuleInputs = result.4
         followingShowRevision += 1
         if needsMarkers, !followingLookedLoaded, let followed = result.2 {
             followingLookedLoaded = true
@@ -99,9 +106,14 @@ extension Gate1AppModel {
     /// Builds the rows from the current inputs off the main thread; `body` only reads the result.
     func rebuildFollowingShowList() async {
         let subscriptions = feedSubscriptions, entries = followingShowEntries, looked = followingLooked.lookedAt
-        let library = followingLibraryEpisodes
+        let library = followingLibraryEpisodes, inputs = followingRuleInputs
         let list = await Task.detached(priority: .userInitiated) {
-            FollowingShowRows.build(subscriptions: subscriptions, entries: entries, lookedAt: looked, libraryEpisodes: library)
+            // The evaluator runs before the rows are built, so a row's preview, date, sort, count, ▶ and swipe all describe
+            // the newest episode that is not set aside. With no rule on and nothing marked it is empty (#4046).
+            let rules = FollowingRuleEvaluation.evaluate(
+                subscriptions: subscriptions, entries: entries, inputs: inputs, libraryEpisodes: library)
+            return FollowingShowRows.build(
+                subscriptions: subscriptions, entries: entries, lookedAt: looked, libraryEpisodes: library, rules: rules)
         }.value
         followingShowListCache = list
     }
