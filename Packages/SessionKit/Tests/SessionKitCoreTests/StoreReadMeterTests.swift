@@ -430,6 +430,7 @@ final class StoreReadMeterTests: XCTestCase {
         "loadMovedMarginOrigins",             // no Margin is moved until the Move feature ships (#4233); then only a cut-short move has one to finish
         "loadTranscriptTimes",                // only an imported meeting transcript has a record; the screens read it only for one (#2997)
         "loadLastSentReadAloud",              // only a Margin shared as text carries a choice, so a healthy Library mostly misses (it filters inside SQLite)
+        "loadLastSentLeadIns",                // only a Margin shared at a length other than 20 s carries one, so a healthy Library mostly misses (it filters inside SQLite)
         "latestPendingSummaryTurnId",         // no summary is waiting in a healthy Library; a miss is the common answer
         "holdsImportedListeningMap"           // few layers carry a friend's map; a miss is the common answer (it still reads the item's layers inside SQLite)
     ]

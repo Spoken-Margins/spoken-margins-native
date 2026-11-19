@@ -755,6 +755,29 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return choices
     }
 
+    /// For each Margin of an item whose newest shares wrote a run-up length (#4171), the length its newest such share
+    /// wrote. Same shape and ordering as `loadLastSentReadAloud`: one read that pulls out only the Margin id and the
+    /// length. A share that wrote none (the Margin was at 20 s and never shared at another length) is skipped, so it
+    /// leaves an earlier length where it was, as a recording leaves the read-aloud choice.
+    public func loadLastSentLeadIns(itemId: String) throws -> [String: Int] {
+        struct Row: Decodable { let margin: String; let leadIn: Int }
+        var lengths: [String: Int] = [:]
+        try readTexts(
+            """
+            SELECT json_object('margin', json_extract(payload, '$.interjectionId'), 'leadIn', json_extract(payload, '$.sentLeadInMs'))
+            FROM records WHERE kind = 'interjection_share_revision' AND item_id = ?
+              AND CASE WHEN json_valid(payload)
+                       THEN json_extract(payload, '$.sentLeadInMs') IS NOT NULL AND json_extract(payload, '$.interjectionId') IS NOT NULL
+                       ELSE 0 END
+            ORDER BY updated_at ASC, rowid ASC;
+            """, [itemId], name: "last_sent_lead_ins"
+        ) { text in
+            guard let row = try? decoder.decode(Row.self, from: Data(text.utf8)) else { return }
+            lengths[row.margin] = row.leadIn
+        }
+        return lengths
+    }
+
     public func importCommentaryLayer(
         _ layer: ImportedCommentaryLayer,
         interjections: [ImportedCommentaryInterjection]
