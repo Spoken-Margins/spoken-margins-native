@@ -366,12 +366,15 @@ class HostedChecksStandTests(unittest.TestCase):
         self.assertEqual(why, '')
         self.assertTrue(all(len(record['moved']) == 1 for record in found.values()))
         lines = lane.hosted_fast_lines(found)
-        self.assertTrue(all('1 commit since touch none of this PR' in line for line in lines))
+        self.assertTrue(all('moved 1 commit since, and this PR still merges cleanly' in line for line in lines))
         self.assertIn(tested[:7], lane.hosted_fast_ran(found))
 
-    def test_next_touching_the_prs_files_or_a_global_input_means_the_whole_plan(self):
-        # #2596 (Default taken 5): only the PR's own files and what every PR is built from make a hosted check stale.
-        for name, path in (('the PR\'s file', 'pr.txt'), ('project.yml', 'project.yml'),
+    def test_next_touching_the_prs_files_or_a_global_input_still_lets_a_clean_merge_stand(self):
+        # 2026-11-19: every move of next that touched project.yml, a lockfile or the PR's own file made the check
+        # stale and started hosted-portable.yml again (115 cancelled to 47 passed in one afternoon). Main's own
+        # scheduled run (#4573) catches merge skew now, as #4572 took per-PR T3 off the merge, so a check stands
+        # while the PR still merges cleanly onto the newest next.
+        for name, path in (('a file the PR did not touch', 'other-pr.txt'), ('project.yml', 'project.yml'),
                            ('Package.swift', 'Packages/SessionKit/Package.swift'),
                            ('Package.resolved', 'Package.resolved'), ('package-lock.json', 'web/package-lock.json'),
                            ('package.json', 'package.json')):
@@ -380,9 +383,18 @@ class HostedChecksStandTests(unittest.TestCase):
                 head, tested, tree = self.pr()
                 newest = self.move_next(path)
                 found, why = self.stands(head, newest, self.records(head, tested, tree))
-                self.assertIsNone(found)
-                self.assertIn(f'tested it on main at {tested[:7]}', why)
-                self.assertTrue(lane.HOSTED_STALE.search(why), why)
+                self.assertEqual(why, '')
+                self.assertEqual(set(found), set(lane.HOSTED_FAST_CHECKS))
+
+    def test_a_pr_that_conflicts_with_the_newest_next_does_not_stand(self):
+        head, tested, tree = self.pr()
+        newest = self.move_next('pr.txt', 'someone else wrote this file first\n')
+        self.assertIsNone(lane.merged_tree(self.tree, newest, head))
+        found, why = self.stands(head, newest, self.records(head, tested, tree))
+        self.assertIsNone(found)
+        self.assertIn(f'tested it on main at {tested[:7]}', why)
+        self.assertIn('conflicts with', why)
+        self.assertTrue(lane.HOSTED_STALE.search(why), why)  # a conflict is started again, as a stale check was
 
     def test_next_moving_in_scripts_or_workflows_lets_a_hosted_check_stand(self):
         # 6 of 7 fallbacks on 2026-10-24 were a scripts/ file merged by someone else while the check ran.
