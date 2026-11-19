@@ -10,7 +10,7 @@ launchd starts it every 10 minutes. It stops at the first reason to wait:
 2. Memory pressure isn't normal.
 3. Free disk is under 10 GB plus 4 GB per running `xcodebuild`.
 4. The Mac-wide simulator slot is busy (the lane's own lock, taken without waiting).
-5. A `/lane` request of T3 or above is waiting for a lane runner. Those decide what merges, so they go first. This holds only while `main` has had an integration report, or a start here, in the last 3 hours, so a busy lane can't starve it.
+5. A `/lane` request of T3 or above is waiting for a lane runner. They hold no merge (#4572), but someone asked to see the result, so they go first. This holds only while `main` has had an integration report, or a start here, in the last 3 hours, so a busy lane can't starve it.
 
 There is no fixed spacing: when the lane is quiet, each new tip is tested within about 10 minutes, and tips that land during a run are tested together at the newest one.
 

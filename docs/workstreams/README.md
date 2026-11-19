@@ -15,7 +15,7 @@ Status never lives in these files. It lives in GitHub: one tracking issue per st
 A milestone's "Done when" is met through PRs, and a PR is done when it's armed: `automerge` on. A `/lane T3` request is optional and never holds the merge (#4572); the app tests run on `main` in `main-t3` (owner overlay `OWNER.md`, [lane-request skill](../../.claude/skills/lane-request/SKILL.md)). This rule covers every brief, so the briefs themselves don't repeat it.
 
 - **Items the agent can show** (a test that fails without the change, a measured number, a fixture, a tap count, a screenshot) are shown in the PR description before arming.
-- **Lane items** ("T2 green", "T3 green", "Lane T3 is green") are met by arming the PR. The runner merges only on PASS, so the thread doesn't wait for the report.
+- **Lane items** ("T2 green", "T3 green", "Lane T3 is green") are met by arming the PR; a brief that still says "T3 green" means the app tests on `main` (`main-t3`), which no PR waits for (#4572). The runner merges only on PASS of its own checks, so the thread doesn't wait for a report.
 - **"Lane T4" items and named journeys** run in the integration run on `main`'s merged tip ([test-lane.md](test-lane.md), Three test levels). The PR names them so that run covers them.
 - **Items marked (owner) or (Mac)** stay out, as before.
 
