@@ -119,13 +119,15 @@ final class WrittenMarginSkimAppTests: XCTestCase {
         let model = fixture.model
         let loadedRecords = model.selectedItem.importedCommentaryInterjections
         XCTAssertFalse(loadedRecords.isEmpty, "precondition: the fixture's item carries the friend's records")
-        model.selectedItem.importedCommentaryInterjections = [:]
-        model.sharedMarginRows = [SharedMarginRow(interjection: fixture.record, layer: fixture.layer, itemTitle: "Real source")]
         model.pause()
         model.seekMedia(toMediaTimeMs: 100)
         try await fixture.waitUntil("the source is paused before the Margin") {
             model.snapshot.status != .playing && (model.snapshot.currentMediaTimeMs ?? Int.max) < 900
         }
+        // Pause and seek each start a background reload of the item, which would put the records back: let it land first.
+        await model.settleItemReload()
+        model.selectedItem.importedCommentaryInterjections = [:]
+        model.sharedMarginRows = [SharedMarginRow(interjection: fixture.record, layer: fixture.layer, itemTitle: "Real source")]
         model.refreshSkimAvailabilityForTesting()
         XCTAssertFalse(model.snapshot.canSkimForward, "precondition: the layer has no records yet, so its Margin is no stop")
 
