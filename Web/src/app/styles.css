@@ -1391,6 +1391,34 @@ button:disabled {
   gap: 10px;
 }
 
+/* The one invitation to the iPhone app after the first reply (#4671): a status-blue edge, with a heading and a × so the
+   words carry it, never the colour alone. */
+.app-invite {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 2px solid var(--status);
+  border-radius: var(--panel-radius);
+  background: var(--status-soft);
+  color: var(--ink);
+}
+
+.app-invite-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.app-invite h3,
+.app-invite p {
+  margin: 0;
+}
+
+.app-invite .button {
+  justify-self: start;
+}
+
 /* A `.spokenmargins` file dragged over the app. Pointer events stay on, so the drop lands here. */
 .drop-overlay {
   position: fixed;
