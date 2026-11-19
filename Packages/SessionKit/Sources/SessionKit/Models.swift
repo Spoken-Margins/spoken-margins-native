@@ -113,6 +113,14 @@ public enum InterjectionCaptureKind: String, Codable, Equatable, Sendable {
     case written
 }
 
+/// What a Margin answers on a paper's Paper note (#4340): its purpose, a key finding, or a piece of evidence. A Margin
+/// is the same Margin with or without one; the role only says which slot of the paper's record it fills.
+public enum PaperNoteRole: String, Codable, Equatable, Sendable, CaseIterable {
+    case purpose
+    case keyFinding
+    case evidence
+}
+
 public enum AnchorType: String, Codable, Equatable, Sendable {
     case text
     case transcript
@@ -1356,6 +1364,9 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var sharedAs: [MarginPacketIdentity]? = nil
     /// The author's answer to the tidy version of this spoken Margin (#4339). Never exported. Build 29 ignores it.
     public var tidyDecision: MarginTidyDecision? = nil
+    /// The slot of a paper's Paper note this Margin fills (#4340). Local to the listener: packets build their own Margin
+    /// shape and never carry it. Optional, so Margins saved before it existed decode, and Build 29 ignores the key.
+    public var paperRole: PaperNoteRole? = nil
     /// Where a Margin moved from a live session came from (#4233). Not in the stored row and not part of `==`: the store
     /// attaches it from a record of its own on every read, so a build that predates it still reads and saves the row
     /// unchanged. Nil for every Margin made on the item.
@@ -1373,6 +1384,7 @@ public struct Interjection: Codable, Equatable, Sendable {
         case transcriptionStatus, transcript, cleanedTranscript, displayText, status, anchorContextStatus
         case alignedTranscript, podcastAnchorEvidence, sourceExactEditionSHA256, podcastAnchorEvidenceCaptureStatus
         case podcastAnchorEvidenceFailureReason, isStarredForSharing, privateSharingNote, captureKind, replyTo, sharedAs
+        case paperRole
         case tidyDecision
     }
 
@@ -1403,6 +1415,7 @@ public struct Interjection: Codable, Equatable, Sendable {
         captureKind: InterjectionCaptureKind? = nil,
         replyTo: MarginReplyLink? = nil,
         sharedAs: [MarginPacketIdentity]? = nil,
+        paperRole: PaperNoteRole? = nil,
         tidyDecision: MarginTidyDecision? = nil
     ) {
         self.id = id
@@ -1431,6 +1444,7 @@ public struct Interjection: Codable, Equatable, Sendable {
         self.captureKind = captureKind
         self.replyTo = replyTo
         self.sharedAs = sharedAs
+        self.paperRole = paperRole
         self.tidyDecision = tidyDecision
     }
 }

@@ -14,12 +14,14 @@ public enum SyncFieldSchema {
 ///
 /// Fixed at birth: item key, created time, anchor, capture kind. Edited, one register each, merged field by field:
 /// `transcript`, `cleanedTranscript`, `displayText`, `privateSharingNote` (text, so a lost race keeps the other
-/// version), `status`, `isStarredForSharing` and `tidyDecision` (#4339; a cleared answer is written as null, so
-/// "Use my original words" reaches the other phone). The recording's path and bytes are not here (slice 5).
+/// version), `status`, `isStarredForSharing`, `paperRole` (#4340; an empty string means the role was taken off) and
+/// `tidyDecision` (#4339; a cleared answer is written as null, so "Use my original words" reaches the other phone).
+/// The recording's path and bytes are not here (slice 5).
 public enum MarginSync {
     public static let schemaVersion = 1
     public static let textFields = ["transcript", "cleanedTranscript", "displayText", "privateSharingNote"]
     static let birthFields = ["itemKey", "createdAt", "anchor", "captureKind"]
+    static let paperRoleField = "paperRole"
 
     public static func record(
         for margin: Interjection, itemKey: String, clock: inout SyncClock, wallMillis: Int64
@@ -41,6 +43,9 @@ public enum MarginSync {
         }
         if let decision = margin.tidyDecision {
             record.set("tidyDecision", try SyncValue(encoding: decision), clock: &clock, wallMillis: wallMillis)
+        }
+        if let role = margin.paperRole {
+            record.set(paperRoleField, .string(role.rawValue), clock: &clock, wallMillis: wallMillis)
         }
         return record
     }
@@ -66,6 +71,9 @@ public enum MarginSync {
         if edited.tidyDecision != before.tidyDecision {
             let value = edited.tidyDecision.flatMap { try? SyncValue(encoding: $0) } ?? .null
             record.set("tidyDecision", value, clock: &clock, wallMillis: wallMillis)
+        }
+        if edited.paperRole != before.paperRole {
+            record.set(paperRoleField, .string(edited.paperRole?.rawValue ?? ""), clock: &clock, wallMillis: wallMillis)
         }
         if edited.status != before.status {
             record.set("status", .string(edited.status), clock: &clock, wallMillis: wallMillis)
@@ -93,6 +101,10 @@ public enum MarginSync {
             // A cleared answer means the tidy text was withdrawn too (every path that clears one clears the other), and a
             // cleared text is not written as a register of its own, so the other phone drops it here.
             if case .null = value { margin.tidyDecision = nil; margin.cleanedTranscript = nil } else if let decision = try? value.decoded(as: MarginTidyDecision.self) { margin.tidyDecision = decision }
+        }
+        // An empty string is a role taken off; a role this build doesn't know is left as the device has it.
+        if let value = record[paperRoleField]?.stringValue {
+            if value.isEmpty { margin.paperRole = nil } else if let role = PaperNoteRole(rawValue: value) { margin.paperRole = role }
         }
         if let value = record["status"]?.stringValue { margin.status = value }
         return margin

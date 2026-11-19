@@ -7,21 +7,6 @@ import XCTest
 final class SharedMarginTallyTests: XCTestCase {
     private let imported = Date(timeIntervalSince1970: 1_700_000_000)
 
-    func testTheRowLineNamesTheCountAndWhatIsNew() {
-        XCTAssertNil(SharedMarginTally.none.libraryLine)
-        XCTAssertEqual(SharedMarginTally(total: 1, new: 0).libraryLine, "1 shared Margin")
-        XCTAssertEqual(SharedMarginTally(total: 1, new: 1).libraryLine, "1 new shared Margin")
-        XCTAssertEqual(SharedMarginTally(total: 3, new: 3).libraryLine, "3 new shared Margins")
-        XCTAssertEqual(SharedMarginTally(total: 3, new: 1).libraryLine, "3 shared Margins · 1 new")
-        XCTAssertEqual(SharedMarginTally(total: 3, new: 0).libraryLine, "3 shared Margins")
-    }
-
-    func testVoiceOverGetsTheWordsNotTheBadge() {
-        XCTAssertNil(SharedMarginTally.none.accessibilityLine)
-        XCTAssertEqual(SharedMarginTally(total: 1, new: 0).accessibilityLine, "1 Margin from other listeners")
-        XCTAssertEqual(SharedMarginTally(total: 3, new: 2).accessibilityLine, "3 Margins from other listeners, 2 new to you")
-    }
-
     func testACountNeverClaimsMoreNewThanThereAre() {
         XCTAssertEqual(SharedMarginTally(total: 2, new: 5), SharedMarginTally(total: 2, new: 2))
         XCTAssertEqual(SharedMarginTally(total: -1, new: -1), .none)

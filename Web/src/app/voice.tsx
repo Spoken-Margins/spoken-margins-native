@@ -25,7 +25,7 @@ export function VoiceButton({ voice }: { voice: { blob: Blob; durationSeconds: n
       audio.current.pause();
       return;
     }
-    if (player.playing) player.toggle();
+    player.pause();
     if (!audio.current) {
       const element = new Audio(URL.createObjectURL(voice.blob));
       element.onplay = () => setPlaying(true);
