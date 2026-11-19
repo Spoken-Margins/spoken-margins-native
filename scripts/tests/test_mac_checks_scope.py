@@ -136,6 +136,24 @@ class MacChecksRequiredTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(self.required(path)[0])
 
+    def test_a_workflow_with_only_linux_jobs_needs_no_mac(self):
+        # #4724 held a hosted Mac for ~30 minutes for a workflow whose one job runs on ubuntu-latest.
+        for path in ('.github/workflows/merge-policy.yml', '.github/workflows/merge-queue-dequeued.yml',
+                     '.github/workflows/signoff-check.yml'):
+            with self.subTest(path=path):
+                self.assertEqual(self.required(path), (False, 'Mac checks not required: no Swift inputs'))
+
+    def test_every_workflow_with_a_job_off_ubuntu_is_a_mac_workflow(self):
+        # Any runner but ubuntu-latest (xcode-27, self-hosted, an expression) counts as a Mac, so a new Mac workflow,
+        # or a Linux one that gains a Mac job, fails here until it is listed in MAC_WORKFLOWS.
+        import re
+        off_ubuntu = set()
+        for path in sorted((ROOT / '.github/workflows').glob('*.yml')):
+            runners = re.findall(r'(?m)^\s+runs-on:\s*(.+?)\s*$', path.read_text())
+            if any(runner != 'ubuntu-latest' for runner in runners):
+                off_ubuntu.add(f'.github/workflows/{path.name}')
+        self.assertEqual(off_ubuntu, set(scope.MAC_WORKFLOWS))
+
     def test_one_swift_path_among_ops_paths_needs_them(self):
         needed, why = self.required('docs/a.md', 'ops/b.py', 'Packages/SessionKit/Sources/SessionKit/X.swift')
         self.assertTrue(needed)
