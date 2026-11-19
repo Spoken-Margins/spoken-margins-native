@@ -97,7 +97,9 @@ final class FollowedSourceSetAsideTests: XCTestCase {
         }
     }
 
-    func testAFailedReadAddsNothingAndDoesNotMarkTheFeedFailed() async throws {
+    /// The closure is given what `save` wrote, not a second read: a read that fails after the save must not drop an
+    /// episode for good (the next refresh would see it as already stored and never add it).
+    func testAFailedReadAfterTheSaveStillAddsTheEpisode() async throws {
         let repository = FailingEntryReads()
         let coordinator = coordinator(repository, setAside: { _, _ in [] })
         _ = try await follow(coordinator)
@@ -105,7 +107,28 @@ final class FollowedSourceSetAsideTests: XCTestCase {
         repository.failReads = true
         let added = await coordinator.refreshStale(force: true)
         repository.failReads = false
-        XCTAssertEqual(added, [], "an episode a rule might set aside is never added because a read failed")
+        XCTAssertEqual(added.map(\.title), ["Crypto weekly"])
+    }
+
+    /// An imported or dismissed episode the feed no longer lists is kept as a tombstone, so it still counts as stored.
+    func testTheClosureSeesAKeptTombstoneAndNotADeletedUnseenEpisode() async throws {
+        let repository = InMemorySessionRepository()
+        let calls = Calls()
+        let coordinator = coordinator(repository, setAside: { entries, subscription in
+            calls.record(entries, subscription)
+            return []
+        })
+        _ = try await follow(coordinator)
+        var gone = try XCTUnwrap(repository.loadFeedEntries(subscriptionId: nil).first { $0.title == "Garden notes" })
+        gone.state = .dismissed
+        try repository.saveFeedEntry(gone)
+        SetAsideFeedURLProtocol.titles = [2: "Maps and more", 3: "Crypto weekly"]
+        _ = await coordinator.refreshStale(force: true)
+        // Garden notes (dismissed) is kept; Maps and more is retained; Crypto weekly is new.
+        XCTAssertEqual(calls.all.count, 1)
+        XCTAssertEqual(calls.all[0].entryIds, ["Garden notes", "Maps and more", "Crypto weekly"])
+        let stored = Set(try repository.loadFeedEntries(subscriptionId: nil).map(\.title))
+        XCTAssertEqual(calls.all[0].entryIds, stored, "the closure sees exactly what is stored")
     }
 
     func testTheRealEvaluatorSetsAsideWhatARuleSkips() async throws {
