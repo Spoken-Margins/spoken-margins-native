@@ -29,7 +29,6 @@ struct LibraryAddToCollectionSheet: View {
                         .onSubmit(createNew)
                         .accessibilityIdentifier("library.addToCollection.newName")
                     Button("Create Collection", systemImage: "plus.circle", action: createNew)
-                        .frame(minHeight: 44)
                         .disabled(ItemCollectionEditing.normalizedName(newName) == nil || isSaving)
                         .accessibilityIdentifier("library.addToCollection.create")
                     if let problem {

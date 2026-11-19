@@ -65,7 +65,7 @@ struct LibraryCollectionRowView: View {
         }
         .contextMenu {
             Button(LibraryBulkAction.addToQueue.title, systemImage: LibraryBulkAction.addToQueue.symbol, action: addToQueue)
-            Button("Export Margins…", systemImage: "square.and.arrow.up", action: exportMargins)
+            Button("Export Margins…", systemImage: "doc.text", action: exportMargins)
             Button("Rename…", systemImage: "pencil", action: rename)
             Button("Delete Collection…", systemImage: "trash", role: .destructive, action: delete)
         }

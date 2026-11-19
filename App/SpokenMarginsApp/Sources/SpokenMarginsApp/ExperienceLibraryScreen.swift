@@ -370,7 +370,7 @@ struct ExperienceLibraryScreen: View {
                     Text(mode.title).tag(mode)
                 }
             }
-            .pickerStyle(.segmented)
+            .segmentedUnlessLargeText()
             .frame(minHeight: 44)
             .accessibilityIdentifier("library.viewMode")
             if let collectionProblem {

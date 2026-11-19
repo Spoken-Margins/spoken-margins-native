@@ -108,7 +108,7 @@ struct LibraryCollectionScreen: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("Export Margins…", systemImage: "square.and.arrow.up") {
+                    Button("Export Margins…", systemImage: "doc.text") {
                         model.exportCollectionMargins(collectionID: collectionID)
                     }
                     Button("Rename…", systemImage: "pencil", action: beginRename)
