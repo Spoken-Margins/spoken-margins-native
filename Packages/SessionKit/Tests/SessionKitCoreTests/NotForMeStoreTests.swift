@@ -156,6 +156,53 @@ final class NotForMeStoreTests: XCTestCase {
         XCTAssertTrue(after.contains { $0.entryKey == "new" })
     }
 
+    func testMarksMadeInTheSameWholeSecondKeepTheirOrderAndTimeAfterAReload() async throws {
+        let first = Date(timeIntervalSince1970: 1_800_000_000.125)
+        let steps = TickingClock(start: first, step: 0.001)
+        let store = NotForMeStore(fileURL: file, now: { steps.next() })
+        for n in 1...3 { try await store.markItem(feedURL: feed, guid: "g-\(n)", canonicalURL: nil, audioURL: nil, title: "Ep \(n)") }
+
+        let reloaded = makeStore()
+        await reloaded.load()
+        let marks = await reloaded.markedItems(feedKey: try XCTUnwrap(NotForMeStore.feedKey(for: feed)))
+        XCTAssertEqual(marks.map(\.entryKey), ["g-1", "g-2", "g-3"])
+        XCTAssertEqual(marks.map(\.hiddenAt.timeIntervalSince1970).map { $0 - 1_800_000_000 }.map { ($0 * 1000).rounded() },
+                       [126, 127, 128], "the fraction survives the file")
+    }
+
+    func testMarksWithTheSameTimestampDropTheEarlierOnesFirstOverTheCap() async throws {
+        let fixed = Date(timeIntervalSince1970: 1_800_000_000)
+        let store = NotForMeStore(fileURL: file, now: { fixed })
+        for n in 1...201 { try await store.markItem(feedURL: feed, guid: "g-\(n)", canonicalURL: nil, audioURL: nil, title: "Ep") }
+        let marks = await store.markedItems(feedKey: try XCTUnwrap(NotForMeStore.feedKey(for: feed)))
+        XCTAssertEqual(marks.count, 200)
+        XCTAssertFalse(marks.contains { $0.entryKey == "g-1" })
+        XCTAssertTrue(marks.contains { $0.entryKey == "g-201" })
+    }
+
+    func testAFileThatCantBeReadIsLeftAloneAndRefusesWritesUntilItCan() async throws {
+        // A folder where the file should be: it exists, and reading it fails, like a file that isn't readable yet.
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+        let store = makeStore()
+        await store.load()
+        let sources = await store.hiddenSources()
+        XCTAssertTrue(sources.isEmpty)
+        do {
+            try await store.hideSource(catalogEntryId: nil, feedURL: feed, title: "A", artworkURL: nil)
+            XCTFail("a write must not replace marks that were never read")
+        } catch { XCTAssertEqual(error as? NotForMeStore.StoreError, .fileNotReadable) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(NotForMeStore.unreadableFileName).path),
+                       "a read error is not a corrupt file, so nothing is set aside")
+
+        // The file becomes readable: the next call reads it, and the write keeps what was in it.
+        try FileManager.default.removeItem(at: file)
+        let key = try XCTUnwrap(NotForMeStore.feedKey(for: "https://feeds.example/earlier.xml"))
+        try Data(#"{"version":1,"sources":[{"feedKey":"\#(key)","title":"Earlier","hiddenAt":"2026-11-18T00:00:00Z"}],"items":[]}"#.utf8).write(to: file)
+        try await store.hideSource(catalogEntryId: nil, feedURL: feed, title: "A", artworkURL: nil)
+        let after = await store.hiddenSources()
+        XCTAssertEqual(Set(after.map(\.title)), ["Earlier", "A"])
+    }
+
     // MARK: Undo and show again
 
     func testUndoTakesTheMarkOffByAnyKeyTheEpisodeCarries() async throws {
@@ -294,10 +341,18 @@ final class NotForMeStoreTests: XCTestCase {
 private final class TickingClock: @unchecked Sendable {
     private let lock = NSLock()
     private var ticks = 0
+    private let start: Date
+    private let step: TimeInterval
+
+    init(start: Date = Date(timeIntervalSince1970: 1_800_000_000), step: TimeInterval = 1) {
+        self.start = start
+        self.step = step
+    }
+
     func next() -> Date {
         lock.withLock {
             ticks += 1
-            return Date(timeIntervalSince1970: 1_800_000_000 + Double(ticks))
+            return start.addingTimeInterval(step * Double(ticks))
         }
     }
 }

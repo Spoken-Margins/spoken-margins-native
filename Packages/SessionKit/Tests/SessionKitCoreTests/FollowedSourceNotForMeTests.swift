@@ -109,6 +109,16 @@ final class FollowedSourceNotForMeTests: XCTestCase {
         XCTAssertEqual(try states(subscription.id)["ep-1"], .unseen)
     }
 
+    func testTheMarkMatchesTheFeedWhateverTheSchemeHostCaseOrTrailingSlashItWasMarkedUnder() async throws {
+        for spelling in ["http://notforme.example/feed.json", "HTTPS://NotForMe.Example/feed.json/", "https://notforme.example/feed.json#x"] {
+            let store = NotForMeStore(fileURL: root.appendingPathComponent("marks-\(UUID().uuidString).json"))
+            try await store.markItem(feedURL: spelling, guid: "ep-2", canonicalURL: nil, audioURL: nil, title: "Episode 2")
+            let subscription = try await coordinator(marks: store.box).follow(urlString: feedURL)
+            XCTAssertEqual(try states(subscription.id)["ep-2"], .dismissed, spelling)
+            try await coordinator(marks: nil).unfollow(subscriptionId: subscription.id)
+        }
+    }
+
     func testAMarkOnAnotherFeedOrAnEpisodeTheListenerAlreadyAddedChangesNothing() async throws {
         let store = store()
         let coordinator = coordinator(marks: store.box)

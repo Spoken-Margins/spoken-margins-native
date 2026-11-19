@@ -72,6 +72,8 @@ public actor NotForMeStore {
         case unusableFeedURL
         /// The item has no GUID, page address or audio address to recognise it by.
         case unidentifiableItem
+        /// The file exists but can't be read yet, so a write would replace marks this store hasn't seen.
+        case fileNotReadable
     }
 
     public nonisolated let box: NotForMeSnapshotBox
@@ -117,21 +119,36 @@ public actor NotForMeStore {
 
     // MARK: Loading
 
-    /// Reads the file once. A missing file is an empty store; a file that can't be read, or that carries another
-    /// version, is renamed to `not-for-me.unreadable.json` so nothing is lost, and the store starts empty.
+    /// Reads the file once. A missing file is an empty store. A file that was read but can't be decoded, or that
+    /// carries another version, is renamed to `not-for-me.unreadable.json` so nothing is lost, and the store starts
+    /// empty. A file that can't be *read* (the phone is still locked, say) is left exactly where it is: the store
+    /// reads as empty for now, tries again on the next call, and refuses every write until the read works, so a
+    /// write can't replace marks it never saw.
     public func load() {
         guard !loaded else { return }
+        guard fileManager.fileExists(atPath: fileURL.path) else {
+            loaded = true
+            publish()
+            return
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            publish()
+            return
+        }
         loaded = true
-        guard fileManager.fileExists(atPath: fileURL.path) else { publish(); return }
-        if let data = try? Data(contentsOf: fileURL),
-           let contents = try? Self.decoder.decode(FileContents.self, from: data),
-           contents.version == Self.currentVersion {
+        if let contents = try? Self.decoder.decode(FileContents.self, from: data), contents.version == Self.currentVersion {
             sources = contents.sources
             items = contents.items
         } else {
             let aside = fileURL.deletingLastPathComponent().appendingPathComponent(Self.unreadableFileName)
-            try? fileManager.removeItem(at: aside)
-            try? fileManager.moveItem(at: fileURL, to: aside)
+            if (try? fileManager.moveItem(at: fileURL, to: aside)) == nil {
+                // The old aside copy is replaced only when the new one can be put there.
+                try? fileManager.removeItem(at: aside)
+                try? fileManager.moveItem(at: fileURL, to: aside)
+            }
         }
         publish()
     }
@@ -140,7 +157,7 @@ public actor NotForMeStore {
 
     public func hiddenSources() -> [HiddenSource] {
         loadIfNeeded()
-        return sources.sorted { $0.hiddenAt > $1.hiddenAt }
+        return sources.sorted { ($0.hiddenAt, $1.feedKey) > ($1.hiddenAt, $0.feedKey) }
     }
 
     public func markedItems(feedKey: String) -> [MarkedItem] {
@@ -232,6 +249,8 @@ public actor NotForMeStore {
 
     /// Writes the file, then swaps the state in and publishes. A write that fails changes nothing.
     private func commit(sources newSources: [HiddenSource], items newItems: [MarkedItem]) throws {
+        loadIfNeeded()
+        guard loaded else { throw StoreError.fileNotReadable }
         let contents = FileContents(version: Self.currentVersion, sources: newSources, items: newItems)
         let data = try Self.encoder.encode(contents)
         try fileManager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -261,16 +280,37 @@ public actor NotForMeStore {
         )
     }
 
+    /// Dates are written with fractional seconds, so a mark made in the same second as another keeps its order
+    /// after a reload; a file with whole seconds still reads.
     private static var encoder: JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(fractionalFormatter.string(from: date))
+        }
         return encoder
     }
 
     private static var decoder: JSONDecoder {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            if let date = fractionalFormatter.date(from: raw) ?? wholeSecondFormatter.date(from: raw) { return date }
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Not an ISO 8601 date: \(raw)"))
+        }
         return decoder
+    }
+
+    private static var fractionalFormatter: ISO8601DateFormatter {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }
+
+    private static var wholeSecondFormatter: ISO8601DateFormatter {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
     }
 }
