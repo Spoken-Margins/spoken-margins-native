@@ -320,19 +320,23 @@ final class SharedMarginAppExportTests: XCTestCase {
             return packet.commentaryLayers.flatMap(\.interjections).map(\.leadInMs)
         }
 
-        XCTAssertEqual(try await share("untouched", setting: [:]), [nil, nil], "no length chosen: the packet an older build writes")
+        let untouched = try await share("untouched", setting: [:])
+        XCTAssertEqual(untouched, [nil, nil], "no length chosen: the packet an older build writes")
         XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), [:])
 
-        XCTAssertEqual(try await share("minute", setting: ["margin-lead-1": 60_000]), [60_000, nil])
+        let minute = try await share("minute", setting: ["margin-lead-1": 60_000])
+        XCTAssertEqual(minute, [60_000, nil])
         XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), ["margin-lead-1": 60_000])
 
         model.prepareShareInterjections()
         XCTAssertEqual(model.sharingState.drafts.map(\.leadInMs), [60_000, SenderLeadIn.defaultMs], "the next share starts where the friend was last told")
-        XCTAssertEqual(try await share("again", setting: [:]), [60_000, nil], "left alone, a re-share keeps the friend's copy at a minute")
+        let again = try await share("again", setting: [:])
+        XCTAssertEqual(again, [60_000, nil], "left alone, a re-share keeps the friend's copy at a minute")
 
-        XCTAssertEqual(try await share("back", setting: ["margin-lead-1": SenderLeadIn.defaultMs]), [SenderLeadIn.defaultMs, nil],
-                       "taking it back is said out loud")
-        XCTAssertEqual(try await share("done", setting: [:]), [nil, nil], "after that, nothing more to say")
+        let back = try await share("back", setting: ["margin-lead-1": SenderLeadIn.defaultMs])
+        XCTAssertEqual(back, [SenderLeadIn.defaultMs, nil], "taking it back is said out loud")
+        let done = try await share("done", setting: [:])
+        XCTAssertEqual(done, [nil, nil], "after that, nothing more to say")
         XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), ["margin-lead-1": SenderLeadIn.defaultMs])
     }
 

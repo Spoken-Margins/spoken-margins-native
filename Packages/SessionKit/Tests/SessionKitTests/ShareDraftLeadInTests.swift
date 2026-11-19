@@ -14,7 +14,7 @@ final class ShareDraftLeadInTests: XCTestCase {
             createdAt: Date(timeIntervalSince1970: 1_777_000_000), roughPercent: 40,
             anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "Before.", anchorAfter: "After.", mediaTimeMs: 754_900),
             audioPath: nil, audioStatus: "saved", transcriptionStatus: "completed", transcript: "Remember this.",
-            cleanedTranscript: nil, displayText: nil, captureKind: .written
+            cleanedTranscript: nil, displayText: nil, status: "active", captureKind: .written
         )
     }
 
