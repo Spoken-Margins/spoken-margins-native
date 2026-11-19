@@ -232,9 +232,7 @@ jobs:
     needs: [changes, web]
     # Not in a merge group (the queue merges, not the lane), and not when `web` had nothing to test (the PR's other
     # workflows re-arm it, as before the paths filter moved into `changes`).
-    if: >-
-      always() && github.event_name != 'merge_group' && needs.changes.outputs.web == 'true' &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && github.event_name != 'merge_group' && needs.changes.outputs.web == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
