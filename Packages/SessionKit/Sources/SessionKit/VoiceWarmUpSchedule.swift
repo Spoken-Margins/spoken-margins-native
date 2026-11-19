@@ -1,7 +1,7 @@
 import Foundation
 
 /// What the warm-up schedule needs from a renderer: one best-effort call that loads its model ahead of the first Play
-/// (#2856). The app's `SupertonicRendering` extends this, so a renderer is handed over as it is.
+/// (#2856). SessionKitSupertonic's `SupertonicRendering` extends this, so a renderer is handed over as it is.
 public protocol VoiceWarmUpRendering: Sendable {
     /// Loads the model and runs one short render ahead of the first Play, so that first Play doesn't pay the load
     /// (#2856). Best effort: it never throws, and a renderer that has nothing to load does nothing.

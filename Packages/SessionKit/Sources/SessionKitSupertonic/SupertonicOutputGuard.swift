@@ -1,19 +1,18 @@
 import Foundation
 import SessionKit
 import SessionKitAudio
-import SessionKitSupertonic
 
 /// Supertonic babbles on dense numbers and symbols (#240). A freshly rendered narration chunk that
 /// fails `SupertonicOutputCheck` is read by the iOS voice instead, in the same audio format, before
 /// it is cached, played or assembled. If the iOS voice can't render it either, the original stays.
 /// Each replacement is reported so diagnostics show why the voice changed for that chunk, and how long the iOS
 /// voice's write took, written or not (#1695).
-final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
+public final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
     /// Reads `text` with the iOS voice into `output`, in `reference`'s format, and returns its
     /// duration in seconds.
-    typealias StandInRender = @Sendable (_ text: String, _ voiceIdentifier: String?, _ reference: URL, _ output: URL) async throws -> TimeInterval
+    public typealias StandInRender = @Sendable (_ text: String, _ voiceIdentifier: String?, _ reference: URL, _ output: URL) async throws -> TimeInterval
 
-    static let systemVoiceStandIn: StandInRender = { text, voiceIdentifier, reference, output in
+    public static let systemVoiceStandIn: StandInRender = { text, voiceIdentifier, reference, output in
         try await SystemVoiceChunkRenderer().render(text: text, voiceIdentifier: voiceIdentifier, matching: reference, to: output)
     }
 
@@ -31,7 +30,7 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
     /// deletes these itself (#311).
     private var replacementURLs: Set<URL> = []
 
-    init(
+    public init(
         wrapping inner: SupertonicRendering,
         systemVoiceIdentifier: String?,
         onReplacement: @escaping @Sendable (String) -> Void = { _ in },
@@ -48,12 +47,12 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
     }
 
     /// The wrapped renderer's engine, so a downloaded voice's own chunks still count as its own (#2700).
-    var engine: String { inner.engine }
-    var isLoadingModel: Bool { inner.isLoadingModel }
-    func prepareToRender() async { await inner.prepareToRender() }
-    func setEventSink(_ sink: @escaping @Sendable (String, [String: String]) -> Void) { inner.setEventSink(sink) }
+    public var engine: String { inner.engine }
+    public var isLoadingModel: Bool { inner.isLoadingModel }
+    public func prepareToRender() async { await inner.prepareToRender() }
+    public func setEventSink(_ sink: @escaping @Sendable (String, [String: String]) -> Void) { inner.setEventSink(sink) }
 
-    func render(
+    public func render(
         text: String,
         voice: SupertonicVoiceID,
         language: String,
@@ -105,7 +104,7 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
     /// on every path. Background preparation made a guard per chunk and never discarded, so each
     /// flagged chunk left its iOS-voice file behind (#363 audit).
     /// Runs on the caller's actor, so `keep` can use the caller's state.
-    func render<Kept>(
+    public func render<Kept>(
         text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int,
         isolation: isolated (any Actor)? = #isolation,
         keep: (SupertonicNarrationResult) async throws -> Kept
@@ -121,7 +120,7 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
         }
     }
 
-    func discardGeneratedAudio(at url: URL) async {
+    public func discardGeneratedAudio(at url: URL) async {
         if lock.withLock({ replacementURLs.remove(url) }) != nil {
             try? FileManager.default.removeItem(at: url)
             return
