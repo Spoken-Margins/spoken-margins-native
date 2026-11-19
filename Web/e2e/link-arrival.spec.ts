@@ -116,6 +116,13 @@ async function journey(page: Page, info: { project: { name: string } } & Paramet
   expect(await audioTime(page)).toBeLessThan(15);
   await expect(cue.getByTestId('margin-cue-clock')).toHaveText(/^0:\d\d$/);
   await shot(page, info as never, `${label}-3-lead-in`);
+  // 3b. Inside the lead-in, "Start a minute earlier" goes a minute back, here to the start of the episode (#4171); the
+  // first Skip then lands inside the lead-in again.
+  await cue.getByTestId('margin-cue-earlier').click();
+  await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeLessThan(5);
+  await expect(cue.getByTestId('margin-cue-earlier')).toHaveCount(0);
+  await cue.getByRole('button', { name: 'Skip to just before Web fixture' }).click();
+  await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThanOrEqual(9.5);
   await cue.getByRole('button', { name: 'Skip to Web fixture now' }).click();
 
   // 4. The Margin plays in place: its card says who and which, and the words show while the voice reads them.
