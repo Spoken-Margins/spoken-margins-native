@@ -248,6 +248,7 @@ def extract(root: Path = ROOT) -> dict:
             scripts_run.update(called)
             needs = job.get('needs') or []
             jobs[job_id] = {
+                'id': job_id,
                 'check': str(job.get('name') or job_id),
                 'if': None if job.get('if') is None else str(job['if']).strip(),
                 'needs': [needs] if isinstance(needs, str) else list(needs),
@@ -633,6 +634,10 @@ class Tree:
             self._scopes[key] = ts.classify(list(key), {}, root=self.root)
         return self._scopes[key]
 
+    def raw(self, file: str) -> dict:
+        """The workflow file as parsed YAML, for a step's env or run text."""
+        return yaml.safe_load(self.yaml_text(file)) or {}
+
     def yaml_text(self, file: str) -> str:
         return (self.root / '.github/workflows' / file).read_text(encoding='utf-8')
 
@@ -1007,14 +1012,34 @@ def b_web_changes(world, run, job, ctx, cause):
     return 'success', {'web': 'true' if any(pattern.search(p) for p in changed_paths(world, ctx)) else 'false'}
 
 
+class FakePolicyGitHub:
+    """merge_policy.GitHub against the simulated world: the PR's labels and its trusted comments."""
+
+    def __init__(self, world):
+        self.w, self.repo = world, REPO
+
+    def pull(self, number):
+        return {'labels': [{'name': n} for n in sorted(self.w.labels)], 'author_association': 'MEMBER',
+                'user': {'login': 'a-maintainer'}, 'head': {'sha': self.w.head}}
+
+    def comments(self, number):
+        lane = self.w.tree.module('lane_runner', 'scripts/lane-runner.py')
+        return [c for c in self.w.comments if lane.trusted_comment(c)]
+
+
 def b_merge_policy(world, run, job, ctx, cause):
-    lane = world.tree.module('lane_runner', 'scripts/lane-runner.py')
-    scope = world.tree.classify(world.paths)
-    trusted = [c for c in world.comments if lane.trusted_comment(c)]
-    head = world.head
-    reasons = list(lane.merge_blockers(scope, trusted, head))
-    if lane.owner_tap_paths(scope) and 'owner-tap' not in world.labels:
-        reasons.append('needs the `owner-tap` label')
+    """The tree's merge_policy.blockers(), with its git reads replaced by the world's paths (a member's PR, so the
+    sign-off rule has nothing to check) and no inherited holds."""
+    policy = world.tree.module('merge_policy', 'scripts/merge_policy.py')
+    saved = policy.fetch_head, policy.changes, policy.unsigned_commits
+    policy.fetch_head = lambda *a, **k: None
+    policy.changes = lambda *a, **k: (sorted(world.paths), {})
+    policy.unsigned_commits = lambda *a, **k: []
+    try:
+        reasons = policy.blockers(FakePolicyGitHub(world), world.tree.root, 'main', 1, world.head,
+                                  classify=lambda paths, diffs: world.tree.classify(paths), inherited=lambda c: [])
+    finally:
+        policy.fetch_head, policy.changes, policy.unsigned_commits = saved
     return ('failure' if reasons else 'success'), {'reasons': '; '.join(reasons) or 'may merge'}
 
 
@@ -1144,15 +1169,30 @@ def b_claude_audit(world, run, job, ctx, cause):
         return 'success', {}
     world.comments.append(audit_comment(world.head, world.s.audit_verdict, 'workflow'))
     world.note(cause, f'claude-audit: audited {world.head[:7]} ({why}), posted with GITHUB_TOKEN')
-    text = (world.tree.root / 'ops/codex/sm_codex_audit.py').read_text(encoding='utf-8')
-    if 'rerun_merge_policy(head)' in text:  # what the tree's audit does after posting, inside a workflow
-        policy_runs = [r for r in world.runs if r['workflow'] == 'merge-policy.yml' and r['event'] == 'pull_request'
-                       and r['sha'] == world.head]
-        if policy_runs and not world.flags.get('policy_run_in_progress'):
-            world.post(world.now, 'rerun', cause['id'], run=policy_runs[-1]['id'], token='github_token')  # A5, A6
-            world.note(cause, 'claude-audit: re-runs the PR\'s merge policy run (A6)')
-        else:
-            world.note(cause, 'claude-audit: no completed merge policy run to re-run')
+    if not hasattr(audit, 'rerun_merge_policy'):
+        world.note(cause, 'claude-audit: this tree\'s audit has no merge policy re-run')
+        return 'success', {}
+    policy_runs = [r for r in world.runs if r['workflow'] == 'merge-policy.yml' and r['event'] == 'pull_request'
+                   and r['sha'] == world.head]
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ['gh', 'api']:
+            body = {'workflow_runs': [{'id': r['id'], 'created_at': f'{r["id"]:06d}', 'status': 'in_progress'
+                                       if world.flags.get('policy_run_in_progress') else 'completed'}
+                                      for r in policy_runs]}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(body), '')
+        if cmd[:3] == ['gh', 'run', 'rerun']:
+            world.post(world.now, 'rerun', cause['id'], run=int(cmd[3]), token='github_token')  # A5, A6
+            return subprocess.CompletedProcess(cmd, 0, '', '')
+        return subprocess.CompletedProcess(cmd, 1, '', 'not modelled')
+
+    # The tree's own rerun_merge_policy decides. The audit calls it only inside a workflow (in_a_workflow), after posting.
+    saved, audit.run = audit.run, fake_run
+    try:
+        said = audit.rerun_merge_policy(world.head)
+    finally:
+        audit.run = saved
+    world.note(cause, f'claude-audit: {said} (A6)')
     return 'success', {}
 
 
@@ -1164,23 +1204,63 @@ def b_main_t3_decide(world, run, job, ctx, cause):
     return 'success', {'run': 'true' if moved else 'false'}
 
 
+def render(template: str, ctx: dict) -> str:
+    """A step's `${{ }}` template with each expression evaluated against <ctx>."""
+    def value(match):
+        result = Expr(match.group(1), ctx, {'success': True, 'failure': False}).evaluate()
+        return '' if result is None else str(result)
+    return EXPR.sub(value, str(template))
+
+
+class FakeRearmApi:
+    """lane_rearm.GitHubApi against the simulated world. A dispatch of a disabled workflow is refused (A16)."""
+
+    def __init__(self, world, token, cause):
+        self.w, self.token, self.cause, self.repo = world, token, cause, REPO
+
+    def get(self, path):
+        w = self.w
+        workflow = re.match(r'actions/workflows/([\w.-]+\.yml)(/runs)?', path)
+        if workflow and not workflow.group(2):
+            return {'state': 'disabled_manually' if workflow.group(1) in SNAPSHOT['disabled_workflows'] else 'active'}
+        if workflow:
+            if 'status=' in path:  # runs take no time (A13), so none is still going
+                return {'total_count': 0}
+            sha = re.search(r'head_sha=(\w+)', path).group(1)
+            return {'total_count': sum(1 for r in w.runs if r['workflow'] == workflow.group(1) and r['sha'] == sha
+                                       and r['event'] == 'pull_request')}
+        if '/pulls' in path:
+            return [] if w.merged_at is not None else [
+                {'number': 1, 'state': 'open', 'base': {'ref': 'main'},
+                 'head': {'sha': w.head, 'repo': {'full_name': REPO}}, 'labels': [{'name': n} for n in sorted(w.labels)]}]
+        raise KeyError(f'the model does not answer GET {path}')
+
+    def dispatch_lane(self, ref, pr, head):
+        if 'lane.yml' in SNAPSHOT['disabled_workflows']:
+            raise subprocess.CalledProcessError(1, ['gh', 'api', '-X', 'POST', 'actions/workflows/lane.yml/dispatches'],
+                                                stderr='HTTP 422: workflow is disabled')
+        self.w.post(self.w.now, 'workflow_dispatch', self.cause['id'], workflow='lane.yml',
+                    inputs={'pr': str(pr), 'head': head, 'auto': 'true'}, token=self.token)
+
+
 def b_rearm(world, run, job, ctx, cause):
-    """hosted-portable/hosted-web `rearm`: for an armed PR on this head, dispatch the workflow its script names
-    (scripts/lane_rearm.py). A dispatch of a disabled workflow fails, and so does the job (A16)."""
-    if 'automerge' not in world.labels or world.merged_at is not None or ctx['github']['event_name'] == 'merge_group':
+    """hosted-portable/hosted-web `rearm`: the tree's scripts/lane_rearm.py main(), with the step's own --results
+    rendered from the workflow, against FakeRearmApi. A missing script is a green no-op, as the step's guard says."""
+    if not (world.tree.root / 'scripts/lane_rearm.py').is_file():
         return 'success', {}
-    text = ''
-    for rel in job['scripts'] or ['scripts/lane_rearm.py']:
-        path = world.tree.root / rel
-        text += path.read_text(encoding='utf-8') if path.is_file() else ''
-    targets = sorted(set(re.findall(r'workflows/([\w.-]+\.yml)/dispatches', text)))
-    for target in targets:
-        if target in SNAPSHOT['disabled_workflows']:
-            world.note(cause, f'{run["workflow"]} rearm: dispatch of {target} refused, it is disabled; the job fails (A16)')
-            return 'failure', {}
-        world.post(world.now, 'workflow_dispatch', cause['id'], workflow=target, inputs={'pr': '1', 'auto': 'true'},
-                   token=job['token'])
-    return 'success', {}
+    steps = world.tree.raw(run['workflow'])['jobs'][job['id']].get('steps') or []
+    step = next((s for s in steps if 'lane_rearm.py' in str(s.get('run') or '')), None)
+    if step is None:
+        return 'success', {}
+    results = render((step.get('env') or {}).get('RESULTS', ''), ctx)
+    module = world.tree.module('lane_rearm', 'scripts/lane_rearm.py')
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = module.main(['--repo', REPO, '--trunk', 'main', '--head', world.head, '--results', results],
+                           api=FakeRearmApi(world, job['token'], cause), out=out)
+    lines = [line for line in out.getvalue().splitlines() if line.strip()]
+    world.note(cause, f'{run["workflow"]} rearm: ' + (' | '.join(lines) or 'nothing to do'))
+    return ('success' if code == 0 else 'failure'), {}
 
 
 BEHAVIOURS = {

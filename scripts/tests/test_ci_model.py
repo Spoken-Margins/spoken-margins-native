@@ -117,13 +117,40 @@ class ScenarioTests(unittest.TestCase):
         self.assertIn('merge policy', ' '.join(result['why']))
 
     def test_b3_no_re_run_when_the_policy_run_is_still_going(self):
-        self.assertFalse(outcome('b3-lane-audit-while-policy-runs')['merged'])
+        result = outcome('b3-lane-audit-while-policy-runs')
+        self.assertFalse(result['merged'])
+        self.assertTrue(any('merge policy check still running' in line for line in result['log']))
 
     def test_b4_failed_rearm_job_stops_the_audit(self):
         result = outcome('b4-lane-armed-before-checks')
         self.assertFalse(result['merged'])
-        self.assertTrue(any('lane.yml refused' in line for line in result['log']))
+        self.assertTrue(any('rearm: ::error::PR #1: could not start its merge run' in line for line in result['log']))
         self.assertTrue(any('not audited (checks failed)' in line for line in result['log']))
+
+    def test_b4_unsticks_when_rearm_stands_down_with_the_lane_off(self):
+        """The same scenario on a tree whose lane_rearm.py stands down green when lane.yml is not active (#4755).
+        The model runs the tree's real lane_rearm.main(), so the fix shows without any change to the model."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ('.github', 'ops', 'project.yml', 'TestPlans'):
+                if (ROOT / name).exists():
+                    os.symlink(ROOT / name, root / name)
+            (root / 'scripts').mkdir()
+            for entry in (ROOT / 'scripts').iterdir():
+                if entry.name != 'lane_rearm.py':
+                    os.symlink(entry, root / 'scripts' / entry.name)
+            text = (ROOT / 'scripts/lane_rearm.py').read_text(encoding='utf-8')
+            anchor = '    started, failed = [], []\n'
+            self.assertIn(anchor, text)
+            stand_down = ("    if api.get('actions/workflows/lane.yml').get('state') != 'active':\n"
+                          "        print('lane.yml is not active: nothing to start', file=out)\n"
+                          "        return [], []\n")
+            (root / 'scripts/lane_rearm.py').write_text(text.replace(anchor, stand_down + anchor, 1), encoding='utf-8')
+            scenario = next(s for s in ci_model.scenarios() if s.name == 'b4-lane-armed-before-checks')
+            result = ci_model.simulate(scenario, ci_model.Tree(root))
+        self.assertTrue(result['merged'], ci_model.summary(result))
+        self.assertTrue(any('rearm: lane.yml is not active' in line for line in result['log']))
+        self.assertEqual(result['relied_on_schedule'], ['claude-audit.yml'])
 
     def test_c_a_token_label_is_queued_only_by_the_sweep(self):
         for name in ('c-token-label', 'c2-token-label-nominal'):
