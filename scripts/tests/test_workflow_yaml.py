@@ -58,8 +58,8 @@ class PermissionTests(unittest.TestCase):
         self.assertEqual(W.effective_permissions(workflow, 'b'), {'contents': 'write'})
 
     def test_the_repositorys_workflows_parse(self):
-        self.assertIn('release', W.load('lane.yml')['jobs'])
-        self.assertTrue(W.checkout_steps(W.load('lane.yml')))
+        self.assertIn('t3', W.load('main-t3.yml')['jobs'])
+        self.assertTrue(W.checkout_steps(W.load('main-t3.yml')))
 
 
 if __name__ == '__main__':

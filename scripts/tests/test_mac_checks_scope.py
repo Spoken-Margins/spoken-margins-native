@@ -5,23 +5,17 @@ touched no Swift input and spent 23% of the Mac minutes, with a queue p90 of abo
 sent the runner to the build Mac after its 5-minute grace.
 """
 import ast
-import io
-import json
 from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import test_lane_runner as runner_tests
 import test_test_scope as scope_tests
-import test_lane_hosted_fast as fast_tests
 import test_fast_portable as portable_tests
 
-lane = runner_tests.lane
 scope = scope_tests.scope
 verification = portable_tests.verification
 ROOT = Path(__file__).resolve().parents[2]
@@ -130,9 +124,9 @@ class MacChecksRequiredTests(unittest.TestCase):
                 self.assertTrue(self.required(path)[0])
 
     def test_a_workflow_or_script_that_drives_the_mac_jobs_needs_them(self):
-        for path in ('.github/workflows/hosted-portable.yml', '.github/workflows/lane.yml', '.github/actions/x/action.yml',
-                     'scripts/verify-tests.py', 'scripts/lane-runner.py', 'scripts/test-scope.py',
-                     'scripts/sessionkit_pass.py', 'scripts/tests/test_lane_runner.py', 'scripts/xcodebuild-lane'):
+        for path in ('.github/workflows/hosted-portable.yml', '.github/workflows/main-t3.yml', '.github/actions/x/action.yml',
+                     'scripts/verify-tests.py', 'scripts/lane_t3.py', 'scripts/test-scope.py',
+                     'scripts/sessionkit_pass.py', 'scripts/tests/test_lane_t3.py', 'scripts/xcodebuild-lane'):
             with self.subTest(path=path):
                 self.assertTrue(self.required(path)[0])
 
@@ -220,7 +214,7 @@ def mac_only_reach():
     The seeds are the runner tests PORTABLE_RUNNER_TESTS_LEFT_OUT names, the ops folders the portable plan leaves out
     or that skip on Linux, and the scripts the Mac-only steps run. A seed reaches every scripts/ file it names (it
     loads or runs it); from there, Python imports are followed all the way down. Names inside the files a seed runs
-    are not followed: lane-runner.py and verify-tests.py name nearly every script, and the tests stub what they run.
+    are not followed: verify-tests.py names nearly every script, and the tests stub what they run.
     """
     files = [p.relative_to(ROOT) for p in (ROOT / 'scripts').rglob('*')
              if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.md']
@@ -276,221 +270,8 @@ class MacOnlyReachTests(unittest.TestCase):
     def test_the_walk_finds_the_helpers_it_is_meant_to(self):
         # A walk that found nothing would pass the test above vacuously.
         reach = mac_only_reach()
-        for path in ('scripts/phone-build', 'scripts/sm_paths.py', 'scripts/sm_build_cache.py', 'scripts/lane-runner.py'):
+        for path in ('scripts/phone-build', 'scripts/sm_paths.py', 'scripts/sm_build_cache.py', 'scripts/lane_slots.py'):
             self.assertIn(path, reach)
-
-
-class HostedCheckSetTests(unittest.TestCase):
-    FULL = lane.HOSTED_MERGED_CHECKS
-
-    def check_set(self, paths, policy=scope):
-        with mock.patch.object(lane, 'base_policy', return_value=policy), \
-                mock.patch.object(lane, 'committed_changes', return_value=(paths, {})):
-            return lane.hosted_check_set(Path('.'), 'main')
-
-    def test_an_ops_only_diff_requires_the_portable_check_alone_and_says_why(self):
-        checks, why = self.check_set(['ops/claude/x.py', 'docs/y.md'])
-        self.assertEqual(checks, lane.HOSTED_PORTABLE_CHECK)
-        self.assertEqual(why, 'Mac checks not required: no Swift inputs')
-
-    def test_a_swift_diff_still_requires_all_three(self):
-        self.assertEqual(self.check_set(['Packages/SessionKit/Sources/SessionKit/X.swift']), (self.FULL, None))
-
-    def test_a_diff_under_app_merges_on_the_portable_check_with_no_app_build(self):
-        # #3540: the portable job (core tests on Linux) stands in for the Mac checks. Owner, 2026-11-18: no per-PR app
-        # build either; before, an App/ diff also waited for "app build (T2, tests only when asked)" (#3539).
-        for paths in (['App/SpokenMarginsApp/Sources/SpokenMarginsApp/X.swift'],
-                      ['App/SpokenMarginsAppTests/XTests.swift', 'docs/y.md']):
-            with self.subTest(paths=paths):
-                self.assertEqual(self.check_set(paths),
-                                 (lane.HOSTED_PORTABLE_CHECK, 'Mac checks not required: no Swift inputs'))
-        self.assertFalse(hasattr(scope, 'app_build_required'))
-        self.assertFalse(hasattr(lane, 'HOSTED_APP_CHECK'))
-
-    def test_a_diff_under_app_that_a_mac_only_test_reads_waits_for_the_mac_checks_only(self):
-        self.assertEqual(self.check_set(['App/SpokenMarginsApp/Resources/Kitten/x.bin', 'App/A.swift']), (self.FULL, None))
-        self.assertEqual(self.check_set(['App/TestFixtures/a.spokenmargins']), (self.FULL, None))
-
-    def test_an_older_base_that_still_names_the_app_build_rule_adds_nothing(self):
-        # A PR whose base still has test-scope.py's app_build_required (before #4572) must not bring the wait back.
-        policy = mock.Mock(mac_checks_required=lambda paths: (False, 'not needed'), app_build_required=lambda paths: True)
-        self.assertEqual(self.check_set(['App/x.swift'], policy=policy), (lane.HOSTED_PORTABLE_CHECK, 'not needed'))
-
-    def test_a_diff_outside_app_keeps_its_checks(self):
-        self.assertEqual(self.check_set(['project.yml'])[0], self.FULL)
-        self.assertEqual(self.check_set(['docs/App/y.md'])[0], lane.HOSTED_PORTABLE_CHECK)
-
-    def test_a_base_without_the_app_build_rule_keeps_the_checks_it_had(self):
-        policy = mock.Mock(spec=['mac_checks_required'], mac_checks_required=scope.mac_checks_required)
-        self.assertEqual(self.check_set(['Packages/SessionKit/x.swift'], policy=policy), (self.FULL, None))
-
-    def test_a_workflow_only_diff_to_the_mac_jobs_own_workflow_requires_all_three(self):
-        self.assertEqual(self.check_set(['.github/workflows/hosted-portable.yml']), (self.FULL, None))
-
-    def test_a_base_without_the_rule_or_a_failure_requires_all_three(self):
-        self.assertEqual(self.check_set(['docs/y.md'], policy=None), (self.FULL, None))
-        self.assertEqual(self.check_set(['docs/y.md'], policy=object()), (self.FULL, None))
-        with mock.patch.object(lane, 'base_policy', side_effect=RuntimeError('x')):
-            self.assertEqual(lane.hosted_check_set(Path('.'), 'main'), (self.FULL, None))
-
-    def test_the_portable_check_is_the_one_the_workflow_names(self):
-        self.assertEqual(lane.HOSTED_PORTABLE_CHECK, {'hosted fast: portable': 'fast-portable'})
-        self.assertEqual(set(lane.HOSTED_PORTABLE_CHECK), set(lane.HOSTED_FAST_CHECKS) - {'hosted fast: SessionKit core'})
-
-    def test_a_skipped_mac_check_is_never_a_pass_when_the_runner_does_ask_for_it(self):
-        # The runner leaves the Mac checks out only by the diff's own paths. If it asks for them, "skipped" fails to stand.
-        github = fast_tests.passing(HEAD, checks=lane.HOSTED_FAST_CHECKS)
-        github.runs['hosted fast: SessionKit core'][0]['conclusion'] = 'skipped'
-        found, why = lane.hosted_fast_records(github, HEAD, checks=lane.HOSTED_FAST_CHECKS)
-        self.assertIsNone(found)
-
-    def test_the_portable_check_alone_stands_and_the_report_says_the_mac_ones_were_not_required(self):
-        github = fast_tests.passing(HEAD, checks=lane.HOSTED_PORTABLE_CHECK)
-        found, why = lane.hosted_fast_records(github, HEAD, checks=lane.HOSTED_PORTABLE_CHECK)
-        self.assertEqual(set(found), set(lane.HOSTED_PORTABLE_CHECK))
-        ran = lane.hosted_fast_ran(found)
-        self.assertIn('not required: no Swift inputs', ran)
-        self.assertIn('none on the Mac', ran)
-        self.assertNotIn('Mac: --plan fast-mac-rest', ran)
-
-
-class HostedWebCheckTests(unittest.TestCase):
-    """#3535: a diff that starts hosted web's Playwright job merges only once that job passed on its head."""
-
-    class Checks:
-        repo = 'o/r'
-
-        def __init__(self, *polls):  # each poll: the check runs GitHub answers with; the last one repeats
-            self.polls, self.calls = list(polls), []
-
-        def api(self, path):
-            self.calls.append(path)
-            polls = self.polls.pop(0) if len(self.polls) > 1 else self.polls[0]
-            if isinstance(polls, Exception):
-                raise polls
-            return json.dumps({'check_runs': polls})
-
-    @staticmethod
-    def check_run(conclusion='success', status='completed', **changes):
-        return {'id': 1, 'status': status, 'conclusion': conclusion, 'app': {'slug': 'github-actions'},
-                'started_at': '2026-11-06T10:00:00Z', 'html_url': 'https://example.test/web', **changes}
-
-    def check(self, github, paths=('Web/src/a.ts',), policy=scope, wait=0, alive=lambda: None, **kwargs):
-        now = {'t': 0.0}
-
-        def sleep(seconds):
-            now['t'] += seconds
-        self.slept = now
-        lane.STEP_RUNS.clear()
-        self.addCleanup(lane.STEP_RUNS.clear)
-        with mock.patch.object(lane, 'base_policy', return_value=policy), \
-                mock.patch.object(lane, 'committed_changes', return_value=(list(paths), {})):
-            return lane.hosted_web_check(github, Path('.'), 'main', HEAD, alive=alive, env={}, wait=wait,
-                                         clock=lambda: now['t'], sleep=sleep, out=io.StringIO(), **kwargs)
-
-    def test_a_diff_that_starts_no_web_job_asks_github_nothing(self):
-        for paths in (('docs/a.md',), ('Packages/SessionKit/Sources/SessionKit/X.swift',), ('research/B4/server/x.go',),
-                      ('Webby/a.ts',), ('web/a.ts',)):
-            with self.subTest(paths=paths):
-                github = self.Checks([])
-                self.assertEqual(self.check(github, paths), (None, ''))
-                self.assertEqual(github.calls, [])
-                self.assertEqual(lane.STEP_RUNS, [])
-
-    def test_a_base_without_the_rule_asks_github_nothing(self):
-        github = self.Checks([])
-        self.assertEqual(self.check(github, policy=None), (None, ''))
-        self.assertEqual(self.check(github, policy=object()), (None, ''))
-        self.assertEqual(github.calls, [])
-
-    def test_every_diff_that_starts_the_job_waits_for_it(self):
-        for paths in (('Web/src/a.ts',), ('Web/README.md',), ('docs/a.md', 'Web/src/a.ts'),
-                      ('Packages/SessionKit/Sources/SessionKit/X.swift', 'Web/src/a.ts'),
-                      ('research/B4/server/internal/links/page.go',), ('.github/workflows/hosted-web.yml',)):
-            with self.subTest(paths=paths):
-                self.assertEqual(self.check(self.Checks([self.check_run()]), paths)[0], 'PASS')
-
-    def test_only_a_pass_passes(self):
-        table = {'success': 'PASS', 'failure': 'FAIL', 'timed_out': 'FAIL', 'cancelled': 'INCONCLUSIVE',
-                 'skipped': 'INCONCLUSIVE', 'neutral': 'INCONCLUSIVE', 'action_required': 'INCONCLUSIVE',
-                 'stale': 'INCONCLUSIVE', None: 'INCONCLUSIVE'}
-        for conclusion, verdict in table.items():
-            with self.subTest(conclusion=conclusion):
-                found, line = self.check(self.Checks([self.check_run(conclusion)]))
-                self.assertEqual(found, verdict)
-                self.assertIn(lane.HOSTED_WEB_CHECK, line)
-                self.assertEqual([(r['step'], r['verdict']) for r in lane.STEP_RUNS], [(lane.HOSTED_WEB_STEP, verdict)])
-
-    def test_it_waits_while_the_job_queues_and_runs_then_takes_the_verdict(self):
-        for last, verdict in ((self.check_run(), 'PASS'), (self.check_run('failure'), 'FAIL')):
-            with self.subTest(verdict=verdict):
-                github = self.Checks([], [self.check_run(None, 'queued')], [self.check_run(None, 'in_progress')], [last])
-                self.assertEqual(self.check(github, wait=3600)[0], verdict)
-                self.assertEqual(len(github.calls), 4)
-
-    def test_it_holds_when_the_job_never_finishes_or_never_shows_up(self):
-        found, line = self.check(self.Checks([self.check_run(None, 'in_progress')]), wait=120, poll=30)
-        self.assertEqual(found, 'INCONCLUSIVE')
-        self.assertIn(lane.NOT_FINISHED, line)
-        self.assertEqual(self.slept['t'], 120)
-        found, line = self.check(self.Checks([]), wait=3600, poll=30, grace=300)
-        self.assertEqual(found, 'INCONCLUSIVE')
-        self.assertIn('no "hosted web: build and Playwright" check ran', line)
-        self.assertEqual(self.slept['t'], 300)
-        self.assertEqual(self.check(self.Checks([]))[0], 'INCONCLUSIVE')
-
-    def test_a_run_from_another_app_is_not_the_job(self):
-        forged = self.check_run(app={'slug': 'someone-else'})
-        self.assertEqual(self.check(self.Checks([forged]))[0], 'INCONCLUSIVE')
-
-    def test_the_newest_run_decides(self):
-        old, new = self.check_run('failure', id=1, started_at='2026-11-06T10:00:00Z'), self.check_run(id=2, started_at='2026-11-06T11:00:00Z')
-        self.assertEqual(self.check(self.Checks([old, new]))[0], 'PASS')
-        self.assertEqual(self.check(self.Checks([new, old]))[0], 'PASS')
-        old, new = self.check_run(id=1, started_at='2026-11-06T10:00:00Z'), self.check_run('failure', id=2, started_at='2026-11-06T11:00:00Z')
-        self.assertEqual(self.check(self.Checks([old, new]))[0], 'FAIL')
-
-    def test_a_failed_read_holds_and_never_passes(self):
-        self.assertEqual(self.check(self.Checks(OSError('network')))[0], 'INCONCLUSIVE')
-        github = self.Checks(subprocess.SubprocessError('gh'), [self.check_run()])  # a passing blip is waited out
-        self.assertEqual(self.check(github, wait=3600)[0], 'PASS')
-        with mock.patch.object(lane, 'base_policy', side_effect=OSError('git')):
-            found, line = lane.hosted_web_check(self.Checks([]), Path('.'), 'main', HEAD, env={}, wait=0)
-        self.assertEqual(found, 'INCONCLUSIVE')
-        self.assertIn('could not tell', line)
-
-    def test_it_stops_waiting_when_the_pr_moves_on(self):
-        github = self.Checks([self.check_run(None, 'in_progress')])
-        found, line = self.check(github, wait=3600, alive=lambda: f'{lane.MOVED_ON}the PR is closed')
-        self.assertEqual(found, 'INCONCLUSIVE')
-        self.assertIn('the PR is closed', line)
-        self.assertEqual(github.calls, [])
-
-    def test_only_a_lane_job_waits(self):
-        github = self.Checks([self.check_run(None, 'in_progress')])
-        with mock.patch.object(lane, 'base_policy', return_value=scope), \
-                mock.patch.object(lane, 'committed_changes', return_value=(['Web/a.ts'], {})), \
-                mock.patch.object(lane, 'HOSTED_REST_WAIT', 60):
-            slept = []
-            lane.hosted_web_check(github, Path('.'), 'main', HEAD, env={'GITHUB_ACTIONS': 'true'}, poll=30,
-                                  clock=lambda: 30.0 * len(slept), sleep=slept.append, out=io.StringIO())
-            self.assertEqual(slept, [30, 30])
-            slept.clear()
-            lane.hosted_web_check(github, Path('.'), 'main', HEAD, env={}, poll=30, clock=lambda: 0.0,
-                                  sleep=slept.append, out=io.StringIO())
-            self.assertEqual(slept, [])
-        lane.STEP_RUNS.clear()
-
-    def test_the_rule_names_what_the_workflow_runs_on(self):
-        import yaml
-        import re
-        workflow = yaml.safe_load((ROOT / '.github/workflows/hosted-web.yml').read_text())
-        # #4693: the paths moved from the trigger into the `changes` job's grep, so the check reports on every PR.
-        step = next(step for step in workflow['jobs']['changes']['steps'] if step.get('id') == 'diff')
-        pattern = re.search(r"grep -qE '\^\((.*)\)'", step['run']).group(1)
-        prefixes = {alt.replace('\\.', '.').removesuffix('$') for alt in pattern.split('|')}
-        self.assertEqual(prefixes, set(scope.HOSTED_WEB_PREFIXES))
-        self.assertEqual(workflow['jobs']['web']['name'], lane.HOSTED_WEB_CHECK)
 
 
 class WorkflowScopeTests(unittest.TestCase):
@@ -639,54 +420,9 @@ class OneMacJobTests(unittest.TestCase):
         self.assertLess(core, blackhole)  # the core tests ran before BlackHole in the old job too
         self.assertLess(blackhole, rest)  # the audio tests still get the virtual output
 
-    def test_the_check_name_and_the_recorded_plan_stay_what_the_runner_expects(self):
-        self.assertEqual(self.jobs['mac-rest']['name'], 'hosted fast: Mac rest')
-        self.assertEqual(lane.HOSTED_REST_CHECK, {'hosted fast: Mac rest': 'fast-hosted-sessionkit+fast-mac-rest'})
-        self.assertIn('plan=fast-hosted-sessionkit+fast-mac-rest tree=', self.text)
-        self.assertEqual(self.text.count('plan=fast-hosted-sessionkit tree='), 1)  # only the sessionkit job records it
-
     def test_the_separate_sessionkit_job_runs_only_with_the_mac_rest_switch_off(self):
         self.assertIn("vars.LANE_HOSTED_MAC_REST != 'on'", self.jobs['sessionkit']['if'])
         self.assertNotIn("!= 'on'", self.jobs['mac-rest']['if'])
-
-    def test_the_runner_requires_two_checks_for_a_swift_diff_and_the_job_that_writes_each(self):
-        self.assertEqual(set(lane.HOSTED_MERGED_CHECKS), {'hosted fast: portable', 'hosted fast: Mac rest'})
-        self.assertNotIn('hosted fast: SessionKit core', lane.HOSTED_MERGED_CHECKS)
-        for name in lane.HOSTED_MERGED_CHECKS:
-            self.assertIn(f"name: '{name}'", self.text)
-
-    def records(self, rest_plan):
-        """hosted_fast_records over the merged set, where the portable check passed and Mac rest recorded <rest_plan>."""
-        names = list(lane.HOSTED_MERGED_CHECKS)
-
-        class Checks(fast_tests.FakeChecks):
-            def api(self, path):
-                if '/annotations' in path:
-                    return super().api(path)
-                name = next(name for name in names if 'check_name=' + lane.urllib.parse.quote(name, safe='') + '&' in path)
-                return fast_tests.json.dumps({'check_runs': self.runs.get(name, [])})
-
-        plans = {**lane.HOSTED_MERGED_CHECKS, 'hosted fast: Mac rest': rest_plan}
-        fake = fast_tests.passing(HEAD, checks=plans)
-        return lane.hosted_fast_records(Checks(fake.runs, fake.annotations), HEAD, lane.HOSTED_MERGED_CHECKS)
-
-    def test_a_mac_rest_record_from_the_old_job_does_not_stand_for_the_core_tests(self):
-        # The audit of 47facb5: the old `mac-rest` job ran no SessionKitCoreTests but recorded plan=fast-mac-rest. A PR
-        # whose core check failed or never finished would merge on that record once only two checks are required.
-        found, why = self.records('fast-mac-rest')
-        self.assertIsNone(found)
-        self.assertIn('"hosted fast: Mac rest"', why)
-        self.assertIn('did not record', why)
-
-    def test_the_plan_the_merged_job_records_is_the_one_the_runner_requires(self):
-        recorded = [plan for run in self.steps('mac-rest') for plan in re.findall(r'plan=(\S+) tree=', run)]
-        self.assertEqual(recorded, [lane.HOSTED_MERGED_CHECKS['hosted fast: Mac rest']])
-        self.assertNotEqual(recorded, ['fast-mac-rest'])
-        found, why = self.records(recorded[0])
-        self.assertEqual(set(found), set(lane.HOSTED_MERGED_CHECKS), why)
-        # each plan the name lists is one the job runs
-        for plan in recorded[0].split('+'):
-            self.assertTrue(any(f'--plan {plan}' in run for run in self.steps('mac-rest')), plan)
 
     def test_the_job_has_room_for_both_plans(self):
         self.assertGreaterEqual(self.jobs['mac-rest']['timeout-minutes'],

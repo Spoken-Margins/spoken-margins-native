@@ -1,17 +1,28 @@
 """The lane report's machine-readable event line (#2378): what it carries, and that it never carries text."""
-import inspect
 import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_lane_runner import HEAD, comment, lane  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import lane_event  # noqa: E402
+from lane_t3 import duration  # noqa: E402
 
-BASE = 'd' * 40
+HEAD, BASE = 'a' * 40, 'd' * 40
+
+
+def report(request_id, verdict, head, base, tier, where, seconds, ran, details, crashes, evidence, not_verified,
+           wanted, event=''):
+    """A lane report in the words the retired lane-runner.py wrote (#4769). Its reports stay on old PRs, and
+    pipeline_events.py still reads them through lane_event.collect."""
+    lines = [f'Lane report {request_id} — {verdict}',
+             f'commit {head[:7]} (tested merged with main at {base[:7]}) · tier {tier} · {where} · {duration(seconds)}',
+             f'ran: {ran}', *details, f'crashes: {crashes}', f'evidence: {evidence} (on the Mac)',
+             f'not verified: {not_verified}']
+    return '\n'.join(lines) + f'\n<!-- lane-request: {json.dumps(wanted, sort_keys=True)} -->\n' + \
+        (f'{event}\n' if event else '')
 
 
 def runs():
@@ -181,7 +192,7 @@ class HoldTests(unittest.TestCase):
         self.assertNotIn('hold', lane_event.parse(lane_event.note(dict(build(verdict='INCONCLUSIVE'), hold='yes'))))
 
     def test_the_prose_fallback_never_guesses_a_hold(self):
-        body = lane.report('pr1-r1', 'INCONCLUSIVE', HEAD, BASE, 'auto', 'hosted', 0, 'nothing',
+        body = report('pr1-r1', 'INCONCLUSIVE', HEAD, BASE, 'auto', 'hosted', 0, 'nothing',
                            ['not merged: held for T3: the /lane T3 request has no lane report yet'], 'none', '/e', 'n', {})
         event = lane_event.collect(body)
         self.assertEqual((event['source'], event['fault']), ('prose', True))
@@ -190,13 +201,13 @@ class HoldTests(unittest.TestCase):
 
 class CollectTests(unittest.TestCase):
     def test_the_line_wins_when_it_is_there(self):
-        body = lane.report('pr1-r1', 'FAIL', HEAD, BASE, 'T3', 'x', 345, 'x', [], 'none', '/e', 'n', {},
+        body = report('pr1-r1', 'FAIL', HEAD, BASE, 'T3', 'x', 345, 'x', [], 'none', '/e', 'n', {},
                            event=lane_event.note(build()))
         event = lane_event.collect(body)
         self.assertEqual((event['source'], event['verdict'], event['tests']['failed']), ('line', 'FAIL', 1))
 
     def test_a_report_without_the_line_falls_back_to_the_prose(self):
-        body = lane.report('pr1-r1', 'INCONCLUSIVE', HEAD, BASE, 'T3', 'no runner', 0, 'nothing', [], 'none', '/e', 'n',
+        body = report('pr1-r1', 'INCONCLUSIVE', HEAD, BASE, 'T3', 'no runner', 0, 'nothing', [], 'none', '/e', 'n',
                            {})
         event = lane_event.collect(body)
         self.assertEqual((event['source'], event['verdict'], event['fault'], event['tier']),
@@ -205,13 +216,13 @@ class CollectTests(unittest.TestCase):
         self.assertEqual(event['steps'], [])
 
     def test_an_older_report_whose_base_was_not_a_commit_still_gives_its_tier_and_head(self):
-        body = lane.report('pr1-r1', 'INCONCLUSIVE', HEAD, 'unknown', 'T3', 'no runner', 0, 'nothing', [], 'none', '/e',
+        body = report('pr1-r1', 'INCONCLUSIVE', HEAD, 'unknown', 'T3', 'no runner', 0, 'nothing', [], 'none', '/e',
                            'n', {})
         event = lane_event.collect(body)
         self.assertEqual((event['tier'], event['head'], event['trunk']), ('T3', HEAD[:7], ''))
 
     def test_a_forged_line_falls_back_to_the_prose_and_other_comments_are_none(self):
-        body = lane.report('pr1-r1', 'PASS', HEAD, BASE, 'T2', 'x', 5, 'x', [], 'none', '/e', 'n', {},
+        body = report('pr1-r1', 'PASS', HEAD, BASE, 'T2', 'x', 5, 'x', [], 'none', '/e', 'n', {},
                            event=lane_event.note(dict(build(), head='/Users/x')))
         self.assertEqual(lane_event.collect(body)['source'], 'prose')
         self.assertIsNone(lane_event.collect('Looks good to me'))
@@ -232,47 +243,6 @@ class TestRecordsTests(unittest.TestCase):
 
     def test_a_missing_folder_is_no_records(self):
         self.assertEqual(lane_event.test_records(Path('/nonexistent-evidence')), {})
-
-
-class RunnerTests(unittest.TestCase):
-    def setUp(self):
-        lane.STEP_RUNS.clear()
-        self.addCleanup(lane.STEP_RUNS.clear)
-
-    def test_the_report_ends_with_the_line_and_still_reads_as_before(self):
-        lane.note_step('host tests', 'PASS', 12.0)
-        note = lane.event_note('PASS', 'T2', HEAD, BASE, 20, None)
-        wanted = lane.identity('T2', HEAD, BASE, [])
-        body = lane.report('pr1-r1', 'PASS', HEAD, BASE, 'T2', 'x', 20, 'x', [], 'none', '/e', 'n', wanted, event=note)
-        self.assertTrue(body.rstrip().endswith('-->'))
-        self.assertEqual(body.rstrip().splitlines()[-1], note)
-        self.assertEqual(lane.report_identity(body), wanted)
-        self.assertEqual(body, lane.report('pr1-r1', 'PASS', HEAD, BASE, 'T2', 'x', 20, 'x', [], 'none', '/e', 'n',
-                                           wanted, event='') + note + '\n')
-
-    def test_the_visible_report_is_the_same_with_or_without_the_line(self):
-        without = lane.report('pr1-r1', 'PASS', HEAD, BASE, 'T2', 'x', 20, 'x', [], 'none', '/e', 'n', {})
-        with_line = lane.report('pr1-r1', 'PASS', HEAD, BASE, 'T2', 'x', 20, 'x', [], 'none', '/e', 'n', {},
-                                event=lane.event_note('PASS', 'T2', HEAD, BASE, 20, None))
-        self.assertTrue(with_line.startswith(without))
-
-    def test_the_queue_wait_is_the_time_from_the_request_to_the_job_start(self):
-        lane.note_step('host tests', 'PASS', 12.0)
-        with mock.patch.object(lane.time, 'gmtime', return_value=__import__('time').gmtime(1_700_000_300)):
-            note = lane.event_note('PASS', 'T3', HEAD, BASE, 100, None, '2023-11-14T22:13:20Z')  # 1_700_000_000
-        self.assertEqual(lane_event.parse(note)['queue_seconds'], 200)
-
-    def test_the_runner_no_longer_marks_any_report_held(self):
-        # #4572: the only report the runner marked `hold` was the one held for T3, which no run writes now.
-        self.assertNotIn('hold', inspect.signature(lane.event_note).parameters)
-
-    def test_a_failing_measurement_leaves_the_report_without_a_line(self):
-        with mock.patch.object(lane_event, 'build', side_effect=RuntimeError('boom')):
-            self.assertEqual(lane.event_note('PASS', 'T2', HEAD, BASE, 1, None), '')
-
-    def test_a_pending_request_keeps_when_it_was_commented(self):
-        found = lane.pending_requests([dict(comment('/lane T2'), created_at='2026-10-23T01:02:03Z')])[0]
-        self.assertEqual(found['created_at'], '2026-10-23T01:02:03Z')
 
 
 if __name__ == '__main__':

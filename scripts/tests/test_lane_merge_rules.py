@@ -1,19 +1,17 @@
 """The merge rules in scripts/lane_merge_rules.py that scripts/merge_policy.py applies to the merge queue:
 which audits clear a head, and which comments are trusted. Moved out of test_lane_runner.py with the code
-(#4769). A test that still calls `runner.` reaches the retired dispatcher in lane-runner.py."""
+(#4769)."""
 import os
 
 os.environ.pop('SM_TRUNK', None)
 os.environ.pop('GITHUB_EVENT_NAME', None)
 
 import importlib.util
-import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -22,10 +20,6 @@ sys.path.insert(0, str(SCRIPTS / 'tests'))
 spec = importlib.util.spec_from_file_location('lane_merge_rules', SCRIPTS / 'lane_merge_rules.py')
 lane = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lane)
-# The retired per-PR dispatcher, for the tests that still reach it (#4769).
-runner_spec = importlib.util.spec_from_file_location('lane_runner', SCRIPTS / 'lane-runner.py')
-runner = importlib.util.module_from_spec(runner_spec)
-runner_spec.loader.exec_module(runner)
 
 HEAD = 'a' * 40
 
@@ -38,7 +32,7 @@ class ClaudeAuditGateTests(unittest.TestCase):
     def test_claude_head_audit_clears_lane_and_risky_changes(self):
         clean = comment('**Claude audit on `aaaaaaa`**\n\nNo blocking findings.')
         scope = {'files': [{'category': 'audio'}, {'category': 'persistence'}, {'category': 'packet'}],
-                 'lane_paths': ['scripts/lane-runner.py']}
+                 'lane_paths': ['scripts/lane_merge_rules.py']}
         self.assertIsNone(lane.audit_blocker([clean], HEAD))
         self.assertEqual(lane.merge_blockers(scope, [clean], HEAD), [])
 
@@ -139,42 +133,6 @@ class TrustedCommentTests(unittest.TestCase):
             with self.subTest(login=login, association=association):
                 self.assertEqual(lane.trusted_comment(self.comment('/lane T3', login, association)), trusted)
         self.assertFalse(lane.trusted_comment({'body': '/lane T3'}))  # no author at all
-
-    def comments_from(self, *comments):
-        github = runner.GitHub('o/r', 5)
-        lines = '\n'.join(json.dumps(c) for c in comments)
-        with mock.patch.object(github, 'api', return_value=lines), mock.patch('builtins.print') as printed:
-            return github.comments(), printed
-
-    def test_a_strangers_lane_request_is_never_run(self):
-        kept, printed = self.comments_from(
-            self.comment('/lane T3\ntests: SpeechTests', 'uncomposed', 'OWNER'),
-            self.comment('/lane T2\ncommit: deadbeef', 'stranger', 'NONE'))
-        request, _ = runner.pending_requests(kept)
-        self.assertEqual((request['tier'], request['author']), ('T3', 'uncomposed'))
-        self.assertIn('ignored 1 comment(s)', printed.call_args.args[0])
-        self.assertIn('stranger', printed.call_args.args[0])
-
-    def test_a_contributors_request_alone_leaves_nothing_to_run(self):
-        kept, _ = self.comments_from(self.comment('/lane T3\ntests: SpeechTests', 'drive-by', 'CONTRIBUTOR'))
-        self.assertEqual(runner.pending_requests(kept), (None, False))
-
-    def test_a_fake_report_cannot_answer_a_request(self):
-        identity = json.dumps(runner.identity('T3', HEAD, 'b' * 40, []))
-        fake = f'Lane report r1 — PASS\n<!-- lane-request: {identity} -->'
-        kept, _ = self.comments_from(self.comment('/lane T3\ncommit: aaaaaaa', 'uncomposed', 'OWNER'),
-                                     self.comment(fake, 'stranger', 'NONE'))
-        request, _ = runner.pending_requests(kept)
-        self.assertIsNotNone(request)  # still waiting for the real runner
-
-    def test_the_project_bots_reports_still_count(self):
-        identity = json.dumps(runner.identity('T3', HEAD, 'b' * 40, []))
-        report = f'Lane report r1 — PASS\n<!-- lane-request: {identity} -->'
-        kept, printed = self.comments_from(self.comment('/lane T3\ncommit: aaaaaaa', 'uncomposed', 'OWNER'),
-                                           self.comment(report, 'github-actions[bot]', 'NONE'))
-        self.assertEqual(len(kept), 2)
-        self.assertEqual(runner.pending_requests(kept), (None, False))
-        printed.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -753,7 +753,6 @@ RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 # run on next, which keep every step, are what catch a missed reader.
 RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels', 'test_verification',
                        'test_validate_contracts', 'test_hot_file_ratchet', 'test_research_tests',
-                       'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
                        'test_lane_t3.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
                        'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
                        'test_building_md', 'test_third_party_notices', 'test_main_thread_reads', 'test_journey_runs',
@@ -848,8 +847,6 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
     'test_phone_build.PhoneBuildTests.test_untested_commit_runs_host_checks_first': PHONE_BUILD_NEEDS_MAC,
     'test_lane_slots.VerifyTestsSlotTests.test_runner_xcodebuild_steps_take_a_slot_and_record_it': 'runs xcodebuild',
     'test_sim_builds.': 'packs and unpacks app builds with macOS ditto',
-    # The runner (lane-runner.py) runs only on the Mac; Ubuntu 22.04's git 2.34 on the VPS runner is too old (#2160).
-    'test_lane_hosted_fast.HostedChecksStandTests.': 'needs git merge-tree --write-tree (git 2.38 or later)',
 }
 PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snapshots and the Mac-only caches'}
 # --plan fast-hosted-sessionkit and --plan fast-mac-rest (#1389): the fast plan split three ways once the repo is
