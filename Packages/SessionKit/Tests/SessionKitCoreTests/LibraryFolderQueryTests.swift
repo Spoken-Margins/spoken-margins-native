@@ -321,11 +321,12 @@ final class LibraryFolderQueryTests: XCTestCase {
         XCTAssertEqual(sqlite3_exec(writer, "BEGIN IMMEDIATE", nil, nil, nil), SQLITE_OK, "another writer holds the store")
         defer { sqlite3_exec(writer, "COMMIT", nil, nil, nil); sqlite3_close(writer) }
 
-        let started = Date()
+        // A read that waited for the writer would hit the store's 1 s busy timeout and come back "not read" (nil),
+        // so the folder checks below fail on state, not on a wall-clock ceiling a busy runner can miss.
         let snapshot = try LibraryReadSnapshot.read(store: store)
-        XCTAssertLessThan(Date().timeIntervalSince(started), 2, "the Library read does not wait for the writer")
-        XCTAssertEqual(snapshot.collections?.map(\.id), ["f"])
-        XCTAssertEqual(snapshot.libraryFolders?.map(\.id), ["f"])
+        XCTAssertEqual(sqlite3_get_autocommit(writer), 0, "the writer still held the store while the Library was read")
+        XCTAssertEqual(snapshot.collections?.map(\.id), ["f"], "the collections were read past the writer")
+        XCTAssertEqual(snapshot.libraryFolders?.map(\.id), ["f"], "the folder records were read past the writer")
 
         let rows = LibraryRowBuilder.rows(from: snapshot, context: StartupAudioContext(hasAcceptedCurrentTerms: true, hasSupertonicVoice: true))
         let listing = LibraryFolderListEngine.listing(rows: rows, collections: snapshot.collections ?? [], folders: snapshot.libraryFolders ?? [],
