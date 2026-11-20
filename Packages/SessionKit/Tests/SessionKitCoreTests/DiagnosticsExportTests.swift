@@ -281,6 +281,19 @@ final class DiagnosticsExportTests: XCTestCase {
         XCTAssertEqual(DiagnosticsExport.entries(live: [:], stored: [:], fixed: fixed())["diskWritesBySource"]?.hasPrefix("none_recorded"), true)
     }
 
+    func testTheListsCountIsOnlyACountAndNoLiveEntryStandsInForIt() {
+        var counted = fixed()
+        counted.listsShowsInTwoOrMore = 3
+        let entries = DiagnosticsExport.entries(live: ["lists.showsInTwoOrMore": "stale"], stored: ["lists.showsInTwoOrMore": "stale"], fixed: counted)
+
+        XCTAssertEqual(entries["lists.showsInTwoOrMore"], "3")
+        XCTAssertEqual(DiagnosticsExport.entries(live: [:], stored: [:], fixed: counted.with(lists: 0))["lists.showsInTwoOrMore"], "0", "zero is a real answer")
+        XCTAssertNil(
+            DiagnosticsExport.entries(live: ["lists.showsInTwoOrMore": "stale"], stored: [:], fixed: fixed())["lists.showsInTwoOrMore"],
+            "lists that couldn't be read leave the key out rather than letting a stale entry stand in"
+        )
+    }
+
     // MARK: The file text
 
     func testTheTextIsJSONWithTheKeysInOrderAndEveryEntryIntact() throws {
@@ -301,5 +314,13 @@ final class DiagnosticsExportTests: XCTestCase {
 
     func testTheSchemaVersionNeverChangesByAccident() {
         XCTAssertEqual(DiagnosticsExport.schemaVersion, "spoken-margins.diagnostics.v1")
+    }
+}
+
+private extension DiagnosticsExport.Fixed {
+    func with(lists count: Int?) -> Self {
+        var copy = self
+        copy.listsShowsInTwoOrMore = count
+        return copy
     }
 }
