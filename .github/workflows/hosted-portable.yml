@@ -222,6 +222,8 @@ jobs:
       mac: ${{ steps.scope.outputs.mac }}
       reason: ${{ steps.scope.outputs.reason }}
       docs_only: ${{ steps.scope.outputs.docs_only }}
+      app: ${{ steps.scope.outputs.app }}
+      app_reason: ${{ steps.scope.outputs.app_reason }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -257,6 +259,14 @@ jobs:
             { echo "mac=true"; echo "reason=no changed-file list or base rule, so the Mac checks run"; } | tee -a "$GITHUB_OUTPUT"
           fi
           grep -q '^mac=' "$GITHUB_OUTPUT" || echo "mac=true" >> "$GITHUB_OUTPUT"
+          # The merge queue's app compile (app-compile below). A base rule without --app-compile-required prints only a
+          # usage error, so no app= line: the grep after this writes app=true. Unsure builds.
+          if [ -s "$list" ] && [ -s "$rule" ]; then
+            python3 "$rule" --app-compile-required "$list" | tee -a "$GITHUB_OUTPUT" || true
+          else
+            echo "app=true" | tee -a "$GITHUB_OUTPUT"
+          fi
+          grep -q '^app=' "$GITHUB_OUTPUT" || echo "app=true" >> "$GITHUB_OUTPUT"
           # Docs-only: every changed path is one the old paths-ignore list skipped. No list says false.
           if [ -s "$list" ] && python3 -c '
           import sys
@@ -341,6 +351,92 @@ jobs:
         run: |
           seconds=$(( $(date +%s) - STARTED ))
           echo "hosted fast SessionKit core took ${seconds}s on xcode-27." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  app-compile:
+    # 2026-11-20: no required check compiled the app, so #4602's Swift error in FollowListsScreen.swift passed every gate
+    # and main did not compile for about 2.5 hours (#4750). This builds the app for the simulator, with no tests and no
+    # simulator, in each merge group whose diff reaches an app build input (test-scope.py app_compile_required). On a PR
+    # it is skipped, which reports success, so the required check passes on the PR and is earned in the queue: one Mac
+    # build per merge group, never per push. The per-PR app builds of 2026-11-18 (retired) queued for 1 to 2.5 hours;
+    # the queue builds at most 3 groups at once, so this holds at most 3 Macs. main-t3.yml still runs the app tests.
+    # Cost and catch: about 8 minutes of hosted Mac per merge group that touches the app (hosted-app-macos.yml on main
+    # took 6 to 8 minutes, 2026-11-20). It would have caught #4602. Waste signal: a month in which it never fails.
+    name: 'hosted app: build (no tests)'
+    needs: scope
+    if: >-
+      !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.app != 'false' &&
+      (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch')
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      DERIVED: ${{ github.workspace }}/.build/hosted-dd
+      CAS: ${{ github.workspace }}/.build/compilation-cache
+      CAS_PACK: ${{ github.workspace }}/.build/compilation-cache-pack
+      SPM: ${{ github.workspace }}/.build/spm
+    steps:
+      - name: Start the clock
+        run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # The app bundles the voice models (LFS). The same cache hosted-app-macos.yml keeps on main.
+      - name: List LFS objects
+        run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
+          restore-keys: lfs-
+      - name: Fetch LFS files
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+      # Restore only: main's hosted-app-macos.yml runs save these, and a merge group's run can read main's caches.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.SPM }}
+          key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: spm-
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ env.CAS_PACK }}
+          key: xcode-cas-sparse-27.0-${{ github.run_id }}
+          restore-keys: xcode-cas-sparse-27.0-
+      - name: Unpack the compilation cache
+        run: CAS="$CAS" PACK="$CAS_PACK" bash scripts/ci-cas-cache.sh unpack
+      - name: Build the app for the simulator (build-for-testing, no tests)
+        env:
+          WHY: ${{ needs.scope.outputs.app_reason }}
+        run: |
+          echo "Why: ${WHY:-no reason given}"
+          mkdir -p "$RUNNER_TEMP/results"
+          root="$GITHUB_WORKSPACE"
+          set -o pipefail
+          xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsAppBehavior -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$DERIVED" \
+            -clonedSourcePackagesDirPath "$SPM" \
+            COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_CAS_PATH="$CAS" COMPILATION_CACHE_LIMIT_SIZE=1G \
+            SWIFT_ENABLE_PREFIX_MAPPING=YES SWIFT_ENABLE_PROJECT_PREFIX_MAPPING=YES \
+            CLANG_ENABLE_PREFIX_MAPPING=YES CLANG_ENABLE_PROJECT_PREFIX_MAPPING=YES \
+            SWIFT_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" CLANG_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" \
+            build-for-testing 2>&1 | tee "$RUNNER_TEMP/results/build-for-testing.log" | grep -E 'error:|BUILD|cacheable tasks' || true
+          grep -q 'TEST BUILD SUCCEEDED' "$RUNNER_TEMP/results/build-for-testing.log"
+      - name: Keep the build log
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: app-compile-log
+          path: ${{ runner.temp }}/results/build-for-testing.log
+          retention-days: 14
+      - name: How long it took
+        if: always()
+        run: |
+          seconds=$(( $(date +%s) - STARTED ))
+          echo "hosted app compile took ${seconds}s." | tee -a "$GITHUB_STEP_SUMMARY"
 
   mac-rest:
     # #2459: --plan fast-mac-rest, which the lane's automerge job used to run on the owner's build Mac (about 8 minutes
@@ -606,7 +702,7 @@ jobs:
     # (the trunk, or the lane-check/** base under test), never the PR's head, and the head reaches the shell only through env. Same-repo runs only. Its outcome is read from the
     # check jobs only: owner-tap-alert and linux-retry-tally run `always()` and end `success` even when every check skipped.
     name: rearm
-    needs: [portable, scope, sessionkit, mac-rest, stop-macs-on-red, linux-retry-tally, owner-tap-alert]
+    needs: [portable, scope, sessionkit, mac-rest, app-compile, stop-macs-on-red, linux-retry-tally, owner-tap-alert]
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 3
