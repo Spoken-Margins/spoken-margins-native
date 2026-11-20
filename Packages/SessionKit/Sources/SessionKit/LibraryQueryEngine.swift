@@ -98,31 +98,35 @@ public enum LibraryQueryEngine {
         _ libraryItems: [Row], query libraryQuery: LibraryQuery, includingSenders: Bool = true
     ) -> [Row] {
         let filtered = filteredLibraryItems(libraryItems, query: libraryQuery, includingSenders: includingSenders)
-        return filtered.sorted { lhs, rhs in
-            let ordered: ComparisonResult
-            switch libraryQuery.sort {
-            case .recentlyAdded:
-                let (left, right) = (lhs.recentlyAddedDate, rhs.recentlyAddedDate)
-                if left != nil, right != nil {
-                    ordered = compareDates(left, right)
-                } else if lhs.storageRecencyRank != rhs.storageRecencyRank {
-                    ordered = lhs.storageRecencyRank < rhs.storageRecencyRank ? .orderedAscending : .orderedDescending
-                } else {
-                    ordered = compareDates(left, right)
-                }
-            case .recentlyListened:
-                ordered = compareDates(lhs.lastListenedAt, rhs.lastListenedAt)
-            case .published:
-                ordered = compareDates(lhs.publishedAt, rhs.publishedAt)
-            case .title:
-                ordered = lhs.title.localizedStandardCompare(rhs.title)
-            case .progress:
-                let left = lhs.continuationProgressPercent ?? 0
-                let right = rhs.continuationProgressPercent ?? 0
-                ordered = left == right ? .orderedSame : (left > right ? .orderedAscending : .orderedDescending)
+        return filtered.sorted { areInOrder($0, $1, sort: libraryQuery.sort) }
+    }
+
+    /// The Library's order for two rows under `sort`, ties broken by id. One function, so a Library folder's row (#3769) is
+    /// placed among items by exactly the rules items follow.
+    static func areInOrder<Row: LibraryQueryRow>(_ lhs: Row, _ rhs: Row, sort: LibrarySort) -> Bool {
+        let ordered: ComparisonResult
+        switch sort {
+        case .recentlyAdded:
+            let (left, right) = (lhs.recentlyAddedDate, rhs.recentlyAddedDate)
+            if left != nil, right != nil {
+                ordered = compareDates(left, right)
+            } else if lhs.storageRecencyRank != rhs.storageRecencyRank {
+                ordered = lhs.storageRecencyRank < rhs.storageRecencyRank ? .orderedAscending : .orderedDescending
+            } else {
+                ordered = compareDates(left, right)
             }
-            return ordered == .orderedSame ? lhs.id < rhs.id : ordered == .orderedAscending
+        case .recentlyListened:
+            ordered = compareDates(lhs.lastListenedAt, rhs.lastListenedAt)
+        case .published:
+            ordered = compareDates(lhs.publishedAt, rhs.publishedAt)
+        case .title:
+            ordered = lhs.title.localizedStandardCompare(rhs.title)
+        case .progress:
+            let left = lhs.continuationProgressPercent ?? 0
+            let right = rhs.continuationProgressPercent ?? 0
+            ordered = left == right ? .orderedSame : (left > right ? .orderedAscending : .orderedDescending)
         }
+        return ordered == .orderedSame ? lhs.id < rhs.id : ordered == .orderedAscending
     }
 
     /// Where an item the app just said it added stands in the Library as the listener has it filtered (#4178): listed,
