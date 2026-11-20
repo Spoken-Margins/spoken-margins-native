@@ -1151,6 +1151,24 @@ class OwnerTapPrAudit(unittest.TestCase):
         cands, skips, _ = self.find([], self.APP_FILES)
         self.assertEqual((cands, skips), ([], {"no lane report": 1}))
 
+    RISKY_FILES = [{"filename": "Packages/SessionKit/Sources/SessionKitPersistence/Store.swift",
+                    "additions": 3, "deletions": 1}]
+
+    def test_a_risky_pr_with_finished_checks_is_audited_without_a_lane_report(self):
+        """The lane is off for the merge queue (#4693): no PR gets a lane report, so a risky head was never audited."""
+        for comments in ([], [self.OLD_LANE]):
+            with self.subTest(comments=comments):
+                cands, skips, _ = self.find(comments, self.RISKY_FILES)
+                self.assertEqual([c["number"] for c in cands], [366])
+                self.assertTrue(cands[0]["reason"].startswith("risky: "), cands[0]["reason"])
+                self.assertEqual(skips, {})
+
+    def test_a_risky_pr_waits_while_checks_run_or_after_one_failed(self):
+        for state in ("pending", "failed"):
+            with self.subTest(state=state):
+                cands, skips, _ = self.find([], self.RISKY_FILES, state)
+                self.assertEqual((cands, skips), ([], {f"checks {state}": 1}))
+
     def test_the_checks_are_read_only_for_a_pr_that_could_be_audited(self):
         with patch.object(A, "head_checks_state") as checks:
             self.find([self.AUDIT], self.TAP_FILES)  # audited: no checks call, one audit per head
