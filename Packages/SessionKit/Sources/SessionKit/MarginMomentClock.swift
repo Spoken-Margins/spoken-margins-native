@@ -241,8 +241,10 @@ public enum MarginMomentPlanner {
         targetMediaTimeMs: Int?,
         text: String = ""
     ) -> Anchors? {
-        guard played.isSpokenItemMargin else { return nil }
+        // A Margin with no saved place has nowhere on any clock, so it is neither played nor heard among the others (#4233).
+        guard played.isSpokenItemMargin, played.hasPlace else { return nil }
         func place(_ margin: Interjection) -> Int? {
+            guard margin.hasPlace else { return nil }
             if clock.isNarratedText { return clock.position(forTextOffset: margin.anchor.startChar) }
             return margin.anchor.mediaTimeMs
         }

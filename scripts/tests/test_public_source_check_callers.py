@@ -23,7 +23,6 @@ ALLOWED_CALLS = {
     (APP + "PublicSourceChecks.swift", "refreshWithheldMapNote"),  # the share review the listener opened
     (APP + "PublicSourceChecks.swift", "startPublicSourceCheck"),  # the helper the two taps above call
     (APP + "PublicSourceChecks.swift", "ensureMark"),  # the app's one entry point
-    (APP + "SharingExperience.swift", ".task"),  # the Share Margins sheet asking for its note when it appears
     (KIT + "SessionEngine.swift", "buildExportReadingOffMain"),  # the export build, with the Listening Map on
 }
 
