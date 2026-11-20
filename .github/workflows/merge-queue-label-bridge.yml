@@ -58,11 +58,13 @@ jobs:
     if: >-
       vars.MERGE_QUEUE == 'on' &&
       (github.event_name != 'pull_request_target' || github.event.label.name == 'automerge' ||
-       github.event.action == 'edited' || github.event.action == 'converted_to_draft')
+       (github.event.action == 'edited' && github.event.changes.title) ||
+       github.event.action == 'converted_to_draft')
     # On the job, not the workflow: a run for another label skips this job and so never joins the group, where it
     # would replace a pending `automerge` run (a concurrency group keeps only its newest pending run).
     concurrency:
-      group: merge-queue-label-bridge-${{ github.event.pull_request.number || inputs.pr || 'sweep' }}
+      # Hold checks get their own group, so an `edited` run never replaces a pending `labeled`/`unlabeled` one.
+      group: merge-queue-label-bridge-${{ github.event.pull_request.number || inputs.pr || 'sweep' }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && 'label' || 'check' }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10

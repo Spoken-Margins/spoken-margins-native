@@ -22,7 +22,8 @@ label into the queue's own commands. merge-queue-label-bridge.yml runs it from m
   the `unlabeled` event, a hold `edited`/`converted_to_draft` event, or merge_queue_dequeued.py's label removal.
 
 Every call is tried a few times. One plain line per PR. Exit 1 when a PR could not be queued or unqueued, so the
-run shows red; the next sweep tries again.
+run shows red. The next sweep retries a failed queueing. A failed unqueue is not retried (the sweep never takes a
+PR out), so it posts a comment on the PR saying it is still set to merge and how to take it out.
 
 Run: `python3 scripts/merge_queue_label_bridge.py --repo owner/name (--pr N --action ACTION | --sweep)`.
 """
@@ -231,8 +232,16 @@ def unqueue(github, pr, out=sys.stdout):
     if LABEL in labels(pr):
         print(f'#{number}: `{LABEL}` is back on, left queued', file=out)
         return True
-    ok = take_out(github, pr, out)
-    if ok and not pr.get('mergeQueueEntry'):
+    try:
+        ok = take_out(github, pr, out)
+    except Failed as error:
+        print(f'#{number}: could not take it out of the merge queue: {error}', file=out)
+        ok = False
+    if not ok:
+        # Nothing retries this, so say so where the author will see it.
+        github.comment(number, f'`{LABEL}` was removed but this PR is still set to merge. Take it out with '
+                               f'`gh pr merge {number} --disable-auto` or by hand.')
+    elif not pr.get('mergeQueueEntry'):
         print(f'#{number}: auto-merge off', file=out)
     return ok
 

@@ -211,11 +211,30 @@ class UnqueueTests(unittest.TestCase):
                 github = FakeGitHub({7: pr(7, armed=False, auto=True)}, disable_answer=(1, text))
                 self.assertEqual(run(github, '--pr', '7', '--action', 'unlabeled')[0], 0)
 
-    def test_a_real_disable_failure_is_red(self):
+    def test_a_real_disable_failure_is_red_and_tells_the_pr(self):
+        # Nothing retries a failed unqueue, so the author must hear about it.
         github = FakeGitHub({7: pr(7, armed=False, auto=True)}, disable_answer=(1, 'HTTP 502: Bad Gateway'))
         code, out = run(github, '--pr', '7', '--action', 'unlabeled')
         self.assertEqual(code, 1)
         self.assertIn('could not turn auto-merge off', out)
+        self.assertEqual(github.posted, [(7, '`automerge` was removed but this PR is still set to merge. Take it out '
+                                             'with `gh pr merge 7 --disable-auto` or by hand.')])
+
+    def test_a_failed_dequeue_tells_the_pr(self):
+        github = FakeGitHub({7: pr(7, armed=False, queued=True)})
+
+        def fail(node_id):
+            raise bridge.Failed('HTTP 502')
+        github.dequeue = fail
+        code, out = run(github, '--pr', '7', '--action', 'unlabeled')
+        self.assertEqual(code, 1)
+        self.assertEqual(len(github.posted), 1)
+        self.assertIn('still set to merge', github.posted[0][1])
+
+    def test_a_successful_unqueue_posts_nothing(self):
+        github = FakeGitHub({7: pr(7, armed=False, queued=True)})
+        run(github, '--pr', '7', '--action', 'unlabeled')
+        self.assertEqual(github.posted, [])
 
 
 class SweepTests(unittest.TestCase):
@@ -270,6 +289,74 @@ class GhRetryTests(unittest.TestCase):
         finally:
             bridge.subprocess.run = original
         self.assertEqual((code, len(calls)), (1, 1))
+
+
+class Ctx:
+    """A GitHub expression context: missing properties are null and falsy, as in Actions."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def __getattr__(self, name):
+        value = self.value.get(name) if isinstance(self.value, dict) else None
+        return Ctx(value) if isinstance(value, dict) or value is None else value
+
+    def __bool__(self):
+        return bool(self.value)
+
+    def __eq__(self, other):
+        return False
+
+    __hash__ = object.__hash__
+
+
+def evaluate(expression, github, merge_queue='on', pr_input=''):
+    """Evaluate the small subset of GitHub expressions this workflow uses (||, &&, ==, parentheses, paths)."""
+    python = expression.replace('||', ' or ').replace('&&', ' and ')
+    return eval(f'({python})', {'__builtins__': {}},  # noqa: S307 - our own workflow file, test only
+                {'github': Ctx(github), 'vars': Ctx({'MERGE_QUEUE': merge_queue}), 'inputs': Ctx({'pr': pr_input})})
+
+
+def interpolate(template, github):
+    return re.sub(r'\$\{\{(.*?)\}\}', lambda m: str(evaluate(m.group(1), github)), template)
+
+
+def event(action, **extra):
+    payload = {'action': action, 'pull_request': {'number': 7}, **extra}
+    return {'event_name': 'pull_request_target', 'event': payload}
+
+
+class WorkflowExpressionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+        cls.job = yaml.safe_load((ROOT / '.github/workflows/merge-queue-label-bridge.yml').read_text())['jobs']['bridge']
+
+    def runs(self, github):
+        return bool(evaluate(self.job['if'], github))
+
+    def group(self, github):
+        return interpolate(self.job['concurrency']['group'], github)
+
+    def test_an_edit_run_never_shares_a_group_with_a_label_run(self):
+        # A group keeps only its newest pending run: an `edited` run must not replace a pending `unlabeled` one.
+        label = self.group(event('unlabeled', label={'name': 'automerge'}))
+        self.assertEqual(label, self.group(event('labeled', label={'name': 'automerge'})))
+        self.assertNotEqual(label, self.group(event('edited', changes={'title': {'from': 'x'}})))
+        self.assertNotEqual(label, self.group(event('converted_to_draft')))
+        self.assertIn('-7-', label)
+
+    def test_a_body_only_edit_does_not_run_the_job(self):
+        self.assertFalse(self.runs(event('edited', changes={'body': {'from': 'old'}})))
+        self.assertTrue(self.runs(event('edited', changes={'title': {'from': 'old'}})))
+
+    def test_which_events_run_the_job(self):
+        self.assertTrue(self.runs(event('labeled', label={'name': 'automerge'})))
+        self.assertTrue(self.runs(event('unlabeled', label={'name': 'automerge'})))
+        self.assertFalse(self.runs(event('labeled', label={'name': 'docs'})))
+        self.assertTrue(self.runs(event('converted_to_draft')))
+        self.assertTrue(self.runs({'event_name': 'schedule', 'event': {}}))
+        self.assertFalse(bool(evaluate(self.job['if'], {'event_name': 'schedule', 'event': {}}, merge_queue='')))
 
 
 class WorkflowTests(unittest.TestCase):
