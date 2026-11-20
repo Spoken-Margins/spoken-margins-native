@@ -1143,12 +1143,12 @@ def build_prompt(batch: list[dict], blocks: list[str], base_sha: str) -> str:
     return "\n".join(head + blocks + tail)
 
 
-# PRs the lane runner never merges (scripts/lane-runner.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). After an audit on
+# PRs only the owner merges (scripts/lane_merge_rules.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). After an audit on
 # one, the owner-tap alert checks it at once (#2047): the audit is often the last thing such a PR waits for. This
 # script posts as the owner, whose comment notifies nobody and starts no workflow, and GitHub refuses a
 # workflow_dispatch of owner-tap-alert.yml until main carries it (#1492). So it removes and re-adds the
 # `owner-tap-check` label; the labeled run of .github/workflows/owner-tap-alert.yml posts the alert as the bot.
-OWNER_TAP_FILES = {"scripts/lane-runner.py"}
+OWNER_TAP_FILES = {"scripts/lane-runner.py", "scripts/lane_merge_rules.py"}
 OWNER_TAP_PREFIXES = (".github/",)
 OWNER_TAP_LABEL = "owner-tap-check"
 

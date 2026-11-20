@@ -131,10 +131,10 @@ class ShaInComment(unittest.TestCase):
         self.assertFalse(A.is_audit_comment(reply))
         self.assertIsNone(A.head_audit([reply], HEAD))
 
-    def test_audit_headings_match_the_lane_runner(self):
-        runner = (Path(__file__).resolve().parents[2] / "scripts" / "lane-runner.py").read_text()
-        m = re.search(r"^AUDITS = .*$", runner, re.M)
-        self.assertIsNotNone(m, "scripts/lane-runner.py no longer defines AUDITS on one line")
+    def test_audit_headings_match_the_merge_rules(self):
+        rules = (Path(__file__).resolve().parents[2] / "scripts" / "lane_merge_rules.py").read_text()
+        m = re.search(r"^AUDITS = .*$", rules, re.M)
+        self.assertIsNotNone(m, "scripts/lane_merge_rules.py no longer defines AUDITS on one line")
         self.assertEqual(ast.literal_eval(ast.parse(m.group(0)).body[0].value), A.AUDIT_HEADINGS)
 
     def test_comment_not_starting_with_codex_audit_is_ignored(self):

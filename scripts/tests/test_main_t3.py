@@ -179,17 +179,17 @@ class IssueTests(unittest.TestCase):
 
 
 class LaneRunnerCouplingTests(unittest.TestCase):
-    """main_t3.py drives lane-runner.py's T3 machinery; a rename there must fail here, not on the hosted Mac."""
+    """main_t3.py drives lane_t3.py's T3 machinery; a rename there must fail here, not on the hosted Mac."""
 
     def test_the_lane_runner_still_has_what_the_main_run_calls(self):
-        lane = M.load_lane_runner()
+        lane = M.load_lane_t3()
         for name in ('_run_t3_grouped', 'log_retry_passes', 'RepoTally', 'T3_TIMEOUT'):
             with self.subTest(name=name):
                 self.assertTrue(hasattr(lane, name))
         self.assertEqual(sorted(lane.PLANS), sorted(M.PLANS))
 
     def test_an_empty_selector_list_runs_the_whole_plan(self):
-        lane = M.load_lane_runner()
+        lane = M.load_lane_t3()
         _, _, ran, _ = lane.run_plans({'app': []}, lambda plan, selectors, output: manifest(passed=['T/A/test1']),
                                       Path('/nonexistent'))
         self.assertEqual(len(ran), 1)

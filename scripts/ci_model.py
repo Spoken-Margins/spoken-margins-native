@@ -1050,8 +1050,8 @@ class FakePolicyGitHub:
                 'user': {'login': 'a-maintainer'}, 'head': {'sha': self.w.head}}
 
     def comments(self, number):
-        lane = self.w.tree.module('lane_runner', 'scripts/lane-runner.py')
-        return [c for c in self.w.comments if lane.trusted_comment(c)]
+        rules = self.w.tree.module('lane_merge_rules', 'scripts/lane_merge_rules.py')
+        return [c for c in self.w.comments if rules.trusted_comment(c)]
 
 
 def b_merge_policy(world, run, job, ctx, cause):
@@ -1174,10 +1174,10 @@ def b_claude_audit(world, run, job, ctx, cause):
         world.note(cause, 'claude-audit: paused (no Claude token, or the head failed twice); posts nothing')
         return 'success', {}
     audit = world.tree.module('audit', 'ops/codex/sm_codex_audit.py')
-    lane = world.tree.module('lane_runner', 'scripts/lane-runner.py')
+    rules = world.tree.module('lane_merge_rules', 'scripts/lane_merge_rules.py')
     pr = {'number': 1, 'headRefOid': world.head, 'isDraft': False, 'baseRefName': 'main', 'title': world.s.title,
           'body': ''}
-    comments = [c for c in world.comments if lane.trusted_comment(c)]
+    comments = [c for c in world.comments if rules.trusted_comment(c)]
     files = [{'filename': p} for p in world.paths]
     ok, why, _ = audit.evaluate(pr, comments, None)
     tap_checks_done = False

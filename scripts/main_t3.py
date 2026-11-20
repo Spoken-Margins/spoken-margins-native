@@ -20,7 +20,7 @@ The contract other tools read (#4575's release gate):
 Subcommands:
 - decide --sha SHA: print and write `run=true|false` to $GITHUB_OUTPUT.
 - run --sha SHA --run-url URL: set `pending`, run both app plans (AppBehavior and AudioAdapters, every test in them)
-  through lane-runner.py's T3 machinery on a fresh simulator clone, set the final status, and on `failure` open or
+  through scripts/lane_t3.py's T3 machinery (moved out of lane-runner.py, #4769) on a fresh simulator clone, set the final status, and on `failure` open or
   update the one open "Main T3 failed on <sha7>" issue (label `regression`, marker MARKER). On `success` it closes
   that issue with a note. Tests that failed and passed on a retry are logged on the flake tally (#2176) as the lane
   does. Exits 0 only on `success`.
@@ -332,8 +332,8 @@ def close_on_green(sha: str, run_url: str, results: dict) -> None:
 
 # ---- The run --------------------------------------------------------------------------------------
 
-def load_lane_runner():
-    spec = importlib.util.spec_from_file_location('lane_runner', ROOT / 'scripts/lane-runner.py')
+def load_lane_t3():
+    spec = importlib.util.spec_from_file_location('lane_t3', ROOT / 'scripts/lane_t3.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -350,9 +350,9 @@ def read_manifests(evidence: Path) -> dict:
 
 
 def run_suite(sha: str, run_id: str, evidence: Path):
-    """lane-runner.py's T3 on a fresh clone with every test of both plans (no --only-testing). Returns
+    """lane_t3.py's T3 on a fresh clone with every test of both plans (no --only-testing). Returns
     (verdict, ran, details, crashes, results)."""
-    lane = load_lane_runner()
+    lane = load_lane_t3()
     lane.T3_TIMEOUT = RUN_TIMEOUT
     grouped = {plan: [] for plan in PLANS}  # an empty selector list runs the whole plan
     verdict, where, ran, details, crashes, _ = lane._run_t3_grouped(grouped, f'main-{sha[:7]}-{run_id}', evidence)
