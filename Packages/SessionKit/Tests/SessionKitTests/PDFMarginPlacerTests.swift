@@ -334,6 +334,8 @@ final class PDFMarginPlacerTests: XCTestCase {
         let seconds = Date().timeIntervalSince(started)
         XCTAssertEqual(placements.count, 200)
         XCTAssertEqual(placements.filter { if case .highlight = $0.spot { return true } else { return false } }.count, 200)
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.13 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards a page's text read again for every Margin (see the comment above the test).
         XCTAssertLessThan(seconds, 60, "placing 200 Margins on 300 pages took \(seconds) s")
     }
 

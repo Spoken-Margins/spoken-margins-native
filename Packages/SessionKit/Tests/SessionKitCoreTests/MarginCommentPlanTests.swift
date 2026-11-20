@@ -189,6 +189,8 @@ final class MarginCommentPlanTests: XCTestCase {
         let plan = MarginCommentPlan.make(itemId: itemId, document: document(text), margins: margins)
         XCTAssertEqual(plan.entries.count, 200)
         XCTAssertTrue(plan.entries.allSatisfy { $0.sentence != nil })
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.3 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards a rescan of the whole text for each Margin's sentence.
         XCTAssertLessThan(Date().timeIntervalSince(started), 10)
     }
 
