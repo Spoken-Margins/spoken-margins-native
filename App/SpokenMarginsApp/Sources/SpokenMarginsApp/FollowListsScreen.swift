@@ -32,7 +32,7 @@ struct FollowListsScreen: View {
 
     private var listBody: some View {
         let rows = FollowListScreens.overviewRows(lists: listsState.lists, subscriptions: subscriptions)
-        List {
+        return List {
             if rows.isEmpty {
                 SMExperienceEmptyState(
                     systemImage: "list.bullet",
