@@ -65,8 +65,10 @@ extension Gate1AppModel {
         }
         let id = start.collection.id
         var name = start.collection.name
-        var record = start.record
-        switch await libraryCollections.startImport(start.collection, isNew: start.isNew, record: record, store: store) {
+        // Every write carries the jobs settled since the last good one, so a failed write never leaves the stored record
+        // saying `added` for an item its collection lacks (#3769 audit).
+        var settling = LibraryCollectionImport.Settling(record: start.record)
+        switch await libraryCollections.startImport(start.collection, isNew: start.isNew, record: start.record, store: store) {
         case .saved(let stored): name = stored.name
         case .gone, .refused: return nil
         case .failed(let error):
@@ -79,22 +81,21 @@ extension Gate1AppModel {
         for job in start.jobs {
             let outcome = await importCollectionMember(job, capture: capture, store: store)
             if case .added = outcome { added += 1 } else { failed += 1 }
-            let before = record
-            let now = Date()
-            var scratch = start.collection
-            LibraryCollectionImport.settle(job, outcome: outcome, record: &record, collection: &scratch, now: now)
+            settling.settle(job, outcome: outcome, now: Date())
+            let record = settling.record
+            let pending = settling
             let result = await libraryCollections.update(id, record: record, store: store) { current, _ in
-                var settled = before
-                var collection = current
-                LibraryCollectionImport.settle(job, outcome: outcome, record: &settled, collection: &collection, now: now)
-                return collection
+                pending.collection(from: current)
             }
             switch result {
-            case .saved(let stored): name = stored.name
+            case .saved(let stored):
+                name = stored.name
+                settling.didSave(record)
             case .gone: deleted = true
             case .refused: break
             case .failed(let error):
-                // The items are saved; the next launch puts any that missed the collection back in (`LibraryFolderLaunchRule`).
+                // The next write carries this job too. If none succeeds, the stored record still has its member `adding`,
+                // and the next launch puts a saved item in the collection (`LibraryFolderLaunchRule`).
                 diagnostics["collectionImportSaveFailure"] = SafeErrorText.describe(error)
             }
             if deleted { break }
@@ -105,7 +106,7 @@ extension Gate1AppModel {
         // Deleted while it filled: the items that landed are in the Library, and the listener chose to drop the collection.
         guard !deleted else { return nil }
         let summary = LibraryCollectionImport.summary(
-            name: name, isNew: start.isNew, added: added, failed: failed, notAdded: record.notAdded.count)
+            name: name, isNew: start.isNew, added: added, failed: failed, notAdded: settling.record.notAdded.count)
         present(summary)
         return summary
     }

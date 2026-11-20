@@ -98,6 +98,53 @@ public enum LibraryCollectionImport {
         }
     }
 
+    /// The jobs settled since the collection and record were last saved together (#3769 audit). Every write replays all
+    /// of them onto the collection as stored at that moment and onto the record as last saved, so a write that failed is
+    /// carried by the next one, and a saved record never says `added` for an item the stored collection lacks (which
+    /// `LibraryFolderLaunchRule` would mark `removed` for good). When the last write fails too, the stored record still
+    /// has those members `adding`, and the next launch puts their items in.
+    public struct Settling: Sendable {
+        private struct Settled: Sendable {
+            var job: LibraryFolderMerge.Job
+            var outcome: Outcome
+            var now: Date
+        }
+
+        /// The record as it was last saved with its collection.
+        public private(set) var saved: LibraryFolderRecord
+        private var pending: [Settled] = []
+
+        public init(record: LibraryFolderRecord) { saved = record }
+
+        /// How many settled jobs are waiting for a write.
+        public var pendingCount: Int { pending.count }
+
+        public mutating func settle(_ job: LibraryFolderMerge.Job, outcome: Outcome, now: Date) {
+            pending.append(Settled(job: job, outcome: outcome, now: now))
+        }
+
+        /// The record to write: every pending job settled onto the record as last saved.
+        public var record: LibraryFolderRecord { applied(to: ItemCollection(id: saved.id, name: "", createdAt: Date.distantPast)).record }
+
+        /// The collection to write: every pending job settled onto `collection`, the collection as stored now.
+        public func collection(from collection: ItemCollection) -> ItemCollection { applied(to: collection).collection }
+
+        /// Call when `record` and the collection were written together; the pending jobs are then settled for good.
+        public mutating func didSave(_ record: LibraryFolderRecord) {
+            saved = record
+            pending.removeAll()
+        }
+
+        private func applied(to collection: ItemCollection) -> (record: LibraryFolderRecord, collection: ItemCollection) {
+            var record = saved
+            var collection = collection
+            for item in pending {
+                LibraryCollectionImport.settle(item.job, outcome: item.outcome, record: &record, collection: &collection, now: item.now)
+            }
+            return (record, collection)
+        }
+    }
+
     /// A new pick with nothing to import makes no collection: an empty row the listener never asked for would only puzzle.
     public static func savesCollection(_ start: Start) -> Bool { !(start.isNew && start.jobs.isEmpty) }
 
