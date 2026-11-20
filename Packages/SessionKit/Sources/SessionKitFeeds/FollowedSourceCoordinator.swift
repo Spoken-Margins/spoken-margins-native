@@ -761,8 +761,11 @@ private struct HTTPNotModified: Error, LocalizedError {
     var errorDescription: String? { "not_modified" }
 }
 
-private final class BoundedRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    private let maximumRedirects: Int
+/// Follows at most `maximumRedirects` redirects per task, each to an https address (#3817). Internal so tests can
+/// call `urlSession(_:task:willPerformHTTPRedirection:...)` directly: a stub `URLProtocol` can't test it, because
+/// what a session does after the protocol reports a redirect differs between OS versions (#4681).
+final class BoundedRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    let maximumRedirects: Int
     private let lock = NSLock()
     private var counts: [Int: Int] = [:]
 
