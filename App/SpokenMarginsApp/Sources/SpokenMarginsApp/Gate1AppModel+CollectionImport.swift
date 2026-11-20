@@ -16,6 +16,10 @@ extension Gate1AppModel {
         guard libraryCollections.importCapture == nil else { reportFailure(Self.collectionImportBusyMessage); return nil }
         let store: SQLiteSessionStore
         do { store = try requireStore() } catch { reportFailure(error, context: "Couldn't add the folder"); return nil }
+        // Busy from here, before the walk's await, so a second pick during the walk is turned away (#3769).
+        let capture = CollectionImportCapture()
+        libraryCollections.importCapture = capture
+        defer { libraryCollections.importCapture = nil }
         let accessed = folder.startAccessingSecurityScopedResource()
         defer { if accessed { folder.stopAccessingSecurityScopedResource() } }
         let walk = await Task.detached(priority: .userInitiated) { LibraryFolderWalk.walk(folder) }.value
@@ -24,7 +28,7 @@ extension Gate1AppModel {
             bookmark: try? folder.bookmarkData(), name: folder.lastPathComponent,
             folders: libraryCollections.folders, collections: libraryCollections.collections, now: Date(),
             collectionID: "collection-\(UUID().uuidString)", makeItemID: Self.collectionImportItemID)
-        return await runCollectionImport(start, store: store)
+        return await runCollectionImport(start, capture: capture, store: store)
     }
 
     /// A link list with a title, picked in Files: a collection of its links in the list's order. Picking the same list
@@ -34,48 +38,74 @@ extension Gate1AppModel {
         guard libraryCollections.importCapture == nil else { reportFailure(Self.collectionImportBusyMessage); return nil }
         let store: SQLiteSessionStore
         do { store = try requireStore() } catch { reportFailure(error, context: "Couldn't add the list"); return nil }
+        let capture = CollectionImportCapture()
+        libraryCollections.importCapture = capture
+        defer { libraryCollections.importCapture = nil }
         let start = LibraryCollectionImport.start(
             walk: LibraryFolderWalk.linkList(list, named: url.lastPathComponent),
             pickedPath: LibraryFolderRecord.standardizedPath(of: url), bookmark: nil, name: title,
             folders: libraryCollections.folders, collections: libraryCollections.collections, now: Date(),
             collectionID: "collection-\(UUID().uuidString)", makeItemID: Self.collectionImportItemID)
-        return await runCollectionImport(start, store: store)
+        return await runCollectionImport(start, capture: capture, store: store)
     }
 
     nonisolated static func collectionImportItemID() -> String { "item-collection-\(UUID().uuidString.lowercased())" }
 
-    private func runCollectionImport(_ start: LibraryCollectionImport.Start, store: SQLiteSessionStore) async -> LibraryCollectionImport.Summary? {
+    /// Runs a started import. The caller holds `capture` set as `importCapture` until this returns. Each file's result is
+    /// written to the collection as it is stored at that moment (`LibraryCollectionModel.update`), so a rename, an edit or
+    /// a delete made while the import runs is kept; a deleted collection ends the import (#3769).
+    private func runCollectionImport(
+        _ start: LibraryCollectionImport.Start, capture: CollectionImportCapture, store: SQLiteSessionStore
+    ) async -> LibraryCollectionImport.Summary? {
         guard LibraryCollectionImport.savesCollection(start) else {
             let summary = LibraryCollectionImport.summary(
                 name: start.collection.name, isNew: true, added: 0, failed: 0, notAdded: start.record.notAdded.count)
             present(summary)
             return summary
         }
-        var collection = start.collection
+        let id = start.collection.id
+        var name = start.collection.name
         var record = start.record
-        if let error = await libraryCollections.saveImport(collection, record: record, store: store) {
-            reportFailure(error, context: "Couldn't add “\(collection.name)”")
+        switch await libraryCollections.startImport(start.collection, isNew: start.isNew, record: record, store: store) {
+        case .saved(let stored): name = stored.name
+        case .gone, .refused: return nil
+        case .failed(let error):
+            reportFailure(error, context: "Couldn't add “\(name)”")
             return nil
         }
-        let capture = CollectionImportCapture()
-        libraryCollections.importCapture = capture
-        defer { libraryCollections.importCapture = nil }
         var added = 0
         var failed = 0
+        var deleted = false
         for job in start.jobs {
             let outcome = await importCollectionMember(job, capture: capture, store: store)
-            LibraryCollectionImport.settle(job, outcome: outcome, record: &record, collection: &collection, now: Date())
             if case .added = outcome { added += 1 } else { failed += 1 }
-            if let error = await libraryCollections.saveImport(collection, record: record, store: store) {
+            let before = record
+            let now = Date()
+            var scratch = start.collection
+            LibraryCollectionImport.settle(job, outcome: outcome, record: &record, collection: &scratch, now: now)
+            let result = await libraryCollections.update(id, record: record, store: store) { current, _ in
+                var settled = before
+                var collection = current
+                LibraryCollectionImport.settle(job, outcome: outcome, record: &settled, collection: &collection, now: now)
+                return collection
+            }
+            switch result {
+            case .saved(let stored): name = stored.name
+            case .gone: deleted = true
+            case .refused: break
+            case .failed(let error):
                 // The items are saved; the next launch puts any that missed the collection back in (`LibraryFolderLaunchRule`).
                 diagnostics["collectionImportSaveFailure"] = SafeErrorText.describe(error)
             }
+            if deleted { break }
         }
         _ = try? await reloadLibraryRowsOffMain(store: store)
         if added > 0 { markOnboardingSteps([.addedOwnSource, .addedFromFiles]) }
         libraryCollections.importCapture = nil
+        // Deleted while it filled: the items that landed are in the Library, and the listener chose to drop the collection.
+        guard !deleted else { return nil }
         let summary = LibraryCollectionImport.summary(
-            name: collection.name, isNew: start.isNew, added: added, failed: failed, notAdded: record.notAdded.count)
+            name: name, isNew: start.isNew, added: added, failed: failed, notAdded: record.notAdded.count)
         present(summary)
         return summary
     }

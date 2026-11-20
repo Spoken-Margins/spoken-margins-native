@@ -142,6 +142,9 @@ final class LibraryCollectionImportTests: XCTestCase {
                        .init(message: "Added 3 items to “X”.", kind: .success))
         XCTAssertEqual(I.summary(name: "X", isNew: false, added: 0, failed: 0, notAdded: 0),
                        .init(message: "“X” is up to date.", kind: .success))
+        // A re-pick of an unchanged folder whose packet was skipped the first time is still up to date (#3769 audit).
+        XCTAssertEqual(I.summary(name: "X", isNew: false, added: 0, failed: 0, notAdded: 1),
+                       .init(message: "“X” is up to date.", kind: .success))
         XCTAssertEqual(I.summary(name: "X", isNew: true, added: 0, failed: 2, notAdded: 0),
                        .init(message: "None of the 2 items in “X” could be added.", kind: .failure))
         XCTAssertEqual(I.summary(name: "X", isNew: false, added: 0, failed: 1, notAdded: 0).message, "The 1 item in “X” couldn't be added.")

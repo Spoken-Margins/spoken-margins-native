@@ -110,6 +110,9 @@ public enum LibraryCollectionImport {
     }
 
     public static func summary(name: String, isNew: Bool, added: Int, failed: Int, notAdded: Int) -> Summary {
+        // A re-pick that brought nothing new and lost nothing new is up to date, even when the walk still skips files it
+        // skipped the first time (a packet, a second copy): those were reported then (#3769).
+        if !isNew, added == 0, failed == 0 { return Summary(message: "“\(name)” is up to date.", kind: .success) }
         let missing = failed + notAdded
         let missingWords = missing == 0 ? "" : " \(missing) couldn't be added."
         if added == 0 {
