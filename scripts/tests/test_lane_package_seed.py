@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -12,9 +13,52 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import lane_package_seed as seed  # noqa: E402
 
-PINS = {'mlx-swift': 'a' * 40, 'zipfoundation': 'b' * 40}
 OLD = time.time() - 3600
 APFS = unittest.skipUnless(sys.platform == 'darwin', 'cp -c (APFS clone) is macOS only')
+GIT_ENV = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1',
+           'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@example.invalid',
+           'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@example.invalid'}
+UPSTREAMS = tempfile.TemporaryDirectory()
+
+
+def git(*args, cwd=None):
+    return subprocess.run(['git', '-c', 'protocol.file.allow=always', *args], cwd=cwd, env=GIT_ENV, check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def make_upstream(identity, submodule=None):
+    """A real upstream repository with two commits; (path, [first, second] revisions). With
+    `submodule`, the second commit adds it at `Source/Cmlx/mlx`, as mlx-swift has."""
+    repo = Path(UPSTREAMS.name) / identity
+    git('init', '-q', str(repo))
+    revisions = []
+    for n in (1, 2):
+        (repo / 'Package.swift').write_text(f'// {identity} {n}\n')
+        if submodule and n == 2:
+            git('submodule', 'add', '-q', str(submodule), 'Source/Cmlx/mlx', cwd=repo)
+        git('add', '.', cwd=repo)
+        git('commit', '-q', '-m', str(n), cwd=repo)
+        revisions.append(git('rev-parse', 'HEAD', cwd=repo))
+    return repo, revisions
+
+
+_MLX_CORE = make_upstream('mlx')
+_UP = {'mlx-swift': make_upstream('mlx-swift', submodule=_MLX_CORE[0]), 'zipfoundation': make_upstream('zipfoundation')}
+PINS = {identity: revs[1] for identity, (_, revs) in _UP.items()}
+EARLIER = {identity: revs[0] for identity, (_, revs) in _UP.items()}
+
+
+def make_checkout(folder, identity, subpath, revision):
+    """What SwiftPM leaves: a bare `repositories/<pkg>` and a `git clone --shared` checkout of it, read-only."""
+    repository = Path(folder) / 'repositories' / f'{identity}-1234'
+    checkout = Path(folder) / 'checkouts' / subpath
+    git('clone', '-q', '--bare', str(_UP[identity][0]), str(repository))
+    git('clone', '-q', '--shared', '--no-checkout', str(repository), str(checkout))
+    git('-C', str(checkout), 'checkout', '-q', '--detach', revision)
+    if (checkout / '.gitmodules').is_file():
+        git('-C', str(checkout), 'submodule', 'update', '-q', '--init', '--recursive')
+    for name in ('config', 'objects/info/alternates', '../Package.swift'):
+        (checkout / '.git' / name).chmod(0o444)
 
 
 def write_resolved(root, pins, version=3):
@@ -27,15 +71,21 @@ def write_resolved(root, pins, version=3):
     return path
 
 
-def write_packages(folder, pins, stamp=OLD, build_path=None, missing=(), edited=()):
-    """A SourcePackages folder as Xcode leaves it: state file, checkouts, and an artifact path naming its build."""
+def write_packages(folder, pins, stamp=OLD, build_path=None, missing=(), edited=(), checked_out=None):
+    """A SourcePackages folder as Xcode leaves it: state file, real git checkouts, and an artifact path naming its build.
+
+    `checked_out` overrides the revision actually checked out (a checkout being updated in place). A pin
+    that is not a real upstream revision gets a plain folder, enough for the pin-matching tests."""
     folder = Path(folder)
     deps = []
     for identity, revision in pins.items():
         subpath = identity.upper()
         if identity not in missing:
-            (folder / 'checkouts' / subpath).mkdir(parents=True, exist_ok=True)
-            (folder / 'checkouts' / subpath / 'Package.swift').write_text(f'// {revision}\n')
+            head = (checked_out or {}).get(identity, revision)
+            if identity in _UP and head in _UP[identity][1]:
+                make_checkout(folder, identity, subpath, head)
+            else:
+                (folder / 'checkouts' / subpath).mkdir(parents=True, exist_ok=True)
         deps.append({'basedOn': None, 'packageRef': {'identity': identity, 'kind': 'remoteSourceControl'},
                      'state': {'checkoutState': {'revision': revision},
                                'name': 'edited' if identity in edited else 'sourceControlCheckout'},
@@ -127,17 +177,20 @@ class RewriteTests(Base):
 @APFS
 class SeedTests(Base):
     def test_a_fresh_build_folder_is_cloned_from_the_matching_donor_and_the_donor_is_untouched(self):
-        write_packages(self.slot('wrong'), {**PINS, 'mlx-swift': 'e' * 40})
+        write_packages(self.slot('wrong'), {**PINS, 'mlx-swift': EARLIER['mlx-swift']})
         donor = write_packages(self.slot('donor'), PINS, build_path='/donor/.build/dd/SourcePackages')
         before = (donor / seed.STATE).read_text()
+        package = (donor / 'checkouts' / 'MLX-SWIFT' / 'Package.swift').read_text()
         derived = self.dir / 'new' / 'dd'
         self.assertEqual(seed.seed(self.root, derived, self.cache), donor)
         target = derived / 'SourcePackages'
         self.assertEqual(seed.state_pins(target), PINS)
         self.assertIn(str(target), (target / seed.STATE).read_text())
-        (target / 'checkouts' / 'MLX-SWIFT' / 'Package.swift').write_text('changed in the clone')
+        cloned = target / 'checkouts' / 'MLX-SWIFT' / 'Package.swift'
+        cloned.chmod(0o644)
+        cloned.write_text('changed in the clone')
         self.assertEqual((donor / seed.STATE).read_text(), before)
-        self.assertEqual((donor / 'checkouts' / 'MLX-SWIFT' / 'Package.swift').read_text(), f'// {"a" * 40}\n')
+        self.assertEqual((donor / 'checkouts' / 'MLX-SWIFT' / 'Package.swift').read_text(), package)
         self.assertEqual([p.name for p in derived.iterdir()], ['SourcePackages'])  # no temporary left
 
     def test_an_existing_source_packages_is_left_alone(self):
@@ -163,6 +216,69 @@ class SeedTests(Base):
             self.assertIsNone(seed.seed(self.root, derived, self.cache))
         self.assertEqual(list(derived.iterdir()), [])
 
+    def test_a_seeded_checkout_still_works_after_the_donor_is_deleted(self):
+        donor = write_packages(self.slot('donor'), PINS)
+        derived = self.dir / 'new' / 'dd'
+        self.assertEqual(seed.seed(self.root, derived, self.cache), donor)
+        shutil.rmtree(self.cache / 'donor')
+        target = derived / 'SourcePackages'
+        for identity, subpath in (('mlx-swift', 'MLX-SWIFT'), ('zipfoundation', 'ZIPFOUNDATION')):
+            checkout = str(target / 'checkouts' / subpath)
+            self.assertEqual(git('-C', checkout, 'rev-parse', 'HEAD^{commit}'), PINS[identity])
+            git('-C', checkout, 'cat-file', '-e', EARLIER[identity])  # history, read through alternates
+            git('-C', checkout, 'status', '--porcelain')
+            url = git('-C', checkout, 'config', 'remote.origin.url')
+            self.assertTrue(url.startswith(str(target / 'repositories') + '/'), url)
+            git('-C', checkout, 'fetch', '-q', 'origin')
+        status = git('-C', str(target / 'checkouts' / 'MLX-SWIFT'), 'submodule', 'status', '--recursive')
+        self.assertTrue(status.startswith(_MLX_CORE[1][1]), status)  # checked out at its recorded commit
+
+    def test_a_shared_copy_outlives_the_build_it_was_kept_from(self):
+        built = self.dir / 'built' / 'dd'
+        write_packages(built / 'SourcePackages', PINS)
+        shared = seed.keep_shared(self.root, built, self.cache)
+        self.assertIsNotNone(shared)
+        os.utime(shared / seed.STATE, (OLD, OLD))  # settled
+        shutil.rmtree(built)  # phone-build deletes dd-sim after a passing build
+        derived = self.dir / 'new' / 'dd'
+        self.assertIsNotNone(seed.seed(self.root, derived, self.cache))
+        checkout = str(derived / 'SourcePackages' / 'checkouts' / 'MLX-SWIFT')
+        git('-C', checkout, 'cat-file', '-e', EARLIER['mlx-swift'])
+
+    def test_a_donor_checkout_updated_in_place_is_not_used(self):
+        write_packages(self.slot('donor'), PINS, checked_out={'mlx-swift': EARLIER['mlx-swift']})
+        derived = self.dir / 'new' / 'dd'
+        self.assertIsNone(seed.seed(self.root, derived, self.cache))
+        self.assertEqual(list(derived.iterdir()), [])
+
+    def test_a_donor_whose_submodule_is_mid_update_is_not_used(self):
+        donor = write_packages(self.slot('donor'), PINS)
+        submodule = donor / 'checkouts' / 'MLX-SWIFT' / 'Source' / 'Cmlx' / 'mlx'
+        git('-C', str(submodule), 'checkout', '-q', '--detach', _MLX_CORE[1][0])
+        derived = self.dir / 'new' / 'dd'
+        self.assertIsNone(seed.seed(self.root, derived, self.cache))
+        self.assertEqual(list(derived.iterdir()), [])
+
+    def test_a_donor_checkout_without_git_is_not_used(self):
+        donor = write_packages(self.slot('donor'), PINS)
+        shutil.rmtree(donor / 'checkouts' / 'ZIPFOUNDATION' / '.git')
+        derived = self.dir / 'new' / 'dd'
+        self.assertIsNone(seed.seed(self.root, derived, self.cache))
+        self.assertEqual(list(derived.iterdir()), [])
+
+    def test_a_relative_derived_data_path_writes_absolute_paths(self):
+        write_packages(self.slot('donor'), PINS, build_path='/donor/.build/dd/SourcePackages')
+        cwd = os.getcwd()
+        os.chdir(self.dir)
+        try:
+            self.assertIsNotNone(seed.seed(self.root, Path('rel/dd'), self.cache))
+        finally:
+            os.chdir(cwd)
+        target = self.dir / 'rel' / 'dd' / 'SourcePackages'
+        path = json.loads((target / seed.STATE).read_text())['object']['artifacts'][0]['path']
+        self.assertTrue(os.path.isabs(path), path)
+        self.assertEqual(os.path.realpath(path.split('/artifacts/')[0]), os.path.realpath(target))
+
     def test_keep_shared_copies_once_per_pins(self):
         derived = self.dir / 'built' / 'dd'
         write_packages(derived / 'SourcePackages', PINS)
@@ -173,7 +289,7 @@ class SeedTests(Base):
 
     def test_keep_shared_skips_packages_that_do_not_match_the_pins(self):
         derived = self.dir / 'built' / 'dd'
-        write_packages(derived / 'SourcePackages', {**PINS, 'mlx-swift': 'f' * 40})
+        write_packages(derived / 'SourcePackages', {**PINS, 'mlx-swift': EARLIER['mlx-swift']})
         self.assertIsNone(seed.keep_shared(self.root, derived, self.cache))
         self.assertFalse((self.cache / seed.SHARED).exists())
 
