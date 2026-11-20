@@ -33,7 +33,8 @@ class LibraryRowDynamicTypeTests(unittest.TestCase):
         self.assertNotIn(".frame(width: 40, height: 40)", text[text.index("struct LibraryRowPlayLabel"):])
         self.assertIn("min(max(iconWidth, 38), 76)", text)
         self.assertIn("min(max(diameter, 40), 80)", text)
-        self.assertEqual(text.count("@ScaledMetric(relativeTo: .body)"), 3)
+        # The tile, the play circle, and the Margins tag and badges that scale with the tile (#4698).
+        self.assertEqual(text.count("@ScaledMetric(relativeTo: .body)"), 5)
 
     def test_the_status_line_may_take_two_lines_only_at_the_largest_normal_size(self):
         text = _text()

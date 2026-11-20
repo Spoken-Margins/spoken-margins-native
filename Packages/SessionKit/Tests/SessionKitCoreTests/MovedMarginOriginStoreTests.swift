@@ -104,6 +104,7 @@ final class MovedMarginOriginStoreTests: XCTestCase {
             "transcriptionStatus", "transcript", "cleanedTranscript", "displayText", "status", "anchorContextStatus",
             "alignedTranscript", "podcastAnchorEvidence", "sourceExactEditionSHA256", "podcastAnchorEvidenceCaptureStatus",
             "podcastAnchorEvidenceFailureReason", "isStarredForSharing", "privateSharingNote", "captureKind", "replyTo", "sharedAs", "paperRole",
+            "tidyDecision",
         ]
         XCTAssertEqual(stored, expected, "a stored property of Interjection has no key in the stored row (or one was removed)")
 

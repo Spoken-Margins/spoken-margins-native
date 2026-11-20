@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SessionKit
 
-/// Sending replies back (#3221): which of the listener's Margins the "Send replies to <friend>" share offers and
+/// Sending replies back (#3221): which of the listener's Margins the "Share replies with <friend>" share offers and
 /// pre-selects, and how the friend's reply reads in the originator's review.
 final class ReplyBackTests: XCTestCase {
     private func date(_ seconds: Double) -> Date { Date(timeIntervalSince1970: 1_700_000_000 + seconds) }
@@ -60,11 +60,34 @@ final class ReplyBackTests: XCTestCase {
             own("extra", madeAt: 210)
         ]
         let offer = try XCTUnwrap(ReplyBackOffer.make(localMargins: margins, layers: [layer("ana")]))
-        XCTAssertEqual(offer.title, "Send replies to Ana")
+        XCTAssertEqual(offer.title, "Share replies with Ana")
         XCTAssertEqual(ids(offer.replies), ["reply"])
         XCTAssertEqual(ids(offer.others), ["extra"])
         XCTAssertEqual(ids(offer.candidates), ["reply", "extra"], "a Margin made before the import is not offered")
         XCTAssertEqual(offer.candidates.map(offer.isPreselected), [true, false])
+    }
+
+    /// #3906, the Design's table: Share, the one verb for sending to a person, and the title follows what the sheet
+    /// holds, so the row never calls new Margins replies.
+    func testTheTitleSaysShareAndFollowsWhatTheSheetHolds() throws {
+        let reply = own("reply", madeAt: 200, replyingTo: "ana"), extra = own("extra", madeAt: 210)
+        let one = [layer("ana")]
+        let two = [layer("ana", importedAt: 100), layer("ben", importedAt: 110)]
+        let three = two + [layer("cleo", importedAt: 120)]
+        let nameless = [layer("ana", label: " ")]
+        let rows: [(String, [Interjection], [ImportedCommentaryLayer], String)] = [
+            ("a linked reply", [reply], one, "Share replies with Ana"),
+            ("a reply and another new Margin", [reply, extra], one, "Share replies with Ana"),
+            ("only Margins that are not replies", [extra], one, "Share your Margins with Ana"),
+            ("replies to two friends", [own("r1", madeAt: 200, replyingTo: "ana"), own("r2", madeAt: 201, replyingTo: "ben")], two, "Share replies with Ana and Ben"),
+            ("no reply, two friends on the item", [extra], two, "Share your Margins with Ana and Ben"),
+            ("no reply, three friends on the item", [extra], three, "Share your Margins with Ana, Ben and 1 other"),
+            ("a reply to a friend with no name", [reply], nameless, "Share replies with your friend"),
+            ("no reply, a friend with no name", [extra], nameless, "Share your Margins with your friend")
+        ]
+        for (label, margins, layers, expected) in rows {
+            XCTAssertEqual(try XCTUnwrap(ReplyBackOffer.make(localMargins: margins, layers: layers)).title, expected, label)
+        }
     }
 
     func testNoMarginSinceTheImportMeansNoOffer() {
@@ -76,7 +99,7 @@ final class ReplyBackTests: XCTestCase {
     func testAFriendWhoseFileNamedNobodyIsNeverOfferedUnderAStandInName() throws {
         for label in ["Unsigned sender", " unsigned  sender ", "Imported collection", " ", ""] {
             let offer = try XCTUnwrap(ReplyBackOffer.make(localMargins: [own("extra", madeAt: 200)], layers: [layer("ana", label: label)]))
-            XCTAssertEqual(offer.title, "Send replies to your friend", label)
+            XCTAssertEqual(offer.title, "Share your Margins with your friend", label)
         }
     }
 
@@ -90,7 +113,7 @@ final class ReplyBackTests: XCTestCase {
         unstarred.isStarredForSharing = false
 
         let single = try XCTUnwrap(ReplyBackOffer.make(localMargins: [own("extra", madeAt: 200)], layers: layers))
-        XCTAssertEqual(single.title, "Send replies to Ana")
+        XCTAssertEqual(single.title, "Share your Margins with Ana")
         XCTAssertEqual(ids(single.candidates), ["extra"])
         XCTAssertEqual(single.candidates.map(single.isPreselected), [true])
 
@@ -140,12 +163,12 @@ final class ReplyBackTests: XCTestCase {
     func testTheFriendNamedIsTheOneTheRepliesAnswer() throws {
         let layers = [layer("ana", importedAt: 100), layer("ben", importedAt: 110), layer("cleo", importedAt: 120)]
         let toBen = [own("r1", madeAt: 200, replyingTo: "ben")]
-        XCTAssertEqual(try XCTUnwrap(ReplyBackOffer.make(localMargins: toBen, layers: layers)).title, "Send replies to Ben")
+        XCTAssertEqual(try XCTUnwrap(ReplyBackOffer.make(localMargins: toBen, layers: layers)).title, "Share replies with Ben")
         let toTwo = [own("r1", madeAt: 200, replyingTo: "cleo"), own("r2", madeAt: 201, replyingTo: "ana")]
-        XCTAssertEqual(try XCTUnwrap(ReplyBackOffer.make(localMargins: toTwo, layers: layers)).title, "Send replies to Cleo and Ana")
+        XCTAssertEqual(try XCTUnwrap(ReplyBackOffer.make(localMargins: toTwo, layers: layers)).title, "Share replies with Cleo and Ana")
         let none = [own("x", madeAt: 200)]
         XCTAssertEqual(try XCTUnwrap(ReplyBackOffer.make(localMargins: none, layers: layers)).title,
-                       "Send replies to Ana, Ben and 1 other", "no reply names a friend, so every friend on the item does")
+                       "Share your Margins with Ana, Ben and 1 other", "no reply names a friend, so every friend on the item does")
     }
 
     func testAReplyToAFriendWhosePacketWasDeletedFallsBackToAnOtherNewMargin() throws {
@@ -386,7 +409,7 @@ final class ReplyBackTests: XCTestCase {
         let offer = try XCTUnwrap(ReplyBackOffer.make(localMargins: margins, layers: [layer("ana", label: "  ")]))
         XCTAssertEqual(ids(offer.candidates), ["r1", "r2"])
         XCTAssertEqual(offer.candidates.map(offer.isPreselected), [true, true])
-        XCTAssertEqual(offer.title, "Send replies to your friend")
+        XCTAssertEqual(offer.title, "Share replies with your friend")
         XCTAssertNotNil(ReplyBackOffer.make(localMargins: [margins[0]], layers: [layer("ana")]))
     }
 

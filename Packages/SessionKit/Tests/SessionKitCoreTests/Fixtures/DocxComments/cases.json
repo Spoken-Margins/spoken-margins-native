@@ -1,0 +1,200 @@
+{
+  "cases": [
+    {
+      "name": "sentence inside one run",
+      "file": "one-run.docx",
+      "note": "splits one w:t twice; one comment ends at the run's end",
+      "margins": [
+        {
+          "marginId": "m1",
+          "sentenceText": "However little known the feelings or views of such a man may be on his first entering a neighbourhood, this truth is so well fixed in the minds of the surrounding families, that he is considered the rightful property of some one or other of their daughters.",
+          "precedingText": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife. ",
+          "commentText": "Comment m1: worth a second look.",
+          "expectedCommentedText": "However little known the feelings or views of such a man may be on his first entering a neighbourhood, this truth is so well fixed in the minds of the surrounding families, that he is considered the rightful property of some one or other of their daughters.",
+          "expectedSpot": "sentence",
+          "expectedParagraphContains": null
+        },
+        {
+          "marginId": "m2",
+          "sentenceText": "Mr. Bennet replied that he had not.",
+          "precedingText": " he is considered the rightful property of some one or other of their daughters. ",
+          "commentText": "Comment m2: worth a second look.",
+          "expectedCommentedText": "Mr. Bennet replied that he had not.",
+          "expectedSpot": "sentence",
+          "expectedParagraphContains": null
+        },
+        {
+          "marginId": "m3",
+          "sentenceText": "However little known the feelings or views of such a man may be on his first entering a neighbourhood, this truth is so well fixed in the minds of the surrounding families, that he is considered the rightful property of some one or other of their daughters.",
+          "precedingText": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife. ",
+          "commentText": "A second Margin on the same sentence.",
+          "expectedCommentedText": "However little known the feelings or views of such a man may be on his first entering a neighbourhood, this truth is so well fixed in the minds of the surrounding families, that he is considered the rightful property of some one or other of their daughters.",
+          "expectedSpot": "sentence",
+          "expectedParagraphContains": null
+        }
+      ]
+    },
+    {
+      "name": "across runs with different formatting",
+      "file": "formatted-runs.docx",
+      "note": "starts at a run's edge, ends inside an italic run",
+      "margins": [
+        {
+          "marginId": "m1",
+          "sentenceText": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife.",
+          "precedingText": "",
+          "commentText": "Comment m1: worth a second look.",
+          "expectedCommentedText": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife.",
+          "expectedSpot": "sentence",
+          "expectedParagraphContains": null
+        }
+      ]
+    },
+    {
+      "name": "across a hyperlink",
+      "file": "hyperlink.docx",
+      "note": "the sentence runs through a w:hyperlink",
+      "margins": [
+        {
+          "marginId": "m1",
+          "sentenceText": "Some years ago, never mind how long precisely, having little or no money in my purse, and nothing particular to interest me on shore, I thought I would sail about a little and see the watery part of the world.",
+          "precedingText": "Call me Ishmael. ",
+          "commentText": "Comment m1: worth a second look.",
+          "expectedCommentedText": "Some years ago, never mind how long precisely, having little or no money in my purse, and nothing particular to interest me on shore, I thought I would sail about a little and see the watery part of the world.",
+          "expectedSpot": "sentence",
+          "expectedParagraphContains": null
+        }
+      ]
+    },
+    {
+      "name": "inside a table cell",
+      "file": "table-cell.docx",
+      "note": "the sentence is the second in a w:tc paragraph",
+      "margins": [
+        {
+          "marginId": "m1",
+          "sentenceText": "I arrived here yesterday, and my first task is to assure my dear sister of my welfare.",
+          "precedingText": "ommencement of an enterprise which you have regarded with such evil forebodings. ",
+          "commentText": "Comment m1: worth a second look.",
+          "expectedCommentedText": "I arrived here yesterday, and my first task is to assure my dear sister of my welfare.",
+          "expectedSpot": "sentence",
+          "expectedParagraphContains": null
+        }
+      ]
+    },
+    {
+      "name": "in a list item",
+      "file": "list-item.docx",
+      "note": "the sentence is in a numbered paragraph after its w:numPr",
+      "margins": [
+        {
+          "marginId": "m1",
+          "sentenceText": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife.",
+          "precedingText": "Three opening lines:\n\nCall me Ishmael.\n\n",
+          "commentText": "Comment m1: worth a second look.",
+          "expectedCommentedText": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife.",
+          "expectedSpot": "sentence",
+          "expectedParagraphContains": null
+        }
+      ]
+    },
+    {
+      "name": "the same sentence twice",
+      "file": "same-sentence-twice.docx",
+      "note": "two identical sentences in two paragraphs",
+      "margins": [
+        {
+          "marginId": "m1",
+          "sentenceText": "Nothing more was heard of it that night.",
+          "precedingText": "The first bell rang at noon. Nothing more was heard of it that night.\n\nThe second bell rang at dusk. ",
+          "commentText": "Comment m1: worth a second look.",
+          "expectedCommentedText": "Nothing more was heard of it that night.",
+          "expectedSpot": "sentence",
+          "expectedParagraphContains": "second bell"
+        },
+        {
+          "marginId": "m2",
+          "sentenceText": "Nothing more was heard of it that night.",
+          "precedingText": "The first bell rang at noon. ",
+          "commentText": "Comment m2: worth a second look.",
+          "expectedCommentedText": "Nothing more was heard of it that night.",
+          "expectedSpot": "sentence",
+          "expectedParagraphContains": "first bell"
+        }
+      ]
+    },
+    {
+      "name": "tracked changes around the sentence",
+      "file": "tracked-changes.docx",
+      "note": "w:ins inside the sentence and w:del before and inside it",
+      "margins": [
+        {
+          "marginId": "m1",
+          "sentenceText": "Elizabeth was very fond of walking.",
+          "precedingText": "",
+          "commentText": "Comment m1: worth a second look.",
+          "expectedCommentedText": "Elizabeth was very fond of walking.",
+          "expectedSpot": "sentence",
+          "expectedParagraphContains": null
+        }
+      ]
+    },
+    {
+      "name": "a document that already has comments",
+      "file": "existing-comments.docx",
+      "note": "keeps comment 0 and its range; the new comment gets id 1",
+      "margins": [
+        {
+          "marginId": "m1",
+          "sentenceText": "It is a way I have of driving off the spleen and regulating the circulation.",
+          "precedingText": "Call me Ishmael. ",
+          "commentText": "Comment m1: worth a second look.",
+          "expectedCommentedText": "It is a way I have of driving off the spleen and regulating the circulation.",
+          "expectedSpot": "sentence",
+          "expectedParagraphContains": null
+        }
+      ]
+    },
+    {
+      "name": "smart quotes and Unicode",
+      "file": "smart-quotes.docx",
+      "note": "curly versus straight quotes, NFC versus NFD",
+      "margins": [
+        {
+          "marginId": "m1",
+          "sentenceText": "\"I am perfectly convinced by it that Mr. Darcy has no defect,\" said the café owner — and nobody disagreed.",
+          "precedingText": "",
+          "commentText": "Quote marks & accents: “defect” <checked>.",
+          "expectedCommentedText": "“I am perfectly convinced by it that Mr. Darcy has no defect,” said the café owner — and nobody disagreed.",
+          "expectedSpot": "sentence",
+          "expectedParagraphContains": null
+        }
+      ]
+    },
+    {
+      "name": "a sentence not found",
+      "file": "not-found.docx",
+      "note": "paragraph fallback, then first-paragraph fallback; both paragraphs have a w:pPr the comment must follow",
+      "margins": [
+        {
+          "marginId": "m1",
+          "sentenceText": "This sentence was cut from the draft before it was sent.",
+          "precedingText": "I arrived here yesterday, and my first task is to assure my dear sister of my welfare. ",
+          "commentText": "Comment m1: worth a second look.",
+          "expectedCommentedText": "I arrived here yesterday, and my first task is to assure my dear sister of my welfare. The weather here is cold.",
+          "expectedSpot": "paragraph",
+          "expectedParagraphContains": null
+        },
+        {
+          "marginId": "m2",
+          "sentenceText": "Nor was this one ever written down.",
+          "precedingText": "Words from another book entirely, which this document never held.",
+          "commentText": "Comment m2: worth a second look.",
+          "expectedCommentedText": "You will rejoice to hear that no disaster has accompanied the commencement of an enterprise which you have regarded with such evil forebodings.",
+          "expectedSpot": "firstParagraph",
+          "expectedParagraphContains": null
+        }
+      ]
+    }
+  ]
+}

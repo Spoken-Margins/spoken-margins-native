@@ -36,6 +36,10 @@ struct Build23SenderSharingExperience: View {
             .modifier(ShareLinkPresentation(sender: linkSender, packageURL: coordinator.verifiedShareFileURL) { packet in
                 coordinator.recordSystemShareCompleted(packetURL: packet)
             })
+            .onChange(of: linkSender.state) { _, state in
+                // The link's share sheet is about to show it: the star counts start again (#4173).
+                if case .ready = state { coordinator.recordSystemShareShown() }
+            }
             .task { isLinkOffered = await linkSender.isOffered() }
             .onDisappear { linkSender.takedownNoticeWasShown() }
         #else
@@ -116,6 +120,10 @@ struct Build23SenderSharingExperience: View {
         .safeAreaInset(edge: .bottom) {
             if snapshot.stage != .share {
                 VStack(alignment: .leading, spacing: 8) {
+                    // The step the sender can act on sits directly above the button that ends the task (#3839).
+                    if let step = snapshot.pinnedStep {
+                        Build23PinnedStepLine(step: step)
+                    }
                     linkStatusLines
                     primaryAction(snapshot)
                         .controlSize(.large)
@@ -292,7 +300,7 @@ struct Build23SenderSharingExperience: View {
                     isEnabled: coordinator.verifiedShareFileURL != nil && !isMakingLink,
                     identifier: "build23.sender.share.present"
                 ) {
-                    presentVerifiedSystemShare()
+                    sendPreviewedFile()
                 }
             }
         default:
@@ -743,7 +751,7 @@ struct Build23SenderSharingExperience: View {
                     Build23VerifiedShareActions(
                         isFileShareEnabled: coordinator.verifiedShareFileURL != nil && !isMakingLink,
                         fileIsSecondChoice: sharesLink,
-                        onShareFile: presentVerifiedSystemShare
+                        onShareFile: sendPreviewedFile
                     )
 
                     Build23VerifiedRecipientPreviewPanel(preview: verifiedPreview)
@@ -892,9 +900,17 @@ struct Build23SenderSharingExperience: View {
         coordinator.send(.selectMargin(visibleMargins.first?.id))
     }
 
+    /// A send tap on the preview stage, where the packet is already made: log the selection, then show the system sheet.
+    /// "Open system share sheet" reopens the same send, so it calls `presentVerifiedSystemShare` alone (#4173).
+    private func sendPreviewedFile() {
+        coordinator.recordShareSelection()
+        presentVerifiedSystemShare()
+    }
+
     private func presentVerifiedSystemShare() {
         coordinator.send(.presentSystemShare)
         guard let verifiedURL = coordinator.verifiedShareFileURL else { return }
+        coordinator.recordSystemShareShown()
         verifiedShareURLForPresentation = verifiedURL
         isSystemSharePresented = true
     }
@@ -906,6 +922,7 @@ struct Build23SenderSharingExperience: View {
 
     /// Makes the packet if it isn't ready, then sends it the way the listener asked.
     private func share(_ kind: Build23PendingShare) {
+        coordinator.recordShareSelection() // one line per tap; not in deliver, so a tap never logs twice (#4173)
         if coordinator.verifiedShareFileURL != nil {
             deliver(kind)
             return
