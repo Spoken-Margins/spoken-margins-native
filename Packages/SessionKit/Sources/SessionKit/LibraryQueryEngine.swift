@@ -77,19 +77,19 @@ public enum LibraryQueryEngine {
         }
     }
 
-    /// What "Completed hidden" adds on the Library: who the hidden finished items hold Margins from (#3794). Nil when
-    /// nothing is hidden, or none of what is hidden has a friend's Margins. The hidden items are the finished ones that
-    /// pass every other filter and the search, and that the listening filter leaves out.
-    public static func completedHiddenNote<Row: LibraryQueryRow>(_ libraryItems: [Row], query libraryQuery: LibraryQuery) -> String? {
-        guard libraryHidesCompleted(query: libraryQuery) else { return nil }
+    /// How many finished items the listening filter hides, for the "N finished hidden · Show" line at the end of the
+    /// Library (#4698). Zero when nothing is hidden. The hidden items are the finished ones that pass every other filter
+    /// and the search, and that the listening filter leaves out.
+    public static func completedHiddenCount<Row: LibraryQueryRow>(_ libraryItems: [Row], query libraryQuery: LibraryQuery) -> Int {
+        guard libraryHidesCompleted(query: libraryQuery) else { return 0 }
         var finished = libraryQuery
         finished.listeningState = .completed
         // A finished item passes the other filters the same under either listening state, so what the listening state
         // hides is decided by its own rule: Unfinished lists a finished item only while a friend's Margins on it are new
         // (#4103); Unplayed and In Progress never list one.
-        let hidden = filteredLibraryItems(libraryItems, query: finished, includingSenders: true)
+        return filteredLibraryItems(libraryItems, query: finished, includingSenders: true)
             .filter { libraryQuery.listeningState != .unfinished || !$0.staysInUnfinished }
-        return LibraryCompletedHiddenNote.words(items: hidden.map(\.sharedMargins))
+            .count
     }
 
     /// - Parameter includingSenders: whether a search also finds items through who sent the Margins on them (#3794).

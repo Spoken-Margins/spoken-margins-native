@@ -22,6 +22,7 @@
         "AudioLoopbackPlaybackTests",
         "MediaPlaybackInterruptionTests",
         "MixedPlaybackAudioSessionTests",
+        "PodcastToArticleMemoryTests",
         "SupertonicSpeechTests/testDownloadedRendererSynthesizesJamesAndLilyAndReusesSessions()"
       ],
       "parallelizable": false

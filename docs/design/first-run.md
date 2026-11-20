@@ -1,357 +1,203 @@
-# First run, reimagined
+# First run: a Margin is waiting
 
-**Flow:** from installing Spoken Margins to finishing the first article or episode.
-**Written:** 4 October 2026, against `next` at `1744dff`.
-**Status:** design only. Nothing here is built or tried on a device. No issues filed, no labels changed.
+**Flow:** from installing Spoken Margins to hearing your own first Margin played back.
+**First written:** 4 October 2026, against `next` at `1744dff`.
+**Refreshed:** 19 November 2026, against `main` at `e3366c1ad`, for #4676, to the onboarding direction of 2026-11-18 (#4679).
+**Status:** design only. Section 1 is read from code; nothing here was built, run in a simulator or tried on a phone for this refresh. Claims marked *(not checked)* were not traced to code.
+
+The 4 October version, with its three directions, voice-pick screens and doors screen, is in git history (`d1723d1a0`). This version keeps what still applies and says what happened to each of its 15 slices (section 5).
 
 ## The short version
 
-1. **Today, the first thing a new listener meets is a legal document.** It appears when they press Play, even on a podcast that doesn't need the voice it's asking about.
-2. **The app never shows its best trick.** You can talk back to anything you're hearing, and your voice stays pinned to that exact moment. A new listener never hears that happen.
-3. **My pick: "A Margin is waiting."** The first thing you hear is the app's voice, chosen by ear. Then you hear a short welcome piece with a real Margin already in it, left by Cole. At that moment it asks you to answer with one of your own. Then it plays your voice back in place.
-4. **That gives sound in one tap, and your first Margin in about five.** Today it's about four taps to sound, sometimes with a 15 second wait, and nobody is guided to a Margin unless they find the tour card.
-5. **Cole's answers (5 October):** yes to recording his own Margin, yes to first-run choices playing right away, and the bundled audio cut to about 1 MB (it was 5 MB). Still open: a plain-language Terms summary, which is a legal question that goes with #455.
+1. **Most of the 4 October quick fixes have shipped.** Podcasts no longer meet the Terms, the Terms are one plain screen, the microphone is explained before iOS asks, a slow Allow no longer reads as a refusal, the import message has Play now, and a friend's file on first launch comes before everything else.
+2. **The core idea is still never shown on a cold install.** A new listener meets a podcast drawer, then hears a text Welcome read aloud or a show they picked. Nobody's voice is pinned to a moment, so the app's one trick is something they're told about, not something that happens to them.
+3. **The 2026-11-18 direction changes the frame.** Every first run is an arrival. A share link is an arrival from a friend; a cold download is an arrival from Cole. So a cold install should run the same arrival path a friend's file already runs, with Cole's Margin waiting on a short welcome piece.
+4. **What's dropped:** the hello screen, the voice-pick screens and the doors screen. The voice choice moved to Settings (#2853), new listeners start on Phonon (#2858), and the drawer stops being the front door. No question is asked before the first Margin.
+5. **What's added:** one defined event, **"first Margin heard"**, that #4672 ("Where should this go?") waits for. Section 3 defines it.
+6. **Five slices remain** (section 5). One needs Cole's recording: one spoken Margin, about 20 seconds, which he agreed to on 5 October.
 
 ---
 
-## 1. What happens today
+## 1. What happens today on `main`
 
-This section is read from the code on `next`. Paths are under `App/SpokenMarginsApp/Sources/SpokenMarginsApp/` unless noted.
+Paths are under `App/SpokenMarginsApp/Sources/SpokenMarginsApp/` unless they start with `Packages/`. Read from code at `e3366c1ad`; not run.
 
 ### Step by step
 
-1. **Launch.** The app seeds two items into an empty Library, then puts a sheet over it.
-   - The seeds are "Welcome to Spoken Margins", a text item, and "Guided Tour: Add and Prepare Sources" (`Gate1AppModel.swift:1838-1858`).
-   - The tour's audio comes from a remote manifest on Cole's site (`GuidedOnboardingCoordinator.swift:42`). The quality-of-life notes say release was blocked on deploying it.
-   - The sheet is "Follow a few favourites", the first-run podcast drawer (`CatalogDrawer.swift`, opened at `Gate1RootView.swift:74-78`).
-2. **Behind the sheet, the Library.** It shows the two items and a "Start with a two-minute tour" card.
-   - The card is the last row in the list, after the items and the "Offline rendering" summary, so on a phone it can sit below the fold (`ExperienceLibraryScreen.swift:84-87`).
-3. **First Play.** On any first play, a full Terms of Use sheet appears and can't be swiped away. It holds about 600 words of legal text, then "Agree and Enable On-Device Voice" or "Use iOS Voice".
-   - **It blocks podcasts too.** `requireTermsDecisionBeforePlayback` (`Gate1AppModel.swift:1480`) checks only whether a bundled voice is pending. It doesn't check what is being played.
-   - **It never names the voice or lets you hear it.** The app has already quietly switched the voice from James to the iPhone voice (`:1404-1427`). So the listener is agreeing to a license for a voice they have never heard.
-4. **First sound.** If they agree, James renders live, because offline preparation is refused until the Terms are accepted (`:5751`). The first sentence can take up to the 15 second render limit. In Low Power Mode or when the phone is warm, it quietly falls back to the iPhone voice.
-5. **First Margin.** Nothing invites one, unless they found the tour card and pressed Practice.
-   - The tour overlay says "Practice making an Margin" (a typo). Its button says "Make an Interjection", an old word (`PlaybackScreen.swift:1586, 1595`).
-   - Pressing Add a Margin raises the microphone prompt with no lead-in. The prompt says "interjections" (`Info.plist`).
-   - If the listener takes more than 10 seconds to read it and tap Allow, the app says they refused (#217).
-   - Speech Recognition is then asked for in the middle of saving (`AudioAdapters.swift:3418`). If they decline, the Margin says "Transcript failed" (#268).
-6. **First import of their own.** Paste & go and the Link field work well now. But every add ends with "Added X to Library without changing Now Playing", with no Play button on that message (`Gate1AppModel.swift:2670`). The listener has to go and find the new row.
-   - A share from Safari's share sheet imports silently the next time the app opens. Failures go to Settings › Import Inbox.
-   - The Safari extension needs turning on in Safari settings, and only prose in Help says so.
-7. **First finish.** A small "Finished" label and a Share button. There's no next step, and nothing says what you made.
-   - The tour's last required step is "Open Session Export", which is an odd thing to ask of someone who hasn't tried their own content yet.
+1. **Launch on an empty Library.** The app seeds two items, then opens a sheet.
+   - The Welcome sample, a text item ("Welcome to Spoken Margins"), is seeded when the Library is empty (`Gate1AppModel+LibrarySeeding.swift:55-69`). Its Markdown now lives in SessionKit (`Packages/SessionKit/Sources/SessionKit/WelcomeSample.swift:11-38`). It is text, so the app's voice reads it.
+   - The "Guided Tour: Add and Prepare Sources" item is still seeded, from a bundled fallback (`Gate1AppModel+LibrarySeeding.swift:70-79`, `Gate1AppModel+GuidedOnboardingContent.swift:7-10`). Its richer audio still comes from a remote manifest on the product server (`Packages/SessionKit/Sources/SessionKit/GuidedOnboardingCoordinator.swift:42`), set up at `Gate1AppModel.swift:2904`.
+   - The sheet is still the first-run drawer, "Follow a few favourites" (`CatalogDrawer.swift:419`, presented at `Gate1RootView.swift:78-83`). It now has search by name (#471, `CatalogDrawer.swift:26-33`) and OPML import (#463, `CatalogDrawer.swift:63-64, 210`).
+   - The drawer no longer opens as the root view appears. It waits for the launch to settle, so a file the system hands over arrives first (`Packages/SessionKit/Sources/SessionKit/FirstLaunchWelcomeOrder.swift:7-12, 88-92`; wired at `Gate1RootView.swift:64` and `CatalogDrawer.swift:763`).
+2. **A friend's file or link on first launch comes first** (#3291). An untouched drawer is withdrawn and the friend's item opens; the drawer comes back on the next visit to the Library, and Done with nothing picked then plays nothing over the friend's episode (`FirstLaunchWelcomeOrder.swift:94-110, 56-58`). A failed link brings the drawer back (`:112-123`, #3801).
+3. **Drawer Done plays something** (#2851). The first pick's newest episode or latest post plays; with no pick, the Welcome sample plays (`Gate1AppModel+FirstListen.swift:12-31`, rule in `Packages/SessionKit/Sources/SessionKit/FirstRunListenChoice.swift:10-23`).
+4. **The Terms.**
+   - They appear only for text read by an on-device voice. A podcast or imported audio never meets them (#781): `PlaybackTermsGate.mayRequireTerms` and `requiresTerms` (`Packages/SessionKit/Sources/SessionKit/PlaybackTermsGate.swift:28-48`), called from `Gate1AppModel+TermsGate.swift:7-33`.
+   - A first Play gets a one-screen summary with both buttons; other ways in get the complete text (#2853, `PlaybackTermsGate.swift:10-23`, `SpokenMarginsTermsView.swift:13-17`). The buttons still say "Agree and Enable On-Device Voice" and "Use iOS Voice" (`SpokenMarginsTermsView.swift:133, 146`).
+   - So on a cold install today, picking a show reaches sound with no Terms. Done with no pick plays the text Welcome, which does meet them.
+5. **The voice.** A fresh install starts on Phonon, and the backup voice reads until Phonon downloads, which waits for the Terms and Wi-Fi (#2858, `Packages/SessionKit/Sources/SessionKit/FirstRunVoiceDefault.swift:18-52`, `Gate1AppModel+FirstRunVoice.swift:11-55`). There is no voice pick on first run; it lives in Settings.
+6. **The first Margin.**
+   - Once audio plays, one card says "Tap to add a Margin" (#2852, `FirstMarginPromptCard.swift:17-18`, shown at `PlaybackScreen.swift:100`). It shows once (`Packages/SessionKit/Sources/SessionKit/OnboardingProgress.swift:109-117`, `Gate1AppModel+Onboarding.swift:46-55`).
+   - Tapping it explains the microphone first: "To record your Margin, Spoken Margins needs the microphone…" (`Packages/SessionKit/Sources/SessionKit/MicrophonePrimer.swift:8`). The slow-Allow bug is fixed (#217, closed 12 October).
+   - While a friend's Margins play, the card hides, and the friend's end card asks instead: "That was Cole's last Margin. To answer Cole, add a Margin of your own." (`Packages/SessionKit/Sources/SessionKit/PinnedMarginCard.swift:207-209, 251-252`; `Gate1AppModel+Onboarding.swift:76-84`, #3790).
+   - Speech Recognition is still asked lazily, inside the first transcription, right after saving (`Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift:4321-4324`). Declining no longer says "Transcript failed" (#268).
+   - **After saving, nothing plays the listener's Margin back.** I found no code that replays a newly saved Margin (searched for any post-save call into `playMarginMoment`, `Gate1AppModel.swift:1104`). The listener has to open the Timeline and tap it.
+7. **The tour, still there.** The Library still shows "Start with a two-minute tour" (`ExperienceLibraryScreen.swift:97, 191`). The tour overlay's words are fixed ("Practice making a Margin", "Add a Margin", `PlaybackScreen.swift:1673, 1683`), but its last step is still "Open Session Export" (`PlaybackScreen.swift:1708-1714`).
+8. **Adding your own.** The add confirmation offers Play now when nothing is playing (#784, `Gate1AppModel+AddedToLibrary.swift:19-23`). Help now says the Link field takes episodes, feeds, articles and PDFs (`HelpScreen.swift:87`).
+9. **J11 covers this** (#2854): fresh install, drawer, Done, first Margin, with taps and seconds, and a script for steps 2 and 3 (`docs/journeys.md:159-176`).
 
-### What the counts look like
+### What changed since 4 October, against its pain list
 
-| Task, from a fresh install | Today | Recommended design |
-|---|---|---|
-| Hear the app's voice | About 4 taps (close the drawer, open the item, Play, Agree), then up to 15 s of rendering | 1 tap, sound within a second |
-| Choose a voice by ear | Not possible before agreeing. Settings › Compare voice playback renders live. | On the first screen, 1 tap per voice |
-| Record your first Margin | Only guided if you find the tour card and press Practice | About 5 taps, guided by a real Margin |
-| Hear your Margin in place | Not shown | Automatic, right after saving |
-| Play something you pasted | 3 taps, then find the row and press Play | 2 taps (Paste & go plays it) |
-
-Tap counts are read from the code and the mockups described below, not timed on a device.
-
-### The pain, in one list
-
-1. The first thing asked of you is legal, not musical.
-2. The Terms block podcasts that don't need them.
-3. You can't hear a voice before choosing it.
-4. The first James playback renders live, so it can stall or quietly switch voices.
-5. Two first-run surfaces compete: the drawer sheet and a tour card at the bottom of the list.
-6. Two seeded items say nearly the same thing.
-7. The core idea, talking back to what you hear, is never demonstrated.
-8. Permission prompts arrive cold, in old wording, and one of them misreads a slow Allow as a refusal.
-9. Adding something never offers to play it.
-10. The first finish is flat.
-11. None of this works offline on a first launch, because the tour audio is remote.
-12. Nothing on the way is spoken aloud. A listener who'd rather hear than read gets a wall of text.
+| 4 October pain | On `main` |
+|---|---|
+| The first thing asked is legal | Only for text read by an on-device voice, as one short screen |
+| Terms block podcasts | Fixed (#781) |
+| Can't hear a voice before choosing | Moot: no voice choice on first run; Phonon is the default (#2853, #2858) |
+| First James playback renders live | Still true for text; the backup voice reads until Phonon arrives *(stall behaviour not checked)* |
+| Drawer and tour card compete | Still two surfaces, but sequenced: the tour coach waits for the first-Margin card |
+| Two seeds say the same thing | Still true |
+| The core idea is never shown | **Still true**, except for a friend's arrival |
+| Permission prompts arrive cold | Fixed for the microphone; Speech Recognition still asked mid-save |
+| Adding never offers to play | Fixed |
+| The first finish is flat | Still true *(the finish label was not re-read)* |
+| Nothing works offline on first launch | Partly: the tour has a bundled fallback; the drawer needs the network to pick a show |
+| Nothing is spoken | The Welcome is read aloud; the screens are not |
 
 ---
 
-## 2. Three directions
+## 2. The direction (2026-11-18), and what it changes here
 
-### Direction A: Sound first
+From #4679, Cole and Claude:
 
-**The idea.** Remove every gate between install and sound, and change nothing else.
+1. **Every first run is an arrival.** A share link is an arrival from a friend; a cold download is an arrival from Cole. Personas are handled by which Margin is waiting, not by branches in the app.
+2. **One question, after the first Margin:** "Where should this go?" (#4672). Nothing is asked before the first Margin.
+3. **Demoted:** the drawer as the front door, the tour, and any persona survey up front.
 
-- The first screen is one big "Hear it" button. It plays a 20 second welcome that is pre-recorded in James's voice and bundled, so it's instant, offline, and can't stall.
-- Under it are three voice cards, James, Lily and iPhone voice, each with its own sample. You choose by ear.
-- The Terms moment moves to the voice choice, as a short plain-language summary. It never appears at Play, and never for podcasts.
-- Then the existing drawer and Library, with the tour card at the top.
+What that means for this design:
 
-**Good:** small, low risk, and it fixes the worst first impression.
-**Weak:** still doesn't show what makes the app different. You can hear things, but you never learn you can answer them.
-
-### Direction B: A Margin is waiting (recommended)
-
-**The idea.** Teach the app by having it happen to you. Direction A's foundations, then a short welcome piece where a real Margin, left by Cole in his own voice, plays at its moment and asks you to answer it. You record one, and the app plays it back in place so you hear your own voice land in the piece.
-
-The same shape works when someone arrives through an invitation: the invite-beta plan already says "the first thing they see is a Margin on their own episode" (`docs/growth/invite-beta-plan.md`). In that case the waiting Margin is the sender's, on the recipient's own episode.
-
-**Good:** the first five minutes are the product's core loop, done for real, through production paths (shared Margin import, "Play this moment", recording). It uses work already on `next`: Paste & go, the drawer, `MarginMomentConductor`, shared-Margin playback.
-**Weak:** more parts. It needs a bundled piece and Cole's recording, and the guided moment has to be gentle enough that people who just want to listen aren't pushed.
-
-### Direction C: Talk me in
-
-**The idea.** Setup is a spoken conversation. James asks "What do you like to listen to?" You answer out loud: "Hard Fork, and anything about the history of science." The app finds the shows, follows them, and starts the newest episode.
-
-**Good:** the most magical, and the most fitting for someone who listens rather than reads. Hands-free from the first second.
-**Weak:** it asks for the microphone and Speech Recognition in the first ten seconds, before trust exists. It depends on podcast search by name, which isn't built (#471). Recognition mistakes in the first minute are expensive. Better as a later "Ask for a podcast" button than as the front door.
-
-### How they compare
-
-| | A: Sound first | B: A Margin is waiting | C: Talk me in |
-|---|---|---|---|
-| Shows the core idea | No | Yes, by doing it | Partly (speaking, not Margins) |
-| Permissions asked up front | None | None (microphone asked at the moment you need it) | Microphone and Speech Recognition, immediately |
-| Works offline on first launch | Yes | Yes | No |
-| Depends on unbuilt work | No | #447's Now view helps but isn't required | #471 search, plus a new intent parser |
-| Size | About 4 S/M slices | About 14 S/M slices | About 10, with more risk |
+- **A cold install runs the friend's arrival path, with Cole as the friend.** The arrival code built for #3247 and #3291 (friend's item first, the pinned card, "To answer Cole, add a Margin of your own") is the same moment the 4 October design drew as "Cole left a Margin here". Reusing it means one arrival to keep right, not two.
+- **The drawer moves to after the first Margin.** It stays in Following, and #4672's "Bring my shows" offers it at the right time. A cold launch stops opening it.
+- **No hello screen, no voice pick, no doors.** The first thing a new listener does is hear Cole.
+- **The finish card is replaced** by #4672's question after the first Margin, and by "Follow this show" at the end of an episode for link arrivals (#4672 rule 5).
 
 ---
 
-## 3. The recommended design: "A Margin is waiting"
+## 3. The design for a cold install
 
-### The principles
+### The flow
 
-1. **Sound before reading.** Every first-run screen can be heard. The first tap makes sound.
-2. **Ask at the moment of need, never before.** The microphone at your first Margin, Speech Recognition right after it, notifications only once you follow something.
-3. **Do the real thing, through the real paths.** No tutorial-only screens. The welcome Margin is a real shared Margin, played by the real player.
-4. **Every step can be skipped, and skipping costs nothing.** You land in a normal Library with everything still reachable.
-5. **Never touch an existing Library.** First run appears only when the Library was empty at launch, which is the current rule (`libraryWasEmptyAtLaunch`).
+Starting state (#4102 rows): `first-run`, nothing playing, entry point is the app icon. No friend's file.
 
-### Screen 1: Hello
+1. **Launch.** The Library holds one item, "Welcome" (the welcome piece). Its Now screen opens and the piece starts, because opening the app for the first time is a request to hear something and nothing else is playing. *(Whether autoplay at launch is acceptable is Cole's call; the alternative is one big Play on the item screen, one extra tap.)*
+2. **The piece plays.** About two minutes of recorded audio, so there are no Terms (`PlaybackTermsGate.playsRecordedAudio`: a native audio file never meets them), no rendering and no network.
+3. **Cole's Margin plays at its moment.** It is a friend's Margin on the welcome item, so the pinned card shows it as a friend listen: "Cole's Margin is here", then his voice.
+4. **Your turn.** After Cole's only Margin, the end card reads "That was Cole's last Margin. To answer Cole, add a Margin of your own." (today's wording). The piece pauses there and waits, with "Not now" to carry on. Add a Margin goes through the microphone primer, then iOS.
+5. **Hear it land.** As soon as the Margin is saved, the app plays it back in place: a few seconds of the piece before it, then the listener's own voice, then the piece carries on. The card line reads "That's yours now, pinned to this moment."
+6. **Speech Recognition** is asked after that playback, not during saving: "Want your Margins as text too? Then you can search them and copy them into your notes." [Yes] [Not now].
+7. **"Where should this go?"** (#4672) appears now, because the first Margin has been heard.
 
-What it holds, top to bottom:
+A written Margin works the same way: if the microphone is denied, the card offers "Write it instead", and step 5 shows the written Margin at its place instead of playing it.
 
-1. A short title: **"Listen to anything. Talk back to it."**
-2. One large button: **"Hear it"** (the full width, at least 60 pt tall, in the bottom half).
-3. Under it, a small "Skip" link.
+### What changes on the friend-arrival card for Cole's welcome
 
-Tapping "Hear it" plays a 20 second welcome in James's voice. It's pre-recorded and bundled, so there's no rendering and no network. The script is written for the ear:
+The friend's card after an answer says "To send it to Cole, tap Share below" (`PinnedMarginCard.swift:250`). On the welcome item that's wrong: sending every new listener's first Margin to Cole isn't the point. On the welcome item the line after an answer is the hear-it-land line, and Share is not offered there. *(Design choice, not a code fact.)*
 
-> "Hi, I'm James. I can read you articles, newsletters and PDFs, and play your podcasts. When something you hear sparks a thought, you can say it out loud, and I'll keep it right there, at that moment. Let's pick the voice you'd like to hear."
+### The event "first Margin heard"
 
-While it plays, the words appear one sentence at a time, the current one lit. That serves people who read along, people who can't play sound right now, and VoiceOver users.
+#4672 needs one trigger. Defined here so both the cold install and a link arrival use it:
 
-### Screen 2: Pick a voice
+1. **What fires it.** On this install, the first time a Margin the listener made themselves plays to its end through the Margin-moment player (`MarginMomentConductor`, the path "Play this moment" uses). Either the automatic hear-it-land playback (step 5) or the listener's own tap counts.
+2. **A written Margin** fires it when saved and shown at its place, since there is nothing to hear.
+3. **What doesn't fire it.** A friend's or Cole's Margin playing; a Margin saved but not yet played back; a playback stopped before its end. A stopped playback leaves the event for the next full one.
+4. **Fires once, and is stored.** It is a new `OnboardingStep` raw value, `heard_first_margin`, stored with the other steps in UserDefaults. Older builds drop unknown step names (`OnboardingProgress.swift:15-16` relies on this for `saw_first_margin_prompt`), so no packet or database change.
+5. **It carries its entry point:** `coldInstall` (Cole's welcome) or `friendArrival` (a friend's file or link on first launch). #4672 shows the full question for `coldInstall` and the gentler end-of-episode version for `friendArrival` (its rule 5).
+6. **An existing Library never fires it.** On the first launch of the build that ships the step, a Library that wasn't empty at launch gets `heard_first_margin` marked as already done, so an upgrade is never asked (#4672 rule 3). A fresh install starts without it. This is a one-time migration, not evidence read at each launch, so a new listener who saved a Margin and quit before hearing it still gets the event later.
 
-Three cards, one per voice. Each card has the voice's name, one line about it, and a play button with a 10 second sample of the same sentence.
+### Arriving through a friend
 
-| Card | Line | Notes |
-|---|---|---|
-| **James** | "Warm and steady. Runs on your phone." | Chosen by default. |
-| **Lily** | "Bright and clear. Runs on your phone." | |
-| **iPhone voice** | "Apple's built-in voice. Uses less battery." | Always available. |
-
-Choosing James or Lily brings up the Terms, as a short card rather than a full page:
-
-> **Before James can read to you**
-> James runs on your phone, under an open license with a few rules. You agree not to use it to impersonate real people, mislead anyone, or harm anyone.
-> [Agree] · [Read the full terms] · [Use the iPhone voice instead]
-
-- The wording above is a placeholder. Whether a summary with a link to the full text is enough for the OpenRAIL-M license is a legal question. It belongs with the legal drafts in #455 and is listed under Cole's decisions below.
-- If the answer is no, the full text stays, but in this place, after the listener has heard the voice, never at Play.
-- Choosing the iPhone voice skips the Terms entirely.
-- **Podcasts never trigger the Terms**, whatever the voice. This is a bug fix that should ship on its own first (slice 1).
-
-### Screen 3: What first?
-
-Three large doors, stacked in the bottom half of the screen so the thumb reaches them:
-
-1. **"Start with ours, 2 minutes"**: the welcome piece. Marked as the suggestion.
-2. **"Something I copied"**: the existing Paste & go `PasteButton`, so iOS shows no paste prompt. A link becomes a podcast or article, plain text becomes a text item.
-3. **"A podcast I like"**: the existing first-run drawer, shown inside this screen rather than as a separate sheet that covers everything. Search by name joins it when #471 lands.
-
-Under the doors, one line: "You can also share from Safari later. I'll show you how." That opens the Safari guide from G1 when it exists, and until then a short spoken explanation.
-
-**Whichever door you pick plays straight away.** Tapping a door in the app is a clear request to listen. This doesn't conflict with the product rule that imports never replace what's playing, because nothing is playing yet.
-
-The drawer stops appearing as a sheet on launch. It lives here, and in Following as it does now.
-
-### Screen 4: The welcome piece
-
-**What the piece is.** About two minutes, written for listening, in four short chapters:
-
-1. "What this is."
-2. "Talking back."
-3. "Bringing your own."
-4. "Sharing."
-
-It's bundled as pre-recorded audio in James's and Lily's voices, plus the plain text for the reader view. The listener's chosen voice is the one that plays. If they chose the iPhone voice, the text is read live, which is always fast.
-
-**The player.** It's the normal playback screen, not a tutorial overlay. Once #447's Now view lands, the guidance lives in the top half as one short line under the title. Until then it's a single card in the existing overlay slot, replacing today's five-step tour card.
-
-**The moment.** At about 0:50, in the "Talking back" chapter, the piece reaches Cole's Margin. It's a real shared Margin on the welcome item, imported from a bundled `.spokenmargins` packet through the normal import path, so it shows in the Timeline with the shared style (a hollow diamond, plus the name "Cole").
-
-1. Just before it, a soft tone, and the line in the top half reads: **"Cole left a Margin here."**
-2. The piece pauses and Cole's Margin plays, through the same "Play this moment" path a shared Margin uses (`MarginMomentConductor`). Roughly:
-   > "Hi, it's Cole. I made this app because I kept losing the thoughts I had while listening. This is a Margin: my voice, pinned to this sentence. Now you try. Hold the button at the bottom and say what you think, about anything."
-3. Then the piece waits, paused. The line says: **"Your turn. Hold Add a Margin and speak."** Add a Margin gets a thicker outline (no pulsing when Reduce Motion is on). A small "Not now" carries on playing.
-
-**Your first Margin.**
-
-1. Holding Add a Margin for the first time shows a one-line primer before the system prompt:
-   > "To record your Margin, Spoken Margins needs the microphone. Recordings stay on your phone unless you choose to share them."
-   > [Continue]
-2. Then the iPhone's own prompt. The 10 second timeout must not count while that prompt is on screen (#217).
-3. Recording uses today's screen: Save sits where Add a Margin was.
-4. **The magic moment: hear it land.** As soon as you save, the app plays the last few seconds of the piece, then your Margin, then carries on. The line reads **"That's yours now, pinned to this moment."** It uses the same "Play this moment" path on your own Margin. It's the first time the listener hears the product's promise come true, in their own voice.
-5. If the listener denied the microphone, the line offers **"Write it instead"** and the piece carries on. Nothing here is a dead end.
-
-**Speech Recognition, right after.** A small card, after your Margin has played back, not during saving:
-
-> "Want your Margins as text too? Then you can search them and copy them into your notes."
-> [Yes] · [Not now]
-
-- [Yes] triggers the system prompt. [Not now] asks again only when the listener first tries to search or copy a Margin as text.
-- If they decline, the Margin's status says Speech Recognition is off, with a Settings link (#268). Nothing says "failed".
-
-### Screen 5: The first finish
-
-When any first item finishes, the playback screen shows a finish card instead of a small "Finished" label:
-
-1. **"You finished Welcome."** Then a count: "1 Margin of yours, 1 from Cole."
-2. Three next steps, as large rows:
-   - **"Add something of your own"**: opens the doors from Screen 3 again.
-   - **"Send your Margin to a friend"**: the existing Share action, with the welcome item. It shows the loop going outward.
-   - **"Set up Safari"**: a guide to turning on the extension and the share sheet.
-3. If the listener followed a podcast in the drawer, one extra row: **"Tell me when new episodes are in?"** That's the only place notifications get asked for on first run.
-
-From the second finish on, it becomes a quieter version: what you finished, your Margins on it, and "Up next" when Home (D2) or the Following inbox has something.
-
-### Arriving through someone else's Margin
-
-The invite-beta plan sends people a Margin on their own episode or post. In that case first run starts from the sender's Margin, not from the welcome piece:
-
-1. **Opening the packet or link before the app has ever run.** First run opens on the recipient sheet: **"Sam left you 2 Margins on 'Episode title'."** It has one button: **"Hear the first one."**
-2. **Voice pick.** It is skipped if the item is a podcast. For an article, it comes after the first Margin plays, not before.
-3. **Playing.** The episode loads at the Margin's moment, with a short lead-in, then Sam's Margin plays (the J5 path, with #158 and #159).
-4. **Answering.** The line then reads: **"Your turn. Add your own Margin here."** The rest is the same as Screen 4.
-5. **Without the app.** If the listener installs from the link page (#486), iOS can't hand the link to the app automatically. So the first screen also offers **"Got a link from someone? Paste it."** (a `PasteButton`), and the link page tells people to tap the link again after installing.
-
-The same goes for a share from Safari's share sheet made before the app has ever been opened: first run starts with that item, "You sent 'Title' from Safari. Play it?", instead of the doors.
+Unchanged in shape, and mostly built (#3291, #3247). The only additions here: the friend's arrival fires the same "first Margin heard" event with `friendArrival`, and hear it land applies to a reply too.
 
 ### Edge cases
 
-| Situation | What happens |
+| Starting state or situation | What happens |
 |---|---|
-| No network on first launch | Everything on Screens 1-4 is bundled. The drawer uses its bundled catalog. The "Something I copied" door explains that links need a connection, and text still works. |
-| Low Power Mode or a warm phone | The welcome and samples are pre-recorded, so they sound the same. For the listener's own articles, the existing fallback rules apply, but the voice line says so in words (C2, #183). |
-| Listener skips everything | They land in the Library with one item, "Welcome", and one card at the **top**: "Start with a two-minute welcome". The card goes away after the welcome is finished or dismissed. |
-| Listener taps "Not now" at the waiting Margin | The piece plays on. The card at the finish still offers the first Margin once: "Try a Margin on this piece?" Then never again. |
-| Upgrading from Build 29, or any Library with content | No first run. Nothing is seeded. The Terms change applies (podcasts never blocked). |
-| Reinstall | First run again. That's fine: the Library starts empty after a delete. |
-| VoiceOver on | Every screen is in reading order: title, then the main button. "Hear it" is labelled "Hear the welcome, 20 seconds". The waiting Margin announces "Cole left a Margin here. Your turn: Add a Margin." The listener can also double-tap the Margin row. |
-| Largest text sizes | Doors and cards stack to one column and grow. Nothing is cut. The welcome text scrolls with the sentence being read. |
-| Microphone denied | "Write it instead" everywhere a recording is offered, plus "Open Settings" once. |
-| Speech Recognition denied | Margins keep their audio. The status says "Speech Recognition is off", with a Settings link. |
-| Explicit podcasts | Hidden in the drawer, as #544 does now. |
-| The listener deletes Welcome | It stays deleted, as the tour does today (tombstoned). |
-| iPad | Same screens, centred at phone width, with doors in the lower half. |
-
-### Accessibility, for how Cole uses the app
-
-- **Heard, not only read.** Every first-run screen has spoken content or can be read aloud with one tap. Text on these screens is short sentences, no more than about 12 words each, no jargon ("render", "chunk", "interjection" never appear).
-- **Not by colour alone.** Shared and own Margins differ by shape (a hollow diamond against a solid one) and by name. Required and optional choices differ by position and wording, never only colour. Warnings use an icon plus words.
-- **One-handed.** Every main action is in the bottom half and at least 44 pt, matching D5's rule.
-- **Calm.** One thing asked per screen. No timers that rush a decision. Reduce Motion replaces any pulse with a thicker outline.
-- **VoiceOver and Dynamic Type** as in the table above.
+| `first-run` with a friend's file | The friend's arrival, as today; Cole's welcome is still in the Library but doesn't autoplay *(rule to set in slice C)* |
+| `returning` (any Library with content, an upgrade) | No welcome, no autoplay, no event; `heard_first_margin` marked done once |
+| `other-item-playing` | Can't happen on a cold launch; the welcome never takes over something playing |
+| Listener taps "Not now" at Cole's Margin | The piece plays on; the first-Margin card stays due for their next listen, as today |
+| No network | Everything on the welcome path is bundled |
+| Microphone denied | "Write it instead"; the event fires on the written Margin |
+| Speech Recognition denied | The Margin keeps its audio; today's #268 wording applies |
+| Listener deletes Welcome | Stays deleted (tombstoned, as the tour is today) |
+| VoiceOver | The card announces "Cole's Margin is here", then "To answer Cole, add a Margin of your own" *(not checked on device)* |
 
 ---
 
 ## 4. What it needs, technically
 
-### New pieces
-
-1. **`FirstRunCoordinator`, in SessionKit.** A pure state machine, host-tested on Linux and macOS.
-   - Stages: `hello`, `voice`, `doors`, `welcomePlaying`, `marginWaiting`, `marginSaved`, `finished`, `done`.
-   - Entry context: a cold start, a packet opened, or a pending share handoff.
-   - It decides which screen to show and what the guidance line says. It records progress by evidence (a saved Margin, a finished item), like today's onboarding rules in the Recovery MVP doc.
-   - It reads today's `onboardingCompletedStepsV1` so someone mid-tour isn't sent back to the start.
-   - The views are thin. `Gate1AppModel` gets call sites only, no new state (AGENTS.md rule).
-2. **Bundled audio** in the app, about 1 MB in all (Cole asked for less than the first 5 MB estimate):
-   - the 20 second hello in James and Lily;
-   - a 10 second sample for James and for Lily (the iPhone voice sample is spoken live, which is instant);
-   - the two-minute welcome in James and Lily;
-   - Cole's Margin, about 20 seconds, inside a bundled `.spokenmargins` packet.
-
-   That's about 320 seconds of speech. Stored as mono HE-AAC at 24 kbps, a speech-quality setting iOS plays natively, it comes to about 3 KB a second, so roughly 1 MB. The first estimate assumed music-quality AAC at 64 kbps and a three-minute welcome.
-   - **If 1 MB is still too much:** bundle the welcome in James only (about 0.6 MB). Listeners who pick Lily then hear the welcome read live, which can stall in Low Power Mode.
-   - **Check by ear first:** slice 7 includes a listen at 24 and 32 kbps on the Mac. If 24 sounds thin, 32 kbps costs about 0.3 MB more.
-
-   These are made once on the Mac with the bundled voice and checked in. Cole records his Margin on the phone and sends the packet, which is the J5 path he already knows.
-3. **The welcome item** as a native-audio item with chapters and its text, built from the bundled file for the chosen voice. That makes it instant, scrubbable, and the same on every phone. It replaces both of today's seeds ("Welcome to Spoken Margins" and "Guided Tour") and the remote tour manifest, so first run no longer depends on Cole's site being up.
-4. **Two small views:** `FirstRunHelloView` and `FirstRunDoorsView`. The doors reuse `PasteAndGoBar` and `CatalogDrawerView` as they are.
-5. **A finish card view** for the finished state in `PlaybackScreen`.
-
-### Changes to existing code
-
-1. **The Terms gate applies only to text read by James or Lily.** `requireTermsDecisionBeforePlayback` should also check that the item will be spoken by a bundled voice. That is a host-testable rule, and it's a bug today.
-2. **The Terms are asked at the voice choice,** and the `.system` switch at launch stays (James never speaks before acceptance).
-3. **The import confirmation gets a "Play now" action** when nothing is playing (`UserFeedbackBanner`). First-run doors start playback directly.
-4. **The microphone request** ignores its timeout while the system prompt is up (#217), and gets the primer line.
-5. **Speech Recognition is asked explicitly** after the first Margin plays back, not lazily inside transcription.
-6. **The usage strings in `Info.plist`** say "Margins", not "interjections":
-   - Microphone: "Spoken Margins records your spoken Margins while you listen. Recordings stay on your phone unless you choose to share them."
-   - Speech Recognition: "Spoken Margins turns your spoken Margins into text so you can search and copy them."
-7. **The catalog drawer** stops opening as a sheet at launch. Today's `presentIfFirstRun` is replaced by the doors screen.
-8. **Help copy** is updated. It still says the Link field is only for podcasts, and still mentions a Home screen that doesn't exist (`HelpScreen.swift:92, 95`).
-9. **The tour overlay's text** is fixed for anyone on the old path until it's removed ("an Margin", "Make an Interjection").
+1. **The welcome piece**, bundled as recorded audio: about two minutes, written for the ear, in four short chapters (what this is, talking back, bringing your own, sharing), rendered on the Mac in one bundled voice and stored as mono HE-AAC at about 24 kbps, roughly 0.4 MB. Its text goes with it for the reader view.
+   - Which voice: the one a new listener starts on (Phonon), if its license allows shipping a render; otherwise James. Shipping pre-rendered audio from a bundled voice goes to the same legal check the 4 October version named *(not checked)*.
+2. **Cole's Margin** in a bundled `.spokenmargins` packet on the welcome item, imported through the normal packet path, so it is a real friend's Margin. *(Not checked: whether a packet can anchor to an item seeded from a bundled audio file, or whether the item has to come from the packet. Slice C decides.)*
+3. **SessionKit** (host-tested): an entry point for "arrival from Cole" in `FirstLaunchWelcomeOrder`, the "first Margin heard" rule, and the one-time migration. `Gate1AppModel` gets call sites only.
+4. **The welcome item replaces both seeds and the remote tour manifest.** The text Welcome and the tour item stop being seeded on fresh installs; existing Libraries keep theirs. The Library tour card and the tour overlay go for new installs.
+5. **The drawer stops opening on a cold launch.** It stays in Following and moves to #4672's "Bring my shows".
 
 ### What it must not break
 
-- **Packets.** The bundled welcome packet is a normal packet that Build 29 can import. No new manifest capability.
-- **The database.** No schema change. First-run state lives in `UserDefaults`, like today's onboarding keys.
-- **Owner data.** First run only runs on a Library that was empty at launch. It never seeds or changes an existing Library.
-- **The Terms requirement.** James and Lily never synthesise anything before acceptance. Pre-recorded samples aren't the listener running the model, but that point goes to the legal check too.
-- **Journeys J1 to J7.**
-- **Share handoffs never autoplay.** Only a tap inside the app starts playback. A handoff gets "Play now" on its message.
-
-### How it gets tested
-
-- **Host:** the coordinator's stages for each entry context, skip paths, resuming from old onboarding keys, and the Terms rule (a podcast is never gated; an article with James is).
-- **App-hosted (T3):** a fresh install reaches sound in one tap. A podcast plays with Terms not accepted. A share handoff from before first launch opens as the first item.
-- **A new journey, J0 "First run",** in `docs/journeys.md`: fresh install, hear the hello, pick a voice, play the welcome, answer Cole's Margin, hear it land, finish, and add your own article. Each step has a tap count. Today no journey covers a fresh install.
-- **Owner check on the phone:** delete the app, install, and go through J0 by ear, once with Low Power Mode on.
+- **Packets.** The bundled packet is a normal packet that the last shipped build can import. No new manifest capability.
+- **The database.** No schema change. First-run state lives in UserDefaults.
+- **Owner data.** Nothing is seeded into, or removed from, a Library that had content at launch.
+- **The Terms.** An on-device voice still never synthesises text before acceptance. The welcome path is recorded audio.
+- **Journeys.** J11 changes (slice C updates it); J12 and the friend's arrival must not change.
 
 ---
 
-## 5. Slices to build it
+## 5. Slices
 
-Each slice is one PR. They're listed in build order, sized S or M, with where each can be done. None is filed yet.
+### The 4 October slices, today
 
-| # | Slice | Size | Where | Depends on |
-|---|---|---|---|---|
-| 1 | Terms gate only for text read by a bundled voice, so podcasts never meet it. Host test that fails today. | S | Cloud | Nothing |
-| 2 | Wording: `Info.plist` usage strings, tour typos, Help copy (Link field, Home). | S | Cloud | Nothing |
-| 3 | Microphone primer line, and the #217 timeout fix. | S | Cloud (T3 on the lane) | Nothing |
-| 4 | Ask for Speech Recognition after the first Margin plays back, with the #268 wording. | S | Cloud (T3) | 3 |
-| 5 | "Play now" on the import message when nothing is playing. | S | Cloud (T2) | Nothing |
-| 6 | `FirstRunCoordinator` in SessionKit, with host tests for every stage and entry context. | M | Cloud | Nothing |
-| 7 | Record the hello and the voice samples in James and Lily, compare 24 and 32 kbps HE-AAC by ear, and bundle them. | S | Mac | Nothing |
-| 8 | Hello and voice-pick screens, using 6 and 7, with the Terms moved to the voice pick. | M | Mac | 1, 6, 7, and Cole's Terms decision |
-| 9 | The doors screen: welcome, Paste & go, the drawer. The drawer stops opening on launch. | M | Mac | 6, 8 |
-| 10 | Write and record the welcome piece. Cole records his Margin and sends the packet. Bundle both. | M | Mac, plus Cole (20 seconds) | 7 |
-| 11 | The welcome item replaces both seeds and the remote tour manifest. | S | Cloud (T3) | 10 |
-| 12 | The waiting Margin: guidance line, pause, "Your turn", and "Hear it land" after saving. | M | Mac | 6, 10, 11; better after #447 |
-| 13 | The finish card, with next steps and the follower-only notifications ask. | M | Mac | 6 |
-| 14 | Arriving through a packet or a pending share: first run starts from it. | M | Mac | 6, 9 |
-| 15 | Journey J0 in `docs/journeys.md`, and a scripted version for the Test Desk. | S | Cloud (doc), Mac (script) | 9, 12 |
+| # | 4 October slice | Now | Reason and evidence |
+|---|---|---|---|
+| 1 | Terms gate only for text read by a bundled voice | **Done** | #781; `PlaybackTermsGate.swift:28-48`, `Gate1AppModel+TermsGate.swift:24` |
+| 2 | Wording: usage strings, tour typos, Help copy | **Done** | `Info.plist:90-93` match the design's strings; `PlaybackScreen.swift:1673, 1683`; `HelpScreen.swift:87` |
+| 3 | Microphone primer and the #217 timeout | **Done** | #2852, #217; `MicrophonePrimer.swift:8` |
+| 4 | Speech Recognition after the first Margin plays back | **Still needed**, smaller | #268's wording shipped, but the ask is still inside transcription (`AudioAdapters.swift:4323`). Filed as slice E. |
+| 5 | "Play now" on the import message | **Done** | #784; `Gate1AppModel+AddedToLibrary.swift:19-23` |
+| 6 | `FirstRunCoordinator` in SessionKit | **Still needed**, re-scoped | `FirstLaunchWelcomeOrder`, `OnboardingProgress` and `FirstRunListenChoice` cover ordering and the drawer. Missing: the arrival from Cole and the "first Margin heard" event. Filed as slice A. |
+| 7 | Record the hello and voice samples | **Dropped** | No hello screen and no voice pick: the voice choice moved to Settings (#2853) and Phonon is the default (#2858). |
+| 8 | Hello and voice-pick screens | **Dropped** | Same as 7; the Terms are now one screen at first Play of text (#2853). |
+| 9 | The doors screen | **Dropped** | The drawer is no longer the front door (#4679). Paste & go and the drawer move to after the first Margin (#4672). |
+| 10 | Write and record the welcome piece; Cole's Margin | **Still needed** | No welcome audio or packet exists (`WelcomeSample.swift` is text). Filed as slice B. |
+| 11 | Welcome item replaces both seeds and the remote manifest | **Still needed**, merged | Both seeds and the manifest are still there (`Gate1AppModel+LibrarySeeding.swift:59-79`, `GuidedOnboardingCoordinator.swift:42`). Merged into slice C. |
+| 12 | The waiting Margin, "Your turn", "Hear it land" | **Split** | "Your turn" exists as the friend end card (`PinnedMarginCard.swift:207-209, 251-252`); slice C points the welcome at it. "Hear it land" has no code: filed as slice D. |
+| 13 | The finish card | **Dropped** | Replaced by #4672's question after the first Margin, and "Follow this show" for link arrivals (#4672 rule 5). |
+| 14 | Arriving through a packet or pending share | **Done** for files and links | #3291; `FirstLaunchWelcomeOrder.swift:94-123`. A Safari share made before the first launch was not re-read *(not checked; not filed)*. |
+| 15 | Journey J0 | **Dropped** | J11 covers a fresh install (#2854, `docs/journeys.md:159`). Slice C updates J11 instead. |
 
-Slices 1 to 5 are worth doing now whatever Cole decides about the rest. They fix the worst moments in today's first run without new design.
+### The slices to build now
+
+| | Slice | Issue | Size | Where | Depends on |
+|---|---|---|---|---|---|
+| A | SessionKit: the arrival from Cole and the "first Margin heard" event, with the one-time migration. Host tests. | #4711 | M | Cloud | Nothing |
+| B | The welcome piece and Cole's welcome Margin, bundled | #4712 | M | Mac, plus Cole (20 seconds) | Nothing |
+| C | A cold install is an arrival from Cole: welcome item replaces both seeds and the manifest, the drawer stops opening on launch, the tour card goes for new installs, J11 updated | #4714 | M | Cloud, captures on the lane | A, B, D |
+| D | Hear it land: play a newly saved first Margin back in place, and fire the event | #4713 | M | Cloud, captures on the lane | A |
+| E | Ask for Speech Recognition after the first Margin plays back | #4715 | S | Cloud | D |
+
+#4672 ("Where should this go?") waits on A (#4711) for its trigger and on D (#4713) for the event to fire in practice.
+
+**Cole's recording (slice B).** One spoken Margin, about 20 seconds (15 to 25 is fine), recorded on his phone on the welcome item at the "talking back" moment, then sent as a packet the usual way (J5). What it says: who he is, why he made the app, that this is a Margin pinned to this moment, and a question to the listener, ending with "your turn". He agreed on 5 October; this is the same recording.
 
 ---
 
-## 6. Decisions for Cole
+## 6. Decisions
 
-1. **Open: a plain-language Terms summary at the voice pick, with a link to the full text?** This is a legal question, and belongs with the drafts in #455. My pick: yes, if the attorney agrees. If not, the full text stays, but moves to the voice pick. It blocks slice 8.
-2. **Answered yes (Cole, 5 October):** Cole records a 20 second Margin in his own voice for the welcome piece. It's needed for slice 10.
-3. **Answered (Cole, 5 October): "that's kinda a lot, can we lower it?"** Cut from about 5 MB to about 1 MB: a two-minute welcome and speech-quality compression, both voices kept. The smaller fallback is about 0.6 MB, with the welcome in James only. Details in section 4.
-4. **Answered yes (Cole, 5 October):** choices on the first-run screen start playing right away, only when nothing else is playing.
+1. **Answered yes (Cole, 5 October):** Cole records a Margin of about 20 seconds for the welcome piece.
+2. **Answered (Cole, 5 October):** bundled audio about 1 MB or less. The two-minute piece in one voice is about 0.4 MB.
+3. **Answered yes (Cole, 5 October):** first-run choices start playing right away when nothing else is playing. This design reads that as allowing the welcome to start on first launch; slice C confirms it in its Design comment.
+4. **Settled by #2853:** the Terms are one plain screen at the first Play of text, and the voice choice lives in Settings. The 4 October open question about a plain-language summary is answered by that.
+5. **Default taken here:** the welcome piece is rendered in the voice new listeners start on, unless the license check says otherwise.
 
 ## Related
 
-#69, #145, #158, #159, #187, #217, #246, #268, #429, #447, #455, #463, #471, #486, #544, #632, #708. Streams B1 (onboard), C2 (voice), D2 (home), D5 (player), G1 (guides), G2 (growth).
+#4679 (direction), #4672 (after the first Margin), #4344, #3247, #3291, #2851, #2852, #2853, #2854, #2858, #781, #784, #217, #268, #463, #471, #1538 (source stays paused after playing your own Margin), #3782 (after installing from a link, no way back to it), #4102, #187.

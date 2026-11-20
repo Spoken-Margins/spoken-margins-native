@@ -64,7 +64,7 @@ extension Gate1AppModel {
         prepareShareInterjections(candidates: selectedItem.interjections)
     }
 
-    /// `replyBack` turns the sheet into "Send replies to <friend>" (#3221): `source` is the offer's own list, the
+    /// `replyBack` turns the sheet into "Share replies with <friend>" (#3221): `source` is the offer's own list, the
     /// replies start included and the listener's other new Margins start out, and nothing else is listed.
     func prepareShareInterjections(candidates source: [Interjection], replyBack: ReplyBackOffer? = nil, isSingleMargin: Bool = false) {
         cancelBulkSharePreparation()
@@ -105,7 +105,6 @@ extension Gate1AppModel {
                     ?? (!hasStarredCandidates || interjection.isStarredForSharing == true),
                 hasVoice: interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil,
                 itemTitle: selectedItem.title,
-                anchorWarning: shareAnchorWarning(for: interjection),
                 lastSentReadAloud: lastSentReadAloud[interjection.id],
                 lastSentLeadInMs: lastSentLeadIns[interjection.id]
             )
@@ -462,8 +461,7 @@ extension Gate1AppModel {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         sharingState.automaticallyCleanedDraftIDs.remove(id)
         let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        let anchorWarning = shareAnchorWarning(for: sharingState.drafts[index].interjection)
-        sharingState.drafts[index].restoreOriginal(hasOriginalAudio: hasOriginalAudio, anchorWarning: anchorWarning)
+        sharingState.drafts[index].restoreOriginal(hasOriginalAudio: hasOriginalAudio)
     }
 
     private func recordShareEdit(
@@ -525,10 +523,7 @@ extension Gate1AppModel {
               let root = try? applicationSupportDirectory()
                 .appending(path: "SpokenMargins/ShareRevisions/\(UUID().uuidString)", directoryHint: .isDirectory) else {
             if let index = sharingState.drafts.firstIndex(where: { $0.id == id }) {
-                sharingState.drafts[index].warning = [
-                    shareAnchorWarning(for: sharingState.drafts[index].interjection),
-                    ShareCleanupWords.Failure.previewNotPrepared.message
-                ].compactMap { $0 }.joined(separator: " ")
+                sharingState.drafts[index].warning = ShareCleanupWords.Failure.previewNotPrepared.message
             }
             return
         }
@@ -547,9 +542,7 @@ extension Gate1AppModel {
                     self?.sharingState.drafts[current].cleanedAudioURL = destination
                     self?.sharingState.drafts[current].cleanedAudioDurationMs = duration
                     self?.sharingState.drafts[current].representationChoice = .cleaned
-                    if let interjection = self?.sharingState.drafts[current].interjection {
-                        self?.sharingState.drafts[current].warning = self?.shareAnchorWarning(for: interjection)
-                    }
+                    self?.sharingState.drafts[current].warning = nil
                 }
             } catch {
                 await MainActor.run {
@@ -563,10 +556,7 @@ extension Gate1AppModel {
                     self?.sharingState.drafts[current].preparationMessage = ShareCleanupWords.Failure.voiceNotPrepared.message
                     if let interjection = self?.sharingState.drafts[current].interjection {
                         self?.diagnostics[Self.marginDiagnosticKey("shareCleanupFailure", interjection)] = "render:\(SafeErrorText.describe(error))"
-                        self?.sharingState.drafts[current].warning = [
-                            self?.shareAnchorWarning(for: interjection),
-                            ShareCleanupWords.Failure.regenerationFailed.message
-                        ].compactMap { $0 }.joined(separator: " ")
+                        self?.sharingState.drafts[current].warning = ShareCleanupWords.Failure.regenerationFailed.message
                     }
                 }
             }

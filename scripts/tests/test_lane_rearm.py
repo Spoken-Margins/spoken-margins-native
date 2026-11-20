@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import re
 from pathlib import Path
 import unittest
 
@@ -21,12 +22,14 @@ def pull(number, head=HEAD, base='main', repo=REPO, labels=('automerge',), state
 class FakeApi:
     repo = REPO
 
-    def __init__(self, pulls, hosted_runs=1):
-        self.pulls, self.hosted_runs, self.dispatched = pulls, hosted_runs, []
+    def __init__(self, pulls, hosted_runs=1, active_runs=0):
+        self.pulls, self.hosted_runs, self.active_runs, self.dispatched = pulls, hosted_runs, active_runs, []
 
     def get(self, path):
         if path.startswith('commits/'):
             return [p for p in self.pulls if p['head']['sha'] == path.split('/')[1]]
+        if 'status=' in path:
+            return {'total_count': self.active_runs if 'portable' in path and 'status=in_progress' in path else 0}
         return {'total_count': self.hosted_runs if 'portable' in path else 0}
 
     def dispatch_lane(self, trunk, pr, head):
@@ -96,24 +99,114 @@ class RearmTests(unittest.TestCase):
             self.go(Broken([]))  # main() catches this; rearm() itself does not hide it
 
 
+class CapAndSupersededTests(unittest.TestCase):
+    def test_the_calling_run_does_not_count_toward_the_cap(self):
+        # The run that brings a head to RUN_LIMIT runs `rearm` while itself in progress, and GitHub counts it. If it is
+        # the final green run, the PR must still start: it is the only thing that will.
+        api = FakeApi([pull(4603)], hosted_runs=rearm.RUN_LIMIT)
+        self.assertEqual(rearm.rearm(api, 'main', HEAD, 'success', out=io.StringIO(), own_runs=1)[0], [4603])
+        api = FakeApi([pull(4603)], hosted_runs=rearm.RUN_LIMIT + 1)
+        self.assertEqual(rearm.rearm(api, 'main', HEAD, 'success', out=io.StringIO(), own_runs=1)[0], [])
+
+    def test_a_cancelled_run_starts_nothing_while_a_newer_one_on_the_head_is_active(self):
+        api = FakeApi([pull(4603)], active_runs=2)  # itself and the run that replaced it
+        self.assertEqual(rearm.rearm(api, 'main', HEAD, 'cancelled', out=io.StringIO(), own_runs=1)[0], [])
+        self.assertEqual(api.dispatched, [])
+
+    def test_a_cancelled_run_that_is_the_last_one_still_starts_the_merge_run(self):
+        # stop-macs-on-red cancels the run itself: no other run is active, and the PR needs its FAIL report.
+        api = FakeApi([pull(4603)], active_runs=1)
+        self.assertEqual(rearm.rearm(api, 'main', HEAD, 'cancelled', out=io.StringIO(), own_runs=1)[0], [4603])
+
+    def test_a_success_starts_the_merge_run_even_with_another_run_active(self):
+        api = FakeApi([pull(4603)], active_runs=2)
+        self.assertEqual(rearm.rearm(api, 'main', HEAD, 'success', out=io.StringIO(), own_runs=1)[0], [4603])
+
+    def test_main_counts_the_calling_run_when_given_results(self):
+        api = FakeApi([pull(4603)], hosted_runs=rearm.RUN_LIMIT)
+        self.assertEqual(rearm.main(['--repo', REPO, '--head', HEAD, '--results', 'success'], api=api, out=io.StringIO()), 0)
+        self.assertEqual(api.dispatched, [('main', 4603, HEAD)])
+
+
+class LaneCheckTests(unittest.TestCase):
+    def test_a_pr_into_a_lane_check_base_starts_on_that_base(self):
+        # lane.yml's release job runs only on the trunk or a lane-check/** ref, and the lane change under test lives on
+        # that base: the merge run must be dispatched there, not on the trunk.
+        api = FakeApi([pull(7, base='lane-check/rearm'), pull(8, base='release/x'), pull(9)])
+        self.assertEqual(sorted(rearm.rearm(api, 'main', HEAD, 'success', out=io.StringIO())[0]), [7, 9])
+        self.assertEqual(sorted(api.dispatched), [('lane-check/rearm', 7, HEAD), ('main', 9, HEAD)])
+
+
+class ConclusionTests(unittest.TestCase):
+    def test_a_run_s_jobs_make_one_conclusion(self):
+        for results, expected in (('success success skipped', 'success'), ('success failure skipped', 'failure'),
+                                  ('success cancelled', 'cancelled'), ('failure cancelled', 'failure'),
+                                  ('skipped skipped', 'skipped'), ('', 'skipped')):
+            self.assertEqual(rearm.conclusion_of(results), expected, results)
+
+    def test_a_bot_dispatched_run_that_finishes_leads_to_the_prs_merge_run(self):
+        # The case of #4603: the lane dispatched hosted-portable (actor github-actions[bot]), every job passed or was
+        # skipped, and nothing started the merge run again. The rearm job passes `needs.*.result`; the PR's run starts.
+        api = FakeApi([pull(4603)])
+        code = rearm.main(['--repo', REPO, '--head', HEAD, '--results', 'success success skipped success'],
+                          api=api, out=io.StringIO())
+        self.assertEqual((code, api.dispatched), (0, [('main', 4603, HEAD)]))
+
+    def test_a_run_whose_jobs_all_skipped_starts_nothing(self):
+        api = FakeApi([pull(4603)])
+        self.assertEqual(rearm.main(['--repo', REPO, '--head', HEAD, '--results', 'skipped skipped'], api=api,
+                                    out=io.StringIO()), 0)
+        self.assertEqual(api.dispatched, [])
+
+
 class WorkflowTests(unittest.TestCase):
-    text = (ROOT / '.github/workflows/lane-rearm.yml').read_text()
+    names = ('hosted-portable', 'hosted-web')
 
-    def test_it_runs_when_either_hosted_workflow_completes(self):
-        self.assertRegex(self.text, r'workflows: \[hosted-portable, hosted-web\]')
-        self.assertIn('types: [completed]', self.text)
-        for name in ('hosted-portable', 'hosted-web'):
-            workflow = (ROOT / f'.github/workflows/{name}.yml').read_text()
-            self.assertRegex(workflow, rf'(?m)^name: {name}$')
+    def text(self, name):
+        return (ROOT / f'.github/workflows/{name}.yml').read_text()
 
-    def test_it_takes_the_script_from_the_trunk_and_skips_fork_runs(self):
-        self.assertIn("ref: ${{ vars.SM_TRUNK || 'main' }}", self.text)
-        self.assertIn('head_repository.full_name == github.repository', self.text)
-        self.assertNotIn('pull_request', self.text.split('\non:')[1].split('\npermissions:')[0])
+    def job_names(self, text):
+        jobs = text.split('\njobs:\n')[1]
+        return [m for m in re.findall(r'(?m)^  ([a-z][a-z-]*):$', jobs)]
 
-    def test_the_head_reaches_the_shell_only_through_an_env_variable(self):
-        run = self.text.split('run: |')[1]
-        self.assertNotIn('${{', run)
+    def rearm_block(self, text):
+        return text.split('\n  rearm:\n')[1]
+
+    def test_no_workflow_run_trigger_is_left_to_double_start_a_pr(self):
+        # workflow_run does not fire for runs GITHUB_TOKEN caused, so it is not how the merge run starts; with the job
+        # below it would also start each finished PR run twice.
+        self.assertFalse((ROOT / '.github/workflows/lane-rearm.yml').exists())
+        for path in (ROOT / '.github/workflows').glob('*.yml'):
+            text = re.sub(r'(?m)^\s*#.*$', '', path.read_text())
+            if 'lane_rearm' in text:
+                self.assertNotIn('workflow_run', text, path.name)
+
+    def test_each_hosted_workflow_ends_with_one_rearm_job_after_every_other_job(self):
+        for name in self.names:
+            text = self.text(name)
+            jobs = self.job_names(text)
+            self.assertEqual(jobs[-1], 'rearm', name)
+            self.assertEqual(jobs.count('rearm'), 1, name)
+            block = self.rearm_block(text)
+            needs = re.search(r'needs: \[([^\]]*)\]', block).group(1).replace(' ', '').split(',')
+            self.assertEqual(sorted(needs), sorted(j for j in jobs if j != 'rearm'), name)
+            # The outcome is read from the check jobs only: an `always()` job that is not one (owner-tap-alert,
+            # linux-retry-tally) ends `success` even when every check skipped, which would start a pointless run.
+            results = re.findall(r'needs\.([a-z-]+)\.result', block.split('RESULTS:')[1].split('\n')[0])
+            self.assertEqual(sorted(results), sorted(j for j in needs if j in (
+                'portable', 'scope', 'sessionkit', 'mac-rest', 'web')), name)
+            self.assertIn('if: always()', block, name)
+
+    def test_the_rearm_job_takes_the_script_from_the_trunk_and_reads_the_head_as_data(self):
+        for name in self.names:
+            block = self.rearm_block(self.text(name))
+            self.assertIn("ref: ${{ github.event.pull_request.base.ref || ", block)
+            self.assertNotIn('github.head_ref', block)
+            self.assertNotIn('pull_request.head.ref', block)
+            self.assertIn('actions: write', block)
+            self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', block)
+            self.assertIn('HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}', block)
+            self.assertNotIn('${{', block.split('run: |')[1])
 
     def test_the_merge_runs_it_starts_are_ones_lane_yml_already_takes(self):
         lane_yml = (ROOT / '.github/workflows/lane.yml').read_text()

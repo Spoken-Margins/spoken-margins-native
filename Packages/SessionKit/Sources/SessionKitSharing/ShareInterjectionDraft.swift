@@ -130,7 +130,6 @@ extension ShareInterjectionDraft {
         isIncluded: Bool,
         hasVoice: Bool,
         itemTitle: String?,
-        anchorWarning: String?,
         lastSentReadAloud: Bool? = nil,
         lastSentLeadInMs: Int? = nil,
         timeZone: TimeZone = .current
@@ -149,7 +148,7 @@ extension ShareInterjectionDraft {
             isIncluded: isIncluded,
             approvedTranscript: transcript,
             representationChoice: hasVoice ? .original : .textOnly,
-            warning: SharedMarginTextRequirement.reviewWarning(for: transcript) ?? anchorWarning,
+            warning: SharedMarginTextRequirement.reviewWarning(for: transcript),
             anchorBefore: context.before,
             anchorAfter: context.after,
             placeholderText: placeholder
@@ -245,7 +244,62 @@ extension ShareInterjectionDraft {
         return applyEditState(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: renderCleanedAudio)
     }
 
-    public mutating func restoreOriginal(hasOriginalAudio: Bool, anchorWarning: String?) {
+    /// Takes the anchor evidence the stored Margin has gained since the sheet opened (#3839). The review's step reads the
+    /// stored Margin, so a step that says "nothing pending" must not go with a packet built from the copy taken at open.
+    /// Returns whether anything changed; the Margin's words and the sender's edits are never touched.
+    @discardableResult
+    public mutating func refreshAnchorEvidence(from stored: Interjection) -> Bool {
+        guard stored.id == interjection.id,
+              interjection.podcastAnchorEvidence != stored.podcastAnchorEvidence
+                || interjection.podcastAnchorEvidenceCaptureStatus != stored.podcastAnchorEvidenceCaptureStatus
+                || interjection.podcastAnchorEvidenceFailureReason != stored.podcastAnchorEvidenceFailureReason
+                || interjection.sourceExactEditionSHA256 != stored.sourceExactEditionSHA256 else { return false }
+        interjection.podcastAnchorEvidence = stored.podcastAnchorEvidence
+        interjection.podcastAnchorEvidenceCaptureStatus = stored.podcastAnchorEvidenceCaptureStatus
+        interjection.podcastAnchorEvidenceFailureReason = stored.podcastAnchorEvidenceFailureReason
+        interjection.sourceExactEditionSHA256 = stored.sourceExactEditionSHA256
+        return true
+    }
+
+    /// Takes the Margin's words when they arrive after the sheet opened (#3839): the text, the timing and whether it can
+    /// be cleaned. Only the words are replaced, and only if the sender has not written their own: while the draft still
+    /// shows the stand-in words, the stored Margin goes in whole and the stand-in becomes the real words. Everything else
+    /// the sender chose stays as they left it (the version, the read-aloud switch, the run-up, the placement words,
+    /// whether the Margin is included, and what a re-share started from). Words the sender typed stay, with no timing
+    /// taken, so nothing they wrote is ever overwritten.
+    ///
+    /// Works from a draft whose copy of the Margin is still pending, or failed when a retry lands, and a stored Margin
+    /// that is no longer pending. Returns whether the draft changed.
+    @discardableResult
+    public mutating func adoptArrivedWords(
+        from stored: Interjection, hasVoice: Bool, itemTitle: String?, timeZone: TimeZone = .current
+    ) -> Bool {
+        let standsIn = isShowingPlaceholder || !SharedMarginTextRequirement.hasReviewedText(approvedTranscript)
+        guard stored.id == interjection.id,
+              stored.transcriptionStatus != "pending",
+              ["pending", "failed"].contains(interjection.transcriptionStatus),
+              interjection.transcriptionStatus != stored.transcriptionStatus,
+              standsIn,
+              editHistory == [.original], cleanup == nil, !isAnalyzingPauses, !isPreparingCleanup else { return false }
+        let before = Self.initial(
+            for: interjection, isIncluded: isIncluded, hasVoice: hasVoice, itemTitle: itemTitle,
+            lastSentReadAloud: previousReadAloud, lastSentLeadInMs: previousLeadInMs, timeZone: timeZone)
+        let arrived = Self.initial(
+            for: stored, isIncluded: isIncluded, hasVoice: hasVoice, itemTitle: itemTitle,
+            lastSentReadAloud: previousReadAloud, lastSentLeadInMs: previousLeadInMs, timeZone: timeZone)
+        // The placement words follow the new words only if the sender never changed them.
+        if anchorBefore == before.anchorBefore, anchorAfter == before.anchorAfter {
+            anchorBefore = arrived.anchorBefore
+            anchorAfter = arrived.anchorAfter
+        }
+        interjection = stored
+        approvedTranscript = arrived.approvedTranscript
+        placeholderText = arrived.placeholderText
+        warning = arrived.warning
+        return true
+    }
+
+    public mutating func restoreOriginal(hasOriginalAudio: Bool) {
         editHistory = [.original]
         editHistoryIndex = 0
         cleanup = nil
@@ -257,7 +311,7 @@ extension ShareInterjectionDraft {
         let words = interjection.transcript ?? interjection.displayText ?? ""
         approvedTranscript = SharedMarginTextRequirement.hasReviewedText(words) ? words : (placeholderText ?? words)
         representationChoice = hasOriginalAudio ? .original : .textOnly
-        warning = SharedMarginTextRequirement.reviewWarning(for: approvedTranscript) ?? anchorWarning
+        warning = SharedMarginTextRequirement.reviewWarning(for: approvedTranscript)
     }
 
     /// Returns whether the app must render cleaned audio after this in-place edit.
