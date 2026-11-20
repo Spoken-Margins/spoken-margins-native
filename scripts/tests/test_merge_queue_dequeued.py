@@ -128,6 +128,23 @@ class NotifyTests(unittest.TestCase):
         self.assertNotIn('gh pr merge', body['body'])
         self.assertEqual(label, ('issues/7/labels', {'labels': ['needs-fix']}))
 
+    def test_a_cancelled_check_is_named_when_nothing_failed(self):
+        # 2026-11-20: three merge groups lost hosted fast: portable to its 30-minute limit; the comment said
+        # "No failed check found", which sent sessions looking for a test failure that wasn't there.
+        github = self.github(check_conclusion='cancelled')
+        mq.notify(github, event(), out=io.StringIO())
+        (path, body), _ = github.posts
+        self.assertIn('Cancelled check: "hosted fast: Mac rest"', body['body'])
+        self.assertIn('time limit', body['body'])
+        self.assertIn('no push is needed', body['body'])
+        self.assertNotIn('No failed check found', body['body'])
+
+    def test_a_real_failure_wins_over_a_cancelled_check(self):
+        runs = [{'name': 'a', 'conclusion': 'cancelled', 'completed_at': '2026-11-19T10:09:00Z'},
+                {'name': 'b', 'conclusion': 'failure', 'completed_at': '2026-11-19T10:01:00Z'}]
+        github = FakeGitHub({f'commits/{LIVE}/check-runs': {'check_runs': runs}})
+        self.assertEqual(mq.failed_check(github, LIVE)['name'], 'b')
+
     def test_a_failure_removal_takes_automerge_off_so_the_bridge_does_not_queue_it_again(self):
         # Without this the label bridge's 15-minute sweep would queue the failing PR again at once, rebuilding every
         # group behind it four times an hour. Re-arming is adding `automerge` again, as with the old lane.

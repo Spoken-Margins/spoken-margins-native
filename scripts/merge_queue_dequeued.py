@@ -117,10 +117,14 @@ def latest_group_run(github, number):
 
 
 def failed_check(github, sha):
-    """The most recently finished failed check run on the group head, or None."""
+    """The most recently finished failed check run on the group head, else the newest cancelled one, else None.
+
+    A job that reaches its timeout-minutes shows as cancelled, not timed_out, and the queue drops the PR for it
+    (hosted fast: portable at 30 minutes, 2026-11-20), so a cancelled run names the cause when nothing failed."""
     runs = github.get(f'commits/{sha}/check-runs?per_page=100').get('check_runs', [])
-    failed = [run for run in runs if run.get('conclusion') in FAILED]
-    return max(failed, key=lambda run: run.get('completed_at') or '', default=None)
+    newest = lambda found: max(found, key=lambda run: run.get('completed_at') or '', default=None)
+    return (newest([run for run in runs if run.get('conclusion') in FAILED])
+            or newest([run for run in runs if run.get('conclusion') == 'cancelled']))
 
 
 def carries_arm_label(pr):
@@ -136,6 +140,11 @@ def comment_body(number, reason, head, check, armed=True):
             lines.append(f'To queue it again, add `{ARM_LABEL}` again.')
         else:
             lines.append('It was taken out by hand.')
+        return '\n\n'.join(lines)
+    if check and check.get('conclusion') == 'cancelled':
+        lines.append(f'Cancelled check: "{check.get("name", "?")}" on the merge group `{head[:7]}` was cancelled, '
+                     f'usually by its time limit, not by a failing test: {check.get("html_url", "")}')
+        lines.append(f'If the PR itself is fine, add `{ARM_LABEL}` again to retry; no push is needed.')
         return '\n\n'.join(lines)
     if check:
         lines.append(f'Failed check: "{check.get("name", "?")}" on the merge group `{head[:7]}`: {check.get("html_url", "")}')
