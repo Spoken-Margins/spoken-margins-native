@@ -32,11 +32,11 @@ struct ExperienceSourcesScreen: View, Equatable {
     @State private var selectedListID: String?
     /// The show whose "Lists for <show>" sheet is open.
     @State private var listsSheetShow: FeedSubscription?
-    @State private var renamingList: FollowList?
-    @State private var renameText = ""
-    @State private var deletingList: FollowList?
-    /// Why the last rename was refused; shown in an alert of its own.
-    @State private var listProblem: String?
+    /// The Lists screen is pushed from the toolbar's Lists button, and a list's own screen from a chip's Edit list (PR 3).
+    @State private var isShowingLists = false
+    @State private var editingList: FollowListEditTarget?
+    /// The empty list whose "Add shows to <list>" sheet is open.
+    @State private var addingShowsToList: FollowList?
     /// Each followed show's artwork (#773), read from the coordinator's side file.
     @State private var artwork = FollowingArtworkCache()
 
@@ -141,11 +141,17 @@ struct ExperienceSourcesScreen: View, Equatable {
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
                 if let emptyListText = byList.emptyListText {
-                    Text(emptyListText)
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
-                        .accessibilityIdentifier("sources.list.empty")
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(emptyListText)
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("sources.list.empty")
+                        if let emptyList = listsState.lists.first(where: { $0.id == selectedListID }) {
+                            Button("Add shows") { addingShowsToList = emptyList }
+                                .accessibilityIdentifier("sources.list.addShows")
+                        }
+                    }
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
                 if let allQuietNote = byList.allQuietNote {
                     Text(allQuietNote)
@@ -199,6 +205,14 @@ struct ExperienceSourcesScreen: View, Equatable {
                     .disabled(inputs.isRefreshingQuickAddFeed)
                     .accessibilityLabel("Refresh Following")
                     .accessibilityIdentifier("quickAdd.refresh.button")
+                    // Hidden while the listener follows nothing, so the empty Following tab is unchanged.
+                    if !inputs.showsEmptyState {
+                        Button(action: { isShowingLists = true }) {
+                            Image(systemName: "list.bullet").minimumTapTarget()
+                        }
+                        .accessibilityLabel(FollowListWords.listsTitle)
+                        .accessibilityIdentifier("sources.lists.button")
+                    }
                     Button(action: { isShowingFollowSheet = true }) {
                         Image(systemName: "plus").minimumTapTarget()
                     }
@@ -231,26 +245,16 @@ struct ExperienceSourcesScreen: View, Equatable {
                 FollowListPickerSheet(subscription: subscription)
                     .environmentObject(model)
             }
-            // `presenting:` hands the buttons the list itself, so they never depend on the order in which the
-            // binding is reset and the action runs.
-            .alert(
-                "Rename list",
-                isPresented: Binding(get: { renamingList != nil }, set: { if !$0 { renamingList = nil } }),
-                presenting: renamingList
-            ) { list in
-                TextField("Name", text: $renameText)
-                Button("Cancel", role: .cancel) {}
-                Button("Rename") { commitRename(list) }
+            .trackedSheet(item: $addingShowsToList) { list in
+                FollowListAddShowsSheet(model: model, subscriptions: feed.inputs.subscriptions, listID: list.id)
             }
-            .confirmationDialog(
-                FollowListWords.deleteQuestion(listName: deletingList?.name ?? "this list"),
-                isPresented: Binding(get: { deletingList != nil }, set: { if !$0 { deletingList = nil } }),
-                titleVisibility: .visible,
-                presenting: deletingList
-            ) { list in
-                Button("Delete list", role: .destructive) { commitDelete(list) }
-            } message: { _ in
-                Text(FollowListWords.deleteMessage)
+            .navigationDestination(isPresented: $isShowingLists) {
+                FollowListsScreen(model: model, subscriptions: inputs.subscriptions, artwork: artwork)
+                    .miniPlayerKeepOut()
+            }
+            .navigationDestination(item: $editingList) { target in
+                FollowListScreen(model: model, subscriptions: inputs.subscriptions, artwork: artwork, listID: target.id)
+                    .miniPlayerKeepOut()
             }
             .navigationDestination(item: $openFriend) { friend in
                 FollowingFriendItemsScreen(friend: friend)
@@ -274,12 +278,6 @@ struct ExperienceSourcesScreen: View, Equatable {
                 artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
             }
             .miniPlayerKeepOut()
-        }
-        // Its own alert, on the stack rather than the list, so it can follow the rename alert's dismissal.
-        .alert("Can’t save that name", isPresented: Binding(get: { listProblem != nil }, set: { if !$0 { listProblem = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(listProblem ?? "")
         }
     }
 
@@ -388,8 +386,8 @@ struct ExperienceSourcesScreen: View, Equatable {
     // MARK: List chips (#4046)
 
     /// **All**, then the lists in alphabetical order, in the catalog drawer's chip style. The selected chip carries a
-    /// checkmark, so colour is never the only signal. A long press on a list's chip offers Rename and Delete list; PR 3
-    /// replaces them with Edit list.
+    /// checkmark, so colour is never the only signal. A long press on a list's chip offers Edit list, which opens the
+    /// list's own screen: rename, delete and the rest live there (PR 3).
     private func listChipRow(lists: [FollowList]) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
@@ -409,36 +407,16 @@ struct ExperienceSourcesScreen: View, Equatable {
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
                     .accessibilityIdentifier("sources.list.chip.\(list.id)")
                     .contextMenu {
-                        Button("Rename", systemImage: "pencil") { beginRename(list) }
-                        Button("Delete list", systemImage: "trash", role: .destructive) { deletingList = list }
+                        Button("Edit list", systemImage: "pencil") { editingList = FollowListEditTarget(id: list.id) }
                     }
                     .accessibilityActions {
-                        Button("Rename") { beginRename(list) }
-                        Button("Delete list") { deletingList = list }
+                        Button("Edit list") { editingList = FollowListEditTarget(id: list.id) }
                     }
                 }
             }
         }
         .accessibilityIdentifier("sources.list.chips")
         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-    }
-
-    private func beginRename(_ list: FollowList) {
-        renameText = list.name
-        renamingList = list
-    }
-
-    private func commitRename(_ list: FollowList) {
-        renamingList = nil
-        let name = renameText
-        Task {
-            if let problem = await model.renameFollowList(id: list.id, to: name) { listProblem = problem.message }
-        }
-    }
-
-    private func commitDelete(_ list: FollowList) {
-        deletingList = nil
-        Task { await model.deleteFollowList(id: list.id) }
     }
 
     /// "Quiet (2)", a button that opens and closes the group. The count and the chevron say what it holds.
