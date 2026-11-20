@@ -240,18 +240,18 @@ final class LibraryFolderPlayPlanTests: XCTestCase {
 
     func testTheRowSaysWhatIsLeft() throws {
         let progress = try self.progress([.finished(at: 10), .none, .percent(30, at: 20)])
-        XCTAssertEqual(progress.detailLine, "3 items · 2 unfinished")
-        XCTAssertEqual(progress.accessibilityLabel(folderName: "Daily Brief"), "Daily Brief, folder, 3 items, 2 unfinished")
+        XCTAssertEqual(progress.detailLine, "3 files · 2 unfinished")
+        XCTAssertEqual(progress.accessibilityLabel(folderName: "Daily Brief"), "Daily Brief, folder, 3 files, 2 unfinished")
     }
 
     func testSingularsAndAllFinished() throws {
         var finished = try self.progress([.finished(at: 10)])
-        XCTAssertEqual(finished.detailLine, "1 item · all finished")
-        XCTAssertEqual(finished.accessibilityLabel(folderName: "A"), "A, folder, 1 item, all finished")
+        XCTAssertEqual(finished.detailLine, "1 file · all finished")
+        XCTAssertEqual(finished.accessibilityLabel(folderName: "A"), "A, folder, 1 file, all finished")
         XCTAssertTrue(finished.isAllFinished)
         let rowsNow = try rows()
         finished = LibraryFolderProgress(folder: folder([member(1)], notAdded: 1), rows: rowsNow)
-        XCTAssertEqual(finished.detailLine, "1 item · all finished · 1 not added")
+        XCTAssertEqual(finished.detailLine, "1 file · all finished · 1 not added")
         let open = LibraryFolderProgress(folder: folder([member(1)]), rows: [:])
         XCTAssertEqual(open.detailLine, "Empty folder", "an item that is not a row is not live")
     }
@@ -263,7 +263,7 @@ final class LibraryFolderPlayPlanTests: XCTestCase {
         let importing = (1...3).map { member($0) } + (4...24).map { member($0, state: .adding) }
         XCTAssertEqual(LibraryFolderProgress(folder: folder(importing), rows: all).detailLine, "Adding 3 of 24…")
         XCTAssertEqual(LibraryFolderProgress(folder: folder(twentyTwoOfTwentyFour, notAdded: 2), rows: all).detailLine,
-                       "22 items · 22 unfinished · 2 not added")
+                       "22 files · 22 unfinished · 2 not added")
         XCTAssertEqual(LibraryFolderProgress(folder: folder([]), rows: all).detailLine, "Empty folder")
         XCTAssertEqual(LibraryFolderProgress(folder: folder([member(1, state: .failed), member(2, state: .failed), member(3, state: .failed)]),
                                              rows: all).detailLine, "3 not added")
@@ -279,7 +279,7 @@ final class LibraryFolderPlayPlanTests: XCTestCase {
             rows["i3"]?.sharedMargins = SharedMarginTally(total: 1, new: 1)
         }
         XCTAssertEqual(progress.marginLine, "5 Margins")
-        XCTAssertEqual(progress.sharedLine, "New shared Margins in 1 item")
+        XCTAssertEqual(progress.sharedLine, "New shared Margins in 1 file")
         let more = try self.progress([.none]) { rows in
             rows["i1"]?.marginCount = 1
             rows["i1"]?.sharedMargins = SharedMarginTally(total: 2, new: 2)
