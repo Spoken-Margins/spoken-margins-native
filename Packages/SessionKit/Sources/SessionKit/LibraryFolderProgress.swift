@@ -114,9 +114,9 @@ public struct LibraryFolderProgress: Equatable, Sendable {
     /// | State | Text |
     /// | --- | --- |
     /// | importing | "Adding 3 of 24…" |
-    /// | normal | "24 items · 16 unfinished" |
-    /// | all finished | "24 items · all finished" |
-    /// | failures not cleared | "22 items · 22 unfinished · 2 not added" |
+    /// | normal | "24 files · 16 unfinished" |
+    /// | all finished | "24 files · all finished" |
+    /// | failures not cleared | "22 files · 22 unfinished · 2 not added" |
     /// | empty | "Empty folder" |
     /// | every file failed | "3 not added" |
     public var detailLine: String {
@@ -130,14 +130,14 @@ public struct LibraryFolderProgress: Equatable, Sendable {
     /// The row's line for the listener's own Margins on the folder's items: "1 Margin", "5 Margins". Nil for none.
     public var marginLine: String? { LibraryRowWording.marginCountLine(margins) }
 
-    /// "New shared Margins in 1 item", "New shared Margins in 3 items". Nil when no item has any.
+    /// "New shared Margins in 1 file", "New shared Margins in 3 files". Nil when no item has any.
     public var sharedLine: String? {
         let count = itemsWithNewSharedMargins
         guard count > 0 else { return nil }
-        return "New shared Margins in \(count) \(count == 1 ? "item" : "items")"
+        return "New shared Margins in \(count) \(count == 1 ? "file" : "files")"
     }
 
-    /// The row's own VoiceOver label: "Daily Brief, folder, 24 items, 16 unfinished".
+    /// The row's own VoiceOver label: "Daily Brief, folder, 24 files, 16 unfinished".
     public func accessibilityLabel(folderName: String) -> String {
         if isImporting { return "\(folderName), folder, \(detailLine)" }
         if entries.isEmpty { return "\(folderName), folder, \(detailLine)" }
@@ -145,7 +145,7 @@ public struct LibraryFolderProgress: Equatable, Sendable {
         return "\(folderName), folder, \(Self.itemsWords(itemCount)), \(state)"
     }
 
-    static func itemsWords(_ count: Int) -> String { count == 1 ? "1 item" : "\(count) items" }
+    static func itemsWords(_ count: Int) -> String { count == 1 ? "1 file" : "\(count) files" }
     static func notAddedWords(_ count: Int) -> String { "\(count) not added" }
 }
 
