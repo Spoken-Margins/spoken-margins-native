@@ -113,6 +113,7 @@ class PortableStepTable(unittest.TestCase):
         self.assertEqual([name for name, _ in calls], [name for name in full if name != 'runner-tests'])
         self.assertEqual(skipped, {**verification.PORTABLE_LEFT_OUT, **verification.PR_QUICK_LEFT_OUT})
         self.assertIn('runner-tests: skipped (the PR quick tier leaves it to the merge group', printed)
+        self.assertNotIn('fast-portable runner-tests left out', printed)
         self.assertEqual(slots, [])
 
     def test_the_workflow_runs_the_quick_tier_on_prs_only(self):

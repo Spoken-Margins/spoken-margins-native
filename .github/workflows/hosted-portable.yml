@@ -4,6 +4,8 @@
 # validators, the test inventory, the browser-extraction and share-link suites, and the research suites. It
 # prints each step it leaves out and a host test fails if a fast-plan step is in neither list. The same job builds
 # SessionKit's Linux targets and runs SessionKitCoreTests in the swift image (#3529), so a red test frees the Mac early.
+# On a PR push (2026-11-20) the job runs a quick tier instead: the plan with --pr-quick (no runner-tests) and no Linux
+# SessionKitCoreTests; the merge group and dispatches run everything (see the "Portable fast plan" step).
 # The second job, `sessionkit`, runs `--plan fast-hosted-sessionkit` on a GitHub-hosted Mac: SessionKit's build and
 # SessionKitCoreTests. The third, `mac-rest` (#2459), runs `--plan fast-mac-rest` on another GitHub-hosted Mac with
 # the BlackHole virtual audio output installed: what neither of the others runs (SessionKitTests and

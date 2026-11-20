@@ -2027,8 +2027,10 @@ class Run:
     def portable(self):
         """The fast plan's steps that run anywhere (#1847), then every step it leaves out, named as skipped.
         No host-test slot: that is the Mac's shared pool, and a hosted job is alone on its machine."""
-        self.host_steps(portable=True, pr_quick=self.manifest.get('pr_quick', False))
-        print('fast-portable runner-tests left out ' + ', '.join(PORTABLE_RUNNER_TESTS_LEFT_OUT), flush=True)
+        pr_quick = self.manifest.get('pr_quick', False)
+        self.host_steps(portable=True, pr_quick=pr_quick)
+        if not pr_quick:  # with --pr-quick runner-tests did not run at all, so it left nothing out
+            print('fast-portable runner-tests left out ' + ', '.join(PORTABLE_RUNNER_TESTS_LEFT_OUT), flush=True)
         for name, reason in PORTABLE_LEFT_OUT.items():
             self.skip(name, reason)
         print('fast-portable left out ' + ', '.join(PORTABLE_LEFT_OUT) + '; the fast plan on the Mac runs them.', flush=True)
@@ -2553,7 +2555,8 @@ def main():
     if args.list:
         print('\n'.join(f'{t} ({status})' for status, tests in journeys.items() for t in tests) if journeys
               else '\n'.join(sorted(plan_tests(ROOT, PLANS[args.plan][1]))) if args.plan in PLANS
-              else ('fast-portable runs ' + ', '.join(PORTABLE_STEPS) + '; it leaves out ' + ', '.join(PORTABLE_LEFT_OUT)
+              else ('fast-portable runs ' + ', '.join(s for s in PORTABLE_STEPS if not (args.pr_quick and s in PR_QUICK_LEFT_OUT))
+                    + '; it leaves out ' + ', '.join([*PORTABLE_LEFT_OUT, *(PR_QUICK_LEFT_OUT if args.pr_quick else ())])
                     if args.plan == 'fast-portable'
                     else 'hot-file ratchet, runner-tests, ops tests, contracts, surfaces, inventory, browser, all SessionKit tests'))
         return 0
@@ -2572,6 +2575,7 @@ def main():
                   read_changed_files(args.changed_files) if args.plan in ('fast', 'fast-mac-rest') else None)
         if args.pr_quick:
             run.manifest['pr_quick'] = True
+            run.save()  # in the evidence from the start, not only from the first step's save
         try:
             if args.build_only:
                 run.xcode_build(args.plan, args.runtime, args.rebuild)
