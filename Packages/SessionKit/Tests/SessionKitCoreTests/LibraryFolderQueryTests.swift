@@ -321,8 +321,9 @@ final class LibraryFolderQueryTests: XCTestCase {
         XCTAssertEqual(sqlite3_exec(writer, "BEGIN IMMEDIATE", nil, nil, nil), SQLITE_OK, "another writer holds the store")
         defer { sqlite3_exec(writer, "COMMIT", nil, nil, nil); sqlite3_close(writer) }
 
-        // A read that waited for the writer would hit the store's 1 s busy timeout and come back "not read" (nil),
-        // so the folder checks below fail on state, not on a wall-clock ceiling a busy runner can miss.
+        // The writer stays open until the defer, so a read that waited for it could only end in SQLITE_BUSY after the
+        // store's 1 s busy timeout: the query loop stops and returns [] (or the read throws and gives nil). Either way
+        // the folder checks below fail on state, not on a wall-clock ceiling a busy runner can miss.
         let snapshot = try LibraryReadSnapshot.read(store: store)
         XCTAssertEqual(sqlite3_get_autocommit(writer), 0, "the writer still held the store while the Library was read")
         XCTAssertEqual(snapshot.collections?.map(\.id), ["f"], "the collections were read past the writer")
