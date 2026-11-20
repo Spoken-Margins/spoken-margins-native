@@ -347,6 +347,17 @@ def refuse_unsafe(chosen, unsafe):
                            'Boot a fresh device with scripts/lane-sim-boot --fresh and pass it with --device.')
 
 
+def refuse_borrowed(chosen, device, simulator_slot_fd):
+    """Never install onto our own Test Runner while someone else is using it (2026-11-20). A run that found the Test
+    Runner already booted used to take it without a simulator slot, because "a device someone else booted is theirs,
+    and so is the slot". So a second run installed its build over a journeys run holding the slot, and every launch
+    crashed. A device the caller names with --device is the caller's own, and a lane job passes its slot down."""
+    if chosen['state'] == 'Booted' and device is None and simulator_slot_fd is None:
+        raise RuntimeError(f'{chosen.get("name")} ({chosen["udid"]}) is already booted and this run holds no simulator '
+                           'slot, so another run is probably using it. Wait for it to shut down, or boot your own with '
+                           'scripts/lane-sim-boot --fresh and pass it with --device.')
+
+
 def capture(command):
     return subprocess.check_output(command, cwd=ROOT, text=True).strip()
 
@@ -2313,6 +2324,7 @@ class Run:
             self.provide_supertonic_model()
         chosen, created = self.simulator(device, ios)
         refuse_unsafe(chosen, lane_sim.unsafe_devices())
+        refuse_borrowed(chosen, device, simulator_slot_fd)
         self.manifest['destination'] = chosen
         derived, identity = self.xcode_build(plan, chosen['runtime'], rebuild, require_build)
         base = ['xcodebuild', '-configuration', 'Debug', '-project', 'SpokenMarginsNative.xcodeproj', '-scheme', scheme,
