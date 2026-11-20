@@ -30,6 +30,7 @@ NO_PILL = {
     ("HelpScreen.swift", "*"): "a sheet",
     ("FollowSheet.swift", "*"): "the Follow sheet",
     ("FollowListPickerSheet.swift", "*"): "a sheet from the show and Following screens (#4046)",
+    ("FollowListScreen.swift", "FollowListAddShowsSheet"): "a sheet from the list screens (#4046)",
     ("Gate1RootView.swift", "Gate1RootView"): "the terms sheet",
     ("Gate1RootView.swift", "InterjectionDetailView"): "pushed inside the Margin detail sheet",
     ("ItemCollectionSheet.swift", "*"): "a sheet",
@@ -38,6 +39,7 @@ NO_PILL = {
     ("PlaybackTimelineSourceView.swift", "*"): "inside Now Playing, which hides the mini player",
     ("PlaybackScreen.swift", "*"): "Now Playing hides the mini player",
     ("SharingExperience.swift", "*"): "sharing sheets",
+    ("TimelineClipPicture.swift", "TimelineClipViewer"): "a full-screen cover, drawn over the whole app (#3895)",
     ("VoicesSettingsScreen.swift", "VoiceAgreementSheet"): "the licence agreement sheet before a voice download (#1819)",
 }
 
