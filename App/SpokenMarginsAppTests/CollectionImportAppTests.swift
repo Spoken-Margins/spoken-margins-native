@@ -172,6 +172,46 @@ final class CollectionImportAppTests: XCTestCase {
         XCTAssertEqual(afterEdit.name, "Week three")
     }
 
+    /// The Add to Collection sheet's tick and rename land on the stored copy (#3769 audit): the sheet drew the row before
+    /// the import's next file joined it, and neither change drops that file.
+    func testATickOrRenameFromTheSheetsOlderCopyKeepsWhatTheImportAddedSince() async throws {
+        let model = try makeModel()
+        let store = try model.requireStore()
+        let folder = try makeDirectory("Week")
+        try write("# One\nOne.", to: folder.appending(path: "1.md"))
+        _ = await model.importFolderAsCollection(folder)
+        // Two more Library items outside "Week", from another folder.
+        let other = try makeDirectory("Other")
+        try write("# Two\nTwo.", to: other.appending(path: "2.md"))
+        try write("# Three\nThree.", to: other.appending(path: "3.md"))
+        _ = await model.importFolderAsCollection(other)
+        let drawn = try XCTUnwrap(model.libraryCollections.collections.first { $0.name == "Week" })
+        let outside = model.libraryItems.filter { !drawn.itemIDs.contains($0.id) }.map(\.id)
+        guard outside.count >= 2 else { return XCTFail("need two items outside the collection, have \(outside.count)") }
+        let fromImport = outside[0], ticked = outside[1]
+
+        let added = await model.libraryCollections.update(drawn.id, store: store) { current, _ in
+            var next = current; next.itemIDs.append(fromImport); return next
+        }
+        guard case .saved = added else { return XCTFail("the import's write should save, got \(added)") }
+
+        let tick = await model.libraryCollections.setMembership(of: ticked, included: true, in: drawn, store: store)
+        guard case .saved = tick else { return XCTFail("tick should save, got \(tick)") }
+        var stored = try XCTUnwrap(try store.loadItemCollections().first { $0.id == drawn.id })
+        XCTAssertEqual(stored.itemIDs, drawn.itemIDs + [fromImport, ticked], "the tick kept the import's item")
+
+        // A tick on a row that showed no checkmark, for an item that joined since, leaves it in.
+        _ = await model.libraryCollections.setMembership(of: fromImport, included: true, in: drawn, store: store)
+        stored = try XCTUnwrap(try store.loadItemCollections().first { $0.id == drawn.id })
+        XCTAssertTrue(stored.itemIDs.contains(fromImport))
+
+        let renamed = await model.libraryCollections.rename(drawn, to: "Week two", store: store)
+        guard case .saved = renamed else { return XCTFail("rename should save, got \(renamed)") }
+        stored = try XCTUnwrap(try store.loadItemCollections().first { $0.id == drawn.id })
+        XCTAssertEqual(stored.name, "Week two")
+        XCTAssertEqual(stored.itemIDs, drawn.itemIDs + [fromImport, ticked])
+    }
+
     /// A collection deleted while its import is filling it stays deleted: the next file's write finds it gone.
     func testACollectionDeletedDuringAnImportIsNotSavedBack() async throws {
         let model = try makeModel()

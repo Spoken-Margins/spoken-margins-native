@@ -53,15 +53,26 @@ final class LibraryCollectionModel: ObservableObject {
         if next != selection { selection = next }
     }
 
-    /// Makes a collection holding `itemIDs` and selects it, so the Library shows what was just made.
-    func create(name: String, itemIDs: [String], store: SQLiteSessionStore, now: Date = Date()) async -> Outcome {
+    /// Makes a collection holding `itemIDs`. With `selects`, the Library is narrowed to it, so it shows what was just made;
+    /// the Add to Collection sheet passes false, since it leaves the Library as it was.
+    func create(name: String, itemIDs: [String], store: SQLiteSessionStore, selects: Bool = true, now: Date = Date()) async -> Outcome {
         guard ItemCollectionEditing.normalizedName(name) != nil else { return .needsName }
         guard let created = ItemCollectionEditing.creating(
             name: name, itemIDs: itemIDs, id: "collection-\(UUID().uuidString)", now: now, in: collections
         ) else { return .nameTaken }
         if let failure = await save(created, store: store) { return .failed(failure) }
-        select(collectionID: created.id)
+        if selects { select(collectionID: created.id) }
         return .saved
+    }
+
+    /// The Add to Collection sheet's tick: puts `itemID` in the stored collection or takes it out. `included` is what the
+    /// tick means on the row the sheet drew; it lands on the stored copy, so items an import added since stay (#3769).
+    func setMembership(
+        of itemID: String, included: Bool, in collection: ItemCollection, store: SQLiteSessionStore, now: Date = Date()
+    ) async -> Outcome {
+        await update(collection.id, store: store) { current, _ in
+            ItemCollectionEditing.setting(itemID: itemID, included: included, in: current, now: now)
+        }.outcome
     }
 
     /// Edit Items: the collection holds exactly the ticked items, among the ones the checklist offered.
