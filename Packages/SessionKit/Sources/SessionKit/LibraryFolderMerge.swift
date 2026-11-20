@@ -116,6 +116,14 @@ public enum LibraryFolderMerge {
 
     // MARK: - Pieces
 
+    /// Whether this file is the one a member stands for, found the way the rest of the merge finds a member's file: by its
+    /// path, through the member's chain of newer copies, with a file whose bytes can't be compared judged by its path alone.
+    private static func standsAtItsPath(_ walked: LibraryFolderWalk.Member, in record: LibraryFolderRecord) -> Bool {
+        guard walked.kind != .link, let index = latestIndex(atPath: walked.key, in: record) else { return false }
+        let member = record.members[index]
+        return member.sha256 == nil || walked.sha256 == nil || member.sha256 == walked.sha256
+    }
+
     /// The walk's own order, except that when several files in one pick have the same bytes and one of them sits at the
     /// path of a member with those bytes, that file comes first. It is the file the member stands for; the others are its
     /// copies (a backup in a folder that sorts ahead of it must not become the member, and the member's file the duplicate).
@@ -130,8 +138,8 @@ public enum LibraryFolderMerge {
             defer { index += 1 }
             guard walked.kind != .link, let sha = walked.sha256 else { continue }
             guard let first = firstIndexBySHA[sha] else { firstIndexBySHA[sha] = index; continue }
-            let isMembersOwnFile = record.members.contains { $0.kind != .link && $0.key == walked.key && $0.sha256 == sha }
-            let firstIsMembersOwnFile = record.members.contains { $0.kind != .link && $0.key == ordered[first].key && $0.sha256 == sha }
+            let isMembersOwnFile = standsAtItsPath(walked, in: record)
+            let firstIsMembersOwnFile = standsAtItsPath(ordered[first], in: record)
             if isMembersOwnFile, !firstIsMembersOwnFile {
                 ordered.remove(at: index)
                 ordered.insert(walked, at: first)
