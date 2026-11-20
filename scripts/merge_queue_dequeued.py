@@ -11,8 +11,9 @@ Two jobs, independent of each other:
    its latest merge-group run with a link when there is one, and how to get back in: fix, push, add `automerge`.
    A removal for a failure also gets the `needs-fix` label and loses `automerge`, so the label bridge
    (merge_queue_label_bridge.py) does not queue it again until someone adds `automerge` again, as with the old
-   lane. A PR that merged, or that was removed by hand, keeps its labels. Each comment carries a hidden marker with the group head (or the PR head when no group ran), so a second
-   event for the same group adds nothing. A failed read logs a warning and exits 0: a notifier must not go red.
+   lane. A removal by hand means "stop": the PR loses `automerge` too, but gets no `needs-fix` since nothing
+   failed. A PR that merged keeps its labels. Each comment carries a hidden marker with the group head (or the PR
+   head when no group ran), so a second event for the same group adds nothing. A failed read logs a warning and exits 0: a notifier must not go red.
 
 2. Cancel. When an entry leaves the queue GitHub rebuilds the groups behind it and sends `merge_group: destroyed`
    for the old ones, but Actions only triggers on `checks_requested`, so the old groups' runs keep their Macs until
@@ -37,7 +38,8 @@ MARKER = '<!-- merge-queue-dequeued head={head} -->'
 ACTIVE = ('queued', 'in_progress', 'waiting', 'pending', 'requested')
 FAILED = ('failure', 'timed_out', 'action_required', 'startup_failure')
 # Event reasons that mean the PR itself needs work; anything else (merged, removed by hand) gets no label.
-NO_LABEL_REASONS = ('MERGE', 'MERGED', 'ALREADY_MERGED', 'MANUAL', 'DEQUEUED_MANUALLY')
+MANUAL_REASONS = ('MANUAL', 'DEQUEUED_MANUALLY')
+NO_LABEL_REASONS = ('MERGE', 'MERGED', 'ALREADY_MERGED', *MANUAL_REASONS)
 TRIES = 3
 
 ENTRIES_QUERY = '''query($owner: String!, $name: String!) {
@@ -123,6 +125,10 @@ def failed_check(github, sha):
 def comment_body(number, reason, head, check):
     lines = [MARKER.format(head=head),
              f'**Left the merge queue** ({reason or "no reason given"}).']
+    if reason.upper() in MANUAL_REASONS:
+        lines.append(f'It was taken out by hand, so `{ARM_LABEL}` came off and it will not be queued again.')
+        lines.append(f'To queue it again, add `{ARM_LABEL}` again.')
+        return '\n\n'.join(lines)
     if check:
         lines.append(f'Failed check: "{check.get("name", "?")}" on the merge group `{head[:7]}`: {check.get("html_url", "")}')
     elif reason and 'CONFLICT' in reason.upper():
@@ -160,7 +166,8 @@ def notify(github, event, out=sys.stdout):
         github.post(f'issues/{number}/comments', {'body': comment_body(number, reason, head, check)})
         if reason.upper() not in NO_LABEL_REASONS:
             github.post(f'issues/{number}/labels', {'labels': [LABEL]})
-            github.delete(f'issues/{number}/labels/{ARM_LABEL}')
+        # Merged PRs returned above, so every removal left here means "stop": failure or by hand.
+        github.delete(f'issues/{number}/labels/{ARM_LABEL}')
     except (subprocess.SubprocessError, OSError) as error:
         warn(f'#{number}: could not post ({error!r})', out)
         return 'skipped: post failed'

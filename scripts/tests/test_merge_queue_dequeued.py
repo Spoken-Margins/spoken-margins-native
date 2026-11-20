@@ -135,11 +135,25 @@ class NotifyTests(unittest.TestCase):
                 mq.notify(github, event(reason=reason), out=io.StringIO())
                 self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
 
-    def test_a_merged_or_manual_removal_keeps_automerge(self):
-        for e in (event(reason='MANUAL'), event(reason='DEQUEUED_MANUALLY'), event(merged=True)):
+    def test_a_merged_pr_keeps_automerge(self):
+        for e in (event(merged=True), event(reason='MERGED')):
             github = self.github()
             mq.notify(github, e, out=io.StringIO())
             self.assertEqual(github.deletes, [])
+
+    def test_a_manual_removal_takes_automerge_off_without_needs_fix(self):
+        # Taking a PR out by hand means "stop". If `automerge` stayed, the bridge's sweep would queue it again
+        # within 15 minutes.
+        for reason in ('MANUAL', 'DEQUEUED_MANUALLY'):
+            with self.subTest(reason=reason):
+                github = self.github()
+                mq.notify(github, event(reason=reason), out=io.StringIO())
+                self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
+                self.assertEqual([path for path, _ in github.posts], ['issues/7/comments'])
+                body = github.posts[0][1]['body']
+                self.assertIn('taken out by hand', body)
+                self.assertIn('add `automerge` again', body)
+                self.assertNotIn('Failed check', body)
 
     def test_deleting_a_label_that_is_already_gone_is_fine(self):
         github = mq.GitHub('o/r', sleep=lambda _: None)
