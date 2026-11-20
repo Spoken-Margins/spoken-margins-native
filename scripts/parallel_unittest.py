@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -34,9 +35,37 @@ from pathlib import Path
 WEIGHTS = Path(__file__).resolve().parent / 'runner_test_seconds.json'
 DEFAULT_JOBS = 4
 # A module still running after this long is killed and fails the step by name. The slowest module took 107 s alone
-# (runner_test_seconds.json); verify-tests.py's step ceiling bounds the whole run anyway.
-MODULE_TIMEOUT = float(os.environ.get('SM_RUNNER_TEST_MODULE_TIMEOUT') or 600)
+# (runner_test_seconds.json). The "still running" lines keep verify-tests.py's 240 s stall rule from firing, so this
+# is the hang bound now; 300 s keeps it near the old one (budget, then 240 s of silence).
+def module_timeout(value):
+    try:
+        return float(value) if float(value) > 0 else 300.0
+    except (TypeError, ValueError):
+        return 300.0
+
+
+MODULE_TIMEOUT = module_timeout(os.environ.get('SM_RUNNER_TEST_MODULE_TIMEOUT'))
 HEARTBEAT_SECONDS = 60
+# Each module runs in its own process group so a timeout kills its whole tree (a swiftc it started, say). That puts
+# it outside the step's group, which verify-tests.py signals on a step timeout or stall, so SIGTERM here kills every
+# live module group before this process exits.
+CHILDREN = {}
+CHILDREN_LOCK = threading.Lock()
+
+
+def kill_group(pid):
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def stop_children(number, frame):
+    with CHILDREN_LOCK:
+        for pid in list(CHILDREN):
+            kill_group(pid)
+    print(f'parallel_unittest.py: stopped by signal {number}; killed every running module', flush=True)
+    os._exit(128 + number)
 
 # One module, with the left-out ids dropped (a test id starting with any PREFIX is not run).
 MODULE_LOADER = '''
@@ -98,13 +127,19 @@ def run_all(names, jobs, left_out=(), cwd='.', out=sys.stdout, python=sys.execut
         with lock:
             running[name] = start
         with tempfile.TemporaryFile() as log:
-            child = subprocess.Popen([python, '-c', MODULE_LOADER, name, *left_out], cwd=cwd, stdout=log,
-                                     stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+            with CHILDREN_LOCK:
+                child = subprocess.Popen([python, '-c', MODULE_LOADER, name, *left_out], cwd=cwd, stdout=log,
+                                         stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+                CHILDREN[child.pid] = name
             try:
                 code, timed_out = child.wait(timeout=module_timeout), False
             except subprocess.TimeoutExpired:
-                child.kill()
+                kill_group(child.pid)
                 code, timed_out = child.wait(), True
+            finally:
+                kill_group(child.pid)  # anything the module left behind in its group
+                with CHILDREN_LOCK:
+                    CHILDREN.pop(child.pid, None)
             log.seek(0)
             output = log.read().decode('utf-8', errors='replace')  # a test may print any bytes
         seconds = time.monotonic() - start
@@ -136,9 +171,13 @@ def run_all(names, jobs, left_out=(), cwd='.', out=sys.stdout, python=sys.execut
     for thread in threads:
         thread.start()
     # A line while slow modules run, so the step's stall watcher sees progress and a hang names its module.
+    last = time.monotonic()
     while any(thread.is_alive() for thread in threads):
         for thread in threads:
             thread.join(timeout=heartbeat / max(1, len(threads)))
+        if time.monotonic() - last < heartbeat:
+            continue
+        last = time.monotonic()
         with lock:
             now = time.monotonic()
             busy = ', '.join(f'{name} {now - start:.0f}s' for name, start in sorted(running.items())
@@ -155,7 +194,9 @@ def main(argv=None):
     parser.add_argument('--times-out', type=Path)
     parser.add_argument('--leave-out', nargs='*', default=[])
     args = parser.parse_args(argv)
-    sys.stdout.reconfigure(errors='backslashreplace')  # a failing test's output reaches any log, even an ASCII one
+    sys.stdout.reconfigure(errors='backslashreplace')
+    for number in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(number, stop_children)  # a failing test's output reaches any log, even an ASCII one
     left_out = tuple(args.leave_out)
     weights = json.loads(WEIGHTS.read_text())['seconds'] if WEIGHTS.exists() else {}
     names = order([name for name in modules(Path('scripts/tests')) if not wholly_left_out(name, left_out)], weights)
