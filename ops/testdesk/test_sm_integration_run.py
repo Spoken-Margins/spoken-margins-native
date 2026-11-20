@@ -2193,3 +2193,18 @@ class ScreenTourTests(unittest.TestCase):
         self.assertIn(names[run.TOUR_NAMES_SHOWN - 1], line)
         self.assertNotIn(names[run.TOUR_NAMES_SHOWN], line)
         self.assertTrue(line.endswith('and 6 more'))
+
+
+class ExclusiveSlotTests(unittest.TestCase):
+    """The job keeps the decision lock for its whole run: it guards the shared Test Runner device (#4730 audit)."""
+
+    def test_the_job_keeps_the_decision_lock_while_it_holds_its_slot(self):
+        import fcntl
+        state = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, state, True)
+        with patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}), run.exclusive_slot() as fds:
+            self.assertEqual(len(fds), 2, 'slot and decision descriptors both go to verify-tests')
+            with (state / run.lane_slots.SIMULATOR_DECISION).open('a+') as probe:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertTrue(run.lane_slots.simulator_job_running())

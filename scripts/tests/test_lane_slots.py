@@ -616,3 +616,46 @@ class VerifyTestsSlotTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DecisionLockTests(unittest.TestCase):
+    """The decision lock guards one check-and-take; a process that keeps it must not freeze every waiter (#4729)."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.state = Path(self.temporary.name) / 'state'
+        self.state.mkdir()
+        self.env = {**os.environ, 'SM_LANE_STATE_DIR': str(self.state), 'SM_LANE_MEMORY_PRESSURE': '1'}
+
+    def hold_decision_lock(self):
+        process = subprocess.Popen([sys.executable, '-c',
+                                    'import fcntl, sys, time; h = open(sys.argv[1], "a+"); '
+                                    'fcntl.flock(h, fcntl.LOCK_EX); print("locked", flush=True); time.sleep(60)',
+                                    str(self.state / 'simulator-slot-decision.lock')],
+                                   stdout=subprocess.PIPE, text=True, start_new_session=True)
+        self.addCleanup(lambda: (process.kill(), process.wait(), process.stdout.close()))
+        self.assertEqual(process.stdout.readline().strip(), 'locked')
+
+    def take_slot(self, max_wait):
+        code = ('import sys; sys.path.insert(0, sys.argv[1]); import lane_slots; '
+                'lane_slots.POLL_SECONDS = 0.2; '
+                'lane_slots.acquire_simulator_slot("waiter", out=sys.stdout, max_wait=float(sys.argv[2]))')
+        try:
+            return subprocess.run([sys.executable, '-c', code, str(SCRIPTS), str(max_wait)], env=self.env,
+                                  capture_output=True, text=True, timeout=max_wait + 15)
+        except subprocess.TimeoutExpired:
+            self.fail('acquire_simulator_slot blocked on the held decision lock past its max_wait')
+
+    def test_a_held_decision_lock_is_waited_on_visibly_and_max_wait_still_applies(self):
+        self.hold_decision_lock()
+        result = self.take_slot(max_wait=2)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('waiting for a simulator slot', result.stdout)
+        self.assertIn('decision', result.stdout + result.stderr)
+        self.assertIn('TimeoutError', result.stderr)
+
+    def test_a_free_decision_lock_takes_a_slot_at_once(self):
+        result = self.take_slot(max_wait=2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('simulator slot 1/2 acquired', result.stdout)

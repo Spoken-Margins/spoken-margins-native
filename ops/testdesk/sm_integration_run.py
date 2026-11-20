@@ -690,7 +690,10 @@ def default_run(cmd: list, cwd: Optional[Path] = None, timeout: Optional[float] 
 def exclusive_slot():
     """Reserve the simulator nonblocking under the lane's decision lock, as the Codex Test Desk did.
 
-    Both descriptors go to verify-tests so a parent exit cannot unlock a running child."""
+    Both descriptors go to verify-tests so a parent exit cannot unlock a running child. The decision lock is kept for
+    the whole job on purpose: verify-tests runs here without --device, on the one shared "SpokenMargins Test Runner",
+    and this hold is the only Mac-wide thing that keeps another checkout's verify-tests off that device mid-run
+    (#4730 audit). Waiters no longer freeze silently on it: lane_slots.acquire polls it and prints a note (#4729)."""
     folder = lane_slots.state_dir()
     folder.mkdir(parents=True, exist_ok=True)
     with (folder / lane_slots.SIMULATOR_DECISION).open('a+') as decision:
