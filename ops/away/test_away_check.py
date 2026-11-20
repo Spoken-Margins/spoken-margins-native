@@ -119,7 +119,7 @@ class OwnerItemTests(unittest.TestCase):
         self.assertFalse(a.asks_owner_to_run('`xcodebuild` failed in actool; owner step is none.\n```\n```'))
 
     def test_owner_merge_paths(self):
-        self.assertTrue(a.touches_owner_paths([{'path': 'scripts/lane-runner.py'}]))
+        self.assertTrue(a.touches_owner_paths([{'path': 'scripts/lane_merge_rules.py'}]))
         self.assertTrue(a.touches_owner_paths([{'path': '.github/workflows/ci.yml'}]))
         self.assertFalse(a.touches_owner_paths([{'path': 'scripts/lane-runner-tests.py'}]))
         self.assertFalse(a.touches_owner_paths([{'path': 'docs/.github-notes.md'}]))
