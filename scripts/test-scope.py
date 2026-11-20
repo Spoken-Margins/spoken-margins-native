@@ -52,6 +52,7 @@ BUILD_FILES = ('project.yml', 'SpokenMarginsNative.xcodeproj/', 'Config/')
 LANE_PREFIXES = ('.github/workflows/', 'scripts/lane')
 LANE_FILES = {'scripts/xcodebuild-lane', 'scripts/host-test-lane', 'scripts/install-lane-guard.py',
               'scripts/test-scope.py', 'scripts/hot_file_ratchet.py', 'scripts/merge_audit.py',
+              'scripts/merge_policy.py', 'scripts/signoff_check.py',  # the merge queue's rules (#4693)
               'scripts/verify-tests.py', 'scripts/trunk.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan'}
 LANE_NOTE = ('Lane change: the runner merges it only after a Codex or Claude audit of the head that says "No blocking '
              'findings". The audit runs by itself once the automerge run passes. A change to scripts/lane-runner.py or '
@@ -581,8 +582,8 @@ def hosted_app_routing(result, env=None):
 
 def hosted_merge_routing(result, env=None):
     """#2459: every automerge job starts on a GitHub-hosted Linux runner once the hosted fast pair runs
-    (LANE_HOSTED_FAST `on`, the rule lane-runner.py's hosted_fast_on reads). There a PR held for T3 is reported held
-    without a Mac, and the job waits for the hosted checks: with LANE_HOSTED_MAC_REST `on` too it merges on all
+    (LANE_HOSTED_FAST `on`, the rule lane-runner.py's hosted_fast_on reads). There the job waits for the hosted
+    checks without a Mac: with LANE_HOSTED_MAC_REST `on` too it merges on all
     three and runs no test; without it, it hands the run to the build Mac (lane.yml's automerge-mac) only once the
     pair has finished. T0 and ops diffs test themselves, as before. The lane job keeps its route. Anything else
     leaves <result> as it is."""
@@ -604,8 +605,8 @@ MAC_READS = ('Packages/SessionKit/', 'Contracts/', 'research/C2/frontend/', 'res
              'Site/onboarding/catalog/', 'Site/onboarding/v1/', 'README.md', 'traces/', 'fixtures/')
 # The App/ paths that tests only a Mac runs still read (#3538). test_mac_checks_scope.py fails on any other, so a text-only
 # read goes to SessionKitCoreTests, which also runs on Linux, instead of keeping App/ diffs on the Mac. Every other App/
-# path needs no Mac check (#3540): the Linux portable job runs the core tests that read it, and the runner waits for
-# the app build (app_build_required) so an App-only diff never merges without a compile.
+# path needs no Mac check (#3540): the Linux portable job runs the core tests that read it. No per-PR app build either
+# since 2026-11-18 (#3539 retired): main-t3.yml compiles main on a schedule (#4616) and bisect cuts a break (#4574).
 MAC_APP_READS = (
     # SharingLoopTourFixtureTests: reads its packets with SessionKitSharing, which imports ShazamKit and AudioToolbox.
     'App/TestFixtures/',
@@ -616,10 +617,18 @@ MAC_APP_READS = (
     # The same, and VoiceCatalogCoordinatorTests, which is compiled out on Linux (canImport(CryptoKit)).
     'App/SpokenMarginsApp/Resources/VoiceCatalog/',
 )
-# Swift inputs and the machinery of the Mac jobs. Every workflow counts: they are the jobs' own definitions.
+# Swift inputs and the machinery of the Mac jobs.
 MAC_PREFIXES = MAC_READS + ('Packages/', 'Config/', 'TestPlans/', 'SpokenMarginsNative.xcodeproj/',
-                            '.github/workflows/', '.github/actions/', 'ops/disk/', 'ops/power/')
-MAC_FILES = {'project.yml', 'Package.swift', 'Package.resolved', 'requirements-dev.txt', '.nvmrc'}
+                            '.github/actions/', 'ops/disk/', 'ops/power/')
+# The workflows that define a job on a Mac: a change to one is a change to a Mac job, so the Mac checks prove it.
+# A workflow whose jobs all run on ubuntu-latest (merge-policy.yml, merge-queue-dequeued.yml, ...) needs no Mac: its
+# tests run in the portable Linux job. Until 2026-11-19 every workflow counted, and a Linux-only workflow PR held a
+# hosted Mac for about 30 minutes (#4724). test_mac_checks_scope.py fails when a workflow with any other runner is
+# missing here, so a new Mac workflow can't slip out of the rule.
+MAC_WORKFLOWS = frozenset('.github/workflows/' + name for name in (
+    'hosted-app-macos.yml', 'hosted-integration.yml', 'hosted-portable.yml', 'hosted-web.yml', 'lane.yml',
+    'main-t3.yml', 'phone-build.yml', 'shipped-build-compat.yml'))
+MAC_FILES = {'project.yml', 'Package.swift', 'Package.resolved', 'requirements-dev.txt', '.nvmrc'} | MAC_WORKFLOWS
 # scripts/ files that drive the Mac jobs, or that the Apple-tool runner tests (verify-tests.py
 # PORTABLE_RUNNER_TESTS_LEFT_OUT) exercise: matched on the file name, in scripts/ and scripts/tests/.
 MAC_SCRIPT_NAME = re.compile(r'lane|verif|test-scope|test_scope|phone|sim[_-]|sessionkit|xcode|host|audio|freeze|'
@@ -640,7 +649,7 @@ HOSTED_WEB_PREFIXES = WEB_PREFIXES + ('research/B4/server/internal/links/', '.gi
 
 def mac_check_reason(path):
     """Why <path> needs the hosted Mac checks, or None when it does not."""
-    if path.startswith('App/'):  # #3540: only the paths a Mac-only test still reads; the app build covers the rest
+    if path.startswith('App/'):  # #3540: only the paths a Mac-only test still reads
         return f'{path} is read by a test only a Mac runs' if path.startswith(MAC_APP_READS) else None
     if path.startswith(MAC_PREFIXES) or path in MAC_FILES or path.endswith(('.swift', '.xcodeproj')):
         return f'{path} is a Swift input or part of the Mac jobs'
@@ -668,13 +677,6 @@ def mac_checks_required(paths):
 def web_check_required(paths):
     """Whether the merge waits for hosted web's Playwright job (#3535): the diff is one that starts it."""
     return any(path.startswith(HOSTED_WEB_PREFIXES) for path in paths)
-
-
-def app_build_required(paths):
-    """True when the runner waits for hosted-app-macos.yml's build before merging (#3539). Every path here is on that
-    workflow's `paths` list, so the build is sure to start. Packages/ and project.yml also start it, but the runner
-    doesn't wait for it on those diffs: the need here is App/ diffs leaving the Mac checks (#3540)."""
-    return any(path.startswith('App/') for path in paths)
 
 
 # Ops folders whose tests skip themselves on Linux (ops/power's amph is AppleScript): a pass there proves nothing.
@@ -797,7 +799,8 @@ def render(result):
     if result['run']:
         lines += ['', 'Run yourself:'] + [f'  {c}' for c in result['run']]
     if result['lane_request']:
-        lines += ['', 'Ask the lane (see the lane-request skill):'] + [f'  {c}' for c in result['lane_request'].splitlines()]
+        lines += ['', 'Optional: ask the lane for a T3 (it never holds the merge, #4572; main gets a scheduled T3, #4573):'] \
+            + [f'  {c}' for c in result['lane_request'].splitlines()]
     if result['notes']:
         lines += ['', 'Notes:'] + [f'  - {n}' for n in result['notes']]
     return '\n'.join(lines)

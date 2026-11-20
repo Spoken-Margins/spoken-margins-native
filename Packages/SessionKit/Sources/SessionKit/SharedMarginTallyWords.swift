@@ -2,8 +2,7 @@ import Foundation
 
 /// The Library row's words for who sent the Margins on an item, and the "Completed hidden" note that says when
 /// the hidden items hold friends' Margins (#3794). Pure and host-tested: the row draws these strings, and nothing
-/// here reads the database. They sit beside `SharedMarginTally.libraryLine`, which the view keeps reading until
-/// the visible change switches it over.
+/// here reads the database.
 extension SharedMarginTally {
     /// One friend whose Margins are on an item. `key` is what tells two people apart (the sender's id; for a sender
     /// with no id, the name), so the same friend in two packets is one sender.
@@ -125,30 +124,14 @@ extension SharedMarginTally {
     public func senderMatches(_ query: String) -> Bool {
         let wanted = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wanted.isEmpty else { return false }
-        return Self.mergedSenders(senders).contains { $0.isNamed && $0.name.localizedStandardContains(wanted) }
+        // `senders` was merged when the tally was made.
+        return senders.contains { $0.isNamed && $0.name.localizedStandardContains(wanted) }
     }
 }
 
 extension SharedMarginTally.Sender {
     /// The sort label: the name, or "a friend".
     fileprivate var shownLabel: String { isNamed ? shownName : "a friend" }
-}
-
-/// What "Completed hidden" adds when a hidden completed item still has a friend's Margins on it (#3794). Items
-/// with unheard Margins are not hidden (#4103), so these are all heard. The view puts a dot before it.
-public enum LibraryCompletedHiddenNote {
-    /// - Parameter items: for each hidden completed item that has friends' Margins, its tally.
-    /// - Returns: "1 has Margins from Cole" (one item, one sender), "1 has Margins from friends" (one item, several
-    ///   senders), "2 have Margins from friends" (two or more items); nil when no hidden item has any.
-    public static func words(items: [SharedMarginTally]) -> String? {
-        let withMargins = items.filter { !$0.isEmpty }
-        guard !withMargins.isEmpty else { return nil }
-        if withMargins.count > 1 { return "\(withMargins.count) have Margins from friends" }
-        let people = SharedMarginTally.mergedSenders(withMargins[0].senders)
-        if people.count == 1, let only = people.first, only.isNamed { return "1 has Margins from \(only.shownName)" }
-        if people.count <= 1 { return "1 has Margins from a friend" }
-        return "1 has Margins from friends"
-    }
 }
 
 extension String {

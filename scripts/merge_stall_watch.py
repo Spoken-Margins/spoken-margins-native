@@ -11,7 +11,7 @@ It alarms when both hold:
     The merge jobs don't count, because they may only be waiting.
 
 A PR that needs its own author, rather than the pipeline, is not stuck: a merge conflict, a blocking newest audit of its
-head, or a FAIL as the newest lane report or the newest T3 report on its head. Each is judged on its own, as the runner
+head, or a FAIL as the newest lane report on its head (T3 reports aside: a T3 holds no merge since #4572). Each is judged on its own, as the runner
 judges them, whatever order the comments came in. Comments from outsiders count for nothing (scripts/comment_trust.py, #1822), so a
 stranger's comment can't hide a stall or fake a verdict.
 
@@ -66,7 +66,7 @@ def needs_its_author(pr: dict, comments: list[dict]) -> str:
     head = pr['head']['sha']
     if pr.get('mergeable_state') == 'dirty':
         return 'has a merge conflict'
-    audit, lane, t3 = None, None, None  # the newest of each on this head; comments come oldest first
+    audit, lane = None, None  # the newest of each on this head; comments come oldest first
     for comment in comments:
         body = (comment.get('body') or '').lstrip()
         first, _, rest = body.partition('\n')
@@ -76,16 +76,13 @@ def needs_its_author(pr: dict, comments: list[dict]) -> str:
             continue
         verdict, commit = LANE_VERDICT.match(first), LANE_COMMIT.search(body)
         if verdict and commit and head.startswith(commit.group(1)):
-            lane = verdict.group(1)
             tier = LANE_TIER.search(body)
-            if tier and tier.group(1) == 'T3':
-                t3 = lane
+            if not (tier and tier.group(1) == 'T3'):  # an optional T3's verdict holds no merge (#4572)
+                lane = verdict.group(1)
     if audit is not None and not CLEAN_AUDIT.match(audit):
         return 'has a blocking audit on its head'
     if lane == 'FAIL':
         return 'has a lane FAIL on its head'
-    if t3 == 'FAIL':
-        return 'has a T3 FAIL on its head'
     return ''
 
 

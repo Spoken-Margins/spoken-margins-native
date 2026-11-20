@@ -11,8 +11,9 @@ public enum TimelineRowKind: String, CaseIterable, Sendable {
 /// The fill, stroke and label colours of a Timeline row. Foundation only, so `PlaybackTimelineListView` and the audit in
 /// `ExperienceColorContrast.swift` read the same numbers.
 ///
-/// The values are what the view drew before the audit could see them. A later change moves them, and the audit's
-/// pairs and known failures move with them.
+/// A row is a plain panel card, and its kind is told by its label, icon, marker and a stronger outline, not by a tint
+/// that fought the text on it; the current row is the app's highlighted card, a soft green fill with a 2 pt evergreen
+/// outline (#3734). The audit's pairs are generated from these values.
 public enum TimelineRowPalette {
     /// A row's fill: a token drawn at `alpha` over whatever is behind the list. `token` names the colour the way the
     /// audit names a tint.
@@ -30,23 +31,19 @@ public enum TimelineRowPalette {
         public let dashed: Bool
     }
 
-    /// The row's fill. The current row has one fill whatever its kind.
+    /// The row's fill. Every kind is the panel; the current row is the soft green of the app's highlighted card.
     public static func fill(kind: TimelineRowKind, isCurrent: Bool) -> Fill {
-        if isCurrent { return Fill(token: "evergreen", color: AppSemanticColorRGB.evergreen, alpha: 0.12) }
-        switch kind {
-        case .source: return Fill(token: "panel", color: AppSemanticColorRGB.panel, alpha: 1)
-        case .listeningMap: return Fill(token: "evergreen", color: AppSemanticColorRGB.evergreen, alpha: 0.07)
-        case .myMargin: return Fill(token: "coral", color: AppSemanticColorRGB.coral, alpha: 0.08)
-        case .userResponse: return Fill(token: "ochre", color: AppSemanticColorRGB.ochre, alpha: 0.08)
-        case .sharedMargin, .assistantResponse: return Fill(token: "plum", color: AppSemanticColorRGB.plum, alpha: 0.07)
-        }
+        _ = kind  // The kind is told by the label, icon, marker and outline, not by the fill.
+        if isCurrent { return Fill(token: "softGreen", color: AppSemanticColorRGB.softGreen, alpha: 1) }
+        return Fill(token: "panel", color: AppSemanticColorRGB.panel, alpha: 1)
     }
 
-    /// The row's outline: the kind's colour, dashed for the assistant's reply.
+    /// The row's outline: the kind's colour at half strength (dashed for the assistant's reply), or an opaque evergreen
+    /// 2 pt outline on the current row, which marks a state and so is measured at 3:1.
     public static func stroke(kind: TimelineRowKind, isCurrent: Bool) -> Stroke {
-        _ = isCurrent  // Today a current row keeps its kind's outline; only its fill changes.
+        if isCurrent { return Stroke(color: currentStrokeColor, alpha: 1, width: 2, dashed: false) }
         let dashed = kind == .assistantResponse
-        return Stroke(color: labelColor(kind: kind), alpha: dashed ? 0.55 : 0.24, width: 1, dashed: dashed)
+        return Stroke(color: labelColor(kind: kind), alpha: dashed ? 0.55 : 0.5, width: 1, dashed: dashed)
     }
 
     /// The colour of the kind's label, icon and marker.
@@ -61,4 +58,7 @@ public enum TimelineRowPalette {
 
     /// The "Current passage" / "Current chapter" label on the current row.
     public static let currentLabelColor = AppSemanticColorRGB.evergreen
+
+    /// The outline of the current row.
+    public static let currentStrokeColor = AppSemanticColorRGB.evergreen
 }

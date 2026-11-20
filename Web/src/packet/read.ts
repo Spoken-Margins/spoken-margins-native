@@ -364,7 +364,10 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
       && lengthOK(anchor.transcriptSegmentId, 300)
       && lengthOK(anchor.chapterTitle, 500)
       // The app's record declares `readAloud: Bool?`, so another type refuses the packet there (#3445).
-      && (record.readAloud == null || typeof record.readAloud === 'boolean');
+      && (record.readAloud == null || typeof record.readAloud === 'boolean')
+      // `leadInMs: Int?` in the app's record (#4171): a string, a fraction or a boolean refuses the packet there. A number
+      // outside the range decodes and is clamped when it is read.
+      && (record.leadInMs == null || (typeof record.leadInMs === 'number' && Number.isSafeInteger(record.leadInMs)));
     if (!bounded) throw mismatch('a Margin field is absent or out of bounds');
     for (const evidence of anchor.machineEvidenceAssetIds) {
       if (asset(evidence)?.role !== ROLE_SIGNATURE) throw mismatch(`anchor evidence ${evidence} is not an acoustic signature`);
@@ -551,6 +554,8 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
     if (replyToId) margin.replyToId = replyToId;
     // The sender's "don't read this aloud" holds for a written Margin only; a voice Margin is the sender's own voice.
     if (record.readAloud === false && !margin.voice) margin.readAloud = false;
+    // The sender's run-up, clamped as the app and the reference reader do (#4171). Absent means each run-up's own length.
+    if (record.leadInMs != null) margin.leadInSeconds = Math.min(Math.max(record.leadInMs, 0), LIMITS.leadInMs) / 1000;
     if (textAnchored) percentMargins.push({ margin, percent: anchor.roughPercent as number });
     else margins.push(margin);
   }

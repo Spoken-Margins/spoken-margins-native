@@ -29,7 +29,7 @@ extension Gate1AppModel {
         return PinnedMarginCard.friendsLast(now: Date(), heardAMargin: heard, localMargins: facts.localMargins, layers: facts.layers)
     }
 
-    /// The player's Share: on a friend's item where the listener has answered, "Send replies to <friend>" with the answers
+    /// The player's Share: on a friend's item where the listener has answered, "Share replies with <friend>" with the answers
     /// picked and changeable; on any other item the share sheet it always opened.
     func openPlaybackShareStartingWithFriendAnswers() {
         let facts = friendItemFacts

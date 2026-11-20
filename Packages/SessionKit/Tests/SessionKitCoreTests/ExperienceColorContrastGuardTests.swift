@@ -42,15 +42,6 @@ final class AppColorContrastAuditFindingsTests: XCTestCase {
         return try XCTUnwrap(measurement).ratio
     }
 
-    /// #3734: the audit's hand-computed numbers for the Timeline rows in light mode.
-    func testTheTimelineRowFindingsAreMeasured() throws {
-        XCTAssertEqual(try ratio("row detail on evergreen at 0.12 over bone", "light"), 3.97, accuracy: 0.01)
-        XCTAssertEqual(try ratio("row detail on evergreen at 0.07 over bone", "light"), 4.32, accuracy: 0.01)
-        XCTAssertEqual(try ratio("row detail on coral at 0.08 over bone", "light"), 4.34, accuracy: 0.01)
-        XCTAssertEqual(try ratio("row detail on plum at 0.07 over bone", "light"), 4.35, accuracy: 0.01)
-        XCTAssertEqual(try ratio("my Margin row label on coral at 0.08 over bone", "light"), 4.44, accuracy: 0.01)
-    }
-
     /// #3731: the Watch's plates were white on the system orange (2.06:1) and blue (3.65:1). Now a dark label on the
     /// orange and a deeper blue under white.
     func testTheWatchPlatesAreReadable() throws {
@@ -62,9 +53,8 @@ final class AppColorContrastAuditFindingsTests: XCTestCase {
     /// Each finding is a known failure until its own issue fixes it, so a fix that works has to delete the entry.
     func testEveryNewFindingIsListedAsKnownUntilItsIssueFixesIt() {
         let listed = Set(AppColorContrastAudit.knownFailures.map { "\($0.pair) [\($0.appearance)]" })
-        let measured = AppColorContrastAudit.measurements(for: AppColorContrastAudit.timelineRowPairs + AppColorContrastAudit.watchPlatePairs)
+        let measured = AppColorContrastAudit.measurements(for: AppColorContrastAudit.allPairs)
         let failing = measured.filter(\.fails).map { "\($0.pair) [\($0.appearance)]" }
-        XCTAssertFalse(failing.isEmpty, "the audit must see the findings")
         XCTAssertEqual(Set(failing).subtracting(listed), [], "an unlisted failure is a new bug: fix it or list it with its issue")
         XCTAssertEqual(AppColorContrastAudit.staleKnownFailures(), [])
     }
@@ -302,8 +292,7 @@ final class AppColorUsageGuardTests: XCTestCase {
     private enum TintKind: Equatable { case audited, noText, unaudited }
 
     private static let tints: [String: TintKind] = [
-        "evergreen@0.12": .audited, "evergreen@0.07": .audited, "coral@0.08": .audited, "ochre@0.08": .audited,
-        "plum@0.07": .audited,
+        "evergreen@0.12": .noText,
         // #3739 slice 2: `tintedFillPairs`.
         "ochre@0.12": .audited, "evergreen@0.16": .audited,
         "listeningAccent@0.18": .audited, "softGreen@0.85": .audited, "softGreen@0.55": .audited,

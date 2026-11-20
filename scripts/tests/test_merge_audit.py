@@ -151,12 +151,12 @@ class HandMergeTests(unittest.TestCase):
         self.assertEqual(self.gap([lane_report('INCONCLUSIVE'), codex_audit()]),
                          'the newest lane report on `f41b1de` is INCONCLUSIVE')
 
-    def test_a_failed_t3_on_the_head_holds_even_after_an_automerge_pass(self):
+    def test_a_t3_report_counts_neither_way(self):
+        # #4572: a T3 holds no merge, so its FAIL leaves no gap and its PASS stands in for no lane report.
         comments = [lane_report('FAIL', tier='T3'), lane_report('PASS', created_at='2026-10-01T16:45:00Z'),
                     codex_audit()]
-        self.assertEqual(self.gap(comments), 'the newest T3 lane report on `f41b1de` is FAIL')
-        comments.insert(1, lane_report('PASS', tier='T3', created_at='2026-10-01T16:42:00Z'))
         self.assertIsNone(self.gap(comments))
+        self.assertEqual(self.gap([lane_report('PASS', tier='T3'), codex_audit()]), 'no lane report on `f41b1de`')
 
     def test_reports_on_another_head_or_not_from_the_runner_dont_count(self):
         self.assertEqual(self.gap([lane_report('PASS', commit='5a59350' + 'b' * 33), codex_audit()]),
