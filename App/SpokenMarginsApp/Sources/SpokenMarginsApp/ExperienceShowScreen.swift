@@ -58,11 +58,17 @@ struct ExperienceShowScreen: View {
             // The library state is read here with the entries: both are set together, under the revision this task keys on.
             let entries = model.followingShowEntries, looked = lookedAtOnOpen
             let library = model.followingLibraryEpisodes, rate = model.speechPlaybackRateMultiplier
+            let inputs = model.followingRuleInputs
             let built = await Task.detached(priority: .userInitiated) { () -> ([FollowingShowEpisode], ShowUpNext?) in
+                // The same evaluator the Following rows read (#4046): the card never names an episode a rule set aside.
+                let rules = FollowingRuleEvaluation.evaluate(
+                    subscriptions: [subscription], entries: entries, inputs: inputs, libraryEpisodes: library)
+                let setAside = rules.outcome(for: subscription.id).setAside
                 let card = FollowingUpNext.card(
-                    entries: entries.filter { $0.subscriptionId == subscription.id }, libraryEpisodes: library)
+                    entries: entries.filter { $0.subscriptionId == subscription.id && !setAside.contains($0.id) },
+                    libraryEpisodes: library)
                 return (
-                    FollowingShowRows.episodes(of: subscription, in: entries, lookedAt: looked),
+                    FollowingShowRows.episodes(of: subscription, in: entries, lookedAt: looked, rules: rules),
                     card.map { ShowUpNext(card: $0, rate: rate) })
             }.value
             episodes = built.0

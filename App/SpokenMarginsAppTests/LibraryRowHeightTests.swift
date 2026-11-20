@@ -4,12 +4,11 @@ import UIKit
 import XCTest
 @testable import SpokenMarginsApp
 
-/// #4062: a Library row tells the listener how far they are and whose Margins are on the item without growing taller.
+/// #4062, #4698: a Library row tells the listener how long the item is and whose Margins are on it without growing taller.
 ///
-/// The old row stacked, under a two-line title and its detail line, a label line for the item loaded now, a line for the
-/// listener's own Margins and a line for a friend's. These tests lay out the production row and fail if a line comes
-/// back. "Today's height" is rebuilt from the same row: the row with no Margins, plus the height each of the two old
-/// Margins lines added on its own, so the bound moves with the fonts and needs no number recorded from `main`.
+/// A row is a title of at most two lines and one info line. The Margins are a tag on the artwork and a dot on its
+/// corner, the item playing is a pause button in the ring, and a finished row keeps its length, so none of them may
+/// add height. These tests lay out the production row and fail if a line comes back.
 @MainActor
 final class LibraryRowHeightTests: XCTestCase {
     private static let longTitle = "Hard cases for AI behavioural design and the long way round to a second line of title"
@@ -35,11 +34,11 @@ final class LibraryRowHeightTests: XCTestCase {
 
     /// The row as the Library draws it, at the width of a standard iPhone.
     private func height(
-        of row: LibraryItemRow, isCurrent: Bool = false, size: DynamicTypeSize = .large, width: CGFloat = 390
+        of row: LibraryItemRow, isCurrent: Bool = false, showsCheck: Bool = false, size: DynamicTypeSize = .large, width: CGFloat = 390
     ) -> CGFloat {
         let view = ExperienceLibraryCompactRow(
-            row: row, isCurrentItem: isCurrent, isLoadedItem: isCurrent, playbackSpeed: 1, spokenNoteFolders: SpokenNoteFolderLedger(),
-            onOpen: {}, onPlay: {}, onComplete: {}, onMarkUnfinished: {}, onPrepareOffline: {}, onPlayNext: {},
+            row: row, isLoadedItem: isCurrent, isPlayingNow: isCurrent, showsFinishedCheck: showsCheck, playbackSpeed: 1, spokenNoteFolders: SpokenNoteFolderLedger(),
+            onOpen: {}, onPlay: {}, onComplete: {}, onMarkUnfinished: {}, onMarkMarginsHeard: {}, onPrepareOffline: {}, onPlayNext: {},
             onAddToQueue: {}, onAddToCollection: {}, onDelete: {}
         )
         .environment(\.dynamicTypeSize, size)
@@ -67,18 +66,20 @@ final class LibraryRowHeightTests: XCTestCase {
         }
     }
 
-    func testOneMarginsLineIsNoTallerThanTheTwoItReplaces() {
+    func testMarginsAddNoHeight() {
         let none = height(of: row(percent: 43))
-        let ownOnly = height(of: row(percent: 43, own: 2))
-        let friendsOnly = height(of: row(percent: 43, shared: friends))
-        let both = height(of: row(percent: 43, own: 2, shared: friends))
-        XCTAssertGreaterThan(ownOnly, none, "precondition: own Margins draw a line")
-        XCTAssertGreaterThan(friendsOnly, none, "precondition: a friend's Margins draw a line")
-        let oldBoth = none + (ownOnly - none) + (friendsOnly - none)
-        XCTAssertLessThanOrEqual(both, oldBoth + 0.5, "both kinds of Margins are taller than the two lines they replaced")
-        // The loaded item has no label line above its title any more, so it is no taller than the old rows without one.
-        let bothCurrent = height(of: row(percent: 43, own: 2, shared: friends), isCurrent: true)
-        XCTAssertLessThanOrEqual(bothCurrent, oldBoth + 0.5, "the loaded item with both kinds of Margins grew")
+        for (own, shared) in [(2, SharedMarginTally.none), (0, friends), (11, friends), (80, SharedMarginTally(total: 40, new: 3))] {
+            let marked = height(of: row(percent: 43, own: own, shared: shared))
+            XCTAssertEqual(marked, none, accuracy: 0.5, "\(own) own and \(shared.total) friends' Margins made the row \(marked - none) pt taller")
+        }
+        let playing = height(of: row(percent: 43, own: 11, shared: friends), isCurrent: true)
+        XCTAssertEqual(playing, none, accuracy: 0.5, "the playing item with Margins grew")
+    }
+
+    func testTheFinishedCheckAddsNoHeight() {
+        let plain = height(of: row(completed: true))
+        let checked = height(of: row(completed: true, own: 3), showsCheck: true)
+        XCTAssertEqual(checked, plain, accuracy: 0.5, "the check and the tag made a finished row taller")
     }
 
     func testAccessibilitySizesReflowWithoutCuttingTheRow() {

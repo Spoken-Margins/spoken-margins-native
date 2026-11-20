@@ -146,6 +146,13 @@ final class Build29DatabaseFixtureTests: XCTestCase {
             id: "list-fixture", name: "Fixture list", createdAt: Date(timeIntervalSince1970: 1),
             members: [ListMember(feedKey: "https://example.substack.com/feed", podcastGUID: "fixture-guid")]
         ))
+        // #4046 PR 6: a list's web address, with a waiting change, the same way.
+        try store.saveListLink(ListLink(
+            id: "link-fixture", listId: "list-fixture", url: "https://example.com/list.opml", title: "Fixture link",
+            etag: "\"v1\"", lastCheckedAt: Date(timeIntervalSince1970: 1), status: .ok, statusAt: Date(timeIntervalSince1970: 1),
+            acceptedMembers: [ListMember(feedKey: "https://example.substack.com/feed")],
+            pending: ListProposal(added: [ProposedShow(member: ListMember(feedKey: "https://example.substack.com/other"), feedURL: "https://example.substack.com/other", title: "Other")], removed: [], checkedAt: Date(timeIntervalSince1970: 1))
+        ))
         // #4046: a listening rule and a Show less mark, the same way.
         try store.saveListeningRule(ListeningRule(
             id: "rule-fixture", action: .skip, words: ["crypto*"], scope: .list("list-fixture"), isOn: true, createdAt: Date(timeIntervalSince1970: 1)
@@ -155,6 +162,11 @@ final class Build29DatabaseFixtureTests: XCTestCase {
         ))
         XCTAssertEqual(try store.loadPublisherAudio(itemId: v1.id)?.durationMs, 60_000)
         XCTAssertNil(try store.loadTranscriptTimeline(itemId: v1.id), "the map must not make the article transcript-backed")
+        // #4046: a rule suggestion's "Not now", the same way.
+        try store.saveRuleSuggestionState(RuleSuggestionState(
+            key: RuleSuggestionState.key(feedKey: "https://example.substack.com/feed", word: "crypto"),
+            snoozedUntil: Date(timeIntervalSince1970: 2_592_001)
+        ))
 
         // An article playing its publisher's recording through its map (#547). Build 29 must see a plain
         // article, its session reading the article, and a Margin anchored to the article's words.

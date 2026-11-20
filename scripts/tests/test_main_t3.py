@@ -1,0 +1,223 @@
+"""#4573: the scheduled main T3's decisions, its `main-t3` status and its failure issue (scripts/main_t3.py).
+
+#4575's release gate reads the status this writes, so its context, states and description limit are contract.
+"""
+from __future__ import annotations
+
+import datetime
+import json
+from pathlib import Path
+import sys
+import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import main_t3 as M  # noqa: E402
+
+NOW = datetime.datetime(2026, 11, 18, 12, 0, tzinfo=datetime.timezone.utc)
+SHA = 'a' * 40
+GREEN = 'b' * 40
+
+
+def status(state, hours_ago=1.0, context=M.CONTEXT):
+    when = NOW - datetime.timedelta(hours=hours_ago)
+    return {'context': context, 'state': state, 'created_at': when.strftime('%Y-%m-%dT%H:%M:%SZ')}
+
+
+def manifest(passed=(), failed=None, retried=()):
+    tests = {t: {'status': 'passed'} for t in passed}
+    for test, messages in (failed or {}).items():
+        tests[test] = {'status': 'failed', 'retry_failures': list(messages)}
+    for test in retried:
+        tests[test] = {'status': 'passed', 'passed_on_retry': True}
+    return {'status': 'verified' if not failed else 'failed', 'steps': [{'name': 'xcode-tests', 'tests': tests}]}
+
+
+class ShouldRunTests(unittest.TestCase):
+    def test_a_commit_with_no_main_t3_status_runs(self):
+        self.assertTrue(M.should_run([], NOW)[0])
+        self.assertTrue(M.should_run([status('success', context='lane'), status('failure', context='ci')], NOW)[0])
+
+    def test_a_final_status_skips(self):
+        for state in ('success', 'failure'):
+            with self.subTest(state=state):
+                run, why = M.should_run([status(state)], NOW)
+                self.assertFalse(run)
+                self.assertIn(state, why)
+
+    def test_the_newest_main_t3_status_decides_whatever_the_listing_order(self):
+        self.assertFalse(M.should_run([status('error', 3), status('success', 1)], NOW)[0])
+        self.assertFalse(M.should_run([status('success', 1), status('error', 3)], NOW)[0])
+
+    def test_a_fresh_pending_skips_and_a_lost_one_runs(self):
+        self.assertFalse(M.should_run([status('pending', 1)], NOW)[0])
+        self.assertTrue(M.should_run([status('pending', 6)], NOW)[0])
+
+    def test_one_runner_fault_gets_one_retry_and_no_more(self):
+        self.assertTrue(M.should_run([status('error', 1), status('pending', 2)], NOW)[0])
+        self.assertFalse(M.should_run([status('error', 1), status('pending', 2), status('error', 4),
+                                       status('pending', 5)], NOW)[0])
+
+    def test_a_failure_is_never_run_again_on_the_same_commit(self):
+        # Owner, 2026-11-18: in-run retries already separate flakes, so a red result gets no second full run, even
+        # when an earlier attempt on the commit was a runner fault, or the failure is old.
+        for history in ([status('failure', 1)], [status('failure', 1), status('error', 3)],
+                        [status('failure', 30)], [status('failure', 1), status('pending', 2)]):
+            with self.subTest(history=[s['state'] for s in history]):
+                self.assertFalse(M.should_run(history, NOW)[0])
+
+    def test_force_always_runs(self):
+        self.assertTrue(M.should_run([status('success')], NOW, force=True)[0])
+
+
+class ResultsTests(unittest.TestCase):
+    def test_a_rerun_replaces_the_first_run_and_a_fresh_clone_counts_only_its_failures(self):
+        found = {'verify-app': manifest(passed=['T/A/test1'], failed={'T/A/test2': ['first']}),
+                 'verify-app-retry': manifest(passed=['T/A/test1', 'T/A/test2']),
+                 'verify-adapters': manifest(passed=['T/B/test1']),
+                 'verify-adapters-fresh': manifest(passed=['T/B/test1'], failed={'T/B/test9': ['boom']})}
+        results = M.collect_results(M.pick_manifests(found))
+        self.assertEqual(results['passed'], 3)
+        self.assertEqual(results['failed'], [('T/B/test9', ['boom'])])
+
+    def test_failures_keep_their_messages_once_and_retries_are_named(self):
+        found = {'verify-app': manifest(passed=['T/A/ok'], failed={'T/A/bad': ['XCTAssertEqual failed', 'XCTAssertEqual failed']},
+                                        retried=['T/A/flaky'])}
+        results = M.collect_results(M.pick_manifests(found))
+        self.assertEqual(results['passed'], 2)
+        self.assertEqual(results['failed'], [('T/A/bad', ['XCTAssertEqual failed'])])
+        self.assertEqual(results['retried'], ['T/A/flaky'])
+
+    def test_no_manifest_is_no_result(self):
+        self.assertEqual(M.collect_results(M.pick_manifests({})), {'passed': 0, 'failed': [], 'retried': []})
+
+
+class StatusTests(unittest.TestCase):
+    def test_states_map_from_the_lane_verdicts(self):
+        self.assertEqual(M.VERDICT_STATE, {'PASS': 'success', 'FAIL': 'failure', 'INCONCLUSIVE': 'error'})
+
+    def test_descriptions(self):
+        self.assertEqual(M.description('success', {'passed': 1870, 'retried': []}, []), '1870 passed')
+        self.assertEqual(M.description('success', {'passed': 5, 'retried': ['x']}, []), '5 passed, 1 on retry')
+        failed = [('SpokenMarginsAppTests/Foo/testBar', []), ('SpokenMarginsAppTests/Baz/testQux', [])]
+        self.assertEqual(M.description('failure', {'passed': 3, 'failed': failed}, []),
+                         '2 failed: Foo/testBar, Baz/testQux')
+        self.assertTrue(M.description('error', {}, ['', 'The cloned simulator did not boot']).startswith(
+            'runner fault: The cloned simulator did not boot'))
+        self.assertIn('no test result', M.description('failure', {'failed': []}, ['Build before simulator boot: x']))
+
+    def test_every_description_fits_githubs_limit(self):
+        many = [(f'SpokenMarginsAppTests/Class{i}/testSomethingLong{i}', []) for i in range(40)]
+        for state, results, details in (('failure', {'failed': many}, []), ('error', {}, ['x ' * 200]),
+                                        ('failure', {'failed': []}, ['y' * 500]), ('success', {'passed': 10**9}, [])):
+            with self.subTest(state=state):
+                text = M.description(state, results, details)
+                self.assertLessEqual(len(text), M.DESCRIPTION_LIMIT)
+                self.assertLessEqual(len(M.status_payload(state, 'u', text)['description']), M.DESCRIPTION_LIMIT)
+        self.assertTrue(M.description('failure', {'failed': many}, []).endswith('...'))
+
+    def test_payload_is_the_contract(self):
+        self.assertEqual(M.status_payload('failure', 'https://run', 'd'),
+                         {'state': 'failure', 'context': 'main-t3', 'target_url': 'https://run', 'description': 'd'})
+        with self.assertRaises(ValueError):
+            M.status_payload('cancelled', 'u', 'd')
+
+
+class IssueTests(unittest.TestCase):
+    results = {'passed': 10, 'failed': [('SpokenMarginsAppTests/Foo/testBar', ['XCTAssertTrue failed - nope'])],
+               'retried': []}
+
+    def test_last_green_is_the_newest_success_other_than_the_tested_commit(self):
+        nodes = [{'oid': SHA, 'status': {'context': {'state': 'SUCCESS'}}}, {'oid': 'c' * 40, 'status': None},
+                 {'oid': 'd' * 40, 'status': {'context': {'state': 'FAILURE'}}},
+                 {'oid': GREEN, 'status': {'context': {'state': 'SUCCESS'}}}]
+        self.assertEqual(M.last_green(nodes, exclude=SHA), GREEN)
+        self.assertIsNone(M.last_green(nodes[1:3]))
+
+    def test_body_names_tests_messages_green_and_merges_and_round_trips_its_state(self):
+        body = M.issue_body(SHA, 'https://run', self.results, [], GREEN, ['abc1234 Merge pull request #1'])
+        self.assertTrue(body.startswith(M.MARKER))
+        self.assertIn('`Foo/testBar`: XCTAssertTrue failed - nope', body)
+        self.assertIn(f'Last green `main-t3`: `{GREEN}`', body)
+        self.assertIn('abc1234 Merge pull request #1', body)
+        state = M.issue_state({'body': body})
+        self.assertEqual(state['first_failed'], SHA)
+        self.assertEqual(state['failed'], ['SpokenMarginsAppTests/Foo/testBar'])
+        self.assertEqual(M.issue_title(SHA), 'Main T3 failed on aaaaaaa')
+
+    def test_an_update_keeps_the_first_failing_commit(self):
+        body = M.issue_body('e' * 40, 'u', self.results, [], None, [], first_failed=SHA)
+        self.assertEqual(M.issue_state({'body': body})['first_failed'], SHA)
+        self.assertIn('none in the last 300 commits', body)
+
+    def test_a_build_failure_lists_what_the_run_said(self):
+        body = M.issue_body(SHA, 'u', {'passed': 0, 'failed': []}, ['Build before simulator boot: error'], None, [])
+        self.assertIn('- Build before simulator boot: error', body)
+
+    def test_the_body_fits_githubs_limit(self):
+        many = {'passed': 0, 'failed': [(f'T/C/test{i}', ['m' * 400]) for i in range(500)]}
+        self.assertLessEqual(len(M.issue_body(SHA, 'u', many, ['d'] * 100, GREEN, ['x' * 200] * 500)), M.BODY_LIMIT)
+
+    def test_dedupe_finds_only_the_trusted_marked_open_issue(self):
+        ours = {'number': 7, 'body': M.issue_body(SHA, 'u', self.results, [], None, []),
+                'user': {'login': 'github-actions[bot]'}, 'author_association': 'NONE'}
+        stranger = dict(ours, number=3, user={'login': 'someone'}, author_association='NONE')
+        unmarked = dict(ours, number=2, body='Main T3 failed on aaaaaaa')
+        pull = dict(ours, number=1, pull_request={})
+        self.assertEqual(M.find_open_issue([stranger, unmarked, pull, ours])['number'], 7)
+        self.assertIsNone(M.find_open_issue([stranger, unmarked, pull]))
+        collaborator = dict(stranger, number=5, author_association='MEMBER')
+        self.assertEqual(M.find_open_issue([ours, collaborator])['number'], 5)
+
+    def test_a_tampered_state_marker_reads_as_none(self):
+        self.assertEqual(M.issue_state({'body': '<!-- main-t3-state: {not json} -->'}), {})
+        self.assertEqual(M.issue_state(None), {})
+
+    def test_still_failing_note_names_new_and_fixed_tests(self):
+        note = M.still_failing_note('e' * 40, 'u', self.results, ['SpokenMarginsAppTests/Old/testGone'])
+        self.assertIn('Newly failing: Foo/testBar.', note)
+        self.assertIn('Now passing: Old/testGone.', note)
+
+
+class LaneRunnerCouplingTests(unittest.TestCase):
+    """main_t3.py drives lane-runner.py's T3 machinery; a rename there must fail here, not on the hosted Mac."""
+
+    def test_the_lane_runner_still_has_what_the_main_run_calls(self):
+        lane = M.load_lane_runner()
+        for name in ('_run_t3_grouped', 'log_retry_passes', 'RepoTally', 'T3_TIMEOUT'):
+            with self.subTest(name=name):
+                self.assertTrue(hasattr(lane, name))
+        self.assertEqual(sorted(lane.PLANS), sorted(M.PLANS))
+
+    def test_an_empty_selector_list_runs_the_whole_plan(self):
+        lane = M.load_lane_runner()
+        _, _, ran, _ = lane.run_plans({'app': []}, lambda plan, selectors, output: manifest(passed=['T/A/test1']),
+                                      Path('/nonexistent'))
+        self.assertEqual(len(ran), 1)
+        self.assertIn('1 passed', ran[0])
+
+
+class WorkflowTests(unittest.TestCase):
+    """main-t3.yml is the trunk's one simulator run (owner, 2026-11-18)."""
+    ROOT = Path(__file__).resolve().parents[2]
+
+    def load(self, name):
+        import yaml
+        data = yaml.safe_load((self.ROOT / '.github/workflows' / name).read_text())
+        return data.get('on', data.get(True))  # PyYAML reads a bare `on:` key as True
+
+    def test_it_ticks_every_3_hours_and_before_the_owners_phone_builds(self):
+        crons = [c['cron'] for c in self.load('main-t3.yml')['schedule']]
+        self.assertEqual(crons, ['17 */3 * * *', '30 13 * * *', '30 22 * * *'])  # 6:30 and 15:30 America/Phoenix
+
+    def test_hosted_integration_no_longer_runs_on_a_push(self):
+        self.assertEqual(list(self.load('hosted-integration.yml')), ['workflow_dispatch'])
+
+
+class CommandLineTests(unittest.TestCase):
+    def test_a_short_sha_is_refused(self):
+        with self.assertRaises(SystemExit):
+            M.main(['decide', '--sha', 'abc1234'])
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -49,6 +49,10 @@ public struct MarginCommentPlan: Equatable, Sendable {
     /// One entry per own Margin of the item, in document order (then the order they were made).
     public var entries: [Entry]
 
+    /// The app's export sheet starts from an empty plan before the Margins are read (#4690), so the initializer is
+    /// public; Swift keeps a public struct's memberwise one internal to the package.
+    public init(entries: [Entry]) { self.entries = entries }
+
     public var included: [Entry] { entries.filter { $0.status == .included } }
 
     /// Plans the comments for `margins` on the item `itemId` whose text is `document`.

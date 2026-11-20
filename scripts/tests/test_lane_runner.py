@@ -510,7 +510,7 @@ class T3Tests(unittest.TestCase):
                 self.assertEqual(any('only AudioLoopback tests were requested' in line for line in details), audio_only_plan)
 
     def test_only_a_deliberate_wait_is_a_hold(self):
-        held = ['not merged: held for T3: this PR\'s newest /lane T3 request has no lane report yet.']
+        held = ['not merged by the runner: the Codex or Claude audit on the head `aaaaaaa` has blocking findings.']
         self.assertTrue(lane.is_hold('INCONCLUSIVE', ['tested nothing'] + held))
         self.assertTrue(lane.is_hold('INCONCLUSIVE', ['not merged by the runner: it touches .github/']))
         self.assertFalse(lane.is_hold('INCONCLUSIVE', ['The Mac\'s simulator slots stayed busy']))
@@ -1398,7 +1398,6 @@ class MergeTests_Runner(unittest.TestCase):
     def run_auto(self, github, verdicts=('PASS',), pushes=(True,), scope=None, comments=(), moved=False,
                  automerge=None, inherited=lambda comments: []):
         events = []
-        self.dispatched = []
         pushes = list(pushes)
 
         def build(tree, base, head, pr, title):
@@ -1426,8 +1425,6 @@ class MergeTests_Runner(unittest.TestCase):
                 mock.patch.object(lane, 'push_merge', side_effect=push), \
                 mock.patch.object(lane, 'fetch_base', side_effect=lambda tree, base: NEWER), \
                 mock.patch.object(lane, 'sweep_merge_audit', side_effect=lambda tree, base: events.append('sweep')), \
-                mock.patch.object(lane, 'dispatch_hosted_integration',
-                                  side_effect=lambda base: self.dispatched.append(base) or 'started'), \
                 mock.patch.object(lane, 'host_build_folders', return_value='build folders: in the workspace (test)'), \
                 mock.patch.object(lane, 'inherited_check', return_value=inherited), \
                 mock.patch.object(lane, 'diff_scope', return_value=scope or self.SCOPE), \
@@ -1622,124 +1619,31 @@ class MergeTests_Runner(unittest.TestCase):
         return runner_report(verdict, lane.identity('T3', commit, MERGE, ['SupertonicSpeechTests']), url=url)
 
     T3_REQUEST = comment('/lane T3\ncommit: aaaaaaa\ntests: SupertonicSpeechTests')
+    T3_SCOPE = {'tier': 'T3', 'why': ['app orchestration'],
+                'files': [{'path': 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift',
+                           'category': 'app-orchestration'}]}
 
-    def test_a_t3_fail_or_inconclusive_on_the_pr_holds_the_merge(self):
-        # #408: the T3 report said FAIL (build-for-testing exit 70, no test ran) and the automerge run
-        # merged minutes later on host tests and builds alone.
-        for verdict in ('FAIL', 'INCONCLUSIVE'):
-            with self.subTest(verdict=verdict):
-                github = FakeGitHub(labels=('automerge',), comments=[self.T3_REQUEST, self.t3_report(verdict)])
-                (got, _, _, details), events = self.run_auto(github)
-                self.assertEqual((got, events, github.posted), (verdict, ['build'], []))
-                self.assertIn(f'not merged: held for T3: the newest T3 lane report on this PR is {verdict} (on {HEAD[:7]}: '
-                              'https://example.test/t3)', details[-1])
-
-    def no_tests_t3_report(self, commit=HEAD):
-        wanted = lane.identity('T3', commit, MERGE, [])
-        details = [f'{lane.NO_TESTS_T3}, and test-scope.py suggests no app test classes for this diff.']
-        return comment(lane.report('pr1-r1', 'INCONCLUSIVE', commit, MERGE, 'T3', 'no simulator', 1, 'nothing', details,
-                                   'none', '/e', 'owner', wanted), login='github-actions[bot]')
-
-    def test_a_t3_request_with_no_tests_holds_nothing_once_the_lane_says_so(self):
-        # #2550 (from #2434): the "names no tests" report was the newest T3 report, so every later automerge pass
-        # said "held for T3" and tested nothing, for a day, with all hosted checks green.
-        github = FakeGitHub(labels=('automerge',),
-                            comments=[comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report()])
-        self.assertIsNone(lane.t3_gate(github._comments))
-        (got, _, _, _), events = self.run_auto(github)
+    def test_a_t3_rated_armed_pr_merges_without_a_t3_report(self):
+        # #4572 (owner, 2026-11-18): a PR merges on its fast checks, builds, signoff and audit; test-scope.py rating it
+        # T3 no longer holds it for a T3 run. Before, it said "not merged: held for T3" until a T3 PASS came.
+        github = FakeGitHub(labels=('automerge',))
+        (got, _, _, details), events = self.run_auto(github, scope=self.T3_SCOPE)
         self.assertEqual((got, events), ('PASS', ['build', 'comment', 'push m1', 'sweep']))
+        self.assertFalse(any('T3' in line for line in details), details)
 
-    def test_a_no_tests_t3_report_does_not_lift_an_earlier_fail_or_a_later_request(self):
-        failed = [self.T3_REQUEST, self.t3_report('FAIL', commit=NEWER)]
-        voided = failed + [comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report()]
-        self.assertEqual(lane.t3_gate(voided)[0], 'FAIL')  # the earlier FAIL still holds
-        named = [comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report(), self.T3_REQUEST]
-        self.assertIn('no lane report yet', lane.t3_gate(named)[1])  # a later request that names tests still waits
-
-    OLD = 'd' * 40
-
-    def plan_miss_report(self, commit=OLD):
-        # #4059: run_t3's FAIL for a named test that is in no app test plan; it ran nothing.
-        wanted = lane.identity('T3', commit, MERGE, ['Gate1FlowUITests/testProbation'])
-        details = [f'{lane.NOT_IN_PLAN} Gate1FlowUITests/testProbation. A named test that does not exist is a failure '
-                   '(verify-tests.py rule).']
-        return comment(lane.report('pr1-r1', 'FAIL', commit, MERGE, 'T3', 'no simulator', 1, 'nothing', details,
-                                   'none', '/e', 'owner', wanted), login='github-actions[bot]')
-
-    def t2_report(self, verdict, commit):
-        return runner_report(verdict, lane.identity('T2', commit, MERGE, []))
-
-    def test_a_plan_miss_t3_fail_holds_nothing_once_a_later_head_passes_t2(self):
-        # #4059 (from #4016): the T3 named a probation test in no plan, FAIL with "ran: nothing"; T2 then passed on
-        # a newer head, and every automerge pass still said "held for T3" for hours.
-        request = comment('/lane T3\ncommit: ddddddd\ntests: Gate1FlowUITests/testProbation')
-        history = [request, self.plan_miss_report(), self.t2_report('PASS', self.OLD)]
-        self.assertEqual(lane.t3_gate(history)[0], 'FAIL')  # a T2 PASS on the same head says nothing new
-        self.assertIsNone(lane.t3_gate(history + [self.t2_report('PASS', HEAD)]))
-        github = FakeGitHub(labels=('automerge',), comments=history + [self.t2_report('PASS', HEAD)])
-        (got, _, _, _), events = self.run_auto(github)
-        self.assertEqual((got, events), ('PASS', ['build', 'comment', 'push m1', 'sweep']))
-
-    def test_a_plan_miss_t3_fail_still_holds_without_a_later_pass_and_a_real_t3_fail_always_holds(self):
-        request = comment('/lane T3\ncommit: ddddddd\ntests: Gate1FlowUITests/testProbation')
-        self.assertEqual(lane.t3_gate([request, self.plan_miss_report()])[0], 'FAIL')
-        self.assertEqual(lane.t3_gate([request, self.plan_miss_report(), self.t2_report('FAIL', HEAD)])[0], 'FAIL')
-        # A T3 that ran tests and failed holds even when a later head passes T2: the tests are the verdict.
-        real = [self.T3_REQUEST, self.t3_report('FAIL', commit=self.OLD), self.t2_report('PASS', HEAD)]
-        self.assertEqual(lane.t3_gate(real)[0], 'FAIL')
-
-    def test_a_corrected_request_after_the_plan_miss_waits_for_its_report_whatever_t2_passes(self):
-        # The audit of #4073: request, plan-miss FAIL, the author's corrected /lane T3 (no report yet), then a T2 PASS
-        # on a newer head. The T2 PASS must not stand in for the T3 the author actually asked for.
-        request = comment('/lane T3\ncommit: ddddddd\ntests: Gate1FlowUITests/testProbation')
-        corrected = comment('/lane T3\ncommit: aaaaaaa\ntests: SupertonicSpeechTests')
-        history = [request, self.plan_miss_report(), corrected, self.t2_report('PASS', HEAD)]
-        self.assertIn('no lane report yet', lane.t3_gate(history)[1])
-
-    def test_a_request_after_the_plan_miss_and_its_later_pass_still_waits_for_its_report(self):
-        request = comment('/lane T3\ncommit: ddddddd\ntests: Gate1FlowUITests/testProbation')
-        history = [request, self.plan_miss_report(), self.t2_report('PASS', HEAD), self.T3_REQUEST]
-        self.assertIn('no lane report yet', lane.t3_gate(history)[1])
-
-    def test_a_bare_request_after_a_named_one_does_not_void_the_named_one(self):
-        # The audit of #2556: the runner answers only the newest request, so a no-tests report for a bare request
-        # must not make the earlier request that named tests look answered.
-        comments = [self.T3_REQUEST, comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report()]
-        self.assertIn('no lane report yet', lane.t3_gate(comments)[1])
-
-    def test_a_t3_request_still_waiting_for_its_report_holds_the_merge(self):
-        old_pass = self.t3_report('PASS', commit=NEWER)
-        for comments in ([self.T3_REQUEST], [old_pass, self.T3_REQUEST],
-                         [self.T3_REQUEST, runner_report('PASS', lane.identity('auto', HEAD, MERGE, []))]):
-            with self.subTest(comments=len(comments)):
+    def test_an_optional_t3_request_or_its_fail_holds_nothing(self):
+        # #4572: a /lane T3 is still answered and reported, but the automerge run never reads it. #408's case (a T3
+        # FAIL, then a merge on host tests and builds) is now the intended behaviour; main's scheduled T3 (#4573)
+        # catches what it would have.
+        for comments in ([self.T3_REQUEST], [self.T3_REQUEST, self.t3_report('FAIL')],
+                         [self.T3_REQUEST, self.t3_report('INCONCLUSIVE')],
+                         [self.T3_REQUEST, self.t3_report('FAIL', commit=NEWER)]):
+            with self.subTest(comments=len(comments), last=comments[-1]['body'][:40]):
                 github = FakeGitHub(labels=('automerge',), comments=comments)
-                (got, _, _, details), events = self.run_auto(github)
-                self.assertEqual((got, events), ('INCONCLUSIVE', ['build']))
-                self.assertIn('newest /lane T3 request has no lane report yet', details[-1])
-
-    def test_a_t3_report_read_at_merge_time_counts_not_the_one_read_at_the_start(self):
-        github = FakeGitHub(labels=('automerge',), comments=[self.T3_REQUEST])
-        github._comments.append(self.t3_report('FAIL'))  # landed while the automerge checks ran
-        (got, _, _, _), events = self.run_auto(github, comments=[self.T3_REQUEST])
-        self.assertEqual((got, events), ('FAIL', ['build']))
-
-    def test_a_fail_on_an_earlier_head_holds_until_a_newer_t3_passes(self):
-        failed = [self.T3_REQUEST, self.t3_report('FAIL', commit=NEWER)]
-        (got, _, _, _), events = self.run_auto(FakeGitHub(labels=('automerge',), comments=failed))
-        self.assertEqual((got, events), ('FAIL', ['build']))
-        passed = failed + [self.T3_REQUEST, self.t3_report('PASS')]
-        (got, _, _, _), events = self.run_auto(FakeGitHub(labels=('automerge',), comments=passed))
-        self.assertEqual((got, events), ('PASS', ['build', 'comment', 'push m1', 'sweep']))
-
-    def test_a_t3_pass_or_an_identical_request_already_passed_lets_it_merge(self):
-        passed = [self.T3_REQUEST, self.t3_report('PASS')]
-        identical = passed + [self.T3_REQUEST, comment(
-            f'Lane: identical T3 request for {HEAD[:7]} already reported (PASS): https://example.test/t3\n{lane.NOTE}',
-            login='github-actions[bot]')]
-        for comments in (passed, identical, [comment('/lane T2'), runner_report('FAIL', lane.identity('T2', HEAD, MERGE, []))]):
-            with self.subTest(comments=len(comments)):
-                (got, _, _, _), events = self.run_auto(FakeGitHub(labels=('automerge',), comments=comments))
+                (got, _, _, details), events = self.run_auto(github, scope=self.T3_SCOPE, comments=comments)
                 self.assertEqual((got, events), ('PASS', ['build', 'comment', 'push m1', 'sweep']))
+                self.assertFalse(any('held for T3' in line for line in details), details)
+        self.assertFalse(hasattr(lane, 't3_gate'))
 
     def test_a_lane_change_is_held_for_a_codex_audit_of_its_head(self):
         # Owner rule 2026-10-01: lane PRs get the same audit hold as audio, persistence and packet PRs. The
@@ -1790,15 +1694,13 @@ class MergeTests_Runner(unittest.TestCase):
         self.assertEqual((events, github.posted), (['build'], []))
         self.assertIn('was closed while it was tested', details[-1])
 
-    def test_each_merge_the_runner_pushes_starts_hosted_integration_once(self):
-        # #2127: a push with the workflow token starts no workflow, so hosted-integration's push trigger never saw
-        # the runner's merges. Only a pushed merge dispatches; a refused push, then the re-merge, dispatches once.
-        cases = [('pushed', {}, ['main']), ('refused, then pushed', {'verdicts': ('PASS', 'PASS'), 'pushes': (False, True)}, ['main']),
-                 ('refused for good', {'verdicts': ('PASS',) * 3, 'pushes': (False,) * 3}, [])]
-        for name, kw, expected in cases:
-            with self.subTest(name):
-                self.run_auto(FakeGitHub(labels=('automerge',)), **kw)
-                self.assertEqual(self.dispatched, expected)
+    def test_a_pushed_merge_starts_no_hosted_integration_run(self):
+        # #4616: the per-merge app run (#2127's dispatch after each runner merge) is retired; main's simulator run is
+        # main-t3.yml on a schedule (#4573). The merge still lands and reports as before.
+        self.assertFalse(hasattr(lane, 'dispatch_hosted_integration'))
+        (_, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)))
+        self.assertEqual(events, ['build', 'comment', 'push m1', 'sweep'])
+        self.assertTrue(details[-1].startswith('merged into main as'), details)
 
     def test_a_refused_push_means_next_moved_so_it_tests_again_on_the_newest_next(self):
         github = FakeGitHub(labels=('automerge',))
@@ -2191,48 +2093,6 @@ class BuildRunnerRoomTests(unittest.TestCase):
             self.assertIn(reason, result)
 
 
-class HostedIntegrationDispatchTests(unittest.TestCase):
-    """#2127: after the runner pushes main, it asks GitHub to start hosted-integration.yml, since the push
-    itself (the workflow token's) starts nothing. Never raises: a merge has already landed."""
-
-    IN_JOB = {'GITHUB_ACTIONS': 'true', 'GH_TOKEN': 't', 'GH_REPO': 'o/r'}
-
-    def dispatch(self, base='main', env=IN_JOB, result=None, error=None):
-        with mock.patch.dict(os.environ, env, clear=True), \
-                mock.patch.object(lane.subprocess, 'run', side_effect=error,
-                                  return_value=result or subprocess.CompletedProcess([], 0, '', '')) as run:
-            said = lane.dispatch_hosted_integration(base)
-        return said, run
-
-    def test_it_dispatches_the_workflow_on_next(self):
-        said, run = self.dispatch()
-        self.assertEqual(run.call_args.args[0], ['gh', 'api', '-X', 'POST',
-                                                 'repos/o/r/actions/workflows/hosted-integration.yml/dispatches',
-                                                 '-f', 'ref=main'])
-        self.assertTrue(said.startswith('hosted integration started on main'), said)
-
-    def test_outside_a_lane_job_or_off_next_it_sends_nothing(self):
-        cases = [('no Actions', {'GH_TOKEN': 't', 'GH_REPO': 'o/r'}, 'main'),
-                 ('no token (the PR code environment)', {'GITHUB_ACTIONS': 'true', 'GH_REPO': 'o/r'}, 'main'),
-                 ('no repository', {'GITHUB_ACTIONS': 'true', 'GH_TOKEN': 't'}, 'main'),
-                 ('another base', self.IN_JOB, 'next')]
-        for name, env, base in cases:
-            with self.subTest(name):
-                said, run = self.dispatch(base, env)
-                run.assert_not_called()
-                self.assertTrue(said.startswith('hosted integration not started'), said)
-
-    def test_a_refusal_or_an_error_is_reported_not_raised(self):
-        # Until the workflow file is on main, GitHub answers 404 (workflow_dispatch needs the default branch).
-        refused = subprocess.CompletedProcess([], 1, '', 'gh: Not Found (HTTP 404)')
-        for name, kw in [('refused', {'result': refused}), ('gh missing', {'error': FileNotFoundError('gh')}),
-                         ('timed out', {'error': subprocess.TimeoutExpired('gh', 60)})]:
-            with self.subTest(name):
-                said, _ = self.dispatch(**kw)
-                self.assertTrue(said.startswith('hosted integration not started'), said)
-        self.assertIn('HTTP 404', self.dispatch(result=refused)[0])
-
-
 class PushTests(unittest.TestCase):
     """Building and pushing the merge commit, with real git and a bare origin."""
 
@@ -2338,7 +2198,7 @@ class MainFlowTests(unittest.TestCase):
     ops = mock.Mock()  # Repo(...): what main posts on #337
     attempt = '1'
 
-    def retry_fault_report(self, released_t3=False, throws=False, exhausted=False):
+    def retry_fault_report(self, throws=False, exhausted=False):
         real_auto = lane.run_auto
 
         def retry(*args, **kwargs):
@@ -2357,11 +2217,8 @@ class MainFlowTests(unittest.TestCase):
                 self.last_retry_note = lane.tested_note()
                 return result
 
-        github = FakeGitHub(labels=('automerge', 'lane:queued') if released_t3 else ('automerge',),
-                            comments=[self.T3_REQUEST, self.held_report()] if released_t3 else [])
+        github = FakeGitHub(labels=('automerge',))
         with mock.patch.object(lane, 'run_auto', side_effect=retry), \
-                mock.patch.object(lane, 't3_scope', return_value=([], [])), \
-                mock.patch.object(lane, 'run_t3', return_value=('PASS', 'sim', 'ran', [], 'none', '')), \
                 mock.patch.object(lane, 'clean_tree'):
             self.run_main(github)
         return next(body for body in reversed(github.posted) if body.startswith('Lane report'))
@@ -2381,14 +2238,6 @@ class MainFlowTests(unittest.TestCase):
         for throws in (False, True):
             with self.subTest(throws=throws):
                 body = self.retry_fault_report(throws=throws)
-                self.assertIn('— INCONCLUSIVE', body)
-                self.assertEqual(lane.TESTED_ON.search(body).group(2), NEWER[:7])
-                self.assertEqual(json.loads(lane.MARKER.search(body).group(1))['next'], NEWER)
-
-    def test_t3_released_fault_after_retry_reports_the_base_it_actually_tested(self):
-        for throws in (False, True):
-            with self.subTest(throws=throws):
-                body = self.retry_fault_report(released_t3=True, throws=throws)
                 self.assertIn('— INCONCLUSIVE', body)
                 self.assertEqual(lane.TESTED_ON.search(body).group(2), NEWER[:7])
                 self.assertEqual(json.loads(lane.MARKER.search(body).group(1))['next'], NEWER)
@@ -2761,174 +2610,37 @@ class MainFlowTests(unittest.TestCase):
         self.assertIn('App/Shared.swift', github.posted[0])
 
 
-    # #421: an automerge run held by the T3 gate merged only after someone pushed again or re-added the
-    # label, and a label the runner re-adds with the workflow's GITHUB_TOKEN starts no run. So the lane job
-    # that reports the T3 PASS runs the held automerge run itself.
+    # #4572: a T3 no longer holds an automerge run, so the lane job that reports a T3 starts none (#421's release of
+    # a held run, and #1209's hand-off of it to a build runner, are gone).
     T3_REQUEST = comment('/lane T3\ntests: SupertonicSpeechTests')
 
-    def held_report(self, commit=HEAD, why=None):
-        why = why or lane.t3_gate([self.T3_REQUEST])[1]
-        return comment(lane.report('pr5-r41', 'INCONCLUSIVE', commit, MERGE, 'auto', 'x', 1, 'x',
-                                   [f'not merged: {why}.'], 'none', '/e', 'owner',
-                                   lane.identity('auto', commit, MERGE, [])), login='github-actions[bot]')
-
-    def run_t3_main(self, github, t3_verdict='PASS', auto_verdict='PASS',
-                    auto_details=('merged into main as m000000',)):
+    def run_t3_main(self, github, t3_verdict='PASS'):
         with mock.patch.object(lane, 't3_scope', return_value=([], [])), \
                 mock.patch.object(lane, 'run_t3', return_value=(t3_verdict, 'sim', 'ran', [], 'none', '')), \
                 mock.patch.object(lane, 'clean_tree', create=True) as clean, \
-                mock.patch.object(lane, 'run_auto', return_value=(auto_verdict, 'x', 'host tests; builds',
-                                                                  list(auto_details))) as auto:
+                mock.patch.object(lane, 'run_auto', side_effect=AssertionError('a T3 starts no automerge run')) as auto:
             self.run_main(github)
         return auto, clean
 
-    def test_a_t3_pass_runs_the_automerge_run_the_t3_gate_held_in_the_same_job(self):
-        github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[self.T3_REQUEST, self.held_report()])
-        auto, clean = self.run_t3_main(github)
-        auto.assert_called_once()
-        clean.assert_called_once()
-        self.assertEqual(auto.call_args[0][4], HEAD)  # the head the T3 passed on
-        self.assertTrue(github.posted[0].startswith('Lane report pr5-r42 — PASS'), github.posted[0])
-        self.assertIn('tier T3', github.posted[0])
-        self.assertTrue(github.posted[1].startswith('Lane report pr5-r42-auto — PASS'), github.posted[1])
-        self.assertIn('tier auto', github.posted[1])
-        self.assertIn(f'started by the T3 PASS ({github._comments[2]["html_url"]})', github.posted[1])
-        self.assertIn('merged into main as m000000', github.posted[1])
-        self.assertEqual(lane.report_identity(github.posted[1])['tier'], 'auto')
-        # lane:running comes off as after any T3, and no lane:done: the released run merged, so the PR closes.
-        # The automerge report answers no /lane request.
-        self.assertEqual(github.label_changes, [('lane:queued', 'lane:running'), ('lane:running', None)])
-        self.assertEqual(lane.pending_requests(github.comments()), (None, False))
-
-    def test_lane_done_comes_after_the_released_automerge_report_when_it_does_not_merge(self):
-        # One event for the whole job, after its last report, so the Hourly dispatch reads the final outcome.
-        github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[self.T3_REQUEST, self.held_report()])
-        reports_before_done, relabel = [], github.relabel
-
-        def spy(remove, add):
-            if add == 'lane:done':
-                reports_before_done.append(len(github.posted))
-            relabel(remove, add)
-        github.relabel = spy
-        self.run_t3_main(github, auto_details=['not merged by the runner: it touches audio and has no audit yet.'])
-        self.assertTrue(github.posted[1].startswith('Lane report pr5-r42-auto — PASS'), github.posted[1])
-        self.assertEqual((github.labeled, reports_before_done), (['lane:running', 'lane:done'], [2]))
-
-    def test_a_pr_held_by_an_older_runner_s_wording_is_released_too(self):
-        old = ("this PR's newest /lane T3 request has no lane report yet; after a T3 PASS, push or remove and "
-               're-add automerge to merge')
-        github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[self.T3_REQUEST, self.held_report(why=old)])
-        auto, _ = self.run_t3_main(github)
-        auto.assert_called_once()
-
-    def test_a_t3_fail_or_inconclusive_or_a_pass_without_automerge_starts_no_automerge_run(self):
-        for labels, verdict in ((('automerge', 'lane:queued'), 'FAIL'), (('automerge', 'lane:queued'), 'INCONCLUSIVE'),
-                                (('lane:queued',), 'PASS')):
-            with self.subTest(labels=labels, verdict=verdict):
-                github = FakeGitHub(labels=labels, comments=[self.T3_REQUEST, self.held_report()])
+    def test_a_t3_report_on_an_armed_pr_starts_no_automerge_run_and_holds_nothing(self):
+        for verdict in ('PASS', 'FAIL', 'INCONCLUSIVE'):
+            with self.subTest(verdict=verdict):
+                github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[self.T3_REQUEST])
                 auto, clean = self.run_t3_main(github, t3_verdict=verdict)
                 auto.assert_not_called()
                 clean.assert_not_called()
-                self.assertEqual(len(github.posted), 1)
-                self.assertIn(f'— {verdict}', github.posted[0])
+                self.assertEqual(len(github.posted), 1)  # the T3 report, and nothing about a merge
+                self.assertTrue(github.posted[0].startswith(f'Lane report pr5-r42 — {verdict}'), github.posted[0])
+                self.assertIn('tier T3', github.posted[0])
+                self.assertNotIn('held for T3', github.posted[0])
+                self.assertEqual(github.labeled[-1:], ['lane:done'])
+                self.assertIn('automerge', github.labels)  # a FAIL takes nothing off either
 
-    def test_a_t3_pass_starts_no_automerge_run_unless_the_newest_one_on_this_head_was_held(self):
-        merged_pass = comment(lane.report('pr5-r41', 'PASS', HEAD, MERGE, 'auto', 'x', 1, 'x', ['merged'], 'none',
-                                          '/e', 'owner', lane.identity('auto', HEAD, MERGE, [])),
-                              login='github-actions[bot]')
-        cases = {
-            'no automerge report yet (the automerge run is still going, and reads the T3 itself)': [self.T3_REQUEST],
-            'held, but on an older head (the push since started a new automerge run)': [
-                self.T3_REQUEST, self.held_report(commit=NEWER)],
-            'a newer automerge report on this head was not held': [
-                self.T3_REQUEST, self.held_report(), merged_pass, comment('/lane T3\ntests: SupertonicSpeechTests')],
-        }
-        for name, comments in cases.items():
-            with self.subTest(name):
-                github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=comments)
-                auto, _ = self.run_t3_main(github)
-                auto.assert_not_called()
-                self.assertEqual(len(github.posted), 1)
-
-    def test_an_identical_t3_request_already_passed_releases_a_held_run_too(self):
-        wanted = lane.identity('T3', HEAD, MERGE, ['SupertonicSpeechTests'])
-        passed = runner_report('PASS', wanted, url='https://example.test/t3-pass')
-        # A second T3 request made the automerge run wait for its report, which is "already reported".
-        github = FakeGitHub(labels=('automerge', 'lane:queued'),
-                            comments=[self.T3_REQUEST, passed, self.T3_REQUEST, self.held_report()])
-        auto, _ = self.run_t3_main(github)
-        auto.assert_called_once()
-        self.assertTrue(github.posted[0].startswith('Lane: identical T3 request'), github.posted[0])
-        self.assertIn('started by the T3 PASS (https://example.test/t3-pass)', github.posted[1])
-        failed = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[
-            self.T3_REQUEST, runner_report('FAIL', wanted), self.T3_REQUEST, self.held_report()])
-        auto, _ = self.run_t3_main(failed)
-        auto.assert_not_called()
-
-    def test_a_lane_fault_in_the_released_run_is_reported_not_silent(self):
-        github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[self.T3_REQUEST, self.held_report()])
-        with mock.patch.object(lane, 't3_scope', return_value=([], [])), \
-                mock.patch.object(lane, 'run_t3', return_value=('PASS', 'sim', 'ran', [], 'none', '')), \
-                mock.patch.object(lane, 'clean_tree', create=True), \
-                mock.patch.object(lane, 'run_auto', side_effect=RuntimeError('checkout refused')):
-            self.run_main(github)
-        self.assertTrue(github.posted[1].startswith('Lane report pr5-r42-auto — INCONCLUSIVE'), github.posted[1])
-        self.assertIn("RuntimeError('checkout refused')", github.posted[1])
-
-    def test_the_identical_request_path_links_the_test_tools_before_the_released_run(self):
-        # That path returns before the job links .venv and node_modules into the fresh checkout, and
-        # verify-tests.py --plan fast stops without them: the released run would report a false FAIL.
-        wanted = lane.identity('T3', HEAD, MERGE, ['SupertonicSpeechTests'])
-        github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[
-            self.T3_REQUEST, runner_report('PASS', wanted), self.T3_REQUEST, self.held_report()])
-        with mock.patch.object(lane, 'tools_source', create=True, return_value=Path('/tools')) as tools:
-            auto, _ = self.run_t3_main(github)
-        auto.assert_called_once()
-        tools.assert_called_once()
-
-    def test_a_failure_while_releasing_leaves_the_t3_verdict_and_says_so_on_the_pr(self):
-        github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[self.T3_REQUEST, self.held_report()])
-        with mock.patch.object(lane, 'merge_after_t3', create=True, side_effect=RuntimeError('gh api: 502')), \
-                mock.patch.object(lane, 't3_scope', return_value=([], [])), \
-                mock.patch.object(lane, 'run_t3', return_value=('PASS', 'sim', 'ran', [], 'none', '')):
-            self.assertEqual(self.outcome(github), {'reported': 'true', 'verdict': 'PASS', 'held': 'false'})
-        self.assertTrue(github.posted[-1].startswith('Lane: the automerge run after the T3 PASS stopped'),
-                        github.posted[-1])
-        self.assertIn("RuntimeError('gh api: 502')", github.posted[-1])
-        self.assertTrue(lane.is_automerge_comment(github.posted[-1]))  # it answers no /lane request
-
-    def test_an_automerge_job_whose_hold_was_passed_by_a_t3_meanwhile_runs_again(self):
-        # The race: the automerge job read no T3 report, the T3 job posted PASS and found no held report
-        # to release, then the automerge job posted its held report. The automerge job releases itself.
-        github = FakeGitHub(labels=('automerge',), comments=[self.T3_REQUEST])
-        t3_pass = runner_report('PASS', lane.identity('T3', HEAD, MERGE, ['SupertonicSpeechTests']))
-        held = f'not merged: {lane.t3_gate([self.T3_REQUEST])[1]}.'
-        results = [('INCONCLUSIVE', 'x', 'host tests; builds', [held]),
-                   ('PASS', 'x', 'host tests; builds', ['merged into main as m000000'])]
-
-        def run_auto(*_args, **_kwargs):
-            if len(results) == 2:
-                github._comments.append(t3_pass)  # landed after this run read the T3 reports
-            return results.pop(0)
-        with mock.patch.object(lane, 'run_auto', side_effect=run_auto) as auto, \
-                mock.patch.object(lane, 'clean_tree', create=True):
-            self.run_main(github, HEAD, 'PASS', '--mode', 'auto')
-        self.assertEqual(auto.call_count, 2)
-        self.assertTrue(github.posted[0].startswith('Lane report pr5-r42 — INCONCLUSIVE'), github.posted[0])
-        self.assertTrue(github.posted[1].startswith('Lane report pr5-r42-auto — PASS'), github.posted[1])
-        self.assertIn('started again in the same automerge job', github.posted[1])
-        self.assertEqual(github.label_changes, [])  # the second run merged: no lane:done, the PR closes
-        still_held = FakeGitHub(labels=('automerge',), comments=[self.T3_REQUEST])
-        with mock.patch.object(lane, 'run_auto', return_value=('INCONCLUSIVE', 'x', 'ran', [held])) as auto, \
-                mock.patch.object(lane, 'clean_tree', create=True):
-            self.run_main(still_held, HEAD, 'PASS', '--mode', 'auto')
-        auto.assert_called_once()
-        self.assertEqual((len(still_held.posted), still_held.labeled), (1, ['lane:done']))
-
-    def test_the_workflow_gives_the_lane_job_room_for_the_released_automerge_run(self):
+    def test_the_lane_job_no_longer_needs_room_for_a_released_automerge_run(self):
         workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
         lane_job = workflow.split('\n  lane:\n')[1].split('\n  automerge:\n')[0]
-        self.assertIn('timeout-minutes: 240', lane_job)
+        self.assertIn('timeout-minutes: 150', lane_job)
+
 
 class MergeTests(unittest.TestCase):
     """The runner merges the newest base into the PR head itself, with real git."""
@@ -3318,9 +3030,7 @@ class AutoRevertTests(unittest.TestCase):
 
     def test_two_runner_faults_after_a_lane_merge_revert_it_once(self):
         repo = FakeRepo([self.fault('2026-10-01T13:00:00Z', 1), self.fault('2026-10-01T13:30:00Z', 2)])
-        with mock.patch.object(lane, 'dispatch_hosted_integration', return_value='started') as dispatch:
-            did = self.revert(repo)
-        dispatch.assert_called_once_with('main')  # the pushed revert is a new tip too (#2127)
+        did = self.revert(repo)
         self.assertTrue(did.startswith('reverted #7 as '), did)
         self.assertEqual(self.origin_file('scripts/lane-runner.py'), 'v1\n')  # the lane change is undone
         self.assertEqual(self.origin_file('app.txt'), 'app 2\n')  # the later ordinary merge stays
@@ -3344,13 +3054,11 @@ class AutoRevertTests(unittest.TestCase):
         self.assertIn('already reverted', again)
         self.assertEqual((len(repo.posted), len(repo.opened), self.rev(self.origin, 'main')), (1, 1, revert))
 
-    def test_a_merge_conflict_a_t3_hold_or_a_fail_is_not_a_runner_fault(self):
+    def test_a_merge_conflict_or_a_fail_is_not_a_runner_fault(self):
         not_faults = [
             self.report('INCONCLUSIVE', ['The PR does not merge cleanly into main (abc1234): a.swift. Merge main '
                                          'into your branch and push; the automerge label runs it again.'],
                         '2026-10-01T13:30:00Z', n=2),
-            self.report('INCONCLUSIVE', ['not merged: held for T3: this PR\'s newest /lane T3 request has no lane '
-                                         'report yet.'], '2026-10-01T13:30:00Z', n=2),
             self.report('FAIL', ['host tests (--plan fast) — expected: verified. observed: exit 1.'],
                         '2026-10-01T13:30:00Z', n=2),
             # #909: the Mac's lid was closed, which no lane change causes; reverting one for it would be wrong.
@@ -4130,14 +3838,13 @@ class TrustedCommentTests(unittest.TestCase):
         kept, _ = self.comments_from(self.comment('/lane T3\ntests: SpeechTests', 'drive-by', 'CONTRIBUTOR'))
         self.assertEqual(lane.pending_requests(kept), (None, False))
 
-    def test_a_fake_report_cannot_answer_a_request_or_lift_the_t3_hold(self):
+    def test_a_fake_report_cannot_answer_a_request(self):
         identity = json.dumps(lane.identity('T3', HEAD, 'b' * 40, []))
         fake = f'Lane report r1 — PASS\n<!-- lane-request: {identity} -->'
         kept, _ = self.comments_from(self.comment('/lane T3\ncommit: aaaaaaa', 'uncomposed', 'OWNER'),
                                      self.comment(fake, 'stranger', 'NONE'))
         request, _ = lane.pending_requests(kept)
         self.assertIsNotNone(request)  # still waiting for the real runner
-        self.assertIsNotNone(lane.t3_gate(kept))  # still held: no trusted T3 report
 
     def test_the_project_bots_reports_still_count(self):
         identity = json.dumps(lane.identity('T3', HEAD, 'b' * 40, []))

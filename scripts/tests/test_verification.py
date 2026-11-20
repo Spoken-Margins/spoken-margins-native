@@ -170,8 +170,13 @@ class VerificationTests(unittest.TestCase):
         # developer's or the lane Mac's real records out of these tests (tests/test_sessionkit_steps.py covers them).
         state = tempfile.TemporaryDirectory()
         self.addCleanup(state.cleanup)
+        # Nor may the machine's own settings change what they assert (#4643): the hosted Mac's lane sets
+        # SM_LANE_IOS_MAJOR to the iOS its image ships when it has no iOS 26, and its checkout has no node_modules.
         for patcher in (patch.object(verification, 'state_dir', return_value=Path(state.name)),
                         patch.object(verification.sessionkit_pass, 'toolchain', return_value=None),
+                        patch.object(verification, 'node_modules_installed', return_value=True),
+                        patch.dict(os.environ, {'SM_LANE_IOS_MAJOR': '26'}),
+                        patch.object(verification.lane_sim, 'IOS_MAJOR', 26),
                         # #705's settle sleeps for real (up to 20 s) whenever a test runs run.xcode twice on one
                         # device: the first call marks it quiet in this shared state folder. Tests of the settle
                         # itself patch it again or inject sleep= (SimulatorSettleTests).
@@ -700,6 +705,16 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual([name for name, _ in calls][0], 'runner-tests')
                 self.assertTrue(self.ops_ran)
                 self.assertFalse(self.skipped_steps(manifest))
+
+    def test_every_test_that_runs_the_host_steps_copes_with_a_checkout_that_has_no_node_modules(self):
+        # #4643: run.host_steps() stops before any step when node_modules is missing, as on a hosted Mac. A test
+        # that runs it for real must make a folder or patch node_modules_installed, or it passes in a developer's
+        # worktree and fails on the lane. The audit of #4646 found test_sessionkit_steps this way.
+        for source in sorted(SCRIPTS.glob('tests/test_*.py')):
+            text = source.read_text()
+            if re.search(r'\.host_steps\(\)', text) and 'patch.object(run' + ", 'host_steps'" not in text:
+                with self.subTest(module=source.name):
+                    self.assertIn('node_modules', text, f'{source.name} runs host_steps() with the real check')
 
     def test_the_readers_run_names_modules_that_exist_and_would_catch_an_app_change(self):
         for name in verification.RUNNER_TEST_READERS:

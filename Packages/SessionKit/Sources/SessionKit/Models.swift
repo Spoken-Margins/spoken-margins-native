@@ -113,6 +113,14 @@ public enum InterjectionCaptureKind: String, Codable, Equatable, Sendable {
     case written
 }
 
+/// What a Margin answers on a paper's Paper note (#4340): its purpose, a key finding, or a piece of evidence. A Margin
+/// is the same Margin with or without one; the role only says which slot of the paper's record it fills.
+public enum PaperNoteRole: String, Codable, Equatable, Sendable, CaseIterable {
+    case purpose
+    case keyFinding
+    case evidence
+}
+
 public enum AnchorType: String, Codable, Equatable, Sendable {
     case text
     case transcript
@@ -1354,6 +1362,11 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var replyTo: MarginReplyLink? = nil
     /// The packets this Margin went out in, so replies that come back link to it. Never exported.
     public var sharedAs: [MarginPacketIdentity]? = nil
+    /// The author's answer to the tidy version of this spoken Margin (#4339). Never exported. Build 29 ignores it.
+    public var tidyDecision: MarginTidyDecision? = nil
+    /// The slot of a paper's Paper note this Margin fills (#4340). Local to the listener: packets build their own Margin
+    /// shape and never carry it. Optional, so Margins saved before it existed decode, and Build 29 ignores the key.
+    public var paperRole: PaperNoteRole? = nil
     /// Where a Margin moved from a live session came from (#4233). Not in the stored row and not part of `==`: the store
     /// attaches it from a record of its own on every read, so a build that predates it still reads and saves the row
     /// unchanged. Nil for every Margin made on the item.
@@ -1371,6 +1384,8 @@ public struct Interjection: Codable, Equatable, Sendable {
         case transcriptionStatus, transcript, cleanedTranscript, displayText, status, anchorContextStatus
         case alignedTranscript, podcastAnchorEvidence, sourceExactEditionSHA256, podcastAnchorEvidenceCaptureStatus
         case podcastAnchorEvidenceFailureReason, isStarredForSharing, privateSharingNote, captureKind, replyTo, sharedAs
+        case paperRole
+        case tidyDecision
     }
 
     public init(
@@ -1399,7 +1414,9 @@ public struct Interjection: Codable, Equatable, Sendable {
         privateSharingNote: String? = nil,
         captureKind: InterjectionCaptureKind? = nil,
         replyTo: MarginReplyLink? = nil,
-        sharedAs: [MarginPacketIdentity]? = nil
+        sharedAs: [MarginPacketIdentity]? = nil,
+        paperRole: PaperNoteRole? = nil,
+        tidyDecision: MarginTidyDecision? = nil
     ) {
         self.id = id
         self.itemId = itemId
@@ -1427,6 +1444,42 @@ public struct Interjection: Codable, Equatable, Sendable {
         self.captureKind = captureKind
         self.replyTo = replyTo
         self.sharedAs = sharedAs
+        self.paperRole = paperRole
+        self.tidyDecision = tidyDecision
+    }
+}
+
+/// What the listener chose about the tidy version of one of their own spoken Margins (#4339).
+///
+/// The words themselves are not stored here. An approved tidy lives in `Interjection.cleanedTranscript` and
+/// `displayText`, which every reader already prefers, and the recording and `transcript` are never written. This is
+/// only the answer, so "Keep mine" is not asked again, and so the card can tell "used" from "never offered".
+///
+/// The JSON is flat on purpose: `{"choice": "usedTidy", "source": "fillers", "decidedAt": "…"}`. Both enums have
+/// String raw values and no associated values, and the field is optional on `Interjection`, so a row written with it
+/// still decodes in Build 29, which ignores keys it does not know. It is local to the Margin's author: it is never in a
+/// packet (a packet is built from a reviewed share revision, not from the Margin row).
+public enum MarginTidyChoice: String, Codable, Equatable, Sendable {
+    case usedTidy
+    case keptOriginal
+}
+
+/// Where an approved tidy came from: the text rules alone, or the on-device model checked by the guard.
+public enum MarginTidySource: String, Codable, Equatable, Sendable {
+    case fillers
+    case onDeviceAI
+}
+
+public struct MarginTidyDecision: Codable, Equatable, Sendable {
+    public var choice: MarginTidyChoice
+    /// Set when `choice` is `usedTidy`; a "kept mine" has no source.
+    public var source: MarginTidySource?
+    public var decidedAt: Date
+
+    public init(choice: MarginTidyChoice, source: MarginTidySource? = nil, decidedAt: Date) {
+        self.choice = choice
+        self.source = source
+        self.decidedAt = decidedAt
     }
 }
 

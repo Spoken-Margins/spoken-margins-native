@@ -9,6 +9,12 @@ import Foundation
 ///
 /// Rows before the first chapter row belong to no section and are never hidden. A chapter row with nothing
 /// under it has nothing to fold.
+///
+/// Starting state and following playback (#4586, the owner's call 2026-11-18). A Timeline that opens with every
+/// chapter expanded is too long on a dense PDF, so `sync` folds every chapter that has rows except the one the
+/// playhead is in, and then, as playback moves into another chapter, folds the chapter it left and opens the
+/// one it entered. A chapter the listener opened or folded by hand is theirs: playback never changes it again
+/// while this Timeline is open. Nothing is stored; a new `TimelineChapterFolding` is the state for a new item.
 public struct TimelineChapterFolding: Equatable, Sendable {
     /// What the folding needs to know about one rail row, in rail order.
     public struct Row: Equatable, Sendable {
@@ -45,8 +51,14 @@ public struct TimelineChapterFolding: Equatable, Sendable {
         }
     }
 
-    /// The ids of chapter rows the listener folded.
+    /// The ids of chapter rows that are folded now, by the listener or by `sync`.
     public private(set) var foldedChapterIDs: Set<String>
+    /// Chapters the listener folded or opened by hand, or was taken into with `reveal`. `sync` leaves them alone.
+    public private(set) var handManagedChapterIDs: Set<String> = []
+    /// The chapter the playhead was in at the last `sync`. Nil before the first chapter, or before the first sync.
+    public private(set) var playingChapterID: String?
+    /// Whether the starting state has been applied for this item.
+    public private(set) var isSeeded = false
 
     public init(foldedChapterIDs: Set<String> = []) {
         self.foldedChapterIDs = foldedChapterIDs
@@ -80,12 +92,61 @@ public struct TimelineChapterFolding: Equatable, Sendable {
     }
 
     /// Fold or unfold a chapter. A chapter with nothing under it stays unfolded.
+    /// A hand toggle: from now on playback leaves this chapter as the listener put it.
     public mutating func toggle(_ chapterID: String, in rows: [Row]) {
         if foldedChapterIDs.contains(chapterID) {
             foldedChapterIDs.remove(chapterID)
+            handManagedChapterIDs.insert(chapterID)
         } else if Self.canFold(chapterID, in: rows) {
             foldedChapterIDs.insert(chapterID)
+            handManagedChapterIDs.insert(chapterID)
         }
+    }
+
+    // MARK: Starting state and following playback
+
+    /// The chapter the playhead is in: the chapter row itself when that row is current, otherwise the chapter
+    /// whose section holds the current row. Nil when no current row is in a chapter (the Beginning, or nothing).
+    public static func playingChapterID(in rows: [Row], currentIDs: Set<String>) -> String? {
+        var header: String?
+        for row in rows {
+            if row.isChapter { header = row.id }
+            if currentIDs.contains(row.id), let header { return header }
+        }
+        return nil
+    }
+
+    /// Bring the folds in line with the rail and the playhead. Call it whenever the rows or the current rows
+    /// change. `currentIDs` is empty while the playhead isn't known yet.
+    ///
+    /// - First time the rail has a chapter with rows: every such chapter folds except the playing one.
+    /// - Afterwards, when the playing chapter changes: the chapter left folds and the one entered opens,
+    ///   each only if the listener hasn't handled it by hand.
+    /// - Chapters that gain their first row after the starting state stay open (nothing buries a new row).
+    /// - An unknown playhead (`currentIDs` empty) changes nothing, so a moment of no answer doesn't flicker.
+    public mutating func sync(rows: [Row], currentIDs: Set<String>) {
+        prune(to: rows)
+        let sections = Self.members(in: rows)
+        handManagedChapterIDs.formIntersection(sections.keys)
+        let playing = Self.playingChapterID(in: rows, currentIDs: currentIDs)
+
+        if !isSeeded {
+            guard !sections.isEmpty else { return }
+            isSeeded = true
+            foldedChapterIDs = Set(sections.keys)
+            if let playing { foldedChapterIDs.remove(playing) }
+            playingChapterID = playing
+            return
+        }
+
+        guard !currentIDs.isEmpty, playing != playingChapterID else { return }
+        if let left = playingChapterID, sections[left] != nil, !handManagedChapterIDs.contains(left) {
+            foldedChapterIDs.insert(left)
+        }
+        if let entered = playing, !handManagedChapterIDs.contains(entered) {
+            foldedChapterIDs.remove(entered)
+        }
+        playingChapterID = playing
     }
 
     /// Forget chapters that are no longer on the rail or no longer have rows under them (a different item, or a
@@ -131,8 +192,18 @@ public struct TimelineChapterFolding: Equatable, Sendable {
     /// Returns whether anything changed.
     @discardableResult
     public mutating func reveal(_ rowID: String, in rows: [Row]) -> Bool {
-        guard let header = foldedChapterHiding(rowID, in: rows) else { return false }
-        foldedChapterIDs.remove(header)
+        // The listener asked to be taken to this row, so its chapter is theirs from now on, whether it was
+        // folded or already open: playback doesn't fold it back behind them.
+        var header: String?
+        for row in rows {
+            if row.isChapter { header = row.id }
+            if row.id == rowID {
+                if !row.isChapter, let header { handManagedChapterIDs.insert(header) }
+                break
+            }
+        }
+        guard let hiding = foldedChapterHiding(rowID, in: rows) else { return false }
+        foldedChapterIDs.remove(hiding)
         return true
     }
 

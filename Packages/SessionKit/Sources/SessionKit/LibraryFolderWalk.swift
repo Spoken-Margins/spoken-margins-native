@@ -18,7 +18,7 @@ public enum LibraryFolderWalk {
     public static let defaultMaxEntries = 2_000
     public static let defaultMaxFiles = 200
 
-    public enum Kind: String, Equatable, Sendable {
+    public enum Kind: String, Codable, Equatable, Sendable {
         case pdf, text, markdown, epub, audio
         /// A Listening Edition `.json`.
         case edition

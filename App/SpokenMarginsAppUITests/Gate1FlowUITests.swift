@@ -275,7 +275,7 @@ final class Gate1FlowUITests: XCTestCase {
         launchAllowingOneStall()
         let row = app.buttons["library.row.item-pill"]
         XCTAssertTrue(row.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Completed hidden"].exists)
+        XCTAssertFalse(element("library.filter.summary").exists, "the everyday view has nothing under the chips (#4698)")
         let search = app.textFields["library.search.field"]
         XCTAssertTrue(search.waitForExistence(timeout: 4))
         let searchTop = search.frame.minY
@@ -306,7 +306,7 @@ final class Gate1FlowUITests: XCTestCase {
         captureScreen(named: "library-completed-search-and-undo")
         app.buttons["Clear search"].tap()
         element("library.filters.reset").tap()
-        XCTAssertTrue(app.staticTexts["Completed hidden"].exists)
+        XCTAssertTrue(element("library.filter.summary").waitForNonExistence(timeout: 4), "back to the everyday view, nothing under the chips")
     }
 
     func testLibraryCompactRowStaysDense() throws {

@@ -8,6 +8,40 @@ import SessionKitSharing
 @testable import SpokenMarginsApp
 
 final class SpokenMarginsPackageHandoffTests: XCTestCase {
+    /// Importing a packet for an episode at `podcasts.example.com` makes the app resolve and download it, and those are
+    /// real requests that used to fail slowly on DNS, still running when the class ended, so the next class that
+    /// watched the network (`TextSceneMapPreparerTests`) was failed by requests it never made (#4581). Every request
+    /// these tests cause now fails at once, and `tearDown` stops what the models started before the class moves on.
+    private let createdModels = CreatedModels()
+
+    override func setUp() {
+        super.setUp()
+        URLProtocol.registerClass(FailFastNetworkURLProtocol.self)
+    }
+
+    override func tearDown() async throws {
+        await Self.settle(createdModels)
+        URLProtocol.unregisterClass(FailFastNetworkURLProtocol.self)
+        try await super.tearDown()
+    }
+
+    /// Stops the downloads the models started and waits for any import still running, so nothing they ask of the
+    /// network outlives the class. The wait is on the import's own state, with the deadline only as a ceiling.
+    @MainActor
+    private static func settle(_ created: CreatedModels) async {
+        for model in created.take() {
+            model.podcastDownloadCoordinator?.shutdown()
+            await model.waitForPackageStaging()
+            try? await pollUntil(timeout: .seconds(10)) { !model.isImportingSpokenMarginsPackage }
+        }
+    }
+
+    @MainActor
+    private func tracked(_ model: Gate1AppModel) -> Gate1AppModel {
+        createdModels.add(model)
+        return model
+    }
+
     func testPackageHandoffPreservesExactBytesUntilConsumed() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("spoken-margins-package-handoff-tests-\(UUID().uuidString)", isDirectory: true)
@@ -61,7 +95,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
     @MainActor
     func testAppConsumesShareExtensionPackageIntoRecipientImportFlow() async throws {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let model = tracked(Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient()))
         model.resetAndSeed()
         let itemID = model.selectedItem.id
         model.selectedItem.interjections = [Interjection(
@@ -114,7 +148,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(model.spokenMarginsPackageImportReview?.id, review.id)
 
         // The app is killed before Import: the next launch reopens the review once, not on every foreground.
-        let relaunched = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let relaunched = tracked(Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient()))
         try await relaunched.consumePendingSpokenMarginsPackageHandoffs(from: store)
         let reopened = try XCTUnwrap(relaunched.spokenMarginsPackageImportReview, "the packet survived the relaunch")
         XCTAssertFalse(reopened.opensDirectly, "shown on an earlier launch: it waits in the sheet, nothing is fetched unasked")
@@ -134,11 +168,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
     @MainActor
     private func shareLinkModel(root: URL, fetch: @escaping ShareLinkPacketDownloader.Fetch) -> Gate1AppModel {
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: root.appendingPathComponent("recipient.sqlite")
-        )
+        ))
         model.resetAndSeed()
         model.shareLinkOpener.downloader = ShareLinkPacketDownloader(fetch: fetch)
         return model
@@ -568,11 +602,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         // Opening a store migrates/writes metadata. Prepare the inspection connection
         // before asynchronous model work, then read the actual persisted import below.
         let store = try SQLiteSessionStore(path: databaseURL.path)
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         let previouslySelectedItemID = model.selectedItem.id
 
@@ -629,11 +663,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let packageURL = root.appendingPathComponent("referenced-episode.spokenmargins")
         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-reference-with-enclosure")
         let store = try SQLiteSessionStore(path: databaseURL.path)
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: FailingPackagePodcastLinkResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
 
         model.handleIncomingURL(packageURL)
@@ -660,11 +694,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let databaseURL = root.appendingPathComponent("recipient.sqlite")
         let packageURL = root.appendingPathComponent("referenced-episode.spokenmargins")
         _ = try writePodcastPackage(to: packageURL, packageID: "package-import-margin-rows")
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: FailingPackagePodcastLinkResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         await model.settleMarginRows()
 
@@ -687,11 +721,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let root = try temporaryDirectory(named: "spoken-margins-import-shared-group-open")
         let packageURL = root.appendingPathComponent("group.spokenmargins")
         _ = try writePodcastPackage(to: packageURL, packageID: "package-shared-group-open")
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: FailingPackagePodcastLinkResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: root.appendingPathComponent("recipient.sqlite")
-        )
+        ))
         model.resetAndSeed()
         await model.settleMarginRows()
 
@@ -724,11 +758,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let root = try temporaryDirectory(named: "spoken-margins-import-nameless-following")
         let packageURL = root.appendingPathComponent("nameless.spokenmargins")
         _ = try writePodcastPackage(to: packageURL, packageID: "package-nameless-following", sender: "Someone")
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: FailingPackagePodcastLinkResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: root.appendingPathComponent("recipient.sqlite")
-        )
+        ))
         model.resetAndSeed()
         await model.settleMarginRows()
 
@@ -851,11 +885,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             return (url, manifest)
         }
         let store = try SQLiteSessionStore(path: databaseURL.path)
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         XCTAssertFalse(try store.listItems().contains { $0.media?.url == Self.podcastAudioURL })
 
@@ -901,11 +935,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let packageURL = root.appendingPathComponent("\(name).spokenmargins")
         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-\(name)")
         let store = try SQLiteSessionStore(path: databaseURL.path)
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: resolver,
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         model.handleIncomingURL(packageURL)
         await model.waitForPackageStaging()
@@ -931,11 +965,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let databaseURL = root.appendingPathComponent("recipient.sqlite")
         let packageURL = root.appendingPathComponent("repair-episode.spokenmargins")
         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-repair-episode")
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         let wrongItemID = model.selectedItem.id
         let store = try SQLiteSessionStore(path: databaseURL.path)
@@ -1116,12 +1150,12 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let packageURL = root.appendingPathComponent("transcript-fallback.spokenmargins")
         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-transcript-fallback")
         let transcriber = PackageAnchorTranscriptionClient()
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             sourceTranscriptionClient: transcriber,
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         model.handleIncomingURL(packageURL)
         await model.waitForPackageStaging()
@@ -1267,10 +1301,10 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         )
         let store = try SQLiteSessionStore(path: databaseURL.path)
         let extractor = ArticlePackageExtractor(extraction)
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         model.readablePageExtractor = extractor
         model.handleIncomingURL(packageURL)
@@ -1289,12 +1323,12 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let packageURL = root.appendingPathComponent("stream-then-download.spokenmargins")
         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-stream-then-download")
         let transcriber = PackageAnchorTranscriptionClient()
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             sourceTranscriptionClient: transcriber,
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         model.handleIncomingURL(packageURL)
         await model.waitForPackageStaging()
@@ -1356,11 +1390,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
                 packageID: "package-held-pass-\(sender.lowercased())", sender: sender
             )
         }
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         for sender in ["Ana", "Ben"] {
             model.handleIncomingURL(root.appendingPathComponent("\(sender).spokenmargins"))
@@ -1516,6 +1550,28 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTFail("Timed out waiting for the package import to finish: \(model.spokenMarginsPackageImportError ?? "no error")")
         throw SessionKitError.persistenceFailed("package_import_test_timeout")
     }
+}
+
+/// The models a test made, so `tearDown` can stop their downloads.
+private final class CreatedModels: @unchecked Sendable {
+    private let lock = NSLock()
+    private var models: [Gate1AppModel] = []
+
+    @MainActor func add(_ model: Gate1AppModel) { lock.withLock { models.append(model) } }
+    @MainActor func take() -> [Gate1AppModel] { lock.withLock { let taken = models; models = []; return taken } }
+}
+
+/// Fails every request made while it is registered, at once, so none of them is still running when the test ends.
+/// A test that needs an answer from the network passes its own session; this is for the requests it never meant to make.
+private final class FailFastNetworkURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+    }
+
+    override func stopLoading() {}
 }
 
 private actor PackageAnchorTranscriptionClient: SourceTranscriptionClient {
