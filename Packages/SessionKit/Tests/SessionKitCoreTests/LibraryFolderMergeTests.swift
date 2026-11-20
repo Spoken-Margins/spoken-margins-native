@@ -132,6 +132,22 @@ final class LibraryFolderMergeTests: XCTestCase {
         XCTAssertEqual(changed.record.members.last?.updatedCopyOf, "brief.pdf")
     }
 
+    func testABackupThatSortsAheadOfAnUpdatedMembersFileIsTheDuplicateOnEveryPick() {
+        let existing = record([member("brief.pdf", "a", id: "i1"), member("brief.pdf#updated-2", "a2", id: "i2", copyOf: "brief.pdf")])
+        let result = run(walk([file("Archive/brief.pdf", "a2"), file("brief.pdf", "a2")]), existing: existing)
+        XCTAssertEqual(result.record.notAdded.map(\.key), ["Archive/brief.pdf"])
+        XCTAssertEqual(result.record.members.map(\.key), ["brief.pdf", "brief.pdf#updated-2"])
+        XCTAssertTrue(result.jobs.isEmpty)
+    }
+
+    func testAMemberWithNoHashYetIsJudgedByItsPathWhenABackupSortsAhead() {
+        let existing = record([member("brief.pdf", nil, id: "i1")])
+        let result = run(walk([file("Archive/brief.pdf", "a"), file("brief.pdf", "a")]), existing: existing)
+        XCTAssertEqual(result.record.notAdded.map(\.key), ["Archive/brief.pdf"])
+        XCTAssertEqual(result.record.members.map(\.key), ["brief.pdf"])
+        XCTAssertEqual(result.record.members.first?.sha256, "a", "the hash is filled in from the member's own file")
+    }
+
     func testACopyAheadOfAFileThatMovedAwayStillLetsTheMemberFollowTheFirstCopy() {
         // The file is gone from its old path, so the first copy in the walk is where it went.
         let existing = record([member("brief.pdf", "a", id: "i1")])
