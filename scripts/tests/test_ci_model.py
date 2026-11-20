@@ -89,10 +89,42 @@ class ExtractTests(unittest.TestCase):
         workflows = TREE.model['workflows']
         self.assertEqual(workflows['merge-queue-label-bridge.yml']['jobs']['bridge']['token'], 'secret:MERGE_QUEUE_TOKEN')
         self.assertEqual(workflows['merge-queue-dequeued.yml']['jobs']['dequeued']['token'], 'github_token')
-        kinds = {e['kind'] for e in workflows['merge-queue-dequeued.yml']['effects']}
-        self.assertTrue({'label-add', 'label-remove', 'comment'} <= kinds)
-        self.assertIn('rerun', {e['kind'] for e in workflows['claude-audit.yml']['effects']})
         self.assertTrue(workflows['lane.yml']['disabled'])
+
+    def test_effects_are_found_however_a_script_is_formatted(self):
+        """On a fixture script, never a live one: how a live script is formatted must not matter to any test."""
+        script = '''import subprocess
+def run(github, number, sha):
+    github.post(f'issues/{number}/comments', {'body': 'one line'})
+    github.post(
+        f"issues/{number}/labels",
+        {"labels": ["needs-fix"]},
+    )
+    github.delete(f'issues/{number}/labels/{"automerge"}')
+    subprocess.run(['gh', 'run',
+                    'rerun', sha], check=True)
+    subprocess.run(
+        [
+            "gh",
+            "pr",
+            "merge",
+            str(number),
+        ]
+    )
+    # gh pr comment in a comment is not an effect
+    command = ['gh', 'workflow', 'run', 'x.yml']
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'scripts').mkdir()
+            (Path(tmp) / 'scripts/fake.py').write_text(script, encoding='utf-8')
+            (Path(tmp) / 'scripts/fake.sh').write_text('gh pr comment "$PR" --body hi\n# gh pr merge\n', encoding='utf-8')
+            effects = ci_model.script_effects(Path(tmp), 'scripts/fake.py')
+            shell = ci_model.script_effects(Path(tmp), 'scripts/fake.sh')
+        self.assertEqual([(e['kind'], e['at']) for e in effects],
+                         [('comment', 'scripts/fake.py:3'), ('label-add', 'scripts/fake.py:4'),
+                          ('label-remove', 'scripts/fake.py:8'), ('rerun', 'scripts/fake.py:9'),
+                          ('queue', 'scripts/fake.py:11'), ('dispatch', 'scripts/fake.py:20')])
+        self.assertEqual([(e['kind'], e['at']) for e in shell], [('comment', 'scripts/fake.sh:1')])
 
     def test_every_assumption_is_cited(self):
         for key, item in ci_model.ASSUMPTIONS.items():

@@ -179,7 +179,7 @@ EFFECT_PATTERNS = [
     ('comment', re.compile(r"'pr', 'comment'|\"pr\", \"comment\"|issues/\{[^}]*\}/comments['\"],\s*\{|gh pr comment")),
     ('dispatch', re.compile(r"dispatch_workflow\(\s*[\"'][\w.-]+|gh workflow run|'workflow', 'run'")),
     ('rerun', re.compile(r"\"run\", \"rerun\"|'run', 'rerun'|gh run rerun")),
-    ('queue', re.compile(r"\['pr', 'merge'|\"pr\", \"merge\"|gh pr merge|dequeuePullRequest")),
+    ('queue', re.compile(r"['\"]pr['\"],\s*['\"]merge['\"]|gh pr merge|dequeuePullRequest")),
     ('push', re.compile(r"\['push'|'push', '--|git push")),
     ('cancel-run', re.compile(r"actions/runs/\{[^}]*\}/cancel")),
 ]
@@ -216,21 +216,48 @@ def _job_token(job: dict) -> str:
     return 'github_token' if exprs else 'none'
 
 
+def _effect(kind: str, rel: str, number: int, text: str) -> dict:
+    target = re.search(r"dispatch_workflow\(\s*[\"']([\w.-]+)", text)
+    return {'kind': kind, 'at': f'{rel}:{number}', **({'workflow': target.group(1)} if target else {})}
+
+
+def _python_effects(rel: str, source: str) -> tuple[list[dict], dict[str, list[range]]]:
+    """Effects of a Python script read from its syntax tree: each call is matched as ast.unparse renders it, on one
+    line with normalised quotes, so a call split across lines or formatted differently is still found. Only the
+    innermost matching call counts, so a wrapper around a matching call does not add a second effect."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return [], {}
+    found, spans = [], {}
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    rendered = {id(node): ast.unparse(node) for node in calls}
+    for kind, pattern in EFFECT_PATTERNS:
+        matching = [node for node in calls if pattern.search(rendered[id(node)])]
+        inner = [node for node in matching
+                 if not any(other is not node and pattern.search(rendered[id(other)])
+                            for other in ast.walk(node) if isinstance(other, ast.Call))]
+        for node in inner:
+            found.append(_effect(kind, rel, node.lineno, rendered[id(node)]))
+            spans.setdefault(kind, []).append(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+    return found, spans
+
+
 def script_effects(root: Path, rel: str) -> list[dict]:
+    """What a script does to GitHub. Python is read with `ast` (any formatting); every file is also scanned line by
+    line for command text outside calls (shell scripts, argument lists built in a variable)."""
     path = root / rel
     if not path.is_file():
         return []
-    found = []
-    for number, line in enumerate(path.read_text(encoding='utf-8', errors='replace').splitlines(), 1):
-        stripped = line.strip()
-        if stripped.startswith('#'):
+    source = path.read_text(encoding='utf-8', errors='replace')
+    found, spans = _python_effects(rel, source) if rel.endswith('.py') else ([], {})
+    for number, line in enumerate(source.splitlines(), 1):
+        if line.strip().startswith('#'):
             continue
         for kind, pattern in EFFECT_PATTERNS:
-            if pattern.search(line):
-                target = re.search(r"dispatch_workflow\(\s*[\"']([\w.-]+)", line)
-                found.append({'kind': kind, 'at': f'{rel}:{number}',
-                              **({'workflow': target.group(1)} if target else {})})
-    return found
+            if pattern.search(line) and not any(number in span for span in spans.get(kind, [])):
+                found.append(_effect(kind, rel, number, line))
+    return sorted(found, key=lambda e: (int(e['at'].rsplit(':', 1)[1]), e['kind']))
 
 
 def extract(root: Path = ROOT) -> dict:
