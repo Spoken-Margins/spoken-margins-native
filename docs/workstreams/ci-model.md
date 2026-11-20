@@ -13,6 +13,7 @@ pipeline (a workflow, the label bridge, the merge policy, the audit) before it l
   check names, script effects) and every scenario whose outcome changes.
 - `.venv/bin/python scripts/ci_model.py --extract` prints the static model as JSON.
 - `--live` re-reads the ruleset, variables, secret names and disabled workflows with `gh` instead of the snapshot.
+- `--diff <ref>` imports and runs that tree's scripts on your machine, so never point it at an untrusted branch.
 
 A CI PR should say what `--diff origin/main` printed, and update `scripts/tests/test_ci_model.py` in the same PR when
 an outcome changes on purpose.
@@ -60,4 +61,19 @@ PR (A8).
   - the audit's candidate loop (when it reads the head's checks) mirrors `sm_codex_audit.py` around line 866, and it
     assumes the re-run is called after every posted audit inside a workflow;
   - main-t3's `decide`, and which job catches which defect (`DEFECT_CATCHERS`, assumption A15).
-- It adds no recurring cost: nothing runs it but a person or an agent.
+
+## Cost and catch
+
+`scripts/tests/test_ci_model.py` runs in CI. It is discovered by the fast plan's `runner-tests` step
+(`scripts/verify-tests.py`, in `PORTABLE_STEPS` and `MAC_REST_STEPS`), and the portable split runs it; the Mac-rest
+split's `runner-tests` keeps only the tests that drive Apple tools, so it skips this file.
+
+1. Cost: about 6 s of runner time per portable run, no tokens and no clicks. The model itself runs only when a
+   person or an agent runs it.
+2. Frequency: every PR whose portable job runs `runner-tests`, plus local fast runs.
+3. Catch: a change to the workflows or the scripts the model imports that breaks the model, or that makes a
+   scenario impossible (a docs PR armed by a person no longer merges, a failed group merges). The tests are written
+   so that a CI fix never turns them red: a current defect (b4) is pinned on a fixture tree with a stub
+   `lane_rearm.py`, and on the working tree a stuck outcome is only checked for naming its cause.
+4. Waste signal: the file goes red for a change that broke nothing in the pipeline, twice; or a CI change lands
+   without anyone reading `--diff`, so the model is kept up for nobody.
