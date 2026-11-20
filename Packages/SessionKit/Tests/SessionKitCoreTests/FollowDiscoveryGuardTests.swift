@@ -165,35 +165,88 @@ final class FollowDiscoveryGuardTests: XCTestCase {
         XCTAssertFalse(DiscoveryStubProtocol.requests(host: "plain.example").contains("http://plain.example/article"))
     }
 
-    #if !canImport(FoundationNetworking)
-    // Redirect handling through a custom URLProtocol differs on Linux; the rule runs on the Mac.
-    func testFiveRedirectsAreFollowedAndASixthIsRefused() async throws {
-        // /hop/N redirects to /hop/N-1; /hop/0 is the feed.
-        for hop in 1...6 {
-            DiscoveryStubProtocol.serve("https://redirects.example/hop/\(hop)", .redirect(to: "https://redirects.example/hop/\(hop - 1)"))
+    // MARK: Redirects (#3817, #4681)
+    //
+    // These call the app's redirect delegate itself, hop by hop, instead of serving redirects from a stub
+    // `URLProtocol`. What a session does after a protocol reports a redirect is not specified, and the stub's
+    // five-hop test failed on the hosted Xcode 27 run with no change to the delegate (#4681); a stub that
+    // can't follow also lets a "redirect is refused" test pass for the wrong reason. Run on every platform.
+
+    /// What the delegate answers for each redirect of one task: the new request's URL, or nil when refused.
+    private func answers(_ delegate: BoundedRedirectDelegate, task: URLSessionTask, to locations: [String]) -> [String?] {
+        locations.map { location in
+            let current = task.currentRequest?.url ?? URL(string: "https://redirects.example/start")!
+            let response = HTTPURLResponse(url: current, statusCode: 302, httpVersion: "HTTP/1.1", headerFields: ["Location": location])!
+            // A relative Location is resolved against the current address before the session asks.
+            let target = URL(string: location, relativeTo: current)!.absoluteURL
+            var answer: URLRequest?
+            var asked = false
+            delegate.urlSession(URLSession(configuration: .ephemeral), task: task, willPerformHTTPRedirection: response, newRequest: URLRequest(url: target)) {
+                asked = true
+                answer = $0
+            }
+            XCTAssertTrue(asked, "the delegate answers at once, whatever it decides")
+            return answer?.url?.absoluteString
         }
-        DiscoveryStubProtocol.serve("https://redirects.example/hop/0", .feed(rss(title: "Hops", links: ["https://redirects.example/x"])))
-
-        let candidates = try await coordinator().discover(urlString: "https://redirects.example/hop/5")
-        XCTAssertEqual(candidates.map(\.relation), ["direct"], "five redirects reach the feed")
-        XCTAssertEqual(candidates.first?.source.canonicalURL, "https://redirects.example/hop/0")
-
-        DiscoveryStubProtocol.forget(host: "redirects.example")
-        let code = await failure(coordinator(), "https://redirects.example/hop/6")
-        XCTAssertNotNil(code, "a sixth redirect is not followed")
-        XCTAssertFalse(DiscoveryStubProtocol.requests(host: "redirects.example").contains("https://redirects.example/hop/0"))
     }
 
-    func testARedirectToPlainHTTPIsRefused() async throws {
-        DiscoveryStubProtocol.serve("https://downgrade.example/feed.xml", .redirect(to: "http://downgrade.example/feed.xml"))
-        DiscoveryStubProtocol.serve("http://downgrade.example/feed.xml", .feed(rss(title: "Downgrade", links: ["https://downgrade.example/x"])))
+    /// Task identifiers are unique within a session, not across sessions, so every task here comes from one session.
+    private static let taskSession = URLSession(configuration: .ephemeral)
 
-        let code = await failure(coordinator(), "https://downgrade.example/feed.xml")
-
-        XCTAssertNotNil(code)
-        XCTAssertFalse(DiscoveryStubProtocol.requests(host: "downgrade.example").contains("http://downgrade.example/feed.xml"))
+    private func task() -> URLSessionTask {
+        Self.taskSession.dataTask(with: URL(string: "https://redirects.example/hop/9")!)
     }
-    #endif
+
+    func testTheAppSessionUsesTheBoundedRedirectDelegateWithALimitOfFive() {
+        let session = FollowedSourceCoordinator.boundedSession(configuration: .ephemeral)
+
+        let delegate = session.delegate as? BoundedRedirectDelegate
+
+        XCTAssertNotNil(delegate, "the session the app makes is the one with the redirect rule")
+        XCTAssertEqual(delegate?.maximumRedirects, 5)
+    }
+
+    func testFiveRedirectsAreFollowedAndASixthIsRefused() {
+        let hops = (1...6).map { "https://redirects.example/hop/\($0)" }
+
+        let results = answers(BoundedRedirectDelegate(maximumRedirects: 5), task: task(), to: hops)
+
+        XCTAssertEqual(results, Array(hops.prefix(5)).map { Optional($0) } + [nil], "hops 1 to 5 are followed, hop 6 is refused")
+    }
+
+    func testTheRedirectCountIsPerTaskAndNeverResets() {
+        let delegate = BoundedRedirectDelegate(maximumRedirects: 5)
+        let first = task()
+        let second = task()
+        let hop = "https://redirects.example/next"
+
+        XCTAssertEqual(answers(delegate, task: first, to: Array(repeating: hop, count: 6)).compactMap { $0 }.count, 5)
+        XCTAssertNil(answers(delegate, task: first, to: [hop]).first!, "a refused task stays refused")
+        XCTAssertEqual(answers(delegate, task: second, to: Array(repeating: hop, count: 6)).compactMap { $0 }.count, 5, "another task starts from zero")
+    }
+
+    func testNeighbouringChainLengthsAndTargets() {
+        // (label, locations the server sends in order, what the delegate answers: true followed, false refused)
+        let https = "https://redirects.example/hop/"
+        let table: [(String, [String], [Bool])] = [
+            ("four hops", (1...4).map { "\(https)\($0)" }, [true, true, true, true]),
+            ("five hops", (1...5).map { "\(https)\($0)" }, [true, true, true, true, true]),
+            ("six hops", (1...6).map { "\(https)\($0)" }, [true, true, true, true, true, false]),
+            ("fifty hops", (1...50).map { "\(https)\($0)" }, Array(repeating: true, count: 5) + Array(repeating: false, count: 45)),
+            ("a downgrade to http", ["http://redirects.example/feed.xml"], [false]),
+            ("a downgrade after two https hops", ["\(https)1", "\(https)2", "http://redirects.example/feed.xml"], [true, true, false]),
+            ("a redirect to another host", ["https://other.example/feed.xml"], [true]),
+            ("a relative Location", ["/hop/1"], [true]),
+            ("a relative Location with a query", ["hop/1?a=b"], [true]),
+            ("an upper-case scheme", ["HTTPS://redirects.example/feed.xml"], [true]),
+            ("a different scheme", ["ftp://redirects.example/feed.xml"], [false]),
+            ("a scheme-less host", ["//other.example/feed.xml"], [true]),
+        ]
+        for (label, locations, expected) in table {
+            let results = answers(BoundedRedirectDelegate(maximumRedirects: 5), task: task(), to: locations)
+            XCTAssertEqual(results.map { $0 != nil }, expected, label)
+        }
+    }
 
     // MARK: Several feeds
 
@@ -307,7 +360,6 @@ private final class DiscoveryStubProtocol: URLProtocol, @unchecked Sendable {
     enum Reply {
         case html(String)
         case feed(Data)
-        case redirect(to: String)
     }
 
     private static let lock = NSLock()
@@ -339,16 +391,6 @@ private final class DiscoveryStubProtocol: URLProtocol, @unchecked Sendable {
             return Self.replies[url.absoluteString]
         }
         switch reply {
-        case let .redirect(to: location)?:
-            guard let next = URL(string: location),
-                  let response = HTTPURLResponse(url: url, statusCode: 302, httpVersion: "HTTP/1.1", headerFields: ["Location": location]) else {
-                client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse)); return
-            }
-            client?.urlProtocol(self, wasRedirectedTo: URLRequest(url: next), redirectResponse: response)
-            // When the session refuses the redirect, the 302 is the answer. When it follows it, the session has
-            // already moved to the next request and ignores these (seen on macOS with five and with fifty hops).
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocolDidFinishLoading(self)
         case let .html(text)?:
             finish(url: url, status: 200, contentType: "text/html; charset=utf-8", body: Data(text.utf8))
         case let .feed(data)?:
