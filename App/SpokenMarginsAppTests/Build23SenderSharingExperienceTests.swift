@@ -1,3 +1,4 @@
+import SwiftUI
 import Foundation
 import XCTest
 @testable import SessionKit
@@ -236,7 +237,7 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
 
         let snapshot = coordinator.snapshot
         XCTAssertTrue(snapshot.isReplyBack)
-        XCTAssertEqual(coordinator.senderHeading, "Send replies to Cole")
+        XCTAssertEqual(coordinator.senderHeading, "Share replies with Cole")
         XCTAssertEqual(snapshot.stage, .review, "two taps from the player: Share, then Share link")
         XCTAssertEqual(snapshot.margins.filter(\.isIncluded).count, 2)
         XCTAssertNil(snapshot.selectedMarginID)
@@ -451,5 +452,44 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         } else {
             UserDefaults.standard.removeObject(forKey: key)
         }
+    }
+}
+
+/// #3839: the step above "Share link" is limited to two lines from the first accessibility size, with a "More" button for
+/// the rest, so the pinned bar never covers more than half the screen. This renders the step line, the part of the bar
+/// that grows with its text, at the largest size and holds it to a third of the shortest iPhone screen, leaving the
+/// other sixth of the half for the link status lines (#4134, which sets their own two-line limit) and the buttons.
+/// The bound was set from the type sizes, not yet from a run on a device: if it fails, measure before moving it.
+@MainActor
+final class Build23PinnedStepLineTests: XCTestCase {
+    private static let short = "Finding the exact moment for your new Margin. Keep the episode playing a few more seconds."
+    private static let longest = "Play the episode for about 12 seconds so your friend hears 2 of these Margins at the exact moment. Sharing now may put them a few seconds off."
+    private static let screenHeight: CGFloat = 667 // the shortest screen iOS 26 runs on (iPhone SE)
+
+    private func height(_ text: String, _ size: DynamicTypeSize) -> CGFloat {
+        let line = Build23PinnedStepLine(step: ShareReviewSteps.Step(icon: .clock, text: text))
+        return UIHostingController(rootView: AnyView(line.environment(\.dynamicTypeSize, size)))
+            .sizeThatFits(in: CGSize(width: 343, height: 10_000)).height
+    }
+
+    func testTheLongestStepAtTheLargestSizeStaysWithinAThirdOfTheScreen() {
+        let atFive = height(Self.longest, .accessibility5)
+        XCTAssertLessThanOrEqual(atFive, Self.screenHeight / 3, "the step line is \(atFive) pt high at AX5")
+    }
+
+    func testFromTheFirstAccessibilitySizeTheHeightDoesNotGrowWithTheText() {
+        for size in [DynamicTypeSize.accessibility1, .accessibility3, .accessibility5] {
+            let long = height(Self.longest, size)
+            let twiceAsLong = height(Self.longest + " " + Self.longest, size)
+            let oneLine = height("Play.", size)
+            XCTAssertEqual(long, twiceAsLong, accuracy: 2, "\(size): a longer step made the bar taller")
+            XCTAssertGreaterThan(long, oneLine + 2, "\(size): the step shows its two lines, not one")
+        }
+    }
+
+    func testAtOrdinarySizesTheWholeStepShowsAndGrowsWithItsText() {
+        let short = height(Self.short, .large)
+        let long = height(Self.longest + " " + Self.longest, .large)
+        XCTAssertGreaterThan(long, short, "at ordinary sizes the whole step shows")
     }
 }

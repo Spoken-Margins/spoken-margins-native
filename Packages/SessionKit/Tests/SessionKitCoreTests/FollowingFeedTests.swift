@@ -113,15 +113,16 @@ final class FollowingFeedTests: XCTestCase {
         )
         // No length known: the percent, first, as the Library row shows it (#4062).
         XCTAssertEqual(FollowingFriends.itemDetail(row, playbackSpeed: 1).fullLine, "40% · The Show · Podcast")
-        // With the episode's length and place known, it says how much is left, the same words as the Library.
+        // With the episode's length and place known, it says how much is left, the same short words as the Library (#4698).
         var placed = row
         placed.mediaDurationMs = 3_600_000
         placed.continuationMediaTimeMs = 1_440_000
-        XCTAssertEqual(FollowingFriends.itemDetail(placed, playbackSpeed: 1).fullLine, "36 min left · The Show · Podcast")
+        XCTAssertEqual(FollowingFriends.itemDetail(placed, playbackSpeed: 1).fullLine, "36 min · The Show · Podcast")
         XCTAssertEqual(FollowingFriends.itemDetail(placed, playbackSpeed: 1).fullLine,
                        "\(LibraryRowLines(row: placed).progress ?? "") · The Show · Podcast")
         let done = LibraryItemRow(id: "j", title: "T", status: "", canDelete: true, isCompleted: true, mediaType: "article", sourceTitle: "arxiv.org")
-        XCTAssertEqual(FollowingFriends.itemDetail(done, playbackSpeed: 1).fullLine, "Completed · arxiv.org · Article")
+        // A finished row keeps its length and says "Completed" only to VoiceOver; with no length, the line starts at the source.
+        XCTAssertEqual(FollowingFriends.itemDetail(done, playbackSpeed: 1).fullLine, "arxiv.org · Article")
     }
 
     // #3753: friends alone must never be drawn before the first show load, or the shows' newer episodes push them down.
