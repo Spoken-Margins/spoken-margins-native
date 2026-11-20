@@ -13,7 +13,7 @@ extension Gate1AppModel {
     /// Picking the same folder again adds only what is new. Returns the last line, or nil when nothing started.
     @discardableResult
     func importFolderAsCollection(_ folder: URL) async -> LibraryCollectionImport.Summary? {
-        guard libraryCollections.importCapture == nil else { reportFailure(Self.collectionImportBusyMessage); return nil }
+        guard libraryCollections.importCapture == nil else { reportPastImportCapture { reportFailure(Self.collectionImportBusyMessage) }; return nil }
         let store: SQLiteSessionStore
         do { store = try requireStore() } catch { reportFailure(error, context: "Couldn't add the folder"); return nil }
         // Busy from here, before the walk's await, so a second pick during the walk is turned away (#3769).
@@ -35,7 +35,7 @@ extension Gate1AppModel {
     /// again adds only its new links.
     @discardableResult
     func importLinkListAsCollection(_ url: URL, list: LinkListFile, title: String) async -> LibraryCollectionImport.Summary? {
-        guard libraryCollections.importCapture == nil else { reportFailure(Self.collectionImportBusyMessage); return nil }
+        guard libraryCollections.importCapture == nil else { reportPastImportCapture { reportFailure(Self.collectionImportBusyMessage) }; return nil }
         let store: SQLiteSessionStore
         do { store = try requireStore() } catch { reportFailure(error, context: "Couldn't add the list"); return nil }
         let capture = CollectionImportCapture()
@@ -60,7 +60,7 @@ extension Gate1AppModel {
         guard LibraryCollectionImport.savesCollection(start) else {
             let summary = LibraryCollectionImport.summary(
                 name: start.collection.name, isNew: true, added: 0, failed: 0, notAdded: start.record.notAdded.count)
-            present(summary)
+            reportPastImportCapture { present(summary) }
             return summary
         }
         let id = start.collection.id
@@ -72,7 +72,7 @@ extension Gate1AppModel {
         case .saved(let stored): name = stored.name
         case .gone, .refused: return nil
         case .failed(let error):
-            reportFailure(error, context: "Couldn't add “\(name)”")
+            reportPastImportCapture { reportFailure(error, context: "Couldn't add “\(name)”") }
             return nil
         }
         var added = 0
@@ -102,13 +102,23 @@ extension Gate1AppModel {
         }
         _ = try? await reloadLibraryRowsOffMain(store: store)
         if added > 0 { markOnboardingSteps([.addedOwnSource, .addedFromFiles]) }
-        libraryCollections.importCapture = nil
         // Deleted while it filled: the items that landed are in the Library, and the listener chose to drop the collection.
         guard !deleted else { return nil }
         let summary = LibraryCollectionImport.summary(
             name: name, isNew: start.isNew, added: added, failed: failed, notAdded: settling.record.notAdded.count)
-        present(summary)
+        reportPastImportCapture { present(summary) }
         return summary
+    }
+
+    /// Shows what the import itself means the listener to see (#3769 audit). `presentFeedback` hands every event with no
+    /// item origin to the capture that is set, so the import's own lines, and the busy line a second pick gets while one
+    /// runs, would be held and never shown. The capture is lifted only for `report`, which is synchronous on the main
+    /// actor, so no importer can report in between, then put back for an import that is still running.
+    func reportPastImportCapture(_ report: () -> Void) {
+        let capture = libraryCollections.importCapture
+        libraryCollections.importCapture = nil
+        defer { libraryCollections.importCapture = capture }
+        report()
     }
 
     private func present(_ summary: LibraryCollectionImport.Summary) {

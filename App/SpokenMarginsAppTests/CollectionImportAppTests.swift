@@ -80,7 +80,22 @@ final class CollectionImportAppTests: XCTestCase {
         let summary = await model.importFolderAsCollection(folder)
         XCTAssertEqual(summary?.kind, .failure)
         XCTAssertEqual(summary?.message, "There's nothing in “Pictures” the app can add.")
+        XCTAssertEqual(model.feedbackEvent?.message, summary?.message, "shown, not held by the import's own capture")
         XCTAssertFalse(model.libraryCollections.collections.contains { $0.name == "Pictures" })
+        XCTAssertNil(model.libraryCollections.importCapture)
+    }
+
+    /// A pick while another import runs is turned away with a line the listener sees. The running import's capture must
+    /// not swallow it, nor take it as the reason its current file failed (#3769 audit).
+    func testTheBusyLineIsShownAndNotHeldByTheRunningImport() async throws {
+        let model = try makeModel()
+        let running = CollectionImportCapture()
+        model.libraryCollections.importCapture = running // an import is mid-way through a file
+        let second = await model.importFolderAsCollection(try makeDirectory("Second"))
+        XCTAssertNil(second)
+        XCTAssertEqual(model.feedbackEvent?.message, Gate1AppModel.collectionImportBusyMessage)
+        XCTAssertTrue(model.libraryCollections.importCapture === running, "the running import keeps its capture")
+        XCTAssertNil(running.take().problem, "not recorded as the running file's failure")
     }
 
     func testATitledLinkListBecomesACollectionInListOrderAndABadLinkIsCounted() async throws {
