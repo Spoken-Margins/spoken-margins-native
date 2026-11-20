@@ -1,6 +1,7 @@
 # The `automerge` label queues the PR in GitHub's merge queue; removing it takes the PR out (#4693, merge queue
 # move). Agents keep arming PRs the way they do today, so no session's instructions change at switch-over.
-# scripts/merge_queue_label_bridge.py says what it does; drafts and "DO NOT MERGE" / "Throwaway" PRs are never queued.
+# scripts/merge_queue_label_bridge.py says what it does; drafts and "do not merge" / "throwaway" PRs are never queued,
+# and retitling or drafting an armed PR (`edited`, `converted_to_draft`) takes it out again.
 #
 # Inert until switch-over: every job needs the repository variable MERGE_QUEUE to be `on`.
 # At switch-over, in the same hour:
@@ -17,13 +18,16 @@
 # checks never start, which would hold the queue; that is not documented either way. So the step uses the secret
 # MERGE_QUEUE_TOKEN (a fine-grained token or App token with pull requests and contents write) when it exists, and
 # GITHUB_TOKEN otherwise. The trial must show a bridge-queued PR's merge-group checks starting before the switch.
-# The same rule means a label added with GITHUB_TOKEN (by another workflow) starts no run here; the 15-minute
-# schedule sweeps those up.
+# The same rule means a label change made with GITHUB_TOKEN (by another workflow) starts no run here; the 15-minute
+# sweep catches both directions: it queues armed PRs and unqueues PRs set to merge without the label.
 #
 # `pull_request_target`, not `pull_request`: the script comes from main and nothing from the PR is checked out or run.
 #
-# Cost and catch: one Linux job of seconds per `automerge` label change, plus a seconds-long sweep every 15 minutes
-# (only with MERGE_QUEUE on; otherwise each run is a skipped job). No Mac minutes, no tokens. It catches every armed
+# Cost and catch: one Linux job of seconds per `automerge` label change, title edit or draft, plus a seconds-long
+# sweep every 15 minutes (only with MERGE_QUEUE on; otherwise each run is a skipped job). Its real cost is the merge
+# group runs each queueing starts (Linux, plus a Mac for a Swift diff). The `needs-fix` guard bounds that to one group
+# per arming: a PR whose group failed gets `needs-fix` and loses `automerge` (merge_queue_dequeued.py), and is not
+# queued again until someone adds `automerge` again. No tokens. It catches every armed
 # PR that would otherwise sit unqueued after switch-over (18 armed PRs on 2026-11-19), and an armed throwaway PR
 # (#4696 carried `automerge` with "do not merge to main" in its title). Waste signal: a month in which agents run
 # `gh pr merge` themselves and the bridge queues nothing.
@@ -31,7 +35,7 @@ name: merge-queue-label-bridge
 
 on:
   pull_request_target:
-    types: [labeled, unlabeled]
+    types: [labeled, unlabeled, edited, converted_to_draft]
   schedule:
     - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
@@ -46,16 +50,18 @@ permissions:
   contents: write
   pull-requests: write
 
-concurrency:
-  group: merge-queue-label-bridge-${{ github.event.pull_request.number || inputs.pr || 'sweep' }}
-  cancel-in-progress: false
-
 jobs:
   bridge:
     name: merge queue label bridge
     if: >-
       vars.MERGE_QUEUE == 'on' &&
-      (github.event_name != 'pull_request_target' || github.event.label.name == 'automerge')
+      (github.event_name != 'pull_request_target' || github.event.label.name == 'automerge' ||
+       github.event.action == 'edited' || github.event.action == 'converted_to_draft')
+    # On the job, not the workflow: a run for another label skips this job and so never joins the group, where it
+    # would replace a pending `automerge` run (a concurrency group keeps only its newest pending run).
+    concurrency:
+      group: merge-queue-label-bridge-${{ github.event.pull_request.number || inputs.pr || 'sweep' }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -77,7 +83,7 @@ jobs:
           if [ "$EVENT" = pull_request_target ]; then
             python3 scripts/merge_queue_label_bridge.py --repo "$GH_REPO" --pr "$PR" --action "$ACTION" --label "$LABEL"
           elif [ -n "$PR" ]; then
-            python3 scripts/merge_queue_label_bridge.py --repo "$GH_REPO" --pr "$PR" --action labeled
+            python3 scripts/merge_queue_label_bridge.py --repo "$GH_REPO" --pr "$PR" --action edited
           else
             python3 scripts/merge_queue_label_bridge.py --repo "$GH_REPO" --sweep
           fi

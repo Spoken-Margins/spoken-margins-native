@@ -12,22 +12,24 @@ import merge_queue_label_bridge as bridge  # noqa: E402
 
 
 class FakeGitHub:
-    """The GitHub class's calls, answered from a dict of PRs. `merge_answer` is gh's (code, text) for `pr merge`."""
+    """The GitHub class's calls, answered from a dict of PRs. `merge_answer` and `disable_answer` are gh's
+    (code, text) for `pr merge` and `pr merge --disable-auto`."""
 
-    def __init__(self, prs, merge_answer=(0, ''), comments='', fail_reads=()):
+    def __init__(self, prs, merge_answer=(0, ''), disable_answer=(0, ''), comments='', fail_list=False):
         self.prs = prs
         self.merge_answer = merge_answer
+        self.disable_answer = disable_answer
         self.existing_comments = comments
-        self.fail_reads = set(fail_reads)
-        self.merged, self.disabled, self.dequeued, self.posted = [], [], [], []
+        self.fail_list = fail_list
+        self.merged, self.disabled, self.dequeued, self.posted, self.removed = [], [], [], [], []
 
     def pull(self, number):
-        if number in self.fail_reads:
-            raise bridge.Failed('HTTP 502')
         return self.prs[number]
 
-    def armed_numbers(self):
-        return sorted(n for n, pr in self.prs.items() if 'automerge' in bridge.labels(pr))
+    def open_pulls(self):
+        if self.fail_list:
+            raise bridge.Failed('HTTP 502')
+        return [p for _, p in sorted(self.prs.items()) if p['state'] == 'OPEN']
 
     def comments(self, number):
         return self.existing_comments
@@ -35,21 +37,27 @@ class FakeGitHub:
     def comment(self, number, body):
         self.posted.append((number, body))
 
+    def remove_label(self, number, name):
+        self.removed.append((number, name))
+
     def merge(self, number):
         self.merged.append(number)
         return self.merge_answer
 
     def disable_auto(self, number):
         self.disabled.append(number)
-        return (0, '')
+        return self.disable_answer
 
     def dequeue(self, node_id):
         self.dequeued.append(node_id)
 
 
-def pr(number, title='Fix a thing', draft=False, armed=True, queued=False, state='OPEN'):
-    return {'id': f'PR_{number}', 'isDraft': draft, 'title': title, 'state': state,
-            'labels': {'nodes': [{'name': 'automerge'}] if armed else []},
+def pr(number, title='Fix a thing', draft=False, armed=True, queued=False, auto=None, state='OPEN', extra=()):
+    names = (['automerge'] if armed else []) + list(extra)
+    auto = (armed or queued) if auto is None else auto
+    return {'id': f'PR_{number}', 'number': number, 'isDraft': draft, 'title': title, 'state': state,
+            'labels': {'nodes': [{'name': name} for name in names]},
+            'autoMergeRequest': {'enabledAt': '2026-11-19T10:00:00Z'} if auto else None,
             'mergeQueueEntry': {'id': f'MQE_{number}'} if queued else None}
 
 
@@ -59,17 +67,44 @@ def run(github, *argv):
     return code, out.getvalue()
 
 
+HELD_TITLES = [
+    'DO NOT MERGE: mutation proof for #4314', 'Throwaway: live proof of the rearm job (do not merge to main)',
+    'Mutation proof, do not merge', 'throwaway check', 'Do-not-merge: x', 'DO_NOT_MERGE x', 'do  not merge',
+    'do not merge', "Don't merge yet", 'Don’t merge yet', 'Dont merge', 'DNM: proof', '[DNM] proof',
+    'WIP: half done', '  wip : half done', '[Throwaway] probe', '(throwaway) probe', '\U0001f9ea Throwaway probe',
+    'Probe lane rearm (throwaway)', 'Probe lane rearm - THROWAWAY', 'Ｔｈｒｏｗａｗａｙ probe',
+]
+QUEUED_TITLES = [
+    'Fix a thing', 'dnmx parser', 'Add DNMS support', 'Wipe the cache', 'WIP-free cleanup', 'Don merge tool',
+    'Do not mergesort twice', 'Throwaways list in docs', 'Merge queue: do the merge',
+]
+
+
+class TitleTests(unittest.TestCase):
+    def test_hold_titles_are_never_queued(self):
+        for title in HELD_TITLES:
+            with self.subTest(title=title):
+                self.assertIsNotNone(bridge.not_queueable(pr(1, title=title)))
+
+    def test_neighbouring_titles_are_queued(self):
+        for title in QUEUED_TITLES:
+            with self.subTest(title=title):
+                self.assertIsNone(bridge.not_queueable(pr(1, title=title)))
+
+    def test_a_draft_is_never_queued(self):
+        self.assertEqual(bridge.not_queueable(pr(1, draft=True)), 'it is a draft')
+
+
 class QueueTests(unittest.TestCase):
     def test_an_armed_pr_is_queued_with_gh_pr_merge(self):
-        github = FakeGitHub({7: pr(7)})
+        github = FakeGitHub({7: pr(7, auto=False)})
         code, out = run(github, '--pr', '7', '--action', 'labeled')
         self.assertEqual((code, github.merged), (0, [7]))
         self.assertIn('#7: queued', out)
 
-    def test_drafts_and_throwaway_titles_are_never_queued_and_get_one_comment(self):
-        cases = {1: pr(1, draft=True), 2: pr(2, title='DO NOT MERGE: mutation proof for #4314'),
-                 3: pr(3, title='Throwaway: live proof of the rearm job (do not merge to main)'),
-                 4: pr(4, title='Mutation proof, do not merge'), 5: pr(5, title='throwaway check')}
+    def test_drafts_and_hold_titles_are_never_queued_and_get_one_comment(self):
+        cases = {1: pr(1, draft=True, auto=False), 2: pr(2, title='DO NOT MERGE: x', auto=False),
+                 3: pr(3, title='Throwaway: x', auto=False)}
         for number in cases:
             with self.subTest(number=number):
                 github = FakeGitHub(cases)
@@ -80,14 +115,9 @@ class QueueTests(unittest.TestCase):
                 self.assertIn('not queued', out)
 
     def test_a_second_label_add_on_a_throwaway_pr_does_not_comment_again(self):
-        github = FakeGitHub({3: pr(3, title='Throwaway: x')}, comments=f'earlier\n{bridge.MARKER}\nNot queued')
+        github = FakeGitHub({3: pr(3, title='Throwaway: x', auto=False)}, comments=f'earlier\n{bridge.MARKER}\nNot')
         run(github, '--pr', '3', '--action', 'labeled')
         self.assertEqual((github.merged, github.posted), ([], []))
-
-    def test_a_title_that_only_mentions_throwaway_later_is_queued(self):
-        github = FakeGitHub({8: pr(8, title='Delete the throwaway fixture')})
-        run(github, '--pr', '8', '--action', 'labeled')
-        self.assertEqual(github.merged, [8])
 
     def test_already_queued_or_auto_merge_already_on_counts_as_done(self):
         github = FakeGitHub({7: pr(7, queued=True)})
@@ -114,6 +144,47 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(github.merged, [])
 
 
+class NeedsFixTests(unittest.TestCase):
+    """Finding 1: a PR whose group failed must not be queued again until someone re-arms it."""
+
+    def test_an_edit_or_sweep_never_queues_a_pr_carrying_needs_fix(self):
+        github = FakeGitHub({7: pr(7, auto=False, extra=['needs-fix'])})
+        code, out = run(github, '--pr', '7', '--action', 'edited')
+        self.assertEqual((code, github.merged, github.removed), (0, [], []))
+        self.assertIn('carries `needs-fix`', out)
+        code, out = run(github, '--sweep')
+        self.assertEqual((code, github.merged, github.removed), (0, [], []))
+
+    def test_adding_automerge_again_removes_needs_fix_and_queues(self):
+        github = FakeGitHub({7: pr(7, auto=False, extra=['needs-fix'])})
+        code, out = run(github, '--pr', '7', '--action', 'labeled')
+        self.assertEqual((code, github.removed, github.merged), (0, [(7, 'needs-fix')], [7]))
+
+    def test_a_dispatch_for_one_pr_does_not_count_as_re_arming(self):
+        text = (ROOT / '.github/workflows/merge-queue-label-bridge.yml').read_text()
+        self.assertIn('--pr "$PR" --action edited', text)
+
+
+class RetitleTests(unittest.TestCase):
+    """Finding 2: retitling or drafting an armed, queued PR takes it out."""
+
+    def test_retitling_a_queued_pr_to_a_hold_title_turns_auto_merge_off_and_dequeues(self):
+        github = FakeGitHub({7: pr(7, title='[DNM] probe', queued=True)})
+        code, out = run(github, '--pr', '7', '--action', 'edited')
+        self.assertEqual((code, github.disabled, github.dequeued, github.merged), (0, [7], ['PR_7'], []))
+        self.assertIn('taken out of the merge queue', out)
+
+    def test_drafting_an_armed_pr_turns_auto_merge_off(self):
+        github = FakeGitHub({7: pr(7, draft=True)})
+        code, _ = run(github, '--pr', '7', '--action', 'converted_to_draft')
+        self.assertEqual((code, github.disabled, github.dequeued), (0, [7], []))
+
+    def test_an_ordinary_edit_of_a_queued_pr_changes_nothing(self):
+        github = FakeGitHub({7: pr(7, queued=True)})
+        self.assertEqual(run(github, '--pr', '7', '--action', 'edited')[0], 0)
+        self.assertEqual((github.disabled, github.dequeued, github.merged), ([], [], []))
+
+
 class UnqueueTests(unittest.TestCase):
     def test_removing_the_label_turns_auto_merge_off_and_dequeues_a_queued_pr(self):
         github = FakeGitHub({7: pr(7, armed=False, queued=True)})
@@ -122,30 +193,75 @@ class UnqueueTests(unittest.TestCase):
         self.assertIn('taken out of the merge queue', out)
 
     def test_removing_it_from_a_pr_not_yet_queued_only_turns_auto_merge_off(self):
-        github = FakeGitHub({7: pr(7, armed=False)})
+        github = FakeGitHub({7: pr(7, armed=False, auto=True)})
         self.assertEqual(run(github, '--pr', '7', '--action', 'unlabeled')[0], 0)
         self.assertEqual((github.disabled, github.dequeued), ([7], []))
 
     def test_a_label_put_back_before_the_run_leaves_the_pr_queued(self):
-        # A remove-and-re-add (the audit's re-arm) must not end with the PR out of the queue.
         github = FakeGitHub({7: pr(7, queued=True)})
         run(github, '--pr', '7', '--action', 'unlabeled')
         self.assertEqual((github.disabled, github.dequeued), ([], []))
 
+    def test_auto_merge_already_off_counts_as_done(self):
+        # Finding 3: gh's wording varies; any "not enabled" reply means there is nothing left to turn off.
+        for text in ('auto-merge is not enabled for this pull request',
+                     'GraphQL: Pull request does not have auto-merge enabled (disablePullRequestAutoMerge)',
+                     "auto merge hasn't been enabled", 'Auto-merge is already disabled'):
+            with self.subTest(text=text):
+                github = FakeGitHub({7: pr(7, armed=False, auto=True)}, disable_answer=(1, text))
+                self.assertEqual(run(github, '--pr', '7', '--action', 'unlabeled')[0], 0)
+
+    def test_a_real_disable_failure_is_red(self):
+        github = FakeGitHub({7: pr(7, armed=False, auto=True)}, disable_answer=(1, 'HTTP 502: Bad Gateway'))
+        code, out = run(github, '--pr', '7', '--action', 'unlabeled')
+        self.assertEqual(code, 1)
+        self.assertIn('could not turn auto-merge off', out)
+
 
 class SweepTests(unittest.TestCase):
     def test_the_sweep_queues_every_armed_pr_and_skips_the_rest(self):
-        github = FakeGitHub({1: pr(1), 2: pr(2, title='DO NOT MERGE: x'), 3: pr(3, armed=False), 4: pr(4),
-                             5: pr(5, queued=True)})
+        github = FakeGitHub({1: pr(1, auto=False), 2: pr(2, title='DO NOT MERGE: x', auto=False),
+                             3: pr(3, armed=False), 4: pr(4, auto=False), 5: pr(5, queued=True)})
         code, out = run(github, '--sweep')
         self.assertEqual((code, github.merged), (0, [1, 4]))
         self.assertIn('4 open PRs carry `automerge`', out)
 
-    def test_one_unreadable_pr_does_not_stop_the_others_but_turns_the_run_red(self):
-        github = FakeGitHub({1: pr(1), 2: pr(2), 3: pr(3)}, fail_reads={2})
+    def test_the_sweep_unqueues_prs_set_to_merge_without_the_label(self):
+        # Finding 3: a removal whose run never came (GITHUB_TOKEN, a lost event) is retried by the sweep.
+        github = FakeGitHub({1: pr(1, armed=False, queued=True), 2: pr(2, armed=False, auto=True),
+                             3: pr(3, armed=False)})
         code, out = run(github, '--sweep')
-        self.assertEqual((code, github.merged), (1, [1, 3]))
-        self.assertIn('#2: could not read', out)
+        self.assertEqual((code, github.disabled, github.dequeued), (0, [1, 2], ['PR_1']))
+        self.assertIn('2 are set to merge without it', out)
+
+    def test_an_unreadable_pr_list_turns_the_run_red(self):
+        code, out = run(FakeGitHub({}, fail_list=True), '--sweep')
+        self.assertEqual(code, 1)
+        self.assertIn('could not reach GitHub', out)
+
+    def test_one_failed_pr_does_not_stop_the_others_but_turns_the_run_red(self):
+        github = FakeGitHub({1: pr(1, auto=False), 2: pr(2, auto=False), 3: pr(3, auto=False)})
+        answers = {2: (1, 'HTTP 502')}
+        github.merge = lambda n: (github.merged.append(n), answers.get(n, (0, '')))[1]
+        code, out = run(github, '--sweep')
+        self.assertEqual((code, github.merged), (1, [1, 2, 3]))
+        self.assertIn('#2: could not queue', out)
+
+
+class GhRetryTests(unittest.TestCase):
+    def test_an_auto_merge_off_reply_is_not_retried(self):
+        github = bridge.GitHub('o/r', sleep=lambda _: None)
+        calls = []
+
+        class Done:
+            returncode, stdout, stderr = 1, '', 'Pull request does not have auto-merge enabled'
+        original = bridge.subprocess.run
+        bridge.subprocess.run = lambda *a, **k: (calls.append(a), Done)[1]
+        try:
+            code, _ = github.disable_auto(7)
+        finally:
+            bridge.subprocess.run = original
+        self.assertEqual((code, len(calls)), (1, 1))
 
 
 class WorkflowTests(unittest.TestCase):
@@ -160,9 +276,21 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(job=name):
                 self.assertTrue(job['if'].startswith("vars.MERGE_QUEUE == 'on' &&"), job['if'])
 
+    def test_retitles_and_drafts_trigger_the_check(self):
+        types = self.workflow[True]['pull_request_target']['types']
+        self.assertEqual(set(types), {'labeled', 'unlabeled', 'edited', 'converted_to_draft'})
+        condition = self.workflow['jobs']['bridge']['if']
+        for action in bridge.CHECK_ACTIONS:
+            self.assertIn(f"github.event.action == '{action}'", condition)
+
+    def test_concurrency_is_on_the_job_so_skipped_runs_never_replace_a_pending_one(self):
+        self.assertNotIn('concurrency', self.workflow)
+        concurrency = self.workflow['jobs']['bridge']['concurrency']
+        self.assertFalse(concurrency['cancel-in-progress'])
+        self.assertIn('pull_request.number', concurrency['group'])
+
     def test_it_runs_main_s_script_and_no_pr_code(self):
         on = self.workflow[True]
-        self.assertEqual(on['pull_request_target'], {'types': ['labeled', 'unlabeled']})
         self.assertNotIn('pull_request', on)
         checkout = self.workflow['jobs']['bridge']['steps'][0]
         self.assertEqual(checkout['with']['ref'], 'main')
@@ -170,7 +298,6 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(checkout['with']['persist-credentials'])
         self.assertNotIn('github.head_ref', self.text)
         self.assertNotIn('pull_request.head.ref', self.text)
-        # PR data reaches the shell only through env, never interpolated into the script.
         self.assertFalse(re.search(r'\$\{\{[^}]*\}\}', self.workflow['jobs']['bridge']['steps'][1]['run']))
 
     def test_it_names_the_lane_jobs_that_must_stop_at_switch_over(self):
