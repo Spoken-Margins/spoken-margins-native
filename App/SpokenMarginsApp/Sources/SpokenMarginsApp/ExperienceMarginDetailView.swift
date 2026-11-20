@@ -15,6 +15,7 @@ struct ExperienceMarginDetailView: View {
     @State private var showsExportQuestion = false
     @State private var showsRecordingLeftOut = false
     @State private var isPreparingMarkdown = false
+    @StateObject private var tidy = MarginTidyCardModel()
     let row: MarginRow
 
     private enum NavigationIntent { case moment, item, share }
@@ -140,6 +141,9 @@ struct ExperienceMarginDetailView: View {
                         .font(.system(.title3, design: .serif))
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
+                    if tidy.showsCard(for: current.interjection) {
+                        MarginTidyCard(margin: current.interjection, card: tidy)
+                    }
                     Text("\(current.isWritten ? "Written Margin" : "Voice Margin") · \(current.itemTitle)")
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
@@ -216,6 +220,9 @@ struct ExperienceMarginDetailView: View {
                 }
             }
             .buttonStyle(MarginDetailActionButtonStyle())
+            .task(id: MarginTidyCardModel.key(for: current.interjection)) {
+                await tidy.refresh(for: current.interjection, using: model)
+            }
             .marginExportShareSheet($exportShare)
             .confirmationDialog("What do you want to export?", isPresented: $showsExportQuestion, titleVisibility: .visible) {
                 Button("Text only") { exportThisMargin(.textOnly) }

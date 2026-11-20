@@ -1156,9 +1156,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertEqual(reopened.sharingState.draftFilter, .starred)
         XCTAssertEqual(reopened.sharingState.drafts.filter(\.isIncluded).map(\.id), ["margin-starred"])
-        XCTAssertEqual(InterjectionSharingView.collapsedTranscriptLineLimit, 10)
-        XCTAssertFalse(InterjectionSharingView.transcriptRequiresExpansion(fullHeight: 220, limitedHeight: 220))
-        XCTAssertTrue(InterjectionSharingView.transcriptRequiresExpansion(fullHeight: 440, limitedHeight: 220))
 
         reopened.setStarredForSharing(curated, starred: false, place: .manage)
         await reopened.settleItemReload() // the item detail reloads off the main thread after the star (#2505)

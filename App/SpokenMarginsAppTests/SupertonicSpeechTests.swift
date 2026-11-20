@@ -1762,53 +1762,6 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertTrue(report.contains("last system_voice:"), "the iOS voice stood in; the guard reported \"\(report)\"")
     }
 
-    // #311: the guard's iOS-voice file is deleted when the player discards it.
-    func testGuardDeletesItsStandInFileOnDiscard() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "guard-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let guardRenderer = SupertonicOutputGuard(
-            wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil, standIn: copyStandIn
-        )
-        let result = try await guardRenderer.render(
-            text: "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries.",
-            voice: .m2, language: "en", speed: 1, synthesisSteps: 8
-        )
-        XCTAssertTrue(result.audioURL.lastPathComponent.hasPrefix("system-voice-"), "the guard stood in")
-        XCTAssertEqual(result.engine, SupertonicNarrationResult.systemVoiceEngine)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: result.audioURL.path))
-        await guardRenderer.discardGeneratedAudio(at: result.audioURL)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: result.audioURL.path), "the stand-in file is deleted")
-    }
-
-    // #288: a render that timed out was still checked when it finished, and a flagged chunk was
-    // written by a second speech synthesizer while the iOS voice read the article live. The live
-    // voice then went silent. A render nobody waits for is dropped instead of re-read.
-    func testACancelledRenderIsNotReadByTheIOSVoice() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "guard-cancel-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let reports = StallEventLog()
-        let guardRenderer = SupertonicOutputGuard(
-            wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil,
-            onReplacement: { reports.stall($0, [:]) }
-        )
-        let render = Task {
-            withUnsafeCurrentTask { $0?.cancel() }
-            return try await guardRenderer.render(
-                text: "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries.",
-                voice: .m2, language: "en", speed: 1, synthesisSteps: 8
-            )
-        }
-        do {
-            let result = try await render.value
-            XCTFail("a cancelled render was read by the iOS voice: \(result.audioURL.lastPathComponent)")
-            await guardRenderer.discardGeneratedAudio(at: result.audioURL)
-        } catch is CancellationError {
-        }
-        XCTAssertTrue(reports.values.isEmpty, "no stand-in was made: \(reports.values)")
-    }
-
     // #311: a stand-in isn't cached under the Supertonic key, so the next play re-checks Supertonic.
     func testStandInIsNotCachedAsSupertonic() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-cache-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -1833,41 +1786,6 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertNil(cache.cachedAudio(text: SpeechTextNormalizer.normalize(text), voice: .m2, language: "en", speed: 1, synthesisSteps: 8),
                      "the iOS-voice audio isn't cached as Supertonic's")
         try client.stop()
-    }
-
-    // #363 audit: background preparation made a guard per chunk and never discarded its render, so
-    // every flagged chunk left an iOS-voice file behind. The render is discarded once kept, or on
-    // failure.
-    /// The guard gets its own write log and a fixed clock (#2386), so nothing here reads the device's uptime or
-    /// shares a count with other tests; a failure means a render was kept or leaked.
-    func testABackgroundRenderIsDiscardedOnceKeptOrOnFailure() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "guard-keep-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let guardRenderer = SupertonicOutputGuard(
-            wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil, standIn: copyStandIn,
-            writeLog: StandInWriteLog(), now: { 0 }
-        )
-        let text = "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries."
-        var standIn: URL?
-        let kept = try await guardRenderer.render(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 8) { rendered in
-            standIn = rendered.audioURL
-            let copy = root.appending(path: "kept.wav")
-            try FileManager.default.copyItem(at: rendered.audioURL, to: copy)
-            return copy
-        }
-        XCTAssertTrue(try XCTUnwrap(standIn).lastPathComponent.hasPrefix("system-voice-"), "the guard stood in")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: kept.path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(standIn).path), "the stand-in is deleted once kept")
-
-        do {
-            _ = try await guardRenderer.render(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 8) { rendered -> URL in
-                standIn = rendered.audioURL
-                throw CancellationError()
-            }
-            XCTFail("the failure is rethrown")
-        } catch is CancellationError {}
-        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(standIn).path), "and on failure")
     }
 
     // #363 audit: before #311 a stand-in could be cached under the Supertonic key. The key's

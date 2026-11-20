@@ -45,7 +45,7 @@ final class ReplyBackRoundTripTests: XCTestCase {
 
         // B's Share offers the reply (selected) and the other new Margins (not selected). Nothing of A's, nothing older.
         let offer = try XCTUnwrap(try bensOffer())
-        XCTAssertEqual(offer.title, "Send replies to Ana")
+        XCTAssertEqual(offer.title, "Share replies with Ana")
         XCTAssertEqual(offer.candidates.map(\.id), ["b-reply", "b-extra", "b-written"])
         XCTAssertEqual(offer.candidates.filter(offer.isPreselected).map(\.id), ["b-reply"])
         let importedFromAna = try ben.importedMargins().map(\.id)
@@ -181,6 +181,6 @@ final class ReplyBackRoundTripTests: XCTestCase {
         try ben.record("b-reply", madeAt: 200, atMs: 801_000, replyingTo: "a-2")
         let offer = try XCTUnwrap(ReplyBackOffer.make(localMargins: ben.margins(), layers: ben.store.loadImportedCommentaryLayers(itemId: ben.itemId)))
         XCTAssertEqual(offer.replies.map(\.id), ["b-reply"])
-        XCTAssertEqual(offer.title, "Send replies to Ana")
+        XCTAssertEqual(offer.title, "Share replies with Ana")
     }
 }

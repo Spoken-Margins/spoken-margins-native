@@ -318,7 +318,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         case "owned_offline_asset": return columns(OwnedOfflineAsset.self, item: { $0.itemId })
         case "feed_subscription": return columns(FeedSubscription.self, item: { _ in nil })
         case "feed_entry": return columns(FeedEntry.self, item: { _ in nil })
+        case "rule_suggestion_state": return columns(RuleSuggestionState.self, item: { _ in nil })
         case "item_collection": return columns(ItemCollection.self, item: { _ in nil })
+        case LibraryFolderRecord.recordKind: return columns(LibraryFolderRecord.self, item: { _ in nil })
         case "follow_list": return columns(FollowList.self, item: { _ in nil })
         case "follow_list_link": return columns(ListLink.self, item: { _ in nil })
         case "listening_rule": return columns(ListeningRule.self, item: { _ in nil })
@@ -753,6 +755,29 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             choices[row.margin] = row.choice != 0
         }
         return choices
+    }
+
+    /// For each Margin of an item whose newest shares wrote a run-up length (#4171), the length its newest such share
+    /// wrote. Same shape and ordering as `loadLastSentReadAloud`: one read that pulls out only the Margin id and the
+    /// length. A share that wrote none (the Margin was at 20 s and never shared at another length) is skipped, so it
+    /// leaves an earlier length where it was, as a recording leaves the read-aloud choice.
+    public func loadLastSentLeadIns(itemId: String) throws -> [String: Int] {
+        struct Row: Decodable { let margin: String; let leadIn: Int }
+        var lengths: [String: Int] = [:]
+        try readTexts(
+            """
+            SELECT json_object('margin', json_extract(payload, '$.interjectionId'), 'leadIn', json_extract(payload, '$.sentLeadInMs'))
+            FROM records WHERE kind = 'interjection_share_revision' AND item_id = ?
+              AND CASE WHEN json_valid(payload)
+                       THEN json_extract(payload, '$.sentLeadInMs') IS NOT NULL AND json_extract(payload, '$.interjectionId') IS NOT NULL
+                       ELSE 0 END
+            ORDER BY updated_at ASC, rowid ASC;
+            """, [itemId], name: "last_sent_lead_ins"
+        ) { text in
+            guard let row = try? decoder.decode(Row.self, from: Data(text.utf8)) else { return }
+            lengths[row.margin] = row.leadIn
+        }
+        return lengths
     }
 
     public func importCommentaryLayer(
@@ -1579,6 +1604,27 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try deleteRecord(kind: "item_collection", id: id)
     }
 
+    /// A Library folder's own details (#3769), beside its `ItemCollection` under the same ID. A new record kind with no
+    /// item_id: no table or index changes and schema 5 stays, an older build never queries the kind, and deleting an item
+    /// never deletes one.
+    public func saveLibraryFolder(_ folder: LibraryFolderRecord) throws {
+        try save(kind: LibraryFolderRecord.recordKind, id: folder.id, sessionId: nil, itemId: nil, value: folder)
+    }
+
+    /// Oldest import first, so the order is stable.
+    public func loadLibraryFolders() throws -> [LibraryFolderRecord] {
+        let folders: [LibraryFolderRecord] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;",
+            [LibraryFolderRecord.recordKind]
+        )
+        return folders.sorted { ($0.importedAt, $0.id) < ($1.importedAt, $1.id) }
+    }
+
+    /// Removes only the record. The collection and every item and Margin stay.
+    public func deleteLibraryFolder(id: String) throws {
+        try deleteRecord(kind: LibraryFolderRecord.recordKind, id: id)
+    }
+
     /// Follow lists (#4046) are their own record kind with no item_id, so Build 29 and the later shipped builds, which read
     /// every record by an explicit kind, never see them. The record id is the list id, so a rename keeps it.
     public func saveFollowList(_ list: FollowList) throws {
@@ -1684,6 +1730,21 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// "Undo Show less". Takes the mark for the entry or, with none, the item.
     public func deleteShowLessMark(entryId: String?, itemId: String?) throws {
         try deleteRecord(kind: "show_less_mark", id: ShowLessMark.id(entryId: entryId, itemId: itemId))
+    }
+
+    /// Rule suggestion states (#4046): "Not now" and "Don't suggest this". Their own record kind with no item_id, so the shipped
+    /// builds' readers never see them. The record id is the suggestion's key, so putting one off twice keeps one record.
+    public func saveRuleSuggestionState(_ state: RuleSuggestionState) throws {
+        try save(kind: "rule_suggestion_state", id: state.key, sessionId: nil, itemId: nil, value: state)
+    }
+
+    /// In key order, so the order is the same on every read.
+    public func loadRuleSuggestionStates() throws -> [RuleSuggestionState] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["rule_suggestion_state"])
+    }
+
+    public func deleteRuleSuggestionState(key: String) throws {
+        try deleteRecord(kind: "rule_suggestion_state", id: key)
     }
 
     public func loadFeedSubscriptions() throws -> [FeedSubscription] {
