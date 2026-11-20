@@ -662,6 +662,43 @@ def mac_check_reason(path):
     return f'{path} is not on the list of paths the Mac checks can ignore'
 
 
+# The merge queue's app compile (hosted-portable.yml `app-compile`, 2026-11-20). No required check compiled the app,
+# so a Swift error in App/ passed every gate and broke main (#4602's FollowListsScreen.swift, about 2.5 hours, #4750).
+# The job builds the app for the simulator in each merge group whose diff reaches an app build input, and only there:
+# once per group, never per push (the per-PR builds of 2026-11-18 queued for 1 to 2.5 hours). An app build input is
+# what project.yml compiles or bundles, the package it links, and the job's own machinery. test_test_scope.py checks
+# that every `path:` and SRCROOT script in project.yml is one, so a new target can't slip out of the rule.
+APP_COMPILE_PREFIXES = ('App/', 'Packages/', 'Config/', 'SpokenMarginsNative.xcodeproj/', 'Contracts/fixtures/',
+                        'Contracts/traces/', 'Contracts/voice-models/', 'Site/onboarding/catalog/', 'TestPlans/')
+# Not linked into the app or its test bundle. Packages/SessionKit/Tests/ShippedReader/ is: it is the library product
+# ShippedPacketReader (Package.swift), which SpokenMarginsAppTests links (project.yml) and imports.
+APP_COMPILE_NOT_PREFIXES = ('Packages/SessionKit/Tests/', 'Packages/SessionKitTools/')
+APP_COMPILE_LINKED_TESTS = ('Packages/SessionKit/Tests/ShippedReader/',)
+APP_COMPILE_FILES = {'project.yml', '.github/workflows/hosted-portable.yml', 'scripts/ci-cas-cache.sh',
+                     'scripts/normalize-embedded-framework-minimum-os.sh'}
+
+
+def app_compile_reason(path):
+    """Why <path> needs the merge queue's app compile, or None when it does not."""
+    if path.startswith(APP_COMPILE_NOT_PREFIXES) and not path.startswith(APP_COMPILE_LINKED_TESTS):
+        return None
+    if path.startswith(APP_COMPILE_PREFIXES) or path in APP_COMPILE_FILES or path.endswith(('.swift', '.xcconfig')):
+        return f'{path} is an app build input'
+    return None
+
+
+def app_compile_required(paths):
+    """(required, reason) for the merge queue's app compile. An empty list is required: nothing is known."""
+    paths = list(paths)
+    if not paths:
+        return True, 'no changed paths were given'
+    for path in sorted(paths):
+        why = app_compile_reason(path)
+        if why:
+            return True, why
+    return False, 'app compile not required: no app build inputs'
+
+
 def mac_checks_required(paths):
     """(required, reason) for the hosted Mac checks. An empty list is required: nothing is known about the diff."""
     paths = list(paths)
@@ -814,6 +851,9 @@ def main(argv=None):
     parser.add_argument('--mac-required', metavar='FILE',
                         help='read changed paths (one per line) and print mac=true|false and reason= lines for '
                              '$GITHUB_OUTPUT; any trouble reading says true')
+    parser.add_argument('--app-compile-required', metavar='FILE',
+                        help='read changed paths (one per line) and print app=true|false and app_reason= lines for '
+                             '$GITHUB_OUTPUT; any trouble reading says true')
     parser.add_argument('--runner-routing', nargs=3, metavar=('EVENT', 'FILES', 'RUNNERS'),
                         help='route lane jobs from event JSON and paginated gh API JSON files')
     args = parser.parse_args(argv)
@@ -823,6 +863,13 @@ def main(argv=None):
         except (OSError, ValueError) as error:
             required, why = True, f'the changed paths could not be read ({error!r})'
         print(f'mac={"true" if required else "false"}\nreason={why}')
+        return 0
+    if args.app_compile_required:
+        try:
+            required, why = app_compile_required(Path(args.app_compile_required).read_text().splitlines())
+        except (OSError, ValueError) as error:
+            required, why = True, f'the changed paths could not be read ({error!r})'
+        print(f'app={"true" if required else "false"}\napp_reason={why}')
         return 0
     if args.runner_routing:
         try:

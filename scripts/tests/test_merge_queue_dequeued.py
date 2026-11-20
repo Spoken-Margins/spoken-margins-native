@@ -172,6 +172,41 @@ class NotifyTests(unittest.TestCase):
         self.assertEqual(github.deletes, [])
         self.assertIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
 
+    def test_a_group_cancelled_by_its_time_limit_stays_armed_once(self):
+        # 2026-11-20: #4746 and #4684 left the queue when "hosted fast: portable" hit timeout-minutes, which ends as
+        # `cancelled`. Nothing in either PR failed, yet both got needs-fix and lost automerge.
+        github = self.github(check_conclusion='cancelled')
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told: retry')
+        self.assertEqual(github.deletes, [])
+        self.assertEqual([path for path, _ in github.posts], ['issues/7/comments'])
+        body = github.posts[0][1]['body']
+        self.assertIn('"hosted fast: Mac rest"', body)
+        self.assertIn('cancelled, not failed', body)
+        self.assertIn(mq.RETRY_MARKER, body)
+
+    def test_a_second_cancelled_group_is_held_as_a_failure(self):
+        earlier = {'body': mq.MARKER.format(head=DEAD) + '\n' + mq.RETRY_MARKER}
+        github = self.github(check_conclusion='cancelled', comments=[earlier])
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+        self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
+        self.assertIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
+        body = github.posts[0][1]['body']
+        self.assertIn('cancelled on its last try too', body)
+        self.assertNotIn(mq.RETRY_MARKER, body)
+
+    def test_a_real_failure_beside_a_cancel_is_still_a_failure(self):
+        github = self.github()
+        github.gets[f'commits/{LIVE}/check-runs']['check_runs'].append(
+            {'name': 'hosted web: build and Playwright', 'conclusion': 'cancelled', 'completed_at': '2026-11-19T10:10:00Z'})
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+        self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
+        self.assertIn('"hosted fast: Mac rest"', github.posts[0][1]['body'])
+
+    def test_a_manual_removal_of_a_cancelled_group_still_means_stop(self):
+        github = self.github(check_conclusion='cancelled')
+        mq.notify(github, event(reason='MANUAL'), out=io.StringIO())
+        self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
+
     def test_deleting_a_label_that_is_already_gone_is_fine(self):
         github = mq.GitHub('o/r', sleep=lambda _: None)
 

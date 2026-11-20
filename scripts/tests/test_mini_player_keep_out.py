@@ -39,6 +39,7 @@ NO_PILL = {
     ("PlaybackTimelineSourceView.swift", "*"): "inside Now Playing, which hides the mini player",
     ("PlaybackScreen.swift", "*"): "Now Playing hides the mini player",
     ("SharingExperience.swift", "*"): "sharing sheets",
+    ("TimelineClipPicture.swift", "TimelineClipViewer"): "a full-screen cover, drawn over the whole app (#3895)",
     ("VoicesSettingsScreen.swift", "VoiceAgreementSheet"): "the licence agreement sheet before a voice download (#1819)",
 }
 

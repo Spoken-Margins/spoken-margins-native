@@ -10,6 +10,11 @@ Codex or Claude audit naming the head says "No blocking findings". T3 reports do
 merge since #4572. Otherwise it adds the `merge-audit` label and says on the PR what was missing.
 Commits pushed to next without any pull request get a `merge-audit` issue. It never reverts anything.
 
+A PR merged through GitHub's merge queue passes (#4693, 2026-11-20). The queue tests the exact commit it then puts
+on the trunk, so that commit carries the queue run's checks, and the required `merge policy` check
+(scripts/merge_policy.py) already enforces the audit and owner-tap rules this script looks for in comments. The
+lane's reports no longer come (lane.yml is disabled), so without this every queue merge was flagged.
+
 The owner may merge directly; they remove the label. The lead session surveys open `merge-audit`
 labels each morning (docs/workstreams/kickoff.md).
 
@@ -175,6 +180,15 @@ def classify_push(pushed: list[str], head: str, recent: list[dict], base: str | 
     return merged, not tip_from_pr
 
 
+QUEUE_CHECK = 'merge policy'
+
+
+def passed_queue_check(check_runs: list[dict]) -> bool:
+    """A successful `merge policy` check run made by GitHub Actions, not by any other app."""
+    return any(run.get('name') == QUEUE_CHECK and run.get('conclusion') == 'success'
+               and (run.get('app') or {}).get('slug') == 'github-actions' for run in check_runs)
+
+
 class GitHub:
     def __init__(self, repo: str):
         self.repo = repo
@@ -188,6 +202,21 @@ class GitHub:
     def json_lines(self, path: str) -> list[dict]:
         out = self.api('--paginate', '--jq', '.[] | @json', path)
         return [json.loads(line) for line in out.splitlines() if line.strip()]
+
+    def passed_merge_queue(self, merge_commit_sha: str | None) -> bool:
+        """Whether this trunk commit passed the `merge policy` check of a merge-queue run (GitHub Actions only).
+
+        The check runs only on PRs and merge groups, and a PR's own checks sit on its head, not on the commit that
+        reached the trunk, so a passing one here is the queue's. A failed read counts as not passed: flag as before.
+        """
+        if not merge_commit_sha:
+            return False
+        try:
+            runs = json.loads(self.api(f'repos/{self.repo}/commits/{merge_commit_sha}/check-runs?check_name='
+                                       + QUEUE_CHECK.replace(' ', '%20')))
+        except (RuntimeError, ValueError):
+            return False
+        return passed_queue_check(runs.get('check_runs') or [])
 
     def pushed_commits(self, before: str, after: str) -> list[str]:
         if before == ZERO:
@@ -227,6 +256,9 @@ class GitHub:
 
 def audit_pull(github: 'GitHub', pull: dict, dry_run: bool, base: str | None = None) -> None:
     number, head = pull['number'], pull['head']['sha']
+    if github.passed_merge_queue(pull.get('merge_commit_sha')):
+        print(f'#{number} ({head[:7]}): merged through the merge queue, whose merge policy check passed')
+        return
     comments = github.json_lines(f'repos/{github.repo}/issues/{number}/comments')
     if has_merge_check(comments, head, pull['merged_at']):
         print(f'#{number} ({head[:7]}): merge check found')

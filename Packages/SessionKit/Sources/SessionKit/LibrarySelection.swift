@@ -22,7 +22,7 @@ public struct LibrarySelection: Equatable, Sendable {
     }
 
     /// The item ids a view offers for ticking, in its order: its item rows, never its collection rows.
-    public static func selectableIDs(_ listing: [LibraryListing]) -> [String] {
+    public static func selectableIDs(_ listing: [LibraryCollectionEntry]) -> [String] {
         listing.compactMap { $0.itemRow?.id }
     }
 

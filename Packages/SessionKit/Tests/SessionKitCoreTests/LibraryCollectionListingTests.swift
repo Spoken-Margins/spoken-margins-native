@@ -25,13 +25,13 @@ final class LibraryCollectionListingTests: XCTestCase {
         ItemCollection(id: id, name: name, itemIDs: items, createdAt: base.addingTimeInterval(created))
     }
 
-    private func ids(_ listing: [LibraryListing]) -> [String] { listing.map(\.id) }
+    private func ids(_ listing: [LibraryCollectionEntry]) -> [String] { listing.map(\.id) }
     private func c(_ id: String) -> String { LibraryCollectionRow.rowID(collectionID: id) }
 
     private func list(
         _ rows: [LibraryItemRow], _ collections: [ItemCollection], imported: [LibraryFolderRecord] = [],
         query: LibraryQuery = LibraryQuery(), mode: LibraryViewMode = .collections, current: String? = nil
-    ) -> [LibraryListing] {
+    ) -> [LibraryCollectionEntry] {
         LibraryCollectionListEngine.listing(rows: rows, collections: collections, imported: imported, query: query, mode: mode,
                                             currentItemID: current)
     }
