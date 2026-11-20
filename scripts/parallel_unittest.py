@@ -33,6 +33,10 @@ from pathlib import Path
 # (verify-tests.py runs the step from the checkout's root); the weights live beside this script.
 WEIGHTS = Path(__file__).resolve().parent / 'runner_test_seconds.json'
 DEFAULT_JOBS = 4
+# A module still running after this long is killed and fails the step by name. The slowest module took 107 s alone
+# (runner_test_seconds.json); verify-tests.py's step ceiling bounds the whole run anyway.
+MODULE_TIMEOUT = float(os.environ.get('SM_RUNNER_TEST_MODULE_TIMEOUT') or 600)
+HEARTBEAT_SECONDS = 60
 
 # One module, with the left-out ids dropped (a test id starting with any PREFIX is not run).
 MODULE_LOADER = '''
@@ -52,7 +56,12 @@ COUNTS = re.compile(r'(failures|errors|skipped|expected failures|unexpected succ
 
 
 def modules(tests_dir):
-    return sorted(path.stem for path in tests_dir.glob('test_*.py'))
+    """The modules `unittest discover -s scripts/tests` loads: test*.py at the top level. A test package below it
+    would be loaded by discover and not here, so it stops the run rather than drop its tests unseen."""
+    nested = sorted(str(path) for path in tests_dir.glob('*/**/test*.py'))
+    if nested:
+        raise SystemExit(f'parallel_unittest.py runs top-level test modules only; move or list these: {nested}')
+    return sorted(path.stem for path in tests_dir.glob('test*.py'))
 
 
 def wholly_left_out(module, left_out):
@@ -71,10 +80,43 @@ def summary(output):
     return (int(found[-1]) if found else None), {key: int(value) for key, value in COUNTS.findall(tail)}
 
 
-def run_all(names, jobs, left_out=(), cwd='.', out=sys.stdout, python=sys.executable):
+def run_all(names, jobs, left_out=(), cwd='.', out=sys.stdout, python=sys.executable,
+            module_timeout=MODULE_TIMEOUT, heartbeat=HEARTBEAT_SECONDS):
     queue = list(names)
     lock = threading.Lock()
     results = {}
+    running = {}
+
+    def report(name, line, output=None):
+        with lock:
+            print(line, file=out, flush=True)
+            if output is not None:
+                print(f'----- {name} output -----\n{output.rstrip()}\n----- end of {name} -----', file=out, flush=True)
+
+    def run_one(name):
+        start = time.monotonic()
+        with lock:
+            running[name] = start
+        with tempfile.TemporaryFile() as log:
+            child = subprocess.Popen([python, '-c', MODULE_LOADER, name, *left_out], cwd=cwd, stdout=log,
+                                     stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+            try:
+                code, timed_out = child.wait(timeout=module_timeout), False
+            except subprocess.TimeoutExpired:
+                child.kill()
+                code, timed_out = child.wait(), True
+            log.seek(0)
+            output = log.read().decode('utf-8', errors='replace')  # a test may print any bytes
+        seconds = time.monotonic() - start
+        ran, counts = summary(output)
+        ok = code == 0 and ran is not None and not timed_out
+        verdict = ('ok' if ok else f'FAILED (killed after {module_timeout:.0f}s)' if timed_out
+                   else f'FAILED (exit {code})')
+        with lock:
+            running.pop(name, None)
+            results[name] = {'seconds': round(seconds, 1), 'ran': ran or 0, 'ok': ok, **counts}
+        report(name, f'{name}: {ran if ran is not None else "no"} tests in {seconds:.1f}s - {verdict}',
+               None if ok else output)
 
     def worker():
         while True:
@@ -82,28 +124,27 @@ def run_all(names, jobs, left_out=(), cwd='.', out=sys.stdout, python=sys.execut
                 if not queue:
                     return
                 name = queue.pop(0)
-            start = time.monotonic()
-            with tempfile.TemporaryFile(mode='w+') as log:
-                code = subprocess.run([python, '-c', MODULE_LOADER, name, *left_out], cwd=cwd, stdout=log,
-                                      stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL).returncode
-                log.seek(0)
-                output = log.read()
-            seconds = time.monotonic() - start
-            ran, counts = summary(output)
-            ok = code == 0 and ran is not None
-            with lock:
-                results[name] = {'seconds': round(seconds, 1), 'ran': ran or 0, 'ok': ok, **counts}
-                print(f'{name}: {ran if ran is not None else "no"} tests in {seconds:.1f}s — '
-                      f'{"ok" if ok else f"FAILED (exit {code})"}', file=out, flush=True)
-                if not ok:
-                    print(f'----- {name} output -----\n{output.rstrip()}\n----- end of {name} -----', file=out,
-                          flush=True)
+            try:
+                run_one(name)
+            except BaseException as error:  # never lose a module: an unexpected error is that module's failure
+                with lock:
+                    running.pop(name, None)
+                    results[name] = {'seconds': 0.0, 'ran': 0, 'ok': False}
+                report(name, f'{name}: FAILED (parallel_unittest.py error: {error!r})')
 
     threads = [threading.Thread(target=worker, daemon=True) for _ in range(max(1, jobs))]
     for thread in threads:
         thread.start()
-    for thread in threads:
-        thread.join()
+    # A line while slow modules run, so the step's stall watcher sees progress and a hang names its module.
+    while any(thread.is_alive() for thread in threads):
+        for thread in threads:
+            thread.join(timeout=heartbeat / max(1, len(threads)))
+        with lock:
+            now = time.monotonic()
+            busy = ', '.join(f'{name} {now - start:.0f}s' for name, start in sorted(running.items())
+                             if now - start >= heartbeat)
+        if busy:
+            report(None, f'still running: {busy}')
     return results
 
 
@@ -114,6 +155,7 @@ def main(argv=None):
     parser.add_argument('--times-out', type=Path)
     parser.add_argument('--leave-out', nargs='*', default=[])
     args = parser.parse_args(argv)
+    sys.stdout.reconfigure(errors='backslashreplace')  # a failing test's output reaches any log, even an ASCII one
     left_out = tuple(args.leave_out)
     weights = json.loads(WEIGHTS.read_text())['seconds'] if WEIGHTS.exists() else {}
     names = order([name for name in modules(Path('scripts/tests')) if not wholly_left_out(name, left_out)], weights)
@@ -121,11 +163,12 @@ def main(argv=None):
     start = time.monotonic()
     results = run_all(names, args.jobs, left_out)
     wall = time.monotonic() - start
+    missing = sorted(set(names) - set(results))
     if args.times_out:
         args.times_out.write_text(json.dumps({name: value['seconds'] for name, value in sorted(results.items())},
                                              indent=1) + '\n')
     total = sum(value['ran'] for value in results.values())
-    failed = sorted(name for name, value in results.items() if not value['ok'])
+    failed = sorted(name for name, value in results.items() if not value['ok']) + missing
     failures = sum(value.get('failures', 0) for value in results.values())
     errors = sum(value.get('errors', 0) for value in results.values())
     skipped = sum(value.get('skipped', 0) for value in results.values())

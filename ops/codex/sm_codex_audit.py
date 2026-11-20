@@ -178,7 +178,8 @@ RISKY_PATTERNS = {
         r"^\.github/workflows/",
         r"^scripts/lane",
         r"^scripts/(xcodebuild-lane|host-test-lane|install-lane-guard\.py|test-scope\.py"
-        r"|hot_file_ratchet\.py|merge_audit\.py|merge_policy\.py|signoff_check\.py|verify-tests\.py|trunk\.py)$",
+        r"|hot_file_ratchet\.py|merge_audit\.py|merge_policy\.py|signoff_check\.py|verify-tests\.py|trunk\.py"
+        r"|parallel_unittest\.py|runner_test_seconds\.json)$",
         r"^TestPlans/(AppBehavior|AudioAdapters)\.xctestplan$",
     ],
 }

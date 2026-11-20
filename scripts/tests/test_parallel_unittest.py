@@ -1,10 +1,12 @@
 """scripts/parallel_unittest.py (#4769): runner-tests one module per process, a few at a time."""
 import importlib.util
 import io
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -75,6 +77,53 @@ class ParallelUnittestTests(unittest.TestCase):
         with tree({}) as cwd:
             done = run(cwd)
         self.assertRegex(done.stdout, r'(?m)^Ran 0 tests in ')  # verify-tests.py turns this into its zero-tests error
+
+    def test_a_module_that_prints_any_bytes_is_still_counted(self):
+        bad = ('import os, unittest\nclass B(unittest.TestCase):\n'
+               '    def test_bad(self):\n        os.write(1, b"\\xff\\xfe")\n        self.fail("after bytes")\n')
+        with tree({'test_a.py': PASSING, 'test_bad.py': bad}) as cwd:
+            done = run(cwd, '--jobs', '1')
+        self.assertEqual(done.returncode, 1, done.stdout)
+        self.assertIn('modules: test_bad', done.stdout)
+
+    def test_an_ascii_log_loses_no_module(self):
+        bad = 'import unittest\nclass B(unittest.TestCase):\n    def test_bad(self): self.fail("caf\u00e9 \u2014")\n'
+        with tree({'test_a.py': PASSING, 'test_bad.py': bad, 'test_c.py': PASSING}) as cwd:
+            done = subprocess.run([sys.executable, '-X', 'utf8=0', str(SCRIPT), '--jobs', '1'], cwd=cwd,
+                                  capture_output=True, timeout=120,
+                                  env={**os.environ, 'LC_ALL': 'C', 'LANG': 'C', 'PYTHONIOENCODING': 'ascii'})
+        text = done.stdout.decode('ascii')
+        self.assertEqual(done.returncode, 1, text)
+        self.assertRegex(text, r'(?m)^Ran 5 tests in ')
+        self.assertIn('modules: test_bad', text)
+
+    def test_a_hung_module_is_killed_and_named(self):
+        hung = 'import time, unittest\nclass H(unittest.TestCase):\n    def test_hang(self): time.sleep(60)\n'
+        with tree({'test_a.py': PASSING, 'test_hung.py': hung}) as cwd:
+            done = subprocess.run([sys.executable, str(SCRIPT)], cwd=cwd, capture_output=True, text=True, timeout=60,
+                                  env={**os.environ, 'SM_RUNNER_TEST_MODULE_TIMEOUT': '2'})
+        self.assertEqual(done.returncode, 1, done.stdout)
+        self.assertIn('test_hung: no tests in', done.stdout)
+        self.assertIn('killed after 2s', done.stdout)
+
+    def test_a_worker_error_is_that_modules_failure(self):
+        out = io.StringIO()
+        def broken(*args, **kwargs):
+            raise OSError('no such interpreter')
+        with unittest.mock.patch.object(parallel.subprocess, 'Popen', broken):
+            results = parallel.run_all(['test_a', 'test_b'], 1, out=out)
+        self.assertEqual(sorted(results), ['test_a', 'test_b'])  # the worker went on to the next module
+        self.assertFalse(any(value['ok'] for value in results.values()))
+
+    def test_modules_match_discover_and_refuse_nested_packages(self):
+        with tree({'test_a.py': PASSING, 'testb.py': PASSING, 'helper.py': ''}) as cwd:
+            tests = Path(cwd) / 'scripts' / 'tests'
+            self.assertEqual(parallel.modules(tests), ['test_a', 'testb'])
+            (tests / 'sub').mkdir()
+            (tests / 'sub' / '__init__.py').write_text('')
+            (tests / 'sub' / 'test_deep.py').write_text(PASSING)
+            with self.assertRaises(SystemExit):
+                parallel.modules(tests)
 
     def test_slowest_first_and_unknown_modules_before_known_ones(self):
         self.assertEqual(parallel.order(['test_a', 'test_b', 'test_new', 'test_c'],

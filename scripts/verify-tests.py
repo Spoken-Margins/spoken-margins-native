@@ -1831,8 +1831,9 @@ class Run:
             errors.extend(f'hot-file ratchet — {line[len("FAIL "):]}' for line in text.splitlines()
                           if line.startswith('FAIL '))
         if name in ('runner-tests', 'ops') or name.startswith('ops-'):
-            match = re.search(r'Ran (\d+) tests? in ', text)
-            entry['executed_count'] = int(match[1]) if match else 0
+            # The last summary: parallel_unittest.py prints a failing module's own "Ran" line before its total.
+            ran = re.findall(r'Ran (\d+) tests? in ', text)
+            entry['executed_count'] = int(ran[-1]) if ran else 0
             if not entry['executed_count']:
                 errors.append('Infrastructure runner executed zero tests' if name == 'runner-tests'
                               else f'{name} executed zero tests')
