@@ -688,12 +688,12 @@ def default_run(cmd: list, cwd: Optional[Path] = None, timeout: Optional[float] 
 
 @contextlib.contextmanager
 def exclusive_slot():
-    """Reserve the simulator nonblocking under the lane's decision lock, then let the decision go.
+    """Reserve the simulator nonblocking under the lane's decision lock, as the Codex Test Desk did.
 
-    The decision lock covers only the check and the take. Keeping it for the whole job, as the Codex Test Desk
-    did, froze every other simulator request until the job ended (#4729); a second job now joins only under the
-    lane's second-slot rule. The slot descriptor goes to verify-tests so a parent exit cannot unlock a running
-    child."""
+    Both descriptors go to verify-tests so a parent exit cannot unlock a running child. The decision lock is kept for
+    the whole job on purpose: verify-tests runs here without --device, on the one shared "SpokenMargins Test Runner",
+    and this hold is the only Mac-wide thing that keeps another checkout's verify-tests off that device mid-run
+    (#4730 audit). Waiters no longer freeze silently on it: lane_slots.acquire polls it and prints a note (#4729)."""
     folder = lane_slots.state_dir()
     folder.mkdir(parents=True, exist_ok=True)
     with (folder / lane_slots.SIMULATOR_DECISION).open('a+') as decision:
@@ -705,10 +705,10 @@ def exclusive_slot():
             raise TimeoutError('Mac-wide simulator slot is busy')
         handle, _, _ = lane_slots.acquire([lane_slots.SIMULATOR_SLOT], 'simulator slot',
                                          'Integration script', max_wait=0)
-    try:
-        yield (handle.fileno(),)
-    finally:
-        lane_slots.release_handle(handle)
+        try:
+            yield (handle.fileno(), decision.fileno())
+        finally:
+            lane_slots.release_handle(handle)
 
 
 class Ops:

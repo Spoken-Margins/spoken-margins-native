@@ -2196,14 +2196,15 @@ class ScreenTourTests(unittest.TestCase):
 
 
 class ExclusiveSlotTests(unittest.TestCase):
-    """The decision lock covers only the check-and-take; the job keeps just its slot (#4729)."""
+    """The job keeps the decision lock for its whole run: it guards the shared Test Runner device (#4730 audit)."""
 
-    def test_the_decision_lock_is_free_while_the_job_holds_its_slot(self):
+    def test_the_job_keeps_the_decision_lock_while_it_holds_its_slot(self):
         import fcntl
         state = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, state, True)
         with patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}), run.exclusive_slot() as fds:
-            self.assertEqual(len(fds), 1, 'only the slot descriptor goes to verify-tests')
+            self.assertEqual(len(fds), 2, 'slot and decision descriptors both go to verify-tests')
             with (state / run.lane_slots.SIMULATOR_DECISION).open('a+') as probe:
-                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)  # raises BlockingIOError if the job kept it
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.assertTrue(run.lane_slots.simulator_job_running())
