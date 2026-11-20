@@ -89,7 +89,9 @@ jobs:
       (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Successful runs take 20 to 29 minutes, so a 30-minute limit cancelled busy runs that were passing; in the merge
+    # queue that drops a PR for no real failure (#4693, 2026-11-20). The limit is a ceiling, not a pace.
+    timeout-minutes: 45
     outputs:
       # The SessionKitCoreTests that passed only on their Linux rerun, for linux-retry-tally (#2176).
       retried: ${{ steps.core.outputs.retried }}

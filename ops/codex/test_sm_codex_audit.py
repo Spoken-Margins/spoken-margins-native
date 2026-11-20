@@ -967,16 +967,30 @@ class HostedAudit(unittest.TestCase):
         # is run for each way the workflow starts, so a guard turned into a comment or into `true` fails (#3704).
         workflow = W.load("claude-audit.yml")
         job = workflow["jobs"]["audit"]
-        for event, conclusion, runs in (("workflow_run", "skipped", False), ("workflow_run", "success", True),
-                                        ("workflow_run", "failure", True), ("workflow_run", "cancelled", True),
-                                        ("workflow_dispatch", "", True), ("schedule", "", True)):
-            with self.subTest(event=event, conclusion=conclusion):
+        for event, conclusion, source, runs in (
+                ("workflow_run", "skipped", "pull_request", False), ("workflow_run", "success", "pull_request", True),
+                ("workflow_run", "failure", "pull_request", True), ("workflow_run", "cancelled", "pull_request", True),
+                ("workflow_run", "success", "workflow_dispatch", True),
+                ("workflow_run", "success", "merge_group", False), ("workflow_run", "failure", "merge_group", False),
+                ("workflow_dispatch", "", "", True), ("schedule", "", "", True)):
+            with self.subTest(event=event, conclusion=conclusion, source=source):
                 self.assertEqual(W.evaluate_condition(
                     job.get("if", True), github_event_name=event,
-                    github_event_workflow_run_conclusion=conclusion), runs)
+                    github_event_workflow_run_conclusion=conclusion,
+                    github_event_workflow_run_event=source), runs)
         # The group is the job's own, so the skipped run is dropped before it can replace the run waiting in it.
         self.assertEqual(job["concurrency"], {"group": "claude-audit", "cancel-in-progress": False})
         self.assertNotIn("concurrency", workflow)
+
+    def test_a_pr_s_hosted_checks_finishing_starts_the_audit(self):
+        # With lane.yml disabled for the merge queue (2026-11-20) the lane report never comes, and the schedule ran 3
+        # times in 24 hours, so the hosted checks finishing must start the audit themselves.
+        workflow = W.load("claude-audit.yml")
+        on = workflow.get("on") or workflow.get(True)
+        self.assertEqual(on["workflow_run"]["types"], ["completed"])
+        for name in ("hosted-portable", "hosted-web"):
+            self.assertIn(name, on["workflow_run"]["workflows"])
+            self.assertEqual(W.load(f"{name}.yml")["name"], name)
 
     def test_on_the_mac_the_label_event_starts_it_and_nothing_is_dispatched(self):
         with patch.dict(os.environ):
@@ -1150,6 +1164,24 @@ class OwnerTapPrAudit(unittest.TestCase):
     def test_a_pr_that_is_not_owner_tap_still_needs_its_lane_pass(self):
         cands, skips, _ = self.find([], self.APP_FILES)
         self.assertEqual((cands, skips), ([], {"no lane report": 1}))
+
+    RISKY_FILES = [{"filename": "Packages/SessionKit/Sources/SessionKitPersistence/Store.swift",
+                    "additions": 3, "deletions": 1}]
+
+    def test_a_risky_pr_with_finished_checks_is_audited_without_a_lane_report(self):
+        """The lane is off for the merge queue (#4693): no PR gets a lane report, so a risky head was never audited."""
+        for comments in ([], [self.OLD_LANE]):
+            with self.subTest(comments=comments):
+                cands, skips, _ = self.find(comments, self.RISKY_FILES)
+                self.assertEqual([c["number"] for c in cands], [366])
+                self.assertTrue(cands[0]["reason"].startswith("risky: "), cands[0]["reason"])
+                self.assertEqual(skips, {})
+
+    def test_a_risky_pr_waits_while_checks_run_or_after_one_failed(self):
+        for state in ("pending", "failed"):
+            with self.subTest(state=state):
+                cands, skips, _ = self.find([], self.RISKY_FILES, state)
+                self.assertEqual((cands, skips), ([], {f"checks {state}": 1}))
 
     def test_the_checks_are_read_only_for_a_pr_that_could_be_audited(self):
         with patch.object(A, "head_checks_state") as checks:
