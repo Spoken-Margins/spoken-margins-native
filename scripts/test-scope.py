@@ -670,14 +670,17 @@ def mac_check_reason(path):
 # that every `path:` and SRCROOT script in project.yml is one, so a new target can't slip out of the rule.
 APP_COMPILE_PREFIXES = ('App/', 'Packages/', 'Config/', 'SpokenMarginsNative.xcodeproj/', 'Contracts/fixtures/',
                         'Contracts/traces/', 'Contracts/voice-models/', 'Site/onboarding/catalog/', 'TestPlans/')
-APP_COMPILE_NOT_PREFIXES = ('Packages/SessionKit/Tests/', 'Packages/SessionKitTools/')  # not linked into the app
+# Not linked into the app or its test bundle. Packages/SessionKit/Tests/ShippedReader/ is: it is the library product
+# ShippedPacketReader (Package.swift), which SpokenMarginsAppTests links (project.yml) and imports.
+APP_COMPILE_NOT_PREFIXES = ('Packages/SessionKit/Tests/', 'Packages/SessionKitTools/')
+APP_COMPILE_LINKED_TESTS = ('Packages/SessionKit/Tests/ShippedReader/',)
 APP_COMPILE_FILES = {'project.yml', '.github/workflows/hosted-portable.yml', 'scripts/ci-cas-cache.sh',
                      'scripts/normalize-embedded-framework-minimum-os.sh'}
 
 
 def app_compile_reason(path):
     """Why <path> needs the merge queue's app compile, or None when it does not."""
-    if path.startswith(APP_COMPILE_NOT_PREFIXES):
+    if path.startswith(APP_COMPILE_NOT_PREFIXES) and not path.startswith(APP_COMPILE_LINKED_TESTS):
         return None
     if path.startswith(APP_COMPILE_PREFIXES) or path in APP_COMPILE_FILES or path.endswith(('.swift', '.xcconfig')):
         return f'{path} is an app build input'

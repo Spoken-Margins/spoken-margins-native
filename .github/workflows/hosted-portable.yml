@@ -259,10 +259,10 @@ jobs:
             { echo "mac=true"; echo "reason=no changed-file list or base rule, so the Mac checks run"; } | tee -a "$GITHUB_OUTPUT"
           fi
           grep -q '^mac=' "$GITHUB_OUTPUT" || echo "mac=true" >> "$GITHUB_OUTPUT"
-          # The merge queue's app compile (app-compile below). A base rule without --app-compile-required fails the
-          # call, which says true: unsure builds.
+          # The merge queue's app compile (app-compile below). A base rule without --app-compile-required prints only a
+          # usage error, so no app= line: the grep after this writes app=true. Unsure builds.
           if [ -s "$list" ] && [ -s "$rule" ]; then
-            python3 "$rule" --app-compile-required "$list" | tee -a "$GITHUB_OUTPUT" || echo "app=true" >> "$GITHUB_OUTPUT"
+            python3 "$rule" --app-compile-required "$list" | tee -a "$GITHUB_OUTPUT" || true
           else
             echo "app=true" | tee -a "$GITHUB_OUTPUT"
           fi
@@ -702,7 +702,7 @@ jobs:
     # (the trunk, or the lane-check/** base under test), never the PR's head, and the head reaches the shell only through env. Same-repo runs only. Its outcome is read from the
     # check jobs only: owner-tap-alert and linux-retry-tally run `always()` and end `success` even when every check skipped.
     name: rearm
-    needs: [portable, scope, sessionkit, mac-rest, stop-macs-on-red, linux-retry-tally, owner-tap-alert]
+    needs: [portable, scope, sessionkit, mac-rest, app-compile, stop-macs-on-red, linux-retry-tally, owner-tap-alert]
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 3

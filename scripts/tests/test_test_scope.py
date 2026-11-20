@@ -778,7 +778,7 @@ class AppCompileScopeTests(unittest.TestCase):
                      'Config/Base.xcconfig', 'project.yml', 'SpokenMarginsNative.xcodeproj/project.pbxproj',
                      'Contracts/fixtures/items/a.json', 'Contracts/voice-models/licenses/x.txt',
                      'Site/onboarding/catalog/v1/catalog.json', '.github/workflows/hosted-portable.yml',
-                     'Web/odd/Thing.swift'):
+                     'Web/odd/Thing.swift', 'Packages/SessionKit/Tests/ShippedReader/Reader/X.swift'):
             self.assertTrue(scope.app_compile_required([path])[0], path)
 
     def test_paths_outside_the_app_build_skip_it(self):
