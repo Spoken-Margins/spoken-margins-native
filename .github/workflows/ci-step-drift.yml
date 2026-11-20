@@ -47,5 +47,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -o pipefail
           python3 scripts/ci_step_budgets.py collect --days 28
           python3 scripts/ci_step_budgets.py drift --issue | tee -a "$GITHUB_STEP_SUMMARY"

@@ -81,10 +81,10 @@ class DeriveTests(unittest.TestCase):
 
     def test_the_slowest_of_several_steps_bounds_a_shared_limit(self):
         samples = [sample(i, 'package', 300, days_ago=i / 10, job='hosted fast: Mac rest') for i in range(30)]
-        samples += [sample(i, 'package-core-serial', 700, days_ago=i / 10, job='hosted fast: Mac rest') for i in range(30)]
+        samples += [sample(i, 'package-core-serial', 1200, days_ago=i / 10, job='hosted fast: Mac rest') for i in range(30)]
         limit = b.derive(samples)['limits']['PACKAGE_TEST_CEILING']
         self.assertEqual(limit['bounded_by'], 'package-core-serial')
-        self.assertEqual(limit['seconds'], 1080)
+        self.assertEqual(limit['seconds'], 1800)
 
 
 class DriftTests(unittest.TestCase):
@@ -142,6 +142,15 @@ class ChooseRunsTests(unittest.TestCase):
         self.assertTrue({0, 1, 2, 3} <= chosen)
 
 
+class ThinDataTests(unittest.TestCase):
+    def test_a_limit_with_too_few_recent_samples_is_named(self):
+        samples = [sample(i, 'runner-tests', 900, days_ago=i / 10) for i in range(b.MIN_SAMPLES)]
+        samples += [sample(100 + i, 'package-core-serial', 400, days_ago=i / 10) for i in range(b.MIN_SAMPLES)]
+        samples += [sample(200 + i, 'package-core', 400, days_ago=10) for i in range(b.MIN_SAMPLES)]  # too old
+        self.assertEqual(b.thin_data(samples, now=NOW), ['PARALLEL_CORE_CEILING'])
+        self.assertEqual(b.thin_data([], now=NOW), list(b.LIMITS))
+
+
 class TableTests(unittest.TestCase):
     def test_the_checked_in_table_names_every_limit_with_its_runs(self):
         table = json.loads(b.TABLE.read_text())
@@ -157,6 +166,14 @@ class TableTests(unittest.TestCase):
         table = json.loads(b.TABLE.read_text())['limits']
         for name in b.LIMITS:
             self.assertEqual(getattr(module, name), table[name]['seconds'], name)
+
+    def test_a_table_only_change_is_a_mac_and_lane_change(self):
+        # Its numbers bound Mac-only steps, so a regeneration PR must not skip the Mac checks or the lane-file rules.
+        spec = importlib.util.spec_from_file_location('test_scope_for_budgets', b.ROOT / 'scripts' / 'test-scope.py')
+        scope = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scope)
+        self.assertIsNotNone(scope.mac_check_reason('scripts/ci_step_budgets.json'))
+        self.assertIn('scripts/ci_step_budgets.json', scope.LANE_FILES)
 
     def test_table_writes_and_keeps_previous_values_it_cannot_derive(self):
         with tempfile.TemporaryDirectory() as temporary:

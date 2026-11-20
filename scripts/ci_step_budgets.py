@@ -56,13 +56,17 @@ DRIFT_MIN_SAMPLES = 5
 
 # Each hand-set limit in verify-tests.py, the plan steps whose durations it bounds, and its floor. A ceiling is how
 # long a step that has used up its budget (verify-tests.py's *_TIMEOUT) may go on while it is still printing results.
-# The floor is that budget and half again: the samples are hosted runners only, and the same plan runs on developers'
-# Macs, where #1767 measured the SessionKit tests two to three times slower under load.
+# The floor is at least that budget and half again. The samples are hosted runners only, and the same plan runs on
+# developers' Macs (AGENTS.md's default loop), where #1767 measured the SessionKit tests two to three times slower under
+# load: PACKAGE_TEST_CEILING keeps #1767's 1500 s as its floor until local runs are measured, because its `package` step
+# runs the whole suite serially there in a Codex sandbox and its hosted samples are package-core-serial fallbacks.
 LIMITS = {
     'RUNNER_TESTS_CEILING': {'steps': ['runner-tests'], 'floor': 900},  # RUNNER_TESTS_TIMEOUT 600
     'PARALLEL_CORE_CEILING': {'steps': ['package-core'], 'floor': 450},  # PARALLEL_CORE_TIMEOUT 300
-    'PACKAGE_TEST_CEILING': {'steps': ['package', 'package-core-serial'], 'floor': 900},  # PACKAGE_TEST_TIMEOUT 600
+    'PACKAGE_TEST_CEILING': {'steps': ['package', 'package-core-serial'], 'floor': 1500},  # PACKAGE_TEST_TIMEOUT 600
 }
+# The samples are censored: only passed steps count, so a run killed at the old ceiling is not among them. 1.5 x p95
+# leaves the room for that tail; the drift alarm watching p95 against 75% of the limit is what notices it filling.
 
 STEP_LINE = re.compile(r'^(?:\S+Z )?([a-z][a-z0-9-]*): ([0-9]+(?:\.[0-9]+)?)s — passed\s*$')
 
@@ -95,12 +99,14 @@ def plan_steps(log_text):
     return found
 
 
-def job_log(job_id, cache):
+def job_log(job_id, cache, failures=None):
     path = cache / f'{job_id}.txt'
     if not path.exists():
         result = subprocess.run(['gh', 'api', '--allow-escape-sequences', f'repos/{repo()}/actions/jobs/{job_id}/logs'],
                                 capture_output=True, check=False)
         if result.returncode:
+            if failures is not None:
+                failures.append(job_id)
             return ''
         # Keep only the step lines: the full logs are megabytes each.
         text = result.stdout.decode(errors='replace')
@@ -109,7 +115,7 @@ def job_log(job_id, cache):
 
 
 def choose_runs(runs, now, per_window=40):
-    """The runs worth reading: on 2026-11-20 hosted-portable had 1,865 successful runs in 28 days, mostly PR pushes,
+    """The runs worth reading: on 2026-11-20 hosted-portable had about 1,700 successful runs in 28 days, mostly PR pushes,
     and a portable job's log is about 4 MB. So: the newest `per_window` runs of each event in the recent week (the
     table's window and drift's "now"), and as many from the baseline week (drift's "then")."""
     recent_from = now - timedelta(days=DRIFT_RECENT_DAYS)
@@ -130,18 +136,23 @@ def choose_runs(runs, now, per_window=40):
 
 def collect(days, out=OUT, per_window=40):
     now = datetime.now(timezone.utc)
-    # The Actions API returns at most 1,000 runs for a filtered listing (1,865 passed in 28 days on 2026-11-20), so
-    # list one week at a time.
+    # The Actions API returns at most 1,000 runs for a filtered listing (about 1,700 passed in 28 days on 2026-11-20),
+    # so list one week at a time, and say so if a week reaches the cap.
     listed = {}
     for week in range(0, days, 7):
         start = (now - timedelta(days=min(week + 7, days))).strftime('%Y-%m-%dT%H:%M:%SZ')
         end = (now - timedelta(days=week)).strftime('%Y-%m-%dT%H:%M:%SZ')
         pages = gh_json(f'repos/{repo()}/actions/workflows/{WORKFLOW}/runs?status=success&per_page=100&created={start}..{end}')
-        listed.update((run['id'], run) for page in pages for run in page['workflow_runs'])
+        week_runs = [run for page in pages for run in page['workflow_runs']]
+        if len(week_runs) >= 1000:
+            print(f'warning: {start}..{end} listed {len(week_runs)} runs, the API cap; older runs that week are missing',
+                  file=sys.stderr)
+        listed.update((run['id'], run) for run in week_runs)
     listed = list(listed.values())
     runs = choose_runs(listed, now, per_window)
     cache = out / 'logs'
     cache.mkdir(parents=True, exist_ok=True)
+    failures = []
 
     def one(run):
         jobs = [job for page in gh_json(f'repos/{repo()}/actions/runs/{run["id"]}/jobs?per_page=100') for job in page['jobs']]
@@ -160,7 +171,7 @@ def collect(days, out=OUT, per_window=40):
                                  'seconds': seconds_between(step.get('started_at'), step.get('completed_at'))})
             if (job['completed_at'] and parse_time(job['completed_at']) - parse_time(job['started_at'])
                     > timedelta(minutes=2)):
-                for name, seconds in plan_steps(job_log(job['id'], cache)):
+                for name, seconds in plan_steps(job_log(job['id'], cache, failures)):
                     rows.append({**base, 'kind': 'plan-step', 'job': job['name'], 'step': name, 'seconds': seconds})
         return rows
 
@@ -168,8 +179,11 @@ def collect(days, out=OUT, per_window=40):
         samples = [row for rows in pool.map(one, runs) for row in rows]
     out.mkdir(parents=True, exist_ok=True)
     (out / 'samples.json').write_text(json.dumps({'collected': now.isoformat(timespec='seconds'), 'days': days,
-                                                  'listed': len(listed), 'runs': len(runs), 'samples': samples}, indent=1))
+                                                  'listed': len(listed), 'runs': len(runs), 'log_failures': len(failures),
+                                                  'samples': samples}, indent=1))
     print(f'read {len(runs)} of {len(listed)} successful runs, {len(samples)} samples -> {out / "samples.json"}')
+    if failures:
+        print(f'warning: {len(failures)} job logs could not be fetched', file=sys.stderr)
 
 
 def percentile(values, share):
@@ -305,6 +319,19 @@ def drift_report(findings, data):
             '(and any timeout-minutes) under a Cost and catch heading.\n')
 
 
+def thin_data(samples, now=None):
+    """The limited steps with fewer than MIN_SAMPLES samples in the recent week: a report built on them would say
+    "nothing drifts" because nothing was read (a log fetch failing, a token without actions: read)."""
+    now = now or datetime.now(timezone.utc)
+    recent_from = now - timedelta(days=DRIFT_RECENT_DAYS)
+    counts = {}
+    for row in samples:
+        if row['kind'] == 'plan-step' and parse_time(row['created']) >= recent_from:
+            counts[row['step']] = counts.get(row['step'], 0) + 1
+    # Any one step of a shared limit is enough (package-core-serial runs only after package-core fails).
+    return [name for name, spec in LIMITS.items() if max(counts.get(step, 0) for step in spec['steps']) < MIN_SAMPLES]
+
+
 def update_issue(findings, body):
     found = subprocess.run(['gh', 'issue', 'list', '--repo', repo(), '--state', 'open', '--search',
                             f'"{DRIFT_ISSUE_TITLE}" in:title', '--json', 'number,title'],
@@ -313,6 +340,12 @@ def update_issue(findings, body):
     if findings and issue is None:
         subprocess.run(['gh', 'issue', 'create', '--repo', repo(), '--title', DRIFT_ISSUE_TITLE, '--body', body], check=True)
     elif findings:
+        current = subprocess.run(['gh', 'issue', 'view', str(issue), '--repo', repo(), '--json', 'body', '-q', '.body'],
+                                 capture_output=True, text=True, check=True).stdout
+        # A body edit notifies nobody, so say it in a comment when the list itself changed (not only its date line).
+        if current.split('\n\n', 1)[-1].strip() != body.split('\n\n', 1)[-1].strip():
+            subprocess.run(['gh', 'issue', 'comment', str(issue), '--repo', repo(), '--body',
+                            'The drift findings changed:\n\n' + body.split('\n\n', 1)[-1]], check=True)
         subprocess.run(['gh', 'issue', 'edit', str(issue), '--repo', repo(), '--body', body], check=True)
     elif issue is not None:
         subprocess.run(['gh', 'issue', 'close', str(issue), '--repo', repo(), '--comment', body], check=True)
@@ -351,6 +384,12 @@ def main(argv=None):
         findings = drift(samples, limits, job_timeouts())
         body = drift_report(findings, data)
         print(body)
+        thin = thin_data(samples)
+        if thin:
+            # Never close the issue on data too thin to judge: fail the job instead, so its red is the signal.
+            print(f'Too few recent samples for {", ".join(thin)} ({data.get("log_failures", 0)} job logs failed to '
+                  f'fetch); the issue is left as it is.', file=sys.stderr)
+            return 1
         if args.issue:
             update_issue(findings, body)
     elif args.command == 'profile':

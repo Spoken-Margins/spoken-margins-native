@@ -86,7 +86,7 @@
    ]
   },
   "PACKAGE_TEST_CEILING": {
-   "seconds": 900,
+   "seconds": 1500,
    "bounded_by": "package-core-serial",
    "p50": 406.7,
    "p95": 459.7,
