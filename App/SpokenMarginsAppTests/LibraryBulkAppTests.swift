@@ -54,6 +54,38 @@ final class LibraryBulkAppTests: XCTestCase {
         XCTAssertEqual(model.statusMessage, "Restored 3 items.")
     }
 
+    /// A mixed selection's Mark as Finished, then Undo, puts back exactly the items it changed: the ones finished before
+    /// stay finished (#4720, #4733 audit). Mark as Unfinished's Undo re-finishes them at their earlier time.
+    func testBulkMarkUndoTakesBackOnlyTheItemsItChanged() async throws {
+        let model = makeModel()
+        let ids = try importItems(model, count: 5)
+        let store = try XCTUnwrap(model.store)
+        func finishedAt(_ id: String) throws -> Date? { try store.loadItem(id: id).sourceCompletedAt }
+        let early = try XCTUnwrap(ManualItemCompletion.markComplete(itemId: ids[0], in: store)?.sourceCompletedAt)
+        _ = try ManualItemCompletion.markComplete(itemId: ids[1], in: store)
+
+        model.markItemsFinished(ids)
+        try await pollUntil { model.feedbackEvent?.message == "Marked 3 items as finished." }
+        XCTAssertEqual(model.feedbackEvent?.message, "Marked 3 items as finished.")
+        for id in ids { XCTAssertNotNil(try finishedAt(id), "\(id) finished") }
+        let undo = try XCTUnwrap(model.feedbackEvent?.action, "the banner offers Undo")
+        XCTAssertEqual(undo.title, "Undo")
+
+        undo.perform()
+        try await pollUntil { model.feedbackEvent?.message == "Marked 3 items as unfinished." }
+        XCTAssertEqual(try finishedAt(ids[0]), early, "finished before the action: still finished, same time")
+        XCTAssertNotNil(try finishedAt(ids[1]))
+        for id in ids[2...] { XCTAssertNil(try finishedAt(id), "\(id) is unfinished again") }
+
+        model.markItemsUnfinished(ids)
+        try await pollUntil { model.feedbackEvent?.message == "Marked 2 items as unfinished." }
+        XCTAssertNil(try finishedAt(ids[0]))
+        try XCTUnwrap(model.feedbackEvent?.action).perform()
+        try await pollUntil { model.feedbackEvent?.message == "Marked 2 items as finished." }
+        XCTAssertEqual(try finishedAt(ids[0]), early, "re-finished at the time it was finished before")
+        for id in ids[2...] { XCTAssertNil(try finishedAt(id), "never finished, so Undo leaves \(id) alone") }
+    }
+
     func testARowDeleteStillUndoesItsOneItem() throws {
         let model = makeModel()
         let ids = try importItems(model, count: 2)

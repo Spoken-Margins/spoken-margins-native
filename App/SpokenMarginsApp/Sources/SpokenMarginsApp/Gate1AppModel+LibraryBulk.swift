@@ -14,8 +14,8 @@ extension Gate1AppModel {
         return added
     }
 
-    /// Mark as Finished: each unfinished item, as its row's Mark Complete does, with one banner and no per-item Undo
-    /// (Mark as Unfinished takes it back).
+    /// Mark as Finished: each unfinished item, as its row's Mark Complete does, with one banner whose Undo un-finishes
+    /// exactly the items this changed, so items that were already finished stay finished (#4720).
     /// Each item is read whole and saved, so a Select All over a big Library runs off the main thread (#2257); the
     /// signals, note export and banner follow on the main actor once every item is saved.
     func markItemsFinished(_ itemIds: [String]) {
@@ -32,37 +32,80 @@ extension Gate1AppModel {
             }
             completionMarkingChanged(itemIds)
             if !result.changed.isEmpty || result.failure == nil {
-                reportConfirmation(LibraryBulkAction.markFinished.banner(count: result.changed.count))
+                // Each completion as stored, so Undo clears only that one, never a later mark (`markUnfinished(markedAt:)`).
+                let marks = result.changed.compactMap { item in item.sourceCompletedAt.map { (id: item.id, at: $0) } }
+                let undo = bulkCompletionUndo(count: marks.count, action: .markFinished) { [weak self] in
+                    self?.revertBulkCompletion(marks.map(\.id), as: .markUnfinished) { id in
+                        guard let at = marks.first(where: { $0.id == id })?.at else { return nil }
+                        return try ManualItemCompletion.markUnfinished(itemId: id, markedAt: at, in: store)
+                    }
+                }
+                reportConfirmation(LibraryBulkAction.markFinished.banner(count: result.changed.count), action: undo)
             }
             if let failure = result.failure { reportFailure(failure, context: "Mark complete failed") }
         }
     }
 
-    /// Mark as Unfinished: each item that was marked finished by hand. Natural completion is never undone.
+    /// Mark as Unfinished: each item that was marked finished by hand. Natural completion is never undone. Undo marks
+    /// exactly the items this changed finished again, at the time each was finished before.
     func markItemsUnfinished(_ itemIds: [String]) {
         guard !rejectNavigationOrSessionMutationWhileRecording("mark_items_unfinished") else { return }
         let store: SQLiteSessionStore
         do { store = try requireStore() } catch { reportFailure(error, context: "Mark unfinished failed"); return }
         Task { @MainActor [weak self] in
-            let result = await Self.markCompletion(itemIds) {
-                try ManualItemCompletion.markUnfinished(itemId: $0, markedAt: nil, in: store)
+            let result = await Self.markCompletion(itemIds) { id -> (id: String, at: Date)? in
+                let before = try store.loadItem(id: id).sourceCompletedAt
+                guard try ManualItemCompletion.markUnfinished(itemId: id, markedAt: nil, in: store) != nil, let before else { return nil }
+                return (id, before)
             }
             guard let self else { return }
             completionMarkingChanged(itemIds)
             if !result.changed.isEmpty || result.failure == nil {
-                reportConfirmation(LibraryBulkAction.markUnfinished.banner(count: result.changed.count))
+                let marks = result.changed
+                let undo = bulkCompletionUndo(count: marks.count, action: .markUnfinished) { [weak self] in
+                    self?.revertBulkCompletion(marks.map(\.id), as: .markFinished) { id in
+                        guard let at = marks.first(where: { $0.id == id })?.at else { return nil }
+                        return try ManualItemCompletion.markComplete(itemId: id, at: at, in: store)
+                    }
+                }
+                reportConfirmation(LibraryBulkAction.markUnfinished.banner(count: result.changed.count), action: undo)
             }
             if let failure = result.failure { reportFailure(failure, context: "Mark unfinished failed") }
         }
     }
 
+    /// The Undo button on a bulk Mark banner, or nil when nothing changed.
+    private func bulkCompletionUndo(
+        count: Int, action: LibraryBulkAction, perform: @escaping @MainActor () -> Void
+    ) -> UserFeedbackEvent.Action? {
+        guard count > 0 else { return nil }
+        return UserFeedbackEvent.Action(
+            title: ManualCompletionMessages.undoTitle,
+            accessibilityLabel: "\(ManualCompletionMessages.undoTitle): \(action.banner(count: count))",
+            identifier: "library.bulk.completion.undo",
+            perform: perform)
+    }
+
+    /// Takes a bulk Mark back on exactly the items it changed, off the main thread, with the opposite action's banner.
+    private func revertBulkCompletion(
+        _ itemIds: [String], as reverse: LibraryBulkAction, _ change: @escaping @Sendable (String) throws -> Item?
+    ) {
+        Task { @MainActor [weak self] in
+            let result = await Self.markCompletion(itemIds, change)
+            guard let self else { return }
+            completionMarkingChanged(itemIds)
+            if !result.changed.isEmpty { reportConfirmation(reverse.banner(count: result.changed.count)) }
+            if let failure = result.failure { reportFailure(failure, context: "Undo failed") }
+        }
+    }
+
     /// Runs one item's change per ID off the main thread. An item that fails is skipped and the rest still change;
     /// the first failure is returned so it can be said once.
-    nonisolated private static func markCompletion(
-        _ itemIds: [String], _ change: @escaping @Sendable (String) throws -> Item?
-    ) async -> (changed: [Item], failure: Error?) {
+    nonisolated private static func markCompletion<Changed: Sendable>(
+        _ itemIds: [String], _ change: @escaping @Sendable (String) throws -> Changed?
+    ) async -> (changed: [Changed], failure: Error?) {
         await Task.detached(priority: .userInitiated) {
-            var changed: [Item] = []
+            var changed: [Changed] = []
             var failure: Error?
             for id in itemIds {
                 do { if let item = try change(id) { changed.append(item) } } catch { failure = failure ?? error }
