@@ -18,8 +18,10 @@
 # checks never start, which would hold the queue; that is not documented either way. So the step uses the secret
 # MERGE_QUEUE_TOKEN (a fine-grained token or App token with pull requests and contents write) when it exists, and
 # GITHUB_TOKEN otherwise. The trial must show a bridge-queued PR's merge-group checks starting before the switch.
-# The same rule means a label change made with GITHUB_TOKEN (by another workflow) starts no run here; the 15-minute
-# sweep catches both directions: it queues armed PRs and unqueues PRs set to merge without the label.
+# The same rule means a label added with GITHUB_TOKEN (by another workflow) starts no run here; the 15-minute
+# sweep queues those. The sweep never takes a PR out: a PR set to merge without the label may be the owner's own
+# Merge tap. A label removed with GITHUB_TOKEN therefore leaves the PR queued; take it out with `gh pr merge
+# --disable-auto` or by hand.
 #
 # `pull_request_target`, not `pull_request`: the script comes from main and nothing from the PR is checked out or run.
 #

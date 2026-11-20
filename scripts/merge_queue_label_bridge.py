@@ -16,8 +16,10 @@ label into the queue's own commands. merge-queue-label-bridge.yml runs it from m
   `automerge`, when a merge group fails, so a failing PR is queued again only after someone re-arms it. Without
   this the 15-minute sweep would queue it again at once, rebuilding every group behind it, four times an hour.
 - Label removed: auto-merge off, and the GraphQL `dequeuePullRequest` mutation if the PR is in the queue.
-- Sweep: queues every armed PR, and unqueues every open PR that has auto-merge on or a queue entry but no
-  `automerge` label. That retries a failed or lost removal (a removal with GITHUB_TOKEN starts no run at all).
+- Sweep: queues every armed PR, re-reading each one just before acting so a PR stopped after the list was read
+  (label removed, retitled, `needs-fix` added) is not queued again. It never takes a PR out: a PR set to merge
+  without the label may be the owner's own Merge tap or a maintainer's `gh pr merge`. A PR leaves the queue only on
+  the `unlabeled` event, a hold `edited`/`converted_to_draft` event, or merge_queue_dequeued.py's label removal.
 
 Every call is tried a few times. One plain line per PR. Exit 1 when a PR could not be queued or unqueued, so the
 run shows red; the next sweep tries again.
@@ -236,14 +238,13 @@ def unqueue(github, pr, out=sys.stdout):
 
 
 def sweep(github, out):
-    pulls = github.open_pulls()
-    armed = [pr for pr in pulls if LABEL in labels(pr)]
-    loose = [pr for pr in pulls if LABEL not in labels(pr) and (pr.get('autoMergeRequest') or pr.get('mergeQueueEntry'))]
-    print(f'{len(armed)} open PRs carry `{LABEL}`; {len(loose)} are set to merge without it', file=out)
+    armed = [pr for pr in github.open_pulls() if LABEL in labels(pr)]
+    print(f'{len(armed)} open PRs carry `{LABEL}`', file=out)
     results = []
-    for act, pr in [(queue, pr) for pr in armed] + [(unqueue, pr) for pr in loose]:
+    for pr in armed:
         try:
-            results.append(act(github, pr, out))
+            # The list is a snapshot; act on the PR as it is now.
+            results.append(queue(github, github.pull(pr['number']), out))
         except Failed as error:
             print(f'#{pr.get("number")}: could not finish: {error}', file=out)
             results.append(False)
@@ -256,7 +257,7 @@ def main(argv=None, github=None, out=sys.stdout):
     parser.add_argument('--pr', type=int)
     parser.add_argument('--action', choices=['labeled', 'unlabeled', *CHECK_ACTIONS])
     parser.add_argument('--label', default=LABEL, help='the label a labeled/unlabeled event is about')
-    parser.add_argument('--sweep', action='store_true', help='queue every armed PR, unqueue every unarmed one')
+    parser.add_argument('--sweep', action='store_true', help='queue every armed PR')
     args = parser.parse_args(argv)
     github = github or GitHub(args.repo)
     if args.action in ('labeled', 'unlabeled') and args.label != LABEL:

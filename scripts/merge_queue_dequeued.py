@@ -12,7 +12,8 @@ Two jobs, independent of each other:
    A removal for a failure also gets the `needs-fix` label and loses `automerge`, so the label bridge
    (merge_queue_label_bridge.py) does not queue it again until someone adds `automerge` again, as with the old
    lane. A removal by hand means "stop": the PR loses `automerge` too, but gets no `needs-fix` since nothing
-   failed. A PR that merged keeps its labels. Each comment carries a hidden marker with the group head (or the PR
+   failed. `automerge` is removed only when the event shows the PR carries it (the owner's own Merge tap on an
+   unlabelled PR has nothing to remove, and its comment says nothing about a label). A PR that merged keeps its labels. Each comment carries a hidden marker with the group head (or the PR
    head when no group ran), so a second event for the same group adds nothing. A failed read logs a warning and exits 0: a notifier must not go red.
 
 2. Cancel. When an entry leaves the queue GitHub rebuilds the groups behind it and sends `merge_group: destroyed`
@@ -122,12 +123,19 @@ def failed_check(github, sha):
     return max(failed, key=lambda run: run.get('completed_at') or '', default=None)
 
 
-def comment_body(number, reason, head, check):
+def carries_arm_label(pr):
+    return any((label or {}).get('name') == ARM_LABEL for label in pr.get('labels') or [])
+
+
+def comment_body(number, reason, head, check, armed=True):
     lines = [MARKER.format(head=head),
              f'**Left the merge queue** ({reason or "no reason given"}).']
     if reason.upper() in MANUAL_REASONS:
-        lines.append(f'It was taken out by hand, so `{ARM_LABEL}` came off and it will not be queued again.')
-        lines.append(f'To queue it again, add `{ARM_LABEL}` again.')
+        if armed:
+            lines.append(f'It was taken out by hand, so `{ARM_LABEL}` came off and it will not be queued again.')
+            lines.append(f'To queue it again, add `{ARM_LABEL}` again.')
+        else:
+            lines.append('It was taken out by hand.')
         return '\n\n'.join(lines)
     if check:
         lines.append(f'Failed check: "{check.get("name", "?")}" on the merge group `{head[:7]}`: {check.get("html_url", "")}')
@@ -163,11 +171,13 @@ def notify(github, event, out=sys.stdout):
         print(f'#{number}: already told about group {head[:7]}.', file=out)
         return 'skipped: already told'
     try:
-        github.post(f'issues/{number}/comments', {'body': comment_body(number, reason, head, check)})
+        armed = carries_arm_label(pr)
+        github.post(f'issues/{number}/comments', {'body': comment_body(number, reason, head, check, armed)})
         if reason.upper() not in NO_LABEL_REASONS:
             github.post(f'issues/{number}/labels', {'labels': [LABEL]})
         # Merged PRs returned above, so every removal left here means "stop": failure or by hand.
-        github.delete(f'issues/{number}/labels/{ARM_LABEL}')
+        if armed:
+            github.delete(f'issues/{number}/labels/{ARM_LABEL}')
     except (subprocess.SubprocessError, OSError) as error:
         warn(f'#{number}: could not post ({error!r})', out)
         return 'skipped: post failed'

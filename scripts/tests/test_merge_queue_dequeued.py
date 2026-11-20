@@ -53,8 +53,10 @@ def run(id_, sha, branch):
     return {'id': id_, 'head_sha': sha, 'head_branch': branch, 'created_at': f'2026-11-19T10:0{id_}:00Z'}
 
 
-def event(number=7, reason='CI_FAILURE', merged=False):
-    return {'reason': reason, 'pull_request': {'number': number, 'merged': merged, 'head': {'sha': OTHER}}}
+def event(number=7, reason='CI_FAILURE', merged=False, armed=True):
+    labels = [{'name': 'automerge'}] if armed else [{'name': 'docs'}]
+    return {'reason': reason, 'pull_request': {'number': number, 'merged': merged, 'head': {'sha': OTHER},
+                                               'labels': labels}}
 
 
 class CancelTests(unittest.TestCase):
@@ -154,6 +156,21 @@ class NotifyTests(unittest.TestCase):
                 self.assertIn('taken out by hand', body)
                 self.assertIn('add `automerge` again', body)
                 self.assertNotIn('Failed check', body)
+
+    def test_a_manual_removal_of_an_unlabelled_pr_removes_nothing_and_claims_nothing(self):
+        # The owner's own Merge tap on a `.github/` PR carries no `automerge`.
+        github = self.github()
+        mq.notify(github, event(reason='MANUAL', armed=False), out=io.StringIO())
+        self.assertEqual(github.deletes, [])
+        body = github.posts[0][1]['body']
+        self.assertIn('taken out by hand', body)
+        self.assertNotIn('automerge', body)
+
+    def test_a_failure_of_an_unlabelled_pr_adds_needs_fix_but_deletes_no_label(self):
+        github = self.github()
+        mq.notify(github, event(armed=False), out=io.StringIO())
+        self.assertEqual(github.deletes, [])
+        self.assertIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
 
     def test_deleting_a_label_that_is_already_gone_is_fine(self):
         github = mq.GitHub('o/r', sleep=lambda _: None)

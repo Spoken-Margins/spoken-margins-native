@@ -226,13 +226,21 @@ class SweepTests(unittest.TestCase):
         self.assertEqual((code, github.merged), (0, [1, 4]))
         self.assertIn('4 open PRs carry `automerge`', out)
 
-    def test_the_sweep_unqueues_prs_set_to_merge_without_the_label(self):
-        # Finding 3: a removal whose run never came (GITHUB_TOKEN, a lost event) is retried by the sweep.
-        github = FakeGitHub({1: pr(1, armed=False, queued=True), 2: pr(2, armed=False, auto=True),
-                             3: pr(3, armed=False)})
-        code, out = run(github, '--sweep')
-        self.assertEqual((code, github.disabled, github.dequeued), (0, [1, 2], ['PR_1']))
-        self.assertIn('2 are set to merge without it', out)
+    def test_the_sweep_leaves_a_pr_set_to_merge_without_the_label_alone(self):
+        # The owner's own Merge tap on a `.github/` PR, or a maintainer's `gh pr merge`, carries no label.
+        github = FakeGitHub({1: pr(1, armed=False, queued=True), 2: pr(2, armed=False, auto=True)})
+        self.assertEqual(run(github, '--sweep')[0], 0)
+        self.assertEqual((github.disabled, github.dequeued, github.merged), ([], [], []))
+
+    def test_the_sweep_acts_on_each_pr_as_it_is_now_not_as_listed(self):
+        # Stopped after the list was read: label removed, needs-fix added by a failed group, retitled DNM.
+        listed = {1: pr(1, auto=False), 2: pr(2, auto=False), 3: pr(3, auto=False), 4: pr(4, auto=False)}
+        now = {1: pr(1, armed=False, auto=False), 2: pr(2, auto=False, extra=['needs-fix']),
+               3: pr(3, title='DNM: x', auto=False), 4: pr(4, auto=False)}
+        github = FakeGitHub(now, comments=bridge.MARKER)
+        github.open_pulls = lambda: [listed[n] for n in sorted(listed)]
+        self.assertEqual(run(github, '--sweep')[0], 0)
+        self.assertEqual(github.merged, [4])
 
     def test_an_unreadable_pr_list_turns_the_run_red(self):
         code, out = run(FakeGitHub({}, fail_list=True), '--sweep')
