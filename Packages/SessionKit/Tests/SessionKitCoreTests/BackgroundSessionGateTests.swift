@@ -42,16 +42,15 @@ final class BackgroundSessionGateTests: XCTestCase {
     func testAWaiterIsWokenByTheReleaseNotByItsTimeout() async {
         let gate = BackgroundSessionGate()
         XCTAssertTrue(gate.claim("a"))
-        let woken = expectation(description: "the waiter came back after the release, long before its hour ran out")
-        var took = false
-        Task { @MainActor in
-            took = await gate.claim("a", waitingUpTo: .seconds(3600))
-            woken.fulfill()
-        }
+        var took: Bool?
+        Task { @MainActor in took = await gate.claim("a", waitingUpTo: .seconds(3600)) }
         try? await Task.sleep(for: .milliseconds(30))
         gate.release("a")
-        await fulfillment(of: [woken], timeout: 30)
-        XCTAssertTrue(took, "woken by the release and took the identifier")
+        // Waits on the answer itself, all on the main actor (an expectation wait would send this test case off it,
+        // which Linux Swift rejects); the 30 s is only a ceiling.
+        let ceiling = ContinuousClock.now + .seconds(30)
+        while took == nil, ContinuousClock.now < ceiling { try? await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(took, true, "woken by the release, long before its hour ran out, and took the identifier")
         XCTAssertTrue(gate.isHeld("a"), "the waiter now holds it")
     }
 
