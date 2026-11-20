@@ -1184,7 +1184,10 @@ RUNNER_TESTS_TIMEOUT = 600
 # #2488: by 2026-10-22 the step took 482-519 s on a busy day and was killed at 600 s at load 138-150, its log still a
 # stream of passing dots, so two runs of #2409 failed with "executed zero tests". It gets #1767's rule: a run still
 # printing at its budget goes on until the ceiling; one silent for the stall time is a hang and stops.
-RUNNER_TESTS_CEILING = 1200
+# 2026-11-20: on the hosted Linux runner (load 0.6) passing runs took 743, 809, 1141 and 1180 s the same afternoon, and
+# PRs #4604 and #4597 were killed at 1200 s with the log still a stream of passing dots. The portable job's 45-minute
+# limit (#4747) has room for 30 minutes here; finding the slow tests is the real fix.
+RUNNER_TESTS_CEILING = 1800
 RUNNER_TESTS_STALL_SECONDS = PACKAGE_STALL_SECONDS  # one test compiles Swift, silent for minutes at high load
 RUNNER_TESTS_LIMITS = {'timeout': RUNNER_TESTS_TIMEOUT, 'ceiling': RUNNER_TESTS_CEILING,
                        'stall_seconds': RUNNER_TESTS_STALL_SECONDS}
