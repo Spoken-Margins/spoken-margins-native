@@ -135,6 +135,75 @@ final class CollectionImportAppTests: XCTestCase {
         XCTAssertEqual(folders.first?.members.last?.reason, LibraryFolderRecord.stoppedReason)
         XCTAssertEqual(try store.loadItemCollections().first { $0.id == "collection-x" }?.itemIDs, [existing])
     }
+
+    // MARK: Edits while an import runs (#3769 audit)
+
+    /// The import writes each file into the collection as stored, and a rename or edit made from an older copy keeps
+    /// what the import added since: neither side writes back a stale snapshot.
+    func testARenameFromAnOlderCopyKeepsWhatTheImportAddedSince() async throws {
+        let model = try makeModel()
+        let store = try model.requireStore()
+        let folder = try makeDirectory("Week")
+        try write("# One\nOne.", to: folder.appending(path: "1.md"))
+        try write("# Two\nTwo.", to: folder.appending(path: "2.md"))
+        _ = await model.importFolderAsCollection(folder)
+        let older = try XCTUnwrap(model.libraryCollections.collections.first { $0.name == "Week" })
+        let extra = try XCTUnwrap(model.libraryItems.first { !older.itemIDs.contains($0.id) }?.id)
+
+        // What an import's next file does: it joins the stored collection.
+        let added = await model.libraryCollections.update(older.id, store: store) { current, _ in
+            var next = current; next.itemIDs.append(extra); return next
+        }
+        guard case .saved = added else { return XCTFail("the import's write should save, got \(added)") }
+        // The row the listener renames was drawn before that file landed.
+        let renamed = await model.libraryCollections.rename(older, to: "Week three", store: store)
+        guard case .saved = renamed else { return XCTFail("rename should save, got \(renamed)") }
+
+        let stored = try XCTUnwrap(try store.loadItemCollections().first { $0.id == older.id })
+        XCTAssertEqual(stored.name, "Week three")
+        XCTAssertEqual(stored.itemIDs, older.itemIDs + [extra], "the rename kept the item the import added")
+
+        // And Select's Remove from Collection, picked on a screen drawn before that file landed (#4720).
+        let removed = await model.libraryCollections.remove([older.itemIDs[0]], fromCollectionID: older.id, store: store)
+        XCTAssertEqual(try removed.get(), 1)
+        let afterRemove = try XCTUnwrap(try store.loadItemCollections().first { $0.id == older.id })
+        XCTAssertEqual(afterRemove.itemIDs, Array(older.itemIDs.dropFirst()) + [extra], "only the picked item left")
+        XCTAssertEqual(afterRemove.name, "Week three")
+    }
+
+    /// A collection deleted while its import is filling it stays deleted: the next file's write finds it gone.
+    func testACollectionDeletedDuringAnImportIsNotSavedBack() async throws {
+        let model = try makeModel()
+        let store = try model.requireStore()
+        let folder = try makeDirectory("Gone soon")
+        try write("# One\nOne.", to: folder.appending(path: "1.md"))
+        _ = await model.importFolderAsCollection(folder)
+        let collection = try XCTUnwrap(model.libraryCollections.collections.first { $0.name == "Gone soon" })
+        let record = try XCTUnwrap(model.libraryCollections.folders.first { $0.id == collection.id })
+
+        _ = await model.libraryCollections.delete(collection, store: store)
+        let late = await model.libraryCollections.update(collection.id, record: record, store: store) { current, _ in current }
+
+        guard case .gone = late else { return XCTFail("a write after the delete should find it gone, got \(late)") }
+        XCTAssertFalse(try store.loadItemCollections().contains { $0.id == collection.id }, "not brought back")
+        XCTAssertFalse(model.libraryCollections.collections.contains { $0.id == collection.id })
+    }
+
+    /// The busy guard holds from the moment a pick starts, before the folder walk's first await.
+    func testASecondPickDuringTheWalkIsTurnedAway() async throws {
+        let model = try makeModel()
+        let folder = try makeDirectory("First")
+        try write("# One\nOne.", to: folder.appending(path: "1.md"))
+        let first = Task { await model.importFolderAsCollection(folder) }
+        await Task.yield()
+        // The first pick has run up to its walk's await; a second pick now must not start.
+        XCTAssertNotNil(model.libraryCollections.importCapture, "busy before the walk's await")
+        let second = await model.importFolderAsCollection(try makeDirectory("Second"))
+        XCTAssertNil(second)
+        XCTAssertEqual(model.feedbackEvent?.message, Gate1AppModel.collectionImportBusyMessage)
+        _ = await first.value
+        XCTAssertNil(model.libraryCollections.importCapture, "cleared when the import ends")
+    }
 }
 
 /// Playable for the addresses it knows; anything else fails the way an unreachable page does.
