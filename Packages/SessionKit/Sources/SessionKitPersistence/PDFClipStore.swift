@@ -35,6 +35,38 @@ public struct PDFClipStore: Sendable {
         return FileManager.default.fileExists(atPath: file.path) ? file : nil
     }
 
+    /// Which floats of an item have a clip saved, read from one listing of the item's folder. The Timeline asks this
+    /// once for the rows it may draw, so deciding whether a row has a picture costs no file check per row and decodes
+    /// nothing. An item with no folder of its own, or no clips, has none.
+    public struct Available: Equatable, Sendable {
+        fileprivate let names: Set<String>
+        /// When the item's clip folder was last replaced, in seconds since 1970; 0 when it has none. A re-import
+        /// swaps the folder for a new one, so the same float ids can name different pictures: a reader that keeps
+        /// what it decoded compares this to know the files changed under it.
+        public let stamp: Double
+
+        public static let none = Available(names: [], stamp: 0)
+
+        public var isEmpty: Bool { names.isEmpty }
+
+        public func contains(floatId: String?) -> Bool {
+            guard let floatId, let name = PDFClipStore.fileName(forFloat: floatId) else { return false }
+            return names.contains(name)
+        }
+    }
+
+    public func available(forItem itemId: String) -> Available {
+        guard let folder = folder(forItem: itemId),
+              let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return .none }
+        let modified = (try? FileManager.default.attributesOfItem(atPath: folder.path)[.modificationDate]) as? Date
+        return Available(names: Set(names.filter { $0.hasSuffix(".jpg") }), stamp: modified?.timeIntervalSince1970 ?? 0)
+    }
+
+    /// The saved JPEG of a float's clip, or nil when there is none or it can't be read.
+    public func data(forFloat floatId: String, itemId: String) -> Data? {
+        url(forFloat: floatId, itemId: itemId).flatMap { try? Data(contentsOf: $0) }
+    }
+
     /// Makes `clips` (JPEG data by float id) the item's clips, and nothing else. Only the floats of `document` get one:
     /// a clip whose float is not in the document the item now has could never be shown, so it is not kept. Clips
     /// the item had before are replaced, so a re-import leaves no stale picture. With none to keep, the folder goes.
