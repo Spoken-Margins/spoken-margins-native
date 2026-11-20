@@ -31,9 +31,34 @@ struct ExperienceItemDetailScreen: View {
     @State private var episodeLinkText = ""
     @State private var showsReactions = false
     @State private var collectionItem: LibraryItemRow?
+    /// The kept copy of this item's PDF, when it is a PDF and this iPhone holds its file: the only case the menu offers
+    /// "Export PDF with Margins" (#4338). Looked up off the main thread when the item opens.
+    @State private var keptPDFOriginal: URL?
+    @State private var pdfExport: PDFCommentExportModel?
     /// A tap on Play or "Skip to …" made before its start is possible, kept until it can run (#3788).
     @StateObject private var arrival = FriendArrivalPresenter()
     private let episodeLinker = ImportedFileEpisodeLinker()
+
+    /// Finds whether the open item is a PDF with a kept original (#4338). Both must hold, so a listener never meets an
+    /// entry that cannot finish.
+    private func refreshKeptPDFOriginal() async {
+        let id = model.selectedItem.id
+        guard !id.isEmpty, let row = model.libraryItems.first(where: { $0.id == id }), LibraryQueryEngine.isPDF(row) else {
+            keptPDFOriginal = nil
+            return
+        }
+        let url = await model.keptPDFOriginalURL(itemId: id)
+        guard id == model.selectedItem.id else { return }
+        keptPDFOriginal = url
+    }
+
+    private func openPDFExport() {
+        guard let original = keptPDFOriginal else { return }
+        let id = model.selectedItem.id
+        pdfExport = PDFCommentExportModel(
+            itemId: id, itemTitle: model.selectedItem.title, original: original,
+            margins: model.ownMargins(itemId: id), store: model.store)
+    }
 
     var body: some View {
         NavigationStack {
@@ -123,6 +148,13 @@ struct ExperienceItemDetailScreen: View {
                             model.openExport(sessionId: model.selectedItem.sessions.first?.id)
                         }
                         .disabled(model.selectedItem.sessions.isEmpty)
+                        // A copy of the kept PDF with the listener's own Margins as comments (#4338). Only for a PDF this
+                        // iPhone holds the file of; off while the item has no Margin of the listener's own.
+                        if keptPDFOriginal != nil {
+                            Button("Export PDF with Margins", systemImage: "doc.richtext", action: openPDFExport)
+                                .disabled(model.ownMargins(itemId: model.selectedItem.id).isEmpty)
+                                .accessibilityIdentifier("item.menu.exportPDF.button")
+                        }
                         quickActionButtons
                         if episodeLinkStatus.canLink && !episodeLinkStatus.canChange {
                             Button("Episode can't change: friends' Margins are on it", systemImage: "link") {}
@@ -165,10 +197,19 @@ struct ExperienceItemDetailScreen: View {
                 }
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
+            // Runs again when the item's Library row arrives, so the entry is not missed on a screen opened before the row.
+            .task(id: "\(model.selectedItem.id)|\(model.libraryItems.contains { $0.id == model.selectedItem.id })") {
+                await refreshKeptPDFOriginal()
+            }
             .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
             .onDisappear {
                 WrittenMarginReadings.leftItemScreen(model.selectedItem.id)
                 arrival.cancel()
+            }
+            .trackedSheet(item: $pdfExport) { export in
+                PDFCommentExportSheet(export: export) { count in
+                    model.presentFeedback(UserFeedbackEvent(kind: .success, message: PDFCommentExportState.doneMessage(count: count)))
+                }
             }
             .trackedSheet(item: $collectionItem) { item in
                 ItemCollectionSheet(item: item).environmentObject(model)
@@ -317,6 +358,10 @@ struct ExperienceItemDetailScreen: View {
 
     @ViewBuilder
     private var metadataPills: some View {
+        // The item's total length, first (#4186): the same words the Library row uses, always the total, never the time left.
+        if let length = lengthPillWords {
+            metadataPill(length.visible, systemImage: "clock", accessibilityLabel: length.spoken)
+        }
         if let episodeTitle = episodeLinkStatus.episodeTitle {
             metadataPill("Episode: \(episodeTitle)", systemImage: "link")
         }
@@ -342,6 +387,18 @@ struct ExperienceItemDetailScreen: View {
                 systemImage: "tablecells"
             )
         }
+    }
+
+    /// Nil for a meeting transcript (its meeting line gives the length) and for text with no character count.
+    private var lengthPillWords: (visible: String, spoken: String)? {
+        let item = model.selectedItem
+        return ItemLengthWords.pill(
+            isNativeAudio: item.isNativeAudio,
+            isMeetingTranscript: item.externalReferenceType == TranscriptItemText.referenceType,
+            textCharacterCount: item.lengthTextCharacterCount,
+            lengthMs: item.lengthMs,
+            playbackSpeed: model.speechPlaybackRateMultiplier
+        )
     }
 
     private var chapterCount: Int {
@@ -985,8 +1042,9 @@ struct ExperienceItemDetailScreen: View {
         }
     }
 
-    private func metadataPill(_ text: String, systemImage: String) -> some View {
+    private func metadataPill(_ text: String, systemImage: String, accessibilityLabel: String? = nil) -> some View {
         Label(text, systemImage: systemImage)
+            .accessibilityLabel(accessibilityLabel ?? text)
             .font(.caption.weight(.semibold))
             .foregroundStyle(AppColors.secondaryText)
             .lineLimit(1)

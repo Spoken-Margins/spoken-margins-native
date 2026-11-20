@@ -579,7 +579,7 @@ jobs:
       group: lane-release-pr-${{ inputs.pr }}
       cancel-in-progress: false
     # The build runner's room wait (up to 90 minutes), then host tests, as in the automerge job. On hosted Linux, the
-    # wait for the hosted checks (about 8 minutes, HOSTED_REST_WAIT, then it lets the runner go and lane-rearm.yml dispatches it
+    # wait for the hosted checks (about 8 minutes, HOSTED_REST_WAIT, then it lets the runner go and the rearm job dispatches it
     # again when the checks finish: a sleeping job holds one of the org's 20 hosted slots).
     timeout-minutes: 150
     env:

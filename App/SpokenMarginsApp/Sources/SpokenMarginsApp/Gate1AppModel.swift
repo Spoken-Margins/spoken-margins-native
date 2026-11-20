@@ -437,6 +437,7 @@ final class Gate1AppModel: ObservableObject {
     var databaseURLOverride: URL?
     let gate2CompactControls: Gate2CompactControlController
     let localFoundationModelClient: any LocalFoundationModelClient
+    let marginTidyProposer: MarginTidyProposer // #4339: one per app run, so a model rewrite is asked for once
     let streamingSpeechQueue = StreamingSpeechQueue(speech: SystemSpeechPlaybackClient())
     var speechPlaybackClient: AudioPlaybackClient?
     var sessionAudioPlaybackClient: AudioPlaybackClient?
@@ -618,6 +619,7 @@ final class Gate1AppModel: ObservableObject {
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.gate2CompactControls = gate2CompactControls
         self.localFoundationModelClient = UITestingHooks.localFoundationModelClient ?? localFoundationModelClient
+        self.marginTidyProposer = .forApp(client: UITestingHooks.localFoundationModelClient ?? localFoundationModelClient)
         self.databaseURLOverride = databaseURLOverride
         self.trashUndoDismissDelay = trashUndoDismissDelay
         if let interjectionTranscriptionHandler {
@@ -1062,10 +1064,6 @@ final class Gate1AppModel: ObservableObject {
         return sharedMarginRows.filter {
             marginCollectionQuery.includes(itemID: $0.layer.itemId) && marginCollectionQuery.matches([$0.interjection.approvedTranscript, $0.itemTitle, $0.collectionLabel])
         }
-    }
-
-    func marginSourceContext(_ row: MarginRow) -> String? {
-        MarginCollection.sourceContext(anchorBefore: row.interjection.anchor.anchorBefore, anchorAfter: row.interjection.anchor.anchorAfter)
     }
 
     /// Opens the Margin a notes-folder link names (#171).
@@ -2333,7 +2331,7 @@ final class Gate1AppModel: ObservableObject {
                     // URL-only services use the existing local readable-page importer,
                     // including its visible unsupported/paywall failure behavior.
                     guard let url = URL(string: document.url) else { throw EditionError.invalid("Invalid article URL.") }
-                    var handoff = try await readablePageExtractor.extract(url: url)
+                    var handoff = try await listenerReadablePageExtractor.extract(url: url)
                     let id = "read-later-" + ListeningEdition.digest(document.url + "\n" + handoff.text)
                     let store = try requireStore()
                     if let found = try? store.loadItemSummary(id: id), found.deletedAt == nil {

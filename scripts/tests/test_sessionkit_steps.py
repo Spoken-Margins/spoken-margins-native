@@ -61,10 +61,12 @@ class Host:
                 os.environ.pop('CODEX_SANDBOX', None)
             run = verification.Run(Path(temporary) / 'run', 'fast', self.changed)
             self.run_object = run
+            # node_modules_installed: a hosted Mac's checkout has none, and host_steps stops on that first (#4643).
             with patch.object(run, 'command', side_effect=lambda name, args, **kw: command(run, name, args, **kw)), \
                     patch.object(run, 'ops_steps'), \
                     patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 't'}), \
                     patch.object(verification, 'state_dir', return_value=Path(state)), \
+                    patch.object(verification, 'node_modules_installed', return_value=True), \
                     patch.object(verification.sessionkit_pass, 'toolchain', return_value=self.toolchain), \
                     patch.object(verification.sessionkit_pass, 'key', side_effect=lambda root, tc: self.next_key() if tc else None), \
                     patch.object(verification, 'swift_tests',
