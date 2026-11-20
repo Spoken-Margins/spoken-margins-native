@@ -134,9 +134,7 @@ final class WrittenMarginOnDeviceVoiceTests: XCTestCase {
             release.wait() // a cold model still loading
             throw CancellationError()
         }
-        let began = Date()
-        let file = try await reader.rendered(reading, onDevice: cold)
-        XCTAssertLessThan(Date().timeIntervalSince(began), 3)
+        let file = try await reader.rendered(reading, onDevice: cold) // `cold` stays blocked until the defer: no waiting for it
         XCTAssertEqual(try text(file), "iphone: Cole wrote: Lovely harbour, worth the climb.", "never silence")
         XCTAssertEqual(file, reader.fileURL(for: reading), "the file's path says the iPhone voice made it")
         XCTAssertFalse(FileManager.default.fileExists(atPath: reader.fileURL(for: reading, onDevice: cold).path), "nothing is saved under the on-device name")

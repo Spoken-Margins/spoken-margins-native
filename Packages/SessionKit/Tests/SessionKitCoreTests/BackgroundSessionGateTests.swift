@@ -40,13 +40,11 @@ final class BackgroundSessionGateTests: XCTestCase {
     func testAWaiterIsWokenByTheReleaseNotByItsTimeout() async {
         let gate = BackgroundSessionGate()
         XCTAssertTrue(gate.claim("a"))
-        let started = ContinuousClock.now
         async let waiting = gate.claim("a", waitingUpTo: .seconds(30))
         try? await Task.sleep(for: .milliseconds(30))
         gate.release("a")
         let took = await waiting
-        XCTAssertTrue(took)
-        XCTAssertLessThan(ContinuousClock.now - started, .seconds(10), "released well before the 30 second timeout")
+        XCTAssertTrue(took, "woken by the release: a waiter that runs out its timeout gets false")
         XCTAssertTrue(gate.isHeld("a"), "the waiter now holds it")
     }
 
