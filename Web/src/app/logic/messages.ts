@@ -26,6 +26,8 @@ export const MESSAGES = Object.freeze({
   paidPost: 'This post is for paid subscribers. The web app reads posts without your Substack sign-in, so it can’t play this one.',
   newestSkipped: 'Its newest post can’t be played here, so this is the newest one that can.',
   noVoice: 'This post has no voice to play: neither the writer nor Substack offers one.',
+  // An episode saved from an Apple Podcasts, Spotify or other page: the page was never a post, so "no voice" would blame the wrong thing (#4767).
+  noWebAudio: 'The web app can’t find this episode’s audio from its page. The Spoken Margins app on iPhone can play it.',
   searchFailed: 'Search isn’t answering right now. Try again, or paste the show’s feed address.',
   micBlocked: 'The microphone is blocked for this site. Allow it in your browser’s site settings, then try again. Written Margins still work.',
   micMissing: 'No microphone was found. Connect one, then try again. Written Margins still work.',

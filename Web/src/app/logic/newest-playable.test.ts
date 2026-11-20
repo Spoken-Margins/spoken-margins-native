@@ -11,6 +11,7 @@ import {
 } from './newest-playable.ts';
 
 const post = (id: string): Episode => ({ id, showId: 's', title: id, pageUrl: `https://e.test/p/${id}` });
+const applePage = (id: string): Episode => ({ id, showId: 's', title: id, pageUrl: `https://podcasts.apple.com/us/podcast/x/id1?i=${id}` });
 const audio = (id: string): Episode => ({ id, showId: 's', title: id, audioUrl: `https://e.test/${id}.mp3` });
 const ids = (list: readonly Episode[]) => list.map((e) => e.id);
 
@@ -75,4 +76,13 @@ test('when nothing plays, the message names why the newest could not', async () 
   assert.deepEqual(newestPlayableMessage(paid.result), { text: MESSAGES.paidPost, tone: 'problem' });
   const silent = await walk([post('a'), post('b')], { a: 'no-voice', b: 'paid' });
   assert.deepEqual(newestPlayableMessage(silent.result), { text: MESSAGES.noVoice, tone: 'problem' });
+});
+
+// #4767: an episode saved from an Apple Podcasts page is not a post. It costs no page read, and a show of only those says
+// the page has no audio for the web, not that a post has no voice.
+test('an episode with only an Apple Podcasts page is never tried, and says why when it is all there is', async () => {
+  assert.deepEqual(ids(playCandidates([applePage('a'), post('p'), audio('b')])), ['p', 'b']);
+  assert.deepEqual(playCandidates([applePage('a'), applePage('b')]), []);
+  const none = await walk([], {});
+  assert.deepEqual(newestPlayableMessage(none.result), { text: MESSAGES.noWebAudio, tone: 'problem' });
 });

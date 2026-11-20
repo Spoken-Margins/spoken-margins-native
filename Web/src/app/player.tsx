@@ -8,6 +8,7 @@ import { friendMargins, readsAloud } from './logic/arrival.ts';
 import { clipRejection, EPISODE_FAILED, failureNoticeShown, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
 import { CrossingClock } from './logic/margin-autoplay.ts';
 import { MESSAGES, plainError } from './logic/messages.ts';
+import { episodeVoice } from './logic/playability.ts';
 import { newestPlayableMessage, playCandidates, playNewestAvailable, type PlayAttempt } from './logic/newest-playable.ts';
 import { browserStorage, MIRROR_EVERY_MS, mirrorPosition } from './logic/position-mirror.ts';
 import { NotSavedError } from './logic/storage.ts';
@@ -527,7 +528,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       save();
       stopClip();
       setArrived(undefined);
-      if (!target.audioUrl && target.pageUrl) {
+      if (episodeVoice(target) === 'post-lookup' && target.pageUrl) {
         // A Substack post: its voice is looked up now, because the listener tapped it (owner, 2026-10-21).
         setLoading(true);
         try {
@@ -547,7 +548,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           setLoading(false);
         }
       }
-      if (!target.audioUrl) return 'no-voice';
+      if (!target.audioUrl) return episodeVoice(target) === 'none' ? 'no-audio' : 'no-voice';
       const resume = dataRef.current.positions.find((p) => p.episodeId === id)?.seconds;
       const finished = target.durationSeconds && resume && resume >= target.durationSeconds - FINISHED_WITHIN_SECONDS;
       pendingSeek.current = options.at ?? (finished ? 0 : resume);
@@ -574,6 +575,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const result = await attemptOpen(id, options);
       if (result === 'paid') toast(MESSAGES.paidPost, 'problem');
       if (result === 'no-voice') toast(MESSAGES.noVoice, 'problem');
+      if (result === 'no-audio') toast(MESSAGES.noWebAudio, 'problem');
     },
     [attemptOpen, toast, primeClip],
   );

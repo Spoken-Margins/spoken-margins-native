@@ -3,22 +3,23 @@
 // walk happens during the tap. Plain TypeScript with no DOM, so `npm run test:web` covers it.
 import type { Episode } from '../../shared/model.ts';
 import { MESSAGES } from './messages.ts';
+import { episodeVoice } from './playability.ts';
 
 /** How many post pages one tap may read. A show of nothing but paid posts must not cost twenty page reads. */
 export const MAX_POST_LOOKUPS = 3;
 
 /** How one attempt went. `stopped`: the player has already told the listener why, so the walk ends there. */
-export type PlayAttempt = 'played' | 'paid' | 'no-voice' | 'stopped';
+export type PlayAttempt = 'played' | 'paid' | 'no-voice' | 'no-audio' | 'stopped';
 
 export interface NewestPlayableResult {
   outcome: 'played' | 'nothing-playable' | 'stopped';
   /** Why the newest item was passed over, when it was. */
-  firstSkip?: 'paid' | 'no-voice';
+  firstSkip?: 'paid' | 'no-voice' | 'no-audio';
 }
 
 /**
- * The items one tap will try, newest first: posts that need a page read, up to the limit, and it ends at the first
- * item whose audio is already known, since that one will play.
+ * The items one tap will try, newest first: Substack posts that need a page read, up to the limit, and it ends at the first
+ * item whose audio is already known, since that one will play. An episode with only an Apple Podcasts or other page is never tried (#4767).
  */
 export function playCandidates(newestFirst: readonly Episode[], maxLookups = MAX_POST_LOOKUPS): Episode[] {
   const candidates: Episode[] = [];
@@ -28,7 +29,7 @@ export function playCandidates(newestFirst: readonly Episode[], maxLookups = MAX
       candidates.push(episode);
       break;
     }
-    if (!episode.pageUrl || lookups >= maxLookups) continue;
+    if (episodeVoice(episode) !== 'post-lookup' || lookups >= maxLookups) continue;
     lookups += 1;
     candidates.push(episode);
   }
@@ -53,5 +54,7 @@ export async function playNewestAvailable(
 export function newestPlayableMessage(result: NewestPlayableResult): { text: string; tone?: 'problem' } | undefined {
   if (result.outcome === 'stopped') return undefined;
   if (result.outcome === 'played') return result.firstSkip ? { text: MESSAGES.newestSkipped } : undefined;
-  return { text: result.firstSkip === 'paid' ? MESSAGES.paidPost : MESSAGES.noVoice, tone: 'problem' };
+  // No firstSkip: nothing was worth trying, so every item is a page with no voice to look up (#4767).
+  const text = result.firstSkip === 'paid' ? MESSAGES.paidPost : result.firstSkip === 'no-voice' ? MESSAGES.noVoice : MESSAGES.noWebAudio;
+  return { text, tone: 'problem' };
 }

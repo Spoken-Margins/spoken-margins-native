@@ -20,7 +20,7 @@
 //   { type: 'verdict', verdict: 'unverified', why: 'post-voice' }
 //   { type: 'failed', reason: 'link-broken' | 'links-off' | 'offline' | 'server' }   the link did not open
 import { PaidPostNoVoice, readSubstackVoice } from '../sources/read.ts';
-import { isSubstackPostUrl, pageHoldsThisPost } from '../sources/substack.ts';
+import { pageHoldsThisPost } from '../sources/substack.ts';
 import type { PacketRead } from './ports.ts';
 import { playability, type CannotPlayReason } from './logic/playability.ts';
 import { ShareLinkError } from './logic/share-link.ts';
@@ -101,8 +101,7 @@ export async function messageForOpenedSettled(
   const reads = playCheckHandler(host) ? checkReadHandler(host) : undefined;
   const first = playability(read);
   if (!reads || first.verdict === 'cannot') return messageForOpened(read);
-  // Only a Substack post's page is read (the agreed read); any other page stays `unverified`, as without the app.
-  if (first.verdict === 'needs-voice-lookup' && !isSubstackPostUrl(first.pageUrl)) return messageForOpened(read);
+  // `needs-voice-lookup` is only ever a Substack post (`episodeVoice`), the one page the agreed read covers; any other page is already `cannot` (#4767).
   try {
     let audioUrl = read.episode.audioUrl;
     if (first.verdict === 'needs-voice-lookup') {

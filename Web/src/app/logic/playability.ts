@@ -5,16 +5,33 @@
 // It says nothing about the audio's own address failing to load or being in a format the browser can't decode: that is
 // only known by reading the audio, which the check does later and never through the player (#4454, PR 1b).
 import type { PacketRead } from '../ports.ts';
+import type { Episode } from '../../shared/model.ts';
+import { isSubstackPostUrl } from '../../sources/substack.ts';
 import { playableArticleMargins } from './arrival.ts';
 
 /**
  * Why a link can't be played in a browser, as far as the packet and a post's voice lookup say.
  * - `article`: the Margins sit on an article's own text, which the browser can't play yet.
- * - `no-episode-audio`: an episode with no audio address and no post to look one up on.
+ * - `no-episode-audio`: an episode with no audio address and no Substack post to look one up on (a page of any other kind counts as none, #4767).
  * - `paid-post`: a Substack post whose voice is behind the paywall.
  * - `no-post-voice`: a post page that has no voice to find.
  */
 export type CannotPlayReason = 'article' | 'no-episode-audio' | 'paid-post' | 'no-post-voice';
+
+/**
+ * Where an episode's voice comes from in a browser (#4767). One answer for the arrival card, the Library tag, the
+ * player and the "play newest" walk, so none of them promises a voice another would refuse.
+ * - `own`: the episode has an audio address.
+ * - `post-lookup`: no audio address, and the page is a Substack post, whose page is read for a voice when the listener taps it.
+ * - `none`: nothing the browser can play. An Apple Podcasts or Spotify page, or any other site's page, is not a Substack
+ *   post and has no voice to look up; the iPhone app can resolve such a page, a browser can't.
+ */
+export type EpisodeVoice = 'own' | 'post-lookup' | 'none';
+
+export function episodeVoice(episode: Pick<Episode, 'audioUrl' | 'pageUrl'>): EpisodeVoice {
+  if (episode.audioUrl) return 'own';
+  return episode.pageUrl && isSubstackPostUrl(episode.pageUrl) ? 'post-lookup' : 'none';
+}
 
 /** What looking up a post's voice found: a voice, a paywall, or nothing. */
 export type VoiceLookup = 'found' | 'paid' | 'none';
@@ -33,9 +50,10 @@ export type Playability =
 export function playability(read: Pick<PacketRead, 'episode' | 'margins' | 'percentMargins'>, voice?: VoiceLookup): Playability {
   // Only a packet with nothing to play is the text-only card: an article's Margins that carry a rough place play on its voice (#4421).
   if (read.margins.length === 0 && playableArticleMargins(read).length === 0) return { verdict: 'cannot', reason: 'article' };
-  const { audioUrl, pageUrl } = read.episode;
-  if (audioUrl) return { verdict: 'plays' };
-  if (!pageUrl) return { verdict: 'cannot', reason: 'no-episode-audio' };
+  const source = episodeVoice(read.episode);
+  if (source === 'own') return { verdict: 'plays' };
+  if (source === 'none') return { verdict: 'cannot', reason: 'no-episode-audio' };
+  const pageUrl = read.episode.pageUrl as string;
   if (voice === 'found') return { verdict: 'plays' };
   if (voice === 'paid') return { verdict: 'cannot', reason: 'paid-post' };
   if (voice === 'none') return { verdict: 'cannot', reason: 'no-post-voice' };
