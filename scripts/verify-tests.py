@@ -862,19 +862,12 @@ PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snaps
 FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
 HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
 MAC_REST_STEPS = ('hot-file-ratchet', 'runner-tests', 'ops', 'package-build', 'package', 'tools', 'shipped-compat')
-# runner-tests without the tests above: discover scripts/tests as the plain step does, then drop the listed ids.
-PORTABLE_RUNNER_LOADER = '''
-import sys, unittest
-sys.path.insert(0, "scripts/tests")
-left_out = tuple(sys.argv[1:])
-def tests(suite):
-    for item in suite:
-        yield from tests(item) if isinstance(item, unittest.TestSuite) else [item]
-kept = unittest.TestSuite(t for t in tests(unittest.defaultTestLoader.discover("scripts/tests"))
-                          if not t.id().startswith(left_out))
-sys.exit(not unittest.TextTestRunner().run(kept).wasSuccessful())
-'''
-# fast-mac-rest's runner-tests: only the tests PORTABLE_RUNNER_TESTS_LEFT_OUT names, the inverse of the loader above.
+# The whole runner-tests step, here and on the Mac, runs one test module per process, four at a time, slowest first
+# (scripts/parallel_unittest.py, #4769): in one process it took 963 s on the owner's Mac and 996 s at p50 on the hosted
+# portable job, 236 tests over a second each holding 65% of that. It prints the same "Ran N tests" and FAIL/ERROR
+# blocks, so the zero-tests check and unittest_failures read it as they read unittest's own output.
+PARALLEL_RUNNER = [sys.executable, 'scripts/parallel_unittest.py']
+# fast-mac-rest's runner-tests: only the tests PORTABLE_RUNNER_TESTS_LEFT_OUT names, the inverse of parallel_unittest.py --leave-out.
 MAC_REST_RUNNER_LOADER = '''
 import sys, unittest
 sys.path.insert(0, "scripts/tests")
@@ -2030,7 +2023,7 @@ class Run:
     def host_steps(self, portable=False):
         scope, why = runner_test_scope(self.changed)
         if portable:
-            self.command('runner-tests', [sys.executable, '-c', PORTABLE_RUNNER_LOADER, *PORTABLE_RUNNER_TESTS_LEFT_OUT],
+            self.command('runner-tests', [*PARALLEL_RUNNER, '--leave-out', *PORTABLE_RUNNER_TESTS_LEFT_OUT],
                          **RUNNER_TESTS_LIMITS)
         elif in_codex_sandbox():
             self.skip('runner-tests')
@@ -2045,8 +2038,7 @@ class Run:
             self.command('runner-tests', [sys.executable, '-c', loader, *RUNNER_TEST_READERS],
                          **RUNNER_TESTS_LIMITS)
         else:
-            self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'],
-                         **RUNNER_TESTS_LIMITS)
+            self.command('runner-tests', PARALLEL_RUNNER, **RUNNER_TESTS_LIMITS)
         needed, why = ops_tests_needed(self.changed)
         if portable:
             self.ops_steps(left_out=PORTABLE_OPS_LEFT_OUT)
