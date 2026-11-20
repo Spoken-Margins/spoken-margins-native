@@ -102,6 +102,14 @@ public enum DocxPlainText {
         }
     }
 
+    /// Track Changes keeps a formatting change's old properties inside the new ones (`w:pPr/w:pPrChange/w:pPr`), so a
+    /// reader that walks into them takes the old style or outline level for the current one. Every reader here skips
+    /// them whole: Word shows the document with the change accepted.
+    static let trackedPropertyChanges: Set<String> = [
+        "w:pPrChange", "w:rPrChange", "w:sectPrChange", "w:tblPrChange", "w:tblPrExChange", "w:tblGridChange",
+        "w:trPrChange", "w:tcPrChange", "w:numberingChange",
+    ]
+
     struct RawParagraph {
         var text = ""
         var styleId: String?
@@ -109,8 +117,9 @@ public enum DocxPlainText {
     }
 
     private final class Delegate: NSObject, XMLParserDelegate {
-        /// Elements whose text Word doesn't show once tracked changes are accepted, and the fallback copy of a text box.
-        private static let unread: Set<String> = ["w:del", "w:moveFrom", "mc:Fallback"]
+        /// Elements whose text Word doesn't show once tracked changes are accepted, the old properties a tracked
+        /// formatting change keeps, and the fallback copy of a text box.
+        private static let unread: Set<String> = Set(["w:del", "w:moveFrom", "mc:Fallback"]).union(DocxPlainText.trackedPropertyChanges)
 
         var paragraphs: [RawParagraph] = []
         /// A text box's paragraphs sit inside another paragraph, so the open ones are a stack; each is kept whole.
@@ -216,8 +225,12 @@ enum StyleLevels {
         var styles: [String: Style] = [:]
         private var currentId: String?
         private var current = Style()
+        /// Inside a style's tracked old properties, whose outline level is the one before the change.
+        private var skipDepth = 0
 
         func parser(_ parser: XMLParser, didStartElement name: String, namespaceURI: String?, qualifiedName: String?, attributes: [String: String] = [:]) {
+            if DocxPlainText.trackedPropertyChanges.contains(name) { skipDepth += 1; return }
+            guard skipDepth == 0 else { return }
             switch name {
             case "w:style":
                 currentId = attributes["w:type"] == "paragraph" ? attributes["w:styleId"] : nil
@@ -230,6 +243,8 @@ enum StyleLevels {
         }
 
         func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) {
+            if DocxPlainText.trackedPropertyChanges.contains(name) { skipDepth = max(0, skipDepth - 1); return }
+            guard skipDepth == 0 else { return }
             if name == "w:style", let id = currentId {
                 styles[id] = current
                 currentId = nil
