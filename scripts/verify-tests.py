@@ -851,6 +851,14 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
     # The runner (lane-runner.py) runs only on the Mac; Ubuntu 22.04's git 2.34 on the VPS runner is too old (#2160).
     'test_lane_hosted_fast.HostedChecksStandTests.': 'needs git merge-tree --write-tree (git 2.38 or later)',
 }
+# --plan fast-portable --pr-quick (2026-11-20): a PR's first signal. In the merge queue (MERGE_QUEUE_MAC=queue-only)
+# the long suites run once per merge group, where batching shares their cost; on a PR push the portable job ran
+# them too, and its runner-tests took 1,180 s of the job's 28 minutes. With --pr-quick the plan leaves runner-tests to
+# the merge group and runs every other portable step (about 90 s together). hosted-portable.yml passes it on PRs only.
+PR_QUICK_LEFT_OUT = {
+    'runner-tests': 'the PR quick tier leaves it to the merge group, which runs the whole fast-portable plan '
+                    '(hosted-portable.yml; for an early run, dispatch it on the branch)',
+}
 PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snapshots and the Mac-only caches'}
 # --plan fast-hosted-sessionkit and --plan fast-mac-rest (#1389): the fast plan split three ways once the repo is
 # public. hosted-portable.yml runs fast-portable on Linux and fast-hosted-sessionkit (SessionKit's build and
@@ -2019,7 +2027,7 @@ class Run:
     def portable(self):
         """The fast plan's steps that run anywhere (#1847), then every step it leaves out, named as skipped.
         No host-test slot: that is the Mac's shared pool, and a hosted job is alone on its machine."""
-        self.host_steps(portable=True)
+        self.host_steps(portable=True, pr_quick=self.manifest.get('pr_quick', False))
         print('fast-portable runner-tests left out ' + ', '.join(PORTABLE_RUNNER_TESTS_LEFT_OUT), flush=True)
         for name, reason in PORTABLE_LEFT_OUT.items():
             self.skip(name, reason)
@@ -2027,9 +2035,11 @@ class Run:
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError(inputs_changed_message('Inputs changed during portable verification', self.input_files))
 
-    def host_steps(self, portable=False):
+    def host_steps(self, portable=False, pr_quick=False):
         scope, why = runner_test_scope(self.changed)
-        if portable:
+        if pr_quick:
+            self.skip('runner-tests', PR_QUICK_LEFT_OUT['runner-tests'])
+        elif portable:
             self.command('runner-tests', [sys.executable, '-c', PORTABLE_RUNNER_LOADER, *PORTABLE_RUNNER_TESTS_LEFT_OUT],
                          **RUNNER_TESTS_LIMITS)
         elif in_codex_sandbox():
@@ -2522,6 +2532,8 @@ def main():
     parser.add_argument('--changed-files', type=Path, metavar='FILE',
                         help='Lane runs: the PR\'s changed paths, one per line (renames name both sides). --plan fast then '
                              'skips the runner and ops tests nothing in the diff can affect; without it every step runs')
+    parser.add_argument('--pr-quick', action='store_true',
+                        help='--plan fast-portable on a PR: leave runner-tests to the merge group (PR_QUICK_LEFT_OUT)')
     parser.add_argument('--list', action='store_true', help='Inspect selection without running tests')
     parser.add_argument('--only-testing', action='append', default=[], metavar='CLASS[/METHOD]',
                         help='Xcode plans: run only these tests of the plan (repeatable); unknown ones fail the run')
@@ -2530,6 +2542,8 @@ def main():
         parser.error('--build-only needs an Xcode --plan and --runtime')
     if args.build_only and (args.device or args.require_build or args.only_testing):
         parser.error('--build-only takes no --device, --require-build or --only-testing')
+    if args.pr_quick and args.plan != 'fast-portable':
+        parser.error('--pr-quick goes with --plan fast-portable only')
     if errors := validate():
         parser.error('; '.join(errors))
     from test_inventory import probation_batches, scripted_journeys  # only the journeys plan reads the list
@@ -2556,6 +2570,8 @@ def main():
             datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '-' + args.plan)
         run = Run(output.resolve(), args.plan,
                   read_changed_files(args.changed_files) if args.plan in ('fast', 'fast-mac-rest') else None)
+        if args.pr_quick:
+            run.manifest['pr_quick'] = True
         try:
             if args.build_only:
                 run.xcode_build(args.plan, args.runtime, args.rebuild)
