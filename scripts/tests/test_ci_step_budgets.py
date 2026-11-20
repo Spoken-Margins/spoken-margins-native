@@ -151,6 +151,48 @@ class ThinDataTests(unittest.TestCase):
         self.assertEqual(b.thin_data([], now=NOW), list(b.LIMITS))
 
 
+class DriftCommandTests(unittest.TestCase):
+    def run_drift(self, samples, **data):
+        from unittest import mock
+        import contextlib, io
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)
+            (out / 'samples.json').write_text(json.dumps({'collected': 'now', 'days': 28, 'runs': 1, 'samples': samples,
+                                                          **data}))
+            with mock.patch.object(b, 'OUT', out), mock.patch.object(b, 'update_issue') as update, \
+                    contextlib.redirect_stdout(io.StringIO()) as printed, contextlib.redirect_stderr(io.StringIO()):
+                code = b.main(['drift', '--issue'])
+        return code, update, printed.getvalue()
+
+    def full(self):
+        now = datetime.now(timezone.utc)
+        rows = []
+        for step in ('runner-tests', 'package-core', 'package'):
+            rows += [{**sample(i, step, 100), 'created': (now - timedelta(hours=i)).isoformat()} for i in range(12)]
+        return rows
+
+    def test_enough_samples_update_the_issue(self):
+        code, update, _ = self.run_drift(self.full(), log_failures=0, log_fetches=40)
+        self.assertEqual(code, 0)
+        update.assert_called_once()
+
+    def test_many_failed_fetches_fail_and_leave_the_issue(self):
+        code, update, _ = self.run_drift(self.full(), log_failures=5, log_fetches=40)
+        self.assertEqual(code, 1)
+        update.assert_not_called()
+
+    def test_a_few_failed_fetches_and_one_thin_limit_still_report(self):
+        rows = [row for row in self.full() if row['step'] != 'package-core']
+        code, update, printed = self.run_drift(rows, log_failures=1, log_fetches=40)
+        self.assertEqual(code, 0)
+        self.assertIn('Too few samples this week to judge: PARALLEL_CORE_CEILING', update.call_args[0][1])
+
+    def test_every_limit_thin_fails(self):
+        code, update, _ = self.run_drift([], log_failures=0, log_fetches=0)
+        self.assertEqual(code, 1)
+        update.assert_not_called()
+
+
 class TableTests(unittest.TestCase):
     def test_the_checked_in_table_names_every_limit_with_its_runs(self):
         table = json.loads(b.TABLE.read_text())

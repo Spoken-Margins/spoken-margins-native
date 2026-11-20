@@ -99,9 +99,11 @@ def plan_steps(log_text):
     return found
 
 
-def job_log(job_id, cache, failures=None):
+def job_log(job_id, cache, failures=None, fetched=None):
     path = cache / f'{job_id}.txt'
     if not path.exists():
+        if fetched is not None:
+            fetched.append(job_id)
         result = subprocess.run(['gh', 'api', '--allow-escape-sequences', f'repos/{repo()}/actions/jobs/{job_id}/logs'],
                                 capture_output=True, check=False)
         if result.returncode:
@@ -152,7 +154,7 @@ def collect(days, out=OUT, per_window=40):
     runs = choose_runs(listed, now, per_window)
     cache = out / 'logs'
     cache.mkdir(parents=True, exist_ok=True)
-    failures = []
+    failures, fetched = [], []
 
     def one(run):
         jobs = [job for page in gh_json(f'repos/{repo()}/actions/runs/{run["id"]}/jobs?per_page=100') for job in page['jobs']]
@@ -171,7 +173,7 @@ def collect(days, out=OUT, per_window=40):
                                  'seconds': seconds_between(step.get('started_at'), step.get('completed_at'))})
             if (job['completed_at'] and parse_time(job['completed_at']) - parse_time(job['started_at'])
                     > timedelta(minutes=2)):
-                for name, seconds in plan_steps(job_log(job['id'], cache, failures)):
+                for name, seconds in plan_steps(job_log(job['id'], cache, failures, fetched)):
                     rows.append({**base, 'kind': 'plan-step', 'job': job['name'], 'step': name, 'seconds': seconds})
         return rows
 
@@ -180,10 +182,11 @@ def collect(days, out=OUT, per_window=40):
     out.mkdir(parents=True, exist_ok=True)
     (out / 'samples.json').write_text(json.dumps({'collected': now.isoformat(timespec='seconds'), 'days': days,
                                                   'listed': len(listed), 'runs': len(runs), 'log_failures': len(failures),
+                                                  'log_fetches': len(fetched),
                                                   'samples': samples}, indent=1))
     print(f'read {len(runs)} of {len(listed)} successful runs, {len(samples)} samples -> {out / "samples.json"}')
     if failures:
-        print(f'warning: {len(failures)} job logs could not be fetched', file=sys.stderr)
+        print(f'warning: {len(failures)} of {len(fetched)} job logs could not be fetched', file=sys.stderr)
 
 
 def percentile(values, share):
@@ -332,6 +335,16 @@ def thin_data(samples, now=None):
     return [name for name, spec in LIMITS.items() if max(counts.get(step, 0) for step in spec['steps']) < MIN_SAMPLES]
 
 
+LOG_FAILURE_SHARE = 0.05
+
+
+def unreadable(data):
+    """True when too many job logs failed to fetch to trust the report. A failure is retried every day, so a run whose
+    logs are gone for good (deleted, 404, 410) would otherwise keep the job red until it leaves the listed weeks."""
+    failures, fetches = data.get('log_failures', 0), data.get('log_fetches', 0)
+    return failures > LOG_FAILURE_SHARE * max(fetches, 1)
+
+
 def update_issue(findings, body):
     found = subprocess.run(['gh', 'issue', 'list', '--repo', repo(), '--state', 'open', '--search',
                             f'"{DRIFT_ISSUE_TITLE}" in:title', '--json', 'number,title'],
@@ -379,13 +392,13 @@ def main(argv=None):
     elif args.command == 'table':
         table()
     elif args.command == 'drift':
-        data, samples = load_samples()
+        data, samples = load_samples(OUT)
         limits = json.loads(TABLE.read_text())['limits']
         findings = drift(samples, limits, job_timeouts())
         body = drift_report(findings, data)
         print(body)
         thin = thin_data(samples)
-        if data.get('log_failures') or len(thin) == len(LIMITS):
+        if unreadable(data) or len(thin) == len(LIMITS):
             # Never close the issue on data that could not be read: fail the job instead, so its red is the signal.
             print(f'{data.get("log_failures", 0)} job logs failed to fetch; too few recent samples for '
                   f'{", ".join(thin) or "none"}. The issue is left as it is.', file=sys.stderr)
