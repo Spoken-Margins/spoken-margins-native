@@ -21,6 +21,7 @@ class FakeGitHub:
         self.heads = heads if heads is not None else set()
         self.post_error = post_error
         self.posts = []
+        self.deletes = []
         self.reads = []
 
     def get(self, path):
@@ -42,13 +43,20 @@ class FakeGitHub:
             raise self.post_error
         self.posts.append((path, body))
 
+    def delete(self, path):
+        if self.post_error:
+            raise self.post_error
+        self.deletes.append(path)
+
 
 def run(id_, sha, branch):
     return {'id': id_, 'head_sha': sha, 'head_branch': branch, 'created_at': f'2026-11-19T10:0{id_}:00Z'}
 
 
-def event(number=7, reason='CI_FAILURE', merged=False):
-    return {'reason': reason, 'pull_request': {'number': number, 'merged': merged, 'head': {'sha': OTHER}}}
+def event(number=7, reason='CI_FAILURE', merged=False, armed=True):
+    labels = [{'name': 'automerge'}] if armed else [{'name': 'docs'}]
+    return {'reason': reason, 'pull_request': {'number': number, 'merged': merged, 'head': {'sha': OTHER},
+                                               'labels': labels}}
 
 
 class CancelTests(unittest.TestCase):
@@ -116,8 +124,67 @@ class NotifyTests(unittest.TestCase):
         self.assertIn('"hosted fast: Mac rest"', body['body'])
         self.assertIn('https://example.test/run/9', body['body'])
         self.assertIn(mq.MARKER.format(head=LIVE), body['body'])  # the newest group, not pr-70's or the old one
-        self.assertIn('`gh pr merge 7`', body['body'])
+        self.assertIn('then add `automerge` again', body['body'])
+        self.assertNotIn('gh pr merge', body['body'])
         self.assertEqual(label, ('issues/7/labels', {'labels': ['needs-fix']}))
+
+    def test_a_failure_removal_takes_automerge_off_so_the_bridge_does_not_queue_it_again(self):
+        # Without this the label bridge's 15-minute sweep would queue the failing PR again at once, rebuilding every
+        # group behind it four times an hour. Re-arming is adding `automerge` again, as with the old lane.
+        for reason in ('CI_FAILURE', 'MERGE_CONFLICT', 'CI_TIMEOUT', ''):
+            with self.subTest(reason=reason):
+                github = self.github()
+                mq.notify(github, event(reason=reason), out=io.StringIO())
+                self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
+
+    def test_a_merged_pr_keeps_automerge(self):
+        for e in (event(merged=True), event(reason='MERGED')):
+            github = self.github()
+            mq.notify(github, e, out=io.StringIO())
+            self.assertEqual(github.deletes, [])
+
+    def test_a_manual_removal_takes_automerge_off_without_needs_fix(self):
+        # Taking a PR out by hand means "stop". If `automerge` stayed, the bridge's sweep would queue it again
+        # within 15 minutes.
+        for reason in ('MANUAL', 'DEQUEUED_MANUALLY'):
+            with self.subTest(reason=reason):
+                github = self.github()
+                mq.notify(github, event(reason=reason), out=io.StringIO())
+                self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
+                self.assertEqual([path for path, _ in github.posts], ['issues/7/comments'])
+                body = github.posts[0][1]['body']
+                self.assertIn('taken out by hand', body)
+                self.assertIn('add `automerge` again', body)
+                self.assertNotIn('Failed check', body)
+
+    def test_a_manual_removal_of_an_unlabelled_pr_removes_nothing_and_claims_nothing(self):
+        # The owner's own Merge tap on a `.github/` PR carries no `automerge`.
+        github = self.github()
+        mq.notify(github, event(reason='MANUAL', armed=False), out=io.StringIO())
+        self.assertEqual(github.deletes, [])
+        body = github.posts[0][1]['body']
+        self.assertIn('taken out by hand', body)
+        self.assertNotIn('automerge', body)
+
+    def test_a_failure_of_an_unlabelled_pr_adds_needs_fix_but_deletes_no_label(self):
+        github = self.github()
+        mq.notify(github, event(armed=False), out=io.StringIO())
+        self.assertEqual(github.deletes, [])
+        self.assertIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
+
+    def test_deleting_a_label_that_is_already_gone_is_fine(self):
+        github = mq.GitHub('o/r', sleep=lambda _: None)
+
+        def gone(args, data=None):
+            raise subprocess.CalledProcessError(1, 'gh', stderr='gh: Label does not exist (HTTP 404)')
+        github._gh = gone
+        github.delete('issues/7/labels/automerge')  # no raise
+
+        def broken(args, data=None):
+            raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 500')
+        github._gh = broken
+        with self.assertRaises(subprocess.CalledProcessError):
+            github.delete('issues/7/labels/automerge')
 
     def test_one_comment_per_group(self):
         told = {'body': 'earlier\n' + mq.MARKER.format(head=LIVE)}

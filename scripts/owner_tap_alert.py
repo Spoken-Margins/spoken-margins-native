@@ -85,6 +85,10 @@ FOLLOWUP_RE = re.compile(r'<!-- owner-tap-audit: ([0-9a-f]{40}) -->')
 NO_AUDIT_TEXT = 'no Claude audit covers this head'  # what an alert posted before the audit says (alert_body)
 # The job that runs this script (the same name in all three workflows): it is running on the head while it checks it.
 OWN_CHECKS = {'owner-tap-alert'}
+# Gates, not tests (#4693): "merge policy" stays red until the PR has its audit and the owner's `owner-tap` label. A
+# red gate must not count as a failed check here, or the audit script (which reads this) never audits an owner-tap PR
+# and this alert never tells the owner it is ready: each waits on the other.
+GATE_CHECKS = {'merge policy'}
 LABEL = 'owner-tap-check'  # the Mac's and the audit script's way to ask Actions for a check (--via-label)
 TAP_LABEL = 'needs-owner-tap'  # persistent: this PR waits only for the owner's merge tap
 TAP_LABEL_DESCRIPTION = "Waits only for the owner's merge tap (.github or lane-runner change)"
@@ -141,7 +145,7 @@ def checks_state(check_runs: list[dict], statuses: list[dict]) -> tuple[str, lis
     failed, pending = [], []
     for run in check_runs:
         name = run.get('name') or '?'
-        if name in OWN_CHECKS:
+        if name in OWN_CHECKS or name in GATE_CHECKS:
             continue
         if run.get('status') != 'completed':
             pending.append(name)
