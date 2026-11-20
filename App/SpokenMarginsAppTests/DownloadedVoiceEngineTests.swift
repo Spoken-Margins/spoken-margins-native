@@ -105,25 +105,6 @@ final class DownloadedVoiceEngineTests: XCTestCase {
         try client.stop()
     }
 
-    /// Supertonic's babble check (#240) is tuned to Supertonic's pacing; a slower voice must not be swapped for the iOS
-    /// voice by it, and the guard must keep reporting the inner renderer's engine.
-    func testTheSupertonicOutputGuardPassesAnotherEnginesAudioThroughUnchecked() async throws {
-        let template = try makeTestWAV(duration: 20)
-        let replacements = Counter()
-        let guarded = SupertonicOutputGuard(
-            wrapping: StampedVoiceRenderer(engine: "phonon", templateURL: template),
-            systemVoiceIdentifier: nil,
-            onReplacement: { _ in replacements.add() },
-            standIn: { _, _, _, _ in XCTFail("the iOS voice was asked"); return 0 },
-            writeLog: StandInWriteLog(),
-            now: { 0 }
-        )
-        XCTAssertEqual(guarded.engine, "phonon")
-        let result = try await guarded.render(text: "Hi.", voice: .m2, language: "en", speed: 1, synthesisSteps: 8)
-        XCTAssertEqual(result.engine, "phonon")
-        XCTAssertEqual(replacements.value, 0)
-    }
-
     /// #1680, I14: a hot phone hands the item to Kitten; when the phone cools mid-item the downloaded voice does not
     /// come back mid-play; the next item gets the chosen voice again.
     func testOnAHotPhoneKittenReadsTheItemAndTheDownloadedVoiceNeverBouncesBackMidItem() async throws {

@@ -4,7 +4,7 @@ extension PlaybackNowMargins.Margin {
     /// Use the whole item's collection, including prior sessions. Response Margins have another clock.
     public init?(own interjection: Interjection, itemID: String) {
         guard interjection.itemId == itemID, interjection.status == "active", interjection.targetType == .item,
-              let time = interjection.anchor.mediaTimeMs, time >= 0 else { return nil }
+              interjection.hasPlace, let time = interjection.anchor.mediaTimeMs, time >= 0 else { return nil }
         self.init(id: "\(interjection.sessionId)::\(interjection.id)", position: Double(time) / 1_000, origin: .own)
     }
 

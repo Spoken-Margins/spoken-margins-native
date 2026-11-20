@@ -105,6 +105,11 @@ public struct InterjectionShareRevision: Codable, Equatable, Sendable, Identifia
     /// recording (nothing to choose) or the share is from before the sender's app remembered it. The next share of the
     /// same Margin starts from the newest one.
     public let sentReadAloud: Bool?
+    /// The length of run-up this share wrote on the Margin's record (#4171), exactly what `SenderLeadIn.valueToWrite`
+    /// gave the packet, or `nil` when it wrote none. The next share of the same Margin starts from the newest one, and
+    /// uses it to decide whether taking a length back to 20 s has to be written out loud. Absent in a share from
+    /// before the sender could choose, and left out of the stored record when `nil`.
+    public let sentLeadInMs: Int?
 
     public init(
         id: String,
@@ -120,7 +125,8 @@ public struct InterjectionShareRevision: Codable, Equatable, Sendable, Identifia
         anchorBefore: String,
         anchorAfter: String,
         status: InterjectionShareRevisionStatus = .draft,
-        sentReadAloud: Bool? = nil
+        sentReadAloud: Bool? = nil,
+        sentLeadInMs: Int? = nil
     ) {
         self.id = id
         self.interjectionId = interjectionId
@@ -136,6 +142,7 @@ public struct InterjectionShareRevision: Codable, Equatable, Sendable, Identifia
         self.anchorAfter = anchorAfter
         self.status = status
         self.sentReadAloud = sentReadAloud
+        self.sentLeadInMs = sentLeadInMs
     }
 }
 

@@ -5,7 +5,8 @@ import Foundation
 /// button, in the pinned bar. Share is never blocked by one: the Margin still places by its words.
 ///
 /// The rule works from the stored Margin and whether the sheet's episode is playing, nothing else, so it can be
-/// tested as a table. Nothing in the app calls it yet.
+/// tested as a table. The sheet reads the stored Margin each time the model publishes it, never the copy the draft took
+/// when the sheet opened, so a step clears by itself when its wait ends.
 public enum ShareReviewSteps {
     /// One Margin as the review sees it.
     public struct Margin: Equatable, Sendable {
@@ -14,20 +15,35 @@ public enum ShareReviewSteps {
         /// The Margin already carries anchor evidence, whatever its status.
         public var hasEvidence: Bool
         public var evidenceStatus: PodcastAnchorEvidenceCaptureStatus?
-        /// "pending", "failed", or a finished status.
+        /// "pending", "failed", or a finished status ("transcribed", "complete").
         public var transcriptionStatus: String
         /// The sheet's item is the one playing, and playback is active.
         public var playingThisItem: Bool
+        /// The Margin's recording can be found. Without it nothing is making words for it, so it never waits on them.
+        public var hasVoice: Bool
 
         public init(
             isNativeAudio: Bool, hasEvidence: Bool, evidenceStatus: PodcastAnchorEvidenceCaptureStatus?,
-            transcriptionStatus: String, playingThisItem: Bool
+            transcriptionStatus: String, playingThisItem: Bool, hasVoice: Bool = true
         ) {
             self.isNativeAudio = isNativeAudio
             self.hasEvidence = hasEvidence
             self.evidenceStatus = evidenceStatus
             self.transcriptionStatus = transcriptionStatus
             self.playingThisItem = playingThisItem
+            self.hasVoice = hasVoice
+        }
+
+        /// One stored Margin as the review sees it.
+        public init(_ interjection: Interjection, isNativeAudio: Bool, playingThisItem: Bool, hasVoice: Bool = true) {
+            self.init(
+                isNativeAudio: isNativeAudio,
+                hasEvidence: !(interjection.podcastAnchorEvidence ?? []).isEmpty,
+                evidenceStatus: interjection.podcastAnchorEvidenceCaptureStatus,
+                transcriptionStatus: interjection.transcriptionStatus,
+                playingThisItem: playingThisItem,
+                hasVoice: hasVoice
+            )
         }
 
         /// The Margin's moment is still being found.
@@ -35,7 +51,7 @@ public enum ShareReviewSteps {
             isNativeAudio && !hasEvidence && evidenceStatus == .pendingPostResumeSample
         }
 
-        var waitsOnWords: Bool { transcriptionStatus == "pending" }
+        var waitsOnWords: Bool { transcriptionStatus == "pending" && hasVoice }
     }
 
     public enum Icon: Equatable, Sendable {
@@ -75,13 +91,11 @@ public enum ShareReviewSteps {
         }
     }
 
-    public static let failedTranscriptLine = "No transcript yet, so this Margin can't be shared. Retry its transcription in Margin detail."
-
-    /// A badge for a Margin that can't go yet: waiting for words, or left out because they failed. nil otherwise.
-    public static func badge(_ margin: Margin) -> String? {
-        if margin.waitsOnWords { return "Waiting for words" }
-        if margin.transcriptionStatus == "failed" { return "Left out: no transcript yet" }
-        return nil
+    /// The badge for a Margin whose words are still being made. A Margin whose transcription failed has no badge here:
+    /// a voice Margin goes with placeholder words (#3027), and one with neither words nor voice is left out, which the
+    /// card already says (`SharedMarginTextRequirement.reviewWarningText`).
+    public static func waitingBadge(_ margin: Margin) -> String? {
+        margin.waitsOnWords ? "Waiting for words" : nil
     }
 
     // MARK: Pinned bar
@@ -101,5 +115,10 @@ public enum ShareReviewSteps {
             return "Finding the exact moment for \(who). Keep the episode playing a few more seconds."
         }
         return "Play the episode for about 12 seconds so your friend hears \(who) at the exact moment. Sharing now may put \(one ? "it" : "them") a few seconds off."
+    }
+
+    /// The pinned line with the icon of the wait it names: words when any Margin waits on its words, else the clock.
+    public static func pinnedStep(_ margins: [Margin]) -> Step? {
+        pinnedLine(margins).map { Step(icon: margins.contains(where: \.waitsOnWords) ? .words : .clock, text: $0) }
     }
 }
