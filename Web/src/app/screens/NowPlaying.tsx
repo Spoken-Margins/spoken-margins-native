@@ -16,6 +16,8 @@ import {
 import { plainError } from '../logic/messages.ts';
 import { choiceFor, hasReplyChoice, parentOf, replyRow, toggleReplying, withReplyChoice, type ReplyChoice } from '../logic/reply-choice.ts';
 import { isStarred } from '../logic/star.ts';
+import { APP_INVITE_WORDS, inviteAfterShare, markInviteSeen, type ShareEnd } from '../logic/app-invite.ts';
+import { browserStorage } from '../logic/position-mirror.ts';
 import { SENDER_NAME_LIMIT, senderForPacket, senderNameHint, sendFile, sendRefusedNextStep } from '../logic/share-send.ts';
 import { NotSavedError } from '../logic/storage.ts';
 import { shareNativePacket } from '../logic/native-packets.ts';
@@ -59,7 +61,7 @@ function LandingOffer({ landing }: { landing?: Landing }) {
         className="button button-primary"
         onClick={() => {
           player.seek(landing.at);
-          player.toggle();
+          player.play();
         }}
       >
         <PlayIcon size={18} />
@@ -89,16 +91,22 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
         <strong>{line.title}</strong>
         {line.position && <span> · {line.position}</span>}
       </p>
-      <p className="arrived-margin-text">
-        {margin.author ? <strong>{margin.author}</strong> : null} {formatClock(margin.atSeconds)}: {words}
-      </p>
-      {voiced && <p className="arrived-margin-note">Your device’s voice is reading {possessive(senderName(margin.author))} words.</p>}
-      {blocked && (
+      {/* Above the words, so a long Margin never pushes it off the screen (owner, 2026-11-18). */}
+      {blocked ? (
         <button type="button" className="button button-primary" onClick={player.playArrived}>
           <PlayIcon size={18} />
           Play {margin.author ? `${leading(possessive(senderName(margin.author)))}` : 'this'} Margin
         </button>
+      ) : (
+        // Pause only holds a Margin; this is how to be done with it and carry on with the episode (#4473).
+        <button type="button" className="button" data-testid="skip-margin" onClick={player.skipMargin}>
+          Skip this Margin
+        </button>
       )}
+      <p className="arrived-margin-text">
+        {margin.author ? <strong>{margin.author}</strong> : null} {formatClock(margin.atSeconds)}: {words}
+      </p>
+      {voiced && <p className="arrived-margin-note">Your device’s voice is reading {possessive(senderName(margin.author))} words.</p>}
     </div>
   );
 }
@@ -183,12 +191,25 @@ function MarginCue({ margins, saved }: { margins: readonly Margin[]; /** The lis
         className="button button-primary margin-cue-skip"
         onClick={() => {
           player.seek(cue.skip.to);
-          if (!player.playing) player.toggle();
+          player.play();
         }}
       >
         <SkipIcon />
         {cue.skip.label}
       </button>
+      {cue.startEarlier && (
+        <button
+          type="button"
+          className="button margin-cue-skip"
+          data-testid="margin-cue-earlier"
+          onClick={() => {
+            player.seek((cue.startEarlier as { to: number }).to);
+            if (!player.playing) player.toggle();
+          }}
+        >
+          Start a minute earlier
+        </button>
+      )}
     </section>
   );
 }
@@ -436,7 +457,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const [sendable] = useState(canSendFiles);
   // Inside the Android app (#3009) one button writes the file and opens Android's share sheet, which can also save it.
   const [bridge] = useState(() => capacitorBridge());
-  // After a friend's Margins, Share offers "Send replies to <friend>" (#2168, as the app's #3221): the replies and the
+  // After a friend's Margins, Share offers "Share replies with <friend>" (#2168, as the app's #3221): the replies and the
   // Margins made since this page opened picked, older notes unpicked, the friend's own never listed. With no offer Share is as before.
   const offer = replyBackOffer(margins);
   // With no offer, a starred Margin of the listener's own turns Share into a list of their Margins, the starred ones picked (#4172).
@@ -457,12 +478,22 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const [nextStep, setNextStep] = useState<string>();
   // The browser refused its share sheet (#4095): Send is replaced by the sentence and Save as a file.
   const [sendRefused, setSendRefused] = useState(false);
+  // The iPhone app, offered once per browser right after the first reply leaves (#4671). Not inside the Android app.
+  const [invite, setInvite] = useState(false);
+  const offerApp = (outcome: ShareEnd) => {
+    if (inviteAfterShare(browserStorage(), { wasReply: offer !== undefined, outcome, inApp: bridge !== undefined })) setInvite(true);
+  };
+  const dismissInvite = () => {
+    markInviteSeen(browserStorage());
+    setInvite(false);
+  };
 
   const share = async (how: 'save' | 'send') => {
     setBusy(true);
     try {
-      // The typed name goes on this file whether or not the browser could keep it; a failed save has already said so.
-      void keepName();
+      // The typed name goes on this file whether or not the browser could keep it; a failed save has already said so, and
+      // never throws. It is awaited so a page closed or reloaded the moment the file lands still has the name (#4107).
+      await keepName();
       const written = await services.packets.writePacket(episode, toWrite, show, senderForPacket(name));
       // Remember which Margin went out under which packet name, so a reply to it can be found later (#4174). Hidden, and
       // never a reason to hold the file back: if the browser can't save it, the link is simply missing.
@@ -477,6 +508,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
       if (how === 'send') {
         // The browser may refuse the sheet (#4095); then Send goes away and Save as a file says what to do instead.
         const outcome = await sendFile((data) => navigator.share(data), file, episode.title);
+        offerApp(outcome);
         if (outcome === 'cancelled') return;
         if (outcome === 'refused') {
           // The sentence sits on the panel, whose status region announces it; the focused Send is about to go, so focus moves to Save.
@@ -487,6 +519,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
         }
       } else {
         downloadFile(file);
+        offerApp('saved');
       }
       const count = written.included.length === 1 ? '1 Margin' : `${written.included.length} Margins`;
       const next = how === 'save' && offer ? savedFileNextStep(offer) : undefined;
@@ -572,7 +605,29 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
           </button>
         )}
       </div>
+      {invite && <AppInvite onDismiss={dismissInvite} />}
     </div>
+  );
+}
+
+/** The one invitation to the iPhone app, after the first reply leaves this browser (#4671). The × only hides it: it is already seen. */
+function AppInvite({ onDismiss }: { onDismiss: () => void }) {
+  const words = APP_INVITE_WORDS;
+  return (
+    <section className="app-invite" aria-labelledby="app-invite-heading">
+      <div className="app-invite-head">
+        <h3 id="app-invite-heading">{words.heading}</h3>
+        <button type="button" className="icon-button" aria-label={words.dismiss} onClick={onDismiss}>
+          <CloseIcon />
+        </button>
+      </div>
+      <p>{words.adds}</p>
+      <a className="button" href={words.button.href} target="_blank" rel="noopener noreferrer">
+        {words.button.text}
+      </a>
+      <p className="muted">{words.tapAgain}</p>
+      <p className="muted">{words.moveMargins}</p>
+    </section>
   );
 }
 
@@ -787,7 +842,7 @@ function RecordMargin({
     started.current = true;
     // The episode pauses while you speak, so the Margin records your voice, not the show.
     resumeAfter.current = player.playing || resumeAfterInterrupt;
-    if (player.playing) player.toggle();
+    player.pause();
     services.recorder
       .start()
       .then((r) => {
@@ -820,7 +875,7 @@ function RecordMargin({
   }, [recording]);
 
   const resume = () => {
-    if (resumeAfter.current && !player.playing) player.toggle();
+    if (resumeAfter.current) player.play();
     resumeAfter.current = false;
   };
 
@@ -929,7 +984,7 @@ function RecordMargin({
             type="button"
             className="button button-primary"
             onClick={() => {
-              if (resumeAfter.current && !player.playing) player.toggle();
+              if (resumeAfter.current) player.play();
               onWriteInstead();
             }}
           >

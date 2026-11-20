@@ -57,8 +57,11 @@ export function failureNoticeShown(state: { failed: boolean; cardsShowing: numbe
 /**
  * What a rejected clip `play()` means for a Margin heard on its own. `NotAllowedError`: the browser wants a tap (a
  * clip started later than the listener's own tap can be refused, as on iPhone Safari), so the run waits on that
- * Margin. Anything else skips it.
+ * Margin. `AbortError` on the clip still playing: the listener paused it before it had loaded (#4473), so it holds
+ * there for Play, as a pause once it is sounding does. Anything else skips it.
  */
-export function clipRejection(name: string | undefined): 'wait-for-tap' | 'skip' {
-  return name === 'NotAllowedError' ? 'wait-for-tap' : 'skip';
+export function clipRejection(name: string | undefined): 'wait-for-tap' | 'held' | 'skip' {
+  if (name === 'NotAllowedError') return 'wait-for-tap';
+  if (name === 'AbortError') return 'held';
+  return 'skip';
 }

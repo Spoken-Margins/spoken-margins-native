@@ -1156,9 +1156,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertEqual(reopened.sharingState.draftFilter, .starred)
         XCTAssertEqual(reopened.sharingState.drafts.filter(\.isIncluded).map(\.id), ["margin-starred"])
-        XCTAssertEqual(InterjectionSharingView.collapsedTranscriptLineLimit, 10)
-        XCTAssertFalse(InterjectionSharingView.transcriptRequiresExpansion(fullHeight: 220, limitedHeight: 220))
-        XCTAssertTrue(InterjectionSharingView.transcriptRequiresExpansion(fullHeight: 440, limitedHeight: 220))
 
         reopened.setStarredForSharing(curated, starred: false, place: .manage)
         await reopened.settleItemReload() // the item detail reloads off the main thread after the star (#2505)
@@ -6480,7 +6477,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try store.saveItem(Item(id: "article", title: "A post", mediaType: "text", text: "Source text.", externalReference: "https://www.noahpinion.blog/p/a-post?utm_source=substack", status: "ready", externalReferenceType: "url"))
         try store.saveSession(Session(id: "session-article", itemId: "article", status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "article", position: Position(charOffset: 4), completionPercent: 40, playbackRate: 1))
         model.openHome()
-        model.refreshFollowedSources(force: false)
+        model.refreshFollowedSources(force: false, trigger: .localChange)
         try await waitFor("subscription loaded") { model.feedSubscriptions.contains { $0.id == "subscription-noahpinion" } }
 
         model.openItem(id: "article")

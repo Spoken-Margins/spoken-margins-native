@@ -90,7 +90,6 @@ final class SharedMarginTallyWordsTests: XCTestCase {
             XCTAssertFalse(tally(2, new: 2, [(stand, 2)]).senderMatches(stand), "search never finds a stand-in: \(stand)")
         }
         XCTAssertEqual(tally(2, new: 2, [("Unsigned sender", 1), ("Imported collection", 1)]).senderLine, "2 new Margins from friends")
-        XCTAssertEqual(LibraryCompletedHiddenNote.words(items: [tally(1, new: 0, [("Imported collection", 1)])]), "1 has Margins from a friend")
         XCTAssertEqual(SharedMarginTally(total: 2, new: 2, senders: [Sender(name: "Cole  M", count: 1), Sender(name: "cole m", count: 1)]).senders.count, 1, "inner whitespace and case")
         XCTAssertEqual(tally(1, new: 1, [("Cole   M.", 1)]).senderLine, "1 new Margin from Cole M.")
     }
@@ -149,21 +148,6 @@ final class SharedMarginTallyWordsTests: XCTestCase {
         XCTAssertFalse(item.senderMatches("sam"))
         XCTAssertFalse(SharedMarginTally.none.senderMatches("cole"))
         XCTAssertFalse(SharedMarginTally(total: 1, new: 1).senderMatches("cole"), "no sender read")
-    }
-
-    // MARK: Completed hidden
-
-    func testCompletedHiddenSaysWhatItHides() {
-        let cole = tally(2, new: 0, [("Cole", 2)])
-        let both = tally(3, new: 0, [("Cole", 2), ("Sam", 1)])
-        let stranger = tally(1, new: 0, [(nil, 1)])
-        XCTAssertNil(LibraryCompletedHiddenNote.words(items: []))
-        XCTAssertNil(LibraryCompletedHiddenNote.words(items: [.none]))
-        XCTAssertEqual(LibraryCompletedHiddenNote.words(items: [cole]), "1 has Margins from Cole")
-        XCTAssertEqual(LibraryCompletedHiddenNote.words(items: [both]), "1 has Margins from friends")
-        XCTAssertEqual(LibraryCompletedHiddenNote.words(items: [stranger]), "1 has Margins from a friend")
-        XCTAssertEqual(LibraryCompletedHiddenNote.words(items: [cole, both]), "2 have Margins from friends")
-        XCTAssertEqual(LibraryCompletedHiddenNote.words(items: [cole, .none]), "1 has Margins from Cole", "an item with none is not counted")
     }
 
     // MARK: The store

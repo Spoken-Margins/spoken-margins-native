@@ -159,7 +159,8 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             XCTAssertFalse(app.alerts["Remove ums and long pauses?"].waitForExistence(timeout: 2),
                            "The cleanup question showed on the reply sheet")
             XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 8), "The reply sheet did not open on its review")
-            XCTAssertTrue(element("build23.sender.heading").label.hasPrefix("Send replies to"), "The sheet is not the reply sheet: \(element("build23.sender.heading").label)")
+            let heading = element("build23.sender.heading").label // "Share replies with <friend>", or "Share your Margins with <friend>" when none is linked as a reply (#3906)
+            XCTAssertTrue(heading.hasPrefix("Share replies with") || heading.hasPrefix("Share your Margins with"), "The sheet is not the reply sheet: \(element("build23.sender.heading").label)")
             XCTAssertFalse(element("build23.sender.review.navigator").exists, "The reply review drew the Margin navigator")
             let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "build23.sender.review.selector."))
             XCTAssertGreaterThanOrEqual(rows.count, 1, "The receipt should hold a row for the Margin going")

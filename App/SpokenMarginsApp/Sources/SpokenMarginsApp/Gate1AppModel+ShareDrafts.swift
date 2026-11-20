@@ -52,7 +52,7 @@ extension Gate1AppModel {
         }
         do {
             selectedItem = try loadItemDetail(id: margin.itemId, store: requireStore())
-            prepareShareInterjections(candidates: [margin])
+            prepareShareInterjections(candidates: [margin], isSingleMargin: true)
             if isSharingInterjectionsPresented {
                 sharingState.draftsPreparedForExport = true
                 sharingState.entry = .reviewDefaults
@@ -64,9 +64,9 @@ extension Gate1AppModel {
         prepareShareInterjections(candidates: selectedItem.interjections)
     }
 
-    /// `replyBack` turns the sheet into "Send replies to <friend>" (#3221): `source` is the offer's own list, the
+    /// `replyBack` turns the sheet into "Share replies with <friend>" (#3221): `source` is the offer's own list, the
     /// replies start included and the listener's other new Margins start out, and nothing else is listed.
-    func prepareShareInterjections(candidates source: [Interjection], replyBack: ReplyBackOffer? = nil) {
+    func prepareShareInterjections(candidates source: [Interjection], replyBack: ReplyBackOffer? = nil, isSingleMargin: Bool = false) {
         cancelBulkSharePreparation()
         let candidates = source.filter {
             $0.status == "active" && $0.targetType == .item
@@ -78,6 +78,8 @@ extension Gate1AppModel {
         let hasStarredCandidates = replyBack == nil && candidates.contains { $0.isStarredForSharing == true }
         sharingState = InterjectionSharingState(isPreparing: true)
         sharingState.replyBackTitle = replyBack?.title
+        sharingState.openedFrom = ShareSelectionDiagnostics.opened(
+            isReplyBack: replyBack != nil, isSingleMargin: isSingleMargin, hasStarredCandidates: hasStarredCandidates)
         sharingState.draftFilter = hasStarredCandidates ? .starred : .all
         isSharingInterjectionsPresented = true
         // The summary: the sheet needs the address, the type and whether there is text, not the article (#2506).
@@ -95,6 +97,7 @@ extension Gate1AppModel {
         // A voice Margin with no words starts with placeholder words instead of being left out (#3027).
         // The switch starts where the sender last put it for each Margin, so a re-share keeps it (#3472).
         let lastSentReadAloud = (try? requireStore().loadLastSentReadAloud(itemId: selectedItem.id)) ?? [:]
+        let lastSentLeadIns = (try? requireStore().loadLastSentLeadIns(itemId: selectedItem.id)) ?? [:]
         sharingState.drafts = candidates.map { interjection in
             ShareInterjectionDraft.initial(
                 for: interjection,
@@ -102,11 +105,37 @@ extension Gate1AppModel {
                     ?? (!hasStarredCandidates || interjection.isStarredForSharing == true),
                 hasVoice: interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil,
                 itemTitle: selectedItem.title,
-                anchorWarning: shareAnchorWarning(for: interjection),
-                lastSentReadAloud: lastSentReadAloud[interjection.id]
+                lastSentReadAloud: lastSentReadAloud[interjection.id],
+                lastSentLeadInMs: lastSentLeadIns[interjection.id]
             )
         }
         sharingState.isPreparing = false
+    }
+
+    /// Where the sharing star's counts are kept (#4173): on this phone, as four numbers.
+    var shareStarTally: ShareStarTallyStore { ShareStarTallyStore() }
+
+    /// One `share.selection` Diagnostics line for a send tap (#4173): how the sheet started, what will be written, and how
+    /// the star was used since the last send. Counts only. A retry logs again, with the same star counts when the first
+    /// send reset them; the last line is the one that counts.
+    func recordShareSelection(now: Date = Date()) {
+        let stored = shareStarTally.load()
+        let counted = stored.isEmpty ? (sharingState.starTallyAtLastSend ?? stored) : stored
+        sharingState.starTallyAtLastSend = counted
+        let included = SharedMarginTextRequirement.shareable(sharingState.drafts.filter(\.isIncluded), text: \.approvedTranscript).0
+        let writtenIDs = Set(included.map(\.id))
+        let margins = sharingState.drafts.map {
+            ShareSelectionDiagnostics.Margin(isStarred: $0.interjection.isStarredForSharing == true, isWritten: writtenIDs.contains($0.id))
+        }
+        recordDeveloperDiagnostic(ShareSelectionDiagnostics.kind, ShareSelectionDiagnostics.fields(
+            opened: sharingState.openedFrom, margins: margins,
+            secondsInSheet: now.timeIntervalSince(sharingState.openedAt), tally: counted))
+    }
+
+    /// The system share sheet now shows the packet or the link, so the star counts start again (#4173). A link that
+    /// fails never gets here, so its retry logs the same counts again.
+    func shareSheetPresented() {
+        shareStarTally.reset()
     }
 
     var bulkSharePreparationEligibleCount: Int {
@@ -432,8 +461,7 @@ extension Gate1AppModel {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         sharingState.automaticallyCleanedDraftIDs.remove(id)
         let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        let anchorWarning = shareAnchorWarning(for: sharingState.drafts[index].interjection)
-        sharingState.drafts[index].restoreOriginal(hasOriginalAudio: hasOriginalAudio, anchorWarning: anchorWarning)
+        sharingState.drafts[index].restoreOriginal(hasOriginalAudio: hasOriginalAudio)
     }
 
     private func recordShareEdit(
@@ -495,10 +523,7 @@ extension Gate1AppModel {
               let root = try? applicationSupportDirectory()
                 .appending(path: "SpokenMargins/ShareRevisions/\(UUID().uuidString)", directoryHint: .isDirectory) else {
             if let index = sharingState.drafts.firstIndex(where: { $0.id == id }) {
-                sharingState.drafts[index].warning = [
-                    shareAnchorWarning(for: sharingState.drafts[index].interjection),
-                    ShareCleanupWords.Failure.previewNotPrepared.message
-                ].compactMap { $0 }.joined(separator: " ")
+                sharingState.drafts[index].warning = ShareCleanupWords.Failure.previewNotPrepared.message
             }
             return
         }
@@ -517,9 +542,7 @@ extension Gate1AppModel {
                     self?.sharingState.drafts[current].cleanedAudioURL = destination
                     self?.sharingState.drafts[current].cleanedAudioDurationMs = duration
                     self?.sharingState.drafts[current].representationChoice = .cleaned
-                    if let interjection = self?.sharingState.drafts[current].interjection {
-                        self?.sharingState.drafts[current].warning = self?.shareAnchorWarning(for: interjection)
-                    }
+                    self?.sharingState.drafts[current].warning = nil
                 }
             } catch {
                 await MainActor.run {
@@ -533,10 +556,7 @@ extension Gate1AppModel {
                     self?.sharingState.drafts[current].preparationMessage = ShareCleanupWords.Failure.voiceNotPrepared.message
                     if let interjection = self?.sharingState.drafts[current].interjection {
                         self?.diagnostics[Self.marginDiagnosticKey("shareCleanupFailure", interjection)] = "render:\(SafeErrorText.describe(error))"
-                        self?.sharingState.drafts[current].warning = [
-                            self?.shareAnchorWarning(for: interjection),
-                            ShareCleanupWords.Failure.regenerationFailed.message
-                        ].compactMap { $0 }.joined(separator: " ")
+                        self?.sharingState.drafts[current].warning = ShareCleanupWords.Failure.regenerationFailed.message
                     }
                 }
             }

@@ -534,9 +534,12 @@ class LaneSimTests(unittest.TestCase):
         gh.chmod(0o755)
         self.env = {'SM_LANE_STATE_DIR': str(folder / 'state'), 'SM_LANE_SIMCTL': str(fake),
                     'SM_LANE_CRASH_REPORTS': str(folder / 'reports'), 'FAKE_RECORD': str(self.record),
-                    'SM_LANE_MEMORY_PRESSURE': '1', 'SM_LANE_GH': str(gh)}
+                    'SM_LANE_MEMORY_PRESSURE': '1', 'SM_LANE_GH': str(gh),
+                    # The fake simctl has an iOS 26 runtime only. The hosted Mac's lane sets this to the iOS it ships
+                    # when it has no 26, and the helper subprocesses read it from the environment (#4643).
+                    'SM_LANE_IOS_MAJOR': '26'}
         patches = [mock.patch.dict(os.environ, self.env), mock.patch.object(lane_sim, 'CRASH_POLL_SECONDS', 0.05),
-                   mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05)]
+                   mock.patch.object(lane_sim, 'IOS_MAJOR', 26), mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05)]
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)

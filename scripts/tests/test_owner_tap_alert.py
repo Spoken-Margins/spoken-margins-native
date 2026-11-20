@@ -134,6 +134,19 @@ class ReadinessTable(unittest.TestCase):
                 self.assertIn(why, reason)
 
 
+class GateChecks(unittest.TestCase):
+    """#4693: a red "merge policy" waits for the audit and the tap, so it can't be what holds either of them back."""
+
+    def test_a_red_merge_policy_gate_is_not_a_failed_check(self):
+        self.assertEqual(alert.checks_state([run('hosted fast: portable'), run('merge policy', conclusion='failure')], []),
+                         ('ok', []))
+
+    def test_a_real_failure_beside_it_still_fails(self):
+        state, names = alert.checks_state([run('hosted fast: portable', conclusion='failure'),
+                                           run('merge policy', conclusion='failure')], [])
+        self.assertEqual((state, names), ('failed', ['hosted fast: portable']))
+
+
 class AlertBody(unittest.TestCase):
     def test_mentions_owner_and_carries_marker_for_the_full_head(self):
         body = alert.alert_body(pr(), ['.github/workflows/lane.yml'], 'uncomposed', audited=True)
@@ -545,6 +558,8 @@ class Workflow(unittest.TestCase):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
                 head, _, job = text.partition('\n  owner-tap-alert:\n')
                 self.assertTrue(job, 'no owner-tap-alert job')
+                # Read this job only. A job after it (the rearm job, which needs `actions: write`) is not the alert's.
+                job = re.split(r'\n  [A-Za-z0-9_-]+:\n', job, maxsplit=1)[0] + '\n'
                 self.assertIn('    name: owner-tap-alert\n', job)
                 self.assertIn(f'    needs: {needs}\n', job)
                 self.assertIn('    if: always() && github.event.pull_request.head.repo.full_name == github.repository\n',

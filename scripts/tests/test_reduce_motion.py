@@ -73,7 +73,7 @@ class ReduceMotionTests(unittest.TestCase):
     def test_the_timeline_scrolls_and_returns_without_a_plain_with_animation(self):
         text = _read("ExperienceTimelineRailScreen.swift")
         self.assertNotIn("withAnimation", text)
-        self.assertEqual(text.count("withMotion("), 4)  # composer scroll, follow scroll, return, chapter fold (#3895)
+        self.assertEqual(text.count("withMotion("), 5)  # composer scroll, follow scroll, return, chapter fold (#3895), chapter fold follows playback (#4586)
 
     def test_the_onboarding_scroll_in_playback_uses_the_helper(self):
         text = _read("PlaybackScreen.swift")

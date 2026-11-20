@@ -9,6 +9,11 @@ extension Gate1AppModel {
         LibraryCollectionScope.visibleLibraryItems(libraryItems, query: libraryQuery, in: libraryCollections.selection)
     }
 
+    /// How many finished items the listening filter hides, for the line at the end of the Library (#4698).
+    var libraryCompletedHiddenCount: Int {
+        LibraryQueryEngine.completedHiddenCount(LibraryCollectionScope.rows(libraryItems, in: libraryCollections.selection), query: libraryQuery)
+    }
+
     /// Whether every row in scope is finished, read over the collection's own rows when one is selected.
     var libraryIsCaughtUp: Bool {
         LibraryQueryEngine.libraryIsCaughtUp(LibraryCollectionScope.rows(libraryItems, in: libraryCollections.selection), query: libraryQuery)

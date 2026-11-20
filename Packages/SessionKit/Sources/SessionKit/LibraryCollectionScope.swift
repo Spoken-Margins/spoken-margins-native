@@ -78,7 +78,7 @@ public enum LibraryCollectionScope {
     /// The rows the New collection and Edit Items checklist offers: every Library row, completed ones too, narrowed by
     /// the sheet's search with the Library's own matching (title, source, author). The Library's order is kept.
     public static func checklistRows<Row: LibraryQueryRow>(_ rows: [Row], search: String) -> [Row] {
-        LibraryQueryEngine.visibleLibraryItems(rows, query: LibraryQuery(query: search, listeningState: .all))
+        LibraryQueryEngine.visibleLibraryItems(rows, query: LibraryQuery(query: search, listeningState: .all), includingSenders: false)
     }
 
     /// A chip tap: the collection with that id, or `nil` (All) when there is none.
