@@ -979,7 +979,7 @@ def describe(event: dict) -> str:
 
 def audit_comment(head: str, verdict: str, who: str) -> dict:
     return {'body': f'**Claude audit on `{head[:7]}`**\n\n{verdict}\n', 'created_at': '2026-11-20T10:00:00Z',
-            'user': {'login': 'github-actions[bot]' if who != 'user' else 'colemiller'},
+            'user': {'login': 'github-actions[bot]' if who != 'user' else 'a-maintainer'},
             'author_association': 'NONE' if who != 'user' else 'OWNER'}
 
 
