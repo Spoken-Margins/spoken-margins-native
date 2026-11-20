@@ -19,8 +19,9 @@ public struct LibraryReadSnapshot: Sendable {
     /// snaps in after them (#4343). Nil when they were not read; a caller then keeps the collections it has.
     public var collections: [ItemCollection]?
     /// The records of the collections that are Library folders (#3769), read in the same pass so a folder's row is drawn
-    /// with its items, never a first frame with them flat. Empty until a folder is imported, and when they were not read.
-    public var libraryFolders: [LibraryFolderRecord] = []
+    /// with its items, never a first frame with them flat. Empty until a folder is imported. Nil when they were not read
+    /// (the read failed); a caller then keeps the folders it has, because an empty list would draw every folder's items flat.
+    public var libraryFolders: [LibraryFolderRecord]?
 
     /// The items not in Recently Deleted, in the snapshot's order: what `listItemSummaries()` returns. A caller that
     /// already holds the snapshot asks this instead of reading the item table again (#2507).

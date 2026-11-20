@@ -272,6 +272,28 @@ final class LibraryFolderQueryTests: XCTestCase {
         XCTAssertEqual(visibility("a", LibraryQuery(query: "Title a")), "visible:row_1", "searching lists it on its own")
     }
 
+    func testTheRowNumberIsThePlaceInTheListTheScreenDraws() {
+        // 24 items arrive after the loose item, so a flat list would put the loose item at row 25.
+        let rows = [row("loose", added: 0)] + (1...24).map { row("p\($0)", added: Double($0)) }
+        let cs = [collection("f", "Daily Brief")]
+        let fs = [folder("f", items: (1...24).map { "p\($0)" })]
+        let drawn = list(rows, collections: cs, folders: fs)
+        XCTAssertEqual(ids(drawn), ["folder:f", "loose"])
+        XCTAssertEqual(LibraryFolderListEngine.addedItemVisibility(itemId: "loose", rows: rows, collections: cs, folders: fs, query: LibraryQuery()),
+                       "visible:row_2")
+        // Searching lists a folder whose name matches before the item it did not match.
+        let search = LibraryQuery(query: "Daily")
+        let found = list(rows, collections: cs, folders: fs, query: search)
+        XCTAssertEqual(ids(found), ["folder:f"])
+        let withMatchingItem = rows + [row("m", title: "Daily news", added: 99)]
+        let listed = list(withMatchingItem, collections: cs, folders: fs, query: search)
+        XCTAssertEqual(LibraryFolderListEngine.addedItemVisibility(itemId: "m", rows: withMatchingItem, collections: cs, folders: fs, query: search),
+                       "visible:row_\((listed.firstIndex { $0.id == "m" } ?? 0) + 1)")
+        // With no folder, the answer is the one the list gave before.
+        XCTAssertEqual(LibraryFolderListEngine.addedItemVisibility(itemId: "loose", rows: rows, collections: [], folders: [], query: LibraryQuery()),
+                       LibraryQueryEngine.addedItemVisibility(itemId: "loose", in: rows, query: LibraryQuery()))
+    }
+
     func testCaughtUpCountsAFolderAsOneRow() {
         let cs = [collection("f", "F")]
         let finishedRows = [row("a", finished: true), row("b", finished: true), row("loose", finished: true)]
@@ -303,10 +325,10 @@ final class LibraryFolderQueryTests: XCTestCase {
         let snapshot = try LibraryReadSnapshot.read(store: store)
         XCTAssertLessThan(Date().timeIntervalSince(started), 2, "the Library read does not wait for the writer")
         XCTAssertEqual(snapshot.collections?.map(\.id), ["f"])
-        XCTAssertEqual(snapshot.libraryFolders.map(\.id), ["f"])
+        XCTAssertEqual(snapshot.libraryFolders?.map(\.id), ["f"])
 
         let rows = LibraryRowBuilder.rows(from: snapshot, context: StartupAudioContext(hasAcceptedCurrentTerms: true, hasSupertonicVoice: true))
-        let listing = LibraryFolderListEngine.listing(rows: rows, collections: snapshot.collections ?? [], folders: snapshot.libraryFolders,
+        let listing = LibraryFolderListEngine.listing(rows: rows, collections: snapshot.collections ?? [], folders: snapshot.libraryFolders ?? [],
                                                       query: LibraryQuery(), currentItemID: nil)
         XCTAssertEqual(Set(ids(listing)), ["folder:f", "i3"], "the folder's items are never listed flat in the first frame")
     }
@@ -314,6 +336,6 @@ final class LibraryFolderQueryTests: XCTestCase {
     func testASnapshotBuiltTheOldWayHasNoFolders() {
         let snapshot = LibraryReadSnapshot(items: [Item](), sessions: [], manifests: [], jobs: [], downloads: [])
         XCTAssertNil(snapshot.collections, "nothing was read")
-        XCTAssertTrue(snapshot.libraryFolders.isEmpty)
+        XCTAssertNil(snapshot.libraryFolders, "nothing was read, which is not the same as no folders")
     }
 }

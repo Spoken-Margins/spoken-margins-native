@@ -118,7 +118,13 @@ public enum LibraryFolderListEngine {
     ) -> String {
         let live = liveFolders(folders: folders, collections: collections, rows: rows)
         if isBrowsing(query), itemFolders(live)[itemId] != nil { return "hidden:in_folder" }
-        return LibraryQueryEngine.addedItemVisibility(itemId: itemId, in: rows, query: query)
+        let answer = LibraryQueryEngine.addedItemVisibility(itemId: itemId, in: rows, query: query)
+        // The reasons an item is hidden are the same with or without folders. Where a visible item stands is not: a folder's
+        // items are not rows and a folder is one, so the position is read from the list the screen draws.
+        guard !live.isEmpty, answer.hasPrefix("visible:") else { return answer }
+        let position = listing(rows: rows, collections: collections, folders: folders, query: query, currentItemID: nil)
+            .firstIndex { $0.id == itemId } ?? 0
+        return "visible:row_\(position + 1)"
     }
 
     /// The row's detail line with the folder's name on the end: "12 min · in Daily Brief". Unchanged for an item in no folder.
