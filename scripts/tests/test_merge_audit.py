@@ -314,14 +314,51 @@ class HandMergeTests(unittest.TestCase):
                          'the label.')
 
 
+QUEUE_MERGE = 'd' * 40
+
+
+class QueueCheckTests(unittest.TestCase):
+    def run_named(self, name='merge policy', conclusion='success', app='github-actions'):
+        return {'name': name, 'conclusion': conclusion, 'app': {'slug': app}}
+
+    def test_only_a_passing_merge_policy_run_from_github_actions_counts(self):
+        self.assertTrue(audit.passed_queue_check([self.run_named()]))
+        for run in (self.run_named(conclusion='failure'), self.run_named(conclusion='cancelled'),
+                    self.run_named(name='hosted fast: portable'), self.run_named(app='some-other-app')):
+            with self.subTest(run=run):
+                self.assertFalse(audit.passed_queue_check([run]))
+        self.assertFalse(audit.passed_queue_check([]))
+
+    def test_the_reader_asks_about_the_merge_commit_and_a_failed_read_is_not_a_pass(self):
+        github = audit.GitHub('o/r')
+        asked = []
+
+        def answer(*args, check=True):
+            asked.append(args)
+            return json.dumps({'check_runs': [{'name': 'merge policy', 'conclusion': 'success',
+                                               'app': {'slug': 'github-actions'}}]})
+        github.api = answer
+        self.assertTrue(github.passed_merge_queue(QUEUE_MERGE))
+        self.assertIn(f'commits/{QUEUE_MERGE}/check-runs?check_name=merge%20policy', asked[0][0])
+        self.assertFalse(github.passed_merge_queue(None))
+
+        def broken(*args, check=True):
+            raise RuntimeError('HTTP 403')
+        github.api = broken
+        self.assertFalse(github.passed_merge_queue(QUEUE_MERGE))
+
+
 class FakeGitHub:
     repo = 'uncomposed/spoken-margins-native'
 
-    def __init__(self, comments):
-        self.comments, self.flagged = comments, []
+    def __init__(self, comments, queued=False):
+        self.comments, self.flagged, self.queued = comments, [], queued
 
     def json_lines(self, path):
         return self.comments
+
+    def passed_merge_queue(self, merge_commit_sha):
+        return self.queued and merge_commit_sha == QUEUE_MERGE
 
     def flag_pull(self, number, head_sha, gap=None, base=None):
         self.flagged.append((number, gap))
@@ -339,6 +376,18 @@ class AuditPullTests(unittest.TestCase):
         github = FakeGitHub([lane_report('PASS')])
         audit.audit_pull(github, self.pull, dry_run=False)
         self.assertEqual(github.flagged, [(633, 'no Codex or Claude audit of `f41b1de`')])
+
+    def test_a_merge_queue_merge_is_not_flagged(self):
+        # 2026-11-20: with lane.yml disabled no lane report comes, so #4747 and #4746 were flagged though the queue's
+        # merge policy check, which enforces the audit and owner-tap rules, passed on the commit that reached main.
+        github = FakeGitHub([], queued=True)
+        audit.audit_pull(github, dict(self.pull, merge_commit_sha=QUEUE_MERGE), dry_run=False)
+        self.assertEqual(github.flagged, [])
+
+    def test_a_merge_the_queue_did_not_pass_is_still_flagged(self):
+        github = FakeGitHub([], queued=True)
+        audit.audit_pull(github, dict(self.pull, merge_commit_sha='e' * 40), dry_run=False)
+        self.assertEqual(len(github.flagged), 1)
 
     def test_the_runner_merge_check_still_passes(self):
         check = {'body': CHECK.replace('92533d3', 'f41b1de'), 'created_at': '2026-10-01T17:08:00Z', 'user': BOT}
