@@ -136,11 +136,9 @@ struct LibraryCollectionScreen: View {
                     .foregroundStyle(AppColors.secondaryText)
                     .accessibilityIdentifier("library.collection.problem")
             }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { headerButtons(row) }
-                VStack(alignment: .leading, spacing: 8) { headerButtons(row) }
-            }
-            .disabled(isSelecting)
+            // A column at accessibility sizes, or whenever the labels don't fit on one line each (#1939): never "Con / tinue".
+            AdaptiveStack(spacing: 12) { headerButtons(row) }
+                .disabled(isSelecting)
         }
     }
 

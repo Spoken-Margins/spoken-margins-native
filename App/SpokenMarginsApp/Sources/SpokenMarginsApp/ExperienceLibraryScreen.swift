@@ -247,10 +247,8 @@ struct ExperienceLibraryScreen: View {
                 .font(.subheadline)
                 .foregroundStyle(AppColors.secondaryText)
             // The two buttons stack when they don't fit side by side in the narrowed column (#1937).
-            ViewThatFits(in: .horizontal) {
-                HStack { onboardingActions }
-                VStack(alignment: .leading) { onboardingActions }
-            }
+            // A column at accessibility sizes or when the labels don't fit on one line each, never a word split (#1939).
+            AdaptiveStack { onboardingActions }
         }
     }
 
