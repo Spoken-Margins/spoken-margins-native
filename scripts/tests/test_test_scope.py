@@ -766,5 +766,54 @@ class ReachedByNameTests(unittest.TestCase):
             ['Model', 'session', 'shared', 'owner', 'run', 'Kind', 'one', 'two'])
 
 
+class AppCompileScopeTests(unittest.TestCase):
+    """The merge queue's app compile (2026-11-20): #4602's FollowListsScreen.swift broke main through every check."""
+
+    def test_the_file_that_broke_main_needs_the_compile(self):
+        self.assertTrue(scope.app_compile_required([APP + 'FollowListsScreen.swift'])[0])
+
+    def test_app_build_inputs_need_it(self):
+        for path in ('App/SpokenMarginsShareExtension/Sources/ShareViewController.swift', KIT + 'SessionKit/Session.swift',
+                     'App/SharedResources/browserTextCapture.js', 'App/SpokenMarginsApp/Info.plist',
+                     'Config/Base.xcconfig', 'project.yml', 'SpokenMarginsNative.xcodeproj/project.pbxproj',
+                     'Contracts/fixtures/items/a.json', 'Contracts/voice-models/licenses/x.txt',
+                     'Site/onboarding/catalog/v1/catalog.json', '.github/workflows/hosted-portable.yml',
+                     'Web/odd/Thing.swift'):
+            self.assertTrue(scope.app_compile_required([path])[0], path)
+
+    def test_paths_outside_the_app_build_skip_it(self):
+        for path in ('docs/areas.md', 'scripts/merge_policy.py', 'scripts/tests/test_test_scope.py',
+                     '.github/workflows/merge-policy.yml', 'Web/src/app.ts', 'ops/codex/sm_codex_audit.py',
+                     'Packages/SessionKit/Tests/SessionKitCoreTests/FooTests.swift', 'AGENTS.md'):
+            self.assertFalse(scope.app_compile_required([path])[0], path)
+
+    def test_one_app_input_among_others_needs_it_and_nothing_known_needs_it(self):
+        self.assertTrue(scope.app_compile_required(['docs/a.md', APP + 'X.swift'])[0])
+        self.assertTrue(scope.app_compile_required([])[0])
+
+    def test_every_path_project_yml_builds_is_an_app_build_input(self):
+        # A new target or resource in project.yml must not fall outside the rule (fix the class, not the case).
+        import re
+        text = (SCRIPTS.parent / 'project.yml').read_text()
+        found = set(re.findall(r'^\s*-?\s*path:\s*([A-Za-z0-9_./-]+)', text, re.M))
+        found |= {'scripts/' + name for name in re.findall(r'SRCROOT\}?/scripts/([A-Za-z0-9_./-]+)', text)}
+        self.assertGreater(len(found), 20)
+        missing = sorted(p for p in found if not scope.app_compile_reason(p.rstrip('/') + ('' if '.' in p.rsplit('/', 1)[-1] else '/x')))
+        self.assertEqual(missing, [])
+
+    def test_the_cli_prints_github_output_lines(self):
+        with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False) as f:
+            f.write('docs/a.md\n')
+        try:
+            out = subprocess.run([sys.executable, str(SCRIPTS / 'test-scope.py'), '--app-compile-required', f.name],
+                                 capture_output=True, text=True, check=True).stdout
+        finally:
+            os.unlink(f.name)
+        self.assertIn('app=false', out)
+        bad = subprocess.run([sys.executable, str(SCRIPTS / 'test-scope.py'), '--app-compile-required', '/nonexistent'],
+                             capture_output=True, text=True, check=True).stdout
+        self.assertIn('app=true', bad)
+
+
 if __name__ == '__main__':
     unittest.main()
