@@ -34,14 +34,14 @@ from pathlib import Path
 # (verify-tests.py runs the step from the checkout's root); the weights live beside this script.
 WEIGHTS = Path(__file__).resolve().parent / 'runner_test_seconds.json'
 DEFAULT_JOBS = 4
-# A module still running after this long is killed and fails the step by name. The slowest module took 107 s alone
-# (runner_test_seconds.json). The "still running" lines keep verify-tests.py's 240 s stall rule from firing, so this
-# is the hang bound now; 300 s keeps it near the old one (budget, then 240 s of silence).
+# A module still running after this long is killed and fails the step by name. The slowest took 107 s alone
+# (runner_test_seconds.json) and up to 189 s with four running on the owner's Mac (test_sm_status). The "still
+# running" lines keep verify-tests.py's 240 s stall rule from firing, so this is the hang bound now.
 def module_timeout(value):
     try:
-        return float(value) if float(value) > 0 else 300.0
+        return float(value) if float(value) > 0 else 480.0
     except (TypeError, ValueError):
-        return 300.0
+        return 480.0
 
 
 MODULE_TIMEOUT = module_timeout(os.environ.get('SM_RUNNER_TEST_MODULE_TIMEOUT'))
@@ -64,7 +64,7 @@ def stop_children(number, frame):
     with CHILDREN_LOCK:
         for pid in list(CHILDREN):
             kill_group(pid)
-    print(f'parallel_unittest.py: stopped by signal {number}; killed every running module', flush=True)
+    os.write(1, f'parallel_unittest.py: stopped by signal {number}; killed every running module\n'.encode())
     os._exit(128 + number)
 
 # One module, with the left-out ids dropped (a test id starting with any PREFIX is not run).

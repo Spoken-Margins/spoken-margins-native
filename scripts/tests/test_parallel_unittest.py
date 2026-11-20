@@ -133,29 +133,35 @@ class ParallelUnittestTests(unittest.TestCase):
     def test_a_timed_out_module_takes_its_own_children_with_it(self):
         with tree({'test_spawn.py': self.SPAWNS}) as cwd:
             done = subprocess.run([sys.executable, str(SCRIPT)], cwd=cwd, capture_output=True, text=True, timeout=60,
-                                  env={**os.environ, 'SM_RUNNER_TEST_MODULE_TIMEOUT': '3'})
+                                  env={**os.environ, 'SM_RUNNER_TEST_MODULE_TIMEOUT': '10'})
             pid = int((Path(cwd) / 'grandchild.pid').read_text())
         self.assertEqual(done.returncode, 1, done.stdout)
         self.assertTrue(self.wait_gone(pid), 'the module\'s child outlived the timeout')
 
     def test_sigterm_kills_every_running_module(self):
         with tree({'test_spawn.py': self.SPAWNS}) as cwd:
-            runner = subprocess.Popen([sys.executable, str(SCRIPT)], cwd=cwd, stdout=subprocess.PIPE, text=True)
+            runner = subprocess.Popen([sys.executable, str(SCRIPT)], cwd=cwd, stdout=subprocess.PIPE, text=True,
+                                      env={**os.environ, 'SM_RUNNER_TEST_MODULE_TIMEOUT': '60'})
             marker = Path(cwd) / 'grandchild.pid'
-            deadline = time.monotonic() + 30
-            while not (marker.exists() and marker.read_text()) and time.monotonic() < deadline:
-                time.sleep(0.1)
-            pid = int(marker.read_text())
-            runner.terminate()
-            out, _ = runner.communicate(timeout=30)
+            try:
+                deadline = time.monotonic() + 30
+                while not (marker.exists() and marker.read_text()) and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                pid = int(marker.read_text())
+                runner.terminate()
+                out, _ = runner.communicate(timeout=30)
+            finally:  # never leave the runner (and its 120 s sleeps) behind when this test fails
+                if runner.poll() is None:
+                    runner.kill()
+                    runner.communicate()
         self.assertNotEqual(runner.returncode, 0)
         self.assertIn('stopped by signal', out)
         self.assertTrue(self.wait_gone(pid), 'a module\'s child outlived the runner')
 
     def test_a_zero_or_bad_timeout_means_the_default(self):
-        self.assertEqual(parallel.module_timeout('0'), 300.0)
-        self.assertEqual(parallel.module_timeout('soon'), 300.0)
-        self.assertEqual(parallel.module_timeout(None), 300.0)
+        self.assertEqual(parallel.module_timeout('0'), 480.0)
+        self.assertEqual(parallel.module_timeout('soon'), 480.0)
+        self.assertEqual(parallel.module_timeout(None), 480.0)
         self.assertEqual(parallel.module_timeout('5'), 5.0)
 
     def test_a_worker_error_is_that_modules_failure(self):
