@@ -68,7 +68,7 @@ final class FollowingByListTests: XCTestCase {
         let screen = FollowingByList.screen(selected: "e", lists: [empty], feedRows: f.feedRows, shows: f.shows, subscriptions: f.subscriptions)
         XCTAssertEqual(screen.rows, [])
         XCTAssertEqual(screen.quiet, [])
-        XCTAssertEqual(screen.emptyListText, "No shows in Later yet")
+        XCTAssertEqual(screen.emptyListText, "No shows in Later yet. Add one from a show’s page.")
         XCTAssertNil(screen.allQuietNote)
     }
 

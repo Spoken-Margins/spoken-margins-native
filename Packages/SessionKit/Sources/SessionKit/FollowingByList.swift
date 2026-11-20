@@ -10,7 +10,7 @@ public enum FollowingByList {
         /// "Every show in <list> is Quiet." Set when the list has Quiet shows and nothing else. The Quiet group then
         /// starts open.
         public var allQuietNote: String?
-        /// "No shows in <list> yet". Set when nothing in the list is followed; the screen puts **Add shows** under it.
+        /// "No shows in <list> yet. Add one from a show’s page." Set when nothing in the list is followed.
         public var emptyListText: String?
 
         public var opensQuietGroup: Bool { allQuietNote != nil }

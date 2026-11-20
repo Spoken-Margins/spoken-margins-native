@@ -57,20 +57,6 @@ extension Gate1AppModel {
         }
     }
 
-    /// Makes an empty list from the Lists screen, which opens "Add shows to <list>" for it next.
-    /// - Returns: why the name was refused, or the new list's id.
-    func createFollowListForEditing(named name: String) async -> (problem: FollowListName.Problem?, listID: String?) {
-        guard let service = followListsService() else { return (nil, nil) }
-        do {
-            let change = try await service.create(name: name)
-            FollowListsState.shared.publish(change.lists)
-            return (change.problem, change.changedListID)
-        } catch {
-            reportFailure(error, context: "Creating a list failed")
-            return (nil, nil)
-        }
-    }
-
     /// - Returns: why the name was refused, or nil when the list was renamed.
     func renameFollowList(id: String, to name: String) async -> FollowListName.Problem? {
         guard let service = followListsService() else { return nil }

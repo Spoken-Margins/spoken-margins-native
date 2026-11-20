@@ -97,7 +97,7 @@ final class FollowListEditingTests: XCTestCase {
     }
 
     func testTheListWordsUseTheTypographicApostrophe() {
-        XCTAssertEqual(FollowListWords.emptyListText(listName: "News"), "No shows in News yet")
+        XCTAssertEqual(FollowListWords.emptyListText(listName: "News"), "No shows in News yet. Add one from a show’s page.")
         XCTAssertEqual(FollowListWords.allQuietNote(listName: "News"), "Every show in News is Quiet.")
         XCTAssertEqual(FollowListWords.deleteQuestion(listName: "News"), "Delete News?")
     }

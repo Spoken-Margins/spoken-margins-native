@@ -30,7 +30,6 @@ NO_PILL = {
     ("HelpScreen.swift", "*"): "a sheet",
     ("FollowSheet.swift", "*"): "the Follow sheet",
     ("FollowListPickerSheet.swift", "*"): "a sheet from the show and Following screens (#4046)",
-    ("FollowListScreen.swift", "FollowListAddShowsSheet"): "a sheet from the list screens (#4046)",
     ("Gate1RootView.swift", "Gate1RootView"): "the terms sheet",
     ("Gate1RootView.swift", "InterjectionDetailView"): "pushed inside the Margin detail sheet",
     ("ItemCollectionSheet.swift", "*"): "a sheet",
