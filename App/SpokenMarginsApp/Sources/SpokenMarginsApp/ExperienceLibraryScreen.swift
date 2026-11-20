@@ -259,44 +259,22 @@ struct ExperienceLibraryScreen: View {
                 collectionChipRow
             }
 
-            HStack(alignment: .top) {
-                Text(model.libraryFilterDescription)
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
-                    .accessibilityIdentifier("library.filter.summary")
-                Spacer()
-                if hasActiveFilters {
+            // The everyday view (Unfinished, nothing else set) has nothing between the chips and the first row (#4698). A
+            // filter the listener chose says what it is, with the way back; the hidden finished items are counted at the
+            // end of the list instead.
+            if hasActiveFilters {
+                HStack(alignment: .top) {
+                    Text(model.libraryFilterDescription)
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .accessibilityIdentifier("library.filter.summary")
+                    Spacer()
                     Button(action: model.resetLibraryFilters) {
                         Text("Reset filters").expandedHitArea(horizontal: 8, vertical: 14)
                     }
                         .font(.caption)
                         .accessibilityIdentifier("library.filters.reset")
                 }
-            }
-            if model.libraryHidesCompleted {
-                let friendNote = model.libraryCompletedHiddenNote
-                ViewThatFits(in: .horizontal) {
-                    HStack {
-                        Text("Completed hidden")
-                        if let friendNote {
-                            // The dot only separates the two texts on the screen; VoiceOver reads them as two items.
-                            Text("·").accessibilityHidden(true)
-                            Text(friendNote).accessibilityIdentifier("library.completed.friendNote")
-                        }
-                        completedVisibilityButton
-                    }
-                    VStack(alignment: .leading) {
-                        Text("Completed hidden")
-                        if let friendNote {
-                            Text(friendNote).accessibilityIdentifier("library.completed.friendNote")
-                        }
-                        completedVisibilityButton
-                    }
-                }
-                .font(.subheadline)
-                .foregroundStyle(AppColors.evergreen)
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("library.completed.visibility")
             }
         }
         .onChange(of: model.libraryQuery) { _, _ in model.libraryQueryChanged() }
@@ -391,8 +369,29 @@ struct ExperienceLibraryScreen: View {
             if model.libraryQuery.query.isEmpty { model.showCompletedLibraryItems() }
             else { model.libraryQuery.listeningState = .all }
         } label: {
-            Text(model.libraryQuery.query.isEmpty ? "Show completed" : "Include in search")
+            Text(model.libraryQuery.query.isEmpty ? "Show" : "Include in search")
                 .expandedHitArea(horizontal: 8, vertical: 12)
+        }
+    }
+
+    /// "3 finished hidden · Show": one line after the last row, in place of the lines that sat under the chips (#4698).
+    @ViewBuilder private var completedHiddenFooter: some View {
+        let hidden = model.libraryHidesCompleted ? model.libraryCompletedHiddenCount : 0
+        if hidden > 0 {
+            HStack(spacing: 6) {
+                Text("\(hidden) finished hidden")
+                    .foregroundStyle(AppColors.secondaryText)
+                Text("·").foregroundStyle(AppColors.secondaryText).accessibilityHidden(true)
+                completedVisibilityButton
+                    .foregroundStyle(AppColors.evergreen)
+                Spacer(minLength: 0)
+            }
+            .font(.subheadline)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("library.completed.visibility")
+            .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
         }
     }
 
@@ -525,18 +524,26 @@ struct ExperienceLibraryScreen: View {
                 model.libraryQueryChanged()
             }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+            // A search that only finished items match says so here, with the way to include them.
+            completedHiddenFooter
         case .list:
             ForEach(listEntries) { entry in
                 let row = entry.row
                 ExperienceLibraryCompactRow(
                     row: row,
                     artworkURL: itemArtwork.url(forItem: row.id),
-                    isCurrentItem: entry.isCurrent,
                     isLoadedItem: entry.isCurrent && model.activePlaybackItemId == row.id,
+                    isPlayingNow: entry.isCurrent && model.activePlaybackItemId == row.id && model.activePlaybackIsPlaying,
+                    showsFinishedCheck: model.libraryQuery.listeningState != .unfinished,
                     playbackSpeed: model.speechPlaybackRateMultiplier,
                     spokenNoteFolders: model.marginOutput.spokenNotes,
                     onOpen: { openRow(row) },
                     onPlay: {
+                        // The item sounding now pauses, as the mini player's button does (#4698).
+                        if entry.isCurrent && model.activePlaybackItemId == row.id && model.activePlaybackIsPlaying {
+                            model.playPauseTapped()
+                            return
+                        }
                         // A note plays whole, start to finish, like any item; its own screen is where a sentence is picked.
                         if let noteId = row.spokenNoteId { notePlay.play(noteId: noteId, app: model) } else { model.continueListening(itemId: row.id) { pendingNewMarginsOffer = $0 } }
                     },
@@ -564,6 +571,7 @@ struct ExperienceLibraryScreen: View {
                 .onAppear { scrollTracker.rowChanged(row.id, isVisible: true) }
                 .onDisappear { scrollTracker.rowChanged(row.id, isVisible: false) }
             }
+            completedHiddenFooter
         }
     }
 
@@ -611,14 +619,22 @@ struct ExperienceLibraryCompactRow: View {
     // The icon tile scales with the text, up to twice its size, so a large glyph is not cut by a fixed frame (#1937).
     @ScaledMetric(relativeTo: .body) private var iconWidth: CGFloat = 38
     @ScaledMetric(relativeTo: .body) private var iconHeight: CGFloat = 44
+    // The Margins tag, the unread dot and the finished check scale with the tile, by the same factor and to the same
+    // cap, so they keep their proportion to the artwork at every text size (#4698).
+    @ScaledMetric(relativeTo: .body) private var tagFontSize: CGFloat = 10
+    @ScaledMetric(relativeTo: .body) private var badgeSize: CGFloat = 11
 
     let row: LibraryItemRow
     /// The item's thumbnail, from its own feed entry or its show; nil keeps the icon (#3864).
     var artworkURL: URL?
-    var isCurrentItem = false
     /// The item has a session loaded in the player now, not only the one the Continue card offers: only it carries the
-    /// speaker glyph and the "Now playing" value (#4062).
+    /// "Now playing" value (#4062).
     var isLoadedItem = false
+    /// The loaded item is sounding now, so its play button is a pause button inside the ring (#4698).
+    var isPlayingNow = false
+    /// The list shows finished items on purpose (Everything, Completed), so a finished row carries a check. Under
+    /// Unfinished a finished row is listed only for a friend's new Margins, and its unread dot says why (#4698).
+    var showsFinishedCheck = false
     /// The listener's speech speed, for a text item's estimated length (#305).
     var playbackSpeed: Double = 1
     /// Which spoken notes were saved to the export folder, for the "Exported" word on a finished note (#3661).
@@ -667,22 +683,63 @@ struct ExperienceLibraryCompactRow: View {
         }
     }
 
-    /// The tile, with a small speaker glyph on the item that is loaded now in place of the label line the row used to
-    /// carry above its title (#4062). The tile stays hidden from VoiceOver; the open button says "Now playing".
+    /// The tile, with the Margins tag hanging off its bottom edge, the unread dot on its top corner and, where the list
+    /// shows finished items on purpose, a check on the other top corner (#4698). Nothing here adds a line to the row.
+    /// The tile stays hidden from VoiceOver; the open button reads the count and who the new ones are from.
     private var iconTile: some View {
-        iconTileArtwork
-            .overlay(alignment: .bottomTrailing) {
-                if isLoadedItem {
-                    Image(systemName: "speaker.wave.2.fill")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(AppColors.onEvergreen)
-                        .frame(width: 18, height: 18)
-                        .background(AppColors.evergreen, in: Circle())
-                        .overlay(Circle().strokeBorder(AppColors.bone, lineWidth: 1.5))
-                        .offset(x: 4, y: 4)
+        let width = min(max(iconWidth, 38), 76)
+        let height = min(max(iconHeight, 44), 88)
+        let scale = width / 38
+        // The artwork is a square centred in the tile; the symbol tile fills it. The badges sit on the picture's corners.
+        let pictureInset = artworkURL == nil ? 0 : (height - width) / 2
+        let tagHeight = 15 * scale
+        let badge = min(max(badgeSize, 11), 22)
+        return iconTileArtwork
+            .overlay(alignment: .bottom) {
+                if let tag = lines.marginTag {
+                    marginTag(tag, height: tagHeight)
+                        .offset(y: tagHeight / 2 - pictureInset)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if lines.hasNewMargins {
+                    Circle()
+                        .fill(AppColors.unread)
+                        .overlay(Circle().strokeBorder(AppColors.bone, lineWidth: 2 * scale))
+                        .frame(width: badge + 4 * scale, height: badge + 4 * scale)
+                        .offset(x: 4 * scale, y: pictureInset - 4 * scale)
+                        .accessibilityIdentifier("library.newMargins.\(row.id)")
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                if showsFinishedCheck && row.isCompleted {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: badge + 3 * scale, weight: .semibold))
+                        .foregroundStyle(AppColors.bone, AppColors.secondaryText)
+                        .background(Circle().fill(AppColors.bone).padding(-1.5 * scale))
+                        .offset(x: -4 * scale, y: pictureInset - 4 * scale)
+                        .accessibilityIdentifier("library.finished.\(row.id)")
                 }
             }
             .accessibilityHidden(true)
+    }
+
+    /// A small grey tag: the Margins glyph and the count. It is grey whether or not the Margins were heard; only the
+    /// unread dot is coloured. Outlined in the row's background so it never runs into the picture.
+    private func marginTag(_ count: String, height: CGFloat) -> some View {
+        let size = min(max(tagFontSize, 10), 20)
+        return HStack(spacing: size * 0.2) {
+            Image(systemName: "quote.bubble.fill")
+                .font(.system(size: size * 0.85, weight: .semibold))
+            Text(count)
+                .font(.system(size: size, weight: .semibold).monospacedDigit())
+        }
+        .foregroundStyle(AppColors.bone)
+        .padding(.horizontal, size * 0.4)
+        .frame(height: height)
+        .background(AppColors.secondaryText, in: RoundedRectangle(cornerRadius: height * 0.34, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: height * 0.34, style: .continuous).strokeBorder(AppColors.bone, lineWidth: size * 0.18))
+        .fixedSize()
     }
 
     @ViewBuilder private var iconTileArtwork: some View {
@@ -706,7 +763,7 @@ struct ExperienceLibraryCompactRow: View {
             .font(.body.weight(.semibold))
             .foregroundStyle(AppColors.evergreen)
             .frame(width: width, height: height)
-            .background(AppColors.softGreen.opacity(isCurrentItem ? 0.85 : 0.55))
+            .background(AppColors.softGreen.opacity(0.55))
             // The row's own text already says the kind (`LibraryRowDetail`), so the icon is not a third stop per row.
             .accessibilityHidden(true)
     }
@@ -723,14 +780,13 @@ struct ExperienceLibraryCompactRow: View {
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
                     .multilineTextAlignment(.leading)
-                marginsLine
             }
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        // Title, progress, byline and kind, Margins, then whether it is the item playing (#4062).
+        // Title, length, byline and kind, Margins, then whether it is the item playing (#4062).
         .accessibilityLabel(openAccessibilityLabel)
         .accessibilityValue(isLoadedItem ? "Now playing" : "")
         .accessibilityIdentifier("library.row.\(row.id)")
@@ -740,7 +796,7 @@ struct ExperienceLibraryCompactRow: View {
         Button(action: onPlay) {
             LibraryRowPlayLabel(
                 isReadyOffline: row.offlineState == .readyOffline, isPreparing: row.startupAudioState == .preparing,
-                progress: lines.ringFraction)
+                progress: lines.ringFraction, isPlaying: isPlayingNow)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(playActionTitle)
@@ -755,13 +811,6 @@ struct ExperienceLibraryCompactRow: View {
         .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
         .contentShape(Rectangle())
         .background(AppColors.bone)
-        .overlay(alignment: .leading) {
-            if isCurrentItem {
-                Rectangle()
-                    .fill(AppColors.evergreen)
-                    .frame(width: 3)
-            }
-        }
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(AppColors.border.opacity(0.8))
@@ -922,62 +971,12 @@ struct ExperienceLibraryCompactRow: View {
         }
     }
 
-    /// One Margins line for both kinds (#4062): "2 yours" and a friend's part, "2 Margins" alone, or just the friend's
-    /// part. It is one line when it fits and two stacked lines when it doesn't, and never cuts a count off. At
-    /// accessibility sizes the parts always stack. The words carry the meaning; the icons are only a hint.
-    @ViewBuilder private var marginsLine: some View {
-        let lines = lines
-        if lines.hasMarginsLine {
-            if let own = lines.ownMargins, let friend = lines.friendMargins {
-                if dynamicTypeSize.isAccessibilitySize {
-                    VStack(alignment: .leading, spacing: 2) { ownPart(own); friendPart(friend) }
-                } else {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 6) {
-                            ownPart(own)
-                            Text("·").accessibilityHidden(true)
-                            friendPart(friend)
-                        }
-                        .fixedSize(horizontal: true, vertical: false)
-                        VStack(alignment: .leading, spacing: 2) { ownPart(own); friendPart(friend) }
-                    }
-                }
-            } else if let own = lines.ownMargins {
-                ownPart(own)
-            } else if let friend = lines.friendMargins {
-                friendPart(friend)
-            }
-        }
-    }
-
-    /// How many Margins the listener has made here, so a nearly-finished item can be cleared without opening it to look (#2394).
-    private func ownPart(_ line: String) -> some View {
-        Label(line, systemImage: "bubble.left")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(AppColors.secondaryText)
-            .accessibilityIdentifier("library.margins.\(row.id)")
-    }
-
-    /// Where a friend left Margins, and whether any are new (#1792). The words carry it, not the color.
-    private func friendPart(_ line: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "person.2.fill")
-                .accessibilityHidden(true)
-            Text(line)
-            if lines.friendMarginsAreNew { NewMarginBadge() }
-        }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(AppColors.evergreen)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(row.sharedMargins.senderAccessibilityLine ?? line)
-        .accessibilityIdentifier("library.sharedMargins.\(row.id)")
-    }
-
     private var sourceByline: String? {
         LibraryRowWording.byline(sourceTitle: row.sourceTitle, author: row.author, title: row.title)
     }
 
     private var playActionTitle: String {
+        if isPlayingNow { return "Pause \(row.title)" }
         if (row.continuationProgressPercent ?? 0) >= ItemFinishedRule.atEndPercent { return "Replay \(row.title)" }
         return row.hasContinuationSession ? "Continue \(row.title)" : "Start \(row.title)"
     }
@@ -1054,12 +1053,14 @@ struct LibraryRowPlayLabel: View {
     /// How far the listener is through an item in progress, 0...1; nil draws no ring (#4062). The ring sits inside the
     /// circle's own edge, so the button keeps its size and the 44 pt hit area. The row's words say the same thing.
     var progress: Double?
+    /// The item is sounding now: the face is a pause glyph inside the same ring (#4698).
+    var isPlaying = false
 
     private static let ringWidth: CGFloat = 2.5
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            Image(systemName: isReadyOffline ? "play.fill" : "play")
+            Image(systemName: isPlaying ? "pause.fill" : (isReadyOffline ? "play.fill" : "play"))
                 .foregroundStyle(AppColors.evergreen)
                 .frame(width: min(max(diameter, 40), 80), height: min(max(diameter, 40), 80))
                 .background(AppColors.softGreen, in: Circle())

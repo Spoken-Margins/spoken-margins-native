@@ -27,6 +27,13 @@ extension Gate1AppModel {
         }
     }
 
+    /// The item's kept PDF, or nil when this iPhone has none. The check is a file lookup, so it runs off the main thread
+    /// (the item screen asks it to decide whether "Export PDF with Margins" is offered, #4338).
+    func keptPDFOriginalURL(itemId: String) async -> URL? {
+        guard let store = try? pdfOriginalStore() else { return nil }
+        return await Task.detached(priority: .userInitiated) { store.url(itemId: itemId) }.value
+    }
+
     /// Keeps a copy of the file at `url` as the original of item `itemId`, off the main thread and a chunk at a time, so no
     /// import ever holds a PDF's bytes. `expectedSHA256` is the hash the item's document recorded; a file that changed since
     /// is not kept (the copy would not be the file the text came from). A failure is only noted in diagnostics.
