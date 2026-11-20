@@ -14,9 +14,10 @@ the call came back, an expectation, a check that the blocking resource was still
 
 What counts as a ceiling, inside one Swift func:
   * a start reading: `let t = Date()`, `Date.now`, `ContinuousClock.now`, `SuspendingClock.now`,
-    `CFAbsoluteTimeGetCurrent()`, `DispatchTime.now()`, `ProcessInfo.processInfo.systemUptime`, `mach_absolute_time()`;
+    `CFAbsoluteTimeGetCurrent()`, `DispatchTime.now()`, `ProcessInfo.processInfo.systemUptime`, `mach_absolute_time()`,
+    `CACurrentMediaTime()`, an instance `clock.now`;
   * a duration: `Date().timeIntervalSince(t)`, `ContinuousClock.now - t` (any clock reading minus a start), a
-    `.measure {` on a clock, and any variable assigned or appended from a duration (`elapsed`, `elapsedMs`, `sorted`);
+    `.measure {` on a clock, a helper handed the start (`elapsed(since: t)`), and any variable assigned or appended from a duration (`elapsed`, `elapsedMs`, `sorted`);
   * a ceiling: `XCTAssertLessThan`/`XCTAssertLessThanOrEqual` with a duration in the first argument,
     `XCTAssertGreaterThan`/`XCTAssertGreaterThanOrEqual` with one in the second, or `XCTAssert`/`XCTAssertTrue`/
     `#expect` comparing one with `<` or `<=`.
@@ -47,7 +48,8 @@ def default_folders(root=ROOT):
 
 CLOCK = (r'(?:Date\(\)|Date\.now|ContinuousClock\.now|SuspendingClock\.now|ContinuousClock\(\)\.now'
          r'|SuspendingClock\(\)\.now|CFAbsoluteTimeGetCurrent\(\)|DispatchTime\.now\(\)'
-         r'|ProcessInfo\.processInfo\.systemUptime|mach_absolute_time\(\))')
+         r'|ProcessInfo\.processInfo\.systemUptime|mach_absolute_time\(\)|CACurrentMediaTime\(\)'
+         r'|\b(?:[a-z]\w*)?[Cc]lock\.now)')
 START = re.compile(r'\b(?:let|var)\s+(\w+)(?:\s*:\s*[\w.]+)?\s*=\s*' + CLOCK + r'(?:\.uptimeNanoseconds)?\s*$')
 ASSIGN = re.compile(r'^\s*(?:(?:let|var)\s+)?(\w+)(?:\s*:\s*[^=]+)?\s*(?:=|\+=)\s*(.+)$')
 APPEND = re.compile(r'^\s*(\w+)\.append\((.+)$')
@@ -131,6 +133,9 @@ class Func:
             if re.search(CLOCK + r'(?:\.uptimeNanoseconds)?\s*-\s*' + v + r'\b', expr):
                 return True
             if re.search(r'\b' + v + r'\.(?:duration\(to:|timeIntervalSinceNow)', expr):
+                return True
+            # A test's own helper handed the start, such as `elapsed(since: begin)`.
+            if re.search(r'\b\w*(?:[Ee]lapsed|[Dd]uration|[Ss]econds|[Ss]ince|[Tt]ook)\w*\(\s*(?:\w+:\s*)?' + v + r'\s*\)', expr):
                 return True
         return False
 

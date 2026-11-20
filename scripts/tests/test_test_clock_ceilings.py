@@ -83,6 +83,9 @@ class WhichCeilingsAreFlagged(unittest.TestCase):
             '#expect with <=': 'let started = Date()\nwork()\n#expect(Date().timeIntervalSince(started) <= 2)',
             'over two lines': 'let started = Date()\nwork()\nXCTAssertLessThan(\n    Date().timeIntervalSince(started),\n    2\n)',
             'a ratio of two timings': 'let a = Date()\nfast()\nlet fastTook = Date().timeIntervalSince(a)\nlet b = Date()\nslow()\nlet slowTook = Date().timeIntervalSince(b)\nXCTAssertLessThan(fastTook, slowTook * 0.8)',
+            'an instance clock': 'let clock = ContinuousClock()\nlet started = clock.now\nwork()\nXCTAssertLessThan(clock.now - started, .seconds(1))',
+            'CACurrentMediaTime': 'let start = CACurrentMediaTime()\nwork()\nXCTAssertLessThan(CACurrentMediaTime() - start, 1)',
+            'a helper handed the start': 'let begin = DispatchTime.now()\nwork()\nlet small = elapsed(since: begin)\nXCTAssertLessThan(small, big / 2)',
             'a min of best times': 'var best = Double.infinity\nfor _ in 0..<5 {\n    let start = Date()\n    work()\n    best = min(best, Date().timeIntervalSince(start))\n}\nXCTAssertLessThan(best, 1)',
         }
         for name, body in cases.items():
@@ -96,6 +99,7 @@ class WhichCeilingsAreFlagged(unittest.TestCase):
             'a stored timestamp, Date() form': 'let renewed = renew()\nXCTAssertLessThan(Date().timeIntervalSince(renewed.checkedAt), 60)',
             'a fake clock the test advances': 'var elapsed: TimeInterval = 0\npace(now: { elapsed }, sleep: { elapsed += $0 })\nXCTAssertLessThan(elapsed, delay + 2.1)',
             'a duration that is data': 'let duration = item.duration\nXCTAssertLessThan(duration, 60)',
+            'a start handed to a maker': 'let started = Date()\nlet item = make(createdAt: started)\nXCTAssertLessThan(item.count, 3)',
             'a start never compared': 'let started = Date()\nlet item = make(createdAt: started)\nXCTAssertLessThan(item.count, 3)',
             'an expectation with a ceiling': 'let done = expectation(description: "done")\nwork { done.fulfill() }\nwait(for: [done], timeout: 30)',
             'a comment that mentions it': '// XCTAssertLessThan(Date().timeIntervalSince(started), 2) used to be here\nXCTAssertEqual(x, 1)',

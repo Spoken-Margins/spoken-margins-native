@@ -73,7 +73,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// short wait in another class past its timeout (#2104). Draining here keeps it inside the test that queued it.
     /// The drain itself is the fix: it keeps the work inside the test that queued it. How long the drain took is only
     /// printed (over 0.3 s names the test in the log), never asserted: a 1 s ceiling on a busy hosted Mac measures the
-    /// machine as much as the test, and a blocked call is caught on state by the test that makes it (#4573).
+    /// machine as much as the test (#4573). That gives up the ceiling's catch: a test that newly leaves a slow drain
+    /// behind now shows only as that printed line, not as a failure.
     override func setUp() {
         super.setUp()
         let inherited = Self.drainMainQueue(label: "before \(name)") // work an earlier class left behind isn't this test's

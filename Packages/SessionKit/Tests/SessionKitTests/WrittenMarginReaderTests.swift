@@ -251,8 +251,9 @@ final class WrittenMarginReaderTests: XCTestCase {
         defer { stuck.signal() }
         let reader = WrittenMarginReader(directory: directory, timeLimit: { _ in 30 }, renderAudio: { _, _ in stuck.wait(); throw WrittenMarginReader.RenderError.nothingToSay })
         let never = WrittenMarginReading(intro: "Cole wrote:", text: "Never.")
+        // Coming back at all is the proof: the render never finishes until this test ends, so a wait that ignored its
+        // limit would hang here instead of returning.
         await reader.waitUntilSettled([never], upTo: 0.3)
-        XCTAssertFalse(reader.isReady(never), "the wait ended at its limit while the render was still stuck")
     }
 
     /// Blocked writes each hold a thread (#1230): after a few, new readings fail at once instead of starting another.

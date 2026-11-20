@@ -36,15 +36,22 @@ final class BackgroundSessionGateTests: XCTestCase {
         XCTAssertTrue(gate.claim("a"), "a released identifier can be claimed again")
     }
 
-    /// An invalidation that ends the old session wakes the waiter at once, not when its timeout runs out.
+    /// An invalidation that ends the old session wakes the waiter at once, not when its timeout runs out. The waiter's
+    /// own timeout is an hour, so it can only come back inside the 30 s ceiling if the release woke it; a gate that
+    /// stopped waking waiters would re-claim the free identifier when the timeout ran out and still return true (#4573).
     func testAWaiterIsWokenByTheReleaseNotByItsTimeout() async {
         let gate = BackgroundSessionGate()
         XCTAssertTrue(gate.claim("a"))
-        async let waiting = gate.claim("a", waitingUpTo: .seconds(30))
+        let woken = expectation(description: "the waiter came back after the release, long before its hour ran out")
+        var took = false
+        Task { @MainActor in
+            took = await gate.claim("a", waitingUpTo: .seconds(3600))
+            woken.fulfill()
+        }
         try? await Task.sleep(for: .milliseconds(30))
         gate.release("a")
-        let took = await waiting
-        XCTAssertTrue(took, "woken by the release: a waiter that runs out its timeout gets false")
+        await fulfillment(of: [woken], timeout: 30)
+        XCTAssertTrue(took, "woken by the release and took the identifier")
         XCTAssertTrue(gate.isHeld("a"), "the waiter now holds it")
     }
 

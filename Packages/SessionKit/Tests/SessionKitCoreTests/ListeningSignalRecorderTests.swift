@@ -600,10 +600,6 @@ private final class ParkedPipe: @unchecked Sendable {
 
     init(path: String) { self.path = path }
 
-    func release(after seconds: TimeInterval) {
-        DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { _ = self.release() }
-    }
-
     /// Frees the queue, and returns what it wrote into the pipe (nothing, when its first write failed).
     @discardableResult
     func release() -> Data {
