@@ -8,9 +8,10 @@ workflow never runs on a conflicted PR). It runs no PR code and reads the PR onl
 Two jobs, independent of each other:
 
 1. Notify. One comment on the PR saying why it left the queue (the event's `reason`), naming the failed check of
-   its latest merge-group run with a link when there is one, and how to get back in: fix, push, `gh pr merge <n>`.
-   A removal for a failure also gets the `needs-fix` label. A PR that merged, or that was removed by hand, gets no
-   label. Each comment carries a hidden marker with the group head (or the PR head when no group ran), so a second
+   its latest merge-group run with a link when there is one, and how to get back in: fix, push, add `automerge`.
+   A removal for a failure also gets the `needs-fix` label and loses `automerge`, so the label bridge
+   (merge_queue_label_bridge.py) does not queue it again until someone adds `automerge` again, as with the old
+   lane. A PR that merged, or that was removed by hand, keeps its labels. Each comment carries a hidden marker with the group head (or the PR head when no group ran), so a second
    event for the same group adds nothing. A failed read logs a warning and exits 0: a notifier must not go red.
 
 2. Cancel. When an entry leaves the queue GitHub rebuilds the groups behind it and sends `merge_group: destroyed`
@@ -31,6 +32,7 @@ import time
 
 QUEUE_PREFIX = 'gh-readonly-queue/main/'
 LABEL = 'needs-fix'
+ARM_LABEL = 'automerge'
 MARKER = '<!-- merge-queue-dequeued head={head} -->'
 ACTIVE = ('queued', 'in_progress', 'waiting', 'pending', 'requested')
 FAILED = ('failure', 'timed_out', 'action_required', 'startup_failure')
@@ -88,6 +90,14 @@ class GitHub:
     def post(self, path, body):
         self._gh(['-X', 'POST', f'repos/{self.repo}/{path}', '--input', '-'], data=json.dumps(body))
 
+    def delete(self, path):
+        """DELETE; a 404 (already gone) is fine."""
+        try:
+            self._gh(['-X', 'DELETE', f'repos/{self.repo}/{path}'])
+        except subprocess.CalledProcessError as error:
+            if '404' not in f'{error.stdout or ""}{error.stderr or ""}':
+                raise
+
 
 def warn(message, out):
     print(f'::warning::{message}', file=out)
@@ -119,7 +129,7 @@ def comment_body(number, reason, head, check):
         lines.append('The PR conflicts with main. Merge main into the branch and resolve it.')
     else:
         lines.append(f'No failed check found on the merge group `{head[:7]}`.')
-    lines.append(f'To get back in: fix it, push, then run `gh pr merge {number}` again.')
+    lines.append(f'To get back in: fix it, push, then add `{ARM_LABEL}` again.')
     return '\n\n'.join(lines)
 
 
@@ -150,6 +160,7 @@ def notify(github, event, out=sys.stdout):
         github.post(f'issues/{number}/comments', {'body': comment_body(number, reason, head, check)})
         if reason.upper() not in NO_LABEL_REASONS:
             github.post(f'issues/{number}/labels', {'labels': [LABEL]})
+            github.delete(f'issues/{number}/labels/{ARM_LABEL}')
     except (subprocess.SubprocessError, OSError) as error:
         warn(f'#{number}: could not post ({error!r})', out)
         return 'skipped: post failed'

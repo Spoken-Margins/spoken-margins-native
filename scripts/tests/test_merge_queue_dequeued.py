@@ -21,6 +21,7 @@ class FakeGitHub:
         self.heads = heads if heads is not None else set()
         self.post_error = post_error
         self.posts = []
+        self.deletes = []
         self.reads = []
 
     def get(self, path):
@@ -41,6 +42,11 @@ class FakeGitHub:
         if self.post_error:
             raise self.post_error
         self.posts.append((path, body))
+
+    def delete(self, path):
+        if self.post_error:
+            raise self.post_error
+        self.deletes.append(path)
 
 
 def run(id_, sha, branch):
@@ -116,8 +122,38 @@ class NotifyTests(unittest.TestCase):
         self.assertIn('"hosted fast: Mac rest"', body['body'])
         self.assertIn('https://example.test/run/9', body['body'])
         self.assertIn(mq.MARKER.format(head=LIVE), body['body'])  # the newest group, not pr-70's or the old one
-        self.assertIn('`gh pr merge 7`', body['body'])
+        self.assertIn('then add `automerge` again', body['body'])
+        self.assertNotIn('gh pr merge', body['body'])
         self.assertEqual(label, ('issues/7/labels', {'labels': ['needs-fix']}))
+
+    def test_a_failure_removal_takes_automerge_off_so_the_bridge_does_not_queue_it_again(self):
+        # Without this the label bridge's 15-minute sweep would queue the failing PR again at once, rebuilding every
+        # group behind it four times an hour. Re-arming is adding `automerge` again, as with the old lane.
+        for reason in ('CI_FAILURE', 'MERGE_CONFLICT', 'CI_TIMEOUT', ''):
+            with self.subTest(reason=reason):
+                github = self.github()
+                mq.notify(github, event(reason=reason), out=io.StringIO())
+                self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
+
+    def test_a_merged_or_manual_removal_keeps_automerge(self):
+        for e in (event(reason='MANUAL'), event(reason='DEQUEUED_MANUALLY'), event(merged=True)):
+            github = self.github()
+            mq.notify(github, e, out=io.StringIO())
+            self.assertEqual(github.deletes, [])
+
+    def test_deleting_a_label_that_is_already_gone_is_fine(self):
+        github = mq.GitHub('o/r', sleep=lambda _: None)
+
+        def gone(args, data=None):
+            raise subprocess.CalledProcessError(1, 'gh', stderr='gh: Label does not exist (HTTP 404)')
+        github._gh = gone
+        github.delete('issues/7/labels/automerge')  # no raise
+
+        def broken(args, data=None):
+            raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 500')
+        github._gh = broken
+        with self.assertRaises(subprocess.CalledProcessError):
+            github.delete('issues/7/labels/automerge')
 
     def test_one_comment_per_group(self):
         told = {'body': 'earlier\n' + mq.MARKER.format(head=LIVE)}
