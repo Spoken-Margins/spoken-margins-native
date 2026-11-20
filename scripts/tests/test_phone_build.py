@@ -611,6 +611,16 @@ elif args[:2] in (["issue", "list"], ["issue", "create"], ["issue", "edit"], ["i
     elif args[1] == "close":
         items = [item for item in items if str(item["number"]) != args[2]]
     json.dump(items, open(path, "w"))
+elif args[:1] == ["api"] and "/statuses" in " ".join(args):  # the main T3 gate (#4575); FAKE_MAIN_T3=none: no status
+    state = os.environ.get("FAKE_MAIN_T3", "success")
+    if state != "none":
+        print(json.dumps({"context": "main-t3", "state": state, "target_url": "https://example/run/1",
+                          "created_at": "2026-11-18T00:00:00Z", "id": 1}))
+elif args[:2] == ["api", "graphql"] and "main-t3" in " ".join(args):  # the newest commit main's T3 passed on
+    state = os.environ.get("FAKE_MAIN_T3", "success")
+    status = {"context": {"state": state.upper(), "targetUrl": "https://example/run/1"}} if state != "none" else None
+    print(json.dumps({"data": {"repository": {"ref": {"target": {"history": {"nodes": [
+        {"oid": tip, "status": status}]}}}}}}))
 elif args[:2] == ["api", "graphql"]:
     def pr(n, title, files, issue):
         return {"number": n, "title": title, "url": "https://example/pr/%d" % n, "mergedAt": "", "body": "",
@@ -1341,6 +1351,10 @@ class PhoneBuildCoalescingTests(unittest.TestCase):
         self.module.guard_reason = unittest.mock.Mock(return_value=None)
         self.module.clear_work = unittest.mock.Mock()
         self.module.build = unittest.mock.Mock(return_value=0)
+        # The main T3 gate (#4575) passes every commit here; its own tests are in test_release_gate_main_t3.py.
+        self.module.main_t3_allows = unittest.mock.Mock(return_value=True)
+        unittest.mock.patch.object(self.module.main_t3_gate, 'newest_green',
+                                   side_effect=lambda *a, **k: (self.module.git(), '')).start()
 
     def attempt(self, minutes, filename='last-attempt.json', result='built'):
         (self.phone / filename).write_text(json.dumps({

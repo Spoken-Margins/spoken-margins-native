@@ -637,7 +637,8 @@ MAC_SCRIPT_NAME = re.compile(r'lane|verif|test-scope|test_scope|phone|sim[_-]|se
 # verify-tests.py). test_mac_checks_scope.py walks that code's imports and fails when one is missing here.
 MAC_SCRIPT_FILES = {'sm_paths.py', 'sm_build_cache.py', 'comment_trust.py', 'setup-worktree.sh', 'merge_audit.py',
                     'simctl_preflight.py', 'test_inventory.py', 'third_party_notices.py', 'node_modules_drift.py',
-                    'check_posterboard_repair.py', 'ops_checkout.py', 'workflow_yaml.py', 'test_workflow_files.py'}
+                    'check_posterboard_repair.py', 'ops_checkout.py', 'workflow_yaml.py', 'test_workflow_files.py',
+                    'main_t3_gate.py', 'test_release_gate_main_t3.py'}
 # Web/ (#3535): no Mac check reads it. Its tests run in --plan fast-portable and in hosted web's Playwright job, which the
 # runner waits for (web_check_required). A Swift file under Web/ still needs the Mac, by the suffix test below.
 MAC_NOT_NEEDED_PREFIXES = ('docs/', 'Design/', 'references/', 'tmp/', '.claude/', 'research/', 'Site/', 'ops/',
