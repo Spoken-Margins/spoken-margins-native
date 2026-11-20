@@ -385,11 +385,15 @@ def main(argv=None):
         body = drift_report(findings, data)
         print(body)
         thin = thin_data(samples)
-        if thin:
-            # Never close the issue on data too thin to judge: fail the job instead, so its red is the signal.
-            print(f'Too few recent samples for {", ".join(thin)} ({data.get("log_failures", 0)} job logs failed to '
-                  f'fetch); the issue is left as it is.', file=sys.stderr)
+        if data.get('log_failures') or len(thin) == len(LIMITS):
+            # Never close the issue on data that could not be read: fail the job instead, so its red is the signal.
+            print(f'{data.get("log_failures", 0)} job logs failed to fetch; too few recent samples for '
+                  f'{", ".join(thin) or "none"}. The issue is left as it is.', file=sys.stderr)
             return 1
+        if thin:
+            # A quiet week, or package-core falling back to serial, leaves one limit thin with nothing wrong: say so.
+            body += f'\nToo few samples this week to judge: {", ".join(thin)}.\n'
+            print(body.splitlines()[-1])
         if args.issue:
             update_issue(findings, body)
     elif args.command == 'profile':
