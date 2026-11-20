@@ -325,10 +325,16 @@ def acquire(names, what, label, out=sys.stderr, max_wait=None, allowed=None, why
     last_note = None
     while True:
         decision = None
+        deciding = True
         if decide:
+            # Never block on it (#4729): a holder that keeps it would freeze this wait with no note and no max_wait.
             decision = open(directory / decide, 'a+')
-            fcntl.flock(decision, fcntl.LOCK_EX)
-        usable = names[:allowed()] if allowed else names
+            try:
+                fcntl.flock(decision, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                decision.close()
+                decision, deciding = None, False
+        usable = (names[:allowed()] if allowed else names) if deciding else []
         taken = None
         for index, name in enumerate(usable):
             handle = open(directory / name, 'a+')
@@ -360,7 +366,9 @@ def acquire(names, what, label, out=sys.stderr, max_wait=None, allowed=None, why
         if timed_out or last_note is None or now - last_note >= NOTE_EVERY_SECONDS:
             # Only when saying it: reading the holders probes each lock, which shouldn't happen every poll.
             busy = '; '.join(_describe(h) for h in _read_holders(names, directory)) or 'nothing holds them'
-            if len(usable) < len(names):
+            if not deciding:
+                busy += f' (another process holds the slot decision, {decide})'
+            elif len(usable) < len(names):
                 busy += f' ({why() if why else f"only {len(usable)} of {len(names)} while a simulator job runs"})'
             if timed_out:
                 raise TimeoutError(f'no {what} free within {max_wait:.0f}s: {busy}')

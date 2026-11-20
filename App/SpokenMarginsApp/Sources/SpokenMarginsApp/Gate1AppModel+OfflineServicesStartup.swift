@@ -76,7 +76,7 @@ extension Gate1AppModel {
                     let scope = FeedRefreshScope.atLaunch(lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled)
                     // Marked only for a pass that ran, and as wide as it really was: a request that landed during the pass
                     // widens it to every feed (#4388).
-                    guard let covered = await self?.performFollowedSourceRefresh(force: false, scope: scope),
+                    guard let covered = await self?.performFollowedSourceRefresh(force: false, scope: scope, trigger: .startup),
                           !Task.isCancelled else { return }
                     LaunchRecorder.shared?.markFollowingFresh(firstScreenOnly: covered == .firstScreen)
                 }

@@ -175,9 +175,10 @@ extension Gate1AppModel {
         statusMessage = sourceImportProgressMessage ?? "Importing sources…"
         lastError = nil
 
+        let originalStore = try? pdfOriginalStore()
         sourceImportTask = Task { [weak self] in
             let batch = await Task.detached(priority: .userInitiated) {
-                await Self.prepareObsidianImports(requests)
+                await Self.prepareObsidianImports(requests, originalStore: originalStore)
             }.value
             scopedAccess.forEach { entry in
                 if entry.didAccess {
@@ -190,11 +191,15 @@ extension Gate1AppModel {
             do {
                 let store = try self.requireStore()
                 let clipStore = self.pdfClipStore()
-                let written = try await Self.offMain { Self.saveObsidianImports(batch.prepared, store: store, clipStore: clipStore) }
+                let written = try await Self.offMain {
+                    Self.saveObsidianImports(batch.prepared, staged: batch.staged, originalStore: originalStore, store: store, clipStore: clipStore)
+                }
                 saved = self.hangTelemetry.labels.scoped("obsidianImportFinish") {
                     Result { try self.completeObsidianMarkdownImport(batch, written: written, store: store) }
                 }
             } catch {
+                // Nothing was saved, so no staged copy will become an original.
+                if let originalStore { batch.staged.values.forEach(originalStore.discard) }
                 saved = .failure(error)
             }
             await self.finishObsidianMarkdownImport(
@@ -211,43 +216,71 @@ extension Gate1AppModel {
         }
     }
 
-    private nonisolated static func prepareObsidianImports(_ requests: [ObsidianImportRequest]) async -> ObsidianImportBatch {
+    private nonisolated static func prepareObsidianImports(
+        _ requests: [ObsidianImportRequest], originalStore: PDFOriginalStore?
+    ) async -> ObsidianImportBatch {
         var prepared: [PreparedObsidianImport] = []
         var failures: [String] = []
         var rawFailures: [String] = []
+        var staged: [String: PDFOriginalStore.Staged] = [:]
+        var stagingFailures: [String] = []
         for request in requests {
+            var stagedCopy: PDFOriginalStore.Staged?
             do {
-                let imported = try await importableText(from: request.url)
+                let read = try await importableText(
+                    from: request.url, itemId: request.itemId, originalStore: originalStore, stagingFailures: &stagingFailures)
+                stagedCopy = read.1
                 prepared.append(try SourceFileItemBuilder.prepare(
-                    imported, fileURL: request.url, itemId: request.itemId, createdAt: Date()
+                    read.0, fileURL: request.url, itemId: request.itemId, createdAt: Date()
                 ))
+                // A file address and a hash, not the bytes: a batch of large PDFs stays small (#4338).
+                staged[request.itemId] = stagedCopy
             } catch {
+                if let stagedCopy { originalStore?.discard(stagedCopy) }
                 failures.append("\(request.url.lastPathComponent)\n\(ListenerErrorText.message(for: error))")
                 rawFailures.append("\(request.url.lastPathComponent): \(error)")
             }
         }
-        return ObsidianImportBatch(prepared: prepared, failures: failures, rawFailures: rawFailures)
+        return ObsidianImportBatch(
+            prepared: prepared, failures: failures, rawFailures: rawFailures, staged: staged, stagingFailures: stagingFailures)
     }
 
-    private nonisolated static func importableText(from url: URL) async throws -> ImportedSourceText {
+    /// The file's text and, for a PDF, a staged copy to keep beside the item (#4338). The picked file's access is open
+    /// here and ends before the item is saved, so the copy is made now, a chunk at a time, and the text is read from the copy
+    /// so the hash recorded on the document is the hash of the file that is kept. When no copy can be made, the text is read
+    /// from the picked file as before and the import goes on without an original.
+    private nonisolated static func importableText(
+        from url: URL, itemId: String, originalStore: PDFOriginalStore?, stagingFailures: inout [String]
+    ) async throws -> (ImportedSourceText, PDFOriginalStore.Staged?) {
         guard url.pathExtension.lowercased() == "pdf" else {
-            return ImportedSourceText(
+            return (ImportedSourceText(
                 text: try String(contentsOf: url, encoding: .utf8),
                 documentStructure: nil
-            )
+            ), nil)
         }
         #if canImport(PDFKit)
+        var staged: PDFOriginalStore.Staged?
         do {
-            let extracted = try NativePDFDocumentExtractor.extractStructured(from: url)
-            return ImportedSourceText(
+            guard let originalStore else { throw CocoaError(.fileNoSuchFile) }
+            staged = try originalStore.stage(copying: url, itemId: itemId)
+        } catch {
+            stagingFailures.append(SafeErrorText.describe(error))
+        }
+        do {
+            let extracted = try NativePDFDocumentExtractor.extractStructured(fromFile: staged?.url ?? url, sourceSHA256: staged?.sha256)
+            return (ImportedSourceText(
                 text: extracted.document.text,
                 documentStructure: extracted.documentStructure,
                 structuredDocument: extracted.document,
                 title: extracted.title,
                 clips: extracted.clips
-            )
+            ), staged)
         } catch PDFStructuredTextExtractor.ExtractionError.noExtractableText {
+            if let staged { originalStore?.discard(staged) }
             throw SourceFileImportError.pdfHasNoExtractableText
+        } catch {
+            if let staged { originalStore?.discard(staged) }
+            throw error
         }
         #else
         throw SourceFileImportError.pdfImportUnavailable
@@ -268,6 +301,7 @@ extension Gate1AppModel {
     private func completeObsidianMarkdownImport(
         _ batch: ObsidianImportBatch, written: SavedObsidianImports, store: SQLiteSessionStore
     ) throws -> SavedObsidianBatch {
+        if let reason = (batch.stagingFailures + written.originalKeepFailures).first { diagnostics["lastPDFOriginalKeepFailure"] = reason } // #4338
         let saved = SavedObsidianBatch(
             imported: written.imported, failures: batch.failures + written.failures,
             rawFailures: batch.rawFailures + written.rawFailures,
@@ -283,13 +317,18 @@ extension Gate1AppModel {
         var imported: [Item] = []
         var failures: [String] = []
         var rawFailures: [String] = []
+        /// Why a saved PDF's original was not kept; the import itself still counts (#4338).
+        var originalKeepFailures: [String] = []
     }
 
     /// Saves each prepared file's item, map and document off the main actor (#2509): the text can be megabytes.
     private nonisolated static func saveObsidianImports(
-        _ prepared: [PreparedObsidianImport], store: SQLiteSessionStore, clipStore: PDFClipStore?
+        _ prepared: [PreparedObsidianImport], staged: [String: PDFOriginalStore.Staged], originalStore: PDFOriginalStore?,
+        store: SQLiteSessionStore, clipStore: PDFClipStore?
     ) -> SavedObsidianImports {
         var result = SavedObsidianImports()
+        var unsaved = staged
+        defer { if let originalStore { unsaved.values.forEach(originalStore.discard) } } // an item that did not save keeps no copy
         for prepared in prepared {
             do {
                 try store.saveItem(prepared.item)
@@ -302,6 +341,15 @@ extension Gate1AppModel {
                     try? clipStore?.replaceClips(prepared.clips, forItem: prepared.item.id, document: document)
                 }
                 result.imported.append(prepared.item)
+                // After the item is saved, so a failed save leaves no original behind. A failed write loses only the copy.
+                if let copy = unsaved.removeValue(forKey: prepared.item.id) {
+                    do {
+                        guard let originalStore else { throw CocoaError(.fileNoSuchFile) }
+                        try originalStore.commit(copy)
+                    } catch {
+                        result.originalKeepFailures.append(SafeErrorText.describe(error))
+                    }
+                }
             } catch {
                 result.failures.append("\(prepared.item.title)\n\(ListenerErrorText.message(for: error))")
                 result.rawFailures.append("\(prepared.item.title): \(error)")

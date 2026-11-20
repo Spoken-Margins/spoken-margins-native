@@ -1,0 +1,119 @@
+{
+  "about": "Ten quiz answers for the #4673 trial: a sender describing a kind of person, no real names. Fields follow the quiz questions in #4674's comments.",
+  "personas": [
+    {
+      "id": "p01",
+      "who": "my aunt, a retired ER nurse",
+      "listens_to": "true-crime podcasts and the BBC World Service",
+      "dinner": "hospital staffing and how much worse it has got since she retired",
+      "already_heard": "the usual 'nurses are heroes' talk; anything that gets basic medicine wrong",
+      "situation": "in the kitchen cleaning up after dinner, hands wet, phone on the counter speaker",
+      "length": "under 40 minutes",
+      "push": "something new where I'd want her thinking",
+      "expert": "she is the expert; the episode is something we both react to"
+    },
+    {
+      "id": "p02",
+      "who": "a coworker who just moved here from a farm town",
+      "listens_to": "agriculture news and old-time radio dramas",
+      "dinner": "why grocery prices don't match what farmers get paid",
+      "already_heard": "the 'small farms good, big farms bad' argument",
+      "situation": "on a long walk with headphones",
+      "length": "30 to 60 minutes",
+      "push": "challenge him a little",
+      "expert": "he is the expert"
+    },
+    {
+      "id": "p03",
+      "who": "my teenage nephew who is into robotics club",
+      "listens_to": "YouTube engineering channels, almost no podcasts",
+      "dinner": "whether AI will take the jobs he wants",
+      "already_heard": "doom takes about AI",
+      "situation": "in the car on the way to school, shared speaker with his mom",
+      "length": "under 25 minutes",
+      "push": "something new, nothing preachy",
+      "expert": "the host is the expert, but he should feel he can argue back"
+    },
+    {
+      "id": "p04",
+      "who": "a friend who is a public-school music teacher",
+      "listens_to": "music history podcasts and NPR",
+      "dinner": "kids learning instruments versus learning on apps",
+      "already_heard": "'arts funding is being cut' stories",
+      "situation": "on the couch with coffee on a Sunday",
+      "length": "45 minutes or so",
+      "push": "something new where I'd want her thinking",
+      "expert": "she is the expert"
+    },
+    {
+      "id": "p05",
+      "who": "my dad, a retired civil engineer",
+      "listens_to": "history podcasts and anything about bridges, dams and infrastructure",
+      "dinner": "why big public projects take so long and cost so much",
+      "already_heard": "complaints about regulations with no detail",
+      "situation": "out hiking, one earbud in",
+      "length": "up to an hour",
+      "push": "challenge him",
+      "expert": "he is the expert; I want him to tell me what the host got wrong"
+    },
+    {
+      "id": "p06",
+      "who": "a neighbour who runs a small bakery",
+      "listens_to": "business interview podcasts and food shows",
+      "dinner": "how hard it is to hire and keep staff",
+      "already_heard": "'nobody wants to work anymore'",
+      "situation": "early morning while baking, speaker on a shelf, hands covered in flour",
+      "length": "20 to 35 minutes",
+      "push": "something new where I'd want her thinking",
+      "expert": "she is the expert"
+    },
+    {
+      "id": "p07",
+      "who": "a college friend who works as a software engineer",
+      "listens_to": "tech podcasts and economics shows",
+      "dinner": "whether remote work is good for junior people",
+      "already_heard": "every return-to-office argument",
+      "situation": "on the train commute with headphones",
+      "length": "30 to 50 minutes",
+      "push": "challenge him",
+      "expert": "both of us know the topic; I want us to disagree usefully"
+    },
+    {
+      "id": "p08",
+      "who": "my grandmother, who gardens every day",
+      "listens_to": "gardening radio call-in shows and audiobooks of mysteries",
+      "dinner": "the weather getting stranger and what grows now that didn't before",
+      "already_heard": "political fights about climate",
+      "situation": "in the garden, phone in an apron pocket on speaker",
+      "length": "under 30 minutes",
+      "push": "gentle, something new",
+      "expert": "she is the expert"
+    },
+    {
+      "id": "p09",
+      "who": "a friend who is a public defender",
+      "listens_to": "legal podcasts and long-form journalism shows",
+      "dinner": "bail, plea deals and how little time each case gets",
+      "already_heard": "true-crime that glamorises prosecutors; any host who gets procedure wrong",
+      "situation": "driving between courthouses, car speaker",
+      "length": "35 to 45 minutes",
+      "push": "something new where I'd want their thinking",
+      "expert": "they are the expert"
+    },
+    {
+      "id": "p10",
+      "who": "my sister, a new parent on leave",
+      "listens_to": "parenting podcasts and comedy interview shows",
+      "dinner": "sleep, screen time, and whether all the parenting advice contradicts itself",
+      "already_heard": "sleep-training debates",
+      "situation": "pushing a stroller around the park, one earbud in",
+      "length": "20 to 40 minutes",
+      "push": "something light but new",
+      "expert": "she is the expert; she has read everything"
+    }
+  ],
+  "wordings": {
+    "plain": "I want to send {who} a podcast episode we can talk about. About them:\n- What they listen to: {listens_to}\n- What they bring up at dinner: {dinner}\n- What they've already heard every argument about: {already_heard}\n- Where and how they'll listen: {situation}\n- How long: {length}\n- How hard it should push: {push}\n- Who should be the expert: {expert}\n\nSuggest 3 or 4 specific episodes (not shows). Put each on one line in this form:\nShow — Episode title | length | clean or explicit | suggested timestamp for my comment | link\nUse an Apple Podcasts episode link when you can. For a Substack, give the post link. One link per line, nothing else on the line after the link.",
+    "verify": "I want to send {who} a podcast episode we can talk about. About them:\n- What they listen to: {listens_to}\n- What they bring up at dinner: {dinner}\n- What they've already heard every argument about: {already_heard}\n- Where and how they'll listen: {situation}\n- How long: {length}\n- How hard it should push: {push}\n- Who should be the expert: {expert}\n\nSuggest 3 or 4 specific episodes (not shows). Put each on one line in this form:\nShow — Episode title | length | clean or explicit | suggested timestamp for my comment | link\nUse an Apple Podcasts episode link when you can. For a Substack, give the post link. One link per line, nothing else on the line after the link.\nBefore you answer, look up each link and confirm it opens that exact episode. Never write a link from memory or guess an ID. If you can't confirm an episode link, give the show's Apple Podcasts link and add (show link) before it."
+  }
+}

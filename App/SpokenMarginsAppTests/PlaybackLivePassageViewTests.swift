@@ -65,11 +65,22 @@ final class PlaybackLivePassageViewTests: XCTestCase {
         defer { mounted.close() }
         try await waitForAppearance(mounted)
         try await Task.sleep(for: .seconds(2))
-        let realized = NowSceneRowCounter.sentences.count
+        let realizedIDs = NowSceneRowCounter.sentences
+        let realized = realizedIDs.count
         XCTAssertGreaterThan(realized, 0, "The rows near the lit sentence are drawn")
         // Distinct sentences, not body runs: a publish elsewhere that redraws the visible rows once more is not a row
         // realized. Counting bodies read 106 and 123 in the 11-18 batch run, with nothing in this view changed.
-        XCTAssertLessThan(realized, 100, "Fewer than 100 of 9,000 rows are realized")
+        // The limit is a fraction of the scene, not a count picked from one quiet run (#4664): the hosted main-t3 runs
+        // read 145 and 151 distinct rows of 9,000, because LazyVStack realizes a lead-in beyond the visible rows, and
+        // how far it reads ahead varies with load. What this test guards is a list that is not lazy at all (9,000 rows)
+        // or that realizes the rows it scrolls past (thousands), so the limit sits at 5%, three times the highest
+        // reading so far and twenty times below either failure. The message carries the span so the next reading
+        // shows where the rows were.
+        let limit = 9_000 / 20
+        XCTAssertLessThan(
+            realized, limit,
+            "Fewer than \(limit) of 9,000 rows are realized (\(realized) were, at text offsets \(realizedIDs.min() ?? -1) to \(realizedIDs.max() ?? -1); the lit one is at \(middle))"
+        )
         let drawn = NowSceneRowCounter.bodies
 
         // The same sentence, a few Characters on: nothing is drawn again.

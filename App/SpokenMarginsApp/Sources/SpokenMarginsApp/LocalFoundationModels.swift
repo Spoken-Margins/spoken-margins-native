@@ -39,10 +39,17 @@ protocol LocalFoundationModelClient: Sendable {
     func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String
     /// "Where people reacted" (#476): the reply to `MarginLayerSynthesis.prompt`, one cited sentence per line.
     func summarizeReactions(prompt: String) async throws -> String
+    /// A spoken Margin's words rewritten as clear written sentences (#4339), given the passage before and after it. The
+    /// reply has not passed `MarginTidyGuard` yet: `MarginTidyProposer` checks it.
+    func tidyMargin(transcript: String, before: String, after: String) async throws -> String
 }
 
 extension LocalFoundationModelClient {
     func summarizeReactions(prompt: String) async throws -> String {
+        throw LocalFoundationModelError.unavailable(availability().description)
+    }
+
+    func tidyMargin(transcript: String, before: String, after: String) async throws -> String {
         throw LocalFoundationModelError.unavailable(availability().description)
     }
 }
@@ -89,6 +96,15 @@ final class UITestingLocalFoundationModelClient: LocalFoundationModelClient, @un
     func summarizeReactions(prompt: String) async throws -> String {
         if mode == .fail { throw LocalFoundationModelError.emptyResponse }
         return "People reacted near the start. [m1]"
+    }
+
+    /// The filler-only tidy with a full stop, so a UI test can tell the model's proposal from the filler-only one, and so
+    /// the reply passes `MarginTidyGuard` for whatever Margin the test seeds. `fail` makes it throw, as a model that can't.
+    func tidyMargin(transcript: String, before: String, after: String) async throws -> String {
+        if mode == .fail { throw LocalFoundationModelError.emptyResponse }
+        let tidy = MarginTidy.fillerOnly(transcript).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = tidy.last, !".!?".contains(last) else { return tidy }
+        return tidy + "."
     }
 }
 #endif
@@ -151,6 +167,16 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
     func summarizeReactions(prompt: String) async throws -> String {
         try requireAvailability()
         return try await respond(to: prompt, maximumResponseTokens: 400)
+    }
+
+    /// One request per tidy (#4339): the Margin's words and up to 500 characters of passage on each side, in the words the
+    /// Design fixed (`MarginTidyPrompt`). Greedy sampling, and a reply cap that fits a five-minute Margin.
+    func tidyMargin(transcript: String, before: String, after: String) async throws -> String {
+        try requireAvailability()
+        return try await respond(
+            to: MarginTidyPrompt.text(transcript: transcript, before: before, after: after),
+            maximumResponseTokens: 1_500
+        )
     }
 
     private func requireAvailability() throws {
