@@ -134,24 +134,6 @@ extension SharedMarginTally.Sender {
     fileprivate var shownLabel: String { isNamed ? shownName : "a friend" }
 }
 
-/// What "Completed hidden" adds when a hidden completed item still has a friend's Margins on it (#3794). Under the
-/// default Unfinished filter, items with unheard Margins are not hidden (#4103), so those are all heard; under
-/// Unplayed and In Progress, finished items are hidden whatever is new on them. The view puts a dot before it.
-public enum LibraryCompletedHiddenNote {
-    /// - Parameter items: for each hidden completed item that has friends' Margins, its tally.
-    /// - Returns: "1 has Margins from Cole" (one item, one sender), "1 has Margins from friends" (one item, several
-    ///   senders), "2 have Margins from friends" (two or more items); nil when no hidden item has any.
-    public static func words(items: [SharedMarginTally]) -> String? {
-        let withMargins = items.filter { !$0.isEmpty }
-        guard !withMargins.isEmpty else { return nil }
-        if withMargins.count > 1 { return "\(withMargins.count) have Margins from friends" }
-        let people = SharedMarginTally.mergedSenders(withMargins[0].senders)
-        if people.count == 1, let only = people.first, only.isNamed { return "1 has Margins from \(only.shownName)" }
-        if people.count <= 1 { return "1 has Margins from a friend" }
-        return "1 has Margins from friends"
-    }
-}
-
 extension String {
     /// Case and diacritics ignored, as the Library search folds titles.
     fileprivate var folded: String {

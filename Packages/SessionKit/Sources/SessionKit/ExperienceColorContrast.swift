@@ -290,6 +290,8 @@ public enum AppColorContrastAudit {
     public static let textBackgroundPairs: [Pair] = [
         .init(name: "reading body on bone", foreground: AppSemanticColorRGB.text, background: AppSemanticColorRGB.bone, minimumRatio: 4.5),
         .init(name: "reading secondary on bone", foreground: AppSemanticColorRGB.secondaryText, background: AppSemanticColorRGB.bone, minimumRatio: 4.5),
+        // The Library row's Margins tag: the count in bone on a secondaryText fill (#4698).
+        .init(name: "bone on secondaryText", foreground: AppSemanticColorRGB.bone, background: AppSemanticColorRGB.secondaryText, minimumRatio: 4.5),
         .init(name: "listening body", foreground: AppSemanticColorRGB.white, background: AppSemanticColorRGB.listeningBackground, minimumRatio: 4.5),
         .init(name: "listening secondary", foreground: AppSemanticColorRGB.listeningSecondary, background: AppSemanticColorRGB.listeningBackground, minimumRatio: 4.5),
         .init(name: "recording status", foreground: AppSemanticColorRGB.listeningAccent, background: AppSemanticColorRGB.listeningBackground, minimumRatio: 4.5),
@@ -354,6 +356,8 @@ public enum AppColorContrastAudit {
         .init(name: "coral icon on panel", foreground: AppSemanticColorRGB.coral, background: AppSemanticColorRGB.panel, minimumRatio: 3),
         .init(name: "coral icon on soft green", foreground: AppSemanticColorRGB.coral, background: AppSemanticColorRGB.softGreen, minimumRatio: 3),
         .init(name: "ochre icon on bone", foreground: AppSemanticColorRGB.ochreText, background: AppSemanticColorRGB.bone, minimumRatio: 3),
+        // The Library row's unread dot for a friend's unheard Margins: a shape, on the row (#4698).
+        .init(name: "unread dot on bone", foreground: AppSystemColorRGB.blue, background: AppSemanticColorRGB.bone, minimumRatio: 3),
         .init(name: "ochre icon on panel", foreground: AppSemanticColorRGB.ochreText, background: AppSemanticColorRGB.panel, minimumRatio: 3),
         .init(name: "ochre icon on soft green", foreground: AppSemanticColorRGB.ochreText, background: AppSemanticColorRGB.softGreen, minimumRatio: 3),
         .init(name: "warning icon on panel", foreground: AppSemanticColorRGB.warningText, background: AppSemanticColorRGB.panel, minimumRatio: 3),
@@ -408,6 +412,9 @@ public enum AppColorContrastAudit {
             for kind in TimelineRowKind.allCases {
                 rows.append((TimelineRowPalette.fill(kind: kind, isCurrent: false), labelNames[kind] ?? "\(kind.rawValue) row label",
                              TimelineRowPalette.labelColor(kind: kind)))
+                // The current row keeps its kind's label and icon, now on the highlighted card's fill.
+                rows.append((TimelineRowPalette.fill(kind: kind, isCurrent: true), labelNames[kind] ?? "\(kind.rawValue) row label",
+                             TimelineRowPalette.labelColor(kind: kind)))
             }
             for row in rows {
                 for (name, color) in [("row title", AppSemanticColorRGB.text), ("row detail", AppSemanticColorRGB.secondaryText),
@@ -418,6 +425,13 @@ public enum AppColorContrastAudit {
                 }
             }
         }
+        // The current row's outline marks a state, so it reaches 3:1 against what is behind the list. The other rows'
+        // outlines only echo the kind, which the label already says, and need no pair.
+        let currentStroke = TimelineRowPalette.currentStrokeColor
+        pairs.append(.init(name: "current row stroke on bone", foreground: currentStroke,
+                           background: AppSemanticColorRGB.bone, minimumRatio: 3))
+        pairs.append(.init(name: "current row stroke on listening background", foreground: darkOnly(currentStroke),
+                           background: darkOnly(AppSemanticColorRGB.listeningBackground), minimumRatio: 3))
         return pairs
     }()
 
@@ -626,15 +640,7 @@ public enum AppColorContrastAudit {
         .init(pair: "input fill on panel", appearance: "light", since: "2026-10-17", fixedBy: "#1922"),
         .init(pair: "input fill on panel", appearance: "dark", since: "2026-10-17", fixedBy: "#1922"),
         .init(pair: "input fill on app background", appearance: "light", since: "2026-10-17", fixedBy: "#1922"),
-        .init(pair: "input fill on app background", appearance: "dark", since: "2026-10-17", fixedBy: "#1922"),
-        // Found by hand in the 2026-11-08 audit, and measured here once the audit could composite a tint (#3739).
-        // The Timeline rows' tints are too strong for the secondary text on them in light mode (#3734).
-        .init(pair: "row detail on evergreen at 0.12 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
-        .init(pair: "row detail on evergreen at 0.07 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
-        .init(pair: "row detail on coral at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
-        .init(pair: "my Margin row label on coral at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
-        .init(pair: "row detail on ochre at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
-        .init(pair: "row detail on plum at 0.07 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734")
+        .init(pair: "input fill on app background", appearance: "dark", since: "2026-10-17", fixedBy: "#1922")
     ]
 
 
