@@ -84,7 +84,7 @@ final class LibraryFolderQueryTests: XCTestCase {
         guard case .folder(let folderRow, let isCurrent) = listing[0] else { return XCTFail("a folder row first") }
         XCTAssertFalse(isCurrent)
         XCTAssertEqual(folderRow.name, "Daily Brief")
-        XCTAssertEqual(folderRow.progress.detailLine, "24 items · 24 unfinished")
+        XCTAssertEqual(folderRow.progress.detailLine, "24 files · 24 unfinished")
         XCTAssertEqual(folderRow.playPlan?.startItemID, "p1")
     }
 
@@ -100,7 +100,7 @@ final class LibraryFolderQueryTests: XCTestCase {
         let listing = list(rows, collections: [collection("f", "F")], folders: [folder("f", items: ["a", "b"])])
         guard case .folder(let folderRow, _) = listing[0] else { return XCTFail("a folder row") }
         XCTAssertEqual(folderRow.progress.itemCount, 1)
-        XCTAssertEqual(folderRow.progress.detailLine, "1 item · 1 unfinished")
+        XCTAssertEqual(folderRow.progress.detailLine, "1 file · 1 unfinished")
     }
 
     // MARK: The Listening filter applies to the folder row
