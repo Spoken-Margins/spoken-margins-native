@@ -22,20 +22,21 @@ PROVIDER = APP / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp" / "SpokenMa
 HELP = APP / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp" / "HelpScreen.swift"
 TOKEN = r"\(.applicationName)"
 # Phrases Siri gave to Reminders or another built-in (#3893): "<verb> a Margin to/with/for/on <app>".
-HANDED_ELSEWHERE = re.compile(r"\ba margin (to|with|for|on)\b", re.I)
+HANDED_ELSEWHERE = re.compile(r"\b(?:a )?margin (to|with|for|on)\b", re.I)
 
 
 def _phrases() -> list[str]:
     text = PROVIDER.read_text()
-    block = re.search(r"phrases:\s*\[(.*?)\n\s*\]", text, re.S)
+    assert text.count("AppShortcut(") == 1, "a second AppShortcut needs its phrases checked too"
+    block = re.search(r"phrases:\s*\[(.*?)\]\s*,\s*shortTitle", text, re.S)
     assert block, "no phrases: [...] list in SpokenMarginsAppShortcuts.swift"
-    phrases = re.findall(r'^\s*"((?:[^"\\]|\\.)*)"\s*,?\s*$', block.group(1), re.M)
+    phrases = re.findall(r'"((?:[^"\\]|\\.)*)"', re.sub(r"//[^\n]*", "", block.group(1)))
     assert phrases, "the phrases list has no string literals"
     return phrases
 
 
 def _swift_sources():
-    return [p for p in APP.rglob("*.swift") if "Tests" not in p.parts]
+    return [p for p in APP.rglob("*.swift") if not any(part.endswith("Tests") for part in p.parts)]
 
 
 class SiriPhraseTests(unittest.TestCase):
@@ -47,7 +48,8 @@ class SiriPhraseTests(unittest.TestCase):
     def test_no_build_compiles_the_provider_out(self):
         defined = []
         for path in [ROOT / "project.yml", *(ROOT / "Config").glob("*.xcconfig")]:
-            if "SPOKEN_MARGINS_LEGACY" in path.read_text():
+            code = re.sub(r"(?m)(//|#).*$", "", path.read_text())
+            if "SPOKEN_MARGINS_LEGACY" in code:
                 defined.append(path.name)
         self.assertEqual(defined, [], "a build that defines SPOKEN_MARGINS_LEGACY drops the Siri phrases")
 
@@ -64,7 +66,8 @@ class SiriPhraseTests(unittest.TestCase):
         self.assertEqual(len(folded), len(set(folded)))
 
     def test_the_phrases_help_teaches_are_registered(self):
-        line = next(l for l in HELP.read_text().splitlines() if "Hands-free: say" in l)
+        line = next((l for l in HELP.read_text().splitlines() if "Hands-free: say" in l), None)
+        self.assertIsNotNone(line, "Help must keep a 'Hands-free: say ...' line that teaches the phrases")
         taught = re.findall(r'\\"(.*?)\\"', line)
         self.assertGreaterEqual(len(taught), 2, "Help lists more than one phrase that works")
         registered = {p.replace(TOKEN, "Spoken Margins").lower() for p in _phrases()}
@@ -75,7 +78,7 @@ class SiriPhraseTests(unittest.TestCase):
         text = (ROOT / "project.yml").read_text()
         self.assertIn("INFOPLIST_KEY_CFBundleDisplayName: Spoken Margins\n", text)
         plist = (APP / "SpokenMarginsApp" / "Info.plist").read_text()
-        self.assertRegex(plist, r"<key>CFBundleDisplayName</key>\s*<string>[^<]+</string>")
+        self.assertRegex(plist, r"<key>CFBundleDisplayName</key>\s*<string>Spoken Margins</string>")
 
 
 if __name__ == "__main__":
