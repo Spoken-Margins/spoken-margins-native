@@ -1169,13 +1169,19 @@ def feed_new_lines(path, offset, watch):
     return offset + end
 
 
+# The step ceilings below come from scripts/ci_step_budgets.json, which scripts/ci_step_budgets.py writes from measured
+# step durations: 1.5 x the p95 of the last 30 passing hosted runs, rounded up to a minute, never below a floor. Each
+# entry lists the run IDs its number came from. Hand-set ceilings were raised three times on 2026-11-20 (runner-tests
+# 600, 1200, 1800 s) as the step drifted toward each one; the scheduled ci-step-drift.yml job now says when a step's
+# p95 passes 75% of its ceiling, and a PR regenerates the table.
+STEP_BUDGETS = json.loads((Path(__file__).resolve().parent / 'ci_step_budgets.json').read_text())['limits']
 PACKAGE_BUILD_TIMEOUT = 900  # SessionKit build with tests; cold, under load
 PACKAGE_TEST_TIMEOUT = 600  # the SessionKit tests alone (#844)
 # #1767: on a busy Mac the same tests run two to three times slower than the 230 s they take on a quiet one, and
 # three PRs were failed ("Process exit 124", hundreds of tests missing, no failing test) while the suite was still
 # working through its classes. The limit above stays the budget; a step that is still printing results when it
 # runs out may go on until the ceiling, and one that has printed nothing for the stall time is a hang and stops.
-PACKAGE_TEST_CEILING = 1500
+PACKAGE_TEST_CEILING = STEP_BUDGETS['PACKAGE_TEST_CEILING']['seconds']
 PACKAGE_STALL_SECONDS = 240
 # The lane (scripts/lane-runner.py FAST_TIMEOUT, 2400 s) starts its clock before this process, so the plan's wait for
 # a host-test slot counts there. A step's ceiling is cut to fit what is left of it, so the step ends itself with its
@@ -1187,7 +1193,7 @@ PARALLEL_CORE_TIMEOUT = 300
 # #1767: on the three timed-out runs this step was killed at 62-76% done, its results (written at the end) were lost, and
 # the serial rerun took another 364-379 s. Its progress lines stream as it goes, so it gets the same rule as the
 # serial steps: a run still printing at 300 s goes on, one silent for the stall time is a hang and is rerun serially.
-PARALLEL_CORE_CEILING = 900
+PARALLEL_CORE_CEILING = STEP_BUDGETS['PARALLEL_CORE_CEILING']['seconds']
 PARALLEL_CORE_STALL_SECONDS = 120
 PACKAGE_RUNNER = ['bash', 'scripts/run-sessionkit-tests.sh']
 # The runner's own 631 tests took 164.5 s on a quiet Mac (PR #1103's 0c940ba, 2026-10-08) and 172.3 s in a
@@ -1198,10 +1204,9 @@ RUNNER_TESTS_TIMEOUT = 600
 # #2488: by 2026-10-22 the step took 482-519 s on a busy day and was killed at 600 s at load 138-150, its log still a
 # stream of passing dots, so two runs of #2409 failed with "executed zero tests". It gets #1767's rule: a run still
 # printing at its budget goes on until the ceiling; one silent for the stall time is a hang and stops.
-# 2026-11-20: on the hosted Linux runner (load 0.6) passing runs took 743, 809, 1141 and 1180 s the same afternoon, and
-# PRs #4604 and #4597 were killed at 1200 s with the log still a stream of passing dots. The portable job's 45-minute
-# limit (#4747) has room for 30 minutes here; finding the slow tests is the real fix.
-RUNNER_TESTS_CEILING = 1800
+# #4763 set 1800 by hand on 2026-11-20 after passing hosted runs took up to 1180 s and two PRs were killed at 1200 s;
+# the table now derives the same 1800 from the last 30 passing runs (1.5 x p95, ci_step_budgets.json).
+RUNNER_TESTS_CEILING = STEP_BUDGETS['RUNNER_TESTS_CEILING']['seconds']
 RUNNER_TESTS_STALL_SECONDS = PACKAGE_STALL_SECONDS  # one test compiles Swift, silent for minutes at high load
 RUNNER_TESTS_LIMITS = {'timeout': RUNNER_TESTS_TIMEOUT, 'ceiling': RUNNER_TESTS_CEILING,
                        'stall_seconds': RUNNER_TESTS_STALL_SECONDS}
