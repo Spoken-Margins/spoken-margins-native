@@ -14,3 +14,9 @@ public enum ShareStarPlace: String, Codable, CaseIterable, Sendable {
     /// The Margins tab's menu.
     case marginsTab
 }
+
+extension Interjection {
+    /// Whether a Margin row shows the sharing star (#4173). Share sends only Margins on the source itself, so a Margin on an
+    /// assistant reply or a summary has no star: it could never be included, and a starred one would suggest otherwise.
+    public var isOfferedShareStar: Bool { targetType == .item }
+}
