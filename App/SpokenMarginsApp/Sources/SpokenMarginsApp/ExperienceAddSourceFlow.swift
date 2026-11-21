@@ -171,7 +171,8 @@ struct ExperienceAddSourceFlow: View {
 
     private var routePicker: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Add to Library")
+            // The sheet's own title already says "Add to Library"; the heading asks the question the tiles answer (#4612).
+            Text("What would you like to add?")
                 .font(.title2.weight(.bold))
                 .screenTitle()
                 .foregroundStyle(AppColors.text)
