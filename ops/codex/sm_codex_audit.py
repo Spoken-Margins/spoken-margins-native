@@ -19,7 +19,8 @@ A PR is audited when all of these hold:
     the runner and its helpers, owner rule 2026-10-01), or the lane runner's
     newest report says it won't merge the PR until it has a Codex or Claude audit (the
     runner classifies files with scripts/test-scope.py, which is wider than the
-    list here: #402 and #439 waited on an audit this script never ran), or a
+    list here: #402 and #439 waited on an audit this script never ran; so the audio,
+    persistence and packet categories of test-scope.py count as risky too, #4843), or a
     comment on the PR or its linked issue asks for a Codex audit.
 
 A head that already has an audit is audited again only for one of these (the lane runner already
@@ -70,6 +71,7 @@ import argparse
 import datetime as _dt
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -184,6 +186,34 @@ RISKY_PATTERNS = {
     ],
 }
 _RISKY_RE = {k: [re.compile(p, re.I) for p in v] for k, v in RISKY_PATTERNS.items()}
+
+# The merge policy holds a PR for an audit by test-scope.py's category (lane-runner.py merge_blockers: AUDITED), which is
+# wider than the hand-kept list above: an app file is audio when its NAME matches APP_AUDIO and packets when it matches
+# APP_PACKET. A PR the policy holds that this script did not call risky waited for an audit nobody ran (#4666, #4792,
+# #4801, #4811, #4812, #4822, #4843). So the categories the policy audits are read from test-scope.py itself.
+SCOPE_AUDIT_AREAS = {"audio": "audio", "persistence": "persistence", "packet": "sharing"}  # lane-runner.py AUDITED
+_SCOPE = None
+
+
+def _scope_policy():
+    global _SCOPE
+    if _SCOPE is None:
+        path = sm_paths.repo(__file__) / "scripts" / "test-scope.py"
+        spec = importlib.util.spec_from_file_location("test_scope_for_audit", path)
+        _SCOPE = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_SCOPE)
+    return _SCOPE
+
+
+def scope_areas(paths: list[str]) -> list[str]:
+    """The areas test-scope.py's classification of these paths holds a merge for (the policy's own reading)."""
+    scope = _scope_policy()
+    # The category depends on the path (and, for a public-API change, the diff), never on the tree. A root with no
+    # files makes classify_path skip the test-class reads it does for the lane's T3 request, which this does not need.
+    nowhere = Path("/nonexistent-tree-for-scope-categories")
+    found = {SCOPE_AUDIT_AREAS[f.category] for f in
+             (scope.classify_path(nowhere, p) for p in sorted(set(paths)) if p) if f.category in SCOPE_AUDIT_AREAS}
+    return sorted(found)
 _NEVER_RISKY_RE = NEVER_RISKY_RE
 _UNCOUNTED_RE = re.compile(r"(^|/)research/|(^|/)fixtures/", re.I)
 
@@ -384,6 +414,7 @@ def risky_areas(paths: list[str]) -> list[str]:
             if any(r.search(p) for r in pats):
                 areas.append(area)
                 break
+    areas += [a for a in scope_areas(paths) if a not in areas]  # what the merge policy holds (#4843)
     return areas
 
 
