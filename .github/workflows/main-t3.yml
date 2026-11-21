@@ -8,11 +8,17 @@
 # runtime check, Git LFS from a cache, the Xcode compilation cache, Python 3.12 and XcodeGen. It runs main's own
 # scripts/lane-runner.py T3 machinery (simulator clone, boot rules, crash-flood stop) through scripts/main_t3.py.
 #
+# A push to main starts it too (#4839): a merge is tested soon after it lands. A push-started run skips when another run
+# did simulator work in the last 3 hours (scripts/main_t3.py --floor-minutes), so a busy day still costs one run in
+# 3 hours, and a skipped push is picked up by the next tick.
+#
 # workflow_dispatch: `force` runs even when the SHA already has a status (a release cut asking for a fresh run, or a
 # retry after a runner fault); `sha` tests an older commit on main instead of its head.
 name: main-t3
 
 on:
+  push:
+    branches: [main]
   schedule:
     # Every 3 hours at minute 17, not on the hour (GitHub delays runs scheduled at :00).
     - cron: '17 */3 * * *'
@@ -36,9 +42,14 @@ on:
 permissions:
   contents: read
 
-# One run at a time; a tick that lands while one runs waits, then finds the status and skips.
+# One run at a time among ticks and dispatches; one that lands while another runs waits, then finds the status and
+# skips. Pushes have a group of their own (#4839): a group keeps one running and one pending run, and a newer pending run
+# replaces the older, so a merge's push run must never replace a waiting release-cut dispatch or a fixed tick. A push
+# run waits behind an older push run only; the floor in `decide` counts a tick's or a dispatch's queued or running
+# simulator job, so a push still starts no second Mac run beside one. Never cancel a run in progress: it is 100 minutes
+# of work.
 concurrency:
-  group: main-t3
+  group: main-t3-${{ github.event_name == 'push' && 'push' || 'run' }}
   cancel-in-progress: false
 
 jobs:
@@ -50,7 +61,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      statuses: read
+      statuses: write  # decide claims the commit with `pending` before the Mac job's minutes of setup
+      actions: read  # the push floor reads this workflow's recent runs and jobs
     outputs:
       run: ${{ steps.decide.outputs.run }}
       sha: ${{ steps.sha.outputs.sha }}
@@ -83,7 +95,10 @@ jobs:
         env:
           SHA: ${{ steps.sha.outputs.sha }}
           FORCE: ${{ inputs.force && '--force' || '' }}
-        run: python3 scripts/main_t3.py decide --sha "$SHA" $FORCE
+          # Only a push waits for the floor; a tick, or a dispatch, always asks the commit's own status.
+          FLOOR: ${{ github.event_name == 'push' && '--floor-minutes 180' || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/main_t3.py decide --sha "$SHA" --run-url "$RUN_URL" $FORCE $FLOOR
 
   t3:
     name: 'main-t3: the whole app suite on main'
@@ -216,3 +231,28 @@ jobs:
             ${{ runner.temp }}/lane-evidence/**/*.md
           if-no-files-found: ignore
           retention-days: 14
+
+  # decide left `pending` on the commit. If the Mac job never started (the run was cancelled while it waited for a
+  # runner, or no runner came), nothing else would settle it and the head would read "in progress" for 5 hours. After a
+  # finished run the newest status is success, failure or error, and `lost` leaves it alone.
+  settle:
+    name: 'settle: a claimed commit whose Mac job never reported'
+    needs: [decide, t3]
+    if: always() && needs.decide.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SHA: ${{ needs.decide.outputs.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ vars.SM_TRUNK || 'main' }}
+          persist-credentials: false
+      - name: Settle a stranded pending
+        run: python3 scripts/main_t3.py lost --sha "$SHA" --run-url "$RUN_URL"

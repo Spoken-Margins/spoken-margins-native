@@ -196,6 +196,119 @@ class LaneRunnerCouplingTests(unittest.TestCase):
         self.assertIn('1 passed', ran[0])
 
 
+def job(name, conclusion='success', hours_ago=1.0, status='completed'):
+    started = NOW - datetime.timedelta(hours=hours_ago)
+    return {'name': name, 'status': status, 'conclusion': conclusion, 'started_at': started.strftime('%Y-%m-%dT%H:%M:%SZ')}
+
+
+def run(run_id, hours_ago, *jobs):
+    created = NOW - datetime.timedelta(hours=hours_ago)
+    return {'id': run_id, 'created_at': created.strftime('%Y-%m-%dT%H:%M:%SZ'), 'jobs': list(jobs)}
+
+
+DECIDE = 'decide: has main moved since its last main-t3?'
+T3 = 'main-t3: the whole app suite on main'
+FLOOR = datetime.timedelta(minutes=M.FLOOR_MINUTES)
+
+
+class PushFloorTests(unittest.TestCase):
+    """#4839: a push to main starts main-t3, but two simulator runs are never closer than the floor. Without the
+    floor, a day of merges would start a 100-minute run per merge."""
+
+    def start(self, runs, current=''):
+        return M.recent_work_start(runs, NOW, FLOOR, current)
+
+    def test_no_recent_run_means_no_floor(self):
+        self.assertIsNone(self.start([]))
+
+    def test_a_simulator_run_inside_the_floor_holds_the_push(self):
+        self.assertIsNotNone(self.start([run(1, 2.5, job(DECIDE), job(T3, hours_ago=2.4))]))
+
+    def test_a_run_older_than_the_floor_does_not(self):
+        self.assertIsNone(self.start([run(1, 3.5, job(DECIDE), job(T3, hours_ago=3.4))]))
+
+    def test_a_run_whose_simulator_job_was_skipped_did_no_work(self):
+        # the decide job said "already tested", so the t3 job never started
+        self.assertIsNone(self.start([run(1, 0.5, job(DECIDE), job(T3, conclusion='skipped'))]))
+
+    def test_a_cancelled_simulator_job_did_no_work(self):
+        self.assertIsNone(self.start([run(1, 0.5, job(T3, conclusion='cancelled'))]))
+
+    def test_a_run_still_going_counts_even_when_it_began_long_ago_within_the_floor(self):
+        running = job(T3, conclusion=None, status='in_progress', hours_ago=1.7)
+        self.assertIsNotNone(self.start([run(1, 1.8, job(DECIDE), running)]))
+
+    def test_this_run_does_not_hold_itself(self):
+        self.assertIsNone(self.start([run(7, 0.1, job(DECIDE), job(T3, conclusion=None, status='queued'))], current='7'))
+
+    def test_only_the_simulator_job_counts_not_any_job(self):
+        self.assertIsNone(self.start([run(1, 0.5, job(DECIDE))]))
+
+    def test_it_returns_the_newest_start(self):
+        found = self.start([run(1, 2.5, job(T3, hours_ago=2.4)), run(2, 1.5, job(T3, hours_ago=1.4))])
+        self.assertEqual(found, NOW - datetime.timedelta(hours=1.4))
+
+    def test_a_job_with_no_start_time_uses_its_runs_creation(self):
+        queued = {'name': T3, 'status': 'queued', 'conclusion': None, 'started_at': None}
+        self.assertIsNotNone(self.start([run(1, 0.2, queued)]))
+
+
+class DecideClaimTests(unittest.TestCase):
+    """Audit of c75ffb7: push runs and ticks are in separate concurrency groups, so a tick can decide while a push run
+    is still in Mac setup. Without a status on the commit it started a second whole-suite run, and the two raced to
+    write the result. decide now leaves `pending` the moment it says run."""
+
+    def decide(self, store, calls, run_id, **over):
+        import argparse
+        import os
+        from unittest import mock
+        args = argparse.Namespace(**{'sha': SHA, 'force': False, 'floor_minutes': 0,
+                                     'run_url': f'https://x/runs/{run_id}', **over})
+        outputs = {}
+
+        class FixedNow(datetime.datetime):  # decide reads the clock; the statuses above are dated NOW
+            @classmethod
+            def now(cls, tz=None):
+                return NOW
+        clock = type('clock', (), {'datetime': FixedNow, 'timezone': datetime.timezone, 'timedelta': datetime.timedelta})
+
+        def set_status(sha, payload):
+            store.insert(0, {'context': payload['context'], 'state': payload['state'],
+                             'created_at': NOW.strftime('%Y-%m-%dT%H:%M:%SZ')})
+            calls.append(payload)
+        with mock.patch.object(M, 'statuses', lambda sha: list(store)), \
+                mock.patch.object(M, 'set_status', set_status), \
+                mock.patch.object(M, 'recent_runs', lambda now, floor: []), \
+                mock.patch.object(M, 'write_outputs', lambda **kw: outputs.update(kw)), \
+                mock.patch.object(M, 'write_summary', lambda text: None), \
+                mock.patch.object(M, 'datetime', clock), \
+                mock.patch.dict(os.environ, {'GITHUB_RUN_ID': str(run_id)}):
+            M.command_decide(args)
+        return outputs['run']
+
+    def test_a_tick_deciding_beside_a_push_run_still_in_setup_skips(self):
+        store, calls = [], []
+        self.assertEqual(self.decide(store, calls, 1, floor_minutes=M.FLOOR_MINUTES), 'true')   # the push run
+        self.assertEqual(self.decide(store, calls, 2), 'false')                               # the 12:17 tick
+        self.assertEqual(len(calls), 1)
+
+    def test_the_claim_is_a_pending_main_t3_status_with_the_run_url(self):
+        store, calls = [], []
+        self.decide(store, calls, 7)
+        self.assertEqual([(c['context'], c['state'], c['target_url']) for c in calls],
+                         [(M.CONTEXT, 'pending', 'https://x/runs/7')])
+
+    def test_a_decision_not_to_run_claims_nothing(self):
+        store, calls = [status('success')], []
+        self.assertEqual(self.decide(store, calls, 3), 'false')
+        self.assertEqual(calls, [])
+
+    def test_a_dispatch_with_force_claims_and_runs_beside_anything(self):
+        store, calls = [status('pending', 0.1)], []
+        self.assertEqual(self.decide(store, calls, 4, force=True), 'true')
+        self.assertEqual(len(calls), 1)
+
+
 class WorkflowTests(unittest.TestCase):
     """main-t3.yml is the trunk's one simulator run (owner, 2026-11-18)."""
     ROOT = Path(__file__).resolve().parents[2]
@@ -208,6 +321,46 @@ class WorkflowTests(unittest.TestCase):
     def test_it_ticks_every_3_hours_and_before_the_owners_phone_builds(self):
         crons = [c['cron'] for c in self.load('main-t3.yml')['schedule']]
         self.assertEqual(crons, ['17 */3 * * *', '30 13 * * *', '30 22 * * *'])  # 6:30 and 15:30 America/Phoenix
+
+    def test_it_also_starts_on_a_push_to_main_and_only_a_push_waits_for_the_floor(self):
+        self.assertEqual(self.load('main-t3.yml')['push'], {'branches': ['main']})
+        text = (self.ROOT / '.github/workflows/main-t3.yml').read_text()
+        self.assertIn("github.event_name == 'push' && '--floor-minutes %d'" % M.FLOOR_MINUTES, text)
+        self.assertIn('actions: read', text)  # the floor reads this workflow's runs
+
+    def test_a_push_run_cannot_replace_a_waiting_tick_or_dispatch(self):
+        # A concurrency group keeps one pending run and a newer pending run replaces it. In one shared group, a merge's
+        # push run replaced a waiting release-cut dispatch or fixed tick, then skipped on the floor, leaving the head
+        # untested (audit of 30f4499). Pushes get a group of their own, and nothing in progress is ever cancelled.
+        import yaml
+        data = yaml.safe_load((self.ROOT / '.github/workflows/main-t3.yml').read_text())
+        group = data['concurrency']['group']
+        self.assertIs(data['concurrency']['cancel-in-progress'], False)
+
+        def resolve(event):  # the one expression the group uses, evaluated for an event
+            return group.replace("${{ github.event_name == 'push' && 'push' || 'run' }}",
+                                 'push' if event == 'push' else 'run')
+        self.assertNotIn('${{', resolve('push'))
+        self.assertNotEqual(resolve('push'), resolve('schedule'))
+        self.assertEqual(resolve('schedule'), resolve('workflow_dispatch'))
+
+    def test_decide_can_claim_the_commit_and_a_settle_job_clears_a_claim_the_mac_never_reported(self):
+        import yaml
+        jobs = yaml.safe_load((self.ROOT / '.github/workflows/main-t3.yml').read_text())['jobs']
+        self.assertEqual(jobs['decide']['permissions']['statuses'], 'write')
+        self.assertIn('--run-url', jobs['decide']['steps'][-1]['run'])
+        settle = jobs['settle']
+        self.assertEqual(sorted(settle['needs']), ['decide', 't3'])
+        self.assertIn('always()', settle['if'])
+        self.assertIn('needs.decide.outputs.run', settle['if'])
+        self.assertIn('main_t3.py lost', settle['steps'][-1]['run'])
+        self.assertFalse(jobs['settle']['name'].startswith(M.RUN_JOB_PREFIX))
+
+    def test_the_floor_names_the_simulator_job_the_workflow_has(self):
+        import yaml
+        jobs = yaml.safe_load((self.ROOT / '.github/workflows/main-t3.yml').read_text())['jobs']
+        self.assertTrue(jobs['t3']['name'].startswith(M.RUN_JOB_PREFIX))
+        self.assertFalse(jobs['decide']['name'].startswith(M.RUN_JOB_PREFIX))
 
     def test_hosted_integration_no_longer_runs_on_a_push(self):
         self.assertEqual(list(self.load('hosted-integration.yml')), ['workflow_dispatch'])
