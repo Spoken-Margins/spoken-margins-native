@@ -56,13 +56,26 @@ final class MarginEndPhraseSavingTests: XCTestCase {
         let said = transcript(["that", "is", "my", "point", "stop", "margin"], text: "That is my point. Stop margin.")
         let file = directory.appending(path: "margin.m4a")
         try Data("audio".utf8).write(to: file)
-        let off = await MarginEndPhraseSaving.prepare(audioURL: file, transcript: said, isSwitchedOn: false)
+        let off = await MarginEndPhraseSaving.prepare(audioURL: file, transcript: said, isSwitchedOn: false, endedByPhrase: true)
         XCTAssertNil(off)
-        let noFile = await MarginEndPhraseSaving.prepare(audioURL: nil, transcript: said, isSwitchedOn: true)
+        let noFile = await MarginEndPhraseSaving.prepare(audioURL: nil, transcript: said, isSwitchedOn: true, endedByPhrase: true)
         XCTAssertNil(noFile)
-        let noWords = await MarginEndPhraseSaving.prepare(audioURL: file, transcript: nil, isSwitchedOn: true)
+        let noWords = await MarginEndPhraseSaving.prepare(audioURL: file, transcript: nil, isSwitchedOn: true, endedByPhrase: true)
         XCTAssertNil(noWords)
+        let notEndedByPhrase = await MarginEndPhraseSaving.prepare(audioURL: file, transcript: said, isSwitchedOn: true, endedByPhrase: false)
+        XCTAssertNil(notEndedByPhrase, "a Margin the phrase did not end is never cut, whatever its last words are")
         XCTAssertEqual(try Data(contentsOf: file), Data("audio".utf8))
+    }
+
+    // MARK: who ended the Margin
+
+    func testOnlyAMarginThePhraseEndedIsMarkedAndItIsAskedAboutOnce() {
+        let ledger = MarginEndPhraseEndLedger()
+        XCTAssertFalse(ledger.consumeEndedByPhrase(interjectionId: "a"), "nothing marked: not ended by the phrase")
+        ledger.markEndedByPhrase(interjectionId: "a")
+        XCTAssertFalse(ledger.consumeEndedByPhrase(interjectionId: "b"), "another Margin is not marked")
+        XCTAssertTrue(ledger.consumeEndedByPhrase(interjectionId: "a"))
+        XCTAssertFalse(ledger.consumeEndedByPhrase(interjectionId: "a"), "a retry or a relaunch keeps everything")
     }
 
     // MARK: words and the swap
@@ -107,24 +120,44 @@ final class MarginEndPhraseSavingTests: XCTestCase {
     #if os(macOS) && canImport(AVFoundation)
     // MARK: the whole step, on a real file
 
-    func testAMarginEndedOnThePhraseIsSavedWithoutItAndOneThatDisagreesKeepsAll() async throws {
+    func testAMarginEndedOnThePhraseIsSavedWithoutIt() async throws {
         let file = try MarginEndPhraseSavingTone.write(seconds: 4, to: directory.appending(path: "margin.m4a"))
+        // "margin" ends at 2,300 ms in a 4 s file: well over the confirming second of audio after it.
         let said = transcript(["that", "is", "my", "point", "stop", "margin"], text: "That is my point. Stop margin.")
-
-        let cut = await MarginEndPhraseSaving.prepare(audioURL: file, transcript: said, isSwitchedOn: true)
+        let cut = await MarginEndPhraseSaving.prepare(audioURL: file, transcript: said, isSwitchedOn: true, endedByPhrase: true)
         let prepared = try XCTUnwrap(cut)
         XCTAssertEqual(MarginEndPhraseSaving.wordsToSave(heard: said, prepared: prepared)?.text, "That is my point.")
         MarginEndPhraseSaving.finish(prepared, wordsSaved: true)
         guard case .milliseconds(let ms) = RecordedFileDuration.measure(file) else { return XCTFail("duration") }
         // "point" ends at 1,500 ms and "stop" starts at 1,600: the cut is at the end of the last word kept.
         XCTAssertEqual(Double(ms), 1_500, accuracy: 150, "the phrase is cut from the audio")
+    }
 
-        // The phrase in the middle of a sentence, or the transcript disagreeing with itself: everything is kept.
-        let again = try MarginEndPhraseSavingTone.write(seconds: 4, to: directory.appending(path: "other.m4a"))
+    func testAMarginEndedByTheScreenOnWordsThatEndLikeThePhraseKeepsAllOfIt() async throws {
+        let file = try MarginEndPhraseSavingTone.write(seconds: 4, to: directory.appending(path: "margin.m4a"))
+        let before = try Data(contentsOf: file)
+        let said = transcript(["so", "i", "wrote", "it", "in", "the", "end", "margin"], text: "So I wrote it in the end margin.")
+        let screen = await MarginEndPhraseSaving.prepare(audioURL: file, transcript: said, isSwitchedOn: true, endedByPhrase: false)
+        XCTAssertNil(screen, "ended by the screen: nothing is cut")
+        XCTAssertEqual(MarginEndPhraseSaving.wordsToSave(heard: said, prepared: screen)?.text, "So I wrote it in the end margin.")
+        XCTAssertEqual(try Data(contentsOf: file), before)
+    }
+
+    func testAFileThatStopsRightAfterThePhraseWordsIsNotCut() async throws {
+        // 8 words end at 3,100 ms; a 3.4 s file has 300 ms after them, less than the confirming second a phrase ending needs.
+        let file = try MarginEndPhraseSavingTone.write(seconds: 3.4, to: directory.appending(path: "margin.m4a"))
+        let said = transcript(["so", "i", "wrote", "it", "in", "the", "end", "margin"], text: "So I wrote it in the end margin.")
+        let early = await MarginEndPhraseSaving.prepare(audioURL: file, transcript: said, isSwitchedOn: true, endedByPhrase: true)
+        XCTAssertNil(early)
+    }
+
+    func testAPhraseInTheMiddleOrANonMatchingEndKeepsAll() async throws {
+        let file = try MarginEndPhraseSavingTone.write(seconds: 4, to: directory.appending(path: "margin.m4a"))
         let notLast = transcript(["stop", "margin", "notes", "here"], text: "Stop margin notes here.")
-        let kept = await MarginEndPhraseSaving.prepare(audioURL: again, transcript: notLast, isSwitchedOn: true)
+        let kept = await MarginEndPhraseSaving.prepare(audioURL: file, transcript: notLast, isSwitchedOn: true, endedByPhrase: true)
         XCTAssertNil(kept)
-        let off = await MarginEndPhraseSaving.prepare(audioURL: again, transcript: said, isSwitchedOn: false)
+        let said = transcript(["that", "is", "my", "point", "stop", "margin"], text: "That is my point. Stop margin.")
+        let off = await MarginEndPhraseSaving.prepare(audioURL: file, transcript: said, isSwitchedOn: false, endedByPhrase: true)
         XCTAssertNil(off, "with the toggle off the phrase stays")
     }
     #endif

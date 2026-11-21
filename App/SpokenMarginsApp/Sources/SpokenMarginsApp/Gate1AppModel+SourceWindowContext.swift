@@ -371,12 +371,13 @@ extension Gate1AppModel {
         Task {
             do {
                 let alignedTranscript = try await alignedInterjectionTranscriptionHandler?(audioPath)
-                // A Margin that ended on "stop margin" loses the phrase from its audio and words (#3940, PR 4); the cut
-                // copy is only swapped in once the words are saved, and any doubt keeps everything.
+                // Only a Margin the spoken phrase ended loses it from its audio and words (#3940, PR 4). The cut copy is
+                // swapped in once the words are saved; any doubt keeps everything.
                 let endPhraseCut = await MarginEndPhraseSaving.prepare(
                     audioURL: Self.resolvedInterjectionAudioURL(for: audioPath, applicationSupportDirectory: supportDirectory),
                     transcript: alignedTranscript,
-                    isSwitchedOn: MarginEndPhraseSaving.isSwitchedOn()
+                    isSwitchedOn: MarginEndPhraseSaving.isSwitchedOn(),
+                    endedByPhrase: MarginEndPhraseEndLedger.shared.consumeEndedByPhrase(interjectionId: interjection.id)
                 )
                 let savedTranscript = MarginEndPhraseSaving.wordsToSave(heard: alignedTranscript, prepared: endPhraseCut)
                 let transcript: String
