@@ -155,7 +155,7 @@ class PaceTests(unittest.TestCase):
         self.assertTrue(a.pace(now, usage, cloud)['breaker_ignored'])
         self.assertFalse(a.pace(now, usage, self.DIAL)['breaker_ignored'])
         text = a.report(now, 8, cloud, a.queue_verdict([], [], 5, 8), [], [], [], [], a.pace(now, usage, cloud))
-        self.assertIn('HALT for claude (ignored: the Dial is Cloud max)', text)
+        self.assertIn('HALT for claude (the Claude one is ignored: the Dial is Cloud max)', text)
 
 
 class GuideTextTests(unittest.TestCase):

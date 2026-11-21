@@ -297,7 +297,7 @@ def report(now: dt.datetime, hours: float, dial: dict, q: dict, holds: list[dict
         else:
             where = f'{gap:.0f} points ahead of the line'
         breaker = ('Breaker HALT for ' + ', '.join(p['halted_by']) +
-                   (' (ignored: the Dial is Cloud max)' if p['breaker_ignored'] else '')) if p['halted_by'] else 'Breaker clear'
+                   (' (the Claude one is ignored: the Dial is Cloud max)' if p['breaker_ignored'] else '')) if p['halted_by'] else 'Breaker clear'
         stale = f' The tick is {p["age_h"]:.0f} hours old; the Mac may be off.' if p['age_h'] > 3 else ''
         out.append(f'4. Allowance: {p["percent"]}% used, the line says {p["line"]:.0f}% '
                    f'(stop line {p["stop"]}%), {where}. {breaker}. '
