@@ -44,10 +44,15 @@ final class LiveSessionRedrawTests: XCTestCase {
         let screenBefore = ScreenRedrawProbe.count("liveSession")
         let checksBefore = ScreenRedrawProbe.equalityCheckCount("liveSession")
         let modelBefore = modelPublishes.count
+        let sourcesBefore = ScreenRedrawProbe.publishes
+        // From here the screen's body prints SwiftUI's reason for each run, so a failing attempt's log says what changed (#4379).
+        ScreenRedrawProbe.printsChanges.insert("liveSession")
+        defer { ScreenRedrawProbe.printsChanges.remove("liveSession") }
 
         let runsAtEachPublish = try await publish(on: model, watching: "liveSession")
 
         try await waitUntilQuiet("liveSession")
+        let sources = Self.publishesSince(sourcesBefore)
         let screenRuns = ScreenRedrawProbe.count("liveSession") - screenBefore
         let checks = ScreenRedrawProbe.equalityCheckCount("liveSession") - checksBefore
         // The runs so far after each publish, so a failure says whether the runs follow the publishes (a redraw by each one)
@@ -56,7 +61,8 @@ final class LiveSessionRedrawTests: XCTestCase {
                                  "\(Self.publishes) model publishes ran the live session screen's body \(screenRuns) times "
                                      + "(SwiftUI asked the screen's == \(checks) times; the model published "
                                      + "\(modelPublishes.count - modelBefore) times; runs after each publish: "
-                                     + "\(runsAtEachPublish.map { $0 - screenBefore }))")
+                                     + "\(runsAtEachPublish.map { $0 - screenBefore }); announcements by the screen's own objects: "
+                                     + "\(sources.isEmpty ? "none" : sources))")
     }
 
     func testControlAScreenThatWatchesTheModelIsRedrawnByTheSamePublishes() async throws {
@@ -78,6 +84,19 @@ final class LiveSessionRedrawTests: XCTestCase {
     }
 
     // MARK: - Publishing
+
+    /// The screen's own objects that announced a change since `before`, as "controller 20, feed 0" (#4379).
+    /// The failing attempt of 2026-11-19 showed one body run for each publish with the screen's `==` never asked, so the
+    /// redraw came from inside the screen, not from the presenter; this names which of its objects asked for it. The
+    /// controller forwards the capture's announcements, so a capture count is also counted under "controller".
+    private static func publishesSince(_ before: [String: Int]) -> String {
+        ScreenRedrawProbe.publishes
+            .map { (name: $0.key, count: $0.value - before[$0.key, default: 0]) }
+            .filter { $0.name.hasPrefix("liveSession.") && $0.count > 0 }
+            .sorted { $0.name < $1.name }
+            .map { "\($0.name.dropFirst("liveSession.".count)) \($0.count)" }
+            .joined(separator: ", ")
+    }
 
     /// What the model sends while an item renders and plays: bare publishes and a new rendered-chunk count.
     /// Returns the screen's body-run count after each publish.

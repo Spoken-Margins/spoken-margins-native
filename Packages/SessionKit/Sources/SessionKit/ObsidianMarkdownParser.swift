@@ -452,8 +452,11 @@ public enum ObsidianMarkdownParser {
         var pendingElements: [PendingElement] = []
         // The first line after the last table kept, so a table's own rows never open another.
         var tableEndLine = 0
+        // Code in a fence holds no picture, link or table (#4451); its lines stay in the text as they always did.
+        let fenced = capturingElements ? SourceElementCapture.fencedLines(in: lines) : []
 
         for (lineIndex, rawLine) in lines.enumerated() {
+            let capturingHere = capturingElements && !fenced[lineIndex]
             var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
             if line.isEmpty {
                 if output.last?.isEmpty == false {
@@ -472,7 +475,7 @@ public enum ObsidianMarkdownParser {
                 continue
             }
             if line.range(of: #"^!\[[^\]]*\]\([^)]+\)$"#, options: .regularExpression) != nil {
-                if capturingElements, let image = SourceElementCapture.standaloneImage(line) {
+                if capturingHere, let image = SourceElementCapture.standaloneImage(line) {
                     // Its place is the caption or paragraph that follows it, which the next output line becomes.
                     pendingElements.append(pendingImage(image, caption: SourceElementCapture.caption(followingLine: lineIndex, in: lines),
                                                         outputIndex: output.count))
@@ -480,20 +483,20 @@ public enum ObsidianMarkdownParser {
                 continue
             }
             // A picture the page wraps in a link: `[![alt](src)](page)`. Its line stays in the text as it always did.
-            if capturingElements, let image = SourceElementCapture.linkedImage(line) {
+            if capturingHere, let image = SourceElementCapture.linkedImage(line) {
                 pendingElements.append(pendingImage(image, caption: SourceElementCapture.caption(followingLine: lineIndex, in: lines),
                                                     outputIndex: output.count))
             }
             // A table's lines stay in the text as they always did; its cells are kept apart, anchored on its first line.
-            if capturingElements, lineIndex >= tableEndLine, SourceElementCapture.opensTable(at: lineIndex, in: lines) {
-                let rawRows = lines[lineIndex...].prefix { SourceElementCapture.isTableRow($0) }
+            if capturingHere, lineIndex >= tableEndLine, SourceElementCapture.opensTable(at: lineIndex, in: lines) {
+                let rawRows = SourceElementCapture.tableLines(from: lineIndex, in: lines, fenced: fenced)
                 tableEndLine = lineIndex + rawRows.count
                 if let table = SourceElementCapture.table(Array(rawRows)) {
                     pendingElements.append(PendingElement(kind: .table, label: table.label, altText: nil, url: "",
                                                           outputIndex: output.count, rows: table.rows))
                 }
             }
-            let linksInLine = capturingElements ? SourceElementCapture.inlineLinks(in: line) : []
+            let linksInLine = capturingHere ? SourceElementCapture.inlineLinks(in: line) : []
 
             // Preserve explicit Setext headings, and standalone bold lines as headings when the text has
             // no real ones (below), from pasted text.

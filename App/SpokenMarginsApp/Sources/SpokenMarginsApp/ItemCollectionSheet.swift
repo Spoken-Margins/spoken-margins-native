@@ -14,12 +14,19 @@ struct ItemCollectionSheet: View {
     @State private var newName = ""
     @State private var renaming: ItemCollection?
     @State private var renameText = ""
-    @State private var problem: String?
+    /// Why Create refused the name (empty or taken). It sits in the New Collection section, beside the field it is about,
+    /// and goes when the name changes (#4638).
+    @State private var nameProblem: String?
+    /// Why a tick, rename or delete on a row was refused. It sits above the rows.
+    @State private var rowProblem: String?
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
+                    if let rowProblem {
+                        Text(rowProblem).foregroundStyle(AppColors.secondaryText)
+                    }
                     if collections.isEmpty {
                         Text("No collections yet. Make one below.")
                             .foregroundStyle(AppColors.secondaryText)
@@ -31,6 +38,8 @@ struct ItemCollectionSheet: View {
                                 Spacer()
                                 if collection.itemIDs.contains(item.id) {
                                     Image(systemName: "checkmark").foregroundStyle(AppColors.ochreText)
+                                        // The selected trait below says it; the glyph would read "checkmark" on top (#4639).
+                                        .accessibilityHidden(true)
                                 }
                             }
                             .contentShape(Rectangle())
@@ -64,11 +73,15 @@ struct ItemCollectionSheet: View {
                     Button("Create Collection and Add This", systemImage: "plus.circle", action: create)
                         .disabled(ItemCollectionEditing.normalizedName(newName) == nil)
                         .accessibilityIdentifier("collection.new.button")
-                }
-                if let problem {
-                    Section { Text(problem).foregroundStyle(AppColors.secondaryText) }
+                    if let nameProblem {
+                        Text(nameProblem)
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("collection.new.problem")
+                    }
                 }
             }
+            .onChange(of: newName) { nameProblem = nil }
             .scrollContentBackground(.hidden)
             .background(AppColors.bone)
             .navigationTitle("Add to Collection")
@@ -95,6 +108,7 @@ struct ItemCollectionSheet: View {
     private func commit(
         needsName: String = ItemCollectionEditing.Wording.renameRefused,
         nameTaken: String = ItemCollectionEditing.Wording.renameRefused,
+        forName: String? = nil,
         fileID: String = #fileID, line: Int = #line,
         _ change: @escaping (LibraryCollectionModel, SQLiteSessionStore) async -> LibraryCollectionModel.Outcome,
         onSaved: @escaping () -> Void = {}
@@ -108,17 +122,31 @@ struct ItemCollectionSheet: View {
             let outcome = await change(collections, store)
             switch outcome {
             case .saved:
-                problem = nil
+                rowProblem = nil
+                if forName != nil { nameProblem = nil }
                 onSaved()
             case .needsName:
-                problem = needsName
+                refuse(needsName, forName: forName)
             case .nameTaken:
-                problem = nameTaken
+                refuse(nameTaken, forName: forName)
             case .failed(let error):
                 model.reportFailure(error, context: "Collection change failed", fileID: fileID, line: line)
             }
             load()
         }
+    }
+
+    /// Shows and announces a refusal (#4638). The announcement is posted here, not read off a changed value, so the same
+    /// refusal tried twice is heard twice. A refusal of a name the listener has since edited is dropped: the field
+    /// stays editable during the save, and the message would be about a name no longer there.
+    private func refuse(_ text: String, forName name: String?) {
+        if let name {
+            guard name == newName else { return }
+            nameProblem = text
+        } else {
+            rowProblem = text
+        }
+        announceToVoiceOver(text)
     }
 
     private func toggle(_ collection: ItemCollection) {
@@ -133,8 +161,9 @@ struct ItemCollectionSheet: View {
     private func create() {
         let name = newName
         let itemID = item.id
-        commit(needsName: ItemCollectionEditing.Wording.nameRequired, nameTaken: ItemCollectionEditing.Wording.nameTaken, { collections, store in
-            await collections.create(name: name, itemIDs: [itemID], store: store, selects: false)
+        nameProblem = nil
+        commit(needsName: ItemCollectionEditing.Wording.nameRequired, nameTaken: ItemCollectionEditing.Wording.nameTaken, forName: name, { collections, store in
+            await collections.create(name: name, itemIDs: [itemID], store: store)
         }, onSaved: { newName = "" })
     }
 
@@ -167,4 +196,10 @@ extension View {
             Button("Rename", action: commit)
         }
     }
+}
+
+/// Says `message` to VoiceOver (#4638). A refusal drawn on screen is silent to a listener who can't see it. Called where
+/// the message is set, so a refusal repeated word for word is spoken each time.
+func announceToVoiceOver(_ message: String) {
+    AccessibilityNotification.Announcement(message).post()
 }

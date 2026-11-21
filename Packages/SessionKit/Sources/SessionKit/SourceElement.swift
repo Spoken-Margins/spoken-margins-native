@@ -250,7 +250,7 @@ enum SourceElementCapture {
         return tableCells(lines[index]).count == columns
     }
 
-    /// Whether `line` can be a table row: it has a pipe that isn't escaped. GFM rows needn't start with one.
+    /// Whether `line` has a pipe that isn't escaped. A header row needs one; a body row does not (`continuesTable`).
     static func isTableRow(_ line: String) -> Bool {
         var previous: Character?
         for character in line where !character.isWhitespace {
@@ -258,6 +258,90 @@ enum SourceElementCapture {
             previous = character
         }
         return false
+    }
+
+    /// The lines of the table that opens at `index` (`opensTable` is true there): the header, the divider, then every
+    /// line GFM keeps as a body row. A body row needn't have a pipe in it; the table ends at a blank line, a code
+    /// fence, or the start of another block (`startsAnotherBlock`). `fenced` marks the lines inside code fences.
+    static func tableLines(from index: Int, in lines: [String], fenced: [Bool]) -> ArraySlice<String> {
+        var end = index + 2
+        while end < lines.count, !fenced[end], continuesTable(lines[end]) { end += 1 }
+        return lines[index..<end]
+    }
+
+    /// Whether a line after a table's divider is one of its body rows. A picture on a line of its own is not: the
+    /// page text drops that line and Timeline draws the picture, so it can't also be a row of cells.
+    static func continuesTable(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return !trimmed.isEmpty && !startsAnotherBlock(line) && standaloneImage(trimmed) == nil && linkedImage(trimmed) == nil
+    }
+
+    /// HTML block names GFM lets interrupt a table (CommonMark HTML block type 6).
+    private static let htmlBlockNames = [
+        "address", "article", "aside", "base", "basefont", "blockquote", "body", "caption", "center", "col", "colgroup", "dd",
+        "details", "dialog", "dir", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "frame",
+        "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hr", "html", "iframe", "legend", "li", "link",
+        "main", "menu", "menuitem", "nav", "noframes", "ol", "optgroup", "option", "p", "param", "search", "section",
+        "summary", "table", "tbody", "td", "tfoot", "th", "thead", "title", "tr", "track", "ul", "pre", "script", "style",
+        "textarea"
+    ]
+
+    /// Whether `line` opens a block that ends a table above it (GFM: "the table is broken at the first empty line,
+    /// or beginning of another block-level structure"): a quote, a heading, a list item, a thematic break, a code
+    /// fence or an HTML block. A line indented four spaces or more is indented code, which is no block start, so it
+    /// stays a row; and a line that only begins with an inline tag (`<em>x</em> | y`) is still a row.
+    static func startsAnotherBlock(_ line: String) -> Bool {
+        if fenceMarker(line) != nil { return true }
+        guard line.prefix(while: { $0 == " " }).count < 4, !line.hasPrefix("\t") else { return false }
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.range(
+            of: #"^(?:>|#{1,6}(?:\s|$)|[-*+](?:\s|$)|\d{1,9}[.)](?:\s|$)|(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$)"#,
+            options: .regularExpression) != nil { return true }
+        guard trimmed.hasPrefix("<") else { return false }
+        if trimmed.hasPrefix("<!--") || trimmed.hasPrefix("<?") || trimmed.range(of: #"^<![A-Za-z]"#, options: .regularExpression) != nil {
+            return true
+        }
+        if let name = trimmed.range(of: #"^</?([A-Za-z][A-Za-z0-9-]*)(?=\s|/?>|$)"#, options: .regularExpression) {
+            let tag = trimmed[name].drop { $0 == "<" || $0 == "/" }.lowercased()
+            if htmlBlockNames.contains(tag) { return true }
+        }
+        // A lone complete tag on its own line opens an HTML block (type 7).
+        return trimmed.range(of: #"^(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*)?/?>|</[A-Za-z][A-Za-z0-9-]*\s*>)\s*$"#,
+                             options: .regularExpression) != nil
+    }
+
+    /// Which lines are inside a fenced code block (CommonMark: three or more backticks or tildes, indented up to three
+    /// spaces, closed by a fence of the same kind at least as long; an unclosed fence runs to the end). The fence
+    /// lines count. Text in a fence is shown as the page's code, so it holds no picture, link or table.
+    static func fencedLines(in lines: [String]) -> [Bool] {
+        var fenced = [Bool](repeating: false, count: lines.count)
+        var open: (character: Character, length: Int)?
+        for (index, line) in lines.enumerated() {
+            let marker = fenceMarker(line)
+            if let current = open {
+                fenced[index] = true
+                if let marker, marker.character == current.character, marker.length >= current.length, marker.info.isEmpty {
+                    open = nil
+                }
+            } else if let marker {
+                fenced[index] = true
+                open = (marker.character, marker.length)
+            }
+        }
+        return fenced
+    }
+
+    private static func fenceMarker(_ line: String) -> (character: Character, length: Int, info: String)? {
+        let indent = line.prefix { $0 == " " }.count
+        guard indent <= 3 else { return nil }
+        let rest = line.dropFirst(indent)
+        guard let first = rest.first, first == "`" || first == "~" else { return nil }
+        let length = rest.prefix { $0 == first }.count
+        guard length >= 3 else { return nil }
+        let info = rest.dropFirst(length).trimmingCharacters(in: .whitespaces)
+        // A backtick fence's info string can't hold a backtick, so "```code```" is inline code, not a fence.
+        guard first != "`" || !info.contains("`") else { return nil }
+        return (first, length, info)
     }
 
     /// How many columns a divider line has, or nil when it isn't one.

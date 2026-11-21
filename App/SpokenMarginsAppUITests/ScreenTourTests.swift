@@ -231,6 +231,14 @@ final class ScreenTourTests: XCTestCase {
         capture("24-item-bottom", "The episode's item screen, scrolled to the bottom")
         for _ in 0..<3 { app.swipeDown() }
 
+        // The Library after Sam's packet: his Margin is on the row's tag and unread dot, and VoiceOver says who it is from
+        // (#4650). The packet opens straight onto the episode, so this is the first time the tour sees the Library since.
+        tapButton("item.home.button")
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 5), "Library did not appear after Sam's packet")
+        assertLibraryRowSays("new from Sam", podcast, after: "Sam's packet")
+        capture("21-library-after-packet", "Library after Sam's packet: the episode's row with its Margins tag and unread dot")
+        openItem(podcast)
+
         // The listener's own place is at about 84% (their Margin is at 80%), past Sam's Margin at 5:00. Since #4125
         // the item then says so: the big button reads "Hear Sam's Margins first" and plays them, then carries on,
         // and the second choice is "Listen without them". The old "Skip to …" pair appears only when nothing of
@@ -291,6 +299,10 @@ final class ScreenTourTests: XCTestCase {
         capture("30-reply-arrival", "Sam's reply: the episode's screen as it opens (\"Replies from Sam\", \"1 reply to your Margin\")")
         // The packet opened the item on its own, with no tab bar under it: back to the tabs first.
         tapButton("item.home.button")
+        // The Library again, with Sam's reply as the new Margin on the row (#4650).
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 5), "Library did not appear after Sam's reply")
+        assertLibraryRowSays("new from Sam", podcast, after: "Sam's reply")
+        capture("31-library-after-reply", "Library after Sam's reply: the episode's row with its Margins tag and unread dot")
         tapRoot("Margins")
         XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 5), "Margins did not appear")
         capture("32-margins-with-reply", "Margins tab after Sam's reply")
@@ -325,6 +337,18 @@ final class ScreenTourTests: XCTestCase {
                      "SPOKEN_MARGINS_UI_TEST_OPEN_PACKET_NAME": fixture]
         if markingListenerMarginShared { extra["SPOKEN_MARGINS_UI_TEST_LISTENER_SHARED"] = "1" }
         relaunchKeepingLibrary(extra, opensOnLibrary: false)
+    }
+
+    /// Fails the tour when the Library row for `itemId` doesn't say `words` to VoiceOver. Since the row's redesign the
+    /// sender's name is no longer drawn on the row (the artwork carries a count tag and a dot, both hidden from
+    /// accessibility), so the row's label is where "3 Margins, 1 new from Sam" can be checked (#4650).
+    private func assertLibraryRowSays(_ words: String, _ itemId: String, after event: String) {
+        let row = app.buttons["library.row.\(itemId)"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 8), "The episode's Library row is missing after \(event)")
+        // The Library refreshes a moment after Home opens, so the row can exist with its old words first: wait for them.
+        let says = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", words), object: row)
+        XCTAssertEqual(XCTWaiter().wait(for: [says], timeout: 10), .completed,
+                       "The episode's Library row should say \"\(words)\" after \(event). It reads: \(row.label)")
     }
 
     private func openItem(_ itemId: String) {
