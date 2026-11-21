@@ -151,7 +151,7 @@ test('a page that is not this post\'s data can\'t say the post has no voice', as
   assert.deepEqual(await run({ status: 200, url, body: '<script>window._preloads = JSON.parse("{}");</script>' }), unclear);
   // Another post's data, or an app that reports no final address while the page's own address differs.
   assert.deepEqual(await run({ status: 200, url, body: preloadsPage({ ...failed, canonical_url: 'https://captured.example/p/other' }) }), unclear);
-  const elsewhere = 'https://open.example/pub/x/p/failed';
+  const elsewhere = 'https://open.substack.com/pub/x/p/failed';
   const moved = appReads({ [elsewhere]: { status: 200, body: preloadsPage(failed) } }, { status: 200 });
   assert.deepEqual(await messageForOpenedSettled(post(elsewhere), moved.host, canPlay), unclear);
   // The same page with its own address is the clear case.
@@ -161,8 +161,23 @@ test('a page that is not this post\'s data can\'t say the post has no voice', as
 test('only a Substack post\'s page is read, and only with both of the app\'s handlers', async () => {
   const other = appReads({}, { status: 200 });
   const essay = post('https://example.com/essay');
-  assert.deepEqual(await messageForOpenedSettled(essay, other.host, canPlay), { type: 'verdict', verdict: 'unverified', why: 'post-voice' });
+  // #4767: a page that is not a Substack post has no voice a browser could find, so it is a plain "can't play", not "couldn't tell".
+  assert.deepEqual(await messageForOpenedSettled(essay, other.host, canPlay), { type: 'verdict', verdict: 'cannot', reason: 'no-episode-audio' });
   assert.deepEqual(other.asked, [], 'a page that is not a Substack post is never read');
+  // #4783: an Apple Podcasts episode page is looked up by the friend's own page when they open the link. The check can't
+  // make that lookup (the web view loads nothing but the link and the app's reads cover a Substack page and audio only), so
+  // it says "couldn't tell", never "can't play" for an episode the friend will be able to hear, and never reads Apple.
+  const apple = post('https://podcasts.apple.com/us/podcast/people-parks-and-policy-with-rffs-margaret-walls/id1445582279?i=1000427709574');
+  const unclear = { type: 'verdict', verdict: 'unverified', why: 'post-voice' };
+  assert.deepEqual(await messageForOpenedSettled(apple, other.host, canPlay), unclear);
+  assert.deepEqual(await messageForOpenedSettled(apple, {}, canPlay), unclear, 'and without the app\'s handlers too');
+  assert.deepEqual(other.asked, []);
+  // An Apple show page with no episode id has nothing to look up: a plain "can't play".
+  const show = post('https://podcasts.apple.com/us/podcast/people-parks-and-policy/id1445582279');
+  assert.deepEqual(await messageForOpenedSettled(show, other.host, canPlay), { type: 'verdict', verdict: 'cannot', reason: 'no-episode-audio' });
+  const spotify = post('https://open.spotify.com/episode/4rOoJ6Egrf8K2IrywzwOMk');
+  assert.deepEqual(await messageForOpenedSettled(spotify, other.host, canPlay), { type: 'verdict', verdict: 'cannot', reason: 'no-episode-audio' });
+  assert.deepEqual(other.asked, []);
   const readOnly = appReads({ [POST]: { status: 200, url: POST, body: feedFixture('substack-voiceover-page.html').toString() } }, { status: 206, contentType: 'audio/mpeg' });
   delete (readOnly.host.webkit.messageHandlers as { smPlayCheck?: unknown }).smPlayCheck;
   assert.deepEqual(await messageForOpenedSettled(post(POST), readOnly.host, canPlay), { type: 'verdict', verdict: 'unverified', why: 'post-voice' });

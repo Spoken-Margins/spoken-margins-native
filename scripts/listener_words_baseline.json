@@ -10,9 +10,15 @@
   },
   {
    "kind": "words",
-   "text": "1 item",
+   "text": "1 Item",
    "count": 1,
-   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
+   "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
+  },
+  {
+   "kind": "words",
+   "text": "1 item",
+   "count": 2,
+   "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
   },
   {
    "kind": "words",
@@ -22,33 +28,21 @@
   },
   {
    "kind": "words",
-   "text": "Add items",
+   "text": "All Items",
    "count": 1,
-   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
+   "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
   },
   {
    "kind": "words",
-   "text": "Add items from your Library to see them here.",
+   "text": "All … items are already in the queue.",
    "count": 1,
-   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
+   "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
   },
   {
    "kind": "words",
-   "text": "All items",
+   "text": "All … items are already in “…”.",
    "count": 1,
-   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
-  },
-  {
-   "kind": "words",
-   "text": "All items, selected",
-   "count": 1,
-   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
-  },
-  {
-   "kind": "words",
-   "text": "Edit Items",
-   "count": 2,
-   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
+   "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
   },
   {
    "kind": "words",
@@ -94,9 +88,15 @@
   },
   {
    "kind": "words",
-   "text": "No items match.",
+   "text": "No items",
    "count": 1,
-   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
+   "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
+  },
+  {
+   "kind": "words",
+   "text": "None of the … items in “…” could be added.",
+   "count": 1,
+   "reason": "#3769 folder import summary: a picked folder holds mixed sources (PDFs, articles, audio), so there is no single source noun; same wording rule as #4343 collections"
   },
   {
    "kind": "words",
@@ -112,15 +112,21 @@
   },
   {
    "kind": "words",
-   "text": "Use itemAudioOmitted; a source is a feed, while this flag describes the listened-to item's audio.",
+   "text": "Select Items",
    "count": 1,
-   "reason": "Developer-facing note in SharingModels that names a field; not shown in the app."
+   "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
   },
   {
    "kind": "words",
-   "text": "Your Library has no items yet.",
+   "text": "The 1 item in “…” couldn't be added.",
    "count": 1,
-   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
+   "reason": "#3769 folder import summary: a picked folder holds mixed sources (PDFs, articles, audio), so there is no single source noun; same wording rule as #4343 collections"
+  },
+  {
+   "kind": "words",
+   "text": "Use itemAudioOmitted; a source is a feed, while this flag describes the listened-to item's audio.",
+   "count": 1,
+   "reason": "Developer-facing note in SharingModels that names a field; not shown in the app."
   },
   {
    "kind": "words",
@@ -160,6 +166,12 @@
   },
   {
    "kind": "words",
+   "text": "item",
+   "count": 1,
+   "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
+  },
+  {
+   "kind": "words",
    "text": "item digest is invalid",
    "count": 1,
    "reason": "Packet validation error text from InterjectionPackageArchive. The import side maps these to fixed listener wording (SharedMarginsImportMessage). It shows to a listener only if the sender's own check of a packet they just built fails (Build23SharingSeams, rare). Kept with the packet code."
@@ -181,6 +193,12 @@
    "text": "item transport",
    "count": 1,
    "reason": "Lines of the packet's preview.md, which the importer compares byte for byte and the frozen last-shipped reader (Packages/SessionKit/Tests/ShippedReader) writes the same way, so new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A friend can open preview.md outside the app, so this is accepted for compatibility, not because nobody reads it."
+  },
+  {
+   "kind": "words",
+   "text": "items",
+   "count": 1,
+   "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
   },
   {
    "kind": "words",
@@ -214,9 +232,15 @@
   },
   {
    "kind": "words",
-   "text": "… items",
+   "text": "… Items",
    "count": 1,
-   "reason": "#4343 Design names these strings (Edit Items, Add items, All items, N items): a collection holds mixed sources, so there is no single source noun"
+   "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
+  },
+  {
+   "kind": "words",
+   "text": "… items",
+   "count": 2,
+   "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
   },
   {
    "kind": "words",

@@ -404,7 +404,8 @@ class TheWorkflow(unittest.TestCase):
         tests = next(i for i, run in enumerate(runs) if 'scripts/linux_core_tests.py run' in run)
         record = next(i for i, run in enumerate(runs) if 'title=lane-hosted-tested' in run)
         self.assertLess(tests, record)
-        self.assertNotIn('if', self.steps('portable')[tests])
+        # Every merge group and dispatch runs them; only a PR's quick tier leaves them to the merge group (2026-11-20).
+        self.assertEqual(self.steps('portable')[tests].get('if'), "github.event_name != 'pull_request'")
         self.assertNotIn('continue-on-error', self.steps('portable')[tests])
         self.assertFalse(any('swift build --build-tests' in run for run in runs), 'swift test builds them')
 
@@ -417,7 +418,7 @@ class TheWorkflow(unittest.TestCase):
         for job, name, path in (('portable', 'linux-core-tests', 'artifacts/test-runs/linux-core/'),
                                 ('mac-rest', 'mac-core-tests', 'artifacts/test-runs/*/package-core.xunit.xml')):
             step = next(s for s in self.steps(job) if s.get('with', {}).get('name') == name)
-            self.assertEqual(step['if'], 'always()')
+            self.assertEqual(step['if'], "always() && github.event_name != 'pull_request'" if job == 'portable' else 'always()')
             self.assertEqual(step['with']['path'], path)
 
     def test_a_linux_retry_pass_reaches_the_tally_job_from_the_step_that_names_it(self):

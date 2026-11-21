@@ -5,18 +5,10 @@ import SwiftUI
 import UIKit
 
 extension SourcePicture {
-    /// The first frame, decoded no larger than `maxPixelSize` on its long side.
+    /// The first frame, decoded no larger than `maxPixelSize` on its long side. Slow for a large picture: call it off
+    /// the main thread (`SourcePicture.decodedStill`).
     static func still(_ data: Data, maxPixelSize: Int) -> UIImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else {
-            return nil
-        }
-        let options = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-        ] as CFDictionary
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, options).map { UIImage(cgImage: $0) }
+        stillImage(data, maxPixelSize: maxPixelSize).map { UIImage(cgImage: $0) }
     }
 }
 
@@ -132,6 +124,8 @@ final class AnimatedPictureView: UIView {
     private var maxPixelSize = 1_200
     /// Bumped to stop the animation that is running: its next frame sees a newer generation and stops.
     private var generation = 0
+    /// Bumped for each still asked for; the decode that comes back for an older one is dropped.
+    private var stillGeneration = 0
     private var isAnimating = false
 
     override init(frame: CGRect) {
@@ -159,8 +153,24 @@ final class AnimatedPictureView: UIView {
         self.data = data
         self.maxPixelSize = maxPixelSize
         stop()
-        imageView.image = SourcePicture.still(data, maxPixelSize: maxPixelSize)
+        loadStill()
         startIfVisible()
+    }
+
+    /// Decodes the still off the main thread and draws it when it is done. A newer picture, or an animation that has
+    /// started drawing its own frames, makes a late still a no-op.
+    private func loadStill(clearing: Bool = true) {
+        guard let data else { return }
+        // A different picture clears the old one; Reduce Motion keeps the frame on screen until its still is ready.
+        if clearing { imageView.image = nil }
+        stillGeneration += 1
+        let wanted = stillGeneration
+        let maxPixelSize = maxPixelSize
+        Task { [weak self] in
+            let decoded = await SourcePicture.decodedStill(data, maxPixelSize: maxPixelSize)
+            guard let self, self.stillGeneration == wanted, !self.isAnimating else { return }
+            self.imageView.image = decoded.map { UIImage(cgImage: $0.image) }
+        }
     }
 
     override func didMoveToWindow() {
@@ -171,7 +181,7 @@ final class AnimatedPictureView: UIView {
     @objc private func reduceMotionChanged() {
         if UIAccessibility.isReduceMotionEnabled {
             stop()
-            if let data { imageView.image = SourcePicture.still(data, maxPixelSize: maxPixelSize) }
+            loadStill(clearing: false)
         } else {
             startIfVisible()
         }

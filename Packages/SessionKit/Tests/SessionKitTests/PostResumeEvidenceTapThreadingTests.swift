@@ -36,16 +36,20 @@ final class PostResumeEvidenceTapThreadingTests: XCTestCase {
         )
     }
 
-    func testTheTapCallbackStaysFastWhileSignatureAppendsAreSlow() throws {
+    func testTheTapCallbackNeverWaitsForASlowSignatureAppend() throws {
         let results = Results()
         let appends = Counter()
+        let finished = Counter()
+        // The first signature append is held until the test lets it go: slow signature work, with no clock in it.
+        // A callback that ran the append itself would be stuck there; the 30 s only stops that hanging the run.
+        let gate = DispatchSemaphore(value: 0)
         let tap = PostResumePodcastEvidenceTapContext(
             resultHandler: { results.append($0) },
             becameIdle: {},
             appendToSignature: { generator, buffer in
-                Thread.sleep(forTimeInterval: 0.05)
-                appends.increment()
+                if appends.increment() == 0 { _ = gate.wait(timeout: .now() + 30) }
                 try generator.append(buffer, at: nil)
+                finished.increment()
             }
         )
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
@@ -53,29 +57,22 @@ final class PostResumeEvidenceTapThreadingTests: XCTestCase {
         XCTAssertTrue(tap.arm(request("ij-first")))
         XCTAssertTrue(tap.arm(request("ij-second")))
 
-        // Two open captures, 50 ms per append: the old callback took about 100 ms per buffer.
+        // Two open captures: the old callback ran both appends itself, so it waited on the held one.
         var generator = SystemRandomNumberGenerator()
         var buffers: [AVAudioPCMBuffer] = []
         for _ in 0..<6 { buffers.append(try Self.oneSecondOfNoise(format: format, using: &generator)) }
-        let clock = ContinuousClock()
-        var elapsedMs: [Double] = []
         for (index, buffer) in buffers.enumerated() {
-            let elapsed = clock.measure {
-                tap.process(
-                    bufferList: buffer.mutableAudioBufferList,
-                    frameCount: CMItemCount(buffer.frameLength),
-                    timeRange: CMTimeRange(
-                        start: CMTime(value: CMTimeValue(296 + index), timescale: 1),
-                        duration: CMTime(value: 1, timescale: 1)
-                    )
+            tap.process(
+                bufferList: buffer.mutableAudioBufferList,
+                frameCount: CMItemCount(buffer.frameLength),
+                timeRange: CMTimeRange(
+                    start: CMTime(value: CMTimeValue(296 + index), timescale: 1),
+                    duration: CMTime(value: 1, timescale: 1)
                 )
-            }
-            elapsedMs.append(Double(elapsed.components.seconds) * 1_000
-                + Double(elapsed.components.attoseconds) / 1e15)
+            )
         }
-        let sorted = elapsedMs.sorted()
-        XCTAssertLessThan(sorted[sorted.count / 2], 5, "the median callback must return in under 5 ms: \(elapsedMs)")
-        XCTAssertLessThan(elapsedMs.reduce(0, +), 150, "all six callbacks together: \(elapsedMs)")
+        XCTAssertEqual(finished.count, 0, "all six callbacks came back while the first append was still held (#4573)")
+        gate.signal()
 
         // The slow work still happens, off the callback, and gives the same evidence.
         XCTAssertTrue(spin(until: 10) { results.all.count == 2 })

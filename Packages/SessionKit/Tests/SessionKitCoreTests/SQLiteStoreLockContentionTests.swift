@@ -36,6 +36,9 @@ final class SQLiteStoreLockContentionTests: XCTestCase {
 
     /// The small read has to finish well inside the time the big read takes. Before the fix it waited for the whole
     /// decode, so it took about as long as the big read.
+    /// Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): a ratio of two timings on the same
+    /// machine, skipped when the big read is too quick to show contention, so a busy runner slows both sides. It guards
+    /// decoding moved back under the store lock; the lock itself is proven on state by the last test in this file.
     func testASmallReadDoesNotWaitForABackgroundReadToDecode() throws {
         let (store, _) = try makeStore()
         // Escaped quotes, newlines and non-ASCII make the JSON slower to decode than to copy, as real articles do.

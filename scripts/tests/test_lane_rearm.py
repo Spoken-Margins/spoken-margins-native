@@ -22,10 +22,13 @@ def pull(number, head=HEAD, base='main', repo=REPO, labels=('automerge',), state
 class FakeApi:
     repo = REPO
 
-    def __init__(self, pulls, hosted_runs=1, active_runs=0):
+    def __init__(self, pulls, hosted_runs=1, active_runs=0, lane_state='active'):
         self.pulls, self.hosted_runs, self.active_runs, self.dispatched = pulls, hosted_runs, active_runs, []
+        self.lane_state = lane_state
 
     def get(self, path):
+        if path == 'actions/workflows/lane.yml':
+            return {'state': self.lane_state}
         if path.startswith('commits/'):
             return [p for p in self.pulls if p['head']['sha'] == path.split('/')[1]]
         if 'status=' in path:
@@ -80,6 +83,17 @@ class RearmTests(unittest.TestCase):
                 raise OSError('HTTP 403')
         started, failed = rearm.rearm(Refused([pull(1), pull(2)]), 'main', HEAD, 'success', out=io.StringIO())
         self.assertEqual((started, failed), ([], [1, 2]))
+
+    def test_with_the_lane_disabled_nothing_is_dispatched_and_the_job_stays_green(self):
+        # 2026-11-20: lane.yml was disabled for the merge queue, every dispatch was refused, rearm went red on every armed
+        # PR, and the audit skipped those heads. Any state but active (disabled_manually, disabled_inactivity) stands down.
+        for state in ('disabled_manually', 'disabled_inactivity'):
+            api = FakeApi([pull(4753)], lane_state=state)
+            self.assertEqual(rearm.rearm(api, 'main', HEAD, 'success', out=io.StringIO()), ([], []))
+            self.assertEqual(api.dispatched, [])
+        out = io.StringIO()
+        api = FakeApi([pull(4753)], lane_state='disabled_manually')
+        self.assertEqual(rearm.main(['--repo', REPO, '--head', HEAD, '--results', 'success'], api=api, out=out), 0)
 
     def test_the_prs_are_read_from_the_commit_not_a_first_page_of_open_prs(self):
         paths = []
