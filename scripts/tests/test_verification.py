@@ -692,9 +692,9 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual(scope, 'readers')
         self.assertIn('test_research_tests', verification.RUNNER_TEST_READERS)
         self.assertIn('test_hot_file_ratchet', verification.RUNNER_TEST_READERS)
-        # The lane runner's T3 tests plan against the real TestPlans/ and app test sources: renaming an app test
+        # The T3 tests plan against the real TestPlans/ and app test sources: renaming an app test
         # or editing a plan must still reach them (found in review of #898).
-        for name in ('test_lane_runner.ScopeClassTests', 'test_lane_runner.T3Tests',
+        for name in ('test_lane_runner.ScopeClassTests', 'test_lane_t3.T3Tests',
                      'test_lane_runner.OnlyTestingTests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit'):
             self.assertIn(name, verification.RUNNER_TEST_READERS)
         for path in ('TestPlans/AudioAdapters.xctestplan', 'App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift'):

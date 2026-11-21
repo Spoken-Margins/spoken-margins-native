@@ -32,7 +32,7 @@ on:
     branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
     # Not opened or synchronize: the head's checks have only just started, and their own last job decides.
     types: [reopened, ready_for_review, labeled]
-    paths: ['.github/**', 'scripts/lane-runner.py']
+    paths: ['.github/**', 'scripts/lane-runner.py', 'scripts/lane_merge_rules.py']
   push:
     branches: [main]
     paths: ['.github/workflows/**', 'scripts/tests/test_workflow_files.py']

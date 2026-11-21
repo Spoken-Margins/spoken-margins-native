@@ -43,7 +43,7 @@ STATUS_ISSUE = dial_gate.STATUS_ISSUE
 # 5 threads, which is about 0.5 per thread-hour averaged over idle time too.
 ISSUES_PER_THREAD_HOUR = 1.0
 AUDIT_LABELS = ('found-by-audit', 'review-finding')
-OWNER_MERGE_PATHS = ('scripts/lane-runner.py', '.github/')
+OWNER_MERGE_PATHS = ('scripts/lane-runner.py', 'scripts/lane_merge_rules.py', '.github/')
 HOLDS_LISTED = 5    # holds to check, listed in the report; the rest are counted
 OWNER_LISTED = 2    # items per owner-only list
 TITLE_WIDTH = 60
