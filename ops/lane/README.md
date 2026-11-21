@@ -15,7 +15,7 @@ What a ping means: a runner is idle. It does not mean RAM, disk or the Mac's one
 
 ## Turn it on (once, by the owner)
 
-The job runs on merge but sends nothing until two repo secrets exist. They are the Dial relay's own URL and token, piped from the VPS so neither is shown or typed (replace `<vps>` with the SSH host that runs the Dial gate). Those two files are root-only, so a normal login reads them through `sudo` (#4848): type the sudo password once (it is not echoed), and it goes to `sudo -S` over ssh's input, so the secrets stay in the pipe. Each `ssh` line below is one command; a root login needs neither the first line nor `sudo -S -p ""` (use `ssh <vps> 'cat /etc/sm-dial/relay-url'`).
+The job runs on merge but sends nothing until two repo secrets exist. They are the Dial relay's own URL and token, piped from the VPS so neither is shown or typed (replace `<vps>` with the SSH host that runs the Dial gate). Those two files are root-only, so a normal login reads them through `sudo` (#4848): type the sudo password once (it is not echoed), and it goes to `sudo -S` over ssh's input, so the secrets stay in the pipe.
 
 ```zsh
 read -rs "pw?sudo password on the VPS: "; echo
