@@ -1197,12 +1197,14 @@ class MergePolicyHeldPrAudit(unittest.TestCase):
         self.assertEqual(A.risky_areas(["Packages/SessionKit/Sources", "Packages/SessionKit/Sources/"]), [])
 
     def test_every_kind_the_policy_audits_is_read_from_test_scope(self):
-        # lane-runner.py AUDITED is the policy's list of kinds. A kind added there without a line in
-        # SCOPE_AUDIT_AREAS would hold PRs for an audit this script never runs.
-        spec = importlib.util.spec_from_file_location("lane_runner_for_audit_test_4843", self.ROOT / "scripts" / "lane-runner.py")
-        runner = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(runner)
-        self.assertEqual(set(A.SCOPE_AUDIT_AREAS), set(runner.AUDITED))
+        # lane_merge_rules.py AUDITED is the policy's list of kinds (lane-runner.py imports it, and #4775 removes
+        # lane-runner.py). A kind added there without a line in SCOPE_AUDIT_AREAS would hold PRs for an audit this
+        # script never runs.
+        spec = importlib.util.spec_from_file_location("lane_merge_rules_for_audit_test_4843",
+                                                      self.ROOT / "scripts" / "lane_merge_rules.py")
+        rules = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rules)
+        self.assertEqual(set(A.SCOPE_AUDIT_AREAS), set(rules.AUDITED))
 
     def test_no_tracked_file_is_held_by_the_policy_but_not_risky_here(self):
         # The class guard: the policy's own classification of every file in the tree, against risky_areas.
