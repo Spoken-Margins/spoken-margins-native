@@ -98,4 +98,7 @@ test('an Apple Podcasts episode page is tried, within the same limit, and ends a
   assert.deepEqual(tried, ['1', '2']);
   assert.equal(result.outcome, 'played');
   assert.equal(result.firstSkip, 'no-audio');
+  // An episode passed over is an episode, never a "post" (#4767).
+  assert.deepEqual(newestPlayableMessage(result), { text: MESSAGES.newestEpisodeSkipped });
+  assert.doesNotMatch(MESSAGES.newestEpisodeSkipped, /post/);
 });

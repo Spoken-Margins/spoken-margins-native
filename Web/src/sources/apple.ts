@@ -62,6 +62,14 @@ export interface AppleLookupOptions {
 /** How long the lookup may take. The friend's card waits on it, so a lookup that never answers must end. */
 export const LOOKUP_TIMEOUT_MS = 8_000;
 
+/** A signal that aborts after `ms`. `AbortSignal.timeout` is missing from older Safari, where the lookup would always fail. */
+function deadline(ms: number): AbortSignal {
+  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms);
+  return controller.signal;
+}
+
 /** The lookup address for a show's newest 200 episodes, the one the iPhone app asks. */
 export function appleLookupUrl(showId: string): string {
   return `https://itunes.apple.com/lookup?id=${showId}&entity=podcastEpisode&limit=200`;
@@ -100,7 +108,7 @@ export async function findAppleEpisodeAudio(pageUrl: string, options: AppleLooku
   const doFetch: FetchLike = options.fetch ?? pickReadTransport().fetch;
   let response: Response;
   try {
-    response = await doFetch(appleLookupUrl(ref.showId), { credentials: 'omit', signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS) });
+    response = await doFetch(appleLookupUrl(ref.showId), { credentials: 'omit', signal: deadline(LOOKUP_TIMEOUT_MS) });
   } catch {
     throw new AppleLookupError('Apple Podcasts didn’t answer. Check your connection and try again.');
   }

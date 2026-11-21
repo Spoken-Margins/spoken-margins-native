@@ -12,7 +12,7 @@ import type { PacketRead } from '../ports.ts';
 export interface PlacedImport {
   /** The episode the Margins belong to: the listener's own, or a new one from the packet. */
   episode: Episode;
-  /** True when `episode` is new and must be stored. */
+  /** True when `episode` must be stored: it is new, or the listener's copy gained the audio address the packet carries (#4783). */
   newEpisode: boolean;
   /** A new "shared with you" show to store, when the episode is new and that show doesn't exist yet. */
   show?: Show;
@@ -96,8 +96,18 @@ export function placeImport(
   const own = findEpisode(read, episodes);
   let episode: Episode;
   let show: Show | undefined;
+  // The listener's copy was kept before its audio was known (a page-only Apple episode, saved when Apple wasn't answering or
+  // before the lookup existed). The packet now carries the audio, so the copy takes it instead of asking again on the tap (#4783).
+  const filled = own !== undefined && !own.audioUrl && read.episode.audioUrl !== undefined;
   if (own) {
-    episode = own;
+    episode = filled
+      ? {
+          ...own,
+          audioUrl: read.episode.audioUrl as string,
+          ...(read.episode.audioOrigin && { audioOrigin: read.episode.audioOrigin }),
+          ...(own.durationSeconds === undefined && read.episode.durationSeconds !== undefined && { durationSeconds: read.episode.durationSeconds }),
+        }
+      : own;
   } else {
     const shared = sharedShowFor(read.sender, now);
     if (!shows.some((s) => s.id === shared.id)) show = shared;
@@ -121,7 +131,7 @@ export function placeImport(
   }));
   return {
     episode,
-    newEpisode: !own,
+    newEpisode: !own || filled,
     ...(show && { show }),
     margins,
     landAt,

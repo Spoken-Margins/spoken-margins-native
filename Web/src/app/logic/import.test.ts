@@ -223,3 +223,30 @@ test('a Margin file opens no voice, so its article Margins are still counted as 
   const placed = placeImport(packet, [], []);
   assert.match(importSummary(placed, 'Cole'), /3 Margins are on an article’s text, which the web app can’t open yet\./);
 });
+
+// #4783: a page-only Apple episode kept before its audio was known takes the audio the packet now carries.
+const APPLE_PAGE = 'https://podcasts.apple.com/us/podcast/x/id1445582279?i=1000427709574';
+const pageOnlyCopy: Episode = { id: 'shared:Cole#page', showId: 'shared:Cole', title: 'Episode', pageUrl: APPLE_PAGE };
+
+test('a copy kept without audio takes the audio the packet carries, and is stored again', () => {
+  const placed = placeImport(read({ title: 'Episode', pageUrl: APPLE_PAGE, audioUrl: 'https://media.example.com/a.mp3', audioOrigin: 'podcast-enclosure', durationSeconds: 1800 }), [], [pageOnlyCopy]);
+  assert.equal(placed.episode.id, pageOnlyCopy.id, 'still the listener\'s own copy');
+  assert.equal(placed.episode.audioUrl, 'https://media.example.com/a.mp3');
+  assert.equal(placed.episode.audioOrigin, 'podcast-enclosure');
+  assert.equal(placed.episode.durationSeconds, 1800);
+  assert.equal(placed.newEpisode, true, 'the changed copy must be stored');
+});
+
+test('a copy that already has audio, or a packet with none, is left exactly as it was', () => {
+  const withAudio = placeImport(read({ title: 'E', guid: 'g-1', audioUrl: 'https://media.example.com/other.mp3' }), [show], [mine]);
+  assert.equal(withAudio.episode, mine);
+  assert.equal(withAudio.newEpisode, false);
+  const noAudio = placeImport(read({ title: 'Episode', pageUrl: APPLE_PAGE }), [], [pageOnlyCopy]);
+  assert.equal(noAudio.episode, pageOnlyCopy);
+  assert.equal(noAudio.newEpisode, false);
+});
+
+test('the copy keeps its own length when it has one', () => {
+  const placed = placeImport(read({ title: 'Episode', pageUrl: APPLE_PAGE, audioUrl: 'https://media.example.com/a.mp3', durationSeconds: 1800 }), [], [{ ...pageOnlyCopy, durationSeconds: 1500 }]);
+  assert.equal(placed.episode.durationSeconds, 1500);
+});

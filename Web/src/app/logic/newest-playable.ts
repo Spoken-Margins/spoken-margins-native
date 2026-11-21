@@ -54,7 +54,7 @@ export async function playNewestAvailable(
 /** The one line for the listener after the walk, if there is one to say. */
 export function newestPlayableMessage(result: NewestPlayableResult): { text: string; tone?: 'problem' } | undefined {
   if (result.outcome === 'stopped') return undefined;
-  if (result.outcome === 'played') return result.firstSkip ? { text: MESSAGES.newestSkipped } : undefined;
+  if (result.outcome === 'played') return result.firstSkip ? { text: result.firstSkip === 'no-audio' ? MESSAGES.newestEpisodeSkipped : MESSAGES.newestSkipped } : undefined;
   // No firstSkip: nothing was worth trying, so every item is a page with no voice to look up (#4767).
   const text = result.firstSkip === 'paid' ? MESSAGES.paidPost : result.firstSkip === 'no-voice' ? MESSAGES.noVoice : MESSAGES.noWebAudio;
   return { text, tone: 'problem' };
