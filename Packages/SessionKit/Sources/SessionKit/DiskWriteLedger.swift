@@ -40,21 +40,34 @@ public struct DiskWriteLedger: Codable, Equatable, Sendable {
         guard bytes > 0 else { return }
         let day = Self.day(of: date)
         days[day, default: [:]][source.rawValue, default: 0] += bytes
-        // Only real days count toward the limit, and a day after today (a clock that was set ahead, then back) is
-        // dropped: either would otherwise push real days out, or hold a summary slot for weeks.
-        for key in days.keys where !Self.isDay(key) || key > day { days[key] = nil }
-        if days.count > Self.keptDays {
-            for stale in days.keys.sorted().dropLast(Self.keptDays) { days[stale] = nil }
-        }
+        Self.prune(&days, today: day)
+    }
+
+    /// Drops what is not a day, then keeps the newest `keptDays` days up to today and the newest `keptDays` days after
+    /// it. A write never deletes a day only because it is later than the write: the clock now may be the wrong one,
+    /// and a clock set back would otherwise erase every real day in one write. Days after today are kept apart from
+    /// the real ones, so a clock set ahead can't push real days out, and the summary leaves them out until time reaches them.
+    private static func prune(_ days: inout [String: [String: Int64]], today: String) {
+        for key in days.keys where !isDay(key) { days[key] = nil }
+        let sorted = days.keys.sorted()
+        let past = sorted.filter { $0 <= today }
+        let later = sorted.filter { $0 > today }
+        for stale in past.dropLast(keptDays) { days[stale] = nil }
+        for stale in later.dropFirst(keptDays) { days[stale] = nil }
     }
 
     /// The Diagnostics `diskWritesBySource` line: the newest days first, each as `<day> total=<n>MB <source>=<n>MB ...`
     /// with sources biggest first, and days joined by `; `. A day's figures are the app's own count of what it
     /// wrote that UTC day, and the line ends with the sources that are counted. `none_recorded` before the first write.
-    public var summaryText: String {
+    public var summaryText: String { summaryText(asOf: nil) }
+
+    /// The same line, leaving out days after `asOf`'s UTC day (a clock that was set ahead left them); they stay in the
+    /// ledger. With no date every day is named.
+    public func summaryText(asOf: Date?) -> String {
         let counted = "counted=" + Source.allCases.map(\.rawValue).joined(separator: ",")
         // Only days and source names of the shapes this type writes are printed, so whatever else a file holds can't leave the phone.
-        let newest = days.keys.filter(Self.isDay).sorted(by: >).prefix(Self.summaryDays)
+        let cutoff = asOf.map(Self.day(of:))
+        let newest = days.keys.filter { key in Self.isDay(key) && (cutoff.map { key <= $0 } ?? true) }.sorted(by: >).prefix(Self.summaryDays)
         guard !newest.isEmpty else { return "none_recorded; " + counted }
         let lines = newest.map { day -> String in
             let bySource = (days[day] ?? [:]).filter { Self.isSourceName($0.key) }
@@ -138,6 +151,6 @@ public final class DiskWriteLedgerStore: @unchecked Sendable {
     public var summaryText: String {
         lock.lock()
         defer { lock.unlock() }
-        return ledger.summaryText
+        return ledger.summaryText(asOf: now())
     }
 }

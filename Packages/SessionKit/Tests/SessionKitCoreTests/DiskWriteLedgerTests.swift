@@ -67,13 +67,36 @@ final class DiskWriteLedgerTests: XCTestCase {
         XCTAssertTrue(ledger.summaryText.hasPrefix("2026-11-18 total=2MB download=2MB;"), ledger.summaryText)
     }
 
-    func testADayAfterTodayLeftByAClockSetAheadIsDroppedOnTheNextWrite() {
+    func testAWriteWhileTheClockIsSetBackNeverErasesTheRealDays() {
         var ledger = DiskWriteLedger()
-        ledger.record(bytes: 9_000_000, source: .download, at: date("2027-03-01T10:00:00Z"))
-        ledger.record(bytes: 1_000_000, source: .download, at: date("2026-11-18T10:00:00Z"))
+        let start = date("2026-11-07T12:00:00Z")
+        for offset in 0..<14 {
+            ledger.record(bytes: 4_000_000_000, source: .speechAssembly, at: start.addingTimeInterval(TimeInterval(offset) * 86_400))
+        }
+        let before = ledger.days
 
-        XCTAssertNil(ledger.days["2027-03-01"], "the bogus future day is gone")
-        XCTAssertTrue(ledger.summaryText.hasPrefix("2026-11-18 total=1MB download=1MB; counted="), ledger.summaryText)
+        ledger.record(bytes: 1_000_000, source: .download, at: date("2026-01-01T10:00:00Z"))
+
+        for (day, sources) in before { XCTAssertEqual(ledger.days[day], sources, "\(day) survives the bogus write") }
+        // The clock is put right and the next real write drops the bogus day, not a real one.
+        ledger.record(bytes: 1_000_000, source: .download, at: date("2026-11-21T10:00:00Z"))
+        XCTAssertNil(ledger.days["2026-01-01"])
+        XCTAssertNil(ledger.days["2026-11-07"], "the oldest real day leaves only because a fifteenth real day arrived")
+        XCTAssertEqual(ledger.days.count, DiskWriteLedger.keptDays)
+    }
+
+    func testAFewDaysLeftByAClockSetAheadNeitherPushRealDaysOutNorShowInTheSummary() {
+        var ledger = DiskWriteLedger()
+        ledger.record(bytes: 3_000_000, source: .download, at: date("2026-11-18T10:00:00Z"))
+        for offset in 0..<10 {
+            ledger.record(bytes: 9_000_000, source: .download, at: date("2027-03-01T10:00:00Z").addingTimeInterval(TimeInterval(offset) * 86_400))
+        }
+        ledger.record(bytes: 1_000_000, source: .speechRender, at: date("2026-11-19T10:00:00Z"))
+
+        XCTAssertNotNil(ledger.days["2026-11-18"])
+        XCTAssertLessThanOrEqual(ledger.days.count, 2 * DiskWriteLedger.keptDays)
+        XCTAssertEqual(ledger.summaryText(asOf: date("2026-11-19T12:00:00Z")),
+                       "2026-11-19 total=1MB speech_render=1MB; 2026-11-18 total=3MB download=3MB; counted=download,speech_render,speech_assembly")
     }
 
     func testTodayAndEarlierDaysSurviveAWriteLaterTheSameDay() {
