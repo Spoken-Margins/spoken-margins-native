@@ -144,6 +144,15 @@ def compilation_cache_settings(root=None):
             f'SWIFT_OTHER_PREFIX_MAPPINGS={mapping}', f'CLANG_OTHER_PREFIX_MAPPINGS={mapping}']
 
 
+def package_cache_settings(environ=None):
+    """`-clonedSourcePackagesDirPath` for the build when SM_SPM_DIR names a folder, else nothing (#4664). A hosted run
+    restores the packages it fetched before (main-t3.yml, as hosted-app-macos.yml does), so a build never waits on the
+    binary-target hosts (download.onnxruntime.ai served an invalid certificate on 2026-11-21 and stopped main-t3's
+    build). Xcode's own default, a SourcePackages folder inside the derived data, is what it was before."""
+    folder = (os.environ if environ is None else environ).get('SM_SPM_DIR', '').strip()
+    return ['-clonedSourcePackagesDirPath', folder] if folder else []
+
+
 def compilation_cache_hits(log):
     """Xcode's own count, e.g. '441 hits / 508 cacheable tasks (87%)', or None when it printed none."""
     found = re.findall(r'note: (\d+ hits / \d+ cacheable tasks \(\d+%\))', log)
@@ -2298,7 +2307,7 @@ class Run:
             if require_build:
                 raise RuntimeError('Prepared Xcode build is missing or stale; refusing to build on a booted T3 device')
             stamp.unlink(missing_ok=True)
-            self.command('build-for-testing', base + compilation_cache_settings() + ['build-for-testing'], timeout=900)
+            self.command('build-for-testing', base + package_cache_settings() + compilation_cache_settings() + ['build-for-testing'], timeout=900)
             log = self.output / 'build-for-testing.log'
             self.manifest['compilation_cache'] = compilation_cache_hits(log.read_text(errors='replace')) \
                 if log.is_file() else None

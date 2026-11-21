@@ -167,6 +167,35 @@ class VerificationTests(unittest.TestCase):
                 self.assertIn(setting, build)
                 self.assertNotIn(setting, tests)
 
+    def test_package_cache_folder_applies_only_to_the_build_step(self):
+        # #4664: main-t3's hosted Mac restores the packages it fetched before, so a bad certificate on a binary-target
+        # host (download.onnxruntime.ai, 2026-11-21) cannot stop the build. Unset, the command is what it was.
+        self.assertEqual(verification.package_cache_settings({}), [])
+        self.assertEqual(verification.package_cache_settings({'SM_SPM_DIR': '  '}), [])
+        self.assertEqual(verification.package_cache_settings({'SM_SPM_DIR': '/w/.build/spm'}),
+                         ['-clonedSourcePackagesDirPath', '/w/.build/spm'])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            self.app_test_root(root)
+            commands = []
+            device = {'udid': 'U', 'state': 'Booted', 'runtime': 'iOS-26', 'name': 'Other'}
+            with patch.object(verification, 'ROOT', root), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', return_value='toolchain'), \
+                    patch.object(verification.Run, 'simulator', return_value=(device, False)), \
+                    patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                    patch.dict(os.environ, {'SM_SPM_DIR': '/w/.build/spm'}), \
+                    patch.object(verification.Run, 'command',
+                                 side_effect=lambda name, args, **kw: commands.append((name, args))):
+                run = verification.Run(Path(temporary) / 'run', 'app')
+                run.xcode('app', 'U', rebuild=False)
+            build = dict(commands)['build-for-testing']
+            tests = dict(commands)['xcode-tests']
+            self.assertEqual(build[build.index('-clonedSourcePackagesDirPath') + 1], '/w/.build/spm')
+            self.assertNotIn('-clonedSourcePackagesDirPath', tests)
+
     def setUp(self):
         # The host steps look up and write SessionKit pass records in the lane's state folder (#1328): keep a
         # developer's or the lane Mac's real records out of these tests (tests/test_sessionkit_steps.py covers them).
