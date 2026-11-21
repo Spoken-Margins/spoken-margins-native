@@ -8,6 +8,9 @@ extension Gate1AppModel {
     func playSharedMarginFromMarginsList(_ row: SharedMarginRow) {
         guard SharedMarginListPlay(row.interjection) == .textPassage else { return playSharedMarginMoment(row) }
         guard !rejectNavigationOrSessionMutationWhileRecording("play_shared_margin_from_list") else { return }
+        guard SharedMarginPrompts.isLayerPlaybackEligible(row.layer, records: [row.interjection]) else {
+            return reportFailure("This friend's Margins are turned off. Turn them on to hear this one.")
+        }
         guard row.layer.itemId == selectedItem.id,
               let prompt = importedCommentaryPrompts(includeAnnounced: true).first(where: { $0.interjection.id == row.interjection.id }) else {
             return reportFailure("This shared Margin isn't ready to play here yet.")

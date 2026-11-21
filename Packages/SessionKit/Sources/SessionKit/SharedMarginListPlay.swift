@@ -20,8 +20,15 @@ public enum SharedMarginListPlay: Equatable, Sendable {
     }
 
     /// Whether the Margins tab's Play button is enabled: something to play (`SharedMarginAudio.canOffer`) and a place
-    /// to play it.
-    public static func canPlay(_ interjection: ImportedCommentaryInterjection) -> Bool {
-        SharedMarginAudio.canOffer(interjection) && SharedMarginListPlay(interjection) != nil
+    /// to play it. A Margin at a passage of text is found by the same prompt list a Skim stop uses, which leaves out a
+    /// layer the listener turned off, deleted or matched to the wrong source (`isLayerPlaybackEligible`), so the
+    /// button follows the layer; a tap there would only fail. A Margin with a time plays its moment whatever the
+    /// toggle, as before (`playSharedMarginMoment`). Audit on 1e7362f.
+    public static func canPlay(_ interjection: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer) -> Bool {
+        guard SharedMarginAudio.canOffer(interjection), let place = SharedMarginListPlay(interjection) else { return false }
+        switch place {
+        case .moment: return true
+        case .textPassage: return SharedMarginPrompts.isLayerPlaybackEligible(layer, records: [interjection])
+        }
     }
 }

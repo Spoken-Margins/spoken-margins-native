@@ -18,11 +18,22 @@ final class SharedMarginListPlayTests: XCTestCase {
         )
     }
 
+    private func layer(
+        enabled: Bool = true, deleted: Bool = false, status: ImportedSourceResolutionStatus = .resolved
+    ) -> ImportedCommentaryLayer {
+        ImportedCommentaryLayer(
+            id: "layer-1", itemId: "item-1", packageDigest: "digest", packageId: "package",
+            itemIdentity: SharedItemIdentity(itemType: .text, title: "An article"),
+            importedAt: Date(timeIntervalSince1970: 1_790_000_000), sourceResolutionStatus: status, isEnabled: enabled,
+            deletedAt: deleted ? Date(timeIntervalSince1970: 1_790_000_100) : nil
+        )
+    }
+
     func testAnArticleMarginMatchedInTheListenersTextPlaysAtItsPassage() {
         let resolution = ImportedAnchorResolution(evidenceClass: .articleTextVerified, localStartChar: 1_200, localEndChar: 1_260)
         XCTAssertNil(SharedMarginPlaybackPosition(margin(resolution)), "no time in the item: what the old rule asked for")
         XCTAssertEqual(SharedMarginListPlay(margin(resolution)), .textPassage)
-        XCTAssertTrue(SharedMarginListPlay.canPlay(margin(resolution)))
+        XCTAssertTrue(SharedMarginListPlay.canPlay(margin(resolution), in: layer()))
     }
 
     func testAPodcastMarginKeepsTheMomentPlayerWhateverItsTextOffset() {
@@ -49,7 +60,7 @@ final class SharedMarginListPlayTests: XCTestCase {
         ]
         for (name, interjection, expected) in rows {
             XCTAssertEqual(SharedMarginListPlay(interjection), expected, name)
-            XCTAssertEqual(SharedMarginListPlay.canPlay(interjection), expected != nil, "\(name): with a recording")
+            XCTAssertEqual(SharedMarginListPlay.canPlay(interjection, in: layer()), expected != nil, "\(name): with a recording")
         }
     }
 
@@ -60,7 +71,25 @@ final class SharedMarginListPlayTests: XCTestCase {
             let silent = margin(audioPath: nil, listenerReadAloud: false, resolution)
             XCTAssertFalse(SharedMarginAudio.canOffer(silent))
             XCTAssertNotNil(SharedMarginListPlay(silent), "it has a place")
-            XCTAssertFalse(SharedMarginListPlay.canPlay(silent), "\(resolution.evidenceClass)")
+            XCTAssertFalse(SharedMarginListPlay.canPlay(silent, in: layer()), "\(resolution.evidenceClass)")
+        }
+    }
+
+    // The audit on 1e7362f: a friend's article Margin on a layer the listener turned off had an enabled Play and a
+    // tap that failed. The prompt list a Skim stop uses leaves such a layer out, so the button follows it.
+    func testAPassageMarginFollowsItsLayerButATimedMarginPlaysWhateverTheToggle() {
+        let passage = margin(.init(evidenceClass: .articleTextVerified, localStartChar: 300))
+        let timed = margin(.init(evidenceClass: .exactEdition, localMediaTimeMs: 9_000))
+        let layers: [(String, ImportedCommentaryLayer, Bool)] = [
+            ("on", layer(), true),
+            ("turned off", layer(enabled: false), false),
+            ("deleted", layer(deleted: true), false),
+            ("matched to the wrong source", layer(status: .wrongSource), false),
+            ("still resolving", layer(status: .pending), true),
+        ]
+        for (name, layer, passageEnabled) in layers {
+            XCTAssertEqual(SharedMarginListPlay.canPlay(passage, in: layer), passageEnabled, "passage Margin, layer \(name)")
+            XCTAssertTrue(SharedMarginListPlay.canPlay(timed, in: layer), "timed Margin, layer \(name): its moment plays as before")
         }
     }
 }

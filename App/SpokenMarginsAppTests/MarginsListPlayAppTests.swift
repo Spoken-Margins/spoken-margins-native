@@ -8,6 +8,13 @@ import SessionKitAudio
 /// disabled and a tap could only fail.
 @MainActor
 final class MarginsListPlayAppTests: XCTestCase {
+    /// A written Margin starts a reading on the shared reader when it plays; a render left running would make a later
+    /// test's reading wait behind it (#3423), so a leak fails the test that made it (audit on 1e7362f).
+    override func tearDown() async throws {
+        await ReturnFixture.expectSharedReaderIdle()
+        try await super.tearDown()
+    }
+
     private func articleModelWithFriendMargin() -> (model: Gate1AppModel, row: SharedMarginRow) {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -48,6 +55,20 @@ final class MarginsListPlayAppTests: XCTestCase {
         model.playSharedMarginFromMarginsList(SharedMarginRow(interjection: row.interjection, layer: elsewhere, itemTitle: "Elsewhere"))
 
         XCTAssertNotNil(model.lastError)
+        XCTAssertNil(model.pendingImportedCommentary)
+    }
+
+    func testAFriendsMarginOnALayerTurnedOffHasNoPlayAndATapSaysWhy() {
+        let (model, row) = articleModelWithFriendMargin()
+        var off = row.layer
+        off.isEnabled = false
+        let offRow = SharedMarginRow(interjection: row.interjection, layer: off, itemTitle: row.itemTitle)
+        XCTAssertFalse(offRow.canPlayFromMarginsList, "the layer is off: nothing for the button to start")
+
+        model.playSharedMarginFromMarginsList(offRow)
+
+        XCTAssertEqual(model.lastError, "This friend's Margins are turned off. Turn them on to hear this one.",
+                       "the real reason, not 'isn't ready'")
         XCTAssertNil(model.pendingImportedCommentary)
     }
 }
