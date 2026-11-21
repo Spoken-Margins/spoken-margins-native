@@ -318,10 +318,18 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
             udid = create()
             info = {}
             completed = False
+            release_timeout = None
             try:
                 try:
                     udid, _ = boot_with_retry(udid, f'T3 template first boot (for {name})', replace, out=out, info=info,
                                               first_boot=True)
+                except subprocess.TimeoutExpired as error:
+                    # A simctl call hung inside the boot or its crash handling (a stop() or a stall's shutdown), so
+                    # the late-report check on this device never ran. That is not a setup hiccup: the lane must not
+                    # try a new device past a possible crash (#4438; AGENTS.md). Only the plain setup calls in this
+                    # function (list, create, a clean template's release, the clone) can escape as a timeout.
+                    raise BootError(f'A simctl call timed out during the template\'s first boot ({error}); its crash '
+                                    'reports were not read, so no other device was tried.') from error
                 finally:
                     udid = info.get('udid', udid)  # after a stall, the fresh template is the one to keep or delete
                 start_watcher(udid, Path(__file__).resolve().with_name('lane-sim-boot'),
@@ -331,8 +339,19 @@ def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
                 time.sleep(LATE_REPORT_WAIT)
                 completed = udid not in unsafe_devices()
             finally:
-                release(udid, keep=completed)
+                try:
+                    release(udid, keep=completed)
+                except subprocess.TimeoutExpired as error:
+                    if not completed:  # a failed or unsafe template: never a setup hiccup
+                        raise BootError(f'The failed T3 template could not be released: {error}') from error
+                    release_timeout = error  # booted cleanly: the late-report check below still runs first
             report = late_report(crash_reports_dir(), udid, info['boot_window'], [])
+            if release_timeout:
+                if report:
+                    mark_unsafe(udid, f'late crash report for template boot: {report.name}')
+                    raise BootError('The T3 template was unsafe and could not be released; no clone was made.') \
+                        from release_timeout
+                raise release_timeout  # no crash evidence: a plain timeout, which the lane may rerun on a fresh clone
             stopped = owned_devices().get(udid)
             if udid in unsafe_devices() or report or not stopped or stopped[1].get('state') != 'Shutdown':
                 if report:
@@ -775,8 +794,11 @@ def back_to_one_simulator(reason: str, by_hand: bool = False) -> bool:
 
 
 def stop(udid: str, reason: str) -> None:
-    subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+    """Stop a device that crashed or was changed under the watcher, and mark it unsafe. The mark comes first: the
+    shutdown can hang under load (120 s, #4438), and a hang must not leave the crash unrecorded, for the lane
+    would then treat the timeout as a setup hiccup and clone again past a crash (AGENTS.md)."""
     mark_unsafe(udid, reason)
+    subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
 
 
 def quiet_marker(udid: str) -> Path:

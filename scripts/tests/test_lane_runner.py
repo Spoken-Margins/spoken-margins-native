@@ -964,6 +964,221 @@ class RunnerDeviceTests(unittest.TestCase):
         self.assertEqual(list(Path(self.state.name).glob('runner-device-*')), [])
 
 
+class T3SetupTimeoutRerunTests(unittest.TestCase):
+    """#4438: a simctl clone or shutdown that times out under overload is rerun once on a fresh clone, in the job."""
+
+    PASS = ('PASS', 'cloned iPhone 17, iOS 26.5', '109 passed', ['109 tests'], 'none', '')
+
+    def setUp(self):
+        state = tempfile.TemporaryDirectory()
+        self.addCleanup(state.cleanup)
+        patcher = mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': state.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def run_real_job(self, release, plans, boot=None, clone=('U1', 'U2')):
+        """The real wrapper and `_t3_on_claimed_device`; only lane_sim, the boot and the plans are mocked."""
+        import lane_sim
+        import lane_slots
+        runs = mock.Mock(side_effect=plans)
+        boot = boot or (None, {'pressure': 'normal', 'pressure_waited': 0, 'boot_window': (0.0, 1.0)})
+        self.clones, self.boots = mock.Mock(side_effect=clone), mock.Mock(side_effect=boot if isinstance(boot, BaseException) else None, return_value=boot)
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(lane_sim, 'newest_runtime', return_value='com.apple.CoreSimulator.SimRuntime.iOS-26-5'), \
+                mock.patch.object(lane, 'prepare_t3_build', return_value=('PASS', [])), \
+                mock.patch.object(lane_slots, 'acquire_simulator_slot', return_value='slot'), \
+                mock.patch.object(lane_slots, 'release_handle'), \
+                mock.patch.object(lane, 'wait_for_quiet_runner', return_value=(0.0, 1.0)), \
+                mock.patch.object(lane_sim, 'clone_temporary', self.clones), \
+                mock.patch.object(lane_sim, 'start_watcher'), \
+                mock.patch.object(lane_sim, 'release', side_effect=release), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane_sim, 'device_type', return_value='x.iPhone-17'), \
+                mock.patch.object(lane, 'boot_t3_device', self.boots), \
+                mock.patch.object(lane, 'run_plans', runs):
+            result = lane._run_t3_grouped({'app': ['T/A']}, 'pr4411-r2', Path(temporary))
+            self.logs = sorted(path.name for path in Path(temporary).iterdir())
+        return result, runs.call_count
+
+    FAILED_PLAN = ([lane.summarize_manifest({'steps': [{'name': 'xcode-tests', 'tests': {
+        'T/A/testBad': {'status': 'failed'}}}]})], ['failed'], ['A (0 passed)'], [])
+    PASSED_PLAN = ([lane.summarize_manifest({'steps': [{'name': 'xcode-tests', 'tests': {
+        'T/A/test1': {'status': 'passed'}}}]})], ['verified'], ['A (1 passed)'], [])
+
+    def test_a_teardown_timeout_after_a_failing_test_keeps_the_fail_and_does_not_rerun_the_tests(self):
+        # #4438 review: release() shuts the clone down after the tests; its timeout must not replace the verdict
+        # with a second run that could pass.
+        (verdict, _, ran, details, _, _), runs = self.run_real_job(
+            [subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'U1'], 120)], [self.FAILED_PLAN, self.PASSED_PLAN])
+        self.assertEqual((verdict, runs), ('FAIL', 1))
+        self.assertTrue(any('could not be released' in line for line in details))
+
+    def test_a_boot_whose_own_shutdown_hangs_is_not_rerun(self):
+        # Audit on a0f3cc3, route A: lane_sim.stop() shuts the device down after a crash during boot; a hang there
+        # must not get around the flood by cloning again.
+        (verdict, where, ran, details, _, _), runs = self.run_real_job(
+            [None], [self.PASSED_PLAN], boot=subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'U1'], 120))
+        self.assertEqual((verdict, ran, runs, self.clones.call_count, self.boots.call_count),
+                         ('INCONCLUSIVE', 'nothing', 0, 1, 1))
+        self.assertIn("'shutdown', 'U1'", details[-1])
+
+    def test_a_template_crash_whose_shutdown_hangs_is_not_rerun(self):
+        # Audit on b3e9167: clone_temporary first-boots a missing template under the crash rules; lane_sim.stop()
+        # marks the device unsafe, and a hang in its shutdown (the #4411 symptom) must not clone again.
+        import lane_sim
+        calls = []
+
+        def clone(name, runtime, out=None):
+            calls.append(name)
+            lane_sim.mark_unsafe('TEMPLATE', 'late crash report for template boot: SpringBoard-x.ips')
+            raise subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'TEMPLATE'], 120)
+
+        (verdict, where, ran, details, _, _), runs = self.run_real_job([None], [self.PASSED_PLAN], clone=clone)
+        self.assertEqual((verdict, ran, runs, len(calls)), ('INCONCLUSIVE', 'nothing', 0, 1))
+        self.assertIn("'shutdown', 'TEMPLATE'", details[-1])
+
+    def test_a_release_that_hangs_after_a_boot_problem_keeps_the_boot_verdict_and_is_not_rerun(self):
+        # Audit on a0f3cc3, route B: the boot failed normally, then the job's own release timed out.
+        (verdict, where, ran, details, crashes, _), runs = self.run_real_job(
+            [subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'U1'], 120)], [self.PASSED_PLAN],
+            boot=('the device crashed during boot', {'pressure': 'normal', 'pressure_waited': 0}))
+        self.assertEqual((verdict, runs, self.clones.call_count, self.boots.call_count), ('INCONCLUSIVE', 0, 1, 1))
+        self.assertIn('did not boot: the device crashed during boot', details[-2])
+        self.assertIn('could not be released', details[-1])
+
+    def test_the_second_attempt_keeps_the_first_attempts_clone_log(self):
+        import lane_sim
+        calls = []
+
+        def clone(name, runtime, out=None):
+            calls.append(name)
+            out.write(f'attempt {len(calls)}\n')
+            if len(calls) == 1:
+                raise subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'U0'], 120)
+            return 'U2'
+
+        (verdict, *_), runs = self.run_real_job([None], [self.PASSED_PLAN], clone=clone)
+        self.assertEqual((verdict, runs), ('PASS', 1))
+        self.assertIn('simulator-clone.log', self.logs)
+        self.assertIn(f'simulator-clone{lane.SETUP_RERUN_SUFFIX}.log', self.logs)
+        self.assertIn(f'first-boot{lane.SETUP_RERUN_SUFFIX}.log', self.logs)
+
+    def test_a_teardown_timeout_after_passing_tests_keeps_the_pass_and_does_not_rerun_them(self):
+        (verdict, *_), runs = self.run_real_job(
+            [subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'U1'], 120)], [self.PASSED_PLAN, self.FAILED_PLAN])
+        self.assertEqual((verdict, runs), ('PASS', 1))
+
+    def test_a_clone_that_times_out_before_the_tests_is_rerun_through_the_real_job(self):
+        import lane_sim
+        calls = []
+
+        def clone(name, runtime, out=None):
+            calls.append(name)
+            if len(calls) == 1:
+                raise subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'U0'], 120)
+            return 'U2'
+
+        import lane_slots
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(lane_sim, 'newest_runtime', return_value='com.apple.CoreSimulator.SimRuntime.iOS-26-5'), \
+                mock.patch.object(lane, 'prepare_t3_build', return_value=('PASS', [])), \
+                mock.patch.object(lane_slots, 'acquire_simulator_slot', return_value='slot'), \
+                mock.patch.object(lane_slots, 'release_handle'), \
+                mock.patch.object(lane, 'wait_for_quiet_runner', return_value=(0.0, 1.0)), \
+                mock.patch.object(lane_sim, 'clone_temporary', side_effect=clone), \
+                mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release'), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane_sim, 'device_type', return_value='x.iPhone-17'), \
+                mock.patch.object(lane, 'boot_t3_device',
+                                  return_value=(None, {'pressure': 'normal', 'pressure_waited': 0, 'boot_window': (0.0, 1.0)})), \
+                mock.patch.object(lane, 'run_plans', return_value=self.PASSED_PLAN) as plans:
+            verdict_runs = (lane._run_t3_grouped({'app': ['T/A']}, 'pr4411-r3', Path(temporary))[0], plans.call_count)
+        self.assertEqual((verdict_runs, len(calls)), (('PASS', 1), 2))
+
+    def shutdown_timeout(self, udid):
+        return subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', udid], 120)
+
+    def run_job(self, attempts, load=634.257):
+        import lane_sim
+        import lane_slots
+        waits = []
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(lane_sim, 'newest_runtime', return_value='runtime'), \
+                mock.patch.object(lane, 'prepare_t3_build', return_value=('PASS', ['prepared'])), \
+                mock.patch.object(lane_slots, 'acquire_simulator_slot', return_value='slot'), \
+                mock.patch.object(lane_slots, 'release_handle') as released, \
+                mock.patch.object(lane, 'overload_line', return_value=48), \
+                mock.patch.object(lane.os, 'getloadavg', return_value=(load, load, load)), \
+                mock.patch.object(lane, 'wait_for_quiet_runner',
+                                  side_effect=lambda line: waits.append(line) or (60.0, 40.0)), \
+                mock.patch.object(lane, '_t3_on_fresh_device', side_effect=attempts) as device:
+            result = lane._run_t3_grouped({'app': ['T/A']}, 'pr4411-r1', Path(temporary))
+            saved = (Path(temporary) / lane.SETUP_RERUNS)
+            saved = json.loads(saved.read_text()) if saved.exists() else None
+        return result, device.call_count, waits, released.call_count, saved
+
+    def test_a_shutdown_timeout_at_load_634_is_rerun_once_on_a_fresh_clone(self):
+        # The first #4411 report: `simctl shutdown E449AC94` timed out after 120 s at load 634.257.
+        (verdict, where, ran, details, _, _), calls, waits, released, saved = self.run_job(
+            [self.shutdown_timeout('E449AC94'), self.PASS])
+        self.assertEqual((verdict, ran, calls, waits, released), ('PASS', '109 passed', 2, [48], 1))
+        self.assertEqual(details[0], 'prepared')
+        note = details[1]
+        self.assertIn('Template or clone failed', note)
+        self.assertIn("'shutdown', 'E449AC94'", note)
+        self.assertIn('load average 634.257 is above the overload line of 48', note)
+        self.assertIn('waited 1m00s (load average then 40)', note)
+        self.assertEqual(details[2:], ['109 tests'])
+        self.assertEqual([(r['status'], r['waited_seconds']) for r in saved], [('ran', 60.0)])
+
+    def test_a_shutdown_timeout_at_load_637_is_rerun_once_too(self):
+        # The second #4411 report: `simctl shutdown 56FF4386`, load 637.901.
+        (verdict, *_), calls, *_ = self.run_job([self.shutdown_timeout('56FF4386'), self.PASS], load=637.901)
+        self.assertEqual((verdict, calls), ('PASS', 2))
+
+    def test_a_clone_timeout_below_the_overload_line_is_rerun_too(self):
+        # The load reading may itself be wrong (#4438): the rerun does not depend on it.
+        (verdict, _, _, details, *_), calls, *_ = self.run_job([self.shutdown_timeout('U1'), self.PASS], load=3.0)
+        self.assertEqual((verdict, calls), ('PASS', 2))
+        self.assertNotIn('Runner overloaded', details[1])
+
+    def test_two_timeouts_end_inconclusive_and_report_both_attempts(self):
+        (verdict, where, ran, details, _, _), calls, _, released, saved = self.run_job(
+            [self.shutdown_timeout('E449AC94'), self.shutdown_timeout('56FF4386')])
+        self.assertEqual((verdict, where, ran, calls, released), ('INCONCLUSIVE', 'no simulator', 'nothing', 2, 1))
+        self.assertEqual(len(details), 2)
+        self.assertIn("'E449AC94'", details[1])
+        self.assertIn("'56FF4386'", details[1])
+        self.assertIn('that attempt failed too', details[1])
+        self.assertEqual([r['status'] for r in saved], ['faulted again'])
+
+    def test_a_second_attempt_that_fails_to_boot_still_names_the_first_timeout(self):
+        import lane_sim
+        (verdict, _, _, details, *_), calls, *_ = self.run_job(
+            [self.shutdown_timeout('E449AC94'), lane_sim.BootError('would not boot')])
+        self.assertEqual((verdict, calls), ('INCONCLUSIVE', 2))
+        self.assertIn("'E449AC94'", details[1])
+        self.assertIn('would not boot', details[1])
+
+    def test_a_failure_that_is_not_a_timeout_is_not_rerun(self):
+        import lane_sim
+        for error in (lane_sim.BootError('would not boot'), OSError('no space left'),
+                      subprocess.CalledProcessError(1, ['xcrun', 'simctl', 'clone'])):
+            with self.subTest(error=type(error).__name__):
+                (verdict, _, _, details, *_), calls, waits, *_ = self.run_job([error])
+                self.assertEqual((verdict, calls, waits), ('INCONCLUSIVE', 1, []))
+                self.assertTrue(details[1].startswith('Template or clone failed'))
+
+    def test_a_failing_test_is_the_prs_fail_and_is_not_rerun(self):
+        failed = ('FAIL', 'cloned iPhone 17, iOS 26.5', '3 passed, 1 failed', ['T/A/testBad failed'], 'none', '')
+        (verdict, *_), calls, waits, *_ = self.run_job([failed])
+        self.assertEqual((verdict, calls, waits), ('FAIL', 1, []))
+
+    def test_a_clean_first_attempt_writes_no_rerun_evidence(self):
+        (verdict, *_), calls, waits, _, saved = self.run_job([self.PASS])
+        self.assertEqual((verdict, calls, waits, saved), ('PASS', 1, [], None))
+
+
 class T3PreparationTests(unittest.TestCase):
     def test_build_finishes_before_the_simulator_slot_is_taken(self):
         import lane_sim

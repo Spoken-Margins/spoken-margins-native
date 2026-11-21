@@ -233,6 +233,19 @@ class RuntimePairTests(unittest.TestCase):
         self.assertIn('iOS-27-1: iPhone-Duo', message)
 
 
+class StopTests(unittest.TestCase):
+    """#4438: stop() records the crash before the shutdown that can hang."""
+
+    def test_a_shutdown_that_times_out_still_leaves_the_unsafe_mark(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
+                mock.patch.object(lane_sim.subprocess, 'run',
+                                  side_effect=subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', UDID], 120)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                lane_sim.stop(UDID, 'a crash during boot')
+            self.assertEqual(lane_sim.unsafe_devices()[UDID]['reason'], 'a crash during boot')
+
+
 class CrashPolicyTests(unittest.TestCase):
     """AGENTS.md: a lone system-process crash is noted and work continues; a flood (three or more crashes of the
     same process within a minute) stops the run; a crash of our own app or extensions always fails."""
@@ -421,6 +434,83 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(released, ['T1', 'T2'])  # the stalled one deleted; the fresh one shut down and kept
         self.assertEqual(list(devices), ['T2'])
         self.assertIn('recovered', posted.call_args.args[2])
+
+    def run_template(self, boot_effect=None, release_effect=None, report=None):
+        """The real clone_temporary with a missing template; only simctl, boot, release and reports are faked."""
+        runtime, devices, calls = 'runtime', {}, {'create': 0, 'clone': 0, 'boot': 0, 'marked': []}
+
+        def command(args, **kw):
+            if args == ['xcodebuild', '-version']:
+                return 'Xcode test'
+            if args[2] == 'list':
+                return json.dumps({'devices': {runtime: list(devices.values())}})
+            if args[2] == 'create':
+                calls['create'] += 1
+                devices['T1'] = {'udid': 'T1', 'name': args[3], 'state': 'Shutdown',
+                                 'deviceTypeIdentifier': lane_sim.DEVICE_TYPE}
+                return 'T1'
+            calls['clone'] += 1
+            return 'CLONE'
+
+        def boot(udid, label, **kw):
+            calls['boot'] += 1
+            if boot_effect:
+                raise boot_effect
+            kw['info']['boot_window'] = (1, 2)
+            return 30.0
+
+        def release(udid, **kw):
+            if release_effect:
+                raise release_effect
+
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
+                mock.patch.object(lane_sim.subprocess, 'check_output', side_effect=command), \
+                mock.patch.object(lane_sim, 'bounded_output', side_effect=command), \
+                mock.patch.object(lane_sim, 'ensure_simctl_ready'), \
+                mock.patch.object(lane_sim, 'boot', side_effect=boot), \
+                mock.patch.object(lane_sim, 'start_watcher'), \
+                mock.patch.object(lane_sim, 'release', side_effect=release), \
+                mock.patch.object(lane_sim, 'late_report', return_value=report), \
+                mock.patch.object(lane_sim, 'mark_unsafe', side_effect=lambda udid, why: calls['marked'].append(why)), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane_sim.time, 'sleep'):
+            try:
+                result = lane_sim.clone_temporary('job', runtime)
+            except Exception as error:
+                result = error
+        return result, calls
+
+    def test_a_template_boot_whose_simctl_call_hangs_is_a_boot_error_not_a_setup_timeout(self):
+        # #4438 audit on 4719545, route A: a stall's shutdown (wait_until_ready) times out, so boot_with_retry's
+        # late-report check never ran. A TimeoutExpired here would be rerun on a fresh device by the T3 wrapper.
+        hang = subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'T1'], 120)
+        result, calls = self.run_template(boot_effect=hang)
+        self.assertIsInstance(result, lane_sim.BootError)
+        self.assertNotIsInstance(result, subprocess.TimeoutExpired)
+        self.assertIn('crash reports were not read', str(result))
+        self.assertEqual((calls['boot'], calls['clone']), (1, 0))
+
+    def test_a_clean_template_whose_release_hangs_with_no_late_report_is_a_plain_timeout(self):
+        # The #4411 shape that may be rerun: nothing crashed, a shutdown hung.
+        hang = subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'T1'], 120)
+        result, calls = self.run_template(release_effect=hang)
+        self.assertIs(result, hang)
+        self.assertEqual((calls['clone'], calls['marked']), (0, []))
+
+    def test_a_clean_template_whose_release_hangs_still_gets_its_late_report_check(self):
+        # Route B: the late-report backstop must run before the timeout is allowed out.
+        hang = subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'T1'], 120)
+        result, calls = self.run_template(release_effect=hang, report=Path('SpringBoard-x.ips'))
+        self.assertIsInstance(result, lane_sim.BootError)
+        self.assertEqual(calls['marked'], ['late crash report for template boot: SpringBoard-x.ips'])
+        self.assertEqual(calls['clone'], 0)
+
+    def test_a_failed_template_whose_release_hangs_is_a_boot_error(self):
+        hang = subprocess.TimeoutExpired(['xcrun', 'simctl', 'shutdown', 'T1'], 120)
+        result, _ = self.run_template(boot_effect=lane_sim.BootError('flood'), release_effect=hang)
+        self.assertIsInstance(result, lane_sim.BootError)
+        self.assertIn('could not be released', str(result))
 
     def test_unsafe_missing_or_incompatible_templates_are_never_cloned(self):
         runtime = 'runtime'
