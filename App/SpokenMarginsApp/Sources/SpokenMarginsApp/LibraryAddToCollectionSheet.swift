@@ -35,6 +35,7 @@ struct LibraryAddToCollectionSheet: View {
                         Text(problem)
                             .font(.subheadline)
                             .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("library.addToCollection.problem")
                     }
                 }
                 if !choices.isEmpty {
@@ -58,6 +59,7 @@ struct LibraryAddToCollectionSheet: View {
                     }
                 }
             }
+            .onChange(of: newName) { problem = nil } // a refusal is about the name tried, so it goes when the name changes (#4638)
             .scrollContentBackground(.hidden)
             .background(AppColors.bone)
             .navigationTitle("Add to Collection")
@@ -80,17 +82,27 @@ struct LibraryAddToCollectionSheet: View {
     }
 
     private func createNew() {
-        guard ItemCollectionEditing.normalizedName(newName) != nil, !isSaving else {
-            problem = ItemCollectionEditing.Wording.nameRequired
+        guard !isSaving else { return } // a second Return during the save is not a refusal
+        guard ItemCollectionEditing.normalizedName(newName) != nil else {
+            refuse(ItemCollectionEditing.Wording.nameRequired)
             return
         }
         isSaving = true
         let name = newName
+        problem = nil
         Task {
-            problem = await model.addItems(itemIDs, toNewCollectionNamed: name)
+            let refusal = await model.addItems(itemIDs, toNewCollectionNamed: name)
             isSaving = false
-            if problem == nil { close() }
+            guard let refusal else { close(); return }
+            // The field stays editable during the save: a refusal of a name since edited is about a name no longer there.
+            if name == newName { refuse(refusal) }
         }
+    }
+
+    /// Shows and announces a refusal (#4638). Posted here, not read off a changed value, so a repeat is heard again.
+    private func refuse(_ text: String) {
+        problem = text
+        announceToVoiceOver(text)
     }
 
     private func close() {
