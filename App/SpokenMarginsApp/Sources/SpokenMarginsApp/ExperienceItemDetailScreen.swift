@@ -97,7 +97,9 @@ struct ExperienceItemDetailScreen: View {
                     downloadRecovery
                     ItemLastFailureCard(itemId: model.selectedItem.id)
                     if !sharingCoordinator.importedLayers.isEmpty {
-                        Build23ImportedMarginPresentation(coordinator: sharingCoordinator, hidesHeading: friendIntro != nil)
+                        Build23ImportedMarginPresentation(
+                            coordinator: sharingCoordinator, hidesHeading: friendIntro != nil, friendIntroShowing: friendIntro != nil
+                        )
                     }
                     reactionsEntry
                     SourceFollowSuggestionCard()
