@@ -148,6 +148,15 @@ class PaceTests(unittest.TestCase):
         self.assertIn('5 hours old', text)
         self.assertIn('HALT for claude', text)
 
+    def test_a_halt_under_cloud_max_is_reported_as_ignored(self):
+        now = dt.datetime(2026, 11, 21, 19, 40, tzinfo=UTC)
+        cloud = dict(self.DIAL, mode='cloud max')
+        usage = {'usage': {'percent': 15, 'at': now}, 'halted': True, 'halted_by': ['claude']}
+        self.assertTrue(a.pace(now, usage, cloud)['breaker_ignored'])
+        self.assertFalse(a.pace(now, usage, self.DIAL)['breaker_ignored'])
+        text = a.report(now, 8, cloud, a.queue_verdict([], [], 5, 8), [], [], [], [], a.pace(now, usage, cloud))
+        self.assertIn('HALT for claude (ignored: the Dial is Cloud max)', text)
+
 
 class GuideTextTests(unittest.TestCase):
     def test_reads_the_guide_and_the_decisions_record(self):
