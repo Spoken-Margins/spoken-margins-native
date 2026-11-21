@@ -245,6 +245,11 @@ struct LibraryCollectionScreen: View {
         guard renaming != nil else { return }
         renaming = nil
         let name = renameText
-        Task { problem = await model.renameCollection(collectionID: collectionID, to: name) }
+        problem = nil
+        Task {
+            problem = await model.renameCollection(collectionID: collectionID, to: name)
+            // A refused rename is drawn in the header; VoiceOver hears it too, each time it is refused (#4638).
+            if let problem { announceToVoiceOver(problem) }
+        }
     }
 }
