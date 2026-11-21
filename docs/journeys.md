@@ -115,6 +115,8 @@ The owner's one-phone version, with prepared packets and an episode that shares 
 3. Word (#4594). Copy `Contracts/fixtures/word/plain-paragraphs.docx` into the simulator's Files (On My iPhone), then Library, **+**, **Import from Files**, and pick it.
    - Pass: a Text row titled "The Gettysburg Address" (the title in the document's properties, not the file name). Play reads "Four score and seven years ago…" and the clock advances. A written Margin shows on the sentence it was written at.
    - Also pick `password-protected.docx` and `old-format.doc` from the same folder: nothing is added, and the banner says why (a password; the older .doc format, save it as .docx).
+4. Word with Margins (#4595). On the Gettysburg item from step 3, write two written Margins on two different sentences, then tap **⋯** on the item screen.
+   - Pass: the menu has **Export Word document with Margins** (it is not there on a PDF item or on an article, and it is dimmed on this item before any Margin exists). The sheet "Word document with your Margins" lists both Margins in text order with "On its sentence", no page numbers, and the footnote. **Export 2 comments** opens the share sheet with `The Gettysburg Address (with Margins).docx`; Save to Files, then open it in Files' preview or Quick Look and record whether the comments show (recorded, not required). The original `plain-paragraphs.docx` in Files is the same size as before.
 
 ## J8 — Collections
 
