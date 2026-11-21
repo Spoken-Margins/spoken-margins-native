@@ -98,6 +98,9 @@ final class SharedTextIntakeTests: XCTestCase {
     func testAnHTTPLinkWithTextAroundItStaysTextAndALoneOneIsNil() {
         XCTAssertNil(SharedTextIntake.route("http://example.com/a"))
         XCTAssertNil(SharedTextIntake.route("  http://example.com/a\n"))
+        for wrapped in ["http://example.com/a.", "<http://example.com/a>", "(http://example.com/a)", "\"http://example.com/a\","] {
+            XCTAssertNil(SharedTextIntake.route(wrapped), "a lone http link with punctuation around it imports nothing: \(wrapped)")
+        }
         XCTAssertEqual(
             SharedTextIntake.route("Title\nhttp://example.com/a"),
             .text(title: "Title", body: "Title\nhttp://example.com/a")

@@ -77,7 +77,12 @@ public enum ClipboardIntakeClassifier {
             }
             guard let scheme = scheme(of: candidate), ["http", "https"].contains(scheme),
                   let url = webURL(from: candidate) else { continue }
-            if found != nil { return nil }
+            if let existing = found {
+                // The same address twice ("Title" then the link, then the link again) is still one link.
+                guard existing.url == url else { return nil }
+                found?.length = existing.length + token.count
+                continue
+            }
             found = (url, token.count)
         }
         guard let found, totalLength - found.length <= shortNoteLimit else { return nil }

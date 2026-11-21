@@ -83,6 +83,8 @@ final class ClipboardIntakeClassifierTests: XCTestCase {
             "Listen: [Hear it](\(address))",
             "Look at this: \(address).",
             "\u{201C}\(address)\u{201D} is worth a listen",
+            "Title\n\(address)\n\(address)",
+            "\(address) \(address)",
         ]
         for pasted in cases {
             XCTAssertEqual(ClipboardIntakeClassifier.classify(pasted), link(address), "\(pasted.debugDescription)")

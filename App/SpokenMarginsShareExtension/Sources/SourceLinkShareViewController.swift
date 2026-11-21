@@ -522,12 +522,11 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     }
 
     /// A string shared as text (#662): a link, alone or with a short note around it ("Title" then the link), goes as that
-    /// link, as Paste & go decides (#4809). Anything else becomes a text item holding the whole text, but only for the
-    /// plain-text types. A string of another type (UTF-8 bytes of JSON, say) is a link only when it is just the link, or,
-    /// as before, a link with under 20 characters around it.
+    /// link, as Paste & go decides (#4809), whatever type the share calls the string. Anything else becomes a text item
+    /// holding the whole text, but only for the plain-text types.
     nonisolated private static func sharedTextImport(_ text: String, identifier: String, presentsPDF: Bool) -> SharedImport? {
         let route = SharedTextIntake.route(text)
-        if case .link(let url) = route, SharedTextIntake.isPlainText(identifier) || text == url.absoluteString {
+        if case .link(let url) = route {
             return sharedURLImport(url, forcePDF: presentsPDF)
         }
         // A link with no space before it ("Listen:https://…") isn't a word of its own to the classifier; the detector finds it.
@@ -536,7 +535,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         }
         switch route {
         case .link:
-            return nil
+            return nil // handled above
         case .text(let title, let body):
             guard SharedTextIntake.isPlainText(identifier) else { return nil }
             return .sharedText(BrowserTextSharePayload(

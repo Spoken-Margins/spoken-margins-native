@@ -53,9 +53,10 @@ public enum SharedTextIntake {
         switch ClipboardIntakeClassifier.classify(text) {
         case .link(let url):
             if url.scheme?.lowercased() == "https" { return .link(url) }
-            // A lone http link has nothing to import, as before; text with one around it is still the listener's text.
+            // A lone http link has nothing to import, as before, even with punctuation or brackets around it; text with
+            // words around one is still the listener's text.
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmed != url.absoluteString else { return nil }
+            guard trimmed.split(whereSeparator: \.isWhitespace).count > 1 else { return nil }
             return .text(title: ClipboardIntakeClassifier.title(for: trimmed), body: trimmed)
         case .text(let title, let body):
             return .text(title: title, body: body)
