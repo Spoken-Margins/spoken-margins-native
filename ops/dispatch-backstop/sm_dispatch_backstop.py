@@ -56,18 +56,26 @@ def gh(method: str, path: str, token: str, body: dict | None = None):
 
 
 def newest_run(workflow: str, token: str, get=gh) -> dict | None:
-    """The newest run of any event, or None when the workflow has never run."""
-    runs = get('GET', f'repos/{REPO}/actions/workflows/{workflow}/runs?per_page=1', token)['workflow_runs']
-    return runs[0] if runs else None
+    """The newest run of any event that did something, or None. A run whose conclusion is `skipped` (every job's `if:`
+    was false: a merge group's check, an unarmed PR's push) did no work, so it must not hold the backstop off; on a busy
+    day those arrive every few minutes. A queued or running run has no conclusion yet and counts."""
+    runs = get('GET', f'repos/{REPO}/actions/workflows/{workflow}/runs?per_page=30', token)['workflow_runs']
+    return next((run for run in runs if run.get('conclusion') != 'skipped'), None)
+
+
+# The timer's own jitter (RandomizedDelaySec=60 on each tick) can make a run look a minute or two younger than the
+# interval at the next tick; without this margin about half the ticks would skip a workflow that is due, and the real gap
+# would double.
+SLACK = dt.timedelta(minutes=2)
 
 
 def decide(now: dt.datetime, interval_minutes: int, run: dict | None) -> tuple[bool, str]:
-    """(dispatch?, why). A run counts from the moment it was created, whatever its event or result."""
+    """(dispatch?, why). A run counts from the moment it was created, whatever its event."""
     if run is None:
-        return True, 'no run yet'
+        return True, 'no worked run yet'
     age = now - parse_time(run['created_at'])
     minutes = int(age.total_seconds() // 60)
-    if age < dt.timedelta(minutes=interval_minutes):
+    if age < dt.timedelta(minutes=interval_minutes) - SLACK:
         return False, f"last run {minutes}m ago ({run.get('event')}), inside {interval_minutes}m"
     return True, f"last run {minutes}m ago ({run.get('event')}), past {interval_minutes}m"
 

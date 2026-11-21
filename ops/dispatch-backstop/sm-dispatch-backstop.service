@@ -8,5 +8,5 @@ Type=oneshot
 ExecStart=/usr/bin/python3 /opt/sm-dispatch/sm_dispatch_backstop.py
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadOnlyPaths=/etc/sm-dispatch /etc/sm-dial
+ReadOnlyPaths=-/etc/sm-dispatch -/etc/sm-dial
 PrivateTmp=true

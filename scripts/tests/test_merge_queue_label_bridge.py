@@ -337,7 +337,8 @@ class WorkflowExpressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import yaml
-        cls.job = yaml.safe_load((ROOT / '.github/workflows/merge-queue-label-bridge.yml').read_text())['jobs']['bridge']
+        workflow = yaml.safe_load((ROOT / '.github/workflows/merge-queue-label-bridge.yml').read_text())
+        cls.job, cls.workflow_on = workflow['jobs']['bridge'], workflow[True]
 
     def runs(self, github):
         return bool(evaluate(self.job['if'], github))
@@ -365,17 +366,17 @@ class WorkflowExpressionTests(unittest.TestCase):
                 self.assertFalse(self.runs(event(action, armed=False)))
                 self.assertFalse(self.runs(event(action)))
 
+    def test_no_check_finishing_starts_a_sweep(self):
+        # A sweep when a check finishes would queue a PR whose merge group just failed (or that was taken out by hand)
+        # before merge_queue_dequeued.py took `automerge` off it: a second failing group (ci_model scenario d).
+        self.assertNotIn('workflow_run', self.workflow_on)
+
     def test_which_events_run_the_job(self):
         self.assertTrue(self.runs(event('labeled', label={'name': 'automerge'})))
         self.assertTrue(self.runs(event('unlabeled', label={'name': 'automerge'})))
         self.assertFalse(self.runs(event('labeled', label={'name': 'docs'})))
         self.assertTrue(self.runs(event('converted_to_draft')))
         self.assertTrue(self.runs({'event_name': 'schedule', 'event': {}}))
-        self.assertTrue(self.runs({'event_name': 'workflow_run', 'event': {'workflow_run': {'event': 'pull_request'}}}))
-        # A merge group's checks finishing must not sweep: the PR whose group just failed still carries `automerge`
-        # until merge_queue_dequeued.py runs, and the sweep would queue it for a second failing group (ci_model, d).
-        for other in ('merge_group', 'push', 'schedule'):
-            self.assertFalse(self.runs({'event_name': 'workflow_run', 'event': {'workflow_run': {'event': other}}}))
         self.assertFalse(bool(evaluate(self.job['if'], {'event_name': 'schedule', 'event': {}}, merge_queue='')))
 
 

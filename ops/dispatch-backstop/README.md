@@ -6,7 +6,9 @@ an event where one exists (the comment at the top of each file names which event
 the VPS, next to the Dial gate, is the backstop for the time-based part.
 
 Every 15 minutes `sm_dispatch_backstop.py` reads the newest run of each workflow (any event) and fires
-`workflow_dispatch` only when that run is older than the workflow's interval: 15 minutes for `claude-audit`,
+`workflow_dispatch` only when that run is older than the workflow's interval less 2 minutes (the timer's own jitter). A run
+whose conclusion is `skipped` (every job's `if:` was false, as for a merge group's check or an unarmed PR's push) does not
+count, so a busy queue cannot hold the backstop off. The interval is 15 minutes for `claude-audit`,
 `merge-stall` and `merge-queue-label-bridge`, 60 for `lane-conflicts`, 180 for `main-t3`. A workflow that an event started
 a few minutes ago is skipped.
 

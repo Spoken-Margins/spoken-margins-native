@@ -27,9 +27,10 @@
 #
 # Start (#4866): the sweep that queues PRs armed by a token-made label change used to wait for a 15-minute cron GitHub ran
 # 4 times of 96 in the 24 hours to 2026-11-21. Now a PR's own `opened`, `reopened`, `synchronize` and `ready_for_review`
-# run the one-PR check, and a hosted check finishing on a PR (`workflow_run`, never a merge group's: it would requeue a
-# PR whose group just failed before merge_queue_dequeued.py has taken `automerge` off it) runs the sweep. The VPS (ops/dispatch-backstop/)
-# fires `workflow_dispatch` when no run began in the last 15 minutes; the one daily tick is the last resort.
+# run the one-PR check (armed PRs only), and the VPS (ops/dispatch-backstop/) fires `workflow_dispatch` for the sweep when
+# no run began in the last 15 minutes; the one daily tick is the last resort. There is no `workflow_run` start: a sweep
+# when any PR's check finishes would queue a PR whose merge group just failed, or one taken out by hand, before
+# merge_queue_dequeued.py has taken `automerge` off it (ci_model scenario d showed the second failing group).
 #
 # Cost and catch: one Linux job of seconds per `automerge` label change, title edit or draft, plus a seconds-long
 # sweep every 15 minutes (only with MERGE_QUEUE on; otherwise each run is a skipped job). Its real cost is the merge
@@ -44,9 +45,6 @@ name: merge-queue-label-bridge
 on:
   pull_request_target:
     types: [labeled, unlabeled, edited, converted_to_draft, opened, reopened, synchronize, ready_for_review]
-  workflow_run:
-    workflows: [hosted-portable, hosted-web, hosted-sessionkit-linux]
-    types: [completed]
   schedule:
     - cron: '7 6 * * *'  # last resort only
   workflow_dispatch:
@@ -66,7 +64,6 @@ jobs:
     name: merge queue label bridge
     if: >-
       vars.MERGE_QUEUE == 'on' &&
-      (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request') &&
       (github.event_name != 'pull_request_target' || github.event.label.name == 'automerge' ||
        (github.event.action == 'edited' && github.event.changes.title) ||
        github.event.action == 'converted_to_draft' ||

@@ -39,10 +39,13 @@ class DecideTests(unittest.TestCase):
         cases = [
             ('never ran', 15, None, True),
             ('just ran', 15, {'created_at': ago(0), 'event': 'push'}, False),
-            ('one minute inside', 15, {'created_at': ago(14), 'event': 'workflow_run'}, False),
+            ('well inside', 15, {'created_at': ago(10), 'event': 'workflow_run'}, False),
+            ('just inside the jitter margin', 15, {'created_at': ago(12), 'event': 'workflow_run'}, False),
+            ('at the margin, so the next tick is not skipped for timer jitter', 15, {'created_at': ago(13), 'event': 'schedule'}, True),
             ('exactly the interval', 15, {'created_at': ago(15), 'event': 'schedule'}, True),
             ('long past', 15, {'created_at': ago(600), 'event': 'schedule'}, True),
             ('hourly job ran 40m ago', 60, {'created_at': ago(40), 'event': 'pull_request'}, False),
+            ('hourly job ran 59m ago', 60, {'created_at': ago(59), 'event': 'pull_request'}, True),
             ('hourly job ran 61m ago', 60, {'created_at': ago(61), 'event': 'pull_request'}, True),
             ('3-hourly job ran 2h ago', 180, {'created_at': ago(120), 'event': 'push'}, False),
             ('3-hourly job ran 3h10 ago', 180, {'created_at': ago(190), 'event': 'schedule'}, True),
@@ -51,11 +54,34 @@ class DecideTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(b.decide(NOW, interval, run)[0], expected)
 
-    def test_any_event_and_any_result_counts_as_a_run(self):
+    def test_any_event_counts_as_a_run(self):
         for event in ('push', 'schedule', 'workflow_dispatch', 'workflow_run', 'pull_request', None):
             with self.subTest(event):
-                run = {'created_at': ago(3), 'event': event, 'conclusion': 'skipped'}
+                run = {'created_at': ago(3), 'event': event, 'conclusion': 'success'}
                 self.assertFalse(b.decide(NOW, 15, run)[0])
+
+
+class NewestRunTests(unittest.TestCase):
+    def pick(self, runs):
+        return b.newest_run('merge-stall.yml', 'tok', lambda *a, **k: {'workflow_runs': runs})
+
+    def test_skipped_runs_do_not_hold_the_backstop_off(self):
+        # A busy merge queue creates a skipped run every few minutes; counting them would starve the backstop.
+        skipped = [{'created_at': ago(m), 'event': 'workflow_run', 'conclusion': 'skipped'} for m in (1, 4, 7)]
+        worked = {'created_at': ago(40), 'event': 'schedule', 'conclusion': 'success'}
+        self.assertEqual(self.pick(skipped + [worked]), worked)
+        self.assertIsNone(self.pick(skipped))
+        self.assertTrue(b.decide(NOW, 15, self.pick(skipped + [worked]))[0])
+
+    def test_a_queued_or_running_run_counts(self):
+        running = {'created_at': ago(2), 'event': 'workflow_run', 'conclusion': None, 'status': 'in_progress'}
+        self.assertEqual(self.pick([running]), running)
+        self.assertFalse(b.decide(NOW, 15, running)[0])
+
+    def test_failed_and_cancelled_runs_count(self):
+        for conclusion in ('failure', 'cancelled', 'success', 'timed_out'):
+            run = {'created_at': ago(2), 'event': 'push', 'conclusion': conclusion}
+            self.assertEqual(self.pick([run]), run, conclusion)
 
 
 class TickTests(unittest.TestCase):
