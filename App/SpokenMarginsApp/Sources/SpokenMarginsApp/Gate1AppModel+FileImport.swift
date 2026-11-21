@@ -216,7 +216,7 @@ extension Gate1AppModel {
         }
     }
 
-    private nonisolated static func prepareObsidianImports(
+    nonisolated static func prepareObsidianImports(
         _ requests: [ObsidianImportRequest], originalStore: PDFOriginalStore?
     ) async -> ObsidianImportBatch {
         var prepared: [PreparedObsidianImport] = []
@@ -322,7 +322,7 @@ extension Gate1AppModel {
     }
 
     /// Saves each prepared file's item, map and document off the main actor (#2509): the text can be megabytes.
-    private nonisolated static func saveObsidianImports(
+    nonisolated static func saveObsidianImports(
         _ prepared: [PreparedObsidianImport], staged: [String: PDFOriginalStore.Staged], originalStore: PDFOriginalStore?,
         store: SQLiteSessionStore, clipStore: PDFClipStore?
     ) -> SavedObsidianImports {
