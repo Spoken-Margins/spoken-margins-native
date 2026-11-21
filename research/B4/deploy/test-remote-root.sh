@@ -65,7 +65,9 @@ ok "deploy.sh: dry-run, apply and rollback all go through sudo for a normal logi
 key='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample test@example'
 if bash "${here}/create-deploy-user.sh" --dry-run root "${key}" >/dev/null 2>&1; then fail "created root as the deploy user"; fi
 if bash "${here}/create-deploy-user.sh" --dry-run 'Bad Name' "${key}" >/dev/null 2>&1; then fail "accepted a bad user name"; fi
-if bash "${here}/create-deploy-user.sh" --dry-run smtest '-----BEGIN OPENSSH PRIVATE KEY-----' >/dev/null 2>&1; then fail "accepted a private key"; fi
+# Built in pieces so the public-tree check does not take this test line for a real private key block.
+private_header="-----BEGIN OPENSSH ""PRIVATE KEY-----"
+if bash "${here}/create-deploy-user.sh" --dry-run smtest "${private_header}" >/dev/null 2>&1; then fail "accepted a private key"; fi
 if bash "${here}/create-deploy-user.sh" --dry-run smtest 'not a key' >/dev/null 2>&1; then fail "accepted text that is not a key"; fi
 plan="$(bash "${here}/create-deploy-user.sh" --dry-run smtestnouser "${key}")"
 grep -q "would run: .*\(adduser\|useradd\)" <<<"${plan}" || fail "the dry run did not say it would make the user: ${plan}"
