@@ -108,6 +108,8 @@ struct ExperienceLibraryScreen: View {
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
             .listStyle(.plain)
+            .scrollDismissesKeyboard(.interactively) // the search box's keyboard goes down on a drag (#4636)
+            .searchKeyboardDoneBar()
             .motionAnimation(.smooth(duration: 0.24), value: listEntries.map(\.id))
             .accessibilityIdentifier("home.screen")
             .navigationTitle("Library")
