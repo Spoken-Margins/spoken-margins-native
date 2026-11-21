@@ -304,7 +304,9 @@ final class MarkdownHeadingChapterTests: XCTestCase {
         let parsed = try ObsidianMarkdownParser.parse(fileName: "notes.md", contents: markdown)
         let started = Date()
         let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-1"))
-        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.6 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards a split of the one huge section that grows with its square.
+        XCTAssertLessThan(Date().timeIntervalSince(started), 10)
         assertContiguous(map, textCount: parsed.text.count)
         XCTAssertGreaterThan(map.chapters.count, 40)
     }

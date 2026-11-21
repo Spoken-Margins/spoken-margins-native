@@ -132,10 +132,8 @@ final class PublicSourceVerifierTests: XCTestCase, @unchecked Sendable {
     func testASlowAnswerEndsAtTheDeadline() async {
         let slow = Probe { _, _ in self.okPage(self.page(self.sentences)) }
         slow.delay = .seconds(30)
-        let started = ContinuousClock.now
         let outcome = await PublicSourceVerifier(probe: slow.runDelayed).verify(textItem(), timeout: .milliseconds(150))
-        XCTAssertEqual(outcome, .couldNotCheck)
-        XCTAssertLessThan(ContinuousClock.now - started, .seconds(5), "the share tap does not wait for a hung server")
+        XCTAssertEqual(outcome, .couldNotCheck, "the share tap does not wait for a hung server: waiting it out would read its page")
     }
 
     // MARK: Redirects

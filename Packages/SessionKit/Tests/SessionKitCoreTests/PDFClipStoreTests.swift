@@ -164,6 +164,81 @@ final class PDFClipStoreTests: XCTestCase {
         XCTAssertEqual(ItemOwnedFiles.stillFree(target, rowState: { _ in .absent }, allItemIds: { ["other"] }), .absent)
     }
 
+    // MARK: The Timeline asks what is there
+
+    func testAvailableClipsComeFromOneListingOfTheItemsFolder() throws {
+        let (store, base) = makeStore()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let bytes = Data([0xFF, 0xD8, 0xFF, 0xD9])
+        try store.replaceClips(["float-p1-1": bytes, "float-p2-1": bytes], forItem: "item-a",
+                               document: document(floatIds: ["float-p1-1", "float-p2-1", "float-p3-1"]))
+
+        let available = store.available(forItem: "item-a")
+        XCTAssertTrue(available.contains(floatId: "float-p1-1"))
+        XCTAssertTrue(available.contains(floatId: "float-p2-1"))
+        XCTAssertFalse(available.contains(floatId: "float-p3-1"), "the document has it, no picture was cut")
+        XCTAssertFalse(available.contains(floatId: nil))
+        XCTAssertFalse(available.contains(floatId: ""))
+        XCTAssertFalse(available.contains(floatId: "../float-p1-1"), "an id that is not a file name is never a hit")
+
+        XCTAssertTrue(store.available(forItem: "item-b").isEmpty, "another item has none of them")
+        XCTAssertEqual(store.available(forItem: "item-b"), .none)
+        XCTAssertEqual(store.available(forItem: ""), .none, "an item with no folder of its own")
+    }
+
+    func testAvailableClipsIgnoreFilesThatAreNotClipsAndFollowAReplace() throws {
+        let (store, base) = makeStore()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let bytes = Data([0xFF, 0xD8, 0xFF, 0xD9])
+        try store.replaceClips(["float-p1-1": bytes], forItem: "item-a", document: document(floatIds: ["float-p1-1"]))
+        let folder = try XCTUnwrap(store.folder(forItem: "item-a"))
+        try Data([1]).write(to: folder.appending(path: "float-p9-9.txt"))
+        XCTAssertFalse(store.available(forItem: "item-a").contains(floatId: "float-p9-9"))
+
+        try store.replaceClips(["float-p2-1": bytes], forItem: "item-a", document: document(floatIds: ["float-p1-1", "float-p2-1"]))
+        let after = store.available(forItem: "item-a")
+        XCTAssertFalse(after.contains(floatId: "float-p1-1"), "a re-import leaves no stale picture")
+        XCTAssertTrue(after.contains(floatId: "float-p2-1"))
+
+        try store.removeClips(forItem: "item-a")
+        XCTAssertEqual(store.available(forItem: "item-a"), .none)
+    }
+
+    func testTheListingChangesWhenTheFolderIsReplacedEvenWithTheSameFileNames() throws {
+        let (store, base) = makeStore()
+        defer { try? FileManager.default.removeItem(at: base) }
+        XCTAssertEqual(store.available(forItem: "item-a").stamp, 0, "no folder, no stamp")
+
+        let first = Data([0xFF, 0xD8, 0x01, 0xFF, 0xD9])
+        try store.replaceClips(["float-p1-1": first], forItem: "item-a", document: document(floatIds: ["float-p1-1"]))
+        let listed = store.available(forItem: "item-a")
+        XCTAssertGreaterThan(listed.stamp, 0)
+        XCTAssertEqual(store.available(forItem: "item-a"), listed, "nothing changed, nothing differs")
+
+        // Put the folder's date far in the past, as if the first import was long ago, then re-import the same
+        // float ids with new pictures: the file names are the same, the listing is not.
+        let folder = try XCTUnwrap(store.folder(forItem: "item-a"))
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_000)], ofItemAtPath: folder.path)
+        let old = store.available(forItem: "item-a")
+        XCTAssertEqual(old.stamp, 1_000)
+        try store.replaceClips(["float-p1-1": Data([0xFF, 0xD8, 0x02, 0xFF, 0xD9])], forItem: "item-a",
+                               document: document(floatIds: ["float-p1-1"]))
+        let after = store.available(forItem: "item-a")
+        XCTAssertTrue(after.contains(floatId: "float-p1-1"))
+        XCTAssertNotEqual(after, old, "a reader that kept the old pictures can tell the files changed")
+    }
+
+    func testTheSavedJPEGIsReadBackByFloatOrIsNil() throws {
+        let (store, base) = makeStore()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let bytes = Data([0xFF, 0xD8, 0x01, 0xFF, 0xD9])
+        try store.replaceClips(["float-p1-1": bytes], forItem: "item-a", document: document(floatIds: ["float-p1-1"]))
+        XCTAssertEqual(store.data(forFloat: "float-p1-1", itemId: "item-a"), bytes)
+        XCTAssertNil(store.data(forFloat: "float-p2-1", itemId: "item-a"))
+        XCTAssertNil(store.data(forFloat: "float-p1-1", itemId: "item-b"))
+        XCTAssertNil(store.data(forFloat: "", itemId: "item-a"))
+    }
+
     // MARK: The import carries them
 
     func testAFilesImportCarriesTheClipsToTheSaveAndNeverToATextFile() throws {

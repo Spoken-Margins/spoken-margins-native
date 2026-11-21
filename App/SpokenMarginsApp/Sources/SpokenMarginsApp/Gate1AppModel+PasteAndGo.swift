@@ -62,6 +62,8 @@ extension Gate1AppModel {
     /// Offers Safari when an https page refused the app or couldn't be read as an article. Offline and
     /// timeout failures don't get the offer: Safari wouldn't do better, and the retry banner covers them.
     func offerSafariIfUnreadable(_ url: URL, error: Error) {
+        // A collection import reports the link as not added instead; an offer left behind would name one link of many (#3769).
+        guard libraryCollections.importCapture == nil else { return }
         guard url.scheme?.lowercased() == "https", let reason = Self.safariOfferReason(for: error) else { return }
         sourceLinkSafariOffer = OpenInSafariOffer(url: url, reason: reason)
     }

@@ -106,6 +106,10 @@ jobs:
       SM_LANE_GITHUB_HOSTED: '1'
       # The app plan's 600 s budget is the owner's Mac; this 3-core hosted Mac needs about an hour for it (#2596).
       SM_PLAN_TIMEOUT_SECONDS: '3600'
+      # The packages the app build fetched before, restored below and handed to xcodebuild by scripts/verify-tests.py
+      # (#4664). Without them every run downloads the onnxruntime binary targets from download.onnxruntime.ai, whose
+      # certificate was invalid for 15 hours on 2026-11-21 and failed every run before any test.
+      SM_SPM_DIR: ${{ github.workspace }}/.build/spm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -147,6 +151,16 @@ jobs:
           # The checkout keeps no credentials; the job token is handed to this one command.
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+      # hosted-app-macos.yml saves this cache under the same key whenever Package.resolved changes, and its builds on
+      # main kept passing through the bad certificate because of it. This run only restores it (no save: a cache
+      # saved from a failed or partial fetch must never replace a good one).
+      - name: Restore the Swift packages
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ env.SM_SPM_DIR }}
+          key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: spm-
       # The same rolling compilation cache as lane.yml's hosted T3 and hosted-app-macos.yml (scripts/ci-cas-cache.sh).
       - name: Restore the Xcode compilation cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0

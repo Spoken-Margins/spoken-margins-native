@@ -82,6 +82,8 @@ final class FollowListFilterTests: XCTestCase {
         let filtered = FollowListFilter.apply(rows: fixture.list.rows, quietRows: [], list: list, subscriptions: fixture.subscriptions)
         XCTAssertEqual(filtered.rows.count, 500)
         // 500 rows against 500 members is a quarter of a million comparisons; a debug build on a busy host still does it in under 2 s.
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.02 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards a filter that grows faster than rows times members.
         XCTAssertLessThan(Date().timeIntervalSince(started), 2)
     }
 

@@ -546,6 +546,8 @@ final class TranscriptHandoffDrainTests: XCTestCase {
         let started = Date()
         let report = await drain()
         XCTAssertEqual(report.added.count, 1)
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.5 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards work per cue that grows with the number of cues.
         XCTAssertLessThan(Date().timeIntervalSince(started), 5)
     }
 }

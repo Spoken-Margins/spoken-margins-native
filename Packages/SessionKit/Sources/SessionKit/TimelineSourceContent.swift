@@ -9,6 +9,10 @@ public struct TimelineSourceContent: Equatable, Sendable {
         public let role: StructuredDocument.Role
         public let label: String?
         public let pageIndex: Int?
+        /// The table or figure this passage is the printed text of, when the PDF's import located it (#3895).
+        /// Its picture, if one was cut, is the clip saved under this id.
+        public let floatId: String?
+        public let floatKind: StructuredDocument.Float.Kind?
     }
 
     public let entries: [Entry]
@@ -34,11 +38,12 @@ public struct TimelineSourceContent: Equatable, Sendable {
         self.elements = elements.filter { $0.start >= 0 && $0.start <= characters.count }
         var result: [Entry] = []
         func append(_ range: Range<Int>, role: StructuredDocument.Role = .body,
-                    label: String? = nil, pageIndex: Int? = nil) {
+                    label: String? = nil, pageIndex: Int? = nil, float: StructuredDocument.Float? = nil) {
             let value = String(characters[range])
             guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             result.append(Entry(id: String(format: "source.text.%020ld.%020ld", range.lowerBound, result.count),
-                                start: range.lowerBound, text: value, role: role, label: label, pageIndex: pageIndex))
+                                start: range.lowerBound, text: value, role: role, label: label, pageIndex: pageIndex,
+                                floatId: float?.id, floatKind: float?.kind))
         }
 
         if let document, document.text == text, !document.segments.isEmpty,
@@ -63,7 +68,9 @@ public struct TimelineSourceContent: Equatable, Sendable {
                 let page = segment.pageIndex.flatMap {
                     $0 >= 0 && $0 < document.extraction.pageCount ? $0 : nil
                 }
-                append(start..<end, role: segment.role, label: label, pageIndex: page)
+                // Only the segment that holds the table's or figure's own text carries its picture; its caption doesn't.
+                let ownFloat = segment.floatId.flatMap { id in document.floats.first { $0.id == id } }
+                append(start..<end, role: segment.role, label: label, pageIndex: page, float: ownFloat)
                 coveredEnd = max(coveredEnd, end)
             }
             if coveredEnd < characters.count { append(coveredEnd..<characters.count) }
