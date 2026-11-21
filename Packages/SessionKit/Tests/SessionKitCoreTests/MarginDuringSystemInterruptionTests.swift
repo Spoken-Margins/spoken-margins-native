@@ -309,34 +309,62 @@ final class MarginDuringSystemInterruptionTests: XCTestCase {
         client.failsPlay = true
         XCTAssertThrowsError(try engine.resumePlaybackAfterInterruption())
         client.failsPlay = false
-        let sessionId = engine.snapshot.sessionId, targetId = engine.snapshot.targetId
-        let pausedAtMs = engine.snapshot.currentMediaTimeMs // what the app's retry captured before the refusal
+        let place = InterruptionRetryPlace(snapshot: engine.snapshot, engine: engine) // what the app's retry captures
+        let pausedAtMs = engine.snapshot.currentMediaTimeMs
 
         let capture = try engine.beginWrittenInterjection()
         XCTAssertNotEqual(engine.snapshot.currentMediaTimeMs, pausedAtMs, "the open Margin publishes the stepped-back place")
 
-        let retrier = InterruptionResumeRetrier(delaysMs: [10], sleep: { _ in })
         var outcomes: [InterruptionResumeRetrier.Outcome] = []
-        struct Refused: Error {}
-        retrier.begin(
-            after: Refused(),
-            stillWaiting: { // the app's, from `retryMediaResumeAfterInterruption`
-                engine.snapshot.status == .paused && engine.snapshot.sessionId == sessionId && engine.snapshot.targetId == targetId
-                    && engine.snapshot.currentMediaTimeMs == pausedAtMs && !engine.snapshot.isRecording
-            },
-            handOver: { // the app's
-                guard engine.snapshot.status == .paused, engine.snapshot.sessionId == sessionId, engine.snapshot.targetId == targetId,
-                      !engine.snapshot.isRecording else { return false }
-                return engine.deferResumeToWrittenCapture()
-            },
-            attempt: { _ = try engine.resumePlaybackAfterInterruption() },
-            report: { outcomes.append($0) }
-        )
-        await retrier.waitUntilIdle()
+        await runRetry(engine, place: place) { outcomes.append($0) }
         XCTAssertEqual(outcomes, [.deferred(attempts: 0)])
 
         _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "Check this claim")
         XCTAssertTrue(client.playing, "Save plays the item")
+    }
+
+    /// The audit's counter-case: the listener seeks while the retries run and then opens a Margin. The item is theirs, so
+    /// the hand-over declines, the retries end as abandoned, and Save leaves it paused where they put it.
+    @MainActor
+    func testAListenerSeekFollowedByAMarginDoesNotHandTheItemBackToTheRetry() async throws {
+        let clock = ClockBox()
+        let client = Client()
+        let repository = InMemorySessionRepository(items: [episode.id: episode])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: client, recorder: Recorder(), now: { clock.date })
+        _ = try engine.startSession(itemId: episode.id)
+        _ = try engine.seekMedia(toMediaTimeMs: 600_000)
+        try siriPausesIt((engine: engine, client: client))
+        clock.date.addTimeInterval(60)
+        client.failsPlay = true
+        XCTAssertThrowsError(try engine.resumePlaybackAfterInterruption())
+        client.failsPlay = false
+        let place = InterruptionRetryPlace(snapshot: engine.snapshot, engine: engine)
+
+        _ = try engine.seekMedia(toMediaTimeMs: 1_200_000) // the listener moves it while it is paused
+        client.playing = false
+        let capture = try engine.beginWrittenInterjection()
+
+        var outcomes: [InterruptionResumeRetrier.Outcome] = []
+        await runRetry(engine, place: place) { outcomes.append($0) }
+        XCTAssertEqual(outcomes, [.abandoned(attempts: 0)])
+
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "Check this claim")
+        XCTAssertFalse(client.playing, "the listener's own place is not played over")
+    }
+
+    /// The retrier wired as `retryMediaResumeAfterInterruption` wires it, with the app's `InterruptionRetryPlace`.
+    @MainActor
+    private func runRetry(_ engine: SessionEngine, place: InterruptionRetryPlace, report: @escaping @MainActor (InterruptionResumeRetrier.Outcome) -> Void) async {
+        struct Refused: Error {}
+        let retrier = InterruptionResumeRetrier(delaysMs: [10], sleep: { _ in })
+        retrier.begin(
+            after: Refused(),
+            stillWaiting: { place.stillWaiting(engine.snapshot) },
+            handOver: { place.mayHandOverToWrittenCapture(engine.snapshot) && engine.deferResumeToWrittenCapture() },
+            attempt: { _ = try engine.resumePlaybackAfterInterruption() },
+            report: report
+        )
+        await retrier.waitUntilIdle()
     }
 
     private final class ClockBox { var date = Date(timeIntervalSince1970: 1_000_000) }

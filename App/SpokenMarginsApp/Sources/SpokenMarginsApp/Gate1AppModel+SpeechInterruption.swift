@@ -71,21 +71,18 @@ extension Gate1AppModel {
     /// background or in Low Power Mode. Tries again a few times while the item is still paused where it was, then
     /// leaves it paused and says why (#2183).
     private func retryMediaResumeAfterInterruption(after error: Error, engine: SessionEngine) {
-        let sessionId = snapshot.sessionId
-        let targetId = snapshot.targetId
-        // Where it paused. A seek, skip, or a Play and Pause by the listener moves this, and then the item is theirs.
-        let pausedAtMs = snapshot.currentMediaTimeMs
+        // Where it paused, and where the refused resume stepped it back to. A seek or skip, or a Play and Pause by the
+        // listener, moves it, and then the item is theirs.
+        let place = InterruptionRetryPlace(snapshot: snapshot, engine: engine)
         Self.mediaInterruptionResumeRetrier.begin(
             after: error,
             stillWaiting: { [weak self] in
                 guard let self else { return false }
-                return snapshot.status == .paused && snapshot.sessionId == sessionId && snapshot.targetId == targetId
-                    && snapshot.currentMediaTimeMs == pausedAtMs && !snapshot.isRecording
+                return place.stillWaiting(snapshot)
             },
             // A written Margin opened while the retries ran: Save or Cancel plays the item, so the retries stop (#4846).
             handOver: { [weak self] in
-                guard let self, snapshot.status == .paused, snapshot.sessionId == sessionId, snapshot.targetId == targetId,
-                      !snapshot.isRecording else { return false }
+                guard let self, place.mayHandOverToWrittenCapture(snapshot) else { return false }
                 return engine.deferResumeToWrittenCapture()
             },
             attempt: { [weak self] in
