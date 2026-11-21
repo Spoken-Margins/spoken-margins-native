@@ -54,7 +54,7 @@ final class QuickFolderReconnectRuleTests: XCTestCase {
             ("a folder inside it", vault + "/2026"),
             ("a sibling that starts with the same letters", vault + "2"),
             ("a different case", vault.replacingOccurrences(of: "Clippings", with: "clippings")),
-            ("a different name", vault.replacingOccurrences(of: "Clippings", with: "Web")),
+            ("a different name", vault.replacingOccurrences(of: "Clippings", with: "Reading")),
             ("the root", "/"),
             ("empty", ""),
         ]
