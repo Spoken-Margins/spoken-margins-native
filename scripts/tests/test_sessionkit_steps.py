@@ -408,5 +408,45 @@ class ScriptTests(unittest.TestCase):
             self.assertEqual(calls[0][-1], '--disable-sandbox', args)
 
 
+    def run_tools(self, *, with_seed_script: bool, state_text: str | None):
+        """`--tools` in a scratch checkout; returns the lane calls and the tools workspace-state file's text (or None)."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'scripts').mkdir()
+            build = root / 'Packages/SessionKit/.build'
+            build.mkdir(parents=True)
+            (root / 'scripts/run-sessionkit-tests.sh').write_text((SCRIPTS / 'run-sessionkit-tests.sh').read_text())
+            if with_seed_script:
+                (root / 'scripts/seed_tools_artifacts.py').write_text((SCRIPTS / 'seed_tools_artifacts.py').read_text())
+            if state_text is not None:
+                (build / 'workspace-state.json').write_text(state_text.replace('@FOLDER@', str(root)))
+            lane = root / 'scripts/host-test-lane'
+            # The lane's call records whether the tools state existed at the moment SwiftPM would have started.
+            lane.write_text(f'#!/bin/sh\n[ -f "{build}/tools/workspace-state.json" ] && echo seeded >> "{root}/seen" || echo bare >> "{root}/seen"\n')
+            lane.chmod(0o755)
+            environment = {key: value for key, value in os.environ.items() if key != 'CODEX_SANDBOX'}
+            done = subprocess.run(['bash', str(root / 'scripts/run-sessionkit-tests.sh'), '--tools'],
+                                  env=environment, capture_output=True, text=True, timeout=30)
+            seen = (root / 'seen').read_text().split() if (root / 'seen').exists() else []
+            state = build / 'tools/workspace-state.json'
+            return done, seen, state.read_text() if state.exists() else None
+
+    def test_the_tools_build_is_seeded_with_sessionkits_binary_targets_before_swiftpm_starts(self):
+        # #4664: a second download of the onnxruntime binary targets failed `tools` on a bad certificate.
+        state = json.dumps({'version': 7, 'object': {'dependencies': [], 'prebuilts': [], 'artifacts': [{
+            'packageRef': {'identity': 'onnxruntime-swift-package-manager'}, 'targetName': 'onnxruntime',
+            'source': {'type': 'remote', 'url': 'https://h.example/o.zip', 'checksum': 'c'}, 'path': '@FOLDER@'}]}})
+        done, seen, seeded = self.run_tools(with_seed_script=True, state_text=state)
+        self.assertEqual((done.returncode, seen), (0, ['seeded']), done.stderr)
+        self.assertIn('onnxruntime-swift-package-manager/onnxruntime', done.stdout)
+        self.assertEqual(json.loads(seeded)['object']['artifacts'][0]['targetName'], 'onnxruntime')
+
+    def test_a_tools_build_with_nothing_to_reuse_or_no_seed_script_still_runs(self):
+        for with_script, state in ((True, None), (True, '{not json'), (False, '{"version": 7, "object": {}}')):
+            with self.subTest(script=with_script, state=state):
+                done, seen, seeded = self.run_tools(with_seed_script=with_script, state_text=state)
+                self.assertEqual((done.returncode, seen, seeded), (0, ['bare'], None), done.stderr)
+
+
 if __name__ == '__main__':
     unittest.main()

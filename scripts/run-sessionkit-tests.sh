@@ -42,7 +42,11 @@ case "${1:-}" in
   --core-serial) exec "$ROOT/scripts/host-test-lane" swift test --skip-build --filter "$CORE" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   --rest) exec "$ROOT/scripts/host-test-lane" swift test --skip-build --filter "$REST" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   --build-only) exec "$ROOT/scripts/host-test-lane" swift build --build-tests ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
-  --tools) exec "$ROOT/scripts/host-test-lane" swift test --package-path "$ROOT/Packages/SessionKitTools" --scratch-path "$PACKAGE/.build/tools" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
+  --tools)
+    # The tools build has a scratch folder of its own, so SwiftPM would download the onnxruntime binary targets a second
+    # time, after SessionKit's build fetched them. Reuse those (#4664): best effort, and a plain download if it can't.
+    python3 "$ROOT/scripts/seed_tools_artifacts.py" "$PACKAGE/.build/workspace-state.json" "$PACKAGE/.build/tools/workspace-state.json" || true
+    exec "$ROOT/scripts/host-test-lane" swift test --package-path "$ROOT/Packages/SessionKitTools" --scratch-path "$PACKAGE/.build/tools" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   --skip-build) exec "$ROOT/scripts/host-test-lane" swift test --skip-build ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   "") exec "$ROOT/scripts/host-test-lane" swift test ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   *) echo "usage: $0 [--build-only | --skip-build | --core-parallel <xunit file> | --core-serial | --rest | --tools]" >&2; exit 2 ;;
