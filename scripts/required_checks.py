@@ -60,18 +60,27 @@ def checks_of(workflow: str) -> list[str]:
     return [name for name, file in REQUIRED_CHECKS.items() if file == workflow]
 
 
-def head_state(runs: list[dict]) -> str:
+FAILED_JOB = ('failure', 'timed_out')
+
+
+def head_state(runs: list[dict], jobs_of=None) -> str:
     """Where a workflow stands on one head, from its runs on that head (the Actions API's `workflow_runs`).
 
     running: a run is queued or in progress, so wait. ran: a run finished with a verdict (success, failure, skipped,
     timed out, anything but a cancel): a failure stays a failure and is not restarted. cancelled: every run was
     cancelled, which is no verdict, so start one. not started: no run at all, so start one.
+
+    A run that ended `cancelled` can still hold a verdict: hosted-portable.yml's `stop-macs-on-red` cancels its own run
+    when the `portable` job fails, so GitHub records the run as cancelled while `hosted fast: portable` stays red. With
+    <jobs_of> (run id -> that run's jobs) a cancelled-only head whose jobs include a failure is `ran`, never restarted.
     """
     if not runs:
         return NOT_STARTED
     if any(run.get('status') in NOT_FINISHED for run in runs):
         return RUNNING
     if any(run.get('conclusion') != 'cancelled' for run in runs):
+        return RAN
+    if jobs_of and any(job.get('conclusion') in FAILED_JOB for run in runs for job in jobs_of(run.get('id'))):
         return RAN
     return CANCELLED
 
@@ -89,7 +98,7 @@ def missing(github, head: str, restart_cancelled: bool = False) -> list[str]:
     Limit: this looks at workflows, not check names. A new job added to a workflow that already ran on a head has no
     check there and is not found; dispatch that workflow by hand (test-lane.md)."""
     return [workflow for workflow in dispatchable()
-            if needs_start(head_state(github.workflow_runs(workflow, head)), restart_cancelled)]
+            if needs_start(head_state(github.workflow_runs(workflow, head), github.run_jobs), restart_cancelled)]
 
 
 STALE_BRANCH_HINT = ('if the PR branch predates the workflow it has no such file to dispatch: push to it or merge main '

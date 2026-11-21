@@ -43,8 +43,6 @@ SCRIPTS = Path(__file__).resolve().parent
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-import required_checks  # noqa: E402
-
 OWNER_TAP_LABEL = 'owner-tap'
 ATTEMPTS = 3
 RETRY_WAIT = 10  # seconds, doubled after each failed try
@@ -132,6 +130,11 @@ class GitHub:
         """The runs of <workflow> on commit <sha>, of any event."""
         found = self.api(f'repos/{self.repo}/actions/workflows/{workflow}/runs?head_sha={sha}&per_page=100')
         return (found or {}).get('workflow_runs') or []
+
+    def run_jobs(self, run_id: int) -> list[dict]:
+        """The jobs of one workflow run, each with its own conclusion."""
+        found = self.api(f'repos/{self.repo}/actions/runs/{run_id}/jobs?per_page=100')
+        return (found or {}).get('jobs') or []
 
     def dispatch(self, workflow: str, ref: str, inputs: dict[str, str]) -> None:
         """workflow_dispatch <workflow> on branch <ref>. One try: a POST that landed but answered late must not start twice."""
@@ -260,6 +263,7 @@ def start_missing(github: GitHub, number: int, head: str, base: str = 'main', ou
     not listed yet is looked for again after <recheck_wait> seconds, because the PR's own workflows start at the same
     time as this one, and the PR's head is read again then. A run that was cancelled is not restarted here (the
     dispatch script does that on purpose). A dispatch that fails is printed and never blocks the merge policy."""
+    import required_checks  # here, not at the top: a broken module must reach main()'s `except`, not stop every verdict
     def eligible(pull: dict) -> bool:
         return (pull.get('state') == 'open' and not pull.get('draft') and (pull.get('head') or {}).get('sha') == head
                 and ((pull.get('head') or {}).get('repo') or {}).get('full_name') == github.repo)

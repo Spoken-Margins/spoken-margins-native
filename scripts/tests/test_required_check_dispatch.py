@@ -25,8 +25,8 @@ import required_checks  # noqa: E402
 REPO = 'Spoken-Margins/spoken-margins-native'
 
 
-def run(status='completed', conclusion='success'):
-    return {'status': status, 'conclusion': conclusion if status == 'completed' else None}
+def run(status='completed', conclusion='success', id=None):
+    return {'id': id, 'status': status, 'conclusion': conclusion if status == 'completed' else None}
 
 
 def pull(number, sha, ref=None, draft=False, state='open', repo=REPO):
@@ -41,6 +41,7 @@ class FakeGitHub:
         self.pulls = {p['number']: p for p in pulls}
         self.runs = {key: list(value) for key, value in (runs or {}).items()}  # (workflow, sha) -> runs
         self.dispatched = []
+        self.jobs = {}  # run id -> that run's jobs
         self.broken = set(broken)  # workflows whose dispatch fails
 
     def api(self, path, paginate=False):
@@ -52,6 +53,9 @@ class FakeGitHub:
 
     def workflow_runs(self, workflow, sha):
         return self.runs.get((workflow, sha), [])
+
+    def run_jobs(self, run_id):
+        return self.jobs.get(run_id, [])
 
     def dispatch(self, workflow, ref, inputs):
         if workflow in self.broken:
@@ -85,6 +89,43 @@ class HeadStateTests(unittest.TestCase):
         for runs, expected in table:
             with self.subTest(runs=runs):
                 self.assertEqual(required_checks.head_state(runs), expected)
+
+
+class CancelledWithAVerdictTests(unittest.TestCase):
+    """hosted-portable.yml's stop-macs-on-red cancels its own run when `portable` fails: the run reads `cancelled`, the
+    check stays red. That head has a result and is never restarted (the audit of #4888)."""
+
+    def jobs(self, **conclusions):
+        return [{'name': name, 'conclusion': conclusion} for name, conclusion in conclusions.items()]
+
+    def test_a_cancelled_run_whose_portable_job_failed_is_ran(self):
+        runs = [run('completed', 'cancelled', id=7)]
+        table = [
+            (self.jobs(portable='failure', **{'mac-rest': 'cancelled'}), 'ran'),
+            (self.jobs(portable='timed_out'), 'ran'),
+            (self.jobs(portable='cancelled', **{'mac-rest': 'cancelled'}), 'cancelled'),   # a plain cancel
+            (self.jobs(scope='success', portable='cancelled'), 'cancelled'),               # cancelled midway, no failure
+            (self.jobs(portable='skipped'), 'cancelled'),
+            ([], 'cancelled'),
+        ]
+        for jobs, expected in table:
+            with self.subTest(jobs=jobs):
+                github = FakeGitHub([])
+                github.jobs[7] = jobs
+                self.assertEqual(required_checks.head_state(runs, github.run_jobs), expected)
+
+    def test_without_the_jobs_a_cancelled_run_is_cancelled(self):
+        self.assertEqual(required_checks.head_state([run('completed', 'cancelled', id=7)]), 'cancelled')
+
+    def test_the_sweep_does_not_restart_a_head_whose_portable_check_failed(self):
+        github = FakeGitHub([pull(1, 'a' * 40), pull(2, 'b' * 40)],
+                            {('hosted-portable.yml', 'a' * 40): [run('completed', 'cancelled', id=1)],
+                             ('hosted-portable.yml', 'b' * 40): [run('completed', 'cancelled', id=2)]})
+        github.jobs[1] = [{'name': 'portable', 'conclusion': 'failure'}]
+        github.jobs[2] = [{'name': 'portable', 'conclusion': 'cancelled'}]
+        started, _ = dispatch_script.sweep(github, 'hosted-portable.yml', 'main', False, io.StringIO(),
+                                           sleep=lambda s: None, recheck_wait=0)
+        self.assertEqual(started, [2])
 
 
 class SweepTests(unittest.TestCase):
@@ -333,6 +374,32 @@ class MainStartTests(unittest.TestCase):
             code, _, out = self.run_main(['--pr', '1', '--head', 'a' * 40, '--start'], judged, github, start=crash)
             self.assertEqual(code, judged)
             self.assertIn('the verdict above stands', out)
+
+
+class LaneListTests(unittest.TestCase):
+    """merge_policy.py loads required_checks.py on every PR and merge group, so both are lane files, audited like it."""
+
+    def test_the_modules_the_policy_and_sweep_run_are_lane_files_in_both_lists(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('test_scope_for_required_checks', SCRIPTS / 'test-scope.py')
+        scope = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scope)
+        audit = (ROOT / 'ops/codex/sm_codex_audit.py').read_text()
+        for name in ('required_checks.py', 'dispatch_required_check.py', 'merge_policy.py'):
+            with self.subTest(name):
+                self.assertIn(f'scripts/{name}', scope.LANE_FILES)
+                self.assertIn(name.replace('.', r'\.'), audit)
+
+
+class ImportFailureTests(unittest.TestCase):
+    def test_a_required_checks_module_that_cannot_import_leaves_the_verdict_alone(self):
+        from unittest import mock
+        github = FakeGitHub([pull(1, 'a' * 40)])
+        with mock.patch.object(policy, 'judge', return_value=0), \
+                mock.patch.dict(sys.modules, {'required_checks': None}), mock.patch('sys.stdout', io.StringIO()) as out:
+            code = policy.main(['--repo', REPO, '--pr', '1', '--head', 'a' * 40, '--start'], github=github)
+        self.assertEqual(code, 0)
+        self.assertIn('the verdict above stands', out.getvalue())
 
 
 class SharedSetTests(unittest.TestCase):

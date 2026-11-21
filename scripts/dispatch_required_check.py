@@ -46,7 +46,7 @@ def scan(github, workflow: str, base: str) -> tuple[list[tuple], list[str], int]
             notes.append(f'#{number}: from a fork, left alone (a fork PR gets no hosted run)')
         else:
             try:
-                state = required_checks.head_state(github.workflow_runs(workflow, sha))
+                state = required_checks.head_state(github.workflow_runs(workflow, sha), github.run_jobs)
             except merge_policy.ReadFailed as error:
                 failures += 1
                 notes.append(f'#{number}: could not read its runs ({error})')
