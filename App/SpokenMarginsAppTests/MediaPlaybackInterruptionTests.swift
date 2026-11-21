@@ -252,6 +252,8 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         await settle { probe.begins == 2 }
         try client.pause()
         otherAudio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        // fixed-sleep ok: time is the subject. A watch that ignored the pause would resume at its next poll once the other
+        // audio had been clear for the 50 ms settle, and nothing marks the absence of that. 300 ms is six polls.
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(events.values, [.began, .endedResumeRequested, .began], "the listener's pause keeps it paused")
         XCTAssertEqual(probe.hold.outcome, .listenerActed)
@@ -576,8 +578,9 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNil(model.marginMoment)
         XCTAssertEqual(model.snapshot.status, .paused)
         // fixed-sleep ok: time is the subject. Left running, the review would start the second Margin when the first
-        // one's voice ended, and a stopped voice sends no end to wait for. 1.5 s is longer than the voice it stopped.
-        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        // one's voice ended, and a stopped voice sends no end to wait for. The fixture's voice is 2 s and about 1.9 s of
+        // it was left at Stop, so 3 s covers its end, the second voice's start and the heard mark written off the main thread.
+        RunLoop.main.run(until: Date().addingTimeInterval(3))
         XCTAssertNil(try fixture.storedRecord("note2")?.firstHeardAt, "the second Margin never plays after Stop")
         XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertFalse(model.sharedMarginOffers.announcedIDs.contains("note2"),
@@ -609,8 +612,9 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
                           "back where the listener left off, not where the review had got to")
         XCTAssertEqual(model.snapshot.status, .paused, "and nothing plays on from the middle of the review")
         // fixed-sleep ok: time is the subject. Left running, the review would reach its second Margin when the first
-        // one's voice ended, and an ended review has no voice left to send that end. 1.5 s is longer than the voice.
-        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        // one's voice ended, and an ended review has no voice left to send that end. The fixture's voice is 2 s and about
+        // 1.9 s of it was left, so 3 s covers its end, the second voice's start and the heard mark written off the main thread.
+        RunLoop.main.run(until: Date().addingTimeInterval(3))
         XCTAssertNil(try fixture.storedRecord("note2")?.firstHeardAt, "the Margin it never reached stays new")
         XCTAssertEqual(model.snapshot.status, .paused)
     }
