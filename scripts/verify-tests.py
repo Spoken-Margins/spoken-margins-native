@@ -795,6 +795,8 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_map_text_gate',
                        # The public-source caller scan reads App/ and SessionKit Swift files (#3449).
                        'test_public_source_check_callers',
+                       # The search-field keyboard guard scans App/ Swift files (#4636).
+                       'test_search_field_keyboard',
                        # The server-contact guard scans App/ and SessionKit Swift files (#2842).
                        'test_server_contact_consent',
                        # The benchmark's filter must name a test in SharingTests.swift (#2133).
