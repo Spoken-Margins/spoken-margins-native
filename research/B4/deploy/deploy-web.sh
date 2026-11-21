@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Deploys the web app (Web/, a static Vite PWA, #3020) to the VPS. Run from the Mac:
 #
-#   research/B4/deploy/deploy-web.sh --dry-run root@<vps>   # build, then list what would change; change nothing
-#   research/B4/deploy/deploy-web.sh root@<vps>             # copy it (after the owner approves the dry run)
+#   research/B4/deploy/deploy-web.sh --dry-run <user>@<vps>   # build, then list what would change; change nothing
+#   research/B4/deploy/deploy-web.sh <user>@<vps>             # copy it (after the owner approves the dry run)
+#
+# <user> is the normal deploy login (#2478, research/B4/README.md "Server access"); it must own the web folder, and
+# needs no root here. root@<vps> still works.
 #
 # Run deploy.sh first: it adds the Caddy block that serves /srv/www/spokenmargins-web as
 # https://app.spokenmargins.com (caddy-web.caddy) and creates the folder.
@@ -78,6 +81,9 @@ echo "built: $(find "${dist}" -type f | wc -l | tr -d ' ') files, $(du -sk "${di
 
 rsync_opts=(-rlc --delete-delay --delay-updates --chmod=D755,F644 --itemize-changes -e "${rsync_ssh}")
 if "${ssh_cmd[@]}" "${host}" "test -d '${web_root}'"; then
+  # A folder deploy.sh made as root is not writable by the normal deploy login; say so now, not as an rsync error.
+  "${ssh_cmd[@]}" "${host}" "test -w '${web_root}'" ||
+    die "${host} cannot write to ${web_root}. On the server, as root: chown -R <deploy user> ${web_root} (create-deploy-user.sh does it)"
   root_exists=1
 else
   root_exists=0
