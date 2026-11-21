@@ -10,9 +10,23 @@ public struct LinkListPick: Sendable {
     public struct Found: Sendable {
         public let name: String
         public let list: LinkListFile
-        public init(name: String, list: LinkListFile) {
+        /// The file itself, so a titled list can be imported as a collection (#3769).
+        public let url: URL?
+        /// Found inside a picked folder rather than picked on its own.
+        public let isInFolder: Bool
+        public init(name: String, list: LinkListFile, url: URL? = nil, isInFolder: Bool = false) {
             self.name = name
             self.list = list
+            self.url = url
+            self.isInFolder = isInFolder
+        }
+
+        /// The collection a picked list becomes (#3769, owner's decision 2026-11-19): its title, when it has one and was
+        /// picked on its own. A list inside a picked folder is part of that folder's collection, never one of its own.
+        public var collectionTitle: String? {
+            guard !isInFolder, url != nil, let title = list.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !title.isEmpty else { return nil }
+            return title
         }
     }
 
@@ -51,6 +65,14 @@ public struct LinkListPick: Sendable {
         return folderOtherCount > 0 || folderFilePaths.isEmpty
     }
 
+    /// The picked lists that become collections, and the pick without them (#3769). A titled list picked on its own is
+    /// a collection in list order; an untitled one, and every rejection and other file, goes the way it always did.
+    public func splittingCollections() -> (collections: [Found], rest: LinkListPick) {
+        var rest = self
+        rest.lists = lists.filter { $0.collectionTitle == nil }
+        return (lists.filter { $0.collectionTitle != nil }, rest)
+    }
+
     /// The key `folderFilePaths` uses, so the edition import can match a walked file to a sorted one.
     public static func filePath(_ url: URL) -> String { url.standardizedFileURL.path }
 
@@ -68,7 +90,7 @@ public struct LinkListPick: Sendable {
         for url in files {
             switch classify(url) {
             case .other: pick.others.append(url)
-            case .list(let list): pick.lists.append(Found(name: url.lastPathComponent, list: list))
+            case .list(let list): pick.lists.append(Found(name: url.lastPathComponent, list: list, url: url))
             case .rejected(let message): pick.rejections.append(Rejection(name: url.lastPathComponent, message: message))
             }
         }
@@ -86,7 +108,7 @@ public struct LinkListPick: Sendable {
                     pick.folderOtherCount += 1
                 case .list(let list):
                     pick.folderFilePaths.insert(filePath(url))
-                    pick.lists.append(Found(name: url.lastPathComponent, list: list))
+                    pick.lists.append(Found(name: url.lastPathComponent, list: list, url: url, isInFolder: true))
                 case .rejected(let message):
                     pick.folderFilePaths.insert(filePath(url))
                     pick.rejections.append(Rejection(name: url.lastPathComponent, message: message))

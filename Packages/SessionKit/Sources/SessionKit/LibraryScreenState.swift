@@ -27,8 +27,6 @@ public enum LibraryScreenState: Equatable, Sendable {
     case caughtUp
     case noMatches
     case list
-    /// A collection is selected and holds no Library item: "Nothing in HIST 210 yet." (#4343)
-    case emptyCollection
 
     public static func resolve(accessError: String?, itemCount: Int, isCaughtUp: Bool, visibleCount: Int) -> LibraryScreenState {
         if let accessError { return .cannotOpen(LibraryAccessNote(accessError: accessError)) }
@@ -36,17 +34,6 @@ public enum LibraryScreenState: Equatable, Sendable {
         if isCaughtUp { return .caughtUp }
         if visibleCount == 0 { return .noMatches }
         return .list
-    }
-
-    /// The body with a collection selected (#4343). `collectionItemCount` is how many Library rows the collection holds,
-    /// completed ones included. An empty collection is its own state; one whose items are all finished is `caughtUp`, the
-    /// Library's own "everything you completed is still here" state with its Show completed button, so a course's
-    /// finished readings are never hidden behind the idea that the collection is empty.
-    public static func resolve(
-        accessError: String?, itemCount: Int, isCaughtUp: Bool, visibleCount: Int, collectionItemCount: Int?
-    ) -> LibraryScreenState {
-        if accessError == nil, itemCount > 0, collectionItemCount == 0 { return .emptyCollection }
-        return resolve(accessError: accessError, itemCount: itemCount, isCaughtUp: isCaughtUp, visibleCount: visibleCount)
     }
 
     /// Adding content is off while the Library can't be opened, so nothing is written into a new empty store.

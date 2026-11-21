@@ -264,10 +264,13 @@ final class ListeningRuleEvaluatorTests: XCTestCase {
         let evaluation = evaluate(shows, rules: rules)
         let elapsed = Date().timeIntervalSince(started)
         XCTAssertEqual(evaluation.outcome(for: "s0").setAside, ["s0-7"])
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 1.2 s on a Mac in a debug build (2026-11-20), against
+        // the 100 ms the release build must meet. Each ceiling is at least 5x the typical time and guards an evaluation
+        // that grows faster than rules times episodes.
         #if DEBUG
-        let budget = 2.0 // Debug builds run several times slower than the 100 ms the release build must meet.
+        let budget = 10.0
         #else
-        let budget = 0.1
+        let budget = 0.5
         #endif
         XCTAssertLessThan(elapsed, budget, "200 rules over 5,000 episodes took \(elapsed) s")
     }

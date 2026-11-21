@@ -94,19 +94,36 @@ public enum DocxCommentWriter {
         try write(source: source, requests: plan.included.map(Request.init(entry:)), author: author, date: date, to: destination)
     }
 
-    /// Writes the copy to `destination`, replacing a file already there. `source` is only read.
-    @discardableResult
-    public static func write(source: URL, requests: [Request], author: String, date: Date = Date(), to destination: URL) throws -> [DocxMarginPlacement] {
-        let archive: Archive
-        do { archive = try Archive(url: source, accessMode: .read) } catch { throw Failure.notADocx }
-        let entries = Array(archive)
-        func read(_ path: String) throws -> Data? {
+    /// Reads one part of the package by path: nil when there is none, `notADocx` when it is not a file, is over
+    /// `maximumPartBytes`, or does not unzip cleanly.
+    private static func partReader(archive: Archive, entries: [Entry]) -> (String) throws -> Data? {
+        { path in
             guard let entry = entries.first(where: { $0.path == path }) else { return nil }
             guard entry.type == .file, entry.uncompressedSize <= UInt64(maximumPartBytes) else { throw Failure.notADocx }
             var data = Data()
             do { _ = try archive.extract(entry, skipCRC32: false) { data.append($0) } } catch { throw Failure.notADocx }
             return data
         }
+    }
+
+    /// Where `requests` would land in `source`, without writing anything: the same search `write` makes, over the same
+    /// document part, so the export sheet can say what each comment will cover before the listener sends it.
+    public static func preview(source: URL, requests: [Request]) throws -> [DocxMarginPlacement] {
+        let archive: Archive
+        do { archive = try Archive(url: source, accessMode: .read) } catch { throw Failure.notADocx }
+        let read = partReader(archive: archive, entries: Array(archive))
+        guard let documentData = try read(documentPath), let documentXML = String(data: documentData, encoding: .utf8) else { throw Failure.notADocx }
+        guard declaresMainNamespace(documentXML) else { throw Failure.unsupportedDocument }
+        return annotate(documentXML: documentXML, requests: requests, firstId: 0).placements
+    }
+
+    /// Writes the copy to `destination`, replacing a file already there. `source` is only read.
+    @discardableResult
+    public static func write(source: URL, requests: [Request], author: String, date: Date = Date(), to destination: URL) throws -> [DocxMarginPlacement] {
+        let archive: Archive
+        do { archive = try Archive(url: source, accessMode: .read) } catch { throw Failure.notADocx }
+        let entries = Array(archive)
+        let read = partReader(archive: archive, entries: entries)
 
         guard let documentData = try read(documentPath), let documentXML = String(data: documentData, encoding: .utf8) else { throw Failure.notADocx }
         guard declaresMainNamespace(documentXML) else { throw Failure.unsupportedDocument }
