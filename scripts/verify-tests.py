@@ -2352,7 +2352,8 @@ class Run:
         self.manifest['destination'] = chosen
         derived, identity = self.xcode_build(plan, chosen['runtime'], rebuild, require_build)
         base = ['xcodebuild', '-configuration', 'Debug', '-project', 'SpokenMarginsNative.xcodeproj', '-scheme', scheme,
-                '-testPlan', name, '-destination', f'id={chosen["udid"]}', '-derivedDataPath', str(derived)]
+                '-testPlan', name, '-destination', f'id={chosen["udid"]}', '-derivedDataPath', str(derived)
+                ] + package_cache_settings()  # the build's package folder: xcodebuild resolves packages again here (#4664)
         booted_here = chosen['state'] != 'Booted'
         # A run that boots its own simulator holds a Mac-wide simulator slot until it shuts it down
         # (16 GB Mac: a second simulator job only while memory pressure is normal, #184). A device

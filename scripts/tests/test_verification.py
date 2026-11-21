@@ -167,7 +167,7 @@ class VerificationTests(unittest.TestCase):
                 self.assertIn(setting, build)
                 self.assertNotIn(setting, tests)
 
-    def test_package_cache_folder_applies_only_to_the_build_step(self):
+    def test_package_cache_folder_applies_to_the_build_and_the_test_step(self):
         # #4664: main-t3's hosted Mac restores the packages it fetched before, so a bad certificate on a binary-target
         # host (download.onnxruntime.ai, 2026-11-21) cannot stop the build. Unset, the command is what it was.
         self.assertEqual(verification.package_cache_settings({}), [])
@@ -193,8 +193,10 @@ class VerificationTests(unittest.TestCase):
                 run.xcode('app', 'U', rebuild=False)
             build = dict(commands)['build-for-testing']
             tests = dict(commands)['xcode-tests']
-            self.assertEqual(build[build.index('-clonedSourcePackagesDirPath') + 1], '/w/.build/spm')
-            self.assertNotIn('-clonedSourcePackagesDirPath', tests)
+            # Both steps name the folder: xcodebuild resolves the package graph again before it tests, and a step
+            # without it would fetch the binary targets into an empty derived-data folder (audit on 0908501).
+            for command in (build, tests):
+                self.assertEqual(command[command.index('-clonedSourcePackagesDirPath') + 1], '/w/.build/spm')
 
     def setUp(self):
         # The host steps look up and write SessionKit pass records in the lane's state folder (#1328): keep a
