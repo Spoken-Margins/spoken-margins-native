@@ -76,11 +76,11 @@ class SeedToolsStateTests(unittest.TestCase):
         self.assertFalse(self.tools_state.exists())
 
     def test_the_tools_run_seeds_before_it_builds(self):
-        lines = RUNNER.read_text().splitlines()
-        seed = next(i for i, line in enumerate(lines) if 'seed-sessionkit-tools-state.sh' in line and '--tools)' in line)
-        build = next(i for i, line in enumerate(lines) if 'SessionKitTools' in line and 'swift test' in line)
-        self.assertLess(seed, build)
-        self.assertIn('--tools)', lines[seed], 'the seed belongs to the --tools case only')
+        line = next(line for line in RUNNER.read_text().splitlines() if line.lstrip().startswith('--tools)'))
+        self.assertIn('seed-sessionkit-tools-state.sh', line)
+        self.assertLess(line.index('seed-sessionkit-tools-state.sh'), line.index('swift test'))
+        self.assertIn(';', line[line.index('seed-sessionkit-tools-state.sh'):line.index('swift test')],
+                      'the build runs even if the seed step says nothing to do')
 
 
 if __name__ == '__main__':
