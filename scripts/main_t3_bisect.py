@@ -20,8 +20,11 @@ What it does, after a `failure` (never after `error`, which proves nothing about
 Rules the pure part (`bisect`, `classify_probe`) keeps, tested in scripts/tests/test_main_t3_bisect.py:
 - A name is given only when the commit before it passed and the commit itself failed in a way that repeats: the red
   run itself, or a probe that failed twice.
-- A probe's verdict is `fail` only when a test of a watched class failed. A build failure or another test failing is
-  `undecided`: it is not evidence about the watched tests.
+- A probe's verdict is `fail` only when a test that failed in the red run failed (the test, not just its class: a
+  class fixed and broken again in another method must not blame the old break). A build failure or any other test
+  failing is `undecided`: it is not evidence about the red run's tests.
+- A culprit whose SHA already has a closed culprit issue is `undecided`: it was fixed forward, so this red run is
+  another break and the same merge cannot be re-broken.
 - `undecided` is retried once, then ends the bisection as undecided.
 
 - An issue names only the tests the culprit's own probes saw fail. A red run with two separate breaks stops at the
@@ -31,6 +34,9 @@ Rules the pure part (`bisect`, `classify_probe`) keeps, tested in scripts/tests/
 
 The scripts/ folder is restored to the red commit's before each probe, so an old commit is tested by today's runner
 (its flags, its crash handling) with its own app code and tests. Default taken: scripts/ only, not TestPlans/.
+
+Run it only in a clean checkout (the workflow job): probes reset tracked files, so it refuses to start when any
+are modified.
 
 Subcommand:
 - bisect --sha RED --run-url URL --evidence DIR: as above. Exits 0 whatever it finds; the red status is already set.
@@ -104,27 +110,25 @@ def failing_classes(chosen: dict) -> dict:
     return {plan: sorted(classes) for plan, classes in grouped.items()}
 
 
-def watched_tests(grouped: dict) -> set:
-    return {c for classes in grouped.values() for c in classes}
+def classify_probe(verdict: str, results: dict, wanted: set) -> str:
+    """pass / fail / undecided for one probe run of the watched classes (lane-runner.py's verdict, main_t3's results).
 
-
-def classify_probe(verdict: str, results: dict, watched: set) -> str:
-    """pass / fail / undecided for one probe run of the watched classes (lane-runner.py's verdict, main_t3's results)."""
+    `wanted` is the set of test ids that failed in the red run. Only one of those failing counts as `fail`."""
     if verdict == 'PASS':
         return PASS
     if verdict != 'FAIL':
         return UNDECIDED  # INCONCLUSIVE: a runner fault, no simulator, a crash flood
     failed = [t for t, _ in results.get('failed', [])]
     if not failed:
-        return UNDECIDED  # the build or a plan failed with no test result; says nothing about the watched tests
-    if any(class_of(t) in watched for t in failed):
+        return UNDECIDED  # the build or a plan failed with no test result; says nothing about the red run's tests
+    if any(t in wanted for t in failed):
         return FAIL
-    return UNDECIDED  # another test failed here: a different problem, not the one being chased
+    return UNDECIDED  # another test failed here (even in a watched class): a different problem, not the one chased
 
 
-def watched_failures(results: dict, watched: set) -> list:
-    """The failed tests of a probe that belong to a watched class: what that commit itself is shown to break."""
-    return sorted(t for t, _ in results.get('failed', []) if class_of(t) in watched)
+def watched_failures(results: dict, wanted: set) -> list:
+    """The red run's failing tests that failed in this probe: what that commit itself is shown to break."""
+    return sorted(t for t, _ in results.get('failed', []) if t in wanted)
 
 
 def bisect(commits: list, probe, max_probes: int = MAX_PROBES, time_left=lambda: True) -> Result:
@@ -239,13 +243,23 @@ def undecided_note(result: Result, red: str, green: str | None, run_url: str) ->
             f'{" (`" + green[:7] + "`)" if green else ""} are listed above.')
 
 
-def find_open_culprit_issue(issues: list, sha: str) -> dict | None:
-    """The open culprit issue for this commit (its marker, from the workflow's bot or a collaborator)."""
+def find_culprit_issue(issues: list, sha: str) -> dict | None:
+    """The culprit issue for this commit in `issues` (its marker, from the workflow's bot or a collaborator)."""
     for issue in sorted(issues, key=lambda i: i['number']):
         found = CULPRIT_MARKER_RE.search(issue.get('body') or '')
         if 'pull_request' not in issue and found and found.group(1) == sha and t3.trusted(issue):
             return issue
     return None
+
+
+find_open_culprit_issue = find_culprit_issue  # the list passed in decides: open issues, or closed ones
+
+
+def closed_issues() -> list:
+    """Closed issues with the regression label, for the already-fixed check."""
+    lines = t3.gh('api', '--paginate', '--jq', '.[] | @json',
+                  f'repos/{t3.repo()}/issues?state=closed&labels={t3.ISSUE_LABEL}&per_page=100')
+    return [json.loads(line) for line in lines.splitlines() if line.strip()]
 
 
 # ---- Git and the runs -------------------------------------------------------------------------------
@@ -314,8 +328,9 @@ def present_classes(grouped: dict, root: Path) -> dict:
     return present
 
 
-def make_probe(grouped: dict, watched: set, red: str, run_id: str, evidence: Path):
-    """The probe function. `probe.failed` maps a commit to the watched tests its probes saw fail."""
+def make_probe(grouped: dict, wanted: set, red: str, run_id: str, evidence: Path):
+    """The probe function. `wanted` is the red run's failing test ids; `probe.failed` maps a commit to the ones its
+    probes saw fail."""
     lane = t3.load_lane_runner()
     lane.T3_TIMEOUT = PROBE_TIMEOUT
     count = [0]
@@ -337,9 +352,9 @@ def make_probe(grouped: dict, watched: set, red: str, run_id: str, evidence: Pat
             print(f'Probe {sha[:7]} stopped: {error!r}', flush=True)
             return UNDECIDED
         results = t3.collect_results(t3.pick_manifests(t3.read_manifests(out)))
-        outcome = classify_probe(verdict, results, watched)
+        outcome = classify_probe(verdict, results, wanted)
         if outcome == FAIL:
-            probe.failed.setdefault(sha, set()).update(watched_failures(results, watched))
+            probe.failed.setdefault(sha, set()).update(watched_failures(results, wanted))
         print(f'Probe {sha[:7]}: {verdict} -> {outcome} ({len(results["failed"])} failed, {results["passed"]} passed; '
               f'{"; ".join(str(d) for d in details[:2])})', flush=True)
         return outcome
@@ -362,6 +377,11 @@ def pr_area(pr: int | None) -> str:
 
 def command_bisect(args) -> int:
     os.chdir(ROOT)
+    # Probes run `git checkout --force` here, so edits to tracked files would be lost without a word.
+    if git('status', '--porcelain', '--untracked-files=no').strip():
+        print('Refusing to run: the checkout has uncommitted changes to tracked files, and the bisection resets them. '
+              'Run it in a clean checkout (the workflow job).', flush=True)
+        return 2
     evidence = Path(args.evidence)
     evidence.mkdir(parents=True, exist_ok=True)
     red = args.sha
@@ -398,7 +418,7 @@ def command_bisect(args) -> int:
             result = bisect([], None)
         if commits:
             started = time.monotonic()
-            probe = make_probe(grouped, watched_tests(grouped), red, args.run_id, evidence)
+            probe = make_probe(grouped, set(failed_tests), red, args.run_id, evidence)
             try:
                 result = bisect([sha for sha, _ in commits], probe,
                                 time_left=lambda: time.monotonic() - started < args.budget)
@@ -407,6 +427,18 @@ def command_bisect(args) -> int:
                     git('checkout', '--force', '--detach', red)
                 except RuntimeError as error:
                     print(f'Could not return to {red[:7]}: {error}', flush=True)
+    if result.kind == 'culprit':
+        # The same merge cannot break the suite twice: a closed culprit issue for it means it was fixed forward, and
+        # this red run is a different break that the bisection mistook for it (a test fixed, then broken again).
+        try:
+            fixed = find_culprit_issue(closed_issues(), result.sha)
+        except (RuntimeError, KeyError, ValueError) as error:
+            print(f'::warning::Could not list the closed culprit issues: {error}', flush=True)
+            fixed = None
+        if fixed:
+            result = Result('undecided', None, f'`{result.sha[:7]}` already has a closed culprit issue (#{fixed["number"]}) '
+                            'and was fixed, so this red run is another break that the bisection could not tell apart',
+                            result.probes)
     (evidence / 'main-t3-bisect.json').write_text(json.dumps(
         {'red': red, 'green': green, 'classes': grouped, 'kind': result.kind, 'culprit': result.sha,
          'reason': result.reason, 'probes': result.probes}, indent=2) + '\n')
@@ -448,8 +480,9 @@ def main(argv=None) -> int:
     run.add_argument('--sha', required=True, help='the red commit (full SHA)')
     run.add_argument('--run-url', required=True)
     run.add_argument('--run-id', default=os.environ.get('GITHUB_RUN_ID', 'local'))
-    run.add_argument('--evidence', default=os.environ.get('SM_LANE_EVIDENCE_DIR', str(ROOT / 'artifacts/main-t3')),
-                     help="the red run's evidence folder (its verify-* manifests); probes write beside them")
+    run.add_argument('--evidence', required=True,
+                     help="the red run's evidence folder (its verify-* manifests, `main-<sha7>` under "
+                          "$SM_LANE_EVIDENCE_DIR in main-t3.yml); probes write beside them")
     run.add_argument('--budget', type=int, default=BUDGET_SECONDS, help='seconds before it stops starting probes')
     args = parser.parse_args(argv)
     if not re.fullmatch(r'[0-9a-f]{40}', args.sha):

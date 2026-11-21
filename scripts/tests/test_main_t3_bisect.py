@@ -17,7 +17,7 @@ import main_t3_bisect as B  # noqa: E402
 
 RED = 'f' * 40
 GREEN = 'e' * 40
-WATCHED = {'SpokenMarginsAppTests/Foo'}
+WANTED = {'SpokenMarginsAppTests/Foo/testA'}  # the test ids that failed in the red run
 
 
 def shas(n):
@@ -122,22 +122,32 @@ class ClassifyTests(unittest.TestCase):
         return {'passed': 4, 'failed': [(n, []) for n in names]}
 
     def test_a_pass_is_a_pass(self):
-        self.assertEqual(B.classify_probe('PASS', {'passed': 9, 'failed': []}, WATCHED), B.PASS)
+        self.assertEqual(B.classify_probe('PASS', {'passed': 9, 'failed': []}, WANTED), B.PASS)
 
     def test_a_failing_watched_class_is_a_fail(self):
-        self.assertEqual(B.classify_probe('FAIL', self.failed('SpokenMarginsAppTests/Foo/testA'), WATCHED), B.FAIL)
+        self.assertEqual(B.classify_probe('FAIL', self.failed('SpokenMarginsAppTests/Foo/testA'), WANTED), B.FAIL)
         # one watched among others still shows the cause is there
         both = self.failed('SpokenMarginsAppTests/Bar/testB', 'SpokenMarginsAppTests/Foo/testA')
-        self.assertEqual(B.classify_probe('FAIL', both, WATCHED), B.FAIL)
+        self.assertEqual(B.classify_probe('FAIL', both, WANTED), B.FAIL)
+
+    def test_a_class_fixed_and_broken_again_in_another_method_does_not_blame_the_old_break(self):
+        """m1 broke Foo/testA, F fixed it, m7 broke Foo/testB: the red run fails only testB, so a probe where only
+        testA fails (m2) is not the red run's break."""
+        wanted = {'SpokenMarginsAppTests/Foo/testB'}
+        old_break = self.failed('SpokenMarginsAppTests/Foo/testA')
+        self.assertEqual(B.classify_probe('FAIL', old_break, wanted), B.UNDECIDED)
+        both = self.failed('SpokenMarginsAppTests/Foo/testA', 'SpokenMarginsAppTests/Foo/testB')
+        self.assertEqual(B.classify_probe('FAIL', both, wanted), B.FAIL)
+        self.assertEqual(B.watched_failures(both, wanted), ['SpokenMarginsAppTests/Foo/testB'])
 
     def test_a_different_failure_or_no_test_result_or_a_fault_decides_nothing(self):
         other = self.failed('SpokenMarginsAppTests/Bar/testB')
-        self.assertEqual(B.classify_probe('FAIL', other, WATCHED), B.UNDECIDED)
-        self.assertEqual(B.classify_probe('FAIL', {'passed': 0, 'failed': []}, WATCHED), B.UNDECIDED)  # build failure
-        self.assertEqual(B.classify_probe('INCONCLUSIVE', {'passed': 0, 'failed': []}, WATCHED), B.UNDECIDED)
+        self.assertEqual(B.classify_probe('FAIL', other, WANTED), B.UNDECIDED)
+        self.assertEqual(B.classify_probe('FAIL', {'passed': 0, 'failed': []}, WANTED), B.UNDECIDED)  # build failure
+        self.assertEqual(B.classify_probe('INCONCLUSIVE', {'passed': 0, 'failed': []}, WANTED), B.UNDECIDED)
         # a class name that merely starts like a watched one is not that class
         lookalike = self.failed('SpokenMarginsAppTests/FooExtras/testA')
-        self.assertEqual(B.classify_probe('FAIL', lookalike, WATCHED), B.UNDECIDED)
+        self.assertEqual(B.classify_probe('FAIL', lookalike, WANTED), B.UNDECIDED)
 
     def test_failing_classes_come_from_the_red_runs_manifests_by_plan(self):
         def manifest(failed):
@@ -223,7 +233,8 @@ class PresentClassesTests(unittest.TestCase):
 class CommandTests(unittest.TestCase):
     """command_bisect end to end with git, gh and the lane replaced by recorders."""
 
-    def run_command(self, result_for, failure_issue=True, git_fails=False, red_failed=None, probe_failed=None):
+    def run_command(self, result_for, failure_issue=True, git_fails=False, red_failed=None, probe_failed=None,
+                    closed=None):
         import argparse
         import json
         import os
@@ -240,6 +251,8 @@ class CommandTests(unittest.TestCase):
             calls.append((args, stdin))
             if args[:2] == ('api', 'repos/o/r/issues/100'):
                 return json.dumps({'labels': [{'name': 'area: hear it well'}]})
+            if args[:2] == ('api', '--paginate') and 'state=closed' in args[-1]:
+                return ''.join(json.dumps(i) + '\n' for i in closed or [])
             return 'https://github.com/o/r/issues/9'
 
         def merges(green, red):
@@ -296,6 +309,41 @@ class CommandTests(unittest.TestCase):
         self.assertIn('`Bar/testB`', other)
         note = [c for c in calls if c[0][:2] == ('issue', 'comment')][0][1]
         self.assertIn('1 other failing test', note)
+
+    def test_a_culprit_with_a_closed_culprit_issue_is_undecided_not_blamed_again(self):
+        """The same merge cannot break the suite twice: its issue was closed, so this red run is another break."""
+        culprit = shas(4)[0]
+        closed = [{'number': 77, 'body': B.CULPRIT_MARKER % culprit, 'user': {'login': 'github-actions[bot]'}}]
+        calls, record = self.run_command(lambda sha: B.FAIL, closed=closed)
+        self.assertEqual(record['kind'], 'undecided')
+        self.assertIn('#77', record['reason'])
+        self.assertEqual([c for c in calls if c[0][:2] == ('issue', 'create')], [])
+        comments = [c for c in calls if c[0][:2] == ('issue', 'comment')]
+        self.assertIn('names no PR', comments[0][1])
+
+    def test_a_closed_issue_for_another_commit_or_from_a_stranger_does_not_block_the_culprit(self):
+        culprit = shas(4)[0]
+        closed = [{'number': 77, 'body': B.CULPRIT_MARKER % ('c' * 40), 'user': {'login': 'github-actions[bot]'}},
+                  {'number': 78, 'body': B.CULPRIT_MARKER % culprit, 'user': {'login': 'stranger'}}]
+        _, record = self.run_command(lambda sha: B.FAIL, closed=closed)
+        self.assertEqual(record['kind'], 'culprit')
+
+    def test_it_refuses_to_run_over_uncommitted_changes_to_tracked_files(self):
+        import argparse
+        import os
+        calls = []
+        patches = [(B, 'git', lambda *a, **k: calls.append(a) or ' M App/Foo.swift\n'), (os, 'chdir', lambda p: None)]
+        saved = [(o, n, getattr(o, n)) for o, n, _ in patches]
+        for o, n, v in patches:
+            setattr(o, n, v)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                args = argparse.Namespace(sha=RED, run_url='https://run', run_id='1', evidence=tmp, budget=10)
+                self.assertEqual(B.command_bisect(args), 2)
+        finally:
+            for o, n, v in saved:
+                setattr(o, n, v)
+        self.assertEqual(calls, [('status', '--porcelain', '--untracked-files=no')])  # nothing was checked out
 
     def test_an_undecided_run_opens_no_issue_and_names_no_pr_on_the_failure_issue(self):
         calls, record = self.run_command(lambda sha: B.UNDECIDED)
