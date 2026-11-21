@@ -45,7 +45,8 @@ root_ssh 'test -s /etc/sm-bandwidth/ping-url && echo "ping URL present" || echo 
 root_ssh 'test -s /etc/sm-bandwidth/ping-url' || { echo "write the ping URL first (see README)"; exit 1; }
 
 stage=$(ssh "$host" 'mktemp -d /tmp/sm-bandwidth-deploy.XXXXXX' | tr -d '\r')
+case $stage in /tmp/*) ;; *) echo "could not make a scratch folder on $host" >&2; exit 1 ;; esac
+trap 'ssh "$host" "rm -rf $stage" >/dev/null 2>&1 || true' EXIT
 scp -q "$here/bandwidth_check.py" "$here/sm-bandwidth.service" "$here/sm-bandwidth.timer" "$host:$stage/"
 install_cmd="install -d -m 755 /opt/sm-bandwidth && install -m 755 $stage/bandwidth_check.py /opt/sm-bandwidth/bandwidth_check.py && install -m 644 $stage/sm-bandwidth.service $stage/sm-bandwidth.timer /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now sm-bandwidth.timer && systemctl start sm-bandwidth.service && journalctl -u sm-bandwidth.service -n 3 --no-pager"
 root_ssh "$install_cmd" "$stage"
-ssh "$host" "rm -rf $stage" >/dev/null 2>&1 || true

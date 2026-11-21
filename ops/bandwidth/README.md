@@ -9,7 +9,7 @@ The Hostinger VPS has an 8 TB monthly transfer allowance, and hPanel shows usage
 Install, from the Mac:
 
 1. On the host, as root, write the check's ping URL (from Healthchecks, check "VPS bandwidth", period 1 day) to `/etc/sm-bandwidth/ping-url`, mode 0600. It is a secret-ish URL: never commit it.
-2. `ops/bandwidth/deploy.sh <ssh-host>` (dry run), then `ops/bandwidth/deploy.sh <ssh-host> --enable`. With a normal (non-root) login the root steps run through `sudo` and ask for its password at the terminal (#4848), so an unattended session can't deploy it.
+2. `ops/bandwidth/deploy.sh <ssh-host>` (dry run), then `ops/bandwidth/deploy.sh <ssh-host> --enable`. With a normal (non-root) login the root steps run through `sudo` and ask for its password at the terminal, once per root step (#4848), so an unattended session can't deploy it.
 
 ## Cost and catch
 

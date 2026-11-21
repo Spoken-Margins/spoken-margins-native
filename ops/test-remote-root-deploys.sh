@@ -27,7 +27,7 @@ cmd="$*"
 echo "flags=${flags% } cmd=${cmd}" >>"${SM_TEST_LOG}"
 case "${cmd}" in
   'id -u') echo "${SM_TEST_UID}" ;;
-  'mktemp -d '*) echo "/tmp/sm-stage.TEST" ;;
+  'mktemp -d '*) [[ -n "${SM_TEST_NO_MKTEMP:-}" ]] && exit 1; echo "/tmp/sm-stage.TEST" ;;
   'test -f '*) exit 1 ;;
 esac
 exit 0
@@ -97,6 +97,11 @@ for script in dial/deploy.sh bandwidth/deploy.sh; do
   if run_deploy "${script}" "oops" --dry-run; then fail "${script} went on with an unreadable user id"; fi
   [[ "$(wc -l <"${SM_TEST_LOG}")" == 1 ]] || fail "${script} ran steps after an unreadable user id"
   ok "${name}: an unreadable user id stops the deploy before any step"
+
+  # A failed mktemp must stop the deploy before anything is copied (an empty folder name would send files to /).
+  if SM_TEST_NO_MKTEMP=1 run_deploy "${script}" 0 --enable; then fail "${script} went on after mktemp failed"; fi
+  [[ ! -s "${SM_TEST_SCP}" ]] || fail "${script} copied files after mktemp failed"
+  ok "${name}: a failed scratch folder stops the deploy before any copy"
 done
 
 # The two scripts' only other ssh calls are reads (cat, test -f, is-active) or the scratch folder; every root step in the source goes through root_ssh.
