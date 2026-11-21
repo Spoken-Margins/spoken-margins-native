@@ -94,6 +94,7 @@
   "test_live_activity_colors": 0.0,
   "test_mac_checks_scope": 14.8,
   "test_main_t3": 0.1,
+  "test_main_t3_bisect": 0.7,
   "test_main_thread_labels": 0.0,
   "test_main_thread_reads": 8.1,
   "test_map_text_gate": 0.1,
