@@ -1187,6 +1187,15 @@ class MergePolicyHeldPrAudit(unittest.TestCase):
         cands, skips, _ = self.find(self.as_files([self.APP + "Gate1RootView.swift", "docs/journeys.md"]))
         self.assertEqual((cands, skips), ([], {"no lane report": 1}))
 
+    def test_a_rename_is_read_on_both_sides_and_a_bare_path_does_not_stop_the_run(self):
+        # The policy diffs with --no-renames, so renaming PlaybackFoo.swift to Foo.swift is held as audio.
+        renamed = [{"filename": self.APP + "Foo.swift", "previous_filename": self.APP + "PlaybackFoo.swift",
+                    "additions": 0, "deletions": 0}]
+        self.assertEqual(A.risky_areas(A.changed_paths(renamed)), ["audio"])
+        cands, skips, _ = self.find(renamed)
+        self.assertEqual(([c["number"] for c in cands], skips), ([366], {}))
+        self.assertEqual(A.risky_areas(["Packages/SessionKit/Sources", "Packages/SessionKit/Sources/"]), [])
+
     def test_every_kind_the_policy_audits_is_read_from_test_scope(self):
         # lane-runner.py AUDITED is the policy's list of kinds. A kind added there without a line in
         # SCOPE_AUDIT_AREAS would hold PRs for an audit this script never runs.

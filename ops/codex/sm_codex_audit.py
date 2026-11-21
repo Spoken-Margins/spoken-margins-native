@@ -211,8 +211,14 @@ def scope_areas(paths: list[str]) -> list[str]:
     # The category depends on the path (and, for a public-API change, the diff), never on the tree. A root with no
     # files makes classify_path skip the test-class reads it does for the lane's T3 request, which this does not need.
     nowhere = Path("/nonexistent-tree-for-scope-categories")
-    found = {SCOPE_AUDIT_AREAS[f.category] for f in
-             (scope.classify_path(nowhere, p) for p in sorted(set(paths)) if p) if f.category in SCOPE_AUDIT_AREAS}
+    found = set()
+    for p in sorted(set(paths)):
+        try:
+            category = scope.classify_path(nowhere, p).category if p else ""
+        except (IndexError, ValueError):  # a path git cannot produce (a bare `.../Sources`): one must not stop the audit run
+            continue
+        if category in SCOPE_AUDIT_AREAS:
+            found.add(SCOPE_AUDIT_AREAS[category])
     return sorted(found)
 _NEVER_RISKY_RE = NEVER_RISKY_RE
 _UNCOUNTED_RE = re.compile(r"(^|/)research/|(^|/)fixtures/", re.I)
@@ -405,6 +411,11 @@ def rearm_decision(pr: dict, comments: list[dict],
     return True, "clean audit of the head, lane not run since"
 
 
+def changed_paths(files: list[dict] | None) -> list[str]:
+    """Every path a PR's files touch, both sides of a rename: the merge policy diffs with --no-renames (#4843)."""
+    return [p for f in files or [] for p in (f.get("filename") or f.get("path"), f.get("previous_filename")) if p]
+
+
 def risky_areas(paths: list[str]) -> list[str]:
     areas = []
     for area, pats in _RISKY_RE.items():
@@ -558,7 +569,7 @@ def evaluate(pr: dict, comments: list[dict], files: list[dict] | None,
         return True, "owner-tap PR, checks finished", None
     if plan:  # an audited head was audited because it was risky or asked for; the trigger decides now
         return True, reason, plan
-    areas = risky_areas([f.get("filename") or f.get("path") or "" for f in files])
+    areas = risky_areas(changed_paths(files))
     if areas:
         return True, "risky: " + ",".join(areas), None
     if runner_waits_on_audit(comments):
@@ -908,7 +919,7 @@ def find_candidates(prs: list[dict], force: bool = False) -> tuple[list[dict], d
             if lane_report_missing_for_head(why):
                 files = fetch_files(n)
                 tap = touches_owner_tap(files)
-                if tap or risky_areas([f.get("filename") or f.get("path") or "" for f in files]):
+                if tap or risky_areas(changed_paths(files)):
                     state, _ = head_checks_state(pr["headRefOid"])
                     if state == "ok":
                         tap_checks_done = True
