@@ -43,7 +43,7 @@ extension PinnedMarginCard {
         let ahead = noun.inSentence
         let skip = Action(job: .skipThisMargin, title: "Skip this Margin", hint: "Stops this Margin and carries on with the \(ahead).", prominence: .secondary)
         let stop = Action(
-            job: .stopReview, title: "Stop",
+            job: .stopReview, title: "Stop Margins",
             hint: "Stops these Margins and pauses the \(ahead). If none of them has played yet, it goes back to where you were.",
             prominence: .quiet)
         switch stage {

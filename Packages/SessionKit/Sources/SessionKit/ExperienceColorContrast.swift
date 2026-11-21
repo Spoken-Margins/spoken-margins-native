@@ -239,6 +239,9 @@ public enum AppSemanticColorRGB {
         light: .init(red: 0.68, green: 0.40, blue: 0.0),
         dark: .init(red: 1.0, green: 0.82, blue: 0.30)
     )
+    /// The star on a Margin row of the always-dark player (#4173): `star`'s dark value in both appearances, since the player
+    /// does not change with the system appearance. The filled or outline shape still carries the state.
+    public static let watchStar = fixed(1.0, 0.82, 0.30)
     /// A destructive label on the always-dark playback cards (Stop on-device generation): the dark-mode danger
     /// text in both appearances, since the card does not change with the system appearance (#1925).
     public static let watchDanger = fixed(1, 0.55, 0.48)
@@ -264,7 +267,7 @@ public enum AppSemanticColorRGB {
         ("border", border), ("borderIncreased", borderIncreased), ("green", green), ("accent", accent), ("accentSoft", accentSoft),
         ("watchBackground", watchBackground), ("watchControl", watchControl), ("ochre", ochre), ("ochreText", ochreText),
         ("warningText", warningText), ("coral", coral),
-        ("star", star), ("watchDanger", watchDanger),
+        ("star", star), ("watchStar", watchStar), ("watchDanger", watchDanger),
         ("swipeEvergreen", swipeEvergreen), ("swipeOchre", swipeOchre), ("swipePlum", swipePlum), ("swipeSlate", swipeSlate)
     ]
 }
@@ -360,6 +363,8 @@ public enum AppColorContrastAudit {
         .init(name: "warning icon on panel", foreground: AppSemanticColorRGB.warningText, background: AppSemanticColorRGB.panel, minimumRatio: 3),
         .init(name: "star icon on panel", foreground: AppSemanticColorRGB.star, background: AppSemanticColorRGB.panel, minimumRatio: 3),
         .init(name: "star icon on app background", foreground: AppSemanticColorRGB.star, background: AppSemanticColorRGB.background, minimumRatio: 3),
+        .init(name: "watch star on watch background", foreground: AppSemanticColorRGB.watchStar, background: AppSemanticColorRGB.watchBackground, minimumRatio: 3),
+        .init(name: "watch star on listening background", foreground: AppSemanticColorRGB.watchStar, background: AppSemanticColorRGB.listeningBackground, minimumRatio: 3),
         .init(name: "star icon on bone", foreground: AppSemanticColorRGB.star, background: AppSemanticColorRGB.bone, minimumRatio: 3),
         .init(name: "border on app background", foreground: AppSemanticColorRGB.border, background: AppSemanticColorRGB.background, minimumRatio: 3),
         .init(name: "border on panel", foreground: AppSemanticColorRGB.border, background: AppSemanticColorRGB.panel, minimumRatio: 3),

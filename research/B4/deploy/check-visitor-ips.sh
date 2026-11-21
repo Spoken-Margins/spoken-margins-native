@@ -2,7 +2,9 @@
 # Read-only check that the VPS keeps no visitor IP addresses (#2034).
 # Run from the Mac, as root or as a user with passwordless sudo:
 #
-#   ssh root@<vps> 'bash -s' < research/B4/deploy/check-visitor-ips.sh
+#   ssh <user>@<vps> 'bash -s' < research/B4/deploy/check-visitor-ips.sh
+#   (a normal user with a sudo password gets "needs sudo" for the root-only counts; for all of them run it through
+#   sudo: see research/B4/README.md, Server access)
 #
 # (use `ssh -i "$SM_SSH_KEY" -o IdentitiesOnly=yes ...` if deploy.sh needs the key)
 #

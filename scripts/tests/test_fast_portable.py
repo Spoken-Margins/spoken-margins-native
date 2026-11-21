@@ -78,11 +78,13 @@ class PortableStepTable(unittest.TestCase):
         for folder in verification.PORTABLE_OPS_LEFT_OUT:
             self.assertTrue(any((ROOT / folder).glob('test_*.py')), folder)
 
-    def run_portable(self, plan='fast-portable'):
+    def run_portable(self, plan='fast-portable', pr_quick=False):
         calls, skipped, slots = [], [], []
         with tempfile.TemporaryDirectory() as temporary:
             (Path(temporary) / 'node_modules').mkdir()
             run = verification.Run(Path(temporary) / 'run', plan)
+            if pr_quick:
+                run.manifest['pr_quick'] = True
             with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, args))), \
                     patch.object(run, 'ops_steps', side_effect=lambda **kw: calls.append(('ops', kw))), \
                     patch.object(verification, 'ROOT', Path(temporary)), \
@@ -104,6 +106,33 @@ class PortableStepTable(unittest.TestCase):
         for name in verification.PORTABLE_LEFT_OUT:
             self.assertIn(name, printed)
         self.assertEqual(slots, [], 'the Mac-wide host-test slot is not for a hosted job')
+
+    def test_the_pr_quick_tier_leaves_only_runner_tests_to_the_merge_group(self):
+        full = [name for name, _ in self.run_portable()[0]]
+        calls, skipped, slots, printed = self.run_portable(pr_quick=True)
+        self.assertEqual([name for name, _ in calls], [name for name in full if name != 'runner-tests'])
+        self.assertEqual(skipped, {**verification.PORTABLE_LEFT_OUT, **verification.PR_QUICK_LEFT_OUT})
+        self.assertIn('runner-tests: skipped (the PR quick tier leaves it to the merge group', printed)
+        self.assertNotIn('fast-portable runner-tests left out', printed)
+        self.assertEqual(slots, [])
+
+    def test_the_workflow_runs_the_quick_tier_on_prs_only(self):
+        workflow = (ROOT / '.github/workflows/hosted-portable.yml').read_text()
+        portable = workflow[workflow.index('\n  portable:'):workflow.index('\n  scope:')]
+        self.assertIn("PR_QUICK: ${{ github.event_name == 'pull_request' && '--pr-quick' || '' }}", portable)
+        self.assertIn('verify-tests.py --plan fast-portable $PR_QUICK', portable)
+        core = portable[portable.index('- name: SessionKitCoreTests on Linux'):]
+        core = core[:core.index('\n      - ')]
+        self.assertIn("if: github.event_name != 'pull_request'", core)
+        # A quick PR pass must not be recorded as the whole plan.
+        self.assertIn('plan=fast-portable-pr-quick tree=', portable)
+        self.assertIn('if [ "$EVENT" = pull_request ]; then', portable)
+
+    def test_pr_quick_is_refused_with_any_other_plan(self):
+        done = subprocess.run([sys.executable, str(SCRIPTS / 'verify-tests.py'), '--plan', 'fast', '--pr-quick', '--list'],
+                              capture_output=True, text=True, cwd=ROOT)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn('--pr-quick goes with --plan fast-portable only', done.stderr)
 
     def test_the_portable_plan_runs_the_exact_command_of_each_node_and_research_step(self):
         # Names alone let a step's command become `true` unnoticed (#3706): pin the argv, and the options that

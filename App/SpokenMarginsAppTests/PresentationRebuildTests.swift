@@ -74,7 +74,12 @@ final class PresentationRebuildTests: XCTestCase {
         try await Task.sleep(for: .seconds(PresentationLedger.rebuildWindow + 0.3))
         model.isOn = true
         try await wait("the cover to appear again") { model.appeared == 2 }
-        try await Task.sleep(for: .milliseconds(100))
+        // The tracker is told of an appearance by a modifier around the cover's content, so it can run after the cover's
+        // own `onAppear`, and a rebuild reaches `captured` by one more hop. A cover can only go after it has appeared and
+        // been reported, so its second disappearance marks the point after which a rebuild would have been captured.
+        model.isOn = false
+        try await wait("the cover to go again") { model.disappeared == 2 }
+        await Task.yield()
 
         XCTAssertEqual(captured, [], "a cover the listener opens again after a pause is not a rebuild")
         XCTAssertEqual(PresentationTracker.shared.summary, "rebuilds=0")

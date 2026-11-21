@@ -280,6 +280,28 @@ jobs:
           # The checkout keeps no credentials; the job token is handed to this one command.
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+      # The packages the app build fetched before, handed to xcodebuild by scripts/verify-tests.py through SM_SPM_DIR
+      # (#4664). Without them every hosted T3 downloads the onnxruntime binary targets from download.onnxruntime.ai,
+      # whose certificate was invalid for 15 hours on 2026-11-21 and failed every run before any test. hosted-app-macos.yml
+      # saves this cache under the same key; this run only restores it (a cache saved from a failed or partial fetch must
+      # never replace a good one), and a miss costs the download, never a red check.
+      - name: Hosted Mac - restore the Swift packages
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ github.workspace }}/.build/spm
+          key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: spm-
+      # Copied out of .build: the lane runner links .build to its warm build folder before the build (warm_build_folders
+      # in scripts/lane-runner.py removes a real .build directory first), which would delete the restored packages. The
+      # cache itself stays at .build/spm so its version matches the one hosted-app-macos.yml saves.
+      - name: Hosted Mac - use the restored packages
+        if: runner.environment == 'github-hosted'
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.build/spm" "$RUNNER_TEMP/spm"
+          cp -a "$GITHUB_WORKSPACE/.build/spm/." "$RUNNER_TEMP/spm/"
+          echo "SM_SPM_DIR=$RUNNER_TEMP/spm" >> "$GITHUB_ENV"
       # The compilation cache goes through scripts/ci-cas-cache.sh, not straight into actions/cache (#2619, from #2617):
       # the store's data files are sparse, plain tar saved their holes as zeros, and restoring a 481 MB archive wrote
       # until the runner's disk was full, before the build began. The script archives them sparse, refuses a restore

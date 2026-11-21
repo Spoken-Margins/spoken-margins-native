@@ -8,6 +8,8 @@
  "SessionKit/Tests/SessionKitCoreTests/MarginCommentPlanTests.swift::testAVeryLongTextWithManyMarginsPlansQuickly": "10 s, ~0.3 s local: a rescan of the text for each Margin's sentence",
  "SessionKit/Tests/SessionKitCoreTests/MarkdownHeadingChapterTests.swift::testAHugeSingleSectionIsSplitInLinearTime": "10 s, ~0.6 s local: a split that grows with the square of the section",
  "SessionKit/Tests/SessionKitCoreTests/NarrationFootnotePlanTests.swift::testALongSourceWithManyNotesPlansQuicklyAndWithinTheBudget": "5 s, ~0.55 s local: a planner that rescans the notes per claim",
+ "SessionKit/Tests/SessionKitCoreTests/PDFClipAnchorsTests.swift::testFortyFloatsInAMillionCharactersAreAnchoredQuickly": "0.5 s, ~0.06 s local: a caption search that scans each float's whole neighbour segment or copies the text per float, which grows with floats x text",
+ "SessionKit/Tests/SessionKitCoreTests/PDFClipAnchorsTests.swift::testPictureOnlyFiguresInOneHugeSegmentAreFoundWithoutRescanningPerFigure": "1 s, ~0.13 s local: a rescan of the caption segment per picture-only figure, which grew as figures x segment length (1.3 s for 80 figures)",
  "SessionKit/Tests/SessionKitCoreTests/PDFSentenceLocatorTests.swift::testALongPageOfRepeatedWordsIsOnePass": "5 s, ~0.4 s local: a quadratic search over a long page",
  "SessionKit/Tests/SessionKitCoreTests/PaperNoteTableTests.swift::testThreeHundredPapersWithTenAnswersEachBuildQuickly": "5 s, ~0.02 s local: a table build that rescans every paper per answer",
  "SessionKit/Tests/SessionKitCoreTests/PlaybackTextReaderBrowserTests.swift::testManyChaptersOverLongTextStaysQuick": "1 s, ~0.06 s local: a recount of the text per chapter",

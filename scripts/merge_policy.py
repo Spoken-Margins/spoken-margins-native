@@ -5,14 +5,14 @@ GitHub's merge queue tests the exact merge and merges it. Four of the lane's rul
 one check carries them, on the PR and again in the queue:
 
 1. Audio, persistence, packet and lane changes need a clean Codex or Claude audit of the PR's head
-   (scripts/lane-runner.py merge_blockers and audit_blocker).
+   (scripts/lane_merge_rules.py merge_blockers and audit_blocker).
 2. A PR that brings in another PR's commit with a blocking audit is held until that finding is resolved
-   (lane-runner.py inherited_check, scripts/lane_inherited_holds.py).
-3. A PR touching `.github/` or `scripts/lane-runner.py` merges only with the owner's tap: the `owner-tap` label,
-   which only the owner adds (lane-runner.py owner_tap_paths; owner rule 2026-10-09, #1203).
+   (lane_merge_rules.py inherited_check, scripts/lane_inherited_holds.py).
+3. A PR touching `.github/`, `scripts/lane-runner.py` or `scripts/lane_merge_rules.py` merges only with the owner's tap:
+   the `owner-tap` label, which only the owner adds (lane_merge_rules.py owner_tap_paths; owner rule 2026-10-09, #1203).
 4. An outside contributor's commits carry `Signed-off-by:` (scripts/signoff_check.py, #2114).
 
-The rules themselves are not copied here: they are imported from lane-runner.py, test-scope.py and signoff_check.py
+The rules themselves are not copied here: they are imported from lane_merge_rules.py, test-scope.py and signoff_check.py
 in the same checkout, which the workflow takes from main, never from the PR. The PR's commits are fetched as git data
 and only read.
 
@@ -64,11 +64,11 @@ def _load(name: str, filename: str):
 _MODULES: dict[str, types.ModuleType] = {}
 
 
-def lane():
-    """scripts/lane-runner.py, where the audit, inherited-hold and owner-tap rules live (one copy)."""
-    if 'lane' not in _MODULES:
-        _MODULES['lane'] = _load('lane_runner_for_merge_policy', 'lane-runner.py')
-    return _MODULES['lane']
+def rules():
+    """scripts/lane_merge_rules.py, where the audit, inherited-hold and owner-tap rules live (one copy, #4769)."""
+    if 'rules' not in _MODULES:
+        _MODULES['rules'] = _load('lane_merge_rules_for_merge_policy', 'lane_merge_rules.py')
+    return _MODULES['rules']
 
 
 def scope_policy():
@@ -122,7 +122,7 @@ class GitHub:
     def comments(self, number: int) -> list[dict]:
         """The PR's comments that the lane trusts (owner, members, collaborators, the project's bot)."""
         found = self.api(f'repos/{self.repo}/issues/{number}/comments?per_page=100', paginate=True)
-        return [c for c in found if lane().trusted_comment(c)]
+        return [c for c in found if rules().trusted_comment(c)]
 
     def queue_entries(self, branch: str) -> list[dict]:
         owner, name = self.repo.split('/', 1)
@@ -191,7 +191,7 @@ def unsigned_commits(tree: Path, base_ref: str, head: str, association: str, log
 
 def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, classify=None, inherited=None) -> list[str]:
     """Why PR <number> at <head> may not merge into <base>, or [] when it may. classify and inherited are injected in
-    tests; by default they are test-scope.py's classify and lane-runner.py's inherited_check."""
+    tests; by default they are test-scope.py's classify and lane_merge_rules.py's inherited_check."""
     base_ref = f'origin/{base}'
     pull = github.pull(number)
     fetch_head(tree, number, head)
@@ -199,9 +199,9 @@ def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, clas
     scope = (classify or (lambda p, d: scope_policy().classify(p, d, root=tree)))(paths, diffs)
     comments = github.comments(number)
     if inherited is None:
-        inherited = lane().inherited_check(types.SimpleNamespace(repo=github.repo, pr=number), tree, base, head)
-    reasons = list(lane().merge_blockers(scope, comments, head, inherited))
-    tap = lane().owner_tap_paths(scope)
+        inherited = rules().inherited_check(types.SimpleNamespace(repo=github.repo, pr=number), tree, base, head)
+    reasons = list(rules().merge_blockers(scope, comments, head, inherited))
+    tap = rules().owner_tap_paths(scope)
     labels = {label.get('name') for label in pull.get('labels') or []}
     if tap and OWNER_TAP_LABEL not in labels:
         shown = ', '.join(f'`{p}`' for p in tap)

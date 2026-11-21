@@ -48,7 +48,10 @@ final class LibraryCollectionListingTests: XCTestCase {
                     let all = list(rows, [collection("x", "Course", ["a", "b"])], query: query, mode: .allItems, current: "d")
                     XCTAssertEqual(ids(all), today.map(\.id), "\(sort) \(listening) '\(text)'")
                     XCTAssertEqual(all.map(\.isCurrent), today.map(\.isCurrent))
-                    XCTAssertTrue(all.allSatisfy { $0.itemRow?.collectionNames.isEmpty == true }, "All Items adds nothing to a row")
+                    for entry in all {
+                        let expected = ["a", "b"].contains(entry.itemRow?.id ?? "") ? ["Course"] : []
+                        XCTAssertEqual(entry.itemRow?.collectionNames, expected, "All Items adds only “· in Course”")
+                    }
                     XCTAssertEqual(ids(list(rows, [], query: query, current: "d")), today.map(\.id))
                 }
             }

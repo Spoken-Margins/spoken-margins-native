@@ -12,6 +12,7 @@ import ast
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -131,10 +132,10 @@ class ShaInComment(unittest.TestCase):
         self.assertFalse(A.is_audit_comment(reply))
         self.assertIsNone(A.head_audit([reply], HEAD))
 
-    def test_audit_headings_match_the_lane_runner(self):
-        runner = (Path(__file__).resolve().parents[2] / "scripts" / "lane-runner.py").read_text()
-        m = re.search(r"^AUDITS = .*$", runner, re.M)
-        self.assertIsNotNone(m, "scripts/lane-runner.py no longer defines AUDITS on one line")
+    def test_audit_headings_match_the_merge_rules(self):
+        rules = (Path(__file__).resolve().parents[2] / "scripts" / "lane_merge_rules.py").read_text()
+        m = re.search(r"^AUDITS = .*$", rules, re.M)
+        self.assertIsNotNone(m, "scripts/lane_merge_rules.py no longer defines AUDITS on one line")
         self.assertEqual(ast.literal_eval(ast.parse(m.group(0)).body[0].value), A.AUDIT_HEADINGS)
 
     def test_comment_not_starting_with_codex_audit_is_ignored(self):
@@ -206,7 +207,10 @@ class CandidateFilter(unittest.TestCase):
         }
         for p, area in paths.items():
             self.assertIn(area, A.risky_areas([p]), p)
-        self.assertEqual(A.risky_areas(["App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackScreen.swift"]), [])
+        # An app file is audio by its name (test-scope.py APP_AUDIO), so the merge policy holds PlaybackScreen.swift
+        # for an audit; this list used to say it was not risky, and #4666 waited on an audit nobody ran (#4843).
+        self.assertEqual(A.risky_areas(["App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackScreen.swift"]), ["audio"])
+        self.assertEqual(A.risky_areas(["App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift"]), [])
 
     LANE_PATHS = [
         ".github/workflows/lane.yml", ".github/workflows/hosted-portable.yml", "scripts/lane-runner.py",
@@ -1123,6 +1127,93 @@ class OwnerTapAlertDispatch(unittest.TestCase):
         self.assertIn(f"github.event.label.name == '{A.OWNER_TAP_LABEL}'",
                       (root / ".github" / "workflows" / "owner-tap-alert.yml").read_text())
         self.assertIn(f"LABEL = '{A.OWNER_TAP_LABEL}'", (root / "scripts" / "owner_tap_alert.py").read_text())
+
+
+class MergePolicyHeldPrAudit(unittest.TestCase):
+    """The audit script audits every PR the merge policy holds for an audit, not only the paths in its own list (#4843).
+
+    The policy reads test-scope.py's categories (lane-runner.py merge_blockers, AUDITED). Six armed PRs sat red on
+    `merge policy` for hours because an app file named Playback*, *Audio*, Share* or *Packet* is audio or packets
+    there and was not on RISKY_PATTERNS, so the script never read their finished checks and skipped them."""
+    ROOT = Path(__file__).resolve().parents[2]
+    APP = "App/SpokenMarginsApp/Sources/SpokenMarginsApp/"
+    # The files of the stuck PRs: #4666 (the Now screen's star), #4811 (a link with text around it) and #4822.
+    STUCK = {
+        "#4666": [APP + "Gate1RootView.swift", APP + "PlaybackMarginRowView.swift", APP + "PlaybackMarginShareStarButton.swift",
+                  APP + "PlaybackMarginsView.swift", APP + "PlaybackNowView.swift", APP + "PlaybackScreen.swift",
+                  "App/SpokenMarginsAppTests/MarginShareStarRowTests.swift",
+                  "Packages/SessionKit/Sources/SessionKit/ExperienceColorContrast.swift",
+                  "Packages/SessionKit/Sources/SessionKit/ShareStarPlace.swift",
+                  "Packages/SessionKit/Tests/SessionKitCoreTests/ShareStarOfferTests.swift", "docs/journeys.md"],
+        "#4811": [APP + "Gate1AppModel+SourceLinkForm.swift", APP + "Gate1AppModel.swift",
+                  "App/SpokenMarginsShareExtension/Sources/SourceLinkShareViewController.swift",
+                  "Packages/SessionKit/Sources/SessionKit/ClipboardIntakeClassifier.swift",
+                  "Packages/SessionKit/Sources/SessionKit/PasteIntake.swift",
+                  "Packages/SessionKit/Tests/SessionKitCoreTests/PasteIntakeTests.swift"],
+    }
+
+    def find(self, files, state="ok", comments=()):
+        with patch.object(A, "fetch_comments", return_value=list(comments)), patch.object(A, "fetch_files", return_value=files), \
+             patch.object(A, "head_checks_state", return_value=(state, [])), patch.object(A, "FAILURES", {}):
+            return A.find_candidates([pr()])
+
+    @staticmethod
+    def as_files(paths):
+        return [{"filename": p, "additions": 3, "deletions": 1} for p in paths]
+
+    def scope(self):
+        spec = importlib.util.spec_from_file_location("scope_for_audit_test_4843", self.ROOT / "scripts" / "test-scope.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_stuck_prs_file_sets_are_risky_in_the_area_the_policy_names(self):
+        self.assertEqual(A.risky_areas(self.STUCK["#4666"]), ["audio", "sharing"])
+        self.assertEqual(A.risky_areas(self.STUCK["#4811"]), ["sharing"])
+
+    def test_a_pr_the_policy_holds_is_a_candidate_once_its_checks_finish(self):
+        for number, paths in self.STUCK.items():
+            with self.subTest(pr=number):
+                cands, skips, _ = self.find(self.as_files(paths))
+                self.assertEqual([c["number"] for c in cands], [366])
+                self.assertTrue(cands[0]["reason"].startswith("risky: "), cands[0]["reason"])
+                self.assertEqual(skips, {})
+
+    def test_it_still_waits_for_its_checks_and_an_ordinary_app_file_is_still_skipped(self):
+        for state in ("pending", "failed"):
+            with self.subTest(state=state):
+                cands, skips, _ = self.find(self.as_files(self.STUCK["#4666"]), state)
+                self.assertEqual((cands, skips), ([], {f"checks {state}": 1}))
+        cands, skips, _ = self.find(self.as_files([self.APP + "Gate1RootView.swift", "docs/journeys.md"]))
+        self.assertEqual((cands, skips), ([], {"no lane report": 1}))
+
+    def test_a_rename_is_read_on_both_sides_and_a_bare_path_does_not_stop_the_run(self):
+        # The policy diffs with --no-renames, so renaming PlaybackFoo.swift to Foo.swift is held as audio.
+        renamed = [{"filename": self.APP + "Foo.swift", "previous_filename": self.APP + "PlaybackFoo.swift",
+                    "additions": 0, "deletions": 0}]
+        self.assertEqual(A.risky_areas(A.changed_paths(renamed)), ["audio"])
+        cands, skips, _ = self.find(renamed)
+        self.assertEqual(([c["number"] for c in cands], skips), ([366], {}))
+        self.assertEqual(A.risky_areas(["Packages/SessionKit/Sources", "Packages/SessionKit/Sources/"]), [])
+
+    def test_every_kind_the_policy_audits_is_read_from_test_scope(self):
+        # lane-runner.py AUDITED is the policy's list of kinds. A kind added there without a line in
+        # SCOPE_AUDIT_AREAS would hold PRs for an audit this script never runs.
+        spec = importlib.util.spec_from_file_location("lane_runner_for_audit_test_4843", self.ROOT / "scripts" / "lane-runner.py")
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        self.assertEqual(set(A.SCOPE_AUDIT_AREAS), set(runner.AUDITED))
+
+    def test_no_tracked_file_is_held_by_the_policy_but_not_risky_here(self):
+        # The class guard: the policy's own classification of every file in the tree, against risky_areas.
+        scope = self.scope()
+        tracked = subprocess.run(["git", "ls-files", "-z"], cwd=self.ROOT, capture_output=True, text=True,
+                                 check=True).stdout.split("\0")
+        nowhere = Path("/nonexistent-tree-for-scope-categories")
+        held = [p for p in tracked if p and scope.classify_path(nowhere, p).category in A.SCOPE_AUDIT_AREAS]
+        self.assertGreater(len(held), 50)  # the tree has audio, persistence and packet files; fewer means the walk broke
+        for p in held:
+            self.assertTrue(A.risky_areas([p]), f"{p} is held for an audit by the merge policy but not risky here")
 
 
 class OwnerTapPrAudit(unittest.TestCase):

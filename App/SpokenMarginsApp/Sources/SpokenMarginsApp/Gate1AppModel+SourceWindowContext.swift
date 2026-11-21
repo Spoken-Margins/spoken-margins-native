@@ -371,19 +371,28 @@ extension Gate1AppModel {
         Task {
             do {
                 let alignedTranscript = try await alignedInterjectionTranscriptionHandler?(audioPath)
+                // Only a Margin the spoken phrase ended loses it from its audio and words (#3940, PR 4). The cut copy is
+                // swapped in once the words are saved; any doubt keeps everything.
+                let endPhraseCut = await MarginEndPhraseSaving.prepare(
+                    audioURL: Self.resolvedInterjectionAudioURL(for: audioPath, applicationSupportDirectory: supportDirectory),
+                    transcript: alignedTranscript,
+                    isSwitchedOn: MarginEndPhraseSaving.isSwitchedOn(),
+                    endedByPhrase: MarginEndPhraseEndLedger.shared.consumeEndedByPhrase(interjectionId: interjection.id)
+                )
+                let savedTranscript = MarginEndPhraseSaving.wordsToSave(heard: alignedTranscript, prepared: endPhraseCut)
                 let transcript: String
-                if let alignedTranscript {
-                    transcript = alignedTranscript.text
+                if let savedTranscript {
+                    transcript = savedTranscript.text
                 } else {
                     transcript = try await interjectionTranscriptionHandler(audioPath)
                 }
                 await MainActor.run {
-                    run { engine in
-                        if let alignedTranscript {
+                    let wordsSaved = run { engine in
+                        if let savedTranscript {
                             snapshot = try engine.transcriptionCompleted(
                                 interjectionId: interjection.id,
                                 sessionId: interjection.sessionId,
-                                alignedTranscript: alignedTranscript
+                                alignedTranscript: savedTranscript
                             )
                         } else {
                             snapshot = try engine.transcriptionCompleted(
@@ -398,6 +407,7 @@ extension Gate1AppModel {
                         withdrawRetryOffer(Self.transcriptionRetryKey(interjection))
                         reportSuccess("Transcribed Margin.")
                     }
+                    MarginEndPhraseSaving.finish(endPhraseCut, wordsSaved: wordsSaved)
                     retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
                     scheduleSourceWindowContextIfNeeded(for: interjection)
                 }

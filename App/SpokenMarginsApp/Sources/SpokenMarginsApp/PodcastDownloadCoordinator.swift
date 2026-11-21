@@ -800,6 +800,8 @@ extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                didFinishDownloadingTo location: URL) {
         guard let attempt = PodcastDownloadAttempt.decode(downloadTask.taskDescription) else { return }
+        // The bytes are on disk whether or not the episode is adopted, so they count first (#4389).
+        DiskWriteLedgerStore.shared.record(fileAt: location, source: .download)
         let responseOK = (downloadTask.response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
         // The URLSession temporary file is only valid until this delegate returns.
         let ext = URL(fileURLWithPath: downloadTask.response?.suggestedFilename ?? "episode.audio").pathExtension

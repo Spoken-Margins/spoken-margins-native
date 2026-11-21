@@ -312,6 +312,16 @@ class FreeSlots(unittest.TestCase):
                 self.assertIn(held, slot['held'])
                 self.assertNotIn('free-slots', rules(actions))
 
+    def test_cloud_max_ignores_a_halt(self):
+        # 2026-11-21: the owner had Cloud max set for the week; the tick's HALT must not hold slots or lead the list.
+        cloud = DIAL_BODY.replace('- [x] Paced', '- [ ] Paced').replace('- [ ] Cloud max', '- [x] Cloud max')
+        tick = TICK_BODY.replace('**14:15 CDT (Mac tick)**', '**14:15 CDT (Mac tick)** HALT (usage breaker: Claude)')
+        actions, slot = sweep.decide(facts_of(world(dial=cloud, tick=tick, ready=[issue(10, ['ready'])])))
+        self.assertNotIn('halt', rules(actions))
+        self.assertIsNone(slot['held'])
+        self.assertGreater(slot['claude_free'], 0)
+        self.assertIn('free-slots', rules(actions))
+
     def test_halt_is_the_first_thing_said(self):
         tick = TICK_BODY.replace('**14:15 CDT (Mac tick)**', '**14:15 CDT (Mac tick)** HALT (usage breaker: Claude)')
         actions, _ = sweep.decide(facts_of(world(tick=tick)))

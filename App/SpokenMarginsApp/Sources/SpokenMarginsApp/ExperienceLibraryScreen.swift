@@ -22,12 +22,17 @@ struct ExperienceLibraryScreen: View {
     /// The item whose Continue is waiting on the "hear new Margins first?" question (#474).
     @State private var pendingNewMarginsOffer: NewMarginsOfferRequest?
     @State private var collectionItem: LibraryItemRow?
-    /// The New collection / Edit Items sheet from the chip row (#4343).
-    @State private var collectionSheet: CollectionItemsSheet.Mode?
+    /// The collection whose screen is pushed (#3769).
+    @State private var openedCollection: LibraryCollectionRoute?
     @State private var renamingCollection: ItemCollection?
     @State private var collectionRenameText = ""
-    /// What a chip's rename or delete could not do, shown under the chips until the next tap there.
+    /// The collection waiting on Delete Collection's confirmation.
+    @State private var deletingCollection: LibraryCollectionRow?
+    /// What a collection row's rename could not do, shown under the controls until the view changes.
     @State private var collectionProblem: String?
+    /// Select (#4720): whether the rows show tick circles, and which are ticked.
+    @State private var isSelecting = false
+    @State private var selection = LibrarySelection()
     /// A spoken note opened from its row: it has its own screen, not the text item screen (#3108).
     @State private var openedNote: SpokenNoteOpening?
     /// Export of a spoken note from its row: its words alone, or its audio and words, through the share sheet (#3660).
@@ -50,9 +55,19 @@ struct ExperienceLibraryScreen: View {
         PlayQueueRows.rows(for: PlayQueue(itemIds: playQueue.itemIds), items: model.libraryItems)
     }
 
-    /// One identity per item, the Continue row included, so completing the top row removes that row (#585).
-    private var listEntries: [LibraryListEntry<LibraryItemRow>] {
-        LibraryListRows.entries(visible: model.visibleLibraryItems, currentId: continueItem?.id)
+    /// One identity per row, the Continue row included, so completing the top row removes that row (#585). In the
+    /// Collections view a collection is one row standing for its items (#3769).
+    private var listEntries: [LibraryCollectionEntry] {
+        model.libraryListing(currentItemID: continueItem?.id)
+    }
+
+    /// The item rows Select can tick, in the list's order; collection rows are not ticked.
+    private var selectableIDs: [String] { LibrarySelection.selectableIDs(listEntries) }
+
+    private var selectedRows: [LibraryItemRow] {
+        let ordered = selection.ordered(in: selectableIDs)
+        let rows = Dictionary(listEntries.compactMap(\.itemRow).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return ordered.compactMap { rows[$0] }
     }
 
     var body: some View {
@@ -102,17 +117,26 @@ struct ExperienceLibraryScreen: View {
             .onChange(of: listEntries.map(\.id), initial: true) { _, ids in
                 scrollTracker.order = ids
                 restoreScroll(in: ids, using: proxy)
+                selection.keepOnly(selectableIDs)
             }
             .onAppear { if restoredScroll { scrollTracker.thaw() } }
             .onDisappear { rememberScroll() }
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
             .listStyle(.plain)
+            .scrollDismissesKeyboard(.interactively) // the search box's keyboard goes down on a drag (#4636)
+            .searchKeyboardDoneBar()
             .motionAnimation(.smooth(duration: 0.24), value: listEntries.map(\.id))
             .accessibilityIdentifier("home.screen")
-            .navigationTitle("Library")
+            .navigationTitle(isSelecting ? selection.title : "Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
+            .librarySelectActions(isSelecting: isSelecting, selectedRows: selectedRows, done: endSelecting)
+            .navigationDestination(item: $openedCollection) { route in
+                LibraryCollectionScreen(collectionID: route.id)
+                    .environmentObject(model)
+                    .miniPlayerKeepOut()
+            }
             .miniPlayerKeepOut()
             }
         }
@@ -137,12 +161,21 @@ struct ExperienceLibraryScreen: View {
             ItemCollectionSheet(item: item)
                 .environmentObject(model)
         }
-        .trackedSheet(item: $collectionSheet) { mode in
-            CollectionItemsSheet(mode: mode)
-                .environmentObject(model)
-        }
-        // On the screen, not on the chip row: the row lives in a list cell the list may recycle.
+        // On the screen, not on the collection row: the row lives in a list cell the list may recycle.
         .collectionRenameAlert(collection: $renamingCollection, text: $collectionRenameText, commit: commitCollectionRename)
+        .confirmationDialog(
+            "Delete “\(deletingCollection?.name ?? "")”?",
+            isPresented: Binding(get: { deletingCollection != nil }, set: { if !$0 { deletingCollection = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Collection", role: .destructive) {
+                if let id = deletingCollection?.collectionID { Task { _ = await model.deleteCollection(collectionID: id) } }
+                deletingCollection = nil
+            }
+            Button("Cancel", role: .cancel) { deletingCollection = nil }
+        } message: {
+            Text(ItemCollectionEditing.Wording.deleteKeepsEverything)
+        }
         .newMarginsOffer($pendingNewMarginsOffer)
         .task { if !isEdgeSwipePreview { await clipboardLink.refresh() } } // the swipe's preview reads nothing (#106)
         // Pictures of items from followed feeds: recorded off the main thread, and again whenever the Library's items change (#3864).
@@ -166,16 +199,38 @@ struct ExperienceLibraryScreen: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            Button {
-                addSourceRoute = .linkOrPodcast
-            } label: {
-                Label("Add", systemImage: "plus")
+        if isSelecting {
+            ToolbarItem(placement: .topBarLeading) {
+                Button(selection.selectAllTitle(visible: selectableIDs)) { selection.toggleAll(selectableIDs) }
+                    .disabled(selectableIDs.isEmpty)
+                    .accessibilityIdentifier("library.select.all")
             }
-            .disabled(!screenState.allowsAddingContent)
-            .accessibilityLabel("Add to Library")
-            .accessibilityIdentifier("home.addSource.button")
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Cancel", action: endSelecting)
+                    .accessibilityIdentifier("library.select.cancel")
+            }
+        } else {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Select") { isSelecting = true }
+                    .disabled(selectableIDs.isEmpty || !screenState.allowsAddingContent)
+                    .accessibilityIdentifier("library.select.button")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    addSourceRoute = .linkOrPodcast
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
+                .disabled(!screenState.allowsAddingContent)
+                .accessibilityLabel("Add to Library")
+                .accessibilityIdentifier("home.addSource.button")
+            }
         }
+    }
+
+    private func endSelecting() {
+        isSelecting = false
+        selection.deselectAll()
     }
 
     private var onboardingIcon: some View {
@@ -194,10 +249,8 @@ struct ExperienceLibraryScreen: View {
                 .font(.subheadline)
                 .foregroundStyle(AppColors.secondaryText)
             // The two buttons stack when they don't fit side by side in the narrowed column (#1937).
-            ViewThatFits(in: .horizontal) {
-                HStack { onboardingActions }
-                VStack(alignment: .leading) { onboardingActions }
-            }
+            // A column at accessibility sizes or when the labels don't fit on one line each, never a word split (#1939).
+            AdaptiveStack { onboardingActions }
         }
     }
 
@@ -255,8 +308,8 @@ struct ExperienceLibraryScreen: View {
                 sortMenu
             }
 
-            if showsCollectionChips {
-                collectionChipRow
+            if showsViewPicker {
+                viewPicker
             }
 
             // The everyday view (Unfinished, nothing else set) has nothing between the chips and the first row (#4698). A
@@ -280,43 +333,24 @@ struct ExperienceLibraryScreen: View {
         .onChange(of: model.libraryQuery) { _, _ in model.libraryQueryChanged() }
     }
 
-    // MARK: Collection chips (#4343)
+    // MARK: Collections | All Items (#3769)
 
-    /// Once any collection exists, or from 15 items (Design default 3). The count is the Library's rows, which leave out
-    /// Recently Deleted and include finished ones.
-    private var showsCollectionChips: Bool {
-        CollectionChipRule.showsRow(itemCount: model.libraryItems.count, collectionCount: model.libraryCollections.collections.count)
-    }
+    /// Once any collection exists: with none, the two views list the same rows.
+    private var showsViewPicker: Bool { !model.libraryCollections.collections.isEmpty }
 
-    private var collectionChips: [CollectionChipRow.Chip] {
-        LibraryCollectionScope.chipOrder(model.libraryCollections.collections).map {
-            CollectionChipRow.Chip(collection: $0, itemCount: LibraryCollectionScope.itemCount(in: $0, among: model.libraryItems))
-        }
-    }
-
-    private var selectedCollection: ItemCollection? {
-        guard let id = model.libraryCollections.selection?.collectionID else { return nil }
-        return model.libraryCollections.collections.first { $0.id == id }
-    }
-
-    private var collectionChipRow: some View {
+    private var viewPicker: some View {
         VStack(alignment: .leading, spacing: 4) {
-            CollectionChipRow(
-                chips: collectionChips,
-                selectedID: model.libraryCollections.selection?.collectionID,
-                allCount: model.libraryItems.count,
-                onSelect: { id in
-                    collectionProblem = nil
-                    model.libraryCollections.select(collectionID: id)
-                },
-                onNew: { collectionSheet = .create },
-                onEditItems: { collectionSheet = .edit($0) },
-                onRename: { collection in
-                    collectionRenameText = collection.name
-                    renamingCollection = collection
-                },
-                onDelete: deleteCollection
-            )
+            Picker("View", selection: Binding(
+                get: { model.libraryCollections.viewMode },
+                set: { model.libraryCollections.viewMode = $0 }
+            )) {
+                ForEach(LibraryViewMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .segmentedUnlessLargeText()
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("library.viewMode")
             if let collectionProblem {
                 Text(collectionProblem)
                     .font(.caption)
@@ -324,42 +358,20 @@ struct ExperienceLibraryScreen: View {
                     .accessibilityIdentifier("library.collections.problem")
             }
         }
+        .onChange(of: model.libraryCollections.viewMode) { _, _ in collectionProblem = nil }
+    }
+
+    private func beginCollectionRename(_ row: LibraryCollectionRow) {
+        guard let collection = model.libraryCollections.collections.first(where: { $0.id == row.collectionID }) else { return }
+        collectionRenameText = collection.name
+        renamingCollection = collection
     }
 
     private func commitCollectionRename() {
         guard let collection = renamingCollection else { return }
         renamingCollection = nil
-        guard let store = model.store else { return }
         let name = collectionRenameText
-        Task {
-            switch await model.libraryCollections.rename(collection, to: name, store: store) {
-            case .saved:
-                collectionProblem = nil
-                model.marginCollectionQuery.refreshCollection(from: model.libraryCollections.collections)
-            case .needsName, .nameTaken:
-                collectionProblem = ItemCollectionEditing.Wording.renameRefused
-            case .failed(let error):
-                model.reportFailure(error, context: "Collection change failed")
-                collectionProblem = ItemCollectionEditing.Wording.saveFailed
-            }
-        }
-    }
-
-    /// No confirmation, like the shipped sheet: deleting a collection keeps every item and Margin in it.
-    private func deleteCollection(_ collection: ItemCollection) {
-        guard let store = model.store else { return }
-        Task {
-            switch await model.libraryCollections.delete(collection, store: store) {
-            case .saved:
-                collectionProblem = nil
-                model.marginCollectionQuery.refreshCollection(from: model.libraryCollections.collections)
-            case .failed(let error):
-                model.reportFailure(error, context: "Collection change failed")
-                collectionProblem = ItemCollectionEditing.Wording.saveFailed
-            case .needsName, .nameTaken:
-                break
-            }
-        }
+        Task { collectionProblem = await model.renameCollection(collectionID: collection.id, to: name) }
     }
 
     /// The text alone is about 20 pt tall, and a text-only button's hit area is only its text, so its hit area grows to
@@ -474,11 +486,11 @@ struct ExperienceLibraryScreen: View {
 
     /// A build that can't open the Library shows that, never the empty state (#1969).
     private var screenState: LibraryScreenState {
-        LibraryCollectionScope.screenState(
+        LibraryScreenState.resolve(
             accessError: model.libraryAccessError,
-            rows: model.libraryItems,
-            query: model.libraryQuery,
-            in: model.libraryCollections.selection
+            itemCount: model.libraryItems.count + model.libraryCollections.collections.count,
+            isCaughtUp: model.libraryIsCaughtUp,
+            visibleCount: listEntries.count
         )
     }
 
@@ -504,15 +516,6 @@ struct ExperienceLibraryScreen: View {
                 actionTitle: "Show completed"
             ) { model.showCompletedLibraryItems() }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-        case .emptyCollection:
-            let name = selectedCollection?.name ?? "this collection"
-            SMExperienceEmptyState(
-                systemImage: "tray",
-                title: "Nothing in \(name) yet.",
-                detail: "Add items from your Library to see them here.",
-                actionTitle: "Add items"
-            ) { if let collection = selectedCollection { collectionSheet = .edit(collection) } }
-            .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
         case .noMatches:
             SMExperienceEmptyState(
                 systemImage: "magnifyingglass",
@@ -528,19 +531,62 @@ struct ExperienceLibraryScreen: View {
             completedHiddenFooter
         case .list:
             ForEach(listEntries) { entry in
-                let row = entry.row
+                listRow(entry)
+                    .onAppear { scrollTracker.rowChanged(entry.id, isVisible: true) }
+                    .onDisappear { scrollTracker.rowChanged(entry.id, isVisible: false) }
+            }
+            completedHiddenFooter
+        }
+    }
+
+    @ViewBuilder
+    private func listRow(_ entry: LibraryCollectionEntry) -> some View {
+        switch entry {
+        case .collection(let collection, let isCurrent):
+            LibraryCollectionRowView(
+                row: collection,
+                isCurrent: isCurrent,
+                open: { openedCollection = LibraryCollectionRoute(id: collection.collectionID) },
+                play: {
+                    if let plan = collection.playPlan {
+                        model.playCollection(plan, name: collection.name) { pendingNewMarginsOffer = $0 }
+                    }
+                },
+                addToQueue: { model.queueCollection(collection.progress) },
+                rename: { beginCollectionRename(collection) },
+                exportMargins: { model.exportCollectionMargins(collectionID: collection.collectionID) },
+                delete: { deletingCollection = collection }
+            )
+            .disabled(isSelecting)
+            .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
+        case .item(let row, let isCurrent):
+            if isSelecting {
+                LibrarySelectableRow(
+                    isSelected: selection.contains(row.id),
+                    label: row.title,
+                    toggle: { selection.toggle(row.id) }
+                ) { itemRow(row, isCurrent: isCurrent) }
+                .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
+            } else {
+                itemRow(row, isCurrent: isCurrent)
+                    .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
+            }
+        }
+    }
+
+    private func itemRow(_ row: LibraryItemRow, isCurrent: Bool) -> some View {
                 ExperienceLibraryCompactRow(
                     row: row,
                     artworkURL: itemArtwork.url(forItem: row.id),
-                    isLoadedItem: entry.isCurrent && model.activePlaybackItemId == row.id,
-                    isPlayingNow: entry.isCurrent && model.activePlaybackItemId == row.id && model.activePlaybackIsPlaying,
+                    isLoadedItem: isCurrent && model.activePlaybackItemId == row.id,
+                    isPlayingNow: isCurrent && model.activePlaybackItemId == row.id && model.activePlaybackIsPlaying,
                     showsFinishedCheck: model.libraryQuery.listeningState != .unfinished,
                     playbackSpeed: model.speechPlaybackRateMultiplier,
                     spokenNoteFolders: model.marginOutput.spokenNotes,
                     onOpen: { openRow(row) },
                     onPlay: {
                         // The item sounding now pauses, as the mini player's button does (#4698).
-                        if entry.isCurrent && model.activePlaybackItemId == row.id && model.activePlaybackIsPlaying {
+                        if isCurrent && model.activePlaybackItemId == row.id && model.activePlaybackIsPlaying {
                             model.playPauseTapped()
                             return
                         }
@@ -567,12 +613,6 @@ struct ExperienceLibraryScreen: View {
                     },
                     onDelete: { model.moveItemToTrash(id: row.id) }
                 )
-                .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
-                .onAppear { scrollTracker.rowChanged(row.id, isVisible: true) }
-                .onDisappear { scrollTracker.rowChanged(row.id, isVisible: false) }
-            }
-            completedHiddenFooter
-        }
     }
 
     private func openRow(_ row: LibraryItemRow) {
@@ -934,7 +974,9 @@ struct ExperienceLibraryCompactRow: View {
     /// The progress words come first ("about 24 min left", "Completed"), then byline, kind and status as before. The
     /// separate percent is gone: the words say how much is left and the ring shows the fraction (#4062).
     private var detail: LibraryRowDetail {
-        LibraryRowDetail(byline: sourceByline, kind: mediaLabel, length: lines.progress, listening: nil, status: statusDetail)
+        // "· in Daily Brief" on the end while a search or filter lists a collection's items on their own (#3769).
+        LibraryRowDetail(byline: sourceByline, kind: mediaLabel, length: lines.progress, listening: nil,
+                         status: LibraryCollectionListEngine.detailLine(statusDetail ?? "", collectionNames: row.collectionNames))
     }
 
     private var openAccessibilityLabel: String {

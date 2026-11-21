@@ -144,6 +144,15 @@ def compilation_cache_settings(root=None):
             f'SWIFT_OTHER_PREFIX_MAPPINGS={mapping}', f'CLANG_OTHER_PREFIX_MAPPINGS={mapping}']
 
 
+def package_cache_settings(environ=None):
+    """`-clonedSourcePackagesDirPath` for the build when SM_SPM_DIR names a folder, else nothing (#4664). A hosted run
+    restores the packages it fetched before (main-t3.yml, as hosted-app-macos.yml does), so a build never waits on the
+    binary-target hosts (download.onnxruntime.ai served an invalid certificate on 2026-11-21 and stopped main-t3's
+    build). Xcode's own default, a SourcePackages folder inside the derived data, is what it was before."""
+    folder = (os.environ if environ is None else environ).get('SM_SPM_DIR', '').strip()
+    return ['-clonedSourcePackagesDirPath', folder] if folder else []
+
+
 def compilation_cache_hits(log):
     """Xcode's own count, e.g. '441 hits / 508 cacheable tasks (87%)', or None when it printed none."""
     found = re.findall(r'note: (\d+ hits / \d+ cacheable tasks \(\d+%\))', log)
@@ -765,7 +774,7 @@ RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels', 'test_verification',
                        'test_validate_contracts', 'test_hot_file_ratchet', 'test_research_tests',
                        'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
-                       'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
+                       'test_lane_t3.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
                        'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
                        'test_building_md', 'test_third_party_notices', 'test_main_thread_reads', 'test_journey_runs',
                        'test_device_conditions',
@@ -795,6 +804,8 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_map_text_gate',
                        # The public-source caller scan reads App/ and SessionKit Swift files (#3449).
                        'test_public_source_check_callers',
+                       # The search-field keyboard guard scans App/ Swift files (#4636).
+                       'test_search_field_keyboard',
                        # The server-contact guard scans App/ and SessionKit Swift files (#2842).
                        'test_server_contact_consent',
                        # The benchmark's filter must name a test in SharingTests.swift (#2133).
@@ -861,6 +872,14 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
     'test_sim_builds.': 'packs and unpacks app builds with macOS ditto',
     # The runner (lane-runner.py) runs only on the Mac; Ubuntu 22.04's git 2.34 on the VPS runner is too old (#2160).
     'test_lane_hosted_fast.HostedChecksStandTests.': 'needs git merge-tree --write-tree (git 2.38 or later)',
+}
+# --plan fast-portable --pr-quick (2026-11-20): a PR's first signal. In the merge queue (MERGE_QUEUE_MAC=queue-only)
+# the long suites run once per merge group, where batching shares their cost; on a PR push the portable job ran
+# them too, and its runner-tests took 1,180 s of the job's 28 minutes. With --pr-quick the plan leaves runner-tests to
+# the merge group and runs every other portable step (about 90 s together). hosted-portable.yml passes it on PRs only.
+PR_QUICK_LEFT_OUT = {
+    'runner-tests': 'the PR quick tier leaves it to the merge group, which runs the whole fast-portable plan '
+                    '(hosted-portable.yml; for an early run, dispatch it on the branch)',
 }
 PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snapshots and the Mac-only caches'}
 # --plan fast-hosted-sessionkit and --plan fast-mac-rest (#1389): the fast plan split three ways once the repo is
@@ -1159,13 +1178,19 @@ def feed_new_lines(path, offset, watch):
     return offset + end
 
 
+# The step ceilings below come from scripts/ci_step_budgets.json, which scripts/ci_step_budgets.py writes from measured
+# step durations: 1.5 x the p95 of the last 30 passing hosted runs, rounded up to a minute, never below a floor. Each
+# entry lists the run IDs its number came from. Hand-set ceilings were raised three times on 2026-11-20 (runner-tests
+# 600, 1200, 1800 s) as the step drifted toward each one; the scheduled ci-step-drift.yml job now says when a step's
+# p95 passes 75% of its ceiling, and a PR regenerates the table.
+STEP_BUDGETS = json.loads((Path(__file__).resolve().parent / 'ci_step_budgets.json').read_text())['limits']
 PACKAGE_BUILD_TIMEOUT = 900  # SessionKit build with tests; cold, under load
 PACKAGE_TEST_TIMEOUT = 600  # the SessionKit tests alone (#844)
 # #1767: on a busy Mac the same tests run two to three times slower than the 230 s they take on a quiet one, and
 # three PRs were failed ("Process exit 124", hundreds of tests missing, no failing test) while the suite was still
 # working through its classes. The limit above stays the budget; a step that is still printing results when it
 # runs out may go on until the ceiling, and one that has printed nothing for the stall time is a hang and stops.
-PACKAGE_TEST_CEILING = 1500
+PACKAGE_TEST_CEILING = STEP_BUDGETS['PACKAGE_TEST_CEILING']['seconds']
 PACKAGE_STALL_SECONDS = 240
 # The lane (scripts/lane-runner.py FAST_TIMEOUT, 2400 s) starts its clock before this process, so the plan's wait for
 # a host-test slot counts there. A step's ceiling is cut to fit what is left of it, so the step ends itself with its
@@ -1177,7 +1202,7 @@ PARALLEL_CORE_TIMEOUT = 300
 # #1767: on the three timed-out runs this step was killed at 62-76% done, its results (written at the end) were lost, and
 # the serial rerun took another 364-379 s. Its progress lines stream as it goes, so it gets the same rule as the
 # serial steps: a run still printing at 300 s goes on, one silent for the stall time is a hang and is rerun serially.
-PARALLEL_CORE_CEILING = 900
+PARALLEL_CORE_CEILING = STEP_BUDGETS['PARALLEL_CORE_CEILING']['seconds']
 PARALLEL_CORE_STALL_SECONDS = 120
 PACKAGE_RUNNER = ['bash', 'scripts/run-sessionkit-tests.sh']
 # The runner's own 631 tests took 164.5 s on a quiet Mac (PR #1103's 0c940ba, 2026-10-08) and 172.3 s in a
@@ -1188,10 +1213,9 @@ RUNNER_TESTS_TIMEOUT = 600
 # #2488: by 2026-10-22 the step took 482-519 s on a busy day and was killed at 600 s at load 138-150, its log still a
 # stream of passing dots, so two runs of #2409 failed with "executed zero tests". It gets #1767's rule: a run still
 # printing at its budget goes on until the ceiling; one silent for the stall time is a hang and stops.
-# 2026-11-20: on the hosted Linux runner (load 0.6) passing runs took 743, 809, 1141 and 1180 s the same afternoon, and
-# PRs #4604 and #4597 were killed at 1200 s with the log still a stream of passing dots. The portable job's 45-minute
-# limit (#4747) has room for 30 minutes here; finding the slow tests is the real fix.
-RUNNER_TESTS_CEILING = 1800
+# #4763 set 1800 by hand on 2026-11-20 after passing hosted runs took up to 1180 s and two PRs were killed at 1200 s;
+# the table now derives the same 1800 from the last 30 passing runs (1.5 x p95, ci_step_budgets.json).
+RUNNER_TESTS_CEILING = STEP_BUDGETS['RUNNER_TESTS_CEILING']['seconds']
 RUNNER_TESTS_STALL_SECONDS = PACKAGE_STALL_SECONDS  # one test compiles Swift, silent for minutes at high load
 RUNNER_TESTS_LIMITS = {'timeout': RUNNER_TESTS_TIMEOUT, 'ceiling': RUNNER_TESTS_CEILING,
                        'stall_seconds': RUNNER_TESTS_STALL_SECONDS}
@@ -2027,17 +2051,21 @@ class Run:
     def portable(self):
         """The fast plan's steps that run anywhere (#1847), then every step it leaves out, named as skipped.
         No host-test slot: that is the Mac's shared pool, and a hosted job is alone on its machine."""
-        self.host_steps(portable=True)
-        print('fast-portable runner-tests left out ' + ', '.join(PORTABLE_RUNNER_TESTS_LEFT_OUT), flush=True)
+        pr_quick = self.manifest.get('pr_quick', False)
+        self.host_steps(portable=True, pr_quick=pr_quick)
+        if not pr_quick:  # with --pr-quick runner-tests did not run at all, so it left nothing out
+            print('fast-portable runner-tests left out ' + ', '.join(PORTABLE_RUNNER_TESTS_LEFT_OUT), flush=True)
         for name, reason in PORTABLE_LEFT_OUT.items():
             self.skip(name, reason)
         print('fast-portable left out ' + ', '.join(PORTABLE_LEFT_OUT) + '; the fast plan on the Mac runs them.', flush=True)
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError(inputs_changed_message('Inputs changed during portable verification', self.input_files))
 
-    def host_steps(self, portable=False):
+    def host_steps(self, portable=False, pr_quick=False):
         scope, why = runner_test_scope(self.changed)
-        if portable:
+        if pr_quick:
+            self.skip('runner-tests', PR_QUICK_LEFT_OUT['runner-tests'])
+        elif portable:
             self.command('runner-tests', [*PARALLEL_RUNNER, '--leave-out', *PORTABLE_RUNNER_TESTS_LEFT_OUT],
                          **RUNNER_TESTS_LIMITS)
         elif in_codex_sandbox():
@@ -2279,7 +2307,7 @@ class Run:
             if require_build:
                 raise RuntimeError('Prepared Xcode build is missing or stale; refusing to build on a booted T3 device')
             stamp.unlink(missing_ok=True)
-            self.command('build-for-testing', base + compilation_cache_settings() + ['build-for-testing'], timeout=900)
+            self.command('build-for-testing', base + package_cache_settings() + compilation_cache_settings() + ['build-for-testing'], timeout=900)
             log = self.output / 'build-for-testing.log'
             self.manifest['compilation_cache'] = compilation_cache_hits(log.read_text(errors='replace')) \
                 if log.is_file() else None
@@ -2324,7 +2352,8 @@ class Run:
         self.manifest['destination'] = chosen
         derived, identity = self.xcode_build(plan, chosen['runtime'], rebuild, require_build)
         base = ['xcodebuild', '-configuration', 'Debug', '-project', 'SpokenMarginsNative.xcodeproj', '-scheme', scheme,
-                '-testPlan', name, '-destination', f'id={chosen["udid"]}', '-derivedDataPath', str(derived)]
+                '-testPlan', name, '-destination', f'id={chosen["udid"]}', '-derivedDataPath', str(derived)
+                ] + package_cache_settings()  # the build's package folder: xcodebuild resolves packages again here (#4664)
         booted_here = chosen['state'] != 'Booted'
         # A run that boots its own simulator holds a Mac-wide simulator slot until it shuts it down
         # (16 GB Mac: a second simulator job only while memory pressure is normal, #184). A device
@@ -2530,6 +2559,8 @@ def main():
     parser.add_argument('--changed-files', type=Path, metavar='FILE',
                         help='Lane runs: the PR\'s changed paths, one per line (renames name both sides). --plan fast then '
                              'skips the runner and ops tests nothing in the diff can affect; without it every step runs')
+    parser.add_argument('--pr-quick', action='store_true',
+                        help='--plan fast-portable on a PR: leave runner-tests to the merge group (PR_QUICK_LEFT_OUT)')
     parser.add_argument('--list', action='store_true', help='Inspect selection without running tests')
     parser.add_argument('--only-testing', action='append', default=[], metavar='CLASS[/METHOD]',
                         help='Xcode plans: run only these tests of the plan (repeatable); unknown ones fail the run')
@@ -2538,6 +2569,8 @@ def main():
         parser.error('--build-only needs an Xcode --plan and --runtime')
     if args.build_only and (args.device or args.require_build or args.only_testing):
         parser.error('--build-only takes no --device, --require-build or --only-testing')
+    if args.pr_quick and args.plan != 'fast-portable':
+        parser.error('--pr-quick goes with --plan fast-portable only')
     if errors := validate():
         parser.error('; '.join(errors))
     from test_inventory import probation_batches, scripted_journeys  # only the journeys plan reads the list
@@ -2547,7 +2580,8 @@ def main():
     if args.list:
         print('\n'.join(f'{t} ({status})' for status, tests in journeys.items() for t in tests) if journeys
               else '\n'.join(sorted(plan_tests(ROOT, PLANS[args.plan][1]))) if args.plan in PLANS
-              else ('fast-portable runs ' + ', '.join(PORTABLE_STEPS) + '; it leaves out ' + ', '.join(PORTABLE_LEFT_OUT)
+              else ('fast-portable runs ' + ', '.join(s for s in PORTABLE_STEPS if not (args.pr_quick and s in PR_QUICK_LEFT_OUT))
+                    + '; it leaves out ' + ', '.join([*PORTABLE_LEFT_OUT, *(PR_QUICK_LEFT_OUT if args.pr_quick else ())])
                     if args.plan == 'fast-portable'
                     else 'hot-file ratchet, runner-tests, ops tests, contracts, surfaces, inventory, browser, all SessionKit tests'))
         return 0
@@ -2564,6 +2598,9 @@ def main():
             datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '-' + args.plan)
         run = Run(output.resolve(), args.plan,
                   read_changed_files(args.changed_files) if args.plan in ('fast', 'fast-mac-rest') else None)
+        if args.pr_quick:
+            run.manifest['pr_quick'] = True
+            run.save()  # in the evidence from the start, not only from the first step's save
         try:
             if args.build_only:
                 run.xcode_build(args.plan, args.runtime, args.rebuild)

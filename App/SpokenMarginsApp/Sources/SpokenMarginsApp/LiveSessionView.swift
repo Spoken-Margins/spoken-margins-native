@@ -103,6 +103,7 @@ struct LiveSessionView: View, Equatable {
     var body: some View {
         #if DEBUG
         let _ = ScreenRedrawProbe.record("liveSession")
+        let _ = ScreenRedrawProbe.printsChanges.contains("liveSession") ? Self._printChanges() : ()
         #endif
         NavigationStack {
             Group {
@@ -121,6 +122,8 @@ struct LiveSessionView: View, Equatable {
             .navigationTitle("Live session")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(isRunningScreen ? AppColors.listeningBackground : AppColors.bone, for: .navigationBar)
+            // As on the player (#4607): the dark scheme reaches the status bar only while the bar's background is shown.
+            .toolbarBackground(isRunningScreen ? .visible : .automatic, for: .navigationBar)
             .toolbarColorScheme(isRunningScreen ? .dark : nil, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -254,6 +257,13 @@ struct LiveSessionView: View, Equatable {
         }
         // Outermost, so the mini player and every sheet and cover this screen opens have the model to watch themselves.
         .environmentObject(model)
+        #if DEBUG
+        // What redraws this screen, by source, for `LiveSessionRedrawTests` (#4379).
+        .recordsPublishes(screen: "liveSession", of: [
+            "controller": controller.objectWillChange, "feed": feed.objectWillChange, "finish": finish.objectWillChange,
+            "links": links.objectWillChange, "capture": capture.objectWillChange,
+        ])
+        #endif
     }
 
     /// Back to where the listener came from. The session keeps running; a spoken Margin still recording is saved, not

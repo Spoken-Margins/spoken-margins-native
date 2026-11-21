@@ -3,18 +3,19 @@ import SwiftUI
 import SessionKit
 import SessionKitPersistence
 
-/// The Library's collection chips (#4343, PR 2): the collections the listener has, which one the Library is narrowed
-/// to, and the saves behind the New collection sheet and a chip's long-press. Kept out of `Gate1AppModel`; the model
-/// owns one of these and reads `selection` where it filters the Library.
+/// The Library's collections (#4343, #3769): the collections the listener has, the Library's Collections | All Items
+/// choice, and the saves behind the collection screen and Select's Add to Collection (#4720). Kept out of
+/// `Gate1AppModel`; the model owns one of these.
 ///
-/// The collections arrive with every Library read (`LibraryReadSnapshot.collections`), so the chip row draws with the
-/// rows and does not snap in after them. The selection is never saved: every launch opens on All, so nobody finds a
-/// Library that seems to be missing items.
+/// The collections arrive with every Library read (`LibraryReadSnapshot.collections`), so collection rows draw with the
+/// item rows and do not snap in after them.
 @MainActor
 final class LibraryCollectionModel: ObservableObject {
     @Published private(set) var collections: [ItemCollection] = []
-    /// The collection the Library is narrowed to; nil is All.
-    @Published private(set) var selection: ItemCollectionScope?
+    /// Collections | All Items (#3769), kept between launches.
+    @Published var viewMode: LibraryViewMode = LibraryViewMode.load(defaults: .standard) {
+        didSet { if viewMode != oldValue { viewMode.save(defaults: .standard) } }
+    }
     /// What each imported folder or link list remembers (#3769), keyed by its collection's ID; read with the Library.
     @Published private(set) var folders: [LibraryFolderRecord] = []
     /// Set while a folder or link list is being imported as a collection, so the importers it calls report to it
@@ -25,8 +26,8 @@ final class LibraryCollectionModel: ObservableObject {
     /// seen as stale and read again, never published over what was just saved.
     var onLocalWrite: (() -> Void)?
 
-    /// Sends `target` a change notification whenever the collections or the selection are about to change, so the
-    /// model's views, which filter the Library by the selection, redraw (the Quick Folder's pattern, #981).
+    /// Sends `target` a change notification whenever the collections or the view choice are about to change, so the
+    /// model's views redraw (the Quick Folder's pattern, #981).
     func forwardWillChange(to target: ObservableObjectPublisher) {
         willChangeRelay = objectWillChange.sink { _ in target.send() }
     }
@@ -38,52 +39,51 @@ final class LibraryCollectionModel: ObservableObject {
         case failed(Error)
     }
 
-    /// The collections as the store has them after a Library read or a save. A selected collection that is gone falls
-    /// back to All; one that changed keeps its place with its current members.
+    /// The collections as the store has them after a Library read or a save.
     func publish(_ stored: [ItemCollection], folders storedFolders: [LibraryFolderRecord]? = nil) {
         if stored != collections { collections = stored }
         if let storedFolders, storedFolders != folders { folders = storedFolders }
-        let next = LibraryCollectionScope.selection(selection, afterCollectionsChanged: stored)
-        if next != selection { selection = next }
     }
 
-    /// A chip tap: nil is All.
-    func select(collectionID: String?) {
-        let next = LibraryCollectionScope.selection(collectionID: collectionID, in: collections)
-        if next != selection { selection = next }
-    }
-
-    /// Makes a collection holding `itemIDs`. With `selects`, the Library is narrowed to it, so it shows what was just made;
-    /// the Add to Collection sheet passes false, since it leaves the Library as it was.
-    func create(name: String, itemIDs: [String], store: SQLiteSessionStore, selects: Bool = true, now: Date = Date()) async -> Outcome {
+    /// Makes a collection holding `itemIDs`, in that order (Select's Add to Collection, a new name typed inline).
+    func create(name: String, itemIDs: [String], store: SQLiteSessionStore, now: Date = Date()) async -> Outcome {
         guard ItemCollectionEditing.normalizedName(name) != nil else { return .needsName }
-        guard let created = ItemCollectionEditing.creating(
-            name: name, itemIDs: itemIDs, id: "collection-\(UUID().uuidString)", now: now, in: collections
+        guard let created = LibraryCollectionAdding.creating(
+            name: name, with: itemIDs, id: "collection-\(UUID().uuidString)", now: now, in: collections
         ) else { return .nameTaken }
-        if let failure = await save(created, store: store) { return .failed(failure) }
-        if selects { select(collectionID: created.id) }
+        if let failure = await save(created.collection, store: store) { return .failed(failure) }
         return .saved
     }
 
-    /// The Add to Collection sheet's tick: puts `itemID` in the stored collection or takes it out. `included` is what the
-    /// tick means on the row the sheet drew; it lands on the stored copy, so items an import added since stay (#3769).
+    /// Select's Add to Collection on an existing collection (#4720): the items join at the end in the order given.
+    /// Returns how many were new to it, or the failure. Adds to the stored copy, so an import filling it keeps its items.
+    func add(_ itemIDs: [String], toCollectionID id: String, store: SQLiteSessionStore, now: Date = Date()) async -> Result<Int, Error> {
+        let result = await update(id, store: store) { current, _ in LibraryCollectionAdding.adding(itemIDs, to: current, now: now).collection }
+        switch result {
+        case .saved(_, let was): return .success(LibraryCollectionAdding.adding(itemIDs, to: was, now: now).added)
+        case .gone, .refused: return .success(0)
+        case .failed(let error): return .failure(error)
+        }
+    }
+
+    /// Remove from Collection (#4720): the items leave this collection and stay in the Library with their Margins.
+    func remove(_ itemIDs: [String], fromCollectionID id: String, store: SQLiteSessionStore, now: Date = Date()) async -> Result<Int, Error> {
+        let result = await update(id, store: store) { current, _ in LibraryCollectionAdding.removing(itemIDs, from: current, now: now).collection }
+        switch result {
+        case .saved(_, let was): return .success(LibraryCollectionAdding.removing(itemIDs, from: was, now: now).removed)
+        case .gone, .refused: return .success(0)
+        case .failed(let error): return .failure(error)
+        }
+    }
+
+    /// The per-item Add to Collection sheet's tick: puts `itemID` in the stored collection or takes it out. `included` is
+    /// what the tick means on the row the sheet drew; it lands on the stored copy, so items an import added since stay (#3769).
     func setMembership(
         of itemID: String, included: Bool, in collection: ItemCollection, store: SQLiteSessionStore, now: Date = Date()
     ) async -> Outcome {
         await update(collection.id, store: store) { current, _ in
             ItemCollectionEditing.setting(itemID: itemID, included: included, in: current, now: now)
         }.outcome
-    }
-
-    /// Edit Items: the collection holds exactly the ticked items, among the ones the checklist offered.
-    func setItems(
-        _ chosen: Set<String>, in collection: ItemCollection, choosable: [String], store: SQLiteSessionStore, now: Date = Date()
-    ) async -> Outcome {
-        // The stored copy, not the sheet's: an import may have added an item since the sheet opened (#3769).
-        let result = await update(collection.id, store: store) { current, _ in
-            ItemCollectionEditing.settingItems(chosen, in: current, choosable: choosable, now: now)
-        }
-        return result.outcome
     }
 
     func rename(_ collection: ItemCollection, to name: String, store: SQLiteSessionStore, now: Date = Date()) async -> Outcome {
@@ -112,8 +112,8 @@ final class LibraryCollectionModel: ObservableObject {
 
     /// What `update` did.
     enum Update {
-        /// Saved; the collection as it is now stored.
-        case saved(ItemCollection)
+        /// Saved; the collection as it is now stored, and the stored copy it replaced (for counting what changed).
+        case saved(ItemCollection, was: ItemCollection)
         /// The collection is no longer stored: deleted since the caller last looked.
         case gone
         /// The change declined (a name already taken); nothing was written.
@@ -138,7 +138,7 @@ final class LibraryCollectionModel: ObservableObject {
         _ id: String, record: LibraryFolderRecord? = nil, store: SQLiteSessionStore,
         _ change: @escaping @Sendable (ItemCollection, [ItemCollection]) -> ItemCollection?
     ) async -> Update {
-        enum Written: Sendable { case saved(ItemCollection, [ItemCollection]?, [LibraryFolderRecord]?), gone, refused, failed(Error) }
+        enum Written: Sendable { case saved(ItemCollection, ItemCollection, [ItemCollection]?, [LibraryFolderRecord]?), gone, refused, failed(Error) }
         let written = await Self.offMain { () -> Written in
             do {
                 let stored = try store.loadItemCollections()
@@ -146,7 +146,7 @@ final class LibraryCollectionModel: ObservableObject {
                 guard let next = change(current, stored) else { return .refused }
                 if next != current { try store.saveItemCollection(next) }
                 if let record { try store.saveLibraryFolder(record) }
-                return .saved(next, try? store.loadItemCollections(), record == nil ? nil : try? store.loadLibraryFolders())
+                return .saved(next, current, try? store.loadItemCollections(), record == nil ? nil : try? store.loadLibraryFolders())
             } catch { return .failed(error) }
         }
         switch written {
@@ -155,7 +155,7 @@ final class LibraryCollectionModel: ObservableObject {
             return .gone
         case .refused: return .refused
         case .failed(let error): return .failed(error)
-        case .saved(let next, let stored, let storedFolders):
+        case .saved(let next, let was, let stored, let storedFolders):
             var local = collections
             if let index = local.firstIndex(where: { $0.id == id }) { local[index] = next } else { local.append(next) }
             var localFolders = folders
@@ -164,7 +164,7 @@ final class LibraryCollectionModel: ObservableObject {
             }
             onLocalWrite?()
             publish(stored ?? local, folders: record == nil ? nil : (storedFolders ?? localFolders))
-            return .saved(next)
+            return .saved(next, was: was)
         }
     }
 
@@ -190,12 +190,12 @@ final class LibraryCollectionModel: ObservableObject {
             if let index = localFolders.firstIndex(where: { $0.id == record.id }) { localFolders[index] = record } else { localFolders.append(record) }
             onLocalWrite?()
             publish(stored ?? local, folders: storedFolders ?? localFolders)
-            return .saved(collection)
+            return .saved(collection, was: collection)
         }
     }
 
-    /// Saves, then reloads so the chips show what is stored. Returns the error when the save failed. A failed read after
-    /// a good save keeps what the save just wrote, so the chips never lose it to a blip.
+    /// Saves, then reloads so the Library shows what is stored. Returns the error when the save failed. A failed read after
+    /// a good save keeps what the save just wrote, so the Library never loses it to a blip.
     private func save(_ collection: ItemCollection, store: SQLiteSessionStore) async -> Error? {
         let result = await Self.offMain { () -> Result<[ItemCollection]?, Error> in
             do { try store.saveItemCollection(collection) } catch { return .failure(error) }
