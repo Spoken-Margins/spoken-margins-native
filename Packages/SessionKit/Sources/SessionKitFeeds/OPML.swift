@@ -253,18 +253,33 @@ public enum FeedLinkListParser {
             let words = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
             guard !words.isEmpty else { continue }
             guard feeds.count + unusable < limits.maximumOutlines else { throw OPMLError.tooManyOutlines }
-            guard let index = words.firstIndex(where: { feedURL(in: $0) != nil }), let url = feedURL(in: words[index]) else {
+            guard let index = words.firstIndex(where: { feedLink(in: $0) != nil }), let link = feedLink(in: words[index]) else {
                 unusable += 1
                 continue
             }
+            let url = link.url
             var rest = words
             rest.remove(at: index)
+            if !link.leading.isEmpty { rest.insert(link.leading, at: index) }
             let title = rest.filter { OPMLParser.webURL(trimmingWrappers($0)) == nil }
                 .joined(separator: " ")
                 .trimmingCharacters(in: separators)
             feeds.append(OPMLFeed(title: title.isEmpty ? url : title, feedURL: url, websiteURL: nil, folders: []))
         }
         return OPMLDocument(title: nil, feeds: feeds, unusableOutlineCount: unusable)
+    }
+
+    /// The feed link in a word, and any name stuck to its front. A Shortcut that puts the show's name and its
+    /// link side by side in one Text with no space between ("Hard Forkhttps://…", "Hard Fork:https://…") gives a
+    /// word that is not a link by itself; reading from its first "http(s)://" keeps the line usable. Text that
+    /// holds a path before the scheme ("example.com/go?to=https://…") stays unusable.
+    static func feedLink(in word: String) -> (url: String, leading: String)? {
+        if let url = feedURL(in: word) { return (url, "") }
+        let schemes = [word.range(of: "http://", options: .caseInsensitive), word.range(of: "https://", options: .caseInsensitive)]
+        guard let earliest = schemes.compactMap({ $0 }).min(by: { $0.lowerBound < $1.lowerBound }) else { return nil }
+        let leading = String(word[..<earliest.lowerBound])
+        guard !leading.isEmpty, !leading.contains("/"), let url = feedURL(in: String(word[earliest.lowerBound...])) else { return nil }
+        return (url, leading)
     }
 
     /// A word that is a feed link once the brackets, quotes and punctuation around it are dropped. An Apple
