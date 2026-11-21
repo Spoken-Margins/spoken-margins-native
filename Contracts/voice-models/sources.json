@@ -19,6 +19,7 @@
       "minimumMemoryMegabytes": 4096,
       "status": "available",
       "bundled": false,
+      "mirrorFrom": "App/SpokenMarginsApp/Resources/Supertonic/",
       "upstreamArchives": [
         {
           "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
