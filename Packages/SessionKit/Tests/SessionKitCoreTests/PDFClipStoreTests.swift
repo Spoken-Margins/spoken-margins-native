@@ -97,6 +97,39 @@ final class PDFClipStoreTests: XCTestCase {
         XCTAssertEqual(leftovers, [])
     }
 
+    func testSavedFloatIdsListsOnlyTheFloatsAskedAboutThatHaveAFile() throws {
+        let (store, base) = makeStore()
+        defer { try? FileManager.default.removeItem(atPath: base.path) }
+        let bytes = Data([0xFF, 0xD8, 0xFF, 0xD9])
+        try store.replaceClips(["float-p1-1": bytes, "float-p2-1": bytes], forItem: "item-a",
+                               document: document(floatIds: ["float-p1-1", "float-p2-1"]))
+
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: ["float-p1-1", "float-p9-9"]), ["float-p1-1"],
+                       "one with a file, one without")
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: ["float-p1-1", "float-p2-1"]), ["float-p1-1", "float-p2-1"])
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: []), [])
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: ["", "../escape", "float-p1-1.jpg"]), [],
+                       "an id that names no file, or a file name given as an id, is not saved")
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-b", among: ["float-p1-1"]), [], "another item has none")
+        XCTAssertEqual(store.savedFloatIds(forItem: "", among: ["float-p1-1"]), [], "no item, no folder")
+    }
+
+    func testSavedFloatIdsIsEmptyWhenTheFolderIsMissingOrWasCleared() throws {
+        let (store, base) = makeStore()
+        defer { try? FileManager.default.removeItem(atPath: base.path) }
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: ["float-p1-1"]), [], "the store's own folder is not there yet")
+
+        try store.replaceClips(["float-p1-1": Data([1])], forItem: "item-a", document: document(floatIds: ["float-p1-1"]))
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: ["float-p1-1"]), ["float-p1-1"])
+        try store.replaceClips([:], forItem: "item-a", document: document(floatIds: []))
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: ["float-p1-1"]), [], "a re-import with no clips clears the folder")
+    }
+
+    func testTheClipsSavedNoticeAndItsItemKeyAreFixedNames() {
+        XCTAssertEqual(PDFClipStore.didSaveClipsNotification.rawValue, "SpokenMargins.PDFClipStore.didSaveClips")
+        XCTAssertEqual(PDFClipStore.itemIdKey, "itemId")
+    }
+
     func testNoClipsToKeepRemovesTheFolder() throws {
         let (store, base) = makeStore()
         defer { try? FileManager.default.removeItem(at: base) }

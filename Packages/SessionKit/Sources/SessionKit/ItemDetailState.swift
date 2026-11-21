@@ -50,6 +50,10 @@ public struct ItemDetailState: Equatable, Sendable {
     }
     public var isNativeAudio = false
     public var timelineSource = TimelineSourceContent(text: "")
+    /// The floats and segment table of the item's PDF, for the Now tab's table and figure cards (#4588). Nil for an
+    /// item with no floats, no structured document, or a document whose text is not the item's text. Set with
+    /// `includingTimelineSource`, so playback ticks never read the store.
+    public var pdfClipSource: PDFClipSource?
     public var documentStructure: PDFDocumentStructure?
     public var sessions: [Session] = []
     /// When the listener last added the item again (`Item.addedAgainAt`, #4178), read with the item when the detail loads.
