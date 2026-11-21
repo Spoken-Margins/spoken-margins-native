@@ -124,14 +124,27 @@ def unsafe_path() -> Path:
     return state_dir() / 'unsafe-simulators.json'
 
 
+# A simulator udid is a UUID; the tests' fixture ids look like `BAD-0001`. Anything else, such as the one-letter `U`
+# that blocked every integration run from 2026-11-18 through the guard's old substring match, names no device.
+UDID_SHAPE = re.compile(r'[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|[A-Z]+-[0-9]+')
+
+
+def is_udid(key) -> bool:
+    return isinstance(key, str) and UDID_SHAPE.fullmatch(key) is not None
+
+
 def unsafe_devices() -> dict:
+    """The marked devices; keys that aren't udid-shaped are left out, so a malformed entry can't hold anything."""
     try:
-        return json.loads(unsafe_path().read_text())
+        marked = json.loads(unsafe_path().read_text())
     except (OSError, ValueError):
         return {}
+    return {key: info for key, info in marked.items() if is_udid(key)} if isinstance(marked, dict) else {}
 
 
 def mark_unsafe(udid: str, reason: str) -> None:
+    if not is_udid(udid):
+        raise ValueError(f'not a simulator udid: {udid!r}')
     devices = unsafe_devices()
     devices[udid] = {'reason': reason, 'marked': datetime.datetime.now().isoformat(timespec='seconds')}
     unsafe_path().parent.mkdir(parents=True, exist_ok=True)
