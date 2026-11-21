@@ -259,6 +259,7 @@ jobs:
         env:
           BASE: ${{ inputs.base }}
           QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          EVENT: ${{ github.event_name }}
         run: |
           # A merge group: everything the group adds to main's tip (its base_sha), not only the last PR's diff, so a
           # group whose head entry is docs-only still runs the Mac checks for a Swift PR ahead of it (the queue merges
@@ -270,7 +271,9 @@ jobs:
           if [ -n "$QUEUE_BASE" ]; then
             git diff --name-only --no-renames "$QUEUE_BASE" HEAD > "$list" || rm -f "$list"
             git show "$QUEUE_BASE:scripts/test-scope.py" > "$rule" 2> /dev/null || rm -f "$rule"
-          elif git rev-parse --verify --quiet HEAD^2 > /dev/null; then
+          # Not a dispatch: a dispatch on the trunk checks out its tip, a merge commit whose HEAD^2 is the last merged PR,
+          # and that PR's files are not a diff to test (a seeding dispatch must run every step, #4664).
+          elif [ "$EVENT" != workflow_dispatch ] && git rev-parse --verify --quiet HEAD^2 > /dev/null; then
             git diff --name-only --no-renames "$(git merge-base HEAD^1 HEAD^2)" HEAD^2 > "$list" || rm -f "$list"
             git show HEAD^1:scripts/test-scope.py > "$rule" 2> /dev/null || rm -f "$rule"
           elif [ -n "$BASE" ]; then
@@ -582,13 +585,18 @@ jobs:
       - name: Changed files
         env:
           QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          EVENT: ${{ github.event_name }}
+          DISPATCH_BASE: ${{ inputs.base }}
         run: |
           # A merge group: everything the group adds to main's tip, as in the `scope` job.
           if [ -n "$QUEUE_BASE" ]; then
             git diff --name-only --no-renames "$QUEUE_BASE" HEAD > "$RUNNER_TEMP/changed-files.txt"
             echo "CHANGED_ARGS=--changed-files $RUNNER_TEMP/changed-files.txt" >> "$GITHUB_ENV"
             echo "$(grep -c . "$RUNNER_TEMP/changed-files.txt" || true) changed files in the merge group"
-          elif git rev-parse --verify --quiet HEAD^2 > /dev/null; then
+          # A dispatch with no base is not a merge to read a diff from: on the trunk it checks out the tip, a merge commit
+          # whose HEAD^2 is the last merged PR, and that PR's files would skip `tools` in the run that seeds the cache
+          # (#4664). With a base, the step above merged it in, so HEAD^2 is the dispatched commit.
+          elif { [ "$EVENT" != workflow_dispatch ] || [ -n "$DISPATCH_BASE" ]; } && git rev-parse --verify --quiet HEAD^2 > /dev/null; then
             git diff --name-only --no-renames "$(git merge-base HEAD^1 HEAD^2)" HEAD^2 > "$RUNNER_TEMP/changed-files.txt"
             echo "CHANGED_ARGS=--changed-files $RUNNER_TEMP/changed-files.txt" >> "$GITHUB_ENV"
             echo "$(grep -c . "$RUNNER_TEMP/changed-files.txt" || true) changed files"

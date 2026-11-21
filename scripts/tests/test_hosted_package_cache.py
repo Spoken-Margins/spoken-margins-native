@@ -10,8 +10,13 @@ added later, or a cache turned into a comment, fails here instead of in the queu
 """
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 import workflow_yaml as W
 from test_workflow_files import ROOT
@@ -149,6 +154,62 @@ class SessionKitBuildCacheKeysTests(unittest.TestCase):
         fallbacks = [line.strip() for line in str(key_step['restore-keys']).splitlines() if line.strip()]
         self.assertEqual(fallbacks[0], key_step['key'].split('${{')[0].strip(), 'its own prefix restores first')
         self.assertIn('sessionkit-macos-xcode27.0-', fallbacks, 'the first run starts from the shared cache, not cold')
+
+
+def step_script(job: str, name: str) -> tuple[str, dict]:
+    step = next(step for step in W.load('hosted-portable.yml')['jobs'][job]['steps'] if step.get('name') == name)
+    return step['run'], {key: str(value) for key, value in (step.get('env') or {}).items()}
+
+
+class SeedingDispatchRunsEveryStepTests(unittest.TestCase):
+    """The cache that serves the queue is saved by a dispatch on main (#4664). main's tip is a merge commit, so the
+    steps that read a diff from HEAD^2 must not do it for a dispatch with no base, or the seeding run reads the last
+    merged PR's files, skips `tools` when they do not touch SessionKit, and saves a cache without .build/tools."""
+
+    @staticmethod
+    def repo_with_merge_tip(folder: Path) -> None:
+        def git(*args):
+            subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *args], cwd=folder, check=True,
+                           capture_output=True)
+        git('init', '-q', '-b', 'main')
+        (folder / 'a.txt').write_text('a')
+        (folder / 'scripts').mkdir()
+        shutil.copy(ROOT / 'scripts' / 'test-scope.py', folder / 'scripts' / 'test-scope.py')  # the rule the step reads
+        git('add', '.'); git('commit', '-q', '-m', 'a')
+        git('switch', '-q', '-c', 'pr')
+        (folder / 'docs.md').write_text('docs only')
+        git('add', '.'); git('commit', '-q', '-m', 'docs')
+        git('switch', '-q', 'main')
+        git('merge', '-q', '--no-ff', '-m', 'Merge pull request #1', 'pr')
+
+    def run_step(self, job, name, event, base='', **env):
+        script, step_env = step_script(job, name)
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            self.repo_with_merge_tip(folder)
+            out = folder / 'out.txt'
+            out.write_text('')
+            tmp = folder / 'tmp'
+            tmp.mkdir()
+            environ = {**os.environ, 'RUNNER_TEMP': str(tmp), 'GITHUB_ENV': str(out), 'GITHUB_OUTPUT': str(out),
+                       'EVENT': event, 'BASE': base, 'DISPATCH_BASE': base, 'QUEUE_BASE': '', **env}
+            done = subprocess.run(['bash', '-e', '-c', script], cwd=folder, env=environ, capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            return out.read_text()
+
+    def test_mac_rest_reads_no_diff_for_a_dispatch_without_a_base(self):
+        written = self.run_step('mac-rest', 'Changed files', 'workflow_dispatch')
+        self.assertNotIn('CHANGED_ARGS', written, 'every fast-mac-rest step must run, `tools` included')
+
+    def test_mac_rest_still_reads_the_diff_for_a_pull_request_and_a_dispatch_with_a_base(self):
+        for event, base in (('pull_request', ''), ('merge_group_without_base_sha', ''), ('workflow_dispatch', 'main')):
+            with self.subTest(event=event, base=base):
+                written = self.run_step('mac-rest', 'Changed files', event, base)
+                self.assertIn('CHANGED_ARGS=--changed-files', written)
+
+    def test_scope_says_the_mac_checks_run_for_a_dispatch_without_a_base_whatever_the_last_merge_touched(self):
+        written = self.run_step('scope', 'Do the Mac checks have anything to test?', 'workflow_dispatch')
+        self.assertIn('mac=true', written)  # the last merged PR here touches only docs: the diff would say mac=false
 
 
 if __name__ == '__main__':
