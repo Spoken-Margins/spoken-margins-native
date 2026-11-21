@@ -149,6 +149,65 @@ public enum MarginEndPhrase {
     }
 }
 
+/// A saved Margin's transcript with the trailing end phrase taken off (#3940, the cut, PR 2).
+public struct MarginEndPhraseCut: Sendable, Equatable {
+    /// Where to cut the audio: 150 ms before the phrase's first word, in the saved file's time.
+    public var cutAtMs: Int
+    /// The transcript text without the phrase, with the punctuation before it kept.
+    public var text: String
+    /// How many leading words (segments) are kept. The rest are the phrase.
+    public var keptWordCount: Int
+}
+
+extension MarginEndPhrase {
+    /// The cut for a saved Margin whose final words are `words` (one per transcript segment) and whose full text is
+    /// `text`: where to cut, the text without the phrase, and how many words stay. `nil` means keep everything: no
+    /// phrase at the end, a phrase that shares a word with the speech before it, text that doesn't end with the
+    /// words the phrase was found in (the recogniser's two readings disagree, and losing the listener's words is
+    /// worse than keeping "stop margin"), or nothing left once the phrase is gone.
+    public static func cut(text: String, words: [MarginEndPhraseWord]) -> MarginEndPhraseCut? {
+        guard let match = trailingPhrase(in: words), match.firstWordIndex > 0, match.cutAtMs > 0 else { return nil }
+        let tokens = tokenize(words)
+        guard let firstIndex = tokens.firstIndex(where: { $0.wordIndex == match.firstWordIndex }),
+              tokens[firstIndex].startMs == match.startMs, // the phrase starts its word: a word can't be split
+              firstIndex > 0 else { return nil }
+        let droppedTokens = tokens[firstIndex...].map(\.text)
+        guard let trimmed = textDroppingTrailingTokens(text, expecting: droppedTokens) else { return nil }
+        return MarginEndPhraseCut(cutAtMs: match.cutAtMs, text: trimmed, keptWordCount: match.firstWordIndex)
+    }
+
+    /// `text` without its last `expecting.count` word tokens, only when those are exactly `expecting`; the text
+    /// before them keeps its own punctuation and loses trailing space. `nil` when they differ or nothing is left.
+    static func textDroppingTrailingTokens(_ text: String, expecting: [String]) -> String? {
+        let normalised = text.precomposedStringWithCanonicalMapping
+        var runs: [(token: String, start: String.Index)] = []
+        var current: String.Index?
+        var index = normalised.startIndex
+        func close(at end: String.Index) {
+            guard let start = current else { return }
+            current = nil
+            let token = normalised[start..<end].lowercased()
+                .replacingOccurrences(of: "\u{2019}", with: "'")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "'"))
+            if !token.isEmpty { runs.append((token, start)) }
+        }
+        while index < normalised.endIndex {
+            let character = normalised[index]
+            if character.isLetter || character.isNumber || character == "'" || character == "\u{2019}" {
+                if current == nil { current = index }
+            } else {
+                close(at: index)
+            }
+            index = normalised.index(after: index)
+        }
+        close(at: normalised.endIndex)
+        guard runs.count > expecting.count, runs.suffix(expecting.count).map(\.token) == expecting else { return nil }
+        let cutIndex = runs[runs.count - expecting.count].start
+        let kept = String(normalised[..<cutIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return kept.isEmpty ? nil : kept
+    }
+}
+
 /// The recogniser's results as they arrive, kept short, with the phrase rule run on them (#3940). The window holds
 /// the recogniser's current reading of the last few seconds and nothing older, so memory stays flat for a Margin of
 /// any length.
