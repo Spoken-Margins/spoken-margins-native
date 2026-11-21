@@ -279,6 +279,24 @@ class SeedTests(Base):
         self.assertIsNone(seed.seed(self.root, derived, self.cache))
         self.assertEqual(list(derived.iterdir()), [])
 
+    def test_a_donor_whose_working_files_do_not_match_its_index_is_not_used(self):
+        """A copy whose .git predates an update and whose sources were copied during it: no lock, HEAD at the pin and
+        submodules at their commits, yet the files differ from the index (a modified file, one the update added)."""
+        cases = {
+            'modified': lambda checkout: (checkout / 'Package.swift').chmod(0o644) or
+            (checkout / 'Package.swift').write_text('// half way to the new revision\n'),
+            'added': lambda checkout: (checkout / 'NewInTheUpdate.swift').write_text('// new\n'),
+            'deleted': lambda checkout: (checkout / 'Package.swift').unlink(),
+            'in a submodule': lambda checkout: (checkout / 'Source' / 'Cmlx' / 'mlx' / 'Package.swift').write_text('x'),
+        }
+        for name, damage in cases.items():
+            with self.subTest(damage=name):
+                donor = write_packages(self.slot('donor-' + name.replace(' ', '-')), PINS)
+                damage(donor / 'checkouts' / 'MLX-SWIFT')
+                derived = self.dir / name.replace(' ', '-') / 'dd'
+                self.assertIsNone(seed.seed(self.root, derived, self.cache))
+                self.assertEqual(list(derived.iterdir()), [])
+
     def test_a_donor_checkout_without_git_is_not_used(self):
         donor = write_packages(self.slot('donor'), PINS)
         shutil.rmtree(donor / 'checkouts' / 'ZIPFOUNDATION' / '.git')

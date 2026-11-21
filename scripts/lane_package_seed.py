@@ -243,8 +243,9 @@ def has_git_lock(git_dir: Path) -> bool:
 
 def verify(source_packages: Path, pins: Dict[str, str]) -> bool:
     """The copy records `pins`, and each checkout's HEAD is its recorded revision with readable history
-    and every submodule at its recorded commit, and no checkout holds a git lock. Catches a donor checkout
-    caught mid-update, including one still writing files under an old HEAD."""
+    and every submodule at its recorded commit, no checkout holds a git lock, and every checkout's working files
+    (and its submodules') match its index with nothing extra. Catches a donor checkout caught mid-update, however
+    its folders were ordered in the copy."""
     if state_pins(source_packages) != pins:
         return False
     data = json.loads((Path(source_packages) / STATE).read_text())
@@ -255,6 +256,13 @@ def verify(source_packages: Path, pins: Dict[str, str]) -> bool:
             return False
         head = _git(checkout, 'rev-parse', '--verify', '-q', 'HEAD^{commit}')
         if head.returncode != 0 or head.stdout.strip() != revision:
+            return False
+        # The files themselves against the copied index, submodules included. HEAD, the index and the lock files
+        # all describe git's side only: a copy whose .git was taken before an update began, and whose sources were
+        # taken while it ran, has none of the signs above and still mixes old and new files. A clean, complete
+        # status means the working files are exactly what the copied index says, whenever cp reached each folder.
+        clean = _git(checkout, 'status', '--porcelain', '--ignore-submodules=none')
+        if clean.returncode != 0 or clean.stdout.strip():
             return False
         if (checkout / '.gitmodules').is_file():
             status = _git(checkout, 'submodule', 'status', '--recursive')
