@@ -133,4 +133,21 @@ final class MarginEndPhraseCutTests: XCTestCase {
         XCTAssertEqual(MarginEndPhrase.cut(text: "He said \u{2014} stop margin.", words: heard)?.text, "He said")
         XCTAssertEqual(MarginEndPhrase.cut(text: "He said, stop margin.", words: heard)?.text, "He said,", "A comma stays")
     }
+
+    /// The audit's rows: only what leads into the phrase goes; the listener's own quotes, apostrophes and the start
+    /// of the text stay.
+    func testTheListenersOwnQuotesApostrophesAndStartOfTextStay() throws {
+        func kept(_ text: String, _ spoken: [String]) -> String? {
+            MarginEndPhrase.cut(text: text, words: words(spoken + ["stop", "margin"]))?.text
+        }
+        XCTAssertEqual(kept("\"Hello,\" she said. Stop margin.", ["hello", "she", "said"]), "\"Hello,\" she said.")
+        XCTAssertEqual(kept("He said \"no\" stop margin", ["he", "said", "no"]), "He said \"no\"")
+        XCTAssertEqual(kept("The players' stop margin", ["the", "players'"]), "The players'")
+        XCTAssertEqual(kept("He said 'no' stop margin", ["he", "said", "no"]), "He said 'no'")
+        XCTAssertEqual(kept("(Aside) it was fine stop margin", ["aside", "it", "was", "fine"]), "(Aside) it was fine")
+        XCTAssertEqual(kept("-5 degrees today stop margin", ["5", "degrees", "today"]), "-5 degrees today")
+        XCTAssertEqual(kept("'Tis fine stop margin", ["tis", "fine"]), "'Tis fine")
+        XCTAssertEqual(kept("It was 10-stop margin", ["it", "was", "10"]), "It was 10-", "A dash joined to a word stays")
+        XCTAssertEqual(kept("He said \u{2014} \"stop margin\"", ["he", "said"]), "He said")
+    }
 }

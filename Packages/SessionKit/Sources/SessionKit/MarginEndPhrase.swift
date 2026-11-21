@@ -212,10 +212,25 @@ extension MarginEndPhrase {
         close(at: normalised.endIndex)
         guard runs.count > expecting.count, runs.suffix(expecting.count).map(\.token) == expecting else { return nil }
         let cutIndex = runs[runs.count - expecting.count].start
-        // An opening quote, bracket or dash that led into the phrase ("He said \"stop margin\"") goes with it.
-        var openers = CharacterSet.whitespacesAndNewlines
-        openers.insert(charactersIn: "\"\u{201C}\u{2018}'([{\u{00AB}\u{2014}\u{2013}-")
-        let kept = String(normalised[..<cutIndex]).trimmingCharacters(in: openers)
+        // Only the end of the kept text is touched, and only what led into the phrase: an opening quote or bracket
+        // that touches it ("He said \"stop margin\"") goes with it, then trailing space, then one dash that stood
+        // alone ("He said \u{2014} stop margin"). A quote or apostrophe that closes a word, and anything at the start
+        // of the text, is the listener's own and stays.
+        let touching = Set("\"\u{201C}\u{2018}'([{\u{00AB}")
+        var end = cutIndex
+        while end > normalised.startIndex {
+            let before = normalised.index(before: end)
+            guard touching.contains(normalised[before]) else { break }
+            end = before
+        }
+        var kept = String(normalised[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let dashes = Set("\u{2014}\u{2013}-")
+        if let last = kept.last, dashes.contains(last) {
+            let beforeDash = kept.dropLast()
+            if beforeDash.last?.isWhitespace == true {
+                kept = String(beforeDash).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
         return kept.isEmpty ? nil : kept
     }
 }
