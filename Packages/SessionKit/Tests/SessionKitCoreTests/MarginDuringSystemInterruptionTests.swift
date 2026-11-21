@@ -219,6 +219,84 @@ final class MarginDuringSystemInterruptionTests: XCTestCase {
         XCTAssertFalse(rig.client.playing, "the first Margin's deferred resume is spent")
     }
 
+    // MARK: A resume retry already running when the written Margin opens (#4846)
+
+    /// The app's retrier wired as `retryMediaResumeAfterInterruption` wires it: it is paused where it was, and a retry
+    /// refused by an open Margin (`requireNavigationAllowed`) would throw.
+    @MainActor
+    private func retryResume(
+        _ rig: (engine: SessionEngine, client: Client), handingOver: Bool, outcomes: @escaping @MainActor (InterruptionResumeRetrier.Outcome) -> Void
+    ) async {
+        let retrier = InterruptionResumeRetrier(delaysMs: [10, 20, 40], sleep: { _ in })
+        struct Refused: Error {}
+        let engine = rig.engine
+        retrier.begin(
+            after: Refused(),
+            stillWaiting: { engine.snapshot.status == .paused && !engine.snapshot.isRecording },
+            handOver: { handingOver && engine.deferResumeToWrittenCapture() },
+            attempt: { _ = try engine.resumePlaybackAfterInterruption() },
+            report: outcomes
+        )
+        await retrier.waitUntilIdle()
+    }
+
+    @MainActor
+    func testARetryRunningWhenAWrittenMarginOpensDefersToItAndSavePlaysTheItem() async throws {
+        let rig = try rig(item: episode)
+        try siriPausesIt(rig)
+        let capture = try rig.engine.beginWrittenInterjection()
+
+        var outcomes: [InterruptionResumeRetrier.Outcome] = []
+        await retryResume(rig, handingOver: true) { outcomes.append($0) }
+
+        XCTAssertEqual(outcomes, [.deferred(attempts: 0)], "no retry runs into the open Margin, no failure, no give-up")
+        XCTAssertFalse(rig.client.playing, "nothing plays under the open Margin")
+        let snapshot = try rig.engine.saveWrittenInterjection(captureId: capture.id, text: "Check this claim")
+        XCTAssertTrue(rig.client.playing, "Save plays the item")
+        XCTAssertTrue(snapshot.status.isPlaybackActive)
+    }
+
+    @MainActor
+    func testARetryRunningWhenAWrittenMarginOpensDefersToItAndCancelPlaysTheItem() async throws {
+        let rig = try rig(item: episode)
+        try siriPausesIt(rig)
+        let capture = try rig.engine.beginWrittenInterjection()
+
+        var outcomes: [InterruptionResumeRetrier.Outcome] = []
+        await retryResume(rig, handingOver: true) { outcomes.append($0) }
+        let snapshot = try rig.engine.cancelWrittenInterjection(captureId: capture.id)
+
+        XCTAssertEqual(outcomes, [.deferred(attempts: 0)])
+        XCTAssertTrue(rig.client.playing)
+        XCTAssertTrue(snapshot.status.isPlaybackActive)
+    }
+
+    /// The regression: without the hand-over the retries ran into the open Margin and ended with `gaveUp`, the
+    /// "Playback paused after the interruption. Tap Play to resume." warning shown while the listener typed.
+    @MainActor
+    func testWithoutTheHandOverTheRetriesRunIntoTheOpenMarginAndGiveUp() async throws {
+        let rig = try rig(item: episode)
+        try siriPausesIt(rig)
+        _ = try rig.engine.beginWrittenInterjection()
+
+        var outcomes: [InterruptionResumeRetrier.Outcome] = []
+        await retryResume(rig, handingOver: false) { outcomes.append($0) }
+
+        guard case .gaveUp? = outcomes.last else { return XCTFail("\(outcomes)") }
+    }
+
+    @MainActor
+    func testARetryWithNoMarginOpenStillResumesTheItem() async throws {
+        let rig = try rig(item: episode)
+        try siriPausesIt(rig)
+
+        var outcomes: [InterruptionResumeRetrier.Outcome] = []
+        await retryResume(rig, handingOver: true) { outcomes.append($0) }
+
+        XCTAssertEqual(outcomes, [.resumed(attempt: 1)])
+        XCTAssertTrue(rig.client.playing)
+    }
+
     // MARK: The system's pause is forgotten once playback starts again
 
     func testAFailedSaveRestoreStillPausesASourceThatWasPlayingAfterALostRoute() throws {

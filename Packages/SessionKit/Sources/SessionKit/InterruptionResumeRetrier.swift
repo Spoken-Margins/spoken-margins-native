@@ -24,6 +24,9 @@ public final class InterruptionResumeRetrier {
         /// The listener or a new item took over before a retry ran, or the retry window had passed (the app was
         /// suspended while it waited), so the retry did not run.
         case abandoned(attempts: Int)
+        /// Something else now owns the resume (a written Margin opened, #4846), so the retries stop without counting a
+        /// failure. `attempts` retries had already run.
+        case deferred(attempts: Int)
     }
 
     /// Waits before each retry, in milliseconds: about 15 s in all, long enough for another app to let go of the
@@ -53,9 +56,14 @@ public final class InterruptionResumeRetrier {
     public var isRetrying: Bool { task != nil }
 
     /// Starts retrying after a resume that failed with `firstError`. Replaces any retry already running.
+    ///
+    /// `handOver` is asked before each attempt, once `stillWaiting` has passed. It returns true when something else
+    /// now owns the resume and will play the item itself (the engine's `deferResumeToWrittenCapture()` for an open
+    /// written Margin, #4846): the retrier stops with `.deferred`, neither attempting, failing nor giving up.
     public func begin(
         after firstError: Error,
         stillWaiting: @escaping @MainActor () -> Bool,
+        handOver: @escaping @MainActor () -> Bool = { false },
         attempt: @escaping @MainActor () throws -> Void,
         report: @escaping @MainActor (Outcome) -> Void
     ) {
@@ -72,6 +80,11 @@ public final class InterruptionResumeRetrier {
                 guard !Task.isCancelled else { return }
                 guard now() <= deadline, stillWaiting() else {
                     report(.abandoned(attempts: index))
+                    self?.task = nil
+                    return
+                }
+                if handOver() {
+                    report(.deferred(attempts: index))
                     self?.task = nil
                     return
                 }

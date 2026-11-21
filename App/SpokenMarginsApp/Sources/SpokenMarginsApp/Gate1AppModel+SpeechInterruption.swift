@@ -82,6 +82,8 @@ extension Gate1AppModel {
                 return snapshot.status == .paused && snapshot.sessionId == sessionId && snapshot.targetId == targetId
                     && snapshot.currentMediaTimeMs == pausedAtMs && !snapshot.isRecording
             },
+            // A written Margin opened while the retries ran: Save or Cancel plays the item, so the retries stop (#4846).
+            handOver: { engine.deferResumeToWrittenCapture() },
             attempt: { [weak self] in
                 guard let self else { return }
                 snapshot = try engine.resumePlaybackAfterInterruption()
@@ -99,6 +101,8 @@ extension Gate1AppModel {
                     reportWarning("Playback paused after the interruption. Tap Play to resume.")
                 case .abandoned(let attempts):
                     diagnostics["mediaPlaybackInterruption"] = "resume_retry_abandoned_after_\(attempts)"
+                case .deferred(let attempts):
+                    diagnostics["mediaPlaybackInterruption"] = "resume_deferred_to_written_margin_after_\(attempts)_retries"
                 }
                 recordDeveloperDiagnostic("media.interruption_resume", ["outcome": diagnostics["mediaPlaybackInterruption"] ?? "none"])
             }

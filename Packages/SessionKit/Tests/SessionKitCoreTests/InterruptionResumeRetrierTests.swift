@@ -77,6 +77,62 @@ final class InterruptionResumeRetrierTests: XCTestCase {
         XCTAssertEqual(outcomes, [.abandoned(attempts: 0)])
     }
 
+    /// #4846: a written Margin opened while the retries ran. The retrier hands the resume over before it attempts, and
+    /// neither fails nor gives up.
+    func testAHandOverStopsTheRetriesWithoutAnAttemptOrAFailure() async {
+        let retrier = make()
+        var attempts = 0
+        var outcomes: [InterruptionResumeRetrier.Outcome] = []
+
+        retrier.begin(
+            after: ActivationFailed(),
+            stillWaiting: { true },
+            handOver: { true },
+            attempt: { attempts += 1; throw ActivationFailed() },
+            report: { outcomes.append($0) }
+        )
+        await retrier.waitUntilIdle()
+
+        XCTAssertEqual(attempts, 0)
+        XCTAssertEqual(outcomes, [.deferred(attempts: 0)])
+        XCTAssertFalse(retrier.isRetrying)
+    }
+
+    func testAHandOverAfterARefusedRetryCountsTheRetriesThatRan() async {
+        let retrier = make()
+        var asked = 0
+        var outcomes: [InterruptionResumeRetrier.Outcome] = []
+
+        retrier.begin(
+            after: ActivationFailed(),
+            stillWaiting: { true },
+            handOver: { asked += 1; return asked == 2 }, // the Margin opens between the first and second retry
+            attempt: { throw ActivationFailed() },
+            report: { outcomes.append($0) }
+        )
+        await retrier.waitUntilIdle()
+
+        XCTAssertEqual(outcomes, [.retryFailed(attempt: 1, reason: "other#1"), .deferred(attempts: 1)])
+    }
+
+    func testTheListenerTakingOverBeatsAHandOver() async {
+        let retrier = make()
+        var asked = 0
+        var outcomes: [InterruptionResumeRetrier.Outcome] = []
+
+        retrier.begin(
+            after: ActivationFailed(),
+            stillWaiting: { false },
+            handOver: { asked += 1; return true },
+            attempt: {},
+            report: { outcomes.append($0) }
+        )
+        await retrier.waitUntilIdle()
+
+        XCTAssertEqual(asked, 0, "the listener's own seek or Play ends it first; nothing is deferred on their behalf")
+        XCTAssertEqual(outcomes, [.abandoned(attempts: 0)])
+    }
+
     func testCancelStopsARetryThatIsWaiting() async {
         let gate = AsyncGate()
         let retrier = InterruptionResumeRetrier(delaysMs: [10], sleep: { _ in await gate.wait() })
