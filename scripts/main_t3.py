@@ -9,7 +9,7 @@ longer runs on a push.
 The contract other tools read (#4575's release gate):
 - After each run, a commit status on the tested SHA with context `main-t3`: `success` (every test passed), `failure`
   (a real test or build failure) or `error` (a runner fault, nothing proven: no simulator, XCTest never connected, a
-  crash flood). `target_url` is the Actions run; the description is "1870 passed" or "3 failed: Class/testA, ...",
+  crash flood, a build that could not download its packages). `target_url` is the Actions run; the description is "1870 passed" or "3 failed: Class/testA, ...",
   cut to GitHub's 140 characters. A run in progress leaves `pending`.
 - "Main has changed" means main's head SHA has no `main-t3` status yet. Two additions, which only decide when this
   workflow runs: a `pending` older than STALE_PENDING (a job killed too hard to clean up) counts as none, and one
@@ -61,6 +61,14 @@ HISTORY_PAGES = 3  # 300 commits back for the last green
 # lane-runner.py's budget for each verify-tests.py run (build, then each plan), replacing its per-PR T3_TIMEOUT.
 RUN_TIMEOUT = 100 * 60
 VERDICT_STATE = {'PASS': 'success', 'FAIL': 'failure', 'INCONCLUSIVE': 'error'}
+# #4664: xcodebuild could not fetch a package or its binary target (a TLS certificate error on
+# download.onnxruntime.ai, a dropped connection, a clone that timed out). That is the hosted Mac's network, not main.
+PACKAGE_RESOLVE_ERROR = 'Could not resolve package dependencies'
+PACKAGE_FETCH_FAULT = re.compile(
+    r'failed downloading|downloadError|certificate for this server|Could not resolve host|'
+    r'network connection was lost|connection (?:was )?(?:reset|refused|timed out)|operation timed out|'
+    r'Failed to clone|could not read from remote repository|unable to access', re.IGNORECASE)
+BUILD_LOG_LIMIT = 4_000_000
 
 
 # ---- Pure logic (scripts/tests/test_main_t3.py) ---------------------------------------------------
@@ -90,6 +98,31 @@ def should_run(statuses: list, now: datetime.datetime, force: bool = False) -> t
             return True, f'its {CONTEXT} run hit a runner fault; one retry'
         return False, f'{errors} {CONTEXT} runner faults on this commit already; waiting for main to move'
     return False, f'already tested: {CONTEXT} {state}'
+
+
+def package_fetch_fault(log_text: str) -> bool:
+    """True when a build log says package resolution failed because a download or clone failed. A resolution error
+    with no such cause (a bad Package.resolved, a missing version) is main's own and stays a failure."""
+    return PACKAGE_RESOLVE_ERROR in log_text and bool(PACKAGE_FETCH_FAULT.search(log_text))
+
+
+def fetch_fault_in_builds(evidence: Path) -> bool:
+    for log in sorted(evidence.glob('verify-*/build-for-testing.log')):
+        try:
+            with open(log, errors='replace') as handle:
+                if package_fetch_fault(handle.read(BUILD_LOG_LIMIT)):
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def state_after_build_fault(state: str, results: dict, fetch_fault: bool) -> str:
+    """A failure with no test run or failed, whose build could not fetch its packages, is a runner fault: `error`,
+    so the next tick retries once (should_run) instead of leaving the commit red until main moves."""
+    if state == 'failure' and fetch_fault and not results.get('failed') and not results.get('passed'):
+        return 'error'
+    return state
 
 
 def short_test(name: str) -> str:
@@ -399,6 +432,7 @@ def command_run(args) -> int:
         verdict, ran, details, crashes, results = ('INCONCLUSIVE', 'nothing', [f'main_t3.py stopped: {error!r}'],
                                                    'unknown', {'passed': 0, 'failed': [], 'retried': []})
     state = VERDICT_STATE.get(verdict, 'error')  # a crash flood with no failed test is INCONCLUSIVE there: `error`
+    state = state_after_build_fault(state, results, fetch_fault_in_builds(evidence))
     text = description(state, results, details)
     set_status(args.sha, status_payload(state, args.run_url, text))
     write_outputs(state=state)

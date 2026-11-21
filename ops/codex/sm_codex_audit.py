@@ -178,7 +178,8 @@ RISKY_PATTERNS = {
         r"^\.github/workflows/",
         r"^scripts/lane",
         r"^scripts/(xcodebuild-lane|host-test-lane|install-lane-guard\.py|test-scope\.py"
-        r"|hot_file_ratchet\.py|merge_audit\.py|merge_policy\.py|signoff_check\.py|verify-tests\.py|trunk\.py)$",
+        r"|hot_file_ratchet\.py|merge_audit\.py|merge_policy\.py|signoff_check\.py|verify-tests\.py|trunk\.py"
+        r"|parallel_unittest\.py|runner_test_seconds\.json|ci_step_budgets\.json)$",
         r"^TestPlans/(AppBehavior|AudioAdapters)\.xctestplan$",
     ],
 }
@@ -499,8 +500,10 @@ def evaluate(pr: dict, comments: list[dict], files: list[dict] | None,
              tap_checks_done: bool = False) -> tuple[bool, str, dict | None]:
     """evaluate_pr, plus the re-audit plan (reaudit_trigger) when the head is audited again, else None.
 
-    `tap_checks_done` (#2052): the caller found the PR touches an owner-tap path and the head's checks have
-    finished with none failed. Such a PR gets no lane report PASS (nothing arms it), so that stands in for one.
+    `tap_checks_done` (#2052, #4693): the head has no lane report and its checks have finished with none failed,
+    which stands in for a lane PASS. An owner-tap PR is never armed, so it gets no lane report; and with the lane
+    off for the merge queue (2026-11-20) no PR does. An owner-tap PR is then always audited; any other still has to
+    be risky or asked for.
     """
     head = pr["headRefOid"]
     if pr.get("isDraft"):
@@ -520,7 +523,7 @@ def evaluate(pr: dict, comments: list[dict], files: list[dict] | None,
         tap_only = True
     if files is None:
         return False, "need files", None
-    if tap_only and not plan:
+    if tap_only and not plan and touches_owner_tap(files):
         return True, "owner-tap PR, checks finished", None
     if plan:  # an audited head was audited because it was risky or asked for; the trigger decides now
         return True, reason, plan
@@ -869,14 +872,17 @@ def find_candidates(prs: list[dict], force: bool = False) -> tuple[list[dict], d
             ok, why, plan = evaluate(pr, comments, None, force=force)
             files = None
             tap_checks_done = False
-            if lane_report_missing_for_head(why):  # an owner-tap PR is never armed, so it gets no lane report (#2052)
+            # No lane report on the head: an owner-tap PR is never armed (#2052), and with the lane off for the merge
+            # queue no PR gets one (#4693). The head's finished checks stand in, read only for a PR that could be audited.
+            if lane_report_missing_for_head(why):
                 files = fetch_files(n)
-                if touches_owner_tap(files):
+                tap = touches_owner_tap(files)
+                if tap or risky_areas([f.get("filename") or f.get("path") or "" for f in files]):
                     state, _ = head_checks_state(pr["headRefOid"])
                     if state == "ok":
                         tap_checks_done = True
                     else:
-                        why = f"owner-tap PR, checks {state}"
+                        why = f"owner-tap PR, checks {state}" if tap else f"checks {state}"
             if why == "need files" or tap_checks_done:
                 files = files or fetch_files(n)
                 ok, why, plan = evaluate(pr, comments, files, force=force, tap_checks_done=tap_checks_done)

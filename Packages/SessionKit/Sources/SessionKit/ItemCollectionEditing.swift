@@ -70,6 +70,14 @@ public enum ItemCollectionEditing {
         return renamed
     }
 
+    /// Puts the item in (at the end) or takes it out, whatever the collection held. The Add to Collection sheet decides
+    /// `included` from the row it drew and applies it to the stored collection, so a tick never undoes a change made
+    /// since the row was drawn (#3769 audit). Unchanged, `updatedAt` included, when the item is already where asked.
+    public static func setting(itemID: String, included: Bool, in collection: ItemCollection, now: Date) -> ItemCollection {
+        guard collection.itemIDs.contains(itemID) != included else { return collection }
+        return toggling(itemID: itemID, in: collection, now: now)
+    }
+
     /// Adds the item at the end of the collection, or takes it out when it is already there.
     public static func toggling(itemID: String, in collection: ItemCollection, now: Date) -> ItemCollection {
         var edited = collection

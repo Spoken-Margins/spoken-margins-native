@@ -4,6 +4,8 @@
 # validators, the test inventory, the browser-extraction and share-link suites, and the research suites. It
 # prints each step it leaves out and a host test fails if a fast-plan step is in neither list. The same job builds
 # SessionKit's Linux targets and runs SessionKitCoreTests in the swift image (#3529), so a red test frees the Mac early.
+# On a PR push (2026-11-20) the job runs a quick tier instead: the plan with --pr-quick (no runner-tests) and no Linux
+# SessionKitCoreTests; the merge group and dispatches run everything (see the "Portable fast plan" step).
 # The second job, `sessionkit`, runs `--plan fast-hosted-sessionkit` on a GitHub-hosted Mac: SessionKit's build and
 # SessionKitCoreTests. The third, `mac-rest` (#2459), runs `--plan fast-mac-rest` on another GitHub-hosted Mac with
 # the BlackHole virtual audio output installed: what neither of the others runs (SessionKitTests and
@@ -89,7 +91,9 @@ jobs:
       (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Successful runs take 20 to 29 minutes, so a 30-minute limit cancelled busy runs that were passing; in the merge
+    # queue that drops a PR for no real failure (#4693, 2026-11-20). The limit is a ceiling, not a pace.
+    timeout-minutes: 45
     outputs:
       # The SessionKitCoreTests that passed only on their Linux rerun, for linux-retry-tally (#2176).
       retried: ${{ steps.core.outputs.retried }}
@@ -152,8 +156,21 @@ jobs:
         run: |
           bash scripts/bootstrap-python-tools.sh
           npm ci
+      # PR quick tier (2026-11-20): on a PR push this job is the first signal, so it runs only the cheap portable steps
+      # (--pr-quick leaves runner-tests out) and skips the Linux SessionKitCoreTests below. The merge group, which
+      # every PR must pass to merge, runs the whole plan and the Linux tests, as do dispatches. Measured from 17 PR runs
+      # and 14 merge groups after MERGE_QUEUE_MAC went queue-only (scripts/ci_step_budgets.py profile): on a PR this
+      # job took 28 minutes at p50, runner-tests 1,180 s at p95 and the Linux core tests 512 s at p50, and the other
+      # portable steps about 90 s together.
+      # Cost and catch: saves about 25 hosted Linux minutes per PR push, and the PR's first test result comes in about
+      # 4 minutes instead of 28. What it can cost: a PR that breaks runner-tests or a Linux-only SessionKit test now
+      # learns it in the merge group, which drops it and retests the PRs behind it (about 58 job-minutes a group).
+      # Waste signal: in a month, merge groups that failed on runner-tests or the Linux core tests, times 58 minutes,
+      # outweigh 25 minutes times the PR pushes; then run the whole plan on PRs again.
       - name: Portable fast plan
-        run: .venv/bin/python scripts/verify-tests.py --plan fast-portable
+        env:
+          PR_QUICK: ${{ github.event_name == 'pull_request' && '--pr-quick' || '' }}
+        run: .venv/bin/python scripts/verify-tests.py --plan fast-portable $PR_QUICK
       # #2681: SessionKit also builds on Linux (the daily Substack canary runs on it), but no per-PR check compiled it
       # there, so #2671's Foundation-only `.bySentences` broke the Linux build on main unnoticed. #3529: and it runs
       # SessionKitCoreTests here, in the same swift image and dependency cache as hosted-sessionkit-linux.yml, so a red
@@ -167,17 +184,20 @@ jobs:
       # What it can cost: a test that fails only on Linux now blocks a merge. Waste signal: three months in which no
       # PR's first red is here, or the tests pass 5 minutes.
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        if: github.event_name != 'pull_request'
         with:
           path: .build-linux
           key: sessionkit-linux-swift6.2.4-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
           restore-keys: sessionkit-linux-swift6.2.4-
       - name: SessionKitCoreTests on Linux
         id: core
+        # The merge group runs them; a PR's quick tier does not (above).
+        if: github.event_name != 'pull_request'
         run: .venv/bin/python scripts/linux_core_tests.py run
       # What this job ran, by name, to set beside the Mac's list: scripts/linux_core_tests.py compare (#3529). The
       # Mac's run keeps its result file the same way, because its parallel run prints no line for a passing test.
       - name: Keep the Linux test list
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-core-tests
@@ -195,10 +215,17 @@ jobs:
           retention-days: 7
       - name: Record what was tested, for the lane runner
         if: success() && (github.event_name == 'pull_request' || inputs.base != '')
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           # GitHub's merge commit: parent 1 is the base, parent 2 the PR's head. The runner matches the tree.
           parents=$(git cat-file -p HEAD | awk '/^parent /{print $2}' | tr '\n' ' ')
-          echo "::notice title=lane-hosted-tested::plan=fast-portable tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
+          # A PR's quick tier is not the whole plan, so it must not be read as one.
+          if [ "$EVENT" = pull_request ]; then
+            echo "::notice title=lane-hosted-tested::plan=fast-portable-pr-quick tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
+          else
+            echo "::notice title=lane-hosted-tested::plan=fast-portable tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
+          fi
       - name: Report time
         if: always()
         run: |
@@ -220,6 +247,8 @@ jobs:
       mac: ${{ steps.scope.outputs.mac }}
       reason: ${{ steps.scope.outputs.reason }}
       docs_only: ${{ steps.scope.outputs.docs_only }}
+      app: ${{ steps.scope.outputs.app }}
+      app_reason: ${{ steps.scope.outputs.app_reason }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -255,6 +284,14 @@ jobs:
             { echo "mac=true"; echo "reason=no changed-file list or base rule, so the Mac checks run"; } | tee -a "$GITHUB_OUTPUT"
           fi
           grep -q '^mac=' "$GITHUB_OUTPUT" || echo "mac=true" >> "$GITHUB_OUTPUT"
+          # The merge queue's app compile (app-compile below). A base rule without --app-compile-required prints only a
+          # usage error, so no app= line: the grep after this writes app=true. Unsure builds.
+          if [ -s "$list" ] && [ -s "$rule" ]; then
+            python3 "$rule" --app-compile-required "$list" | tee -a "$GITHUB_OUTPUT" || true
+          else
+            echo "app=true" | tee -a "$GITHUB_OUTPUT"
+          fi
+          grep -q '^app=' "$GITHUB_OUTPUT" || echo "app=true" >> "$GITHUB_OUTPUT"
           # Docs-only: every changed path is one the old paths-ignore list skipped. No list says false.
           if [ -s "$list" ] && python3 -c '
           import sys
@@ -339,6 +376,92 @@ jobs:
         run: |
           seconds=$(( $(date +%s) - STARTED ))
           echo "hosted fast SessionKit core took ${seconds}s on xcode-27." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  app-compile:
+    # 2026-11-20: no required check compiled the app, so #4602's Swift error in FollowListsScreen.swift passed every gate
+    # and main did not compile for about 2.5 hours (#4750). This builds the app for the simulator, with no tests and no
+    # simulator, in each merge group whose diff reaches an app build input (test-scope.py app_compile_required). On a PR
+    # it is skipped, which reports success, so the required check passes on the PR and is earned in the queue: one Mac
+    # build per merge group, never per push. The per-PR app builds of 2026-11-18 (retired) queued for 1 to 2.5 hours;
+    # the queue builds at most 3 groups at once, so this holds at most 3 Macs. main-t3.yml still runs the app tests.
+    # Cost and catch: about 8 minutes of hosted Mac per merge group that touches the app (hosted-app-macos.yml on main
+    # took 6 to 8 minutes, 2026-11-20). It would have caught #4602. Waste signal: a month in which it never fails.
+    name: 'hosted app: build (no tests)'
+    needs: scope
+    if: >-
+      !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.app != 'false' &&
+      (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch')
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      DERIVED: ${{ github.workspace }}/.build/hosted-dd
+      CAS: ${{ github.workspace }}/.build/compilation-cache
+      CAS_PACK: ${{ github.workspace }}/.build/compilation-cache-pack
+      SPM: ${{ github.workspace }}/.build/spm
+    steps:
+      - name: Start the clock
+        run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # The app bundles the voice models (LFS). The same cache hosted-app-macos.yml keeps on main.
+      - name: List LFS objects
+        run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
+          restore-keys: lfs-
+      - name: Fetch LFS files
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+      # Restore only: main's hosted-app-macos.yml runs save these, and a merge group's run can read main's caches.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.SPM }}
+          key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: spm-
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ env.CAS_PACK }}
+          key: xcode-cas-sparse-27.0-${{ github.run_id }}
+          restore-keys: xcode-cas-sparse-27.0-
+      - name: Unpack the compilation cache
+        run: CAS="$CAS" PACK="$CAS_PACK" bash scripts/ci-cas-cache.sh unpack
+      - name: Build the app for the simulator (build-for-testing, no tests)
+        env:
+          WHY: ${{ needs.scope.outputs.app_reason }}
+        run: |
+          echo "Why: ${WHY:-no reason given}"
+          mkdir -p "$RUNNER_TEMP/results"
+          root="$GITHUB_WORKSPACE"
+          set -o pipefail
+          xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsAppBehavior -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$DERIVED" \
+            -clonedSourcePackagesDirPath "$SPM" \
+            COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_CAS_PATH="$CAS" COMPILATION_CACHE_LIMIT_SIZE=1G \
+            SWIFT_ENABLE_PREFIX_MAPPING=YES SWIFT_ENABLE_PROJECT_PREFIX_MAPPING=YES \
+            CLANG_ENABLE_PREFIX_MAPPING=YES CLANG_ENABLE_PROJECT_PREFIX_MAPPING=YES \
+            SWIFT_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" CLANG_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" \
+            build-for-testing 2>&1 | tee "$RUNNER_TEMP/results/build-for-testing.log" | grep -E 'error:|BUILD|cacheable tasks' || true
+          grep -q 'TEST BUILD SUCCEEDED' "$RUNNER_TEMP/results/build-for-testing.log"
+      - name: Keep the build log
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: app-compile-log
+          path: ${{ runner.temp }}/results/build-for-testing.log
+          retention-days: 14
+      - name: How long it took
+        if: always()
+        run: |
+          seconds=$(( $(date +%s) - STARTED ))
+          echo "hosted app compile took ${seconds}s." | tee -a "$GITHUB_STEP_SUMMARY"
 
   mac-rest:
     # #2459: --plan fast-mac-rest, which the lane's automerge job used to run on the owner's build Mac (about 8 minutes
@@ -604,7 +727,7 @@ jobs:
     # (the trunk, or the lane-check/** base under test), never the PR's head, and the head reaches the shell only through env. Same-repo runs only. Its outcome is read from the
     # check jobs only: owner-tap-alert and linux-retry-tally run `always()` and end `success` even when every check skipped.
     name: rearm
-    needs: [portable, scope, sessionkit, mac-rest, stop-macs-on-red, linux-retry-tally, owner-tap-alert]
+    needs: [portable, scope, sessionkit, mac-rest, app-compile, stop-macs-on-red, linux-retry-tally, owner-tap-alert]
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 3

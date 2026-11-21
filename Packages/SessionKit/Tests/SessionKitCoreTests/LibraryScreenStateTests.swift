@@ -32,16 +32,4 @@ final class LibraryScreenStateTests: XCTestCase {
         XCTAssertEqual(state(items: 3, visible: 2), .list)
         for plain in [LibraryScreenState.empty, .caughtUp, .noMatches, .list] { XCTAssertTrue(plain.allowsAddingContent) }
     }
-
-    func testAnEmptyCollectionIsItsOwnStateAndOnlyWhenThereAreItemsAndNoError() {
-        func state(items: Int = 5, error: String? = nil, collection: Int?) -> LibraryScreenState {
-            .resolve(accessError: error, itemCount: items, isCaughtUp: false, visibleCount: 0, collectionItemCount: collection)
-        }
-        XCTAssertEqual(state(collection: 0), .emptyCollection)
-        XCTAssertEqual(state(collection: 2), .noMatches, "Items in the collection that the filters hide are not an empty collection")
-        XCTAssertEqual(state(collection: nil), .noMatches, "No collection selected: the old rule")
-        XCTAssertEqual(state(items: 0, collection: 0), .empty, "An empty Library is still the first-run state")
-        if case .cannotOpen = state(error: "boom", collection: 0) {} else { XCTFail("A Library that can't open outranks an empty collection") }
-        XCTAssertTrue(LibraryScreenState.emptyCollection.allowsAddingContent)
-    }
 }

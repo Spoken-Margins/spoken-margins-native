@@ -206,8 +206,9 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         let notificationCenter = NotificationCenter()
         let events = InterruptionEventRecorder()
         var otherAudio = InterruptionBackgroundHold.OtherAudio(isPlaying: true, secondaryShouldBeSilenced: true)
+        var otherAudioReads = 0
         let probe = InterruptionHoldProbe(watch: .init(
-            probe: { otherAudio },
+            probe: { otherAudioReads += 1; return otherAudio },
             activate: { nil },
             pollInterval: 0.02,
             settle: 0.05,
@@ -228,7 +229,11 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
 
         post(.began, to: notificationCenter)
         await settle { probe.begins == 1 }
-        try await Task.sleep(for: .milliseconds(200))
+        // Each poll of the watch reads the other audio, so five more reads are five chances (and more than the 50 ms the
+        // watch needs to see it clear) for a resume that ignores the announcement. Count them, not the clock.
+        let readsAtBegin = otherAudioReads
+        await settle { otherAudioReads >= readsAtBegin + 5 }
+        XCTAssertGreaterThanOrEqual(otherAudioReads, readsAtBegin + 5, "the watch kept polling while the announcement played")
         XCTAssertEqual(events.values, [.began], "the announcement is still playing")
 
         otherAudio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
@@ -236,7 +241,9 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertEqual(events.values, [.began, .endedResumeRequested])
         XCTAssertEqual(probe.hold.outcome, .otherAudioStopped)
         post(.ended, options: .shouldResume, to: notificationCenter)
-        try await Task.sleep(for: .milliseconds(100))
+        // The observer delivers on the main queue after the post returns (see `settle`), and the queue is in order: once
+        // a block queued after the post has run, the late end has been handled.
+        await afterTheMainQueueDrains()
         XCTAssertEqual(events.values, [.began, .endedResumeRequested], "a late end doesn't resume a second time")
 
         try client.play(targetId: "watched-interruption-audio", fromMediaTimeMs: 0)
@@ -245,6 +252,8 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         await settle { probe.begins == 2 }
         try client.pause()
         otherAudio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        // fixed-sleep ok: time is the subject. A watch that ignored the pause would resume at its next poll once the other
+        // audio had been clear for the 50 ms settle, and nothing marks the absence of that. 300 ms is six polls.
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(events.values, [.began, .endedResumeRequested, .began], "the listener's pause keeps it paused")
         XCTAssertEqual(probe.hold.outcome, .listenerActed)
@@ -254,6 +263,16 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
     /// The observers deliver on the main queue, after the post returns.
     private func settle(_ condition: () -> Bool) async {
         try? await pollUntil { condition() }
+    }
+
+    /// Returns after the work already queued on the main queue has run, twice over: one pass for an observer's block,
+    /// one for anything that block queued in turn.
+    private func afterTheMainQueueDrains() async {
+        for _ in 0..<2 {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { continuation.resume() }
+            }
+        }
     }
 
     private func post(
@@ -408,7 +427,9 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         let model = fixture.model
         model.refreshMarginRows()
         model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
-        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        // A voice that can't be decoded ends in a failed item, and that is the moment a wrong "heard" mark would have
+        // been written (the test below reads the same failure).
+        try waitUntil("the failure shows") { model.importedCommentaryPhase.isFailed }
         XCTAssertNil(try fixture.storedRecord()?.firstHeardAt, "a voice that never played isn't heard")
         model.stopInterjectionAudioPlayback()
         model.refreshMarginRows()
@@ -556,7 +577,10 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         model.stopReviewingNewMargins()
         XCTAssertNil(model.marginMoment)
         XCTAssertEqual(model.snapshot.status, .paused)
-        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        // fixed-sleep ok: time is the subject. Left running, the review would start the second Margin when the first
+        // one's voice ended, and a stopped voice sends no end to wait for. The fixture's voice is 2 s and about 1.9 s of
+        // it was left at Stop, so 3 s covers its end, the second voice's start and the heard mark written off the main thread.
+        RunLoop.main.run(until: Date().addingTimeInterval(3))
         XCTAssertNil(try fixture.storedRecord("note2")?.firstHeardAt, "the second Margin never plays after Stop")
         XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertFalse(model.sharedMarginOffers.announcedIDs.contains("note2"),
@@ -587,7 +611,10 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertLessThan(abs((model.snapshot.currentMediaTimeMs ?? .max) - leftOffAt), 1_000,
                           "back where the listener left off, not where the review had got to")
         XCTAssertEqual(model.snapshot.status, .paused, "and nothing plays on from the middle of the review")
-        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        // fixed-sleep ok: time is the subject. Left running, the review would reach its second Margin when the first
+        // one's voice ended, and an ended review has no voice left to send that end. The fixture's voice is 2 s and about
+        // 1.9 s of it was left, so 3 s covers its end, the second voice's start and the heard mark written off the main thread.
+        RunLoop.main.run(until: Date().addingTimeInterval(3))
         XCTAssertNil(try fixture.storedRecord("note2")?.firstHeardAt, "the Margin it never reached stays new")
         XCTAssertEqual(model.snapshot.status, .paused)
     }
@@ -1283,7 +1310,11 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
 
         NotificationCenter.default.post(name: name, object: AVAudioSession.sharedInstance(), userInfo: userInfo)
         try waitUntil("the Margin is held") { model.marginMomentVoiceIsPaused }
-        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        let chimeSeconds = try AVAudioPlayer(data: SharedMarginCue.doubleChimeWAVData()).duration
+        // fixed-sleep ok: time is the subject. The conductor starts the voice by itself once the chime and a 0.15 s pause
+        // after it are over, and no event marks that moment. Wait for the chime's own length (read from the sound),
+        // that pause and half a second more.
+        RunLoop.main.run(until: Date().addingTimeInterval(chimeSeconds + 0.15 + 0.5))
         XCTAssertNil(try fixture.storedRecord()?.firstHeardAt, "their voice didn't start by itself")
         XCTAssertNotNil(model.marginMoment?.playing, "the Margin is still waiting, not consumed")
 

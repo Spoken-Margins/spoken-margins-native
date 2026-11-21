@@ -58,6 +58,8 @@ extension Gate1AppModel {
     /// `feedback.suppressed` when a banner already showing refuses the replacement), with no text (#3344).
     /// `fileID` and `line` default to the caller's, so a call site names itself without changing.
     func presentFeedback(_ event: UserFeedbackEvent, fileID: String = #fileID, line: Int = #line) {
+        // A collection import's files report to it, and it shows one line when it is done (#3769).
+        if libraryCollections.importCapture?.holds(event) == true { return }
         let replaced = feedbackEvent != nil
         let accepted = feedbackEvent?.mayBeReplaced(by: event) ?? true
         recordDeveloperDiagnostic(
