@@ -48,6 +48,8 @@ public enum MarginEndPhrase {
         public var firstWordIndex: Int
         public var startMs: Int
         public var endMs: Int
+        /// Where the last phrase of the run starts. It is `startMs` unless the phrase was said again straight away.
+        public var finalPhraseStartMs: Int
         /// Where to cut the audio so the phrase is gone: a little before its first word.
         public var cutAtMs: Int { max(0, startMs - MarginEndPhrase.cutLeadMs) }
     }
@@ -63,9 +65,12 @@ public enum MarginEndPhrase {
     /// The audio kept before the phrase when it is cut.
     public static let cutLeadMs = 150
 
-    /// The rule on the words heard so far (oldest first) and the recogniser's audio clock.
+    /// The rule on the words heard so far (oldest first) and `audioNowMs`, the time through which the recogniser has
+    /// **delivered results**. Not the microphone's clock: results lag the audio, and a word spoken in the confirming
+    /// second may not be delivered yet, so a clock ahead of the results could end a Margin on "stop margin notes".
     public static func evaluate(words: [MarginEndPhraseWord], audioNowMs: Int) -> Outcome {
-        guard let match = trailingPhrase(in: words), match.startMs >= earliestStartMs else { return .none }
+        // The early-start rule looks at the last phrase said, not at an earlier try the cut also takes.
+        guard let match = trailingPhrase(in: words), match.finalPhraseStartMs >= earliestStartMs else { return .none }
         if audioNowMs - match.endMs >= confirmMs { return .end(cutAtMs: match.cutAtMs) }
         return .confirming(phraseStartMs: match.startMs)
     }
@@ -77,11 +82,13 @@ public enum MarginEndPhrase {
     public static func trailingPhrase(in words: [MarginEndPhraseWord]) -> Match? {
         let tokens = tokenize(words)
         guard let last = tokens.last, var start = phraseStart(endingAt: tokens.count - 1, in: tokens) else { return nil }
+        let finalStartMs = tokens[start].startMs
         while start > 0, let earlier = phraseStart(endingAt: start - 1, in: tokens),
               tokens[start].startMs - tokens[start - 1].endMs <= confirmMs {
             start = earlier
         }
-        return Match(firstWordIndex: tokens[start].wordIndex, startMs: tokens[start].startMs, endMs: last.endMs)
+        return Match(firstWordIndex: tokens[start].wordIndex, startMs: tokens[start].startMs, endMs: last.endMs,
+                     finalPhraseStartMs: finalStartMs)
     }
 
     // MARK: Words
@@ -142,27 +149,49 @@ public enum MarginEndPhrase {
     }
 }
 
-/// The recogniser's results as they arrive, kept short, with the phrase rule run on them (#3940). Each batch is one
-/// result's words. A later result replaces every word that starts at or after its first word (a volatile guess that
-/// was revised, or one a final result now covers), so the window holds the recogniser's current reading of the last
-/// few seconds and nothing older: memory stays flat for a Margin of any length.
+/// The recogniser's results as they arrive, kept short, with the phrase rule run on them (#3940). The window holds
+/// the recogniser's current reading of the last few seconds and nothing older, so memory stays flat for a Margin of
+/// any length.
+///
+/// How a result changes it:
+/// - A **volatile** result is the recogniser's current guess for the whole unfinished tail. It replaces every word
+///   from its start onward, even when it carries no words (a guess revised to nothing retracts the old one, so a stale
+///   "stop margin" can't be confirmed). Its start is `resultStartMs`, or its first word's start.
+/// - A **final** result replaces only the words inside its own range, so a late final for earlier audio can't delete
+///   the newer tail.
 public struct MarginEndPhraseWindow: Sendable {
-    /// How much of the audio's recent past is kept. The rule needs only the phrase and the word before it.
+    /// How much of the audio's recent past is kept, plus the one word before it. The rule needs only the phrase and
+    /// the word before it (the pause "and martian" needs).
     public static let retainMs = 10_000
 
     public private(set) var words: [MarginEndPhraseWord] = []
 
     public init() {}
 
-    /// Takes the next result (empty for none) and the recogniser's audio clock, which is how far it has processed
-    /// the audio, not the wall clock. Gives what the rule says now.
-    public mutating func advance(audioNowMs: Int, hearing batch: [MarginEndPhraseWord] = []) -> MarginEndPhrase.Outcome {
-        if let first = batch.first {
-            words.removeAll { $0.startMs >= first.startMs }
+    /// Takes the next result (none for no new result) and `audioNowMs`, the time through which the recogniser has
+    /// delivered results (see `MarginEndPhrase.evaluate`). Gives what the rule says now.
+    public mutating func advance(
+        audioNowMs: Int,
+        hearing batch: [MarginEndPhraseWord] = [],
+        isFinal: Bool = false,
+        resultStartMs: Int? = nil
+    ) -> MarginEndPhrase.Outcome {
+        if let start = resultStartMs ?? batch.first?.startMs {
+            if isFinal, let last = batch.last {
+                let end = max(last.endMs, batch.map(\.endMs).max() ?? 0)
+                words.removeAll { $0.startMs >= start && $0.startMs < end }
+            } else if !isFinal {
+                words.removeAll { $0.startMs >= start }
+            }
             words.append(contentsOf: batch)
+            words.sort { $0.startMs < $1.startMs }
         }
+        // Forget what is older than the window, but keep the last word before it: with it gone, a phrase's pause
+        // check would read "nothing came before" for a word that was said right before.
         let cutoff = audioNowMs - Self.retainMs
-        words.removeAll { $0.endMs < cutoff }
+        if let lastOld = words.lastIndex(where: { $0.endMs < cutoff }), lastOld > 0 {
+            words.removeFirst(lastOld)
+        }
         return MarginEndPhrase.evaluate(words: words, audioNowMs: audioNowMs)
     }
 }

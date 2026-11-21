@@ -263,8 +263,50 @@ final class MarginEndPhraseTests: XCTestCase {
         let guess = say("stop margin", at: 5_000)
         _ = window.advance(audioNowMs: 6_000, hearing: guess.words)
         let final = say("stop marching", at: 5_000)
-        XCTAssertEqual(window.advance(audioNowMs: 7_500, hearing: final.words), .none)
+        XCTAssertEqual(window.advance(audioNowMs: 7_500, hearing: final.words, isFinal: true), .none)
         XCTAssertEqual(window.words.map(\.text), ["stop", "marching"])
+    }
+
+    func testAGuessRevisedToNothingRetractsTheOldPhrase() {
+        var window = MarginEndPhraseWindow()
+        let said = say("that is my point stop margin", at: 5_000)
+        XCTAssertEqual(window.advance(audioNowMs: said.endMs, hearing: said.words),
+                       .confirming(phraseStartMs: said.words[4].startMs))
+        // The recogniser now reads that stretch as nothing: an empty result that starts where the phrase did.
+        XCTAssertEqual(window.advance(audioNowMs: said.endMs + 200, resultStartMs: said.words[4].startMs), .none)
+        XCTAssertEqual(window.advance(audioNowMs: said.endMs + 1_500), .none, "A retracted phrase is never confirmed")
+        // A result of only punctuation retracts it too.
+        var other = MarginEndPhraseWindow()
+        _ = other.advance(audioNowMs: said.endMs, hearing: said.words)
+        let dot = [MarginEndPhraseWord(text: ".", startMs: said.words[4].startMs, endMs: said.words[4].startMs + 100)]
+        XCTAssertEqual(other.advance(audioNowMs: said.endMs + 1_500, hearing: dot), .none)
+    }
+
+    func testALateFinalForEarlierAudioKeepsTheNewerTail() {
+        var window = MarginEndPhraseWindow()
+        let earlier = say("that is my point", at: 5_000)       // ends 6500
+        let tail = say("stop margin", at: 9_000)               // volatile tail, already heard
+        _ = window.advance(audioNowMs: tail.endMs, hearing: tail.words)
+        XCTAssertEqual(window.advance(audioNowMs: tail.endMs, hearing: earlier.words, isFinal: true),
+                       .confirming(phraseStartMs: 9_000))
+        XCTAssertEqual(window.words.map(\.text), ["that", "is", "my", "point", "stop", "margin"])
+    }
+
+    func testAnEarlyFirstTryDoesNotMakeTheLaterPhraseTooEarly() {
+        let first = say("stop margin", at: 400)               // starts before the first second
+        let second = say("stop margin", at: first.endMs + 100)
+        let words = first.words + second.words
+        XCTAssertEqual(MarginEndPhrase.evaluate(words: words, audioNowMs: second.endMs + 1_000), .end(cutAtMs: 250),
+                       "The rule's early check is about the phrase said last; the cut takes both tries")
+    }
+
+    func testARunOnAndMartianStaysARunOnAfterTheWordBeforeAgesOut() {
+        var window = MarginEndPhraseWindow()
+        _ = window.advance(audioNowMs: 6_100, hearing: say("that is it", at: 5_000).words)
+        // Results arrive late: the clock is 11 s past that word when "and martian", said right after it, lands.
+        let runOn = say("and martian", at: 6_300)
+        XCTAssertEqual(window.advance(audioNowMs: 17_100, hearing: runOn.words), .none)
+        XCTAssertEqual(window.advance(audioNowMs: 19_000), .none)
     }
 
     func testTheWindowStaysSmallThroughATwentyMinuteMarginAndStillFindsTheEnd() {
@@ -277,7 +319,7 @@ final class MarginEndPhraseTests: XCTestCase {
             largest = max(largest, window.words.count)
             clock += 2_000
         }
-        XCTAssertLessThanOrEqual(largest, 6, "Only the last ten seconds of words are kept")
+        XCTAssertLessThanOrEqual(largest, 7, "Only the last ten seconds of words, and the one before them, are kept")
         let end = say("stop margin", at: clock)
         XCTAssertEqual(window.advance(audioNowMs: end.endMs, hearing: end.words), .confirming(phraseStartMs: clock))
         XCTAssertEqual(window.advance(audioNowMs: end.endMs + 1_000), .end(cutAtMs: clock - 150))
