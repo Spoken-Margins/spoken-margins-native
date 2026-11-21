@@ -40,6 +40,9 @@ public struct DiskWriteLedger: Codable, Equatable, Sendable {
         guard bytes > 0 else { return }
         let day = Self.day(of: date)
         days[day, default: [:]][source.rawValue, default: 0] += bytes
+        // Only real days count toward the limit, and a day after today (a clock that was set ahead, then back) is
+        // dropped: either would otherwise push real days out, or hold a summary slot for weeks.
+        for key in days.keys where !Self.isDay(key) || key > day { days[key] = nil }
         if days.count > Self.keptDays {
             for stale in days.keys.sorted().dropLast(Self.keptDays) { days[stale] = nil }
         }

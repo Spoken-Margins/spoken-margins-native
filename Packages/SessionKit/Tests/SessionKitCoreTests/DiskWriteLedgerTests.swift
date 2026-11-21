@@ -55,6 +55,36 @@ final class DiskWriteLedgerTests: XCTestCase {
         XCTAssertEqual(ledger.summaryText.components(separatedBy: "; ").count, DiskWriteLedger.summaryDays + 1, "seven days and the counted line")
     }
 
+    func testKeysThatAreNotDaysNeverPushRealDaysOutOfTheLedger() {
+        // Fourteen odd keys that sort after every digit: pruned by sort order alone, each new real day would go at once.
+        var odd: [String: [String: Int64]] = [:]
+        for index in 0..<14 { odd["my diary \(index)"] = ["download": 1] }
+        var ledger = DiskWriteLedger(days: odd)
+
+        ledger.record(bytes: 2_000_000, source: .download, at: date("2026-11-18T10:00:00Z"))
+
+        XCTAssertEqual(Array(ledger.days.keys), ["2026-11-18"])
+        XCTAssertTrue(ledger.summaryText.hasPrefix("2026-11-18 total=2MB download=2MB;"), ledger.summaryText)
+    }
+
+    func testADayAfterTodayLeftByAClockSetAheadIsDroppedOnTheNextWrite() {
+        var ledger = DiskWriteLedger()
+        ledger.record(bytes: 9_000_000, source: .download, at: date("2027-03-01T10:00:00Z"))
+        ledger.record(bytes: 1_000_000, source: .download, at: date("2026-11-18T10:00:00Z"))
+
+        XCTAssertNil(ledger.days["2027-03-01"], "the bogus future day is gone")
+        XCTAssertTrue(ledger.summaryText.hasPrefix("2026-11-18 total=1MB download=1MB; counted="), ledger.summaryText)
+    }
+
+    func testTodayAndEarlierDaysSurviveAWriteLaterTheSameDay() {
+        var ledger = DiskWriteLedger()
+        ledger.record(bytes: 1_000_000, source: .download, at: date("2026-11-17T23:00:00Z"))
+        ledger.record(bytes: 1_000_000, source: .download, at: date("2026-11-18T01:00:00Z"))
+        ledger.record(bytes: 1_000_000, source: .speechRender, at: date("2026-11-18T23:00:00Z"))
+
+        XCTAssertEqual(Set(ledger.days.keys), ["2026-11-17", "2026-11-18"])
+    }
+
     func testTheSummaryHoldsSourceNamesDaysAndMegabytesOnly() {
         var ledger = DiskWriteLedger()
         for source in DiskWriteLedger.Source.allCases { ledger.record(bytes: 7_000_000, source: source, at: date("2026-11-18T10:00:00Z")) }
