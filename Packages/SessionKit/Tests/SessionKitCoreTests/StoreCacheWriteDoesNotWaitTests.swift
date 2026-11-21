@@ -47,6 +47,19 @@ final class StoreCacheWriteDoesNotWaitTests: XCTestCase {
         release()   // lets a read that did wait come back, so the test ends either way
         XCTAssertEqual(outcome, .completed, "the read waited for the other connection's write lock")
         XCTAssertNil(failure.value)
+        if outcome == .completed {
+            // The write that was skipped still put the store's wait for saves back.
+            XCTAssertEqual(busyTimeout(of: store), store.writeBusyTimeoutMs, "a save still waits for another connection's write lock")
+        }
+    }
+
+    private func busyTimeout(of store: SQLiteSessionStore) -> Int32 {
+        store.withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(store.db, "PRAGMA busy_timeout;", -1, &statement, nil) == SQLITE_OK else { return -1 }
+            defer { sqlite3_finalize(statement) }
+            return sqlite3_step(statement) == SQLITE_ROW ? sqlite3_column_int(statement, 0) : -1
+        }
     }
 
     func testTheLibraryItemListDoesNotWaitForAnotherConnectionsWriteLock() throws {
@@ -86,12 +99,7 @@ final class StoreCacheWriteDoesNotWaitTests: XCTestCase {
         XCTAssertEqual(sqlite3_step(statement), SQLITE_ROW)
         XCTAssertEqual(sqlite3_column_int(statement, 0), 1, "the slice was kept for the next read")
 
-        var timeoutStatement: OpaquePointer?
-        XCTAssertEqual(sqlite3_prepare_v2(store.db, "PRAGMA busy_timeout;", -1, &timeoutStatement, nil), SQLITE_OK)
-        defer { sqlite3_finalize(timeoutStatement) }
-        XCTAssertEqual(sqlite3_step(timeoutStatement), SQLITE_ROW)
-        XCTAssertEqual(sqlite3_column_int(timeoutStatement, 0), store.writeBusyTimeoutMs,
-                       "a save still waits for another connection's write lock")
+        XCTAssertEqual(busyTimeout(of: store), store.writeBusyTimeoutMs, "a save still waits for another connection's write lock")
     }
 }
 
