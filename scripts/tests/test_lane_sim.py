@@ -878,15 +878,17 @@ class LaneSimTests(unittest.TestCase):
 
     def test_the_runner_does_not_start_a_simulator_while_another_job_holds_the_slot(self):
         import importlib.util
-        spec = importlib.util.spec_from_file_location('lane_runner_for_slot', SCRIPTS / 'lane-runner.py')
+        spec = importlib.util.spec_from_file_location('lane_t3_for_slot', SCRIPTS / 'lane_t3.py')
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         with mock.patch.object(runner, 'RUNNER_SLOT_WAIT', 0.2), \
                 mock.patch.object(runner, 'prepare_t3_build', return_value=('PASS', ['prepared'])), \
+                mock.patch.object(lane_sim, 'newest_runtime', return_value='iOS-26-5'), \
                 mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}), \
                 mock.patch.object(lane_sim, 'clone_temporary', side_effect=AssertionError('made a simulator')), \
                 lane_slots.simulator_slot('the Test Desk', out=self.quiet), mock.patch('sys.stdout', self.quiet):
-            verdict, _, _, details, _, _ = runner.run_t3(['ExperiencePresentationTests'], 'r1', Path(self.temporary.name))
+            verdict, _, _, details, _, _ = runner._run_t3_grouped({'app': ['ExperiencePresentationTests']}, 'r1',
+                                                                  Path(self.temporary.name))
         self.assertEqual(verdict, 'INCONCLUSIVE')
         self.assertIn('simulator slots stayed busy', details[0])
         self.assertIn('memory pressure is warn', details[0])
@@ -1218,7 +1220,7 @@ class LaneSimTests(unittest.TestCase):
 
     def test_the_runner_reports_why_it_could_not_boot(self):
         import importlib.util
-        spec = importlib.util.spec_from_file_location('lane_runner_for_sim', SCRIPTS / 'lane-runner.py')
+        spec = importlib.util.spec_from_file_location('lane_t3_for_sim', SCRIPTS / 'lane_t3.py')
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         with mock.patch.object(lane_sim, 'LOCK_WAIT', 0.2), \

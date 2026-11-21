@@ -865,8 +865,9 @@ enum PDFStructuredTextExtractor {
         return (result, figure)
     }
 
+    /// One rule for what opens a figure caption, shared with `PDFFigureCaptionLocator` (#4587).
     static func isFigureCaption(_ text: String) -> Bool {
-        text.range(of: #"^(?:Fig(?:ure)?\.?|FIG(?:URE)?\.?)\s*[0-9S]+[0-9.]*(?:[.:|]|\s*$|\s+\p{Lu}|\s*\()"#, options: .regularExpression) != nil
+        PDFFigureCaption.isCaptionStart(text)
     }
 
     /// Title-page matter (owner, #191): author names are read, the rest is not.

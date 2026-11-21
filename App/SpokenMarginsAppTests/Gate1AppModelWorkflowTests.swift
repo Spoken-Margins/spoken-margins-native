@@ -2093,6 +2093,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         // #148: the old timer ran out 0.7 s after the save returned, while the listening screen was still being
         // drawn, and the queued second tap on Add a Margin then started a recording. The shield now waits for the
         // screen to appear.
+        // fixed-sleep ok: time is the subject. The retired timer ran out 0.7 s after the save; sleeping past that moment
+        // is the only way to show it no longer opens the shield. A late wake only makes a regression easier to see.
+        // `MarginCaptureCoordinatorTests` holds the same rule on injected dates, with no wall clock.
         try await Task.sleep(nanoseconds: 900_000_000)
         XCTAssertTrue(model.isMarginCaptureCoolingDown, "no listening screen has appeared yet")
         model.beginInterjection()
@@ -3501,6 +3504,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let secondUndoId = try XCTUnwrap(model.trashUndo?.id)
 
         XCTAssertNotEqual(firstUndoId, secondUndoId)
+        // fixed-sleep ok: time is the subject. The older timer's deadline (80 ms after the first Undo) is the moment that
+        // must pass, and this sleep ends at 90 ms. Both timers sleep on the main actor, which wakes them in deadline order,
+        // so the older one has had its turn before this line runs. The replacement's own timer ends the test below.
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(model.trashUndo?.id, secondUndoId, "The older timer must not dismiss the replacement Undo")
         try await waitFor("replacement trash Undo to auto-dismiss") {

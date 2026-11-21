@@ -118,10 +118,12 @@ public enum PlaybackLivePassage {
         public let chapterTitle: String?
         /// Where the scene starts in the item's text. It names the scene, and a later scene starts later.
         public let chapterStart: Int
+        /// Where the scene's own text ends: its chapter's end, kept inside the text. Text that no chapter holds is in no scene.
+        public let chapterEnd: Int
         /// All the scene's sentences, in reading order. Empty when it has no text.
         public let sentences: [Sentence]
 
-        public static let empty = Scene(chapterTitle: nil, chapterStart: 0, sentences: [])
+        public static let empty = Scene(chapterTitle: nil, chapterStart: 0, chapterEnd: 0, sentences: [])
     }
 
     /// A selectable chapter and its current sentence in UIKit/Foundation UTF-16 coordinates.
@@ -173,7 +175,7 @@ public enum PlaybackLivePassage {
         /// The whole chapter as a scene. Rows are built once; Margins only replace the rows they sit on.
         public func scene(margins: [Margin] = []) -> Scene {
             // A chapter with no sentence (whitespace only, or empty at the end of the text) has no row for a Margin to sit on.
-            guard !ranges.isEmpty else { return Scene(chapterTitle: title, chapterStart: bounds.lowerBound, sentences: []) }
+            guard !ranges.isEmpty else { return Scene(chapterTitle: title, chapterStart: bounds.lowerBound, chapterEnd: bounds.upperBound, sentences: []) }
             var rows = baseRows()
             var anchored: [Int: [Margin]] = [:]
             for margin in margins where isInChapter(margin.offset, bounds: bounds, textLength: characters.count) {
@@ -185,7 +187,7 @@ public enum PlaybackLivePassage {
                 rows[index] = Sentence(start: row.start, end: row.end, text: row.text, isCurrent: false,
                                        diamonds: sorted.map { Diamond(id: $0.id, origin: $0.origin) })
             }
-            return Scene(chapterTitle: title, chapterStart: bounds.lowerBound, sentences: rows)
+            return Scene(chapterTitle: title, chapterStart: bounds.lowerBound, chapterEnd: bounds.upperBound, sentences: rows)
         }
 
         private func baseRows() -> [Sentence] {

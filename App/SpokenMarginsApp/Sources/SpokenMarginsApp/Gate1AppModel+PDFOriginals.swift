@@ -27,11 +27,14 @@ extension Gate1AppModel {
         }
     }
 
-    /// The item's kept PDF, or nil when this iPhone has none. The check is a file lookup, so it runs off the main thread
-    /// (the item screen asks it to decide whether "Export PDF with Margins" is offered, #4338).
-    func keptPDFOriginalURL(itemId: String) async -> URL? {
+    /// The item's kept original and what kind it is (a PDF or a Word document), or nil when this iPhone has none. A file
+    /// lookup, so it runs off the main thread (the item screen asks it which export entry to offer, #4595).
+    func keptOriginal(itemId: String) async -> (url: URL, kind: ItemOriginalStore.Kind)? {
         guard let store = try? pdfOriginalStore() else { return nil }
-        return await Task.detached(priority: .userInitiated) { store.url(itemId: itemId) }.value
+        return await Task.detached(priority: .userInitiated) { () -> (url: URL, kind: ItemOriginalStore.Kind)? in
+            guard let kind = store.kind(itemId: itemId), let url = store.url(itemId: itemId) else { return nil }
+            return (url, kind)
+        }.value
     }
 
     /// Keeps a copy of the file at `url` as the original of item `itemId`, off the main thread and a chunk at a time, so no
