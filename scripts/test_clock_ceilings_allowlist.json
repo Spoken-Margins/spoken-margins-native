@@ -1,4 +1,5 @@
 {
+ "SessionKit/Tests/SessionKitCoreTests/ClipboardIntakeClassifierTests.swift::testAHugeTokenInAShortNoteDoesNotStallTheClassifier": "5 s, ~0.03 s local: a bracket strip that recounts the run per bracket (20,000 brackets took over 20 s)",
  "SessionKit/Tests/SessionKitCoreTests/EpisodeLengthBackfillTests.swift::testTwoThousandItemsAgainstFiveThousandEntriesIsFast": "1 s, ~0.007 s local: a feed scan per item instead of a lookup",
  "SessionKit/Tests/SessionKitCoreTests/FollowListFilterTests.swift::testAListWith500ShowsFiltersAllOfThemWithinABudget": "2 s, ~0.02 s local: a filter worse than rows x members",
  "SessionKit/Tests/SessionKitCoreTests/FollowingShowRowsRuleTests.swift::testTwoHundredRulesOverFiveThousandEpisodesAreFast": "10 s, ~0.9 s local: a rule pass worse than rules x episodes",
