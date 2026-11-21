@@ -115,7 +115,10 @@ echo "Configuring and validating Caddy."
 if [[ "${remote_uid}" != 0 ]]; then
   # Editing and reloading Caddy is root's. When the site's block is already there nothing needs doing; when it is not,
   # that first setup is a server deploy (research/B4/deploy/deploy.sh), run by a person at a terminal.
-  if ssh -S "${control_socket}" "${vps_remote}" "grep -Fqx '${site_host} {' /etc/caddy/Caddyfile"; then
+  if ! ssh -S "${control_socket}" "${vps_remote}" "test -r /etc/caddy/Caddyfile"; then
+    echo "${vps_remote} cannot read /etc/caddy/Caddyfile, so it cannot tell whether Caddy serves ${site_host}. The files are uploaded; check by hand." >&2
+    exit 1
+  elif ssh -S "${control_socket}" "${vps_remote}" "grep -Fqx '${site_host} {' /etc/caddy/Caddyfile"; then
     echo "Caddy already serves ${site_host}; a normal login leaves it alone."
   else
     echo "Caddy has no block for ${site_host} and ${vps_remote} is not root. Run research/B4/deploy/deploy.sh first." >&2

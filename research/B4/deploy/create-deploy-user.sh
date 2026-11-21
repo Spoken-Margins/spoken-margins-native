@@ -49,17 +49,18 @@ say "installing the public key in ${home}/.ssh/authorized_keys"
 if ((dry_run)); then
   say "would run: install -d -m 0700 -o ${user} -g ${user} ${home}/.ssh; add the key line once; chmod 0600"
 else
-  install -d -m 0700 -o "${user}" -g "${user}" "${home}/.ssh"
+  group="$(id -gn "${user}")"
+  install -d -m 0700 -o "${user}" -g "${group}" "${home}/.ssh"
   touch "${home}/.ssh/authorized_keys"
   grep -qxF -- "${key}" "${home}/.ssh/authorized_keys" || printf '%s\n' "${key}" >>"${home}/.ssh/authorized_keys"
-  chown "${user}:${user}" "${home}/.ssh/authorized_keys"
+  chown "${user}:${group}" "${home}/.ssh/authorized_keys"
   chmod 0600 "${home}/.ssh/authorized_keys"
 fi
 
 for dir in "${web_roots[@]}"; do
   if [[ -d "${dir}" ]]; then
     say "handing ${dir} to ${user}"
-    act chown -R "${user}:${user}" "${dir}"
+    act chown -R "${user}:$(id -gn "${user}" 2>/dev/null || echo "${user}")" "${dir}"
   else
     say "${dir} does not exist yet (deploy.sh makes the web folder); skipped"
   fi

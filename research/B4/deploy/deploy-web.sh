@@ -81,6 +81,9 @@ echo "built: $(find "${dist}" -type f | wc -l | tr -d ' ') files, $(du -sk "${di
 
 rsync_opts=(-rlc --delete-delay --delay-updates --chmod=D755,F644 --itemize-changes -e "${rsync_ssh}")
 if "${ssh_cmd[@]}" "${host}" "test -d '${web_root}'"; then
+  # A folder deploy.sh made as root is not writable by the normal deploy login; say so now, not as an rsync error.
+  "${ssh_cmd[@]}" "${host}" "test -w '${web_root}'" ||
+    die "${host} cannot write to ${web_root}. On the server, as root: chown -R <deploy user> ${web_root} (create-deploy-user.sh does it)"
   root_exists=1
 else
   root_exists=0

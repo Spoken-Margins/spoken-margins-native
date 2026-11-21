@@ -10,8 +10,10 @@
 # unchanged, so a deploy still works before the new user exists.
 
 # Single-quote a string for a POSIX shell, so it survives one trip through ssh.
+# The quote goes in a variable so the substitution means the same in bash 3.2 (the Mac's /bin/bash) as in bash 5.
 sm_squote() {
-  printf "'%s'" "${1//\'/\'\\\'\'}"
+  local q="'" s="$1"
+  printf "'%s'" "${s//$q/$q\\$q$q}"
 }
 
 # sm_remote_root_command COMMAND [DIR]

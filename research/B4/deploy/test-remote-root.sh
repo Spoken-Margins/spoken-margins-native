@@ -55,6 +55,13 @@ set -e
 grep -qx -- "-R tester /tmp/dir with space" "${SM_TEST_LOG}" || fail "the staging folder was not handed back to the login: $(cat "${SM_TEST_LOG}")"
 ok "normal login: runs through sudo, keeps the exit code, hands the staging folder back (even with a space in its name)"
 
+# Quoting survives a round trip through a shell, including a single quote and a space.
+for sample in "plain" "it's" "a b'c'd" "" "x\$HOME\`y"; do
+  quoted="$(sm_squote "${sample}")"
+  [[ "$(bash -c "printf %s ${quoted}")" == "${sample}" ]] || fail "sm_squote changed ${sample}"
+done
+ok "sm_squote round-trips quotes, spaces and shell characters"
+
 # Every root step in deploy.sh goes through the helper.
 installs="$(grep -c "remote-install.sh' \(dry-run\|apply\|rollback\)" "${here}/deploy.sh")"
 wrapped="$(grep "remote-install.sh' \(dry-run\|apply\|rollback\)" "${here}/deploy.sh" | grep -c sm_remote_root_command)"
@@ -84,6 +91,10 @@ refusals="$(grep -nE '^\[\[ .* \]\] \|\| die|^id .* \|\| die|\| die "' "${here}/
 write_line="$(grep -n 'cat >"${dropin}"' "${here}/harden-ssh.sh" | cut -d: -f1)"
 [[ -n "${refusals}" && -n "${write_line}" && "${refusals}" -lt "${write_line}" ]] || fail "harden-ssh.sh writes before it checks"
 grep -q 'who | awk' "${here}/harden-ssh.sh" || fail "harden-ssh.sh does not require a live session for the deploy user"
+grep -q 'Accepted publickey for' "${here}/harden-ssh.sh" || fail "harden-ssh.sh does not require proof that the key logged in"
+grep -q 'sudo -l -U' "${here}/harden-ssh.sh" || fail "harden-ssh.sh does not check what sudo really allows"
+grep -q 'trap cleanup EXIT' "${here}/harden-ssh.sh" || fail "harden-ssh.sh does not remove its file on an unchecked exit"
+# Only a root run reaches the later checks, so they are read here, not run (the test must not change the host's sshd).
 ok "harden-ssh.sh: refuses first, needs a live session for the deploy user, reverts if sshd disagrees"
 
 echo "${pass} passed"

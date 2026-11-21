@@ -103,6 +103,7 @@ for url in "https://${site_host}/" "https://${site_host}/api/v1/health" "https:/
 done
 if [[ -n "${failed}" ]]; then
   echo "== ${failed} failed from outside; rolling the Caddyfile and smserver back" >&2
+  echo "   (sudo asks for the password again here, in a new terminal session. If it times out, run on the box: sudo bash ${remote_dir}/remote-install.sh rollback '${backup}' '${bin_backup}' '${unit_backup}')" >&2
   ssh ${root_flags[@]+"${root_flags[@]}"} "${ssh_opts[@]}" "${host}" "$(sm_remote_root_command "SM_SERVER_PORT='${port}' bash '${remote_dir}/remote-install.sh' rollback '${backup}' '${bin_backup}' '${unit_backup}'" "${remote_dir}")"
   exit 1
 fi
