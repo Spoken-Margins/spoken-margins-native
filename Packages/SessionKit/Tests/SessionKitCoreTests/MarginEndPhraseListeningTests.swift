@@ -103,4 +103,17 @@ final class MarginEndPhraseListeningTests: XCTestCase {
         XCTAssertEqual(decider.receive([word("okay", 6_300, 6_500), word("stop", 6_600, 6_900), word("marching", 7_000, 7_300)], isFinal: true, sinceStartMs: 8_700, resultStartMs: 6_300), .listening)
         XCTAssertEqual(decider.tick(sinceStartMs: 60_000), .unchanged)
     }
+
+    func testAFinalThatIsEmptyOrShorterThanTheGuessTakesTheGuessBack() {
+        // An empty final for the stretch the guess covered.
+        var empty = MarginEndPhraseDecider()
+        XCTAssertEqual(empty.receive([word("stop", 6_600, 6_900), word("margin", 7_000, 7_300)], isFinal: false, sinceStartMs: 8_400, resultStartMs: 6_600), .finishing)
+        XCTAssertEqual(empty.receive([], isFinal: true, sinceStartMs: 8_700, resultStartMs: 6_600, resultEndMs: 7_300), .listening)
+        XCTAssertEqual(empty.tick(sinceStartMs: 60_000), .unchanged)
+        // A final that stops short of the guess: "okay stop margin" becomes "okay stop".
+        var shorter = MarginEndPhraseDecider()
+        XCTAssertEqual(shorter.receive([word("okay", 6_300, 6_500), word("stop", 6_600, 6_900), word("margin", 7_000, 7_300)], isFinal: false, sinceStartMs: 8_400, resultStartMs: 6_300), .finishing)
+        XCTAssertEqual(shorter.receive([word("okay", 6_300, 6_500), word("stop", 6_600, 6_900)], isFinal: true, sinceStartMs: 8_700, resultStartMs: 6_300, resultEndMs: 7_300), .listening)
+        XCTAssertEqual(shorter.tick(sinceStartMs: 60_000), .unchanged)
+    }
 }

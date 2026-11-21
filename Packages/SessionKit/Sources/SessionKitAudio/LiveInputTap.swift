@@ -27,11 +27,14 @@ public struct LiveInputWord: Sendable, Equatable {
 public struct LiveInputResult: Sendable, Equatable {
     public var words: [LiveInputWord]
     public var startMs: Int?
+    /// Where the result's audio ends. A final settles everything from `startMs` to here.
+    public var endMs: Int?
     public var isFinal: Bool
 
-    public init(words: [LiveInputWord], startMs: Int? = nil, isFinal: Bool = false) {
+    public init(words: [LiveInputWord], startMs: Int? = nil, endMs: Int? = nil, isFinal: Bool = false) {
         self.words = words
         self.startMs = startMs
+        self.endMs = endMs
         self.isFinal = isFinal
     }
 }

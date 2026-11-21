@@ -74,6 +74,7 @@ public final class SpeechLiveInputSession: LiveInputSession, @unchecked Sendable
                     continuation.yield(LiveInputResult(
                         words: Self.heardWords(in: result),
                         startMs: Self.milliseconds(result.range.start),
+                        endMs: Self.milliseconds(result.range.end),
                         isFinal: result.isFinal
                     ))
                 }

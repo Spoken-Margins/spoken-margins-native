@@ -101,7 +101,7 @@ public final class MarginEndPhraseListener: @unchecked Sendable {
         let words = result.words.map { MarginEndPhraseWord(text: $0.text, startMs: $0.startMs, endMs: $0.endMs) }
         let step = lock.withLock { () -> MarginEndPhraseDecider.Step in
             guard !stopped else { return .unchanged }
-            return decider.receive(words, isFinal: result.isFinal, sinceStartMs: sinceStartMs(), resultStartMs: result.startMs)
+            return decider.receive(words, isFinal: result.isFinal, sinceStartMs: sinceStartMs(), resultStartMs: result.startMs, resultEndMs: result.endMs)
         }
         emit(step)
     }

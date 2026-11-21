@@ -50,6 +50,10 @@ final class MarginEndPhraseListenerTests: XCTestCase {
         }
         /// The recogniser revising what it said for audio from `startMs` on to nothing.
         func retract(from startMs: Int) { continuation.yield(LiveInputResult(words: [], startMs: startMs, isFinal: false)) }
+        /// The recogniser finalizing a stretch to nothing.
+        func finalizeEmpty(from startMs: Int, to endMs: Int) {
+            continuation.yield(LiveInputResult(words: [], startMs: startMs, endMs: endMs, isFinal: true))
+        }
         /// The recogniser dying on its own: the stream ends and nobody asked it to.
         func die() { continuation.finish() }
     }
@@ -118,6 +122,21 @@ final class MarginEndPhraseListenerTests: XCTestCase {
         clock.set(60_000)
         try? await Task.sleep(for: .milliseconds(400)) // a few ticks
         XCTAssertFalse(signals.all.contains(.end), "a withdrawn phrase is not confirmed")
+        await listener.stop()
+    }
+
+    func testAGuessFinalizedToNothingNeverEnds() async {
+        let session = FakeSession(), signals = Signals(), clock = Clock()
+        let listener = make(session, signals, clock)
+        await listener.start()
+        clock.set(8_400)
+        session.say([word("stop", 6_600, 6_900), word("margin", 7_000, 7_300)])
+        await eventually("finishing hint") { signals.all.contains(.hint(.finishing)) }
+        session.finalizeEmpty(from: 6_600, to: 7_300)
+        await eventually("hint back to listening") { signals.all.last == .hint(.listening) }
+        clock.set(60_000)
+        try? await Task.sleep(for: .milliseconds(400)) // a few ticks
+        XCTAssertFalse(signals.all.contains(.end))
         await listener.stop()
     }
 
