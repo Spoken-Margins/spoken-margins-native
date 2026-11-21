@@ -175,7 +175,8 @@ def truncate(text: str, limit: int) -> str:
 # run (a passing build says "took 7m44s"), so the status line skips them to name the line that says what failed.
 NEUTRAL_DETAIL = re.compile(
     r'^(shared build before simulator boot took |boot of the cloned simulator took |'
-    r'template preparation and simulator clone took |test-scope |\w+: passed on retry)')
+    r'template preparation and simulator clone took |test-scope |\w+: passed on retry|'
+    r'boot stall on the first clone |tolerated one SpringBoard change |\w+: recovered after 1 startup stall)')
 
 
 def first_problem(details: list, default: str) -> str:

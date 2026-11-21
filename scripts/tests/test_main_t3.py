@@ -121,6 +121,12 @@ class StatusTests(unittest.TestCase):
             with self.subTest(neutral=neutral[:30]):
                 self.assertEqual(M.first_problem([neutral], 'none'), neutral)
         self.assertEqual(M.first_problem(['', ''], 'none'), 'none')
+        # Recovered-stall lines (lane-runner.py 2699, 3020, 3023) are also information, found by the review of this change.
+        for recovered in ('boot stall on the first clone (A), so it was deleted and one fresh clone (B) booted in 40s',
+                          "tolerated one SpringBoard change in the first 30 s of the first boot (owner's rule)",
+                          'app: recovered after 1 startup stall (xcode-tests printed no test output) and counts as a PASS'):
+            with self.subTest(recovered=recovered[:30]):
+                self.assertEqual(M.first_problem([recovered, 'adapters: Process exit 2'], 'none'), 'adapters: Process exit 2')
         self.assertEqual(M.first_problem(['app: passed on retry: Foo/testBar', 'x failed'], 'none'), 'x failed')
         self.assertEqual(M.first_problem(['Build before simulator boot: Process exit 74'], 'none'),
                          'Build before simulator boot: Process exit 74')
