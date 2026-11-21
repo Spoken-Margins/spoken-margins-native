@@ -38,10 +38,15 @@ final class MarginDuringSystemInterruptionTests: XCTestCase {
         var resume = SystemInterruptionResume()
         /// A start that gets as far as `play` and then fails, as `playCurrentTarget` can.
         var failsSettingTheRate = false
+        /// iOS refusing to start the player right after the interruption (#2183): `play` throws.
+        var failsPlay = false
         func prepareSpeechText(_ text: String) throws -> String { text }
         func play(targetId: String) throws { playing = true }
         func play(targetId: String, from charOffset: Int) throws { self.charOffset = charOffset; playing = true }
-        func play(targetId: String, fromMediaTimeMs t: Int) throws { mediaTimeMs = t; playing = true }
+        func play(targetId: String, fromMediaTimeMs t: Int) throws {
+            if failsPlay { throw SessionKitError.invalidCommandForState("play") }
+            mediaTimeMs = t; playing = true
+        }
         func setPlaybackRate(_ rate: Double) throws {
             if failsSettingTheRate { throw SessionKitError.invalidCommandForState("setPlaybackRate") }
         }
@@ -284,6 +289,57 @@ final class MarginDuringSystemInterruptionTests: XCTestCase {
 
         guard case .gaveUp? = outcomes.last else { return XCTFail("\(outcomes)") }
     }
+
+    /// The path the audit found: a long Siri pause, the first resume steps the source back and is then refused, and the
+    /// listener opens a Margin during the retry delay. The Margin publishes the stepped-back place, so the app's
+    /// "paused where it was" check no longer holds; the hand-over must still be made, with the app's real checks.
+    @MainActor
+    func testAMarginOpenedAfterARefusedResumeThatSteppedBackStillDefersToSave() async throws {
+        let clock = ClockBox()
+        let client = Client()
+        let repository = InMemorySessionRepository(items: [episode.id: episode])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: client, recorder: Recorder(), now: { clock.date })
+        _ = try engine.startSession(itemId: episode.id)
+        _ = try engine.seekMedia(toMediaTimeMs: 600_000)
+        let rig = (engine: engine, client: client)
+        try siriPausesIt(rig)
+        clock.date.addTimeInterval(60) // a pause long enough to step back 6 s
+
+        // The first resume: the engine steps the session back, then iOS refuses the player.
+        client.failsPlay = true
+        XCTAssertThrowsError(try engine.resumePlaybackAfterInterruption())
+        client.failsPlay = false
+        let sessionId = engine.snapshot.sessionId, targetId = engine.snapshot.targetId
+        let pausedAtMs = engine.snapshot.currentMediaTimeMs // what the app's retry captured before the refusal
+
+        let capture = try engine.beginWrittenInterjection()
+        XCTAssertNotEqual(engine.snapshot.currentMediaTimeMs, pausedAtMs, "the open Margin publishes the stepped-back place")
+
+        let retrier = InterruptionResumeRetrier(delaysMs: [10], sleep: { _ in })
+        var outcomes: [InterruptionResumeRetrier.Outcome] = []
+        struct Refused: Error {}
+        retrier.begin(
+            after: Refused(),
+            stillWaiting: { // the app's, from `retryMediaResumeAfterInterruption`
+                engine.snapshot.status == .paused && engine.snapshot.sessionId == sessionId && engine.snapshot.targetId == targetId
+                    && engine.snapshot.currentMediaTimeMs == pausedAtMs && !engine.snapshot.isRecording
+            },
+            handOver: { // the app's
+                guard engine.snapshot.status == .paused, engine.snapshot.sessionId == sessionId, engine.snapshot.targetId == targetId,
+                      !engine.snapshot.isRecording else { return false }
+                return engine.deferResumeToWrittenCapture()
+            },
+            attempt: { _ = try engine.resumePlaybackAfterInterruption() },
+            report: { outcomes.append($0) }
+        )
+        await retrier.waitUntilIdle()
+        XCTAssertEqual(outcomes, [.deferred(attempts: 0)])
+
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "Check this claim")
+        XCTAssertTrue(client.playing, "Save plays the item")
+    }
+
+    private final class ClockBox { var date = Date(timeIntervalSince1970: 1_000_000) }
 
     @MainActor
     func testARetryWithNoMarginOpenStillResumesTheItem() async throws {

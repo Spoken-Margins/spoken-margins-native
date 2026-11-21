@@ -83,7 +83,11 @@ extension Gate1AppModel {
                     && snapshot.currentMediaTimeMs == pausedAtMs && !snapshot.isRecording
             },
             // A written Margin opened while the retries ran: Save or Cancel plays the item, so the retries stop (#4846).
-            handOver: { engine.deferResumeToWrittenCapture() },
+            handOver: { [weak self] in
+                guard let self, snapshot.status == .paused, snapshot.sessionId == sessionId, snapshot.targetId == targetId,
+                      !snapshot.isRecording else { return false }
+                return engine.deferResumeToWrittenCapture()
+            },
             attempt: { [weak self] in
                 guard let self else { return }
                 snapshot = try engine.resumePlaybackAfterInterruption()

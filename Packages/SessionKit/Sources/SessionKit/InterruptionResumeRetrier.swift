@@ -57,9 +57,10 @@ public final class InterruptionResumeRetrier {
 
     /// Starts retrying after a resume that failed with `firstError`. Replaces any retry already running.
     ///
-    /// `handOver` is asked before each attempt, once `stillWaiting` has passed. It returns true when something else
-    /// now owns the resume and will play the item itself (the engine's `deferResumeToWrittenCapture()` for an open
-    /// written Margin, #4846): the retrier stops with `.deferred`, neither attempting, failing nor giving up.
+    /// `handOver` is asked before each attempt, ahead of `stillWaiting` (inside the retry window). It returns true when
+    /// something else now owns the resume and will play the item itself (the engine's `deferResumeToWrittenCapture()`
+    /// for an open written Margin, #4846): the retrier stops with `.deferred`, neither attempting, failing nor giving
+    /// up. It must itself check that the source is still the one being resumed.
     public func begin(
         after firstError: Error,
         stillWaiting: @escaping @MainActor () -> Bool,
@@ -78,13 +79,21 @@ public final class InterruptionResumeRetrier {
             for (index, delay) in delays.enumerated() {
                 await sleep(delay)
                 guard !Task.isCancelled else { return }
-                guard now() <= deadline, stillWaiting() else {
+                guard now() <= deadline else {
                     report(.abandoned(attempts: index))
                     self?.task = nil
                     return
                 }
+                // Before `stillWaiting`: a refused first resume has already stepped the source back, and opening a
+                // Margin publishes that new place, so a "paused where it was" check fails and would end the retries as
+                // abandoned with the hand-over never made (#4846).
                 if handOver() {
                     report(.deferred(attempts: index))
+                    self?.task = nil
+                    return
+                }
+                guard stillWaiting() else {
+                    report(.abandoned(attempts: index))
                     self?.task = nil
                     return
                 }

@@ -115,21 +115,37 @@ final class InterruptionResumeRetrierTests: XCTestCase {
         XCTAssertEqual(outcomes, [.retryFailed(attempt: 1, reason: "other#1"), .deferred(attempts: 1)])
     }
 
-    func testTheListenerTakingOverBeatsAHandOver() async {
+    /// A hand-over is asked before `stillWaiting`: a refused resume moves the source, and a Margin opened afterwards
+    /// publishes that place, so `stillWaiting` is false by then (#4846). The caller's hand-over guards the source.
+    func testAHandOverIsAskedBeforeStillWaiting() async {
         let retrier = make()
-        var asked = 0
         var outcomes: [InterruptionResumeRetrier.Outcome] = []
 
         retrier.begin(
             after: ActivationFailed(),
             stillWaiting: { false },
-            handOver: { asked += 1; return true },
+            handOver: { true },
             attempt: {},
             report: { outcomes.append($0) }
         )
         await retrier.waitUntilIdle()
 
-        XCTAssertEqual(asked, 0, "the listener's own seek or Play ends it first; nothing is deferred on their behalf")
+        XCTAssertEqual(outcomes, [.deferred(attempts: 0)])
+    }
+
+    func testAHandOverThatDeclinesLeavesTheListenerTakeOverRuleAlone() async {
+        let retrier = make()
+        var outcomes: [InterruptionResumeRetrier.Outcome] = []
+
+        retrier.begin(
+            after: ActivationFailed(),
+            stillWaiting: { false },
+            handOver: { false },
+            attempt: {},
+            report: { outcomes.append($0) }
+        )
+        await retrier.waitUntilIdle()
+
         XCTAssertEqual(outcomes, [.abandoned(attempts: 0)])
     }
 
