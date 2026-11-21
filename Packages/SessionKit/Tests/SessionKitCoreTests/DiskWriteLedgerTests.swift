@@ -55,6 +55,70 @@ final class DiskWriteLedgerTests: XCTestCase {
         XCTAssertEqual(ledger.summaryText.components(separatedBy: "; ").count, DiskWriteLedger.summaryDays + 1, "seven days and the counted line")
     }
 
+    func testKeysThatAreNotDaysNeverPushRealDaysOutOfTheLedger() {
+        // Fourteen odd keys that sort after every digit: pruned by sort order alone, each new real day would go at once.
+        var odd: [String: [String: Int64]] = [:]
+        for index in 0..<14 { odd["my diary \(index)"] = ["download": 1] }
+        var ledger = DiskWriteLedger(days: odd)
+
+        ledger.record(bytes: 2_000_000, source: .download, at: date("2026-11-18T10:00:00Z"))
+
+        XCTAssertEqual(Array(ledger.days.keys), ["2026-11-18"])
+        XCTAssertTrue(ledger.summaryText.hasPrefix("2026-11-18 total=2MB download=2MB;"), ledger.summaryText)
+    }
+
+    func testAWriteWhileTheClockIsSetBackNeverErasesTheRealDays() {
+        var ledger = DiskWriteLedger()
+        let start = date("2026-11-07T12:00:00Z")
+        for offset in 0..<14 {
+            ledger.record(bytes: 4_000_000_000, source: .speechAssembly, at: start.addingTimeInterval(TimeInterval(offset) * 86_400))
+        }
+        let before = ledger.days
+
+        ledger.record(bytes: 1_000_000, source: .download, at: date("2026-01-01T10:00:00Z"))
+
+        for (day, sources) in before { XCTAssertEqual(ledger.days[day], sources, "\(day) survives the bogus write") }
+        // The clock is put right and the next real write drops the bogus day, not a real one.
+        ledger.record(bytes: 1_000_000, source: .download, at: date("2026-11-21T10:00:00Z"))
+        XCTAssertNil(ledger.days["2026-01-01"])
+        XCTAssertNil(ledger.days["2026-11-07"], "the oldest real day leaves only because a fifteenth real day arrived")
+        XCTAssertEqual(ledger.days.count, DiskWriteLedger.keptDays)
+    }
+
+    func testAFewDaysLeftByAClockSetAheadDoNotPushRealDaysOutAndShowInTheExportAsRecorded() {
+        var ledger = DiskWriteLedger()
+        ledger.record(bytes: 3_000_000, source: .download, at: date("2026-11-18T10:00:00Z"))
+        for offset in 0..<10 {
+            ledger.record(bytes: 9_000_000, source: .download, at: date("2027-03-01T10:00:00Z").addingTimeInterval(TimeInterval(offset) * 86_400))
+        }
+        ledger.record(bytes: 1_000_000, source: .speechRender, at: date("2026-11-19T10:00:00Z"))
+
+        XCTAssertNotNil(ledger.days["2026-11-18"])
+        XCTAssertNotNil(ledger.days["2026-11-19"])
+        XCTAssertLessThanOrEqual(ledger.days.count, 2 * DiskWriteLedger.keptDays)
+        XCTAssertTrue(ledger.summaryText.contains("2027-03-10 total=9MB download=9MB"), "a wrong clock is visible in the export")
+    }
+
+    func testAnExportWhileTheClockIsSetBackStillNamesTheRealDays() throws {
+        let file = try temporaryFile()
+        let real = DiskWriteLedgerStore(fileURL: file, now: { Self.parse("2026-11-20T12:00:00Z") })
+        real.record(bytes: 4_000_000_000, source: .speechAssembly)
+
+        let setBack = DiskWriteLedgerStore(fileURL: file, now: { Self.parse("2026-01-01T12:00:00Z") })
+
+        XCTAssertEqual(setBack.summaryText, real.summaryText)
+        XCTAssertTrue(setBack.summaryText.hasPrefix("2026-11-20 total=4000MB speech_assembly=4000MB;"), setBack.summaryText)
+    }
+
+    func testTodayAndEarlierDaysSurviveAWriteLaterTheSameDay() {
+        var ledger = DiskWriteLedger()
+        ledger.record(bytes: 1_000_000, source: .download, at: date("2026-11-17T23:00:00Z"))
+        ledger.record(bytes: 1_000_000, source: .download, at: date("2026-11-18T01:00:00Z"))
+        ledger.record(bytes: 1_000_000, source: .speechRender, at: date("2026-11-18T23:00:00Z"))
+
+        XCTAssertEqual(Set(ledger.days.keys), ["2026-11-17", "2026-11-18"])
+    }
+
     func testTheSummaryHoldsSourceNamesDaysAndMegabytesOnly() {
         var ledger = DiskWriteLedger()
         for source in DiskWriteLedger.Source.allCases { ledger.record(bytes: 7_000_000, source: source, at: date("2026-11-18T10:00:00Z")) }
