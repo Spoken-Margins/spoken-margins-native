@@ -76,6 +76,8 @@ struct Build23SharingMarginSnapshot: Identifiable, Equatable {
     var waitingBadge: String? = nil
     /// The quiet note under the card about where the Margin will land. Nil for an article, a PDF or a placed Margin.
     var placementNote: String? = nil
+    /// False for a moved Margin with no place on its item (#4233): a packet can't carry it, so its switch stays off.
+    var hasPlace = true
 }
 
 extension Build23SharingMarginSnapshot {
@@ -91,7 +93,8 @@ extension Build23SharingMarginSnapshot {
 
     /// What VoiceOver says about the Margin's place in the packet; matches the visible status.
     var shareStatusDescription: String {
-        isLeftOutForMissingText ? "left out, no transcript yet" : (isIncluded ? "included" : "not included")
+        guard hasPlace else { return "not included, \(ShareableMargins.noPlaceLine.lowercased())" }
+        return isLeftOutForMissingText ? "left out, no transcript yet" : (isIncluded ? "included" : "not included")
     }
 }
 
@@ -425,7 +428,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 readAloud: draft.readAloud,
                 steps: ShareReviewSteps.cardSteps(reviewMargin),
                 waitingBadge: ShareReviewSteps.waitingBadge(reviewMargin),
-                placementNote: ShareReviewSteps.cardNote(reviewMargin)
+                placementNote: ShareReviewSteps.cardNote(reviewMargin),
+                hasPlace: draft.interjection.hasPlace
             )
         }
         let hasReviewedSelection = margins.contains {

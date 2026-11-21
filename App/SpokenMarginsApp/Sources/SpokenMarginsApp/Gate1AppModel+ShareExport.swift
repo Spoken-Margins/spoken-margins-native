@@ -30,7 +30,9 @@ extension Gate1AppModel {
             sharingState.errorMessage = "Finish or cancel bulk preparation before sharing."
             return nil
         }
-        let (drafts, omission) = SharedMarginTextRequirement.shareable(sharingState.drafts.filter(\.isIncluded), text: \.approvedTranscript)
+        // A Margin with no place never goes in a packet, whatever its switch says (#4233).
+        let (drafts, omission) = SharedMarginTextRequirement.shareable(
+            ShareableMargins.filter(sharingState.drafts.filter(\.isIncluded), margin: \.interjection), text: \.approvedTranscript)
         guard !drafts.isEmpty else {
             sharingState.errorMessage = omission ?? "Select at least one Margin with reviewed text."
             return nil
