@@ -35,4 +35,16 @@ final class LibraryRowDetailTests: XCTestCase {
         XCTAssertEqual(detail.rest, "Text")
         XCTAssertEqual(detail.fullLine, "Text")
     }
+
+    /// #4649: the reason a search listed the row leads the part that truncates, so a long byline cuts itself, not the reason.
+    func testTheMatchNoteLeadsTheRestAndNothingChangesWithout() {
+        let with = LibraryRowDetail(byline: "A Very Long Publication Name", kind: "Article", length: "25 min", listening: nil,
+                                    status: "Offline", matched: "From Sam and 2 friends")
+        XCTAssertEqual(with.rest, "From Sam and 2 friends · A Very Long Publication Name · Article · Offline")
+        XCTAssertEqual(with.fullLine, "25 min · " + with.rest)
+        XCTAssertEqual(with.length, "25 min")
+        let without = LibraryRowDetail(byline: "A Very Long Publication Name", kind: "Article", length: "25 min", listening: nil, status: "Offline")
+        XCTAssertEqual(without.rest, "A Very Long Publication Name · Article · Offline")
+        XCTAssertEqual(LibraryRowDetail(byline: nil, kind: "Text", length: nil, listening: nil, status: nil, matched: "").rest, "Text", "an empty note adds no separator")
+    }
 }
