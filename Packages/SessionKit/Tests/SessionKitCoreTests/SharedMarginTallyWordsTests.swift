@@ -70,6 +70,46 @@ final class SharedMarginTallyWordsTests: XCTestCase {
         XCTAssertEqual(tally(4, new: 0, [(nil, 3), ("Cole", 1)]).senderLine, "4 Margins from a friend and Cole")
     }
 
+    /// #4648: two friends with different ids who share a name read as two people, and VoiceOver gets the whole name.
+    func testFriendsWhoShareANameReadAsTwoPeopleAndVoiceOverSpeaksTheWholeName() {
+        let longStart = String(repeating: "a", count: 23)
+        let longA = longStart + "bcdefgh" // 30 characters
+        let longB = longStart + "xyzwvut" // 30 characters, the same 23 at the start
+        struct Row { let name: String; let a: String; let b: String; let line: String; let spoken: String }
+        let rows = [
+            Row(name: "same name", a: "Sam", b: "Sam",
+                line: "4 Margins from Sam and another Sam", spoken: "4 Margins from Sam and another Sam"),
+            Row(name: "case", a: "Sam", b: "sam",
+                line: "4 Margins from Sam and another sam", spoken: "4 Margins from Sam and another sam"),
+            Row(name: "inner whitespace", a: "Sam  K", b: " Sam K ",
+                line: "4 Margins from Sam K and another Sam K", spoken: "4 Margins from Sam K and another Sam K"),
+            Row(name: "diacritics", a: "José", b: "Jose",
+                line: "4 Margins from José and another Jose", spoken: "4 Margins from José and another Jose"),
+            Row(name: "different names stay as they were", a: "Sam", b: "Samuel",
+                line: "4 Margins from Sam and Samuel", spoken: "4 Margins from Sam and Samuel"),
+            Row(name: "two long names cut to the same start",
+                a: longA, b: longB,
+                line: "4 Margins from \(longStart)… and another \(longStart)…",
+                spoken: "4 Margins from \(longA) and \(longB)"),
+            Row(name: "the same long name",
+                a: longA, b: longA,
+                line: "4 Margins from \(longStart)… and another \(longStart)…",
+                spoken: "4 Margins from \(longA) and another \(longA)")
+        ]
+        for row in rows {
+            let both = tally(4, new: 0, [(row.a, 2), (row.b, 2)])
+            XCTAssertEqual(both.senderLine, row.line, row.name)
+            XCTAssertEqual(both.senderAccessibilityLine, row.spoken, row.name)
+        }
+        // A 30-character name: cut on screen, whole when spoken, with one sender and with a reply split.
+        let one = tally(1, new: 1, [(longA, 1)])
+        XCTAssertEqual(one.senderLine, "1 new Margin from \(longStart)…")
+        XCTAssertEqual(one.senderAccessibilityLine, "1 new Margin from \(longA)")
+        // Three friends who share a name are still "3 friends"; one unnamed friend is not a second Sam.
+        XCTAssertEqual(tally(3, new: 0, [("Sam", 1), ("Sam", 1), ("Sam", 1)]).senderLine, "3 Margins from 3 friends")
+        XCTAssertEqual(tally(2, new: 0, [("Sam", 1), (nil, 1)]).senderLine, "2 Margins from a friend and Sam")
+    }
+
     func testNamesAreCheckedAgainstTheNameTable() {
         func line(_ name: String?) -> String { tally(1, new: 1, [(name, 1)]).senderLine ?? "" }
         XCTAssertEqual(line("O'Brien"), "1 new Margin from O'Brien", "an apostrophe")
