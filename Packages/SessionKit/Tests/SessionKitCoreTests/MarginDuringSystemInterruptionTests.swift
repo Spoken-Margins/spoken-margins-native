@@ -352,6 +352,49 @@ final class MarginDuringSystemInterruptionTests: XCTestCase {
         XCTAssertFalse(client.playing, "the listener's own place is not played over")
     }
 
+    /// The second audit: the listener's Play and then Pause before the player confirms leaves the item paused at exactly
+    /// the stepped-back place, so a place check cannot see that they acted.
+    @MainActor
+    func testAListenersPlayAndPauseBeforeAMarginDoesNotHandTheItemBackToTheRetry() async throws {
+        let clock = ClockBox()
+        let client = Client()
+        let repository = InMemorySessionRepository(items: [episode.id: episode])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: client, recorder: Recorder(), now: { clock.date })
+        _ = try engine.startSession(itemId: episode.id)
+        _ = try engine.seekMedia(toMediaTimeMs: 600_000)
+        try siriPausesIt((engine: engine, client: client))
+        clock.date.addTimeInterval(60)
+        client.failsPlay = true
+        XCTAssertThrowsError(try engine.resumePlaybackAfterInterruption())
+        client.failsPlay = false
+        let place = InterruptionRetryPlace(snapshot: engine.snapshot, engine: engine)
+
+        _ = try engine.resumePlayback() // the listener taps Play ...
+        _ = try engine.pause() // ... and Pause
+        client.playing = false
+        let capture = try engine.beginWrittenInterjection()
+
+        XCTAssertFalse(place.mayHandOverToWrittenCapture(engine.snapshot), "the listener acted: the item is theirs")
+        var outcomes: [InterruptionResumeRetrier.Outcome] = []
+        await runRetry(engine, place: place) { outcomes.append($0) }
+        XCTAssertFalse(outcomes.contains(.deferred(attempts: 0)))
+
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "Check this claim")
+        XCTAssertFalse(client.playing, "the listener's Pause is not played over")
+    }
+
+    func testTheRetrysOwnResumeAndTheSystemsPauseAreNotTheListenersTransport() throws {
+        let rig = try rig(item: episode)
+        try siriPausesIt(rig)
+        let epoch = rig.engine.listenerTransportEpoch
+        rig.client.failsPlay = true
+        XCTAssertThrowsError(try rig.engine.resumePlaybackAfterInterruption())
+        rig.client.failsPlay = false
+        XCTAssertEqual(rig.engine.listenerTransportEpoch, epoch, "neither the system's pause nor the retry's resume counts")
+        _ = try rig.engine.pause()
+        XCTAssertEqual(rig.engine.listenerTransportEpoch, epoch + 1, "the listener's own Pause does")
+    }
+
     /// The retrier wired as `retryMediaResumeAfterInterruption` wires it, with the app's `InterruptionRetryPlace`.
     @MainActor
     private func runRetry(_ engine: SessionEngine, place: InterruptionRetryPlace, report: @escaping @MainActor (InterruptionResumeRetrier.Outcome) -> Void) async {

@@ -1,37 +1,42 @@
 import Foundation
 
-/// Where a podcast sits while its refused resume after an interruption is retried, and whether a retry may still act on
-/// it (#2183, #4846). Kept out of `Gate1AppModel` so it is host-tested.
+/// What a retry of a refused resume after an interruption may still do to a podcast (#2183, #4846). Kept out of
+/// `Gate1AppModel` so it is host-tested.
 ///
-/// A refused first resume has already stepped the source back (`resumePlaybackAfterInterruption`) without publishing
-/// it, so the source is at one of two places: where it paused, or where the refused resume moved it. Opening a written
-/// Margin publishes the second. A seek or skip by the listener moves it to a third, and then the item is theirs.
+/// "The listener has taken over" is read from the engine's count of the listener's transport commands, never from the
+/// place: a refused first resume has already stepped the source back without publishing it, opening a written Margin
+/// publishes that place, and a listener's Play then Pause before the player confirms, or a skip to the chapter start,
+/// can land on the same place. Reading it from the place went wrong twice (audits of #4861).
 @MainActor
 public struct InterruptionRetryPlace {
     private let sessionId: String?
     private let targetId: String?
-    private let places: [Int?]
+    private let pausedAtMs: Int?
+    private let epoch: Int
+    private let engine: SessionEngine
 
-    /// Call right after the refused resume: `snapshot` is still the paused place, the engine's session the stepped-back one.
+    /// Call right after the refused resume, while `snapshot` is still the paused place.
     public init(snapshot: SessionSnapshot, engine: SessionEngine) {
         sessionId = snapshot.sessionId
         targetId = snapshot.targetId
-        places = [snapshot.currentMediaTimeMs, engine.currentSession?.position.mediaTimeMs]
+        pausedAtMs = snapshot.currentMediaTimeMs
+        epoch = engine.listenerTransportEpoch
+        self.engine = engine
     }
 
-    private func isSameSourceAtOurPlace(_ snapshot: SessionSnapshot) -> Bool {
+    private func isSameSourcePaused(_ snapshot: SessionSnapshot) -> Bool {
         snapshot.status == .paused && snapshot.sessionId == sessionId && snapshot.targetId == targetId
             && !snapshot.isRecording
     }
 
     /// The retrier's `stillWaiting`: paused where it paused, with nothing recording.
     public func stillWaiting(_ snapshot: SessionSnapshot) -> Bool {
-        isSameSourceAtOurPlace(snapshot) && snapshot.currentMediaTimeMs == places[0]
+        isSameSourcePaused(snapshot) && snapshot.currentMediaTimeMs == pausedAtMs
     }
 
-    /// The retrier's `handOver` precondition: the same source, at the place it paused or the place the refused resume
-    /// stepped it back to, so a seek, skip, Play or Pause by the listener keeps it theirs.
+    /// The retrier's `handOver` precondition: the same source, still paused, and no transport command by the listener
+    /// since the refusal.
     public func mayHandOverToWrittenCapture(_ snapshot: SessionSnapshot) -> Bool {
-        isSameSourceAtOurPlace(snapshot) && places.contains(snapshot.currentMediaTimeMs)
+        isSameSourcePaused(snapshot) && engine.listenerTransportEpoch == epoch
     }
 }
