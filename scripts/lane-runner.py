@@ -829,6 +829,13 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
     return list(dict.fromkeys(found))[:limit]
 
 
+def package_cache_args() -> list[str]:
+    """`-clonedSourcePackagesDirPath` when SM_SPM_DIR names a folder (lane.yml's hosted Mac sets it from the restored
+    `spm-` cache, #4664), as verify-tests.py's package_cache_settings does for T3; none otherwise."""
+    folder = os.environ.get('SM_SPM_DIR', '').strip()
+    return ['-clonedSourcePackagesDirPath', folder] if folder else []
+
+
 @ledger_step('app builds', lambda args, result: (
     [part.rsplit(' (', 1)[0] for part in result[1].split(', ') if not part.endswith('(pass)')], False))
 def run_t2(evidence: Path, runner=None) -> tuple[str, str, list[str]]:
@@ -839,7 +846,8 @@ def run_t2(evidence: Path, runner=None) -> tuple[str, str, list[str]]:
         # Its own DerivedData per destination (#405): after a device build in the same folder, the next warm
         # simulator build reused its cached build plan and never rewrote the missing all-product-headers.yaml.
         command = [str(ROOT / 'scripts/xcodebuild-lane'), '-project', 'SpokenMarginsNative.xcodeproj',
-                   '-scheme', 'SpokenMarginsApp', '-derivedDataPath', str(ROOT / f'.build/dd-{name}'), *args]
+                   '-scheme', 'SpokenMarginsApp', '-derivedDataPath', str(ROOT / f'.build/dd-{name}'),
+                   *package_cache_args(), *args]
         with log.open('w') as handle:
             code = runner(command, handle, BUILD_TIMEOUT)
         if code == 0:
