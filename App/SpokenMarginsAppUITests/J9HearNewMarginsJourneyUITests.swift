@@ -14,6 +14,8 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
     /// Where the imported Margin sits (`UITestingLaunchSeed.coopMarginMediaTimeMs`), and the lead-in before it.
     private let friendMarginAt = 300
     private let leadIn = 10
+    /// "Play this moment" and Skim seek 30 s before the Margin (`MarginMomentSequence.defaultLeadInMs`, #1577).
+    private let momentLeadIn = 30
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -173,6 +175,93 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
             waitUntil("The episode clock is stuck after the big button", timeout: 8) { self.currentPosition().map { $0 > start } ?? false }
             XCTAssertFalse(app.buttons["newMarginsOffer.review"].exists, "The big button asked a question before playing")
             XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+        }
+    }
+
+    /// #4447: the owner's report from his phone. A friend's Margin sits well behind where he is listening, and on the
+    /// playback screen he could not seek back to it from the Margins tab and found no Skim arrows. Before this there was
+    /// no step for either, so both could break unseen. The listener is paused at about 20:00; Sam's Margin is at 5:00.
+    /// This presses the friend row's Play on the Margins tab and checks that the episode lands at the Margin's 30 s lead-in (270 s).
+    func testMarginsTabPlayReachesAFriendsMarginFromFarPast() throws {
+        try openTheEpisodeFarPastAFriendsMargin(step: "J9 Margins tab")
+
+        try XCTContext.runActivity(named: "J9 Margins tab, step 4: The friend's row has an enabled Play that seeks back to the Margin") { _ in
+            tap("playback.margins.button")
+            let friendPlay = app.buttons.matching(NSPredicate(
+                format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "margins.shared.row.", ".play"
+            )).firstMatch
+            XCTAssertTrue(friendPlay.waitForExistence(timeout: 8), "The friend's Margin has no Play button on the Margins tab")
+            XCTAssertTrue(friendPlay.isEnabled, "The friend's Margin is listed with a Play button that is disabled")
+            XCTAssertTrue(friendPlay.isHittable, "The friend's Play button can't be tapped")
+            let before = try position()
+            friendPlay.tap()
+            // The episode jumps to the lead-in before the Margin, then plays on or waits on the card. Both are inside this window.
+            waitUntil("A tap on the friend's Margin did not take the episode from \(before) s to its Margin at \(friendMarginAt) s; clock shows \(element("playback.progress.label").label)", timeout: 15) {
+                self.currentPosition().map { ($0 >= self.friendMarginAt - self.momentLeadIn - 5) && $0 <= self.friendMarginAt + 5 } ?? false
+            }
+            XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+        }
+    }
+
+    /// #4447: the same position, the same friend. Skim's two arrows are on the playback screen beside the chapter
+    /// title, and Skim backward goes to the friend's Margin. A hidden arrow (no row) is the owner's other symptom.
+    func testSkimArrowsAreOnTheNowScreenAndGoBackToAFriendsMargin() throws {
+        try openTheEpisodeFarPastAFriendsMargin(step: "J9 Skim")
+
+        try XCTContext.runActivity(named: "J9 Skim, step 4: Both arrows are drawn, and backward goes to the Margin") { _ in
+            let backward = app.buttons["playback.skim.backward.button"].firstMatch
+            let forward = app.buttons["playback.skim.forward.button"].firstMatch
+            XCTAssertTrue(backward.waitForExistence(timeout: 8), "No Skim backward arrow, with a friend's Margin behind the listener")
+            XCTAssertTrue(forward.exists, "No Skim forward arrow")
+            XCTAssertTrue(backward.isEnabled, "Skim backward is dimmed, with a friend's Margin behind the listener")
+            XCTAssertTrue(backward.isHittable, "Skim backward can't be tapped")
+            let before = try position()
+            backward.tap()
+            waitUntil("Skim backward did not go to the friend's Margin at \(friendMarginAt) s from \(before) s; clock shows \(element("playback.progress.label").label)", timeout: 15) {
+                self.currentPosition().map { ($0 >= self.friendMarginAt - self.momentLeadIn - 5) && $0 <= self.friendMarginAt + 5 } ?? false
+            }
+            XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+        }
+    }
+
+    /// The owner's position for #4447: saved near 20:00 and paused, then a friend's Margin from 5:00 arrives and he
+    /// chooses "Listen without them", so the Margin is behind him and the Now screen is where he is.
+    private func openTheEpisodeFarPastAFriendsMargin(step: String) throws {
+        XCTContext.runActivity(named: "\(step), step 1: The episode is in the Library (offline seed)") { _ in
+            app.launch()
+            XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "Library did not open")
+            XCTAssertTrue(revealLibraryRow(), "Seeded episode did not appear in the Library")
+        }
+
+        try XCTContext.runActivity(named: "\(step), step 2: Listen to about 20:00 and pause") { _ in
+            tap("queue.start.\(itemId)")
+            XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
+            try waitUntilPlaying("Episode never reached the playing state")
+            try scrub(to: 0.8)
+            waitUntil("Scrub did not land near 20:00; clock shows \(element("playback.progress.label").label)", timeout: 10) {
+                self.currentPosition().map { (17 * 60...23 * 60).contains($0) } ?? false
+            }
+            playPause.tap()
+            waitUntil("Episode did not reach the paused state") { self.playPause.label == "Play" }
+        }
+
+        try XCTContext.runActivity(named: "\(step), step 3: Force-quit; a friend's Margin from before this point arrives; carry on without it") { _ in
+            app.terminate()
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP"] = "1"
+            app.launch()
+            XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "Library did not reopen")
+            XCTAssertTrue(revealLibraryRow(), "Episode is missing from the Library after relaunch")
+            tap("queue.start.\(itemId)")
+            let skip = offerButton("newMarginsOffer.skip", orLabel: "Listen without them")
+            XCTAssertTrue(skip.waitForExistence(timeout: 5), "Continue did not offer a way to carry on without the new Margin")
+            skip.tap()
+            XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
+            try waitUntilPlaying("The episode never carried on without the friend's Margin")
+            playPause.tap()
+            waitUntil("Episode did not reach the paused state") { self.playPause.label == "Play" }
+            let at = try position()
+            XCTAssertTrue((17 * 60...25 * 60).contains(at), "Episode carried on at \(at) s, not near 20:00")
         }
     }
 
