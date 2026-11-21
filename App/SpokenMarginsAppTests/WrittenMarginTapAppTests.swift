@@ -42,6 +42,13 @@ final class WrittenMarginTapAppTests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    /// The `margin.tap` lines the model has recorded, as `origin/outcome/reason` (#4447).
+    private func tapLines(_ model: Gate1AppModel) -> [String] {
+        model.playbackEventRecording.events.filter { $0.kind == "margin.tap" }.map {
+            [$0.fields["origin"], $0.fields["outcome"], $0.fields["reason"]].compactMap { $0 }.joined(separator: "/")
+        }
+    }
+
     private func uniqueWords() -> String { "Lovely harbour \(UUID().uuidString)" }
 
     /// True while "Skip to the Margins" is holding for the fixture's item. With no entries `holdReview` starts nothing: it
@@ -209,6 +216,7 @@ final class WrittenMarginTapAppTests: XCTestCase {
         XCTAssertNil(model.playingImportedCommentary, "a dismissed card plays nothing when its reading arrives")
         XCTAssertNil(model.marginMoment)
         XCTAssertNil(model.pendingImportedCommentary)
+        XCTAssertEqual(tapLines(model), [], "a card's wait is not a tap on a Margin's play button: a dismissed one leaves no margin.tap line (#4447)")
     }
 
     // Leaving the item's screen ends a tap's wait: when the reading arrives, nothing plays (the wiring behind `.onDisappear`).
@@ -227,6 +235,7 @@ final class WrittenMarginTapAppTests: XCTestCase {
         // reader answers, and nothing shows it has run; this is that hop's margin, not a guess at render time (#4313).
         try await Task.sleep(for: .milliseconds(500))
         XCTAssertNil(model.playingImportedCommentary, "the listener had left: nothing plays")
+        XCTAssertEqual(tapLines(model), [], "a card's wait cancelled by leaving the item leaves no margin.tap line, only a play button's tap does (#4447)")
     }
 
     // The same for a review's hold: it never starts the review after the listener leaves the screen.

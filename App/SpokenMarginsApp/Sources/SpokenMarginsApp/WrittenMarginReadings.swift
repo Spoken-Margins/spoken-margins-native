@@ -122,8 +122,9 @@ enum WrittenMarginReadings {
         let task = Task { @MainActor [weak model] in
             let rendered = await wait()
             if tapWaits[prompt.id]?.id == id { tapWaits[prompt.id] = nil }
-            guard let model else { return }
-            guard !Task.isCancelled else { return model.recordMarginTap(.shared, .dropped(.cancelled)) } // left the item mid-wait, a review began, or Skip
+            // No `margin.tap` line from this wait: it serves the pinned card's Listen, the compact command and the friend's
+            // Margin that plays on its own, none of them a tap on a Margin's play button, and it logs no start to pair with (#4447).
+            guard !Task.isCancelled, let model else { return }
             guard model.selectedItem.id == prompt.layer.itemId, !model.recordingNavigationIsLocked else { return } // the listener left
             if wasPending, model.pendingImportedCommentary?.id != prompt.id { return } // the card was dismissed or replaced
             guard rendered else {
