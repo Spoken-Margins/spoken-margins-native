@@ -6,6 +6,7 @@
 import { formatClock } from '../../shared/clock.ts';
 import type { Episode, Margin, PercentMargin, Show } from '../../shared/model.ts';
 import { sharedWords } from '../../packet/write.ts';
+import { appleEpisodeRef } from '../../sources/apple.ts';
 import { samePage } from '../../sources/substack.ts';
 import type { PacketRead } from '../ports.ts';
 
@@ -81,8 +82,19 @@ export function findEpisode(read: PacketRead, episodes: readonly Episode[]): Epi
     const byAudio = episodes.find((e) => e.audioUrl === audioUrl);
     if (byAudio) return byAudio;
   }
-  if (pageUrl) return episodes.find((e) => e.pageUrl !== undefined && samePage(e.pageUrl, pageUrl));
+  if (pageUrl) return episodes.find((e) => e.pageUrl !== undefined && sameEpisodePage(e.pageUrl, pageUrl));
   return undefined;
+}
+
+/**
+ * Two pages of one episode. An Apple episode page names its episode only in `?i=`, which `samePage` ignores, so two episodes
+ * of one show would match. When either page is an Apple episode page, both must be, with the same show and episode ids.
+ */
+function sameEpisodePage(a: string, b: string): boolean {
+  const left = appleEpisodeRef(a);
+  const right = appleEpisodeRef(b);
+  if (left || right) return left !== undefined && right !== undefined && left.showId === right.showId && left.episodeId === right.episodeId;
+  return samePage(a, b);
 }
 
 export function placeImport(

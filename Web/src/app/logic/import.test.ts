@@ -250,3 +250,28 @@ test('the copy keeps its own length when it has one', () => {
   const placed = placeImport(read({ title: 'Episode', pageUrl: APPLE_PAGE, audioUrl: 'https://media.example.com/a.mp3', durationSeconds: 1800 }), [], [{ ...pageOnlyCopy, durationSeconds: 1500 }]);
   assert.equal(placed.episode.durationSeconds, 1500);
 });
+
+test('two episodes of one Apple show are never the same page, however alike their addresses (audit on f88c1c7)', () => {
+  const other = 'https://podcasts.apple.com/us/podcast/x/id1445582279?i=1000427709999';
+  const table: Array<[string, string, boolean]> = [
+    [APPLE_PAGE, other, false],
+    [APPLE_PAGE, APPLE_PAGE, true],
+    [APPLE_PAGE, 'https://podcasts.apple.com/us/podcast/x/id1445582279?i=1000427709574&utm_source=a', true],
+    [APPLE_PAGE, 'https://itunes.apple.com/us/podcast/x/id1445582279?i=1000427709574', true],
+    [APPLE_PAGE, 'https://podcasts.apple.com/us/podcast/x/id1445582279', false],
+    ['https://podcasts.apple.com/us/podcast/id1445582279?i=1', 'https://podcasts.apple.com/us/podcast/id1445582279?i=2', false],
+    ['https://podcasts.apple.com/us/podcast/id1445582279?i=1', 'https://podcasts.apple.com/gb/podcast/id1445582279?i=1', true],
+  ];
+  for (const [kept, opened, same] of table) {
+    const copy: Episode = { ...pageOnlyCopy, pageUrl: kept };
+    assert.equal(findEpisode(read({ title: 'Episode', pageUrl: opened }), [copy]) !== undefined, same, `${kept} vs ${opened}`);
+  }
+});
+
+test('opening episode B never stores B’s audio on the kept episode A', () => {
+  const other = 'https://podcasts.apple.com/us/podcast/x/id1445582279?i=1000427709999';
+  const placed = placeImport(read({ title: 'Episode', pageUrl: other, audioUrl: 'https://media.example.com/b.mp3' }), [], [pageOnlyCopy]);
+  assert.notEqual(placed.episode.id, pageOnlyCopy.id);
+  assert.equal(placed.newEpisode, true);
+  assert.equal(pageOnlyCopy.audioUrl, undefined);
+});
