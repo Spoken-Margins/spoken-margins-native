@@ -88,7 +88,8 @@ public struct ShareInterjectionDraft: Identifiable {
         placeholderText: String? = nil
     ) {
         self.interjection = interjection
-        self.isIncluded = isIncluded
+        // Included implies a place (#4233), by construction: a Margin with no place never rides in a packet.
+        self.isIncluded = isIncluded && ShareableMargins.canShare(interjection)
         self.approvedTranscript = approvedTranscript
         self.cleanup = cleanup
         self.cleanedAudioURL = cleanedAudioURL
@@ -143,12 +144,14 @@ extension ShareInterjectionDraft {
             after: interjection.anchor.anchorAfter,
             commentLength: ExcerptCapRule.commentLength(transcript: words)
         )
+        // A Margin with no place can't be in a packet (#4233): it never starts included, even when starred, and says why.
+        let canShare = ShareableMargins.canShare(interjection)
         var draft = ShareInterjectionDraft(
             interjection: interjection,
-            isIncluded: isIncluded,
+            isIncluded: isIncluded && canShare,
             approvedTranscript: transcript,
             representationChoice: hasVoice ? .original : .textOnly,
-            warning: SharedMarginTextRequirement.reviewWarning(for: transcript),
+            warning: canShare ? SharedMarginTextRequirement.reviewWarning(for: transcript) : ShareableMargins.noPlaceLine,
             anchorBefore: context.before,
             anchorAfter: context.after,
             placeholderText: placeholder
@@ -177,8 +180,9 @@ extension ShareInterjectionDraft {
 }
 
 extension ShareInterjectionDraft {
+    /// A Margin with no place stays out whatever is asked, so "Select all shown" and a tap on its row can't include it (#4233).
     public mutating func setIncluded(_ included: Bool) {
-        isIncluded = included
+        isIncluded = included && ShareableMargins.canShare(interjection)
     }
 
     public mutating func setRepresentation(_ choice: ShareMarginRepresentationChoice, hasOriginalAudio: Bool) {
