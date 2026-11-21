@@ -1299,6 +1299,8 @@ def hosted_fast_records(github, head: str, checks: dict = HOSTED_FAST_CHECKS) ->
         if run.get('conclusion') != 'success':
             fault = (hosted_lane_fault(github, run, name, head)
                      if run.get('conclusion') in HOSTED_FAILED_CONCLUSIONS else '')
+            if not fault and run.get('conclusion') in HOSTED_FAILED_CONCLUSIONS:
+                fault = hosted_rearmed_after_failure(github, run, name, head)
             return None, f'"{name}" ended {run.get("conclusion")} on {head[:7]}{fault}'
         record = hosted_tested(json.loads(github.api(f'repos/{github.repo}/check-runs/{run["id"]}/annotations')))
         if not record or record['plan'] != plan or record['head'] != head:
@@ -1341,6 +1343,43 @@ def hosted_lane_fault(github, run: dict, name: str, head: str) -> str:
         return ''
     message = ' '.join(message.split())[:200].replace('@', '')  # one line, and no mention in the report
     return f' with a lane-fault annotation (run {run.get("id")}): {message}'
+
+
+def _automerge_added_at(github) -> str | None:
+    """When `automerge` was last added to this PR (the newest `labeled` event for it), or None. A read that fails raises."""
+    out = github.api('--paginate', '--jq', '.[] | select(.event == "labeled" and .label.name == "automerge") | .created_at',
+                     f'repos/{github.repo}/issues/{github.pr}/events?per_page=100')
+    return max((line.strip() for line in str(out).splitlines() if line.strip()), default=None)
+
+
+def hosted_rearmed_after_failure(github, run: dict, name: str, head: str) -> str:
+    """What to add to a failed hosted check's "ended failure on <head>" line when `automerge` was added again after that
+    run finished: ' and automerge was added again after it (run <id>)', else '' (#4584).
+
+    The failed check is a fact about the head, so re-adding the label alone only read the same run again, and the lane
+    re-reported it (2026-11-18: about 68 PRs whose checks had failed on the package-clone fault before #4568 merged, a
+    fault with no `lane-fault` annotation). Someone who re-adds the label after a failure is asking for another try, so
+    the check is started again once (hosted_rest_checks treats the marker as it does a lane fault). It is '' (so a FAIL,
+    as before) when the label was added before the run finished (the failure is the first answer to that arming: the
+    audit's and the rearm job's runs, and a PR armed while its checks ran), when another earlier run of this check on
+    this head failed (one more try per head, as for a lane fault, #4085), and when the PR is unknown or a read fails.
+    A fresh run that fails again finished after the label was added, so it is a FAIL."""
+    pr = getattr(github, 'pr', None)
+    finished = run.get('completed_at') or run.get('started_at')
+    if not pr or not finished:
+        return ''
+    try:
+        added = _automerge_added_at(github)
+        if added is None or added <= finished:
+            return ''
+        earlier = json.loads(github.api(f'repos/{github.repo}/commits/{head}/check-runs?check_name='
+                                        f'{urllib.parse.quote(name, safe="")}&filter=all&per_page=100'))
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, AttributeError):
+        return ''  # can't tell: a failure blocks, as before
+    if any((other.get('app') or {}).get('slug') == 'github-actions' and other.get('id') != run.get('id')
+           and other.get('conclusion') in HOSTED_FAILED_CONCLUSIONS for other in earlier.get('check_runs', [])):
+        return ''
+    return f' and automerge was added again after it (run {run.get("id")})'
 
 
 def merged_tree(tree: Path, base: str, head: str, fetch: str | None = None) -> str | None:
@@ -1483,7 +1522,9 @@ HOSTED_MISSING_GRACE = 5 * 60
 # 2 minutes after its checks finish, and a waiting job takes about 120 requests an hour, not 480 (#3501 audit).
 HOSTED_REST_POLL = 120
 HOSTED_FAILED = re.compile(r'" ended (failure|timed_out) on ')
-HOSTED_LANE_FAULT = re.compile(r' with a lane-fault annotation \(run (\d+)\)')  # hosted_lane_fault's words (#4085)
+# hosted_lane_fault's words (#4085) and hosted_rearmed_after_failure's (#4584): a failed check the job starts again once
+HOSTED_LANE_FAULT = re.compile(r'(?: with a lane-fault annotation| and automerge was added again after it) \(run (\d+)\)')
+HOSTED_REARMED = re.compile(r' and automerge was added again after it \(run \d+\)')
 HOSTED_MISSING = re.compile(r'^no ".+" check ran on ')
 HOSTED_SKIPPED = re.compile(r'" ended skipped on ')
 HOSTED_UNREADABLE = 'could not read the fast checks'  # says nothing about the checks themselves
@@ -1532,7 +1573,8 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
     with the tip this job started on, because a fresh run is merged onto the newest tip and main moves while the job
     waits (#2596). The caller reads back the tip the last poll used.
     A check that failed with a lane-fault annotation (hosted_lane_fault) is started again once, whatever run_again says,
-    and waited for; a second faulted run of it on the head is a plain failure (#4085).
+    and waited for; a second faulted run of it on the head is a plain failure (#4085). So is one that failed before
+    automerge was added again (hosted_rearmed_after_failure, #4584); its second failure is a FAIL too.
     run_again: there is no Mac to fall back on (#3501), so a check that can't be had (cancelled, skipped, never ran) is
     started again as a stale one is, within the same limits, rather than given up on. A read that failed says nothing
     about the checks, so it is only waited out. A check a fresh run skips as well won't change with more runs: the
@@ -1545,6 +1587,7 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
     deadline = started + wait
     dispatches, dispatched_at, running_seen = 0, started, False
     faulted: set[str] = set()  # runs of a check that failed with a lane-fault annotation (#4085)
+    rearmed_seen = False  # a check that failed before automerge was added again has been started again (#4584)
 
     def out_of_time(why: str) -> tuple[None, str]:
         # With run_again (the hosted job, no Mac to fall back on) a check that is still queued or running, or a fresh
@@ -1564,11 +1607,14 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
                 pass  # keep comparing with the tip we have; the push says if it moved
         found, why = _hosted_fast_checks_once(github, tree, base, head, base_sha, env, records, checks)
         fault = None if found is not None else HOSTED_LANE_FAULT.search(why)
+        rearmed_seen = rearmed_seen or bool(HOSTED_REARMED.search(why))
         if fault:  # #4085: the runner failed it, not the PR: start the check again once, and wait for that run
             if fault.group(1) not in faulted:
                 faulted.add(fault.group(1))
                 if len(faulted) > HOSTED_LANE_FAULT_LIMIT - 1:
-                    return None, why
+                    # The run started for a re-add (#4584) that failed again is the PR's FAIL, even with a lane-fault
+                    # annotation of its own: take the marker off so hosted_checks_missing reads a failure.
+                    return None, HOSTED_LANE_FAULT.sub('', why) if rearmed_seen else why
                 problem = dispatch()
                 if problem:
                     return None, f'{why}; running them again on {base} failed: {problem}'
@@ -1684,6 +1730,11 @@ def hosted_web_check(github, tree: Path, base: str, head: str, alive=lambda: Non
 def hosted_checks_missing(why: str, fallback: str = NEEDS_MAC) -> tuple[str, str, str, list[str]]:
     """What a run that merges on the hosted checks returns when they don't stand: FAIL when one failed on this head
     (the PR's code, as the Mac's own run would have shown), else <fallback> with why."""
+    if HOSTED_REARMED.search(why):  # #4584: the label was added again after this failure; the check is started again once
+        return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
+            f'not merged: {why}. The check failed before automerge was added again, so it is started again once, and '
+            'the run could not be had or finished: run it again (remove and re-add automerge). A second failure of '
+            'the check on this head reports FAIL.']
     if HOSTED_LANE_FAULT.search(why):  # #4085: before FAIL; hosted_lane_fault leaves the marker off a repeated fault
         return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
             f'not merged: {why}. Runner fault, not this PR\'s code: run again (remove and re-add automerge). The '

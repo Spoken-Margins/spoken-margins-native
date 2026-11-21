@@ -31,6 +31,7 @@ STALE = f'"hosted fast: portable" tested it on main at {MERGE[:7]}, and main sin
 FAILED = f'"hosted fast: Mac rest" ended failure on {HEAD[:7]}'
 FAULT = f'"hosted fast: portable" ended failure on {HEAD[:7]} with a lane-fault annotation (run 41): setup fault: no DNS'
 FAULT_AGAIN = FAULT.replace('(run 41)', '(run 42)')
+REARMED = f'"hosted fast: portable" ended failure on {HEAD[:7]} and automerge was added again after it (run 41)'
 MISSING = f'no "hosted fast: Mac rest" check ran on {HEAD[:7]}'
 UNRECORDED = f'"hosted fast: portable" on {HEAD[:7]} did not record that it tested fast-portable on this head'
 NEWER = '9' * 40
@@ -162,6 +163,36 @@ class HostedRestChecksTests(unittest.TestCase):
         self.assertIsNone(found)
         self.assertIn('not from here', why)
         self.assertEqual(lane.hosted_checks_missing(why, lane.NEEDS_MAC)[0], 'INCONCLUSIVE')
+
+    def test_a_failed_check_is_run_again_once_when_automerge_was_added_again_after_it(self):
+        # #4584: the failed run is a fact about the head; re-adding the label has to start the check again, once.
+        (found, why), waited, dispatched = self.wait([(None, REARMED), (None, REARMED), (None, RUNNING), (STOOD, '')],
+                                                     run_again=True)
+        self.assertEqual(found, STOOD)
+        self.assertEqual(dispatched, [0.0])  # one dispatch: the second answer was the old failed run still newest
+
+    def test_the_run_started_for_a_re_add_that_fails_is_a_fail(self):
+        # Records leaves the marker off a run that finished after the label was added, so its answer is a plain failure.
+        (found, why), _, dispatched = self.wait([(None, REARMED), (None, RUNNING), (None, FAILED)], run_again=True)
+        self.assertIsNone(found)
+        self.assertEqual(dispatched, [0.0])
+        self.assertEqual(lane.hosted_checks_missing(why)[0], 'FAIL')
+
+    def test_a_run_started_for_a_re_add_that_fails_with_a_lane_fault_annotation_is_a_fail(self):
+        # Review finding: the second failing run on one head is a FAIL even when only the second one has the annotation.
+        (found, why), _, dispatched = self.wait([(None, REARMED), (None, RUNNING), (None, FAULT_AGAIN)], run_again=True)
+        self.assertIsNone(found)
+        self.assertEqual(dispatched, [0.0])
+        self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+        self.assertEqual(lane.hosted_checks_missing(why)[0], 'FAIL')
+
+    def test_a_re_add_that_cannot_start_the_check_again_reports_inconclusive_with_the_reason(self):
+        (found, why), _, dispatched = self.wait([(None, REARMED)], run_again=False, dispatch_result='not from here')
+        self.assertIsNone(found)
+        self.assertIn('not from here', why)
+        verdict, _, _, details = lane.hosted_checks_missing(why, lane.NEEDS_MAC)
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertIn('second failure', details[0])
 
     def test_hosted_checks_missing_reports_a_marked_fault_inconclusive(self):
         verdict, _, ran, details = lane.hosted_checks_missing(FAULT, lane.NEEDS_MAC)

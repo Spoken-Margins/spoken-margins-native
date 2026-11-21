@@ -33,13 +33,18 @@ def notice(plan, tree, base, head, title='lane-hosted-tested', level='notice'):
 
 
 class FakeChecks:
-    """The two GitHub API reads hosted_fast_records makes: check runs on a head, and one run's annotations."""
+    """The GitHub API reads hosted_fast_records makes: check runs on a head, one run's annotations and, for a failed
+    check, when automerge was added to the PR."""
 
-    def __init__(self, runs, annotations):
+    def __init__(self, runs, annotations, pr=None, armed=()):
         self.repo, self.runs, self.annotations, self.calls = 'o/r', runs, annotations, []
+        self.pr, self.armed = pr, list(armed)  # armed: when `automerge` was added to the PR (#4584)
 
-    def api(self, path):
+    def api(self, *args):
+        path = args[-1]
         self.calls.append(path)
+        if '/events' in path:  # `--paginate --jq` prints one line per matching event
+            return ''.join(f'{when}\n' for when in self.armed)
         if '/annotations' in path:
             return json.dumps(self.annotations[int(path.split('/')[-2])])
         name = next(name for name in lane.HOSTED_FAST_CHECKS
@@ -220,6 +225,108 @@ class HostedRecordsTests(unittest.TestCase):
         self.assertNotIn('\n', why)
         self.assertNotIn('@', why)
         self.assertLessEqual(len(why), 400)
+
+    def rearmed(self, armed, earlier=(), completed='2026-10-18T10:30:00Z', conclusion='failure', annotations=()):
+        """A failed "hosted fast: portable" (run 1, finished at <completed>) on PR 7, with `automerge` added at <armed>."""
+        checks = self.failed(conclusion, list(annotations), earlier)
+        checks.pr, checks.armed = 7, list(armed)
+        checks.runs['hosted fast: portable'][0]['completed_at'] = completed
+        return checks
+
+    def test_a_failed_check_is_started_again_once_when_automerge_was_added_again_after_it(self):
+        # #4584: after #4568 about 68 PRs had automerge removed and re-added; the lane re-read the same failed run and
+        # reported it again. The failed run is a fact about the head, so the re-add has to be what starts another.
+        for conclusion in ('failure', 'timed_out'):
+            with self.subTest(conclusion):
+                found, why = lane.hosted_fast_records(
+                    self.rearmed(['2026-10-18T09:00:00Z', '2026-10-18T11:00:00Z'], conclusion=conclusion), self.HEAD)
+                self.assertIsNone(found)
+                self.assertTrue(lane.HOSTED_LANE_FAULT.search(why), why)
+                self.assertTrue(lane.HOSTED_REARMED.search(why), why)
+                self.assertEqual(lane.HOSTED_LANE_FAULT.search(why).group(1), '1')
+                verdict, _, _, details = lane.hosted_checks_missing(why, 'INCONCLUSIVE')
+                self.assertEqual(verdict, 'INCONCLUSIVE')
+                self.assertIn('second failure', details[0])
+
+    def test_the_newest_arming_counts_whatever_order_the_events_come_in(self):
+        found, why = lane.hosted_fast_records(self.rearmed(['2026-10-18T11:00:00Z', '2026-10-18T09:00:00Z']), self.HEAD)
+        self.assertTrue(lane.HOSTED_REARMED.search(why), why)
+        found, why = lane.hosted_fast_records(self.rearmed(['2026-10-18T09:00:00Z', '2026-10-18T10:00:00Z']), self.HEAD)
+        self.assertFalse(lane.HOSTED_REARMED.search(why), why)
+
+    def test_a_failure_that_is_the_first_answer_to_the_arming_is_still_a_fail(self):
+        # The label was added before the run finished (a PR armed while its checks ran, the audit's re-arm and the rearm
+        # job's dispatch all come after the failure and add no label event newer than it): a plain FAIL, as before.
+        for name, armed in (('armed before it finished', ['2026-10-18T10:00:00Z']),
+                            ('armed at the moment it finished', ['2026-10-18T10:30:00Z']),
+                            ('never armed', [])):
+            with self.subTest(name):
+                found, why = lane.hosted_fast_records(self.rearmed(armed), self.HEAD)
+                self.assertIsNone(found)
+                self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+                self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
+
+    def test_a_second_failure_on_one_head_is_a_fail_however_often_automerge_is_added(self):
+        again = ['2026-10-18T11:00:00Z']
+        for name, earlier in (('an ordinary failure before it', [('failure', [])]),
+                              ('a timeout before it', [('timed_out', [])])):
+            with self.subTest(name):
+                found, why = lane.hosted_fast_records(self.rearmed(again, earlier), self.HEAD)
+                self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+                self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
+        # A cancelled or passing earlier run, or another app's failed one, is not an earlier failure of this check.
+        for name, earlier in (('a cancelled run before it', [('cancelled', [])]),
+                              ('a passing run before it', [('success', [])])):
+            with self.subTest(name):
+                found, why = lane.hosted_fast_records(self.rearmed(again, earlier), self.HEAD)
+                self.assertTrue(lane.HOSTED_REARMED.search(why), why)
+        checks = self.rearmed(again, [('failure', [])])
+        checks.runs['hosted fast: portable'][1]['app'] = {'slug': 'someone-else'}
+        found, why = lane.hosted_fast_records(checks, self.HEAD)
+        self.assertTrue(lane.HOSTED_REARMED.search(why), why)
+
+    def test_the_failed_run_that_was_started_again_is_a_fail_when_it_fails_too(self):
+        # The run the lane starts after the re-add finishes after the label was added: no marker, a FAIL.
+        checks = self.rearmed(['2026-10-18T11:00:00Z'], completed='2026-10-18T11:20:00Z')
+        found, why = lane.hosted_fast_records(checks, self.HEAD)
+        self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
+
+    def test_a_lane_fault_annotation_keeps_its_own_marker_and_cap(self):
+        again = ['2026-10-18T11:00:00Z']
+        found, why = lane.hosted_fast_records(self.rearmed(again, annotations=[self.lane_fault()]), self.HEAD)
+        self.assertIn('with a lane-fault annotation', why)
+        self.assertFalse(lane.HOSTED_REARMED.search(why), why)
+        found, why = lane.hosted_fast_records(
+            self.rearmed(again, [('failure', [self.lane_fault()])], annotations=[self.lane_fault()]), self.HEAD)
+        self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)  # the second fault: a FAIL, even though automerge was re-added
+
+    def test_only_a_check_that_failed_is_started_again_for_a_re_add(self):
+        for conclusion in ('cancelled', 'skipped', 'neutral'):
+            with self.subTest(conclusion):
+                checks = self.rearmed(['2026-10-18T11:00:00Z'], conclusion=conclusion)
+                found, why = lane.hosted_fast_records(checks, self.HEAD)
+                self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+                self.assertFalse(any('/events' in call for call in checks.calls))
+
+    def test_events_that_cannot_be_read_leave_the_failure_a_fail(self):
+        checks = self.rearmed(['2026-10-18T11:00:00Z'])
+        real = checks.api
+
+        def broken(*args):
+            if '/events' in args[-1]:
+                raise OSError('rate limited')
+            return real(*args)
+        checks.api = broken
+        found, why = lane.hosted_fast_records(checks, self.HEAD)
+        self.assertIsNone(found)
+        self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+        self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
+
+    def test_no_pr_number_means_no_event_read(self):
+        checks = self.failed('failure', [])
+        found, why = lane.hosted_fast_records(checks, self.HEAD)
+        self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+        self.assertFalse(any('/events' in call for call in checks.calls))
 
     def test_a_record_for_another_plan_or_head_is_not_this_run(self):
         for name, annotation in (('another plan', notice('fast', 'e' * 40, 'd' * 40, self.HEAD)),
