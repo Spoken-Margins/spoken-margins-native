@@ -150,6 +150,21 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
                 XCTAssertEqual(app.descendants(matching: .any).matching(shown).count, 0, "\"\(words)\" shows on arrival")
             }
             XCTAssertFalse(element("item.arrival.waitingLine").exists, "The waiting line shows with nothing to wait for")
+            // #3855: each fact once above the Play choices. Scroll to the bottom first so the imported-layer card is in the tree;
+            // one friend, one layer, so the card's own "From Sam" line is dropped and the count line carries the "1 Margin".
+            for _ in 0..<4 { app.swipeUp() }
+            let screen = element("item.screen")
+            // Any element type: a card's single VoiceOver element is not necessarily reported as static text.
+            func count(labelPrefix: String) -> Int {
+                screen.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", labelPrefix)).count
+            }
+            XCTAssertEqual(count(labelPrefix: "From "), 1, "The sender's name is said more than once before Play")
+            XCTAssertEqual(count(labelPrefix: "1 Margin"), 1, "\"1 Margin\" is said more than once before Play")
+            // The card keeps its one VoiceOver element and its id, with the sender sentence dropped (#3855).
+            let provenance = screen.descendants(matching: .any).matching(NSPredicate(
+                format: "identifier BEGINSWITH 'build23.imported.layer.' AND identifier ENDSWITH '.provenance'")).firstMatch
+            XCTAssertTrue(provenance.exists, "The imported card lost its VoiceOver element")
+            XCTAssertFalse(provenance.label.hasPrefix("From "), "The card still says who sent it: \(provenance.label)")
             play.tap()
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "The episode did not start")
             XCTAssertEqual(app.buttons["playback.itemTitle.button"].label, episodeTitle, "A different item is playing")
