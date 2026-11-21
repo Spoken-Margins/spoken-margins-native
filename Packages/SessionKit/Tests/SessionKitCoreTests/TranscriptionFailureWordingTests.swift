@@ -77,7 +77,7 @@ final class TranscriptionFailureWordingTests: XCTestCase {
     }
 
     /// Codex audit on #439: with Speech Recognition off, the source window can't be transcribed
-    /// either, so the context fails too. "Context needs retry" hid the actual reason.
+    /// either, so the context fails too, and the context words alone would hide the actual reason.
     func testSpeechRecognitionOffOutranksTheContextItAlsoBroke() {
         let status = TranscriptionFailureWording.marginAttention(
             transcriptionStatus: "failed",
@@ -97,12 +97,42 @@ final class TranscriptionFailureWordingTests: XCTestCase {
             )
         }
 
-        XCTAssertEqual(attention("failed", context: true), "Context needs retry")
-        XCTAssertEqual(attention("pending", off: true, context: true), "Context needs retry")
-        XCTAssertEqual(attention("complete", context: true, missing: true), "Context needs retry")
+        XCTAssertEqual(attention("failed", context: true), TranscriptionFailureWording.contextNeedsRetry)
+        XCTAssertEqual(attention("pending", off: true, context: true), TranscriptionFailureWording.contextNeedsRetry)
+        XCTAssertEqual(attention("complete", context: true, missing: true), TranscriptionFailureWording.contextNeedsRetry)
         XCTAssertEqual(attention("complete", missing: true), "Recording is unavailable")
         XCTAssertEqual(attention("failed"), "Transcription needs retry")
         XCTAssertEqual(attention("pending"), "Transcribing…")
         XCTAssertEqual(attention("complete"), "Margin needs attention")
+    }
+
+    /// #4608: the context status said "Context needs retry" and nothing else. Each wording the Margins row can show now says
+    /// what failed in plain words, and none leans on a word the listener never meets ("context") or on a Retry button the row
+    /// may not be showing.
+    func testEveryAttentionWordingSaysWhatFailedInPlainWords() {
+        let statuses = ["pending", "transcribed", "complete", "failed", "queued", ""]
+        var seen = Set<String>()
+        for status in statuses {
+            for flags in 0..<8 {
+                let words = TranscriptionFailureWording.marginAttention(
+                    transcriptionStatus: status, speechRecognitionOff: flags & 1 != 0,
+                    contextUnavailable: flags & 2 != 0, recordingMissing: flags & 4 != 0)
+                seen.insert(words)
+                let label = "\(status) flags:\(flags): \(words)"
+                XCTAssertFalse(words.isEmpty, label)
+                XCTAssertFalse(words.lowercased().contains("context"), label)
+                XCTAssertFalse(words.contains("Retry"), "the row may show no Retry button: \(label)")
+                XCTAssertLessThanOrEqual(words.count, 70, "short enough for a row: \(label)")
+            }
+        }
+        XCTAssertTrue(seen.contains(TranscriptionFailureWording.contextNeedsRetry), "the sweep must reach the context words")
+    }
+
+    func testTheContextWordsNameTheSourceAndTheMarginAndNotTheRecording() {
+        let words = TranscriptionFailureWording.contextNeedsRetry.lowercased()
+        XCTAssertTrue(words.contains("source"))
+        XCTAssertTrue(words.contains("margin"))
+        XCTAssertFalse(words.contains("saved"), "the context words show even when the recording is missing, so they can't promise it is kept")
+        XCTAssertFalse(words.contains("lost"))
     }
 }
