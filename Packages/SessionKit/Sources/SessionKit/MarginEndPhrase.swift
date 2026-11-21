@@ -50,6 +50,8 @@ public enum MarginEndPhrase {
         public var endMs: Int
         /// Where the last phrase of the run starts. It is `startMs` unless the phrase was said again straight away.
         public var finalPhraseStartMs: Int
+        /// The index, among the words' tokens, of the phrase's first token.
+        var firstTokenIndex: Int
         /// Where to cut the audio so the phrase is gone: a little before its first word.
         public var cutAtMs: Int { max(0, startMs - MarginEndPhrase.cutLeadMs) }
     }
@@ -88,7 +90,7 @@ public enum MarginEndPhrase {
             start = earlier
         }
         return Match(firstWordIndex: tokens[start].wordIndex, startMs: tokens[start].startMs, endMs: last.endMs,
-                     finalPhraseStartMs: finalStartMs)
+                     finalPhraseStartMs: finalStartMs, firstTokenIndex: start)
     }
 
     // MARK: Words
@@ -166,14 +168,21 @@ extension MarginEndPhrase {
     /// words the phrase was found in (the recogniser's two readings disagree, and losing the listener's words is
     /// worse than keeping "stop margin"), or nothing left once the phrase is gone.
     public static func cut(text: String, words: [MarginEndPhraseWord]) -> MarginEndPhraseCut? {
-        guard let match = trailingPhrase(in: words), match.firstWordIndex > 0, match.cutAtMs > 0 else { return nil }
+        guard let match = trailingPhrase(in: words), match.firstWordIndex > 0 else { return nil }
         let tokens = tokenize(words)
-        guard let firstIndex = tokens.firstIndex(where: { $0.wordIndex == match.firstWordIndex }),
-              tokens[firstIndex].startMs == match.startMs, // the phrase starts its word: a word can't be split
-              firstIndex > 0 else { return nil }
-        let droppedTokens = tokens[firstIndex...].map(\.text)
+        let first = match.firstTokenIndex
+        // The phrase must start its own recognised word: one word holding "okay stop" can't be split, and a phrase
+        // with no token before it leaves nothing to keep.
+        guard first > 0, tokens[first - 1].wordIndex != tokens[first].wordIndex else { return nil }
+        // Cut before the phrase, but never into the last kept word: recogniser times often touch, and 150 ms back
+        // from a phrase that starts the moment the word ends would clip it. Overlapping words keep everything.
+        let lastKeptEndMs = tokens[first - 1].endMs
+        guard lastKeptEndMs <= match.startMs else { return nil }
+        let cutAtMs = max(match.cutAtMs, lastKeptEndMs)
+        guard cutAtMs > 0 else { return nil }
+        let droppedTokens = tokens[first...].map(\.text)
         guard let trimmed = textDroppingTrailingTokens(text, expecting: droppedTokens) else { return nil }
-        return MarginEndPhraseCut(cutAtMs: match.cutAtMs, text: trimmed, keptWordCount: match.firstWordIndex)
+        return MarginEndPhraseCut(cutAtMs: cutAtMs, text: trimmed, keptWordCount: match.firstWordIndex)
     }
 
     /// `text` without its last `expecting.count` word tokens, only when those are exactly `expecting`; the text
@@ -203,7 +212,10 @@ extension MarginEndPhrase {
         close(at: normalised.endIndex)
         guard runs.count > expecting.count, runs.suffix(expecting.count).map(\.token) == expecting else { return nil }
         let cutIndex = runs[runs.count - expecting.count].start
-        let kept = String(normalised[..<cutIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        // An opening quote, bracket or dash that led into the phrase ("He said \"stop margin\"") goes with it.
+        var openers = CharacterSet.whitespacesAndNewlines
+        openers.insert(charactersIn: "\"\u{201C}\u{2018}'([{\u{00AB}\u{2014}\u{2013}-")
+        let kept = String(normalised[..<cutIndex]).trimmingCharacters(in: openers)
         return kept.isEmpty ? nil : kept
     }
 }

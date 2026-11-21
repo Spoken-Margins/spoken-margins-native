@@ -17,7 +17,7 @@ final class MarginEndPhraseCutTests: XCTestCase {
         let cut = try XCTUnwrap(MarginEndPhrase.cut(text: "That is my point. Stop margin.", words: heard))
         XCTAssertEqual(cut.text, "That is my point.")
         XCTAssertEqual(cut.keptWordCount, 4)
-        XCTAssertEqual(cut.cutAtMs, 1_600 - 150)
+        XCTAssertEqual(cut.cutAtMs, 1_500, "150 ms back would be 1,450, inside \"point\" (ends 1,500): the cut waits for the word to end")
     }
 
     func testEveryAcceptedSpellingIsCutWithItsOwnText() throws {
@@ -88,8 +88,49 @@ final class MarginEndPhraseCutTests: XCTestCase {
         XCTAssertEqual(cut.text, "It\u{2019}s caf\u{00E9} time.")
     }
 
-    func testACutAtTheVeryStartWouldLeaveNoAudioSoItKeepsAll() {
-        // The phrase starts 120 ms in: 150 ms before it is the start, so the cut would be empty.
-        XCTAssertNil(MarginEndPhrase.cut(text: "Um stop margin", words: words(["um", "stop", "margin"], from: 0, wordMs: 100, gapMs: 20)))
+    func testAShortWordRightBeforeThePhraseIsKeptWhole() throws {
+        // The phrase starts 120 ms in and "um" ends at 100: the cut is at 100, so "um" is whole.
+        let cut = try XCTUnwrap(MarginEndPhrase.cut(text: "Um stop margin", words: words(["um", "stop", "margin"], from: 0, wordMs: 100, gapMs: 20)))
+        XCTAssertEqual(cut.cutAtMs, 100)
+        XCTAssertEqual(cut.text, "Um")
+    }
+
+    func testTheCutNeverClipsTheLastKeptWord() throws {
+        // The last word touches the phrase: 150 ms back would cut into "it".
+        let heard = [
+            MarginEndPhraseWord(text: "that", startMs: 0, endMs: 300), MarginEndPhraseWord(text: "is", startMs: 300, endMs: 500),
+            MarginEndPhraseWord(text: "it", startMs: 500, endMs: 1_000), MarginEndPhraseWord(text: "stop", startMs: 1_000, endMs: 1_300),
+            MarginEndPhraseWord(text: "margin", startMs: 1_300, endMs: 1_800)
+        ]
+        let cut = try XCTUnwrap(MarginEndPhrase.cut(text: "That is it. Stop margin.", words: heard))
+        XCTAssertEqual(cut.cutAtMs, 1_000, "never earlier than the end of the last word kept")
+        // A gap bigger than the lead keeps the 150 ms.
+        var gap = heard
+        gap[3].startMs = 1_400; gap[3].endMs = 1_700; gap[4].startMs = 1_700; gap[4].endMs = 2_100
+        XCTAssertEqual(MarginEndPhrase.cut(text: "That is it. Stop margin.", words: gap)?.cutAtMs, 1_250)
+        // Words that overlap the phrase keep everything.
+        var overlap = heard
+        overlap[2].endMs = 1_100
+        XCTAssertNil(MarginEndPhrase.cut(text: "That is it. Stop margin.", words: overlap))
+    }
+
+    func testAZeroLengthWordHoldingMoreThanThePhraseIsNotSplit() {
+        let heard = [
+            MarginEndPhraseWord(text: "um", startMs: 0, endMs: 300),
+            MarginEndPhraseWord(text: "okay stop", startMs: 400, endMs: 400),
+            MarginEndPhraseWord(text: "margin", startMs: 500, endMs: 900)
+        ]
+        XCTAssertNil(MarginEndPhrase.cut(text: "Um okay stop margin", words: heard), "\"okay\" would be lost")
+        var short = heard
+        short[1] = MarginEndPhraseWord(text: "okay-stop", startMs: 400, endMs: 402)
+        XCTAssertNil(MarginEndPhrase.cut(text: "Um okay stop margin", words: short))
+    }
+
+    func testAnOpeningQuoteOrDashBeforeThePhraseGoesWithIt() throws {
+        let heard = words(["he", "said", "stop", "margin"])
+        XCTAssertEqual(MarginEndPhrase.cut(text: "He said \"stop margin\"", words: heard)?.text, "He said")
+        XCTAssertEqual(MarginEndPhrase.cut(text: "He said \u{201C}stop margin\u{201D}", words: heard)?.text, "He said")
+        XCTAssertEqual(MarginEndPhrase.cut(text: "He said \u{2014} stop margin.", words: heard)?.text, "He said")
+        XCTAssertEqual(MarginEndPhrase.cut(text: "He said, stop margin.", words: heard)?.text, "He said,", "A comma stays")
     }
 }

@@ -11,18 +11,62 @@ import AVFoundation
 /// keep. It happens only when that transcript's last words are the phrase and its text agrees (`MarginEndPhrase.cut`);
 /// in every other case, and in every failure, the original file and words are left exactly as they were: losing the
 /// listener's words is worse than keeping two spoken ones.
+///
+/// Two steps, so the caller can order them with its own write: `prepare` cuts a copy beside the original and changes
+/// nothing; `commit` swaps it in. The caller saves the words without the phrase between the two, so a failed save
+/// leaves the audio and the words as they were, and the one failure left (the swap) keeps more of the listener's
+/// speech than the saved words show, never less.
 public enum MarginEndPhraseTrim {
-    public enum Outcome: Sendable, Equatable {
-        /// Nothing was changed.
-        case keepAll
-        /// The file at the same path now ends before the phrase, and `transcript` is the words without it.
-        case trimmed(transcript: AlignedInterjectionTranscript, durationMs: Int)
+    /// A cut copy of the file, verified, waiting to replace the original.
+    public final class Prepared: @unchecked Sendable {
+        /// The words without the phrase, aligned.
+        public let transcript: AlignedInterjectionTranscript
+        /// The length of the cut file.
+        public let durationMs: Int
+        let target: URL
+        let temporary: URL
+        private let lock = NSLock()
+        private var finished = false
+
+        init(transcript: AlignedInterjectionTranscript, durationMs: Int, target: URL, temporary: URL) {
+            self.transcript = transcript
+            self.durationMs = durationMs
+            self.target = target
+            self.temporary = temporary
+        }
+
+        /// Replaces the original with the cut copy, in one rename. Once only; false if it didn't happen.
+        @discardableResult
+        public func commit() -> Bool {
+            guard claim() else { return false }
+            do {
+                _ = try FileManager.default.replaceItemAt(target, withItemAt: temporary)
+                return true
+            } catch {
+                try? FileManager.default.removeItem(at: temporary)
+                return false
+            }
+        }
+
+        /// Throws the copy away (the words could not be saved, or nobody will commit). Safe after a commit.
+        public func discard() {
+            guard claim() else { return }
+            try? FileManager.default.removeItem(at: temporary)
+        }
+
+        private func claim() -> Bool {
+            lock.withLock {
+                if finished { return false }
+                finished = true
+                return true
+            }
+        }
     }
 
-    /// How far the trimmed file's length may differ from the cut point before it is not trusted.
+    /// How far the cut file's length may differ from the cut point before it is not trusted.
     static let durationToleranceMs = 300
 
-    /// The words without the phrase and where to cut, or nil to keep all. Pure; the audio is cut by `trim`.
+    /// The words without the phrase and where to cut, or nil to keep all. Pure; the audio is cut by `prepare`.
     static func plan(for transcript: AlignedInterjectionTranscript) -> (cut: MarginEndPhraseCut, kept: AlignedInterjectionTranscript)? {
         let heard = transcript.segments.map { MarginEndPhraseWord(text: $0.text, startMs: $0.startMs, endMs: $0.endMs) }
         guard let cut = MarginEndPhrase.cut(text: transcript.text, words: heard), cut.keptWordCount > 0,
@@ -36,19 +80,17 @@ public enum MarginEndPhraseTrim {
         return (cut, kept)
     }
 
-    /// Cuts `fileURL` before the phrase and replaces it in place. Any failure leaves the original untouched.
-    public static func trim(fileURL: URL, transcript: AlignedInterjectionTranscript) async -> Outcome {
+    /// Cuts a copy of `fileURL` before the phrase. Nil means keep everything: no phrase, a transcript that
+    /// disagrees, or any failure. The original is never touched here.
+    public static func prepare(fileURL: URL, transcript: AlignedInterjectionTranscript) async -> Prepared? {
         #if canImport(AVFoundation)
-        guard let cutPlan = plan(for: transcript) else { return .keepAll }
-        let fileManager = FileManager.default
+        guard let cutPlan = plan(for: transcript) else { return nil }
         // Beside the original, so replacing it is one rename on the same volume.
-        let temporary = fileURL.deletingLastPathComponent()
-            .appending(path: ".trim-\(UUID().uuidString).m4a")
-        defer { try? fileManager.removeItem(at: temporary) }
+        let temporary = fileURL.deletingLastPathComponent().appending(path: ".trim-\(UUID().uuidString).m4a")
         do {
             let asset = AVURLAsset(url: fileURL)
             guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
-                return .keepAll
+                return nil
             }
             exporter.outputURL = temporary
             exporter.outputFileType = .m4a
@@ -59,15 +101,16 @@ public enum MarginEndPhraseTrim {
             try await exporter.export(to: temporary, as: .m4a)
             guard case .milliseconds(let trimmedMs) = RecordedFileDuration.measure(temporary),
                   trimmedMs > 0, abs(trimmedMs - cutPlan.cut.cutAtMs) <= durationToleranceMs else {
-                return .keepAll
+                try? FileManager.default.removeItem(at: temporary)
+                return nil
             }
-            _ = try fileManager.replaceItemAt(fileURL, withItemAt: temporary)
-            return .trimmed(transcript: cutPlan.kept, durationMs: trimmedMs)
+            return Prepared(transcript: cutPlan.kept, durationMs: trimmedMs, target: fileURL, temporary: temporary)
         } catch {
-            return .keepAll
+            try? FileManager.default.removeItem(at: temporary)
+            return nil
         }
         #else
-        return .keepAll
+        return nil
         #endif
     }
 }

@@ -48,43 +48,56 @@ final class MarginEndPhraseTrimTests: XCTestCase {
 
     func testThePhraseIsCutFromTheFileAndTheWords() async throws {
         let url = try tone(seconds: 4)
-        // Words 200 ms apart from 200: "stop" starts at 1,800 ms, so the cut is at 1,650.
+        // "point" ends at 1,700 ms and "stop" starts at 1,800: the cut is at 1,700, the end of the last word kept.
         let said = transcript(["that", "is", "my", "point", "stop", "margin"], text: "That is my point. Stop margin.")
-        let outcome = await MarginEndPhraseTrim.trim(fileURL: url, transcript: said)
-        guard case .trimmed(let kept, let durationMs) = outcome else { return XCTFail("expected a cut, got \(outcome)") }
-        XCTAssertEqual(kept.text, "That is my point.")
-        XCTAssertEqual(kept.segments.map(\.text), ["that", "is", "my", "point"])
-        XCTAssertEqual(Double(durationMs), 1_650, accuracy: Double(MarginEndPhraseTrim.durationToleranceMs))
-        XCTAssertEqual(RecordedFileDuration.measure(url), .milliseconds(durationMs), "the file at the same path is the short one")
-        let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path)
-        XCTAssertEqual(leftovers, ["margin.m4a"], "no temporary file is left beside it")
+        let before = try Data(contentsOf: url)
+        let prepared = try XCTUnwrap(await MarginEndPhraseTrim.prepare(fileURL: url, transcript: said))
+        XCTAssertEqual(try Data(contentsOf: url), before, "prepare changes nothing")
+        XCTAssertEqual(prepared.transcript.text, "That is my point.")
+        XCTAssertEqual(prepared.transcript.segments.map(\.text), ["that", "is", "my", "point"])
+        XCTAssertEqual(Double(prepared.durationMs), 1_700, accuracy: 120)
+        XCTAssertTrue(prepared.commit())
+        XCTAssertEqual(RecordedFileDuration.measure(url), .milliseconds(prepared.durationMs), "the file at the same path is the short one")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), ["margin.m4a"], "no temporary file is left beside it")
+        XCTAssertFalse(prepared.commit(), "a second commit does nothing")
+    }
+
+    func testDiscardingLeavesTheOriginalAndNoTemporaryFile() async throws {
+        let url = try tone(seconds: 4)
+        let before = try Data(contentsOf: url)
+        let said = transcript(["that", "is", "my", "point", "stop", "margin"], text: "That is my point. Stop margin.")
+        let prepared = try XCTUnwrap(await MarginEndPhraseTrim.prepare(fileURL: url, transcript: said))
+        prepared.discard()
+        XCTAssertFalse(prepared.commit(), "a discarded copy can't be committed")
+        XCTAssertEqual(try Data(contentsOf: url), before)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), ["margin.m4a"])
     }
 
     func testAMismatchKeepsTheOriginalFileAndWords() async throws {
         let url = try tone(seconds: 4)
         let before = try Data(contentsOf: url)
         let said = transcript(["that", "is", "my", "point", "stop", "margin"], text: "That is my point stop marching.")
-        let outcome = await MarginEndPhraseTrim.trim(fileURL: url, transcript: said)
-        XCTAssertEqual(outcome, .keepAll)
+        let prepared = await MarginEndPhraseTrim.prepare(fileURL: url, transcript: said)
+        XCTAssertNil(prepared)
         XCTAssertEqual(try Data(contentsOf: url), before, "the original is untouched")
     }
 
     func testNoPhraseKeepsEverything() async throws {
         let url = try tone(seconds: 2)
         let before = try Data(contentsOf: url)
-        let outcome = await MarginEndPhraseTrim.trim(fileURL: url, transcript: transcript(["that", "is", "it"], text: "That is it."))
-        XCTAssertEqual(outcome, .keepAll)
+        let prepared = await MarginEndPhraseTrim.prepare(fileURL: url, transcript: transcript(["that", "is", "it"], text: "That is it."))
+        XCTAssertNil(prepared)
         XCTAssertEqual(try Data(contentsOf: url), before)
     }
 
     func testAFileThatWillNotOpenKeepsEverythingAndLeavesNoTemporaryFile() async throws {
         let url = directory.appending(path: "margin.m4a")
         try Data([0, 1, 2, 3]).write(to: url)
-        let outcome = await MarginEndPhraseTrim.trim(
+        let prepared = await MarginEndPhraseTrim.prepare(
             fileURL: url,
             transcript: transcript(["that", "is", "my", "point", "stop", "margin"], text: "That is my point. Stop margin.")
         )
-        XCTAssertEqual(outcome, .keepAll)
+        XCTAssertNil(prepared)
         XCTAssertEqual(try Data(contentsOf: url), Data([0, 1, 2, 3]))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), ["margin.m4a"])
     }
