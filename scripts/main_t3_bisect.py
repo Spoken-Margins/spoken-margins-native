@@ -24,6 +24,11 @@ Rules the pure part (`bisect`, `classify_probe`) keeps, tested in scripts/tests/
   `undecided`: it is not evidence about the watched tests.
 - `undecided` is retried once, then ends the bisection as undecided.
 
+- An issue names only the tests the culprit's own probes saw fail. A red run with two separate breaks stops at the
+  earlier one; the other failures are listed as "not by this merge" and are not bisected.
+- The job token reaches `git lfs pull` by environment (GIT_CONFIG_*), never argv, so no error text can print it, and
+  its base64 form is masked in the log first.
+
 The scripts/ folder is restored to the red commit's before each probe, so an old commit is tested by today's runner
 (its flags, its crash handling) with its own app code and tests. Default taken: scripts/ only, not TestPlans/.
 
@@ -117,6 +122,11 @@ def classify_probe(verdict: str, results: dict, watched: set) -> str:
     return UNDECIDED  # another test failed here: a different problem, not the one being chased
 
 
+def watched_failures(results: dict, watched: set) -> list:
+    """The failed tests of a probe that belong to a watched class: what that commit itself is shown to break."""
+    return sorted(t for t, _ in results.get('failed', []) if class_of(t) in watched)
+
+
 def bisect(commits: list, probe, max_probes: int = MAX_PROBES, time_left=lambda: True) -> Result:
     """Find the first failing commit in `commits` (oldest first). The last one is known to fail and the commit before
     the first is known to pass. `probe(sha)` returns PASS, FAIL or UNDECIDED; `time_left()` is False when out of time.
@@ -190,7 +200,7 @@ def culprit_title(subject: str, pr: int | None, tests: list) -> str:
 
 
 def culprit_body(sha: str, subject: str, pr: int | None, red: str, green: str, run_url: str, tests: list, result: Result,
-                 failure_issue: str | None) -> str:
+                 failure_issue: str | None, unexplained: list | None = None) -> str:
     named = f'PR #{pr}' if pr else f'the merge `{subject}`'
     probes = ', '.join(f'`{s[:7]}` {o}' for s, o in result.probes) or 'none needed: one merge since the last green'
     lines = [CULPRIT_MARKER % sha, '',
@@ -204,6 +214,10 @@ def culprit_body(sha: str, subject: str, pr: int | None, red: str, green: str, r
              f'- Failing tests ({len(tests)}): ' + ', '.join(f'`{t3.short_test(t)}`' for t in tests[:20]) +
              (f' and {len(tests) - 20} more' if len(tests) > 20 else ''),
              ]
+    if unexplained:
+        lines.append(f'- Also failing in the red run, but not by this merge (its probes did not fail them; another merge '
+                     f'or a flake): ' + ', '.join(f'`{t3.short_test(t)}`' for t in unexplained[:20]) +
+                     (f' and {len(unexplained) - 20} more' if len(unexplained) > 20 else ''))
     if failure_issue:
         lines.append(f'- The failure issue for the run: {failure_issue}')
     lines += ['', '## Done when', '',
@@ -236,11 +250,36 @@ def find_open_culprit_issue(issues: list, sha: str) -> dict | None:
 
 # ---- Git and the runs -------------------------------------------------------------------------------
 
-def git(*args: str) -> str:
-    done = subprocess.run(['git', *args], cwd=ROOT, capture_output=True, text=True)
+def describe(args: tuple) -> str:
+    """The first words of a git command for an error message, without the value after any `-c` (a credential)."""
+    shown, skip = [], False
+    for arg in args:
+        if skip:
+            skip = False
+            continue
+        if arg == '-c':
+            skip = True
+            continue
+        shown.append(arg)
+    return ' '.join(shown[:3])
+
+
+def git(*args: str, env: dict | None = None) -> str:
+    """Run git in the checkout. `env` adds to the environment, so a credential never goes in argv or in an error."""
+    done = subprocess.run(['git', *args], cwd=ROOT, capture_output=True, text=True,
+                          env={**os.environ, **env} if env else None)
     if done.returncode:
-        raise RuntimeError(f'git {" ".join(args[:3])}: {done.stderr.strip()[:300]}')
+        raise RuntimeError(f'git {describe(args)}: {done.stderr.strip()[:300]}')
     return done.stdout
+
+
+def lfs_credential(token: str) -> tuple:
+    """(the basic-auth value, the environment that hands it to git for one command). GIT_CONFIG_* keeps it out of
+    argv, so no error text or process listing carries it; the caller masks the value in the workflow log."""
+    import base64
+    auth = base64.b64encode(f'x-access-token:{token}'.encode()).decode()
+    return auth, {'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'http.https://github.com/.extraheader',
+                  'GIT_CONFIG_VALUE_0': f'AUTHORIZATION: basic {auth}'}
 
 
 def merges_in_range(green: str, red: str) -> list:
@@ -255,10 +294,11 @@ def check_out(sha: str, red: str) -> None:
     git('checkout', red, '--', 'scripts')
     token = os.environ.get('GH_TOKEN')
     if token:
-        import base64
-        auth = base64.b64encode(f'x-access-token:{token}'.encode()).decode()
+        auth, env = lfs_credential(token)
+        # Actions masks the raw token, not the base64 of it, so mask that too before anything can print it.
+        print(f'::add-mask::{auth}', flush=True)
         # The checkout keeps no credentials; the job token is handed to this one command (main-t3.yml does the same).
-        git('-c', f'http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}', 'lfs', 'pull')
+        git('lfs', 'pull', env=env)
 
 
 def present_classes(grouped: dict, root: Path) -> dict:
@@ -275,6 +315,7 @@ def present_classes(grouped: dict, root: Path) -> dict:
 
 
 def make_probe(grouped: dict, watched: set, red: str, run_id: str, evidence: Path):
+    """The probe function. `probe.failed` maps a commit to the watched tests its probes saw fail."""
     lane = t3.load_lane_runner()
     lane.T3_TIMEOUT = PROBE_TIMEOUT
     count = [0]
@@ -297,10 +338,13 @@ def make_probe(grouped: dict, watched: set, red: str, run_id: str, evidence: Pat
             return UNDECIDED
         results = t3.collect_results(t3.pick_manifests(t3.read_manifests(out)))
         outcome = classify_probe(verdict, results, watched)
+        if outcome == FAIL:
+            probe.failed.setdefault(sha, set()).update(watched_failures(results, watched))
         print(f'Probe {sha[:7]}: {verdict} -> {outcome} ({len(results["failed"])} failed, {results["passed"]} passed; '
               f'{"; ".join(str(d) for d in details[:2])})', flush=True)
         return outcome
 
+    probe.failed = {}
     return probe
 
 
@@ -332,6 +376,7 @@ def command_bisect(args) -> int:
         print(f'Could not list the open issues: {error}', flush=True)
         failure_issue = None
     green = None
+    probe = None
     try:
         green = t3.find_last_green(red)
     except (RuntimeError, KeyError, TypeError, ValueError) as error:
@@ -372,13 +417,19 @@ def command_bisect(args) -> int:
             if find_open_culprit_issue(issues, result.sha) is None:
                 subject = subjects.get(result.sha, '')
                 pr = pr_number(subject)
-                body = culprit_body(result.sha, subject, pr, red, green, args.run_url, failed_tests, result,
-                                    failure_issue['html_url'] if failure_issue else None)
-                url = t3.gh('issue', 'create', '-R', t3.repo(), '--title', culprit_title(subject, pr, failed_tests),
+                # Name only what the culprit's own probes saw fail; the rest of the red run's failures are not its.
+                shown = sorted(getattr(probe, 'failed', {}).get(result.sha) or failed_tests)
+                unexplained = [t for t in failed_tests if t not in shown]
+                body = culprit_body(result.sha, subject, pr, red, green, args.run_url, shown, result,
+                                    failure_issue['html_url'] if failure_issue else None, unexplained)
+                url = t3.gh('issue', 'create', '-R', t3.repo(), '--title', culprit_title(subject, pr, shown),
                             '--label', 'ready', '--label', t3.ISSUE_LABEL, '--label', pr_area(pr),
                             '--body-file', '-', stdin=body).strip()
                 print(f'Culprit issue: {url}', flush=True)
                 note = f'Bisected to `{result.sha[:7]}` ({subject}): {url}'
+                if unexplained:
+                    note += (f'. Not explained by this merge, and not bisected: {len(unexplained)} other failing test'
+                             f'{"s" if len(unexplained) != 1 else ""} in the red run (another merge or a flake).')
             else:
                 note = f'Bisected to `{result.sha[:7]}`; its issue is already open.'
         else:

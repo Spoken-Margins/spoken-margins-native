@@ -223,13 +223,16 @@ class PresentClassesTests(unittest.TestCase):
 class CommandTests(unittest.TestCase):
     """command_bisect end to end with git, gh and the lane replaced by recorders."""
 
-    def run_command(self, result_for, failure_issue=True, git_fails=False):
+    def run_command(self, result_for, failure_issue=True, git_fails=False, red_failed=None, probe_failed=None):
         import argparse
         import json
         import os
         calls = []
         commits = [(sha, f'Merge pull request #{i}00 from x/y') for i, sha in enumerate(shas(4), 1)]
-        failed = {'steps': [{'tests': {'SpokenMarginsAppTests/Foo/testA': {'status': 'failed'}}}]}
+        failed = {'steps': [{'tests': {t: {'status': 'failed'}
+                                       for t in red_failed or ['SpokenMarginsAppTests/Foo/testA']}}]}
+        if probe_failed is not None:
+            result_for.failed = probe_failed
         issue = {'number': 5, 'html_url': 'https://github.com/o/r/issues/5', 'body': B.t3.MARKER,
                  'user': {'login': 'github-actions[bot]'}}
 
@@ -277,6 +280,23 @@ class CommandTests(unittest.TestCase):
         self.assertEqual([c[0][2] for c in comments], ['5'])
         self.assertIn('https://github.com/o/r/issues/9', comments[0][1])
 
+    def test_two_separate_breaks_name_only_the_tests_the_culprit_failed(self):
+        """m1 broke Foo and a later merge broke Bar: the bisection stops at m1, so the issue may not blame m1 for Bar."""
+        foo, bar = 'SpokenMarginsAppTests/Foo/testA', 'SpokenMarginsAppTests/Bar/testB'
+        probe = lambda sha: B.FAIL  # noqa: E731
+        culprit = shas(4)[0]
+        calls, _ = self.run_command(probe, red_failed=[foo, bar], probe_failed={culprit: {foo}})
+        args, body = [c for c in calls if c[0][:2] == ('issue', 'create')][0]
+        title = args[args.index('--title') + 1]
+        self.assertEqual(title, 'Main T3 red: #100 broke Foo/testA')
+        failing = [line for line in body.splitlines() if line.startswith('- Failing tests')][0]
+        self.assertIn('`Foo/testA`', failing)
+        self.assertNotIn('Bar/testB', failing)
+        other = [line for line in body.splitlines() if line.startswith('- Also failing')][0]
+        self.assertIn('`Bar/testB`', other)
+        note = [c for c in calls if c[0][:2] == ('issue', 'comment')][0][1]
+        self.assertIn('1 other failing test', note)
+
     def test_an_undecided_run_opens_no_issue_and_names_no_pr_on_the_failure_issue(self):
         calls, record = self.run_command(lambda sha: B.UNDECIDED)
         self.assertEqual([c for c in calls if c[0][:2] == ('issue', 'create')], [])
@@ -297,6 +317,62 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(B.t3.find_open_issue([failure, culprit])['number'], 1)
         self.assertIsNone(B.t3.find_open_issue([culprit]))
         self.assertIsNone(B.find_open_culprit_issue([failure], 'a' * 40))
+
+
+class CredentialTests(unittest.TestCase):
+    """A probe's LFS pull carries the job token; it must reach neither argv, an error, nor an unmasked log line."""
+    TOKEN = 'ghs_exampletoken123'
+
+    def test_check_out_hands_the_token_to_git_by_environment_and_masks_it(self):
+        import contextlib
+        import io
+        import os
+        calls = []
+        auth, _ = B.lfs_credential(self.TOKEN)
+        original, os_token = B.git, os.environ.get('GH_TOKEN')
+        B.git = lambda *args, env=None: calls.append((args, env)) or ''
+        os.environ['GH_TOKEN'] = self.TOKEN
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                B.check_out('a' * 40, RED)
+        finally:
+            B.git = original
+            if os_token is None:
+                os.environ.pop('GH_TOKEN')
+            else:
+                os.environ['GH_TOKEN'] = os_token
+        lfs = [c for c in calls if c[0][:2] == ('lfs', 'pull')]
+        self.assertEqual(len(lfs), 1)
+        args, env = lfs[0]
+        self.assertFalse(any(auth in a or self.TOKEN in a for a in args), args)
+        self.assertEqual(env['GIT_CONFIG_KEY_0'], 'http.https://github.com/.extraheader')
+        self.assertEqual(env['GIT_CONFIG_VALUE_0'], f'AUTHORIZATION: basic {auth}')
+        self.assertIn(f'::add-mask::{auth}', out.getvalue())
+
+    def test_a_failed_git_command_never_prints_a_value_given_after_dash_c(self):
+        with self.assertRaises(RuntimeError) as caught:
+            B.git('-c', 'http.extraheader=AUTHORIZATION: basic SECRETVALUE', 'no-such-subcommand')
+        self.assertNotIn('SECRETVALUE', str(caught.exception))
+        self.assertNotIn('AUTHORIZATION', str(caught.exception))
+        self.assertEqual(B.describe(('-c', 'k=v', 'lfs', 'pull', 'x')), 'lfs pull x')
+        self.assertEqual(B.describe(('log', '--first-parent')), 'log --first-parent')
+
+    def test_the_environment_credential_reaches_git_but_not_the_error_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            original = B.ROOT
+            B.ROOT = Path(tmp)
+            try:
+                subprocess.run(['git', 'init', '-q', tmp], check=True)
+                auth, env = B.lfs_credential(self.TOKEN)
+                # `git config` reads the injected key, so the environment really is passed down.
+                self.assertEqual(B.git('config', '--get', 'http.https://github.com/.extraheader', env=env).strip(),
+                                 f'AUTHORIZATION: basic {auth}')
+                with self.assertRaises(RuntimeError) as caught:
+                    B.git('bogus-subcommand', env=env)
+                self.assertNotIn(auth, str(caught.exception))
+            finally:
+                B.ROOT = original
 
 
 class GitRangeTests(unittest.TestCase):
