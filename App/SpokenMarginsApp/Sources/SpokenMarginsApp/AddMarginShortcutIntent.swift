@@ -159,10 +159,12 @@ struct AddMarginToSpokenMarginsIntent: AppIntent {
     }
 
     /// Siri stays open and listening after this answer until the listener dismisses it, so what was playing does not come
-    /// back by itself (measured on the owner's phone, #3894, 2026-11-21). Nothing here can end Siri's turn: the intent is
-    /// not foreground (`openAppWhenRun`), asks nothing after the text, and returns only the dialog; App Intents has no
-    /// call that closes Siri. Help says so (`HelpScreen`, Margins). Don't add a follow-up question or a confirmation
-    /// step in the hope of ending it: both would keep Siri listening.
+    /// back while Siri is up (measured on the owner's phone, #3894, 2026-11-21). No public App Intents call ends Siri's
+    /// turn. The one known way to move Siri aside is to bring the app to the front (`openAppWhenRun`,
+    /// `ForegroundContinuableIntent`); that is rejected here because hands-free means the phone stays as it is. The
+    /// intent asks nothing after the text and returns only the dialog. A follow-up question or a confirmation step would
+    /// most likely keep Siri listening, so don't add one. Help says what to expect (`HelpScreen`, Margins).
+    /// Not measured: whether the player resumes by itself after Siri closes (#4831 asks).
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         // The same weak reference the Listening Edition action uses; the app sets it at launch,
