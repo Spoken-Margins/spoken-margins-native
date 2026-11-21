@@ -61,6 +61,13 @@ final class MarginMomentTapTests: XCTestCase {
         return (model, MarginRow(interjection: margin, itemTitle: "Tap source", sessionDate: nil))
     }
 
+    /// The `margin.tap` lines the model has recorded, as `origin/outcome/reason` (#4447): a tap that does nothing must say why.
+    private func tapLines(_ model: Gate1AppModel) -> [String] {
+        model.playbackEventRecording.events.filter { $0.kind == "margin.tap" }.map {
+            [$0.fields["origin"], $0.fields["outcome"], $0.fields["reason"]].compactMap { $0 }.joined(separator: "/")
+        }
+    }
+
     func testTheTapKeepsTheScreenUntilTheReadsAreDoneThenPlaysTheMoment() async throws {
         let (model, row) = try fixture()
         defer { model.endMarginMoment(); model.pause() }
@@ -71,6 +78,7 @@ final class MarginMomentTapTests: XCTestCase {
         XCTAssertEqual(model.screen, .playback)
         XCTAssertNotNil(model.marginMoment)
         XCTAssertEqual(model.selectedItem.id, "tap-source")
+        XCTAssertEqual(tapLines(model), ["own/started"], "one line per tap, and it says the moment started")
     }
 
     func testLeavingTheScreenBeforeTheReadsAreDoneDropsTheMoment() async throws {
@@ -83,6 +91,9 @@ final class MarginMomentTapTests: XCTestCase {
         await model.settleItemOpen()
         XCTAssertEqual(model.screen, .home, "a late result must not cover the tab the listener chose")
         XCTAssertNil(model.marginMoment)
+        // The tab change drops the open (so the open is no longer the tap's, and its task is cancelled) before the screen
+        // check could see it; the open is the reason named, as a cancel alone would hide it.
+        XCTAssertEqual(tapLines(model), ["own/dropped/open_superseded"], "the dropped tap says so, and why")
     }
 
     func testAMarginThatIsNoLongerActiveSaysSoAndPlaysNothing() async throws {
@@ -93,6 +104,7 @@ final class MarginMomentTapTests: XCTestCase {
         XCTAssertNil(model.marginMoment)
         XCTAssertEqual(model.screen, .home)
         XCTAssertNotNil(model.lastError)
+        XCTAssertEqual(tapLines(model), ["own/refused/margin_unavailable"])
     }
 
     func testAnotherItemStartedWhileTheReadsRunDropsTheMoment() async throws {
@@ -105,6 +117,7 @@ final class MarginMomentTapTests: XCTestCase {
         await model.settleItemOpen()
         XCTAssertNil(model.marginMoment, "a late result must not take over newer playback")
         XCTAssertEqual(model.snapshot.itemId, "other-source")
+        XCTAssertEqual(tapLines(model), ["own/dropped/playback_moved"])
     }
 
     func testARecordingStartedWhileTheReadsRunDropsTheMoment() async throws {
@@ -115,5 +128,30 @@ final class MarginMomentTapTests: XCTestCase {
         XCTAssertTrue(model.recordingNavigationIsLocked)
         await model.settleItemOpen()
         XCTAssertNil(model.marginMoment)
+        let lines = tapLines(model)
+        XCTAssertEqual(lines.count, 1, "a dropped tap is not silent")
+        XCTAssertTrue(lines.first?.hasPrefix("own/dropped/") == true, "the tap was dropped, whatever the first thing to notice was: \(lines)")
+    }
+
+    func testATapWhileRecordingIsTurnedDownAndSaysSo() async throws {
+        let (model, row) = try fixture(openHome: false)
+        defer { model.endMarginMoment(); model.pause() }
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        XCTAssertTrue(model.recordingNavigationIsLocked)
+        MarginMomentTap.start(row, model: model)
+        await model.settleItemOpen()
+        XCTAssertNil(model.marginMoment)
+        XCTAssertEqual(tapLines(model), ["own/refused/recording_in_progress"])
+    }
+
+    func testEachTapMakesExactlyOneLine() async throws {
+        let (model, row) = try fixture()
+        defer { model.endMarginMoment(); model.pause() }
+        MarginMomentTap.start(row, model: model)
+        await model.settleItemOpen()
+        MarginMomentTap.start(row, model: model)
+        await model.settleItemOpen()
+        XCTAssertEqual(tapLines(model).count, 2)
+        XCTAssertFalse(tapLines(model).contains { $0.contains(row.interjection.id) }, "a line never names the Margin")
     }
 }
