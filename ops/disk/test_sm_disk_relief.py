@@ -8,6 +8,7 @@ import fcntl
 import json
 import os
 import plistlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -865,11 +866,38 @@ class BuildCacheFolder(Base):
                 if not desk_goes:
                     self.assertTrue(any(str(desk_slot / 'root/dd') in s and '3 hours' in s for s in plan.skipped), plan.skipped)
 
+    def test_a_gone_desk_worktrees_slot_still_goes_after_30_minutes(self):
+        desk = self.desk_worktree('lane-gone')
+        slot = self.linked(desk, age=40 * 60)
+        shutil.rmtree(desk)
+        plan = d.make_plan(self.cfg, FakeMachine(self.cfg, base_free=10 * MiB))
+        self.assertIn(slot, {c.path for c in plan.candidates})
+
+    def test_a_desk_worktrees_in_worktree_build_waits_3_hours_too(self):
+        desk_repo = self.cfg.home / 'Documents/GitHub/spoken-margins-native-test-desk'
+        desk_repo.mkdir(parents=True)
+        git(desk_repo, 'init', '-q', '-b', 'main')
+        write(desk_repo / 'README.md', 10)
+        (desk_repo / '.gitignore').write_text('.build/\n')
+        git(desk_repo, 'add', '.')
+        git(desk_repo, 'commit', '-qm', 'one')
+        lane = desk_repo / '.claude/worktrees/lane-x'
+        git(desk_repo, 'worktree', 'add', '-q', '--detach', str(lane))
+        cache = self.cache(lane, MiB, age=2 * 3600)
+        plan = d.make_plan(self.cfg, FakeMachine(self.cfg, base_free=10 * MiB))
+        self.assertNotIn(cache, {c.path for c in plan.candidates})
+        self.assertTrue(any(str(cache) in s and '3 hours' in s for s in plan.skipped), plan.skipped)
+        age_tree(cache, 4 * 3600)
+        plan = d.make_plan(self.cfg, FakeMachine(self.cfg, base_free=10 * MiB))
+        self.assertIn(cache, {c.path for c in plan.candidates})
+
     def test_only_a_desk_lane_worktree_gets_the_longer_idle_age(self):
         home = self.cfg.home / 'Documents/GitHub'
         yes = [home / 'spoken-margins-native-test-desk/.claude/worktrees/lane-x',
                home / 'spoken-margins-native-test-desk/.claude/worktrees/lane-pr1-abc']
-        no = [home / 'spoken-margins-native/.claude/worktrees/lane-x',           # a lane name in another checkout
+        no = [home / 'spoken-margins-native/.claude/worktrees/lane-x',
+              home / 'spoken-margins-native-test-desk/other/.claude/worktrees/lane-x',  # the suffix is on the checkout only
+              home / '-test-desk/.claude/worktrees/lane-x',           # a lane name in another checkout
               home / 'spoken-margins-native-test-desk/.claude/worktrees/ws-4731',  # the desk's own other worktree
               home / 'spoken-margins-native-test-desk/lane-x',                    # not under .claude/worktrees
               home / 'spoken-margins-native-test-desk',                           # the standing desk checkout itself

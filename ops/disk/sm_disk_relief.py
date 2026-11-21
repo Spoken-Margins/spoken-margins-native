@@ -572,7 +572,7 @@ def is_desk_lane_worktree(path) -> bool:
         return False
     parts = Path(str(path)).parts
     return (len(parts) >= 4 and parts[-1].startswith('lane-') and parts[-2:-4:-1] == ('worktrees', '.claude')
-            and any(part.endswith('-test-desk') for part in parts[:-3]))
+            and parts[-4].endswith('-test-desk') and parts[-4] != '-test-desk')
 
 
 def cache_idle_seconds(worktree) -> int:
@@ -685,8 +685,10 @@ def plan_build_slots(cfg: Config, machine: Machine, procs: List[Proc], protected
         idle = cache_idle_seconds(owner)
         idle_since = machine.now() - idle
         if worktree_gone(owner):
-            if tree_stats(slot, stop_if_newer_than=idle_since).newest_mtime > idle_since:
-                plan.skipped.append(f'{slot}: changed in the last {idle_words(idle)}')
+            # Nothing is waiting for a build whose worktree is gone, so the desk's longer wait doesn't apply.
+            gone_since = machine.now() - CACHE_IDLE_SECONDS
+            if tree_stats(slot, stop_if_newer_than=gone_since).newest_mtime > gone_since:
+                plan.skipped.append(f'{slot}: changed in the last {idle_words(CACHE_IDLE_SECONDS)}')
                 continue
             size = tree_stats(slot).disk_bytes
             if size:
