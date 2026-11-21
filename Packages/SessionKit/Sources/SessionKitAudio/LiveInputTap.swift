@@ -121,6 +121,7 @@ public actor LiveInputTap {
     private let makeSession: @Sendable () -> any LiveInputSession
     private let onWords: @Sendable ([LiveInputWord]) -> Void
     private let onEvent: Event
+    private let onStreamEnded: @Sendable () -> Void
     private let wallClockMs: @Sendable () -> Int
     private let cpuClockMs: @Sendable () -> Int
 
@@ -142,12 +143,14 @@ public actor LiveInputTap {
         makeSession: @escaping @Sendable () -> any LiveInputSession,
         onWords: @escaping @Sendable ([LiveInputWord]) -> Void = { _ in },
         onEvent: @escaping Event,
+        onStreamEnded: @escaping @Sendable () -> Void = {},
         wallClockMs: @escaping @Sendable () -> Int = { LiveInputTap.monotonicMs() },
         cpuClockMs: @escaping @Sendable () -> Int = { LiveInputTap.processCpuMs() }
     ) {
         self.makeSession = makeSession
         self.onWords = onWords
         self.onEvent = onEvent
+        self.onStreamEnded = onStreamEnded
         self.wallClockMs = wallClockMs
         self.cpuClockMs = cpuClockMs
     }
@@ -186,6 +189,7 @@ public actor LiveInputTap {
                 await self?.heard(batch)
                 onWords(batch)
             }
+            await self?.sessionWordsEnded()
         }
         onEvent("margin.endPhrase.spike.started", [:])
         return true
@@ -220,6 +224,14 @@ public actor LiveInputTap {
         case .stopped:
             break
         }
+    }
+
+    /// The session's words ended while the tap was still running: the recogniser stopped on its own (an error, or the
+    /// system took it). A stop the tap itself asked for sets `.stopped` first, so it never lands here.
+    private func sessionWordsEnded() {
+        guard state == .running else { return }
+        onEvent("margin.endPhrase.spike.streamEnded", [:])
+        onStreamEnded()
     }
 
     private func heard(_ batch: [LiveInputWord]) {
