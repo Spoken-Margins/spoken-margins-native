@@ -110,7 +110,7 @@ final class MarginRowRepairTests: XCTestCase {
     }
 
     func testTheTwoStatusStringsAreTheOnesTheRowShows() {
-        XCTAssertEqual(TranscriptionFailureWording.contextNeedsRetry, "Context needs retry")
+        XCTAssertEqual(TranscriptionFailureWording.contextNeedsRetry, "Couldn't find the source words near this Margin")
         XCTAssertEqual(TranscriptionFailureWording.transcriptionNeedsRetry, "Transcription needs retry")
         XCTAssertEqual(TranscriptionFailureWording.marginStatus(transcriptionStatus: "failed", speechRecognitionOff: false), "Transcription needs retry")
     }
