@@ -3,6 +3,8 @@ import SessionKit
 
 enum InterjectionPositionPresentation {
     static func percent(for interjection: Interjection, durationMs: Int?) -> Int? {
+        // A moved Margin with no place stores zeros that mean nothing (#4233): no percent.
+        guard interjection.hasPlace else { return nil }
         guard let mediaTimeMs = interjection.anchor.mediaTimeMs else {
             return max(0, min(100, interjection.roughPercent))
         }
@@ -13,6 +15,7 @@ enum InterjectionPositionPresentation {
     }
 
     static func timelineBadge(for interjection: Interjection, durationMs: Int?) -> String {
+        guard interjection.hasPlace else { return MarginRowWording.noPlace }
         if let percent = percent(for: interjection, durationMs: durationMs) {
             return "\(percent)%"
         }
@@ -20,6 +23,7 @@ enum InterjectionPositionPresentation {
     }
 
     static func detailDescription(for interjection: Interjection, durationMs: Int?) -> String {
+        guard interjection.hasPlace else { return MarginPlacePresentation.detailPosition }
         guard let mediaTimeMs = interjection.anchor.mediaTimeMs else {
             return "Around \(percent(for: interjection, durationMs: durationMs) ?? 0)%"
         }

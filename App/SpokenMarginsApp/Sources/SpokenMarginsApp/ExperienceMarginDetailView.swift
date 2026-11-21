@@ -101,7 +101,7 @@ struct ExperienceMarginDetailView: View {
             .buttonStyle(.automatic)
             .accessibilityIdentifier("marginDetail.copyWithContext.button")
             // Share means another listener (#3211): this opens the friend sheet with only this Margin.
-            if ItemShareSessionSelection.isShareable(current.interjection) {
+            if MarginPlacePresentation.offersShare(current.interjection) {
                 Button("Share this Margin", systemImage: "square.and.arrow.up") {
                     pendingNavigation = .share // the friend sheet opens once this screen has closed
                     dismiss()
@@ -149,6 +149,12 @@ struct ExperienceMarginDetailView: View {
                         .foregroundStyle(AppColors.secondaryText)
                     LabeledContent("Attached to", value: current.targetDescription)
                     LabeledContent("Position", value: InterjectionPositionPresentation.detailDescription(for: current.interjection, durationMs: nil))
+                    if let movedFrom = MarginPlacePresentation.movedFromLine(for: current.interjection) {
+                        Text(movedFrom)
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("marginDetail.movedFrom.label")
+                    }
                     if current.needsAttention {
                         Label(current.attentionDescription, systemImage: "exclamationmark.triangle")
                             .foregroundStyle(AppColors.coral)
@@ -259,16 +265,19 @@ struct ExperienceMarginDetailView: View {
                 model.refreshMarginRowsInBackground(forItem: row.interjection.itemId)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                Button("Go to this moment in the source", systemImage: "arrow.turn.down.right") {
-                    pendingNavigation = .moment
-                    dismiss()
+                // A Margin with no place has no moment to go to (#4233).
+                if MarginPlacePresentation.offersGoToMoment(current.interjection) {
+                    Button("Go to this moment in the source", systemImage: "arrow.turn.down.right") {
+                        pendingNavigation = .moment
+                        dismiss()
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("marginDetail.playMoment.button")
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
+                    .background(AppColors.bone)
                 }
-                .buttonStyle(PrimaryButtonStyle())
-                .accessibilityIdentifier("marginDetail.playMoment.button")
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity)
-                .background(AppColors.bone)
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("marginDetail.screen")
