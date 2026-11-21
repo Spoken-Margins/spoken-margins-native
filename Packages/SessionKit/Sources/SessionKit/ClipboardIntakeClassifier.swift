@@ -29,8 +29,10 @@ public enum ClipboardIntakeUnusableReason: Equatable, Sendable {
 public enum ClipboardIntakeClassifier {
     /// Words taken from the start of the text for its title, matching the text import's own fallback.
     public static let titleWordLimit = 8
-    /// A share sheet often copies "Episode title https://…" on one line; treat a short single line with one link as that link.
-    public static let shortLinkLineLimit = 280
+    /// A share sheet copies "Episode title https://…", or the title and the link on two lines, or a note before the link.
+    /// Text with exactly one web link and no more than this many characters around it (the note, not the link, so a long
+    /// tracking link doesn't count against it) is that link, on one line or several (#4809).
+    public static let shortNoteLimit = 280
 
     /// "notes.txt" or "Node.js" on its own is a file or product name, not a site.
     private static let fileExtensions: Set<String> = [
@@ -52,16 +54,34 @@ public enum ClipboardIntakeClassifier {
             }
         }
 
-        if !trimmed.contains(where: \.isNewline), trimmed.count <= shortLinkLineLimit {
-            let links = tokens.compactMap { token -> URL? in
-                let candidate = stripWrapping(token)
-                guard let scheme = scheme(of: candidate), ["http", "https"].contains(scheme) else { return nil }
-                return webURL(from: candidate)
-            }
-            if links.count == 1, let link = links.first { return .link(link) }
-        }
+        if let link = linkWithShortNote(in: tokens, totalLength: trimmed.count) { return .link(link) }
 
         return .text(title: title(for: trimmed), body: trimmed)
+    }
+
+    /// The link of a short note around exactly one web link, however many lines the note has. Two links are ambiguous and a
+    /// longer note is the listener's text, so both are nil. Only a short note is ever scanned, so a pasted article costs
+    /// no more than its word count.
+    private static func linkWithShortNote(in tokens: [String], totalLength: Int) -> URL? {
+        guard tokens.count <= shortNoteLimit / 2 + 1 else { return nil }
+        var found: (url: URL, length: Int)?
+        for token in tokens {
+            // Most words hold no link; skipping them first keeps a long run of brackets from being stripped one by one.
+            guard token.range(of: "http", options: .caseInsensitive) != nil else { continue }
+            var candidate = stripWrapping(token)
+            // The address of a Markdown link with spaces in its text: "[Hear it](https://…)" is "it](https://…)" here.
+            // Two Markdown links stuck together are two links.
+            if let close = candidate.range(of: "](http", options: [.caseInsensitive, .backwards]) {
+                if candidate.range(of: "](http", options: .caseInsensitive)?.lowerBound != close.lowerBound { return nil }
+                candidate = stripWrapping(String(candidate[candidate.index(close.lowerBound, offsetBy: 2)...]))
+            }
+            guard let scheme = scheme(of: candidate), ["http", "https"].contains(scheme),
+                  let url = webURL(from: candidate) else { continue }
+            if found != nil { return nil }
+            found = (url, token.count)
+        }
+        guard let found, totalLength - found.length <= shortNoteLimit else { return nil }
+        return found.url
     }
 
     /// The first words of the first non-empty line, without Markdown heading marks.
@@ -126,9 +146,13 @@ public enum ClipboardIntakeClassifier {
         let pairs: [Character: Character] = [")": "(", "]": "["]
         var result = Substring(token)
         while let first = result.first, leading.contains(first) { result = result.dropFirst() }
+        // Bracket counts are kept as characters drop, so a long run of brackets costs one pass, not one per bracket.
+        var counts: [Character: Int] = [:]
+        for character in result where "()[]".contains(character) { counts[character, default: 0] += 1 }
         while let last = result.last, trailing.contains(last) {
             // Keep a bracket the link itself opened, as in "…/wiki/Mercury_(planet)".
-            if let opener = pairs[last], result.filter({ $0 == last }).count <= result.filter({ $0 == opener }).count { break }
+            if let opener = pairs[last], counts[last, default: 0] <= counts[opener, default: 0] { break }
+            if "()[]".contains(last) { counts[last, default: 0] -= 1 }
             result = result.dropLast()
         }
         return String(result)

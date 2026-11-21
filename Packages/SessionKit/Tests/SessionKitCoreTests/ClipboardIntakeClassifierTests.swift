@@ -49,29 +49,63 @@ final class ClipboardIntakeClassifierTests: XCTestCase {
         )
     }
 
-    /// A share sheet's "Title https://…" line is the link only while it is short: 280 characters at most,
-    /// counting the title. A longer line is pasted text. (A bare link has no such limit.)
-    func testAShareSheetLineIsTheLinkUpTo280CharactersAndTextBeyond() {
-        func shareLine(ofLength length: Int) -> String {
-            let head = "Listen to this: https://example.com/"
-            return head + String(repeating: "a", count: length - head.count)
+    /// A note around one link is part of the share while it is short: 280 characters at most, not counting the link, so a
+    /// long tracking link is no reason to import the message as text (#4809). A longer note is pasted text. A bare link
+    /// has no limit.
+    func testANoteAroundALinkIsTheLinkUpTo280CharactersOfNoteAndTextBeyond() {
+        let address = "https://example.com/" + String(repeating: "a", count: 400)
+        for noteLength in [16, 279, 280] {
+            let note = String(repeating: "n", count: noteLength - 1) + " "
+            XCTAssertEqual(ClipboardIntakeClassifier.classify(note + address), link(address), "\(noteLength) characters of note")
+            XCTAssertEqual(ClipboardIntakeClassifier.classify(address + " " + note.dropLast()), link(address), "link first, \(noteLength)")
         }
-        for length in [100, 279, 280] {
-            let line = shareLine(ofLength: length)
-            XCTAssertEqual(line.count, length)
-            XCTAssertEqual(
-                ClipboardIntakeClassifier.classify(line),
-                link(String(line.dropFirst("Listen to this: ".count))),
-                "\(length) characters"
-            )
-        }
-        let long = shareLine(ofLength: 281)
-        XCTAssertEqual(long.count, 281)
-        // The title is the first eight words, which here is the whole line.
-        XCTAssertEqual(ClipboardIntakeClassifier.classify(long), .text(title: long, body: long))
+        let long = String(repeating: "n", count: 280) + " " + address
+        XCTAssertEqual(
+            ClipboardIntakeClassifier.classify(long),
+            .text(title: ClipboardIntakeClassifier.title(for: long), body: long),
+            "281 characters of note is text"
+        )
 
         let bareLong = "https://example.com/" + String(repeating: "a", count: 400)
         XCTAssertEqual(ClipboardIntakeClassifier.classify(bareLong), link(bareLong), "a bare link is a link whatever its length")
+    }
+
+    /// #4809: apps copy "Title" then the link on the next line, or a note, a blank line and the link. These are the link.
+    func testATitleAndALinkOnSeparateLinesIsTheLink() {
+        let address = "https://example.com/post"
+        let cases = [
+            "First line\n\(address)",
+            "First line\r\n\(address)",
+            "\(address)\nFirst line",
+            "Check this out\n\n\(address)\n",
+            "  Check this out \(address) \n",
+            "Title — Site\n(\(address))",
+            "Listen: [Hear it](\(address))",
+            "Look at this: \(address).",
+            "\u{201C}\(address)\u{201D} is worth a listen",
+        ]
+        for pasted in cases {
+            XCTAssertEqual(ClipboardIntakeClassifier.classify(pasted), link(address), "\(pasted.debugDescription)")
+        }
+    }
+
+    /// Still text: two links, a long note around one, no web link, or a link that is not a web link.
+    func testNotesThatAreNotAShareStayText() {
+        let address = "https://example.com/post"
+        let article = String(repeating: "A sentence about things. ", count: 40)
+        for pasted in [
+            "Compare \(address) with https://example.com/b",
+            "\(article)\n\(address)",
+            "Check this out example.com or mail me@example.com",
+            "Check this out mailto:me@example.com",
+            "Check this out ftp://example.com/file",
+        ] {
+            guard case .text = ClipboardIntakeClassifier.classify(pasted) else {
+                XCTFail("should stay text: \(pasted.prefix(60).debugDescription)")
+                continue
+            }
+        }
+        XCTAssertGreaterThan(article.count, ClipboardIntakeClassifier.shortNoteLimit)
     }
 
     func testABareDomainBecomesAnHTTPSLink() {
@@ -101,11 +135,29 @@ final class ClipboardIntakeClassifierTests: XCTestCase {
         XCTAssertEqual(body, pasted.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    func testTextThatMentionsALinkInsideSeveralLinesStaysText() {
+    /// A short run of words with a huge token among them must classify at once: only words that could hold a link are stripped.
+    func testAHugeTokenInAShortNoteDoesNotStallTheClassifier() {
+        let started = Date()
+        for pasted in ["a " + String(repeating: ")", count: 20_000), "see " + String(repeating: "(", count: 20_000) + " x"] {
+            guard case .text = ClipboardIntakeClassifier.classify(pasted) else { return XCTFail("should be text") }
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5, "was quadratic in the run of brackets")
+    }
+
+    func testTwoMarkdownLinksStuckTogetherAreTwoLinksSoText() {
+        guard case .text = ClipboardIntakeClassifier.classify("Read [a](https://x.com/a)[b](https://y.com/b)") else {
+            return XCTFail("two links in one word are ambiguous")
+        }
+    }
+
+    func testTextThatMentionsALinkInsideLongProseStaysText() {
+        let body = (1...12).map { "Line \($0) of notes about listening, with enough words to be notes." }.joined(separator: "\n")
+            + "\nhttps://example.com/post"
+        XCTAssertGreaterThan(body.count, ClipboardIntakeClassifier.shortNoteLimit)
         XCTAssertEqual(
-            ClipboardIntakeClassifier.classify("First line\nhttps://example.com/post"),
-            .text(title: "First line", body: "First line\nhttps://example.com/post"),
-            "a link inside several lines of text is part of the text"
+            ClipboardIntakeClassifier.classify(body),
+            .text(title: "Line 1 of notes about listening, with enough", body: body),
+            "a link inside pages of text is part of the text"
         )
     }
 

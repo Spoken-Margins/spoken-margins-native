@@ -15,6 +15,20 @@ public enum PasteIntake: Equatable, Sendable {
         if let link = PastedShareLink.first(in: content) { return .shareLink(link) }
         return .intake(ClipboardIntakeClassifier.classify(content))
     }
+
+    /// The one web link a paste is, with a short note around it or not, for a field that takes only a link (the Link form
+    /// and the model's paste buttons, #4809): a friend's share link or an `http(s)` link, else nil.
+    public static func webLink(in content: String?) -> URL? {
+        switch classify(content) {
+        case .shareLink(let url):
+            return url
+        case .intake(.link(let url)):
+            guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else { return nil }
+            return url
+        case .intake:
+            return nil
+        }
+    }
 }
 
 /// Finds a share link in pasted text: `https://<share host>/l/…`, whole or cut short.

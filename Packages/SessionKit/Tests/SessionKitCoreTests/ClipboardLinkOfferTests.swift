@@ -113,6 +113,8 @@ final class ClipboardLinkOfferTests: XCTestCase {
             ("  https://example.com/post\n", link("https://example.com/post")),
             ("Episode title https://example.com/ep/1", link("https://example.com/ep/1")),
             ("example.com/post", link("https://example.com/post")),
+            ("Episode title\nhttps://example.com/ep/1", link("https://example.com/ep/1")),
+            ("Check this out https://example.com/ep/1\n", link("https://example.com/ep/1")),
             (article, .notALink),
             ("a few words with no link", .notALink),
             ("https://a.com/x and https://b.com/y", .notALink),
