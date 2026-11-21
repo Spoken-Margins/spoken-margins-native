@@ -234,6 +234,10 @@ struct PlaybackScreen: View {
                 }
             }
             .toolbarBackground(AppColors.listeningBackground, for: .navigationBar)
+            // A bar that is only visible once content scrolls under it hands the status bar its style back to the
+            // system, so in light mode the clock and battery were dark on this dark green screen (#4607). Same colour
+            // as the screen, so nothing changes to the eye; the colour scheme below now reaches the status bar.
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 // One meaning for the top-left arrow on every tab: leave the screen. The exception is the Timeline editor
