@@ -44,9 +44,11 @@ public struct DiskWriteLedger: Codable, Equatable, Sendable {
     }
 
     /// Drops what is not a day, then keeps the newest `keptDays` days up to today and the newest `keptDays` days after
-    /// it. A write never deletes a day only because it is later than the write: the clock now may be the wrong one,
-    /// and a clock set back would otherwise erase every real day in one write. Days after today are kept apart from
-    /// the real ones, so a clock set ahead can't push real days out, and the summary leaves them out until time reaches them.
+    /// it. A write never deletes a day only because it is later than the write, and the summary never hides a day
+    /// because of the clock: the clock now may be the wrong one, and trusting it would erase or hide every real day
+    /// while it is set back. Keeping the two groups apart means a clock set ahead pushes real days out only while it is
+    /// still ahead; once it is right again the days it left count as later days and no longer crowd out real ones.
+    /// The export names them as recorded, so a wrong clock shows up in the export instead of being hidden.
     private static func prune(_ days: inout [String: [String: Int64]], today: String) {
         for key in days.keys where !isDay(key) { days[key] = nil }
         let sorted = days.keys.sorted()
@@ -59,15 +61,10 @@ public struct DiskWriteLedger: Codable, Equatable, Sendable {
     /// The Diagnostics `diskWritesBySource` line: the newest days first, each as `<day> total=<n>MB <source>=<n>MB ...`
     /// with sources biggest first, and days joined by `; `. A day's figures are the app's own count of what it
     /// wrote that UTC day, and the line ends with the sources that are counted. `none_recorded` before the first write.
-    public var summaryText: String { summaryText(asOf: nil) }
-
-    /// The same line, leaving out days after `asOf`'s UTC day (a clock that was set ahead left them); they stay in the
-    /// ledger. With no date every day is named.
-    public func summaryText(asOf: Date?) -> String {
+    public var summaryText: String {
         let counted = "counted=" + Source.allCases.map(\.rawValue).joined(separator: ",")
         // Only days and source names of the shapes this type writes are printed, so whatever else a file holds can't leave the phone.
-        let cutoff = asOf.map(Self.day(of:))
-        let newest = days.keys.filter { key in Self.isDay(key) && (cutoff.map { key <= $0 } ?? true) }.sorted(by: >).prefix(Self.summaryDays)
+        let newest = days.keys.filter(Self.isDay).sorted(by: >).prefix(Self.summaryDays)
         guard !newest.isEmpty else { return "none_recorded; " + counted }
         let lines = newest.map { day -> String in
             let bySource = (days[day] ?? [:]).filter { Self.isSourceName($0.key) }
@@ -151,6 +148,6 @@ public final class DiskWriteLedgerStore: @unchecked Sendable {
     public var summaryText: String {
         lock.lock()
         defer { lock.unlock() }
-        return ledger.summaryText(asOf: now())
+        return ledger.summaryText
     }
 }
