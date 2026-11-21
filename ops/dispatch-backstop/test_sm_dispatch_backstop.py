@@ -1,0 +1,102 @@
+"""Host tests for the dispatch backstop (#4866). Run: python3 -m unittest ops/dispatch-backstop/test_sm_dispatch_backstop.py"""
+import datetime as dt
+import io
+import sys
+import unittest
+import urllib.error
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import sm_dispatch_backstop as b  # noqa: E402
+
+NOW = dt.datetime(2026, 11, 21, 12, 0, 0, tzinfo=dt.timezone.utc)
+
+
+def ago(minutes):
+    return (NOW - dt.timedelta(minutes=minutes)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+class FakeGitHub:
+    """Answers the runs list from a table and records dispatches. A workflow named in `broken` raises."""
+
+    def __init__(self, runs, broken=()):
+        self.runs, self.broken, self.posts = runs, set(broken), []
+
+    def __call__(self, method, path, token, body=None):
+        workflow = path.split('/workflows/')[1].split('/')[0].split('?')[0]
+        if workflow in self.broken:
+            raise urllib.error.URLError('boom')
+        if method == 'POST':
+            assert path.endswith('/dispatches'), path
+            self.posts.append((workflow, body))
+            return None
+        found = self.runs.get(workflow)
+        return {'workflow_runs': [found] if found else []}
+
+
+class DecideTests(unittest.TestCase):
+    def test_table_around_the_interval(self):
+        cases = [
+            ('never ran', 15, None, True),
+            ('just ran', 15, {'created_at': ago(0), 'event': 'push'}, False),
+            ('one minute inside', 15, {'created_at': ago(14), 'event': 'workflow_run'}, False),
+            ('exactly the interval', 15, {'created_at': ago(15), 'event': 'schedule'}, True),
+            ('long past', 15, {'created_at': ago(600), 'event': 'schedule'}, True),
+            ('hourly job ran 40m ago', 60, {'created_at': ago(40), 'event': 'pull_request'}, False),
+            ('hourly job ran 61m ago', 60, {'created_at': ago(61), 'event': 'pull_request'}, True),
+            ('3-hourly job ran 2h ago', 180, {'created_at': ago(120), 'event': 'push'}, False),
+            ('3-hourly job ran 3h10 ago', 180, {'created_at': ago(190), 'event': 'schedule'}, True),
+        ]
+        for name, interval, run, expected in cases:
+            with self.subTest(name):
+                self.assertEqual(b.decide(NOW, interval, run)[0], expected)
+
+    def test_any_event_and_any_result_counts_as_a_run(self):
+        for event in ('push', 'schedule', 'workflow_dispatch', 'workflow_run', 'pull_request', None):
+            with self.subTest(event):
+                run = {'created_at': ago(3), 'event': event, 'conclusion': 'skipped'}
+                self.assertFalse(b.decide(NOW, 15, run)[0])
+
+
+class TickTests(unittest.TestCase):
+    def run_tick(self, runs, **kwargs):
+        github, out = FakeGitHub(runs, kwargs.pop('broken', ())), io.StringIO()
+        failures = b.tick('tok', NOW, out=out, get=github, **kwargs)
+        return github, out.getvalue().splitlines(), failures
+
+    def test_only_overdue_workflows_dispatch_and_each_gets_one_line(self):
+        runs = {name: {'created_at': ago(5), 'event': 'workflow_run'} for name in b.WORKFLOWS}
+        runs['merge-stall.yml'] = {'created_at': ago(50), 'event': 'schedule'}
+        github, lines, failures = self.run_tick(runs)
+        self.assertEqual(github.posts, [('merge-stall.yml', {'ref': 'main'})])
+        self.assertEqual(len(lines), len(b.WORKFLOWS))
+        self.assertEqual(failures, 0)
+        self.assertEqual([l for l in lines if ' dispatched: ' in l], [lines[1]])
+        self.assertIn('merge-stall.yml dispatched: last run 50m ago (schedule), past 15m', lines[1])
+        self.assertTrue(all(' skipped: ' in l for i, l in enumerate(lines) if i != 1))
+
+    def test_a_workflow_that_never_ran_dispatches(self):
+        github, lines, _ = self.run_tick({}, workflows={'lane-conflicts.yml': 60})
+        self.assertEqual(github.posts, [('lane-conflicts.yml', {'ref': 'main'})])
+        self.assertIn('dispatched: no run yet', lines[0])
+
+    def test_dry_run_dispatches_nothing_and_says_so(self):
+        github, lines, _ = self.run_tick({}, dry_run=True)
+        self.assertEqual(github.posts, [])
+        self.assertTrue(all(' would dispatch: ' in l for l in lines))
+
+    def test_one_failure_does_not_stop_the_others_and_is_counted(self):
+        github, lines, failures = self.run_tick({}, broken=['claude-audit.yml'])
+        self.assertEqual(failures, 1)
+        self.assertEqual(sorted(w for w, _ in github.posts), sorted(set(b.WORKFLOWS) - {'claude-audit.yml'}))
+        self.assertIn('claude-audit.yml FAILED', lines[0])
+
+    def test_a_malformed_answer_is_a_failure_not_a_crash(self):
+        out = io.StringIO()
+        failures = b.tick('tok', NOW, out=out, get=lambda *a, **k: {'unexpected': 1}, workflows={'merge-stall.yml': 15})
+        self.assertEqual(failures, 1)
+        self.assertIn('FAILED', out.getvalue())
+
+
+if __name__ == '__main__':
+    unittest.main()

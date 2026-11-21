@@ -552,11 +552,14 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertNotIn('git push', text)
         self.assertNotIn('--force', text)
 
-    def test_it_also_runs_every_hour_because_runner_merges_and_merge_less_prs_start_nothing(self):
+    def test_it_also_runs_without_an_event_because_runner_merges_and_merge_less_prs_start_nothing(self):
         # #4538: the lane runner merges with the workflow token, which starts no workflow, and GitHub starts no
         # pull_request run for a PR it can't build a merge ref for. Without a schedule such a PR sits armed and silent.
+        # Since #4866 the hourly start is the VPS's workflow_dispatch (ops/dispatch-backstop/), and the cron is the
+        # one daily last resort.
         text = self.workflow.read_text()
-        self.assertRegex(text, r"schedule:\n\s+- cron: '\d+ \* \* \* \*'")
+        self.assertRegex(text, r"schedule:\n\s+- cron: '\d+ \d+ \* \* \*'")
+        self.assertIn('workflow_dispatch:', text)
         self.assertIn('(github.event_name != \'push\' || github.ref_name == (vars.SM_TRUNK || \'main\'))', text)
 
     def test_it_starts_when_next_moves_and_when_a_lane_label_or_push_lands(self):

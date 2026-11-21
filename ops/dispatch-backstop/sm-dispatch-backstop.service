@@ -1,0 +1,12 @@
+[Unit]
+Description=Spoken Margins dispatch backstop (#4866): start overdue scheduled workflows
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/sm-dispatch/sm_dispatch_backstop.py
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/sm-dispatch /etc/sm-dial
+PrivateTmp=true

@@ -23,9 +23,12 @@
 # lane.yml, and the tap check dispatches owner-tap-alert.yml.
 name: claude-audit
 
+# Start (#4866): the `workflow_run` below replaces the 15-minute cron. The VPS (ops/dispatch-backstop/) fires
+# `workflow_dispatch` when no run began in the last 15 minutes; GitHub started this cron 4 times of 96 in the 24 hours to
+# 2026-11-21. The one daily tick is the last resort if the VPS is down too.
 on:
   schedule:
-    - cron: '3,18,33,48 * * * *'  # the backstop; GitHub may run these late
+    - cron: '3 6 * * *'  # last resort only
   # The usual start: a PR's checks finishing is what makes it ready for its audit. Under the lane that was the lane
   # report; since the merge queue switch-over (lane.yml disabled, 2026-11-20) it is the PR's hosted checks finishing,
   # which ops/codex/sm_codex_audit.py reads as standing in for a lane PASS (#4746). With only the schedule left, the
