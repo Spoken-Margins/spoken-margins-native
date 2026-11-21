@@ -115,6 +115,8 @@ extension Gate1AppModel {
         sourceLinkSafariOffer = nil
     }
 
+    static let collectionImportNeedsChoiceMessage = "Several episodes match this link. Add it on its own to choose one."
+
     func presentSourceLinkCandidateReviewIfAvailable(
         request: LinkResolutionRequest,
         result: LinkResolutionResult,
@@ -126,6 +128,12 @@ extension Gate1AppModel {
             return url.scheme?.lowercased() == "https"
         }
         guard result.status == .needsReview, playableCandidates.count > 1 else { return false }
+        // During a collection import nobody is there to choose: the link counts as not added, with the reason, instead
+        // of a review sheet left open after the import ends (#3769).
+        guard libraryCollections.importCapture == nil else {
+            reportWarning(Self.collectionImportNeedsChoiceMessage)
+            return true
+        }
         var reviewResult = result
         reviewResult.candidates = playableCandidates
         sourceLinkCandidateReview = SourceLinkCandidateReviewState(

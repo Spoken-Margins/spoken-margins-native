@@ -122,6 +122,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', return_value='toolchain'), \
                     patch.object(verification.Run, 'simulator', return_value=(device, False)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.Run, 'command',
                                  side_effect=lambda name, args, **kw: commands.append((name, args))):
@@ -152,6 +153,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', return_value='toolchain'), \
                     patch.object(verification.Run, 'simulator', return_value=(device, False)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.Run, 'command',
                                  side_effect=lambda name, args, **kw: commands.append((name, args))):
@@ -164,6 +166,37 @@ class VerificationTests(unittest.TestCase):
             for setting in settings:
                 self.assertIn(setting, build)
                 self.assertNotIn(setting, tests)
+
+    def test_package_cache_folder_applies_to_the_build_and_the_test_step(self):
+        # #4664: main-t3's hosted Mac restores the packages it fetched before, so a bad certificate on a binary-target
+        # host (download.onnxruntime.ai, 2026-11-21) cannot stop the build. Unset, the command is what it was.
+        self.assertEqual(verification.package_cache_settings({}), [])
+        self.assertEqual(verification.package_cache_settings({'SM_SPM_DIR': '  '}), [])
+        self.assertEqual(verification.package_cache_settings({'SM_SPM_DIR': '/w/.build/spm'}),
+                         ['-clonedSourcePackagesDirPath', '/w/.build/spm'])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            self.app_test_root(root)
+            commands = []
+            device = {'udid': 'U', 'state': 'Booted', 'runtime': 'iOS-26', 'name': 'Other'}
+            with patch.object(verification, 'ROOT', root), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', return_value='toolchain'), \
+                    patch.object(verification.Run, 'simulator', return_value=(device, False)), \
+                    patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                    patch.dict(os.environ, {'SM_SPM_DIR': '/w/.build/spm'}), \
+                    patch.object(verification.Run, 'command',
+                                 side_effect=lambda name, args, **kw: commands.append((name, args))):
+                run = verification.Run(Path(temporary) / 'run', 'app')
+                run.xcode('app', 'U', rebuild=False)
+            build = dict(commands)['build-for-testing']
+            tests = dict(commands)['xcode-tests']
+            # Both steps name the folder: xcodebuild resolves the package graph again before it tests, and a step
+            # without it would fetch the binary targets into an empty derived-data folder (audit on 0908501).
+            for command in (build, tests):
+                self.assertEqual(command[command.index('-clonedSourcePackagesDirPath') + 1], '/w/.build/spm')
 
     def setUp(self):
         # The host steps look up and write SessionKit pass records in the lane's state folder (#1328): keep a
@@ -1347,6 +1380,16 @@ class VerificationTests(unittest.TestCase):
             verification.refuse_unsafe(chosen, {'31A5C797': {'reason': 'iOS 27 flood'}})
         verification.refuse_unsafe(chosen, {'OTHER': {'reason': 'x'}})  # not listed: fine
 
+    def test_a_booted_test_runner_is_refused_without_a_slot(self):
+        # 2026-11-20: a fixer's --plan app found the Test Runner booted by the journeys run, took it without a slot and
+        # installed over it; every journey launch crashed.
+        booted = {'udid': 'CDB9C646', 'name': verification.TEST_RUNNER_NAME, 'state': 'Booted'}
+        with self.assertRaisesRegex(RuntimeError, 'already booted.*holds no simulator slot.*--device'):
+            verification.refuse_borrowed(booted, None, None)
+        verification.refuse_borrowed(booted, 'CDB9C646', None)  # named on purpose with --device
+        verification.refuse_borrowed(booted, None, 8)  # a lane job passed its slot down
+        verification.refuse_borrowed(dict(booted, state='Shutdown'), None, None)  # this run boots it and takes a slot
+
     def test_simulator_minimum_matches_shipping_targets(self):
         import re
         project = (inventory.ROOT / 'project.yml').read_text()
@@ -1552,6 +1595,7 @@ class VerificationTests(unittest.TestCase):
                             patch.object(verification, 'capture', side_effect=capture), \
                             patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
                             patch.object(verification, 'refuse_unsafe'), \
+                            patch.object(verification, 'refuse_borrowed'), \
                             patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                             patch.object(verification.subprocess, 'run'), \
                             patch.dict(os.environ, {'SM_PLAN_TIMEOUT_SECONDS': '3600'}), \
@@ -1605,6 +1649,7 @@ class VerificationTests(unittest.TestCase):
                             patch.object(verification, 'capture', side_effect=capture), \
                             patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
                             patch.object(verification, 'refuse_unsafe'), \
+                            patch.object(verification, 'refuse_borrowed'), \
                             patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                             patch.object(verification.subprocess, 'run'), \
                             patch.dict(os.environ, {'SM_PLAN_TIMEOUT_SECONDS': '3600'}), \
@@ -1648,6 +1693,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', side_effect=capture), \
                     patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.subprocess, 'run'), \
                     patch.object(run, 'command', side_effect=command):
@@ -2087,6 +2133,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', side_effect=capture), \
                     patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.subprocess, 'run'), \
                     patch.object(run, 'command', side_effect=command):
@@ -2136,6 +2183,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', side_effect=capture), \
                     patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.subprocess, 'run'), \
                     patch.object(run, 'command', side_effect=command):
@@ -2317,6 +2365,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', side_effect=capture), \
                     patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.subprocess, 'run'), \
                     patch.object(run, 'command', side_effect=command):
@@ -2611,6 +2660,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', return_value='stub'), \
                     patch.object(run, 'simulator', return_value=(fresh, True)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.lane_sim, 'boot',
                                  side_effect=lambda udid, label, **kw: boots.append(kw) or 1.0), \
@@ -2646,6 +2696,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', return_value='stub'), \
                     patch.object(run, 'simulator', side_effect=lambda *a: (next(runners), True)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.lane_sim, 'boot', side_effect=boot), \
                     patch.object(verification.lane_sim, 'post_stall') as posted, \
@@ -2701,6 +2752,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', return_value='stub'), \
                     patch.object(run, 'simulator', return_value=(booted, False)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification, 'acquire_simulator_slot', return_value=None), \
                     patch.object(verification, 'settle_before_tests',

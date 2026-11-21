@@ -106,7 +106,7 @@ test('an episode that has not failed keeps its countdown, and a retry that works
 test('a packet with no audio address keeps its own words', () => {
   assert.equal(
     ARRIVAL_WORDS.noEpisodeAudio('Sam'),
-    'This episode has no audio the browser can play. Sam’s Margins are saved in your Library.',
+    'This episode has no audio the browser can play. Sam’s Margins are saved in your Library. Open this in the Spoken Margins app on iPhone to hear them with the episode.',
   );
 });
 

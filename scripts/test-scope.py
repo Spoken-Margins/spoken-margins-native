@@ -52,7 +52,8 @@ LANE_PREFIXES = ('.github/workflows/', 'scripts/lane')
 LANE_FILES = {'scripts/xcodebuild-lane', 'scripts/host-test-lane', 'scripts/install-lane-guard.py',
               'scripts/test-scope.py', 'scripts/hot_file_ratchet.py', 'scripts/merge_audit.py',
               'scripts/merge_policy.py', 'scripts/signoff_check.py',  # the merge queue's rules (#4693)
-              'scripts/verify-tests.py', 'scripts/trunk.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan'}
+              'scripts/parallel_unittest.py', 'scripts/runner_test_seconds.json',  # runner-tests' driver (#4769)
+              'scripts/verify-tests.py', 'scripts/ci_step_budgets.json', 'scripts/trunk.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan'}
 LANE_NOTE = ('Lane change: the runner merges it only after a Codex or Claude audit of the head that says "No blocking '
              'findings". The audit runs by itself once the automerge run passes. A change to scripts/lane_merge_rules.py or '
              '.github/ also needs the owner\'s merge tap: the runner never merges it.')
@@ -606,7 +607,9 @@ MAC_SCRIPT_NAME = re.compile(r'lane|verif|test-scope|test_scope|phone|sim[_-]|se
 # verify-tests.py). test_mac_checks_scope.py walks that code's imports and fails when one is missing here.
 MAC_SCRIPT_FILES = {'sm_paths.py', 'sm_build_cache.py', 'comment_trust.py', 'setup-worktree.sh', 'merge_audit.py',
                     'simctl_preflight.py', 'test_inventory.py', 'third_party_notices.py', 'node_modules_drift.py',
-                    'check_posterboard_repair.py', 'ops_checkout.py', 'workflow_yaml.py', 'test_workflow_files.py'}
+                    'check_posterboard_repair.py', 'ops_checkout.py', 'workflow_yaml.py', 'test_workflow_files.py',
+                    'parallel_unittest.py', 'runner_test_seconds.json',
+                    'ci_step_budgets.json'}  # verify-tests.py's step ceilings, which bound Mac-only steps too
 # Web/ (#3535): no Mac check reads it. Its tests run in --plan fast-portable and in hosted web's Playwright job, which the
 # runner waits for (web_check_required). A Swift file under Web/ still needs the Mac, by the suffix test below.
 MAC_NOT_NEEDED_PREFIXES = ('docs/', 'Design/', 'references/', 'tmp/', '.claude/', 'research/', 'Site/', 'ops/',

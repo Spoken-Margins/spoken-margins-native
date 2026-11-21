@@ -1652,8 +1652,12 @@ final class SourceLinkImportTests: XCTestCase {
             audio.currentMediaTimeValue = 123_000
             model.dispatchGate2CompactCommand(.beginInterjection)
             XCTAssertTrue(model.snapshot.isRecording, "\(status.rawValue): recording starts as usual")
-            // Give a wrongly started peek time to read and transcribe before checking that it didn't.
-            try await Task.sleep(nanoseconds: 300_000_000)
+            // A wrongly started peek writes "started" and then, once it has read and transcribed, its outcome. Wait for a
+            // settled value, so the reads and requests below are counted after a peek would have made them.
+            try await pollUntil {
+                let peek = model.diagnostics["justHeardPeek"]
+                return peek != nil && peek != "started"
+            }
             XCTAssertEqual(model.diagnostics["justHeardPeek"], "speech_not_authorized", "\(status.rawValue)")
             XCTAssertTrue(reads.lastMs.isEmpty, "\(status.rawValue): the heard audio is not even read")
             let requests = await transcriber.windowRequestCount()

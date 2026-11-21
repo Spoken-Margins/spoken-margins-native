@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitEPUB
 import SessionKitPDF
 import SessionKitPersistence
 
@@ -12,20 +13,22 @@ struct PDFCommentShareFile: Identifiable {
     let commentCount: Int
 }
 
-/// Drives the "PDF with your Margins" sheet (#4338, PR 5). What the sheet lists and offers is `PDFCommentExportState`
-/// (SessionKit, host-tested); the PDF work is `PDFCommentExporter` (SessionKitPDF). This holds the two together, runs
-/// both off the main thread, and hands the finished file to the share sheet. It is not part of `Gate1AppModel`.
+/// Drives the "PDF with your Margins" sheet (#4338, PR 5), and the same sheet for a Word document (#4595). What the
+/// sheet lists and offers is `PDFCommentExportState` (SessionKit, host-tested); the PDF work is `PDFCommentExporter`
+/// (SessionKitPDF) and the Word work is `WordCommentExporter` (SessionKitEPUB). This holds them together, runs both off
+/// the main thread, and hands the finished file to the share sheet. It is not part of `Gate1AppModel`.
 @MainActor
 final class PDFCommentExportModel: ObservableObject, Identifiable {
     /// The last name used on comments, remembered by this phone only.
     static let authorDefaultsKey = "pdfCommentAuthorName"
 
-    @Published private(set) var state = PDFCommentExportState(plan: MarginCommentPlan(entries: []), spots: nil)
+    @Published private(set) var state: PDFCommentExportState
     @Published var shareFile: PDFCommentShareFile?
 
     nonisolated var id: ObjectIdentifier { ObjectIdentifier(self) }
 
     let itemTitle: String
+    let document: PDFCommentExportState.Document
     private let itemId: String
     private let original: URL
     private let margins: [Interjection]
@@ -43,8 +46,10 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
 
     init(
         itemId: String, itemTitle: String, original: URL, margins: [Interjection],
-        store: SQLiteSessionStore?, defaults: UserDefaults = .standard
+        store: SQLiteSessionStore?, document: PDFCommentExportState.Document = .pdf, defaults: UserDefaults = .standard
     ) {
+        self.document = document
+        self.state = PDFCommentExportState(plan: MarginCommentPlan(entries: []), spots: nil, document: document)
         self.itemId = itemId
         self.itemTitle = itemTitle
         self.original = original
@@ -66,26 +71,39 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
         guard !loaded else { return }
         loaded = true
         let author = defaults.string(forKey: Self.authorDefaultsKey) ?? ""
-        let (itemId, original, margins, store) = (itemId, original, margins, store)
-        let outcome: Result<(MarginCommentPlan, PDFCommentExporter.Preview), Error> = await Task.detached(priority: .userInitiated) {
-            Result {
-                guard let store, let document = try store.loadStructuredDocument(itemId: itemId) else {
-                    throw PDFCommentWriter.Failure.unreadable
+        let (itemId, original, margins, store, document) = (itemId, original, margins, store, document)
+        let outcome: Result<(MarginCommentPlan, [PDFMarginPlacement], [String: PDFCommentExportState.Spot]), Error> =
+            await Task.detached(priority: .userInitiated) {
+                Result {
+                    switch document {
+                    case .pdf:
+                        guard let store, let structured = try store.loadStructuredDocument(itemId: itemId) else {
+                            throw PDFCommentWriter.Failure.unreadable
+                        }
+                        let plan = MarginCommentPlan.make(itemId: itemId, document: structured, margins: margins)
+                        let preview = try PDFCommentExporter.preview(source: original, plan: plan)
+                        return (plan, preview.placements, preview.spots)
+                    case .word:
+                        // A Word item is its plain text: the Margins' anchors are offsets into it.
+                        guard let store, let text = try store.loadItem(id: itemId).text else {
+                            throw DocxCommentWriter.Failure.notADocx
+                        }
+                        let plan = MarginCommentPlan.make(itemId: itemId, text: text, margins: margins)
+                        let preview = try WordCommentExporter.preview(source: original, plan: plan)
+                        return (plan, [], preview.spots)
+                    }
                 }
-                let plan = MarginCommentPlan.make(itemId: itemId, document: document, margins: margins)
-                return (plan, try PDFCommentExporter.preview(source: original, plan: plan))
-            }
-        }.value
+            }.value
         switch outcome {
-        case .success(let (plan, preview)):
+        case .success(let (plan, placements, spots)):
             self.plan = plan
-            placements = preview.placements
-            state = PDFCommentExportState(plan: plan, spots: preview.spots, authorName: author)
+            self.placements = placements
+            state = PDFCommentExportState(plan: plan, spots: spots, authorName: author, document: document)
         case .failure(let error):
-            state = PDFCommentExportState(plan: MarginCommentPlan(entries: []), spots: [:], authorName: author)
+            state = PDFCommentExportState(plan: MarginCommentPlan(entries: []), spots: [:], authorName: author, document: document)
             switch error {
             case PDFCommentWriter.Failure.refused(.locked): state.markLocked()
-            default: state.markUnreadable() // unreadable, or a file with no pages
+            default: state.markUnreadable() // unreadable, or a file with no pages, or a package this writer can't edit
             }
         }
     }
@@ -94,10 +112,10 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
     /// nothing (`beginExport` refuses it).
     func export() {
         guard state.beginExport() else { return }
-        let (plan, placements, original) = (plan, placements, original)
+        let (plan, placements, original, document) = (plan, placements, original, document)
         let ids = state.includedIds
         let author = state.authorForComments
-        let fileName = PDFCommentExportFileName.make(title: itemTitle)
+        let fileName = PDFCommentExportFileName.make(title: itemTitle, document: document)
         Task {
             let built: Result<PDFCommentShareFile, Error> = await Task.detached(priority: .userInitiated) {
                 Result {
@@ -105,8 +123,13 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
                     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                     let file = folder.appendingPathComponent(fileName)
                     do {
-                        try PDFCommentExporter.export(
-                            source: original, plan: plan, placements: placements, includedIds: ids, author: author, to: file)
+                        switch document {
+                        case .pdf:
+                            try PDFCommentExporter.export(
+                                source: original, plan: plan, placements: placements, includedIds: ids, author: author, to: file)
+                        case .word:
+                            try WordCommentExporter.export(source: original, plan: plan, includedIds: ids, author: author, to: file)
+                        }
                     } catch {
                         try? FileManager.default.removeItem(at: folder)
                         throw error
