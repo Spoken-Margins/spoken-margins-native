@@ -842,6 +842,44 @@ class BuildCacheFolder(Base):
         for slot in (busy_slot, recent_slot, testing_slot):
             self.assertTrue((slot / 'root/dd/Build/blob').exists(), slot)
 
+    def desk_worktree(self, name='lane-pr4496-5bdcb06') -> Path:
+        tree = self.cfg.home / 'Documents/GitHub/spoken-margins-native-test-desk/.claude/worktrees' / name
+        tree.mkdir(parents=True)
+        (tree / '.git').write_text('gitdir: /nowhere\n')  # a linked worktree, which is what gets a build slot
+        return tree
+
+    def test_a_test_desk_build_waiting_for_its_slot_is_not_deleted_for_a_few_hours(self):
+        # 2026-11-19 (#4731): a finished desk build, idle 25 minutes while the desk waited for a simulator, was deleted.
+        desk = self.desk_worktree()
+        (plain,) = self.make_repo('a')[1]
+        desk_slot = self.linked(desk)
+        plain_slot = self.linked(plain)
+        for age, desk_goes in ((40 * 60, False), (2 * 3600, False), (4 * 3600, True)):
+            with self.subTest(age_minutes=age // 60):
+                age_tree(desk_slot, age)
+                age_tree(plain_slot, age)
+                plan = d.make_plan(self.cfg, FakeMachine(self.cfg, base_free=10 * MiB))
+                planned = {c.path for c in plan.candidates}
+                self.assertIn(plain_slot / 'root/dd', planned, 'an ordinary idle worktree must still go after 30 minutes')
+                self.assertEqual(desk_slot / 'root/dd' in planned, desk_goes, planned)
+                if not desk_goes:
+                    self.assertTrue(any(str(desk_slot / 'root/dd') in s and '3 hours' in s for s in plan.skipped), plan.skipped)
+
+    def test_only_a_desk_lane_worktree_gets_the_longer_idle_age(self):
+        home = self.cfg.home / 'Documents/GitHub'
+        yes = [home / 'spoken-margins-native-test-desk/.claude/worktrees/lane-x',
+               home / 'spoken-margins-native-test-desk/.claude/worktrees/lane-pr1-abc']
+        no = [home / 'spoken-margins-native/.claude/worktrees/lane-x',           # a lane name in another checkout
+              home / 'spoken-margins-native-test-desk/.claude/worktrees/ws-4731',  # the desk's own other worktree
+              home / 'spoken-margins-native-test-desk/lane-x',                    # not under .claude/worktrees
+              home / 'spoken-margins-native-test-desk',                           # the standing desk checkout itself
+              home / 'spoken-margins-native-test-desk/.claude/worktrees/lane-x/deeper',
+              Path('/'), None, '']
+        for path in yes:
+            self.assertEqual(d.cache_idle_seconds(path), d.DESK_BUILD_IDLE_SECONDS, path)
+        for path in no:
+            self.assertEqual(d.cache_idle_seconds(path), d.CACHE_IDLE_SECONDS, path)
+
     def test_a_slot_whose_worktree_a_live_agent_has_locked_stays(self):
         # A sub-agent's worktree, locked with its pid while the agent itself works from another folder:
         # its DerivedData must survive between build-for-testing and test-without-building (finding 3).
