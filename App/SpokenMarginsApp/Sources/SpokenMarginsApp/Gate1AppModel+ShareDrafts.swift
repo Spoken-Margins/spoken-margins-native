@@ -47,6 +47,7 @@ extension Gate1AppModel {
     /// Share it leaves the playing session and the current screen alone; only `selectedItem` follows the Margin's item.
     func openMarginShare(_ margin: Interjection) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_margin_share") else { return }
+        guard ShareableMargins.canShare(margin) else { return reportFailure(ShareableMargins.singleMarginRefusal) }
         guard ItemShareSessionSelection.isShareable(margin) else {
             return reportFailure("This Margin can't be shared with a friend yet.")
         }

@@ -358,15 +358,23 @@ struct Build23SenderSharingExperience: View {
     private func selectionControls(_ snapshot: Build23SharingSnapshot) -> some View {
         let visibleMargins = Build23SenderPresentation.filteredMargins(in: snapshot)
         let includedCount = snapshot.margins.filter(\.isIncluded).count
+        // A Margin with no place can't be chosen, so it is not counted as one to choose (#4233).
+        let selectableCount = snapshot.margins.filter(\.hasPlace).count
         return ExperienceSurface(tint: AppColors.softGreen) {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(VoiceOverAnnouncements.SharingStep.select.title)
                         .font(.title3.weight(.semibold))
                         .screenTitle()
-                    Text("\(includedCount) of \(snapshot.margins.count) selected")
+                    Text("\(includedCount) of \(selectableCount) selected")
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
+                    if !snapshot.margins.isEmpty, selectableCount == 0 {
+                        Text(ShareableMargins.allWithoutPlaceLine)
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.text)
+                            .accessibilityIdentifier("build23.sender.noPlace.all")
+                    }
                     Build23WrappingLayout(spacing: 8) {
                         Button("Select all shown") {
                             setVisibleIncluded(true, margins: visibleMargins)
