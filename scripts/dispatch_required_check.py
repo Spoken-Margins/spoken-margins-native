@@ -88,11 +88,13 @@ def sweep(github, workflow: str, base: str = 'main', dry_run: bool = False, out=
     return started, failures
 
 
-def main(argv: list[str] | None = None, github=None, out=sys.stdout) -> int:
+def main(argv: list[str] | None = None, github=None, out=sys.stdout, sleep=time.sleep) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('workflow', help='a required workflow file, e.g. hosted-web.yml')
     parser.add_argument('--repo', default='')
     parser.add_argument('--base', default='main')
+    parser.add_argument('--recheck-wait', type=float, default=RECHECK_WAIT,
+                        help='seconds to wait before starting heads found without a run, then look again (0: no wait)')
     parser.add_argument('--dry-run', action='store_true', help='list what would start; start nothing')
     args = parser.parse_args(argv)
     if args.workflow in required_checks.NOT_DISPATCHABLE:
@@ -109,7 +111,7 @@ def main(argv: list[str] | None = None, github=None, out=sys.stdout) -> int:
             parser.error('--repo (or GITHUB_REPOSITORY) is required')
         github = merge_policy.GitHub(repo)
     try:
-        _, failures = sweep(github, args.workflow, args.base, args.dry_run, out)
+        _, failures = sweep(github, args.workflow, args.base, args.dry_run, out, sleep=sleep, recheck_wait=args.recheck_wait)
     except merge_policy.ReadFailed as error:
         print(f'could not list the open PRs ({error})', file=out)
         return 1

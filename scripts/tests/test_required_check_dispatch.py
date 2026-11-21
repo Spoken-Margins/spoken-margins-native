@@ -187,8 +187,10 @@ class SweepTests(unittest.TestCase):
         self.assertIn("doesn't satisfy a required check", out.getvalue())
         out = io.StringIO()
         self.assertEqual(dispatch_script.main(['lane.yml'], github=FakeGitHub([]), out=out), 2)
+        naps = []
         self.assertEqual(dispatch_script.main(['hosted-web.yml'], github=FakeGitHub([pull(1, 'a' * 40)]),
-                                              out=io.StringIO()), 0)
+                                              out=io.StringIO(), sleep=naps.append), 0)
+        self.assertEqual(naps, [dispatch_script.RECHECK_WAIT])
 
 
 class PolicyStartTests(unittest.TestCase):
