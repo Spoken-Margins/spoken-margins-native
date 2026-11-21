@@ -419,6 +419,7 @@ class ScriptTests(unittest.TestCase):
             if with_seed_script:
                 (root / 'scripts/seed_tools_artifacts.py').write_text((SCRIPTS / 'seed_tools_artifacts.py').read_text())
             if state_text is not None:
+                (root / 'extracted').mkdir()
                 (build / 'workspace-state.json').write_text(state_text.replace('@FOLDER@', str(root)))
             lane = root / 'scripts/host-test-lane'
             # The lane's call records whether the tools state existed at the moment SwiftPM would have started.
@@ -435,7 +436,7 @@ class ScriptTests(unittest.TestCase):
         # #4664: a second download of the onnxruntime binary targets failed `tools` on a bad certificate.
         state = json.dumps({'version': 7, 'object': {'dependencies': [], 'prebuilts': [], 'artifacts': [{
             'packageRef': {'identity': 'onnxruntime-swift-package-manager'}, 'targetName': 'onnxruntime',
-            'source': {'type': 'remote', 'url': 'https://h.example/o.zip', 'checksum': 'c'}, 'path': '@FOLDER@'}]}})
+            'source': {'type': 'remote', 'url': 'https://h.example/o.zip', 'checksum': 'c'}, 'path': '@FOLDER@/extracted'}]}})
         done, seen, seeded = self.run_tools(with_seed_script=True, state_text=state)
         self.assertEqual((done.returncode, seen), (0, ['seeded']), done.stderr)
         self.assertIn('onnxruntime-swift-package-manager/onnxruntime', done.stdout)

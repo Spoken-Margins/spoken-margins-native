@@ -9,16 +9,19 @@ have fixed it can only be saved by a run that passes.
 
 SwiftPM records each downloaded binary target in `workspace-state.json` (package, target, source URL and checksum,
 and the extracted folder's absolute path) and downloads nothing for a target whose entry matches the manifest and
-whose folder exists. This copies SessionKit's entries into the tools scratch's state, pointing at the folders where
-they already are, for every entry whose folder exists. Nothing is copied and no file but the tools state is written.
-An entry the tools state already has is kept as it is. Best effort: any problem prints one line and leaves the
-state alone, so the build downloads as it always did. Never touches a real Library or any listener data.
+whose folder exists. This copies each of SessionKit's extracted binary-target folders into the tools scratch's own
+`artifacts/` folder and adds an entry for it to the tools state. The copy is the tools build's own, so a SwiftPM that
+later judges an entry stale and deletes its folder cannot take SessionKit's files with it (review of #4892). An entry
+the tools state already has is kept when its folder exists and its source matches; otherwise it is replaced. Best
+effort: any problem prints one line and leaves that entry alone, so the build downloads as it always did. Reads only
+SessionKit's `.build`; never touches a real Library or any listener data.
 
   scripts/seed_tools_artifacts.py <SessionKit workspace-state.json> <tools workspace-state.json>
 """
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -54,11 +57,32 @@ def seed(source: Path, target: Path) -> str:
     if state is None:  # the same keys the source has, none of its dependencies: SwiftPM resolves those itself
         state = {'version': held.get('version', 7), 'object': {key: [] for key in held['object']}}
     artifacts = state['object'].setdefault('artifacts', [])
-    present = {entry_key(entry) for entry in artifacts if isinstance(entry, dict)}
-    added = [entry for entry in usable if entry_key(entry) not in present]
+    held_entries = {entry_key(e): e for e in artifacts if isinstance(e, dict)}
+    added, scratch = [], target.parent
+    for entry in usable:
+        key = entry_key(entry)
+        mine = held_entries.get(key)
+        if mine is not None and isinstance(mine.get('path'), str) and Path(mine['path']).exists() \
+                and mine.get('source') == entry.get('source'):
+            continue  # the tools build already has this one, from this source
+        copy = scratch / 'artifacts' / str(key[0]) / str(key[1]) / Path(entry['path']).name
+        try:
+            if copy.is_dir():
+                shutil.rmtree(copy)
+            elif copy.exists():
+                copy.unlink()
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            if Path(entry['path']).is_dir():
+                shutil.copytree(entry['path'], copy, symlinks=True)
+            else:
+                shutil.copy2(entry['path'], copy)
+        except OSError:
+            continue  # no copy, no entry: SwiftPM downloads this one
+        artifacts[:] = [e for e in artifacts if not (isinstance(e, dict) and entry_key(e) == key)]
+        artifacts.append({**entry, 'path': str(copy)})
+        added.append(entry)
     if not added:
         return 'the tools state already holds every binary target SessionKit has'
-    artifacts.extend(added)
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix('.json.tmp')
     temporary.write_text(json.dumps(state, indent=2) + '\n', encoding='utf-8')

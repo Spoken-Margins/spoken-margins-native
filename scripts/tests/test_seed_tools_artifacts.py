@@ -28,6 +28,9 @@ class SeedTests(unittest.TestCase):
         self.extensions = self.root / 'artifacts' / 'onnxruntime_extensions.xcframework'
         self.core.mkdir(parents=True)
         self.extensions.mkdir(parents=True)
+        (self.core / 'Info.plist').write_text('core')
+        (self.extensions / 'Info.plist').write_text('extensions')
+        self.scratch = self.target.parent
 
     def write_source(self, artifacts, version=7):
         self.source.write_text(json.dumps({'version': version, 'object': {
@@ -44,25 +47,52 @@ class SeedTests(unittest.TestCase):
         self.assertEqual(sorted(e['targetName'] for e in state['object']['artifacts']), ['onnxruntime', 'onnxruntime_extensions'])
         self.assertEqual(state['object']['dependencies'], [], 'SwiftPM resolves its own dependencies')
         self.assertIn('onnxruntime-swift-package-manager/onnxruntime_extensions', line)
-        self.assertEqual({e['path'] for e in state['object']['artifacts']}, {str(self.core), str(self.extensions)},
-                         'the entries point at the folders where the files already are: nothing is copied')
+        copies = {e['targetName']: Path(e['path']) for e in state['object']['artifacts']}
+        self.assertEqual(copies['onnxruntime'], self.scratch / 'artifacts' / 'onnxruntime-swift-package-manager' / 'onnxruntime' / 'onnxruntime.xcframework')
+        self.assertEqual((copies['onnxruntime'] / 'Info.plist').read_text(), 'core')
+        self.assertEqual((copies['onnxruntime_extensions'] / 'Info.plist').read_text(), 'extensions')
+        self.assertTrue(self.core.exists(), 'SessionKit\'s own folder stays where it was')
+        # A SwiftPM that later deletes a stale entry's folder takes the tools copy, never SessionKit's (review of #4892).
+        import shutil
+        shutil.rmtree(copies['onnxruntime'])
+        self.assertTrue((self.core / 'Info.plist').exists())
 
     def test_an_entry_whose_folder_is_gone_is_left_out(self):
         self.write_source([entry('onnxruntime', self.core), entry('onnxruntime_extensions', self.root / 'missing')])
         S.seed(self.source, self.target)
         self.assertEqual([e['targetName'] for e in self.target_state()['object']['artifacts']], ['onnxruntime'])
 
-    def test_an_entry_the_tools_state_already_has_is_kept_and_the_rest_added(self):
-        self.write_source([entry('onnxruntime', self.core, checksum='new'), entry('onnxruntime_extensions', self.extensions)])
+    def seed_with_own_entry(self, own):
+        self.write_source([entry('onnxruntime', self.core), entry('onnxruntime_extensions', self.extensions)])
         self.target.parent.mkdir(parents=True)
-        mine = entry('onnxruntime', self.root / 'tools-own', checksum='mine')
-        self.target.write_text(json.dumps({'version': 7, 'object': {'artifacts': [mine], 'dependencies': [{'x': 1}], 'prebuilts': []}}))
+        self.target.write_text(json.dumps({'version': 7, 'object': {'artifacts': [own], 'dependencies': [{'x': 1}], 'prebuilts': []}}))
         S.seed(self.source, self.target)
         state = self.target_state()
-        by_target = {e['targetName']: e for e in state['object']['artifacts']}
-        self.assertEqual(by_target['onnxruntime']['source']['checksum'], 'mine')
-        self.assertIn('onnxruntime_extensions', by_target)
         self.assertEqual(state['object']['dependencies'], [{'x': 1}], 'the rest of its state is untouched')
+        return {e['targetName']: e for e in state['object']['artifacts']}, state['object']['artifacts']
+
+    def test_an_entry_the_tools_state_has_from_the_same_source_with_its_folder_is_kept(self):
+        own_folder = self.root / 'tools-own'
+        own_folder.mkdir()
+        by_target, listed = self.seed_with_own_entry(entry('onnxruntime', own_folder))
+        self.assertEqual(by_target['onnxruntime']['path'], str(own_folder))
+        self.assertIn('onnxruntime_extensions', by_target)
+        self.assertEqual(len(listed), 2)
+
+    def test_an_entry_whose_folder_is_gone_or_whose_source_differs_is_replaced(self):
+        # A restored tools state can hold an entry from another runner's checkout path, or an older checksum.
+        own_folder = self.root / 'tools-own'
+        own_folder.mkdir()
+        for name, own in (('folder gone', entry('onnxruntime', self.root / 'not-there')),
+                          ('older checksum', entry('onnxruntime', own_folder, checksum='older'))):
+            with self.subTest(name):
+                if self.target.parent.exists():
+                    import shutil
+                    shutil.rmtree(self.target.parent)
+                by_target, listed = self.seed_with_own_entry(own)
+                self.assertEqual(by_target['onnxruntime']['source']['checksum'], 'abc')
+                self.assertTrue(by_target['onnxruntime']['path'].startswith(str(self.scratch / 'artifacts')))
+                self.assertEqual(len(listed), 2, 'replaced, not duplicated')
 
     def test_running_twice_changes_nothing_the_second_time(self):
         self.write_source([entry('onnxruntime', self.core)])
