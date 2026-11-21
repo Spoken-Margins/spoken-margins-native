@@ -136,6 +136,8 @@ final class ClipboardIntakeClassifierTests: XCTestCase {
     }
 
     /// A short run of words with a huge token among them must classify at once: only words that could hold a link are stripped.
+    /// A performance budget, listed in scripts/test_clock_ceilings_allowlist.json: stripping a run of 20,000 brackets
+    /// recounted the run for each bracket and took over 20 s; it takes about 0.03 s.
     func testAHugeTokenInAShortNoteDoesNotStallTheClassifier() {
         let started = Date()
         for pasted in ["a " + String(repeating: ")", count: 20_000), "see " + String(repeating: "(", count: 20_000) + " x"] {
