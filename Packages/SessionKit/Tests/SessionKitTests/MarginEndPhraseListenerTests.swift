@@ -22,8 +22,8 @@ final class MarginEndPhraseListenerTests: XCTestCase {
     }
 
     private final class FakeSession: LiveInputSession, @unchecked Sendable {
-        let words: AsyncStream<[LiveInputWord]>
-        private let continuation: AsyncStream<[LiveInputWord]>.Continuation
+        let words: AsyncStream<LiveInputResult>
+        private let continuation: AsyncStream<LiveInputResult>.Continuation
         private let lock = NSLock()
         private var stopped = 0
         private let startError: LiveInputUnavailable?
@@ -32,7 +32,7 @@ final class MarginEndPhraseListenerTests: XCTestCase {
         /// `wordsOnStop` are the last words a recogniser delivers as it is told to stop, before its stream ends.
         init(startError: LiveInputUnavailable? = nil, wordsOnStop: [LiveInputWord] = []) {
             self.wordsOnStop = wordsOnStop
-            let (stream, continuation) = AsyncStream<[LiveInputWord]>.makeStream()
+            let (stream, continuation) = AsyncStream<LiveInputResult>.makeStream()
             self.words = stream
             self.continuation = continuation
             self.startError = startError
@@ -42,10 +42,14 @@ final class MarginEndPhraseListenerTests: XCTestCase {
         func start() async throws { if let startError { throw startError } }
         func stop() async {
             lock.withLock { stopped += 1 }
-            if !wordsOnStop.isEmpty { continuation.yield(wordsOnStop) }
+            if !wordsOnStop.isEmpty { say(wordsOnStop) }
             continuation.finish()
         }
-        func say(_ batch: [LiveInputWord]) { continuation.yield(batch) }
+        func say(_ batch: [LiveInputWord]) {
+            continuation.yield(LiveInputResult(words: batch, startMs: batch.first?.startMs, isFinal: batch.first?.isFinal ?? false))
+        }
+        /// The recogniser revising what it said for audio from `startMs` on to nothing.
+        func retract(from startMs: Int) { continuation.yield(LiveInputResult(words: [], startMs: startMs, isFinal: false)) }
         /// The recogniser dying on its own: the stream ends and nobody asked it to.
         func die() { continuation.finish() }
     }
@@ -98,6 +102,22 @@ final class MarginEndPhraseListenerTests: XCTestCase {
         // that the ticker adds no timer of its own.
         try? await Task.sleep(for: .milliseconds(500))
         XCTAssertEqual(signals.all, [.hint(.listening)])
+        await listener.stop()
+    }
+
+    func testAGuessTheRecogniserTakesBackNeverEnds() async {
+        let session = FakeSession(), signals = Signals(), clock = Clock()
+        let listener = make(session, signals, clock)
+        await listener.start()
+        // A volatile "stop margin" (6,600 to 7,300) shows the hint; the recogniser then revises that stretch to nothing.
+        clock.set(8_400)
+        session.say([word("stop", 6_600, 6_900), word("margin", 7_000, 7_300)])
+        await eventually("finishing hint") { signals.all.contains(.hint(.finishing)) }
+        session.retract(from: 6_600)
+        await eventually("hint back to listening") { signals.all.last == .hint(.listening) }
+        clock.set(60_000)
+        try? await Task.sleep(for: .milliseconds(400)) // a few ticks
+        XCTAssertFalse(signals.all.contains(.end), "a withdrawn phrase is not confirmed")
         await listener.stop()
     }
 

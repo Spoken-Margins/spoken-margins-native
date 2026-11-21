@@ -53,7 +53,7 @@ public final class MarginEndPhraseListener: @unchecked Sendable {
     public func start() async {
         let tap = LiveInputTap(
             makeSession: makeSession,
-            onWords: { [weak self] batch in self?.heard(batch) },
+            onResult: { [weak self] result in self?.heard(result) },
             onEvent: { [weak self] kind, fields in self?.tapEvent(kind, fields) },
             onStreamEnded: { [weak self] in self?.recogniserStopped() }
         )
@@ -97,12 +97,11 @@ public final class MarginEndPhraseListener: @unchecked Sendable {
 
     // MARK: Results
 
-    private func heard(_ batch: [LiveInputWord]) {
-        let words = batch.map { MarginEndPhraseWord(text: $0.text, startMs: $0.startMs, endMs: $0.endMs) }
-        let isFinal = batch.first?.isFinal ?? false
+    private func heard(_ result: LiveInputResult) {
+        let words = result.words.map { MarginEndPhraseWord(text: $0.text, startMs: $0.startMs, endMs: $0.endMs) }
         let step = lock.withLock { () -> MarginEndPhraseDecider.Step in
             guard !stopped else { return .unchanged }
-            return decider.receive(words, isFinal: isFinal, sinceStartMs: sinceStartMs())
+            return decider.receive(words, isFinal: result.isFinal, sinceStartMs: sinceStartMs(), resultStartMs: result.startMs)
         }
         emit(step)
     }

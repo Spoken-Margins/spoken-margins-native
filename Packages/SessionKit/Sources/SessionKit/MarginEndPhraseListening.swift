@@ -84,9 +84,15 @@ public struct MarginEndPhraseDecider: Sendable {
 
     public init() {}
 
-    /// A result from the recogniser, `sinceStartMs` after it started.
-    public mutating func receive(_ batch: [MarginEndPhraseWord], isFinal: Bool, sinceStartMs: Int) -> Step {
-        step(window.advance(audioNowMs: sinceStartMs - Self.deliveryLagMs, hearing: batch, isFinal: isFinal))
+    /// A result from the recogniser, `sinceStartMs` after it started. `resultStartMs` is where the result starts in the
+    /// recogniser's audio clock: with it, a guess revised to nothing (an empty `batch`) takes back what it said for that
+    /// stretch, so a withdrawn "stop margin" can't be confirmed.
+    public mutating func receive(
+        _ batch: [MarginEndPhraseWord], isFinal: Bool, sinceStartMs: Int, resultStartMs: Int? = nil
+    ) -> Step {
+        step(window.advance(
+            audioNowMs: sinceStartMs - Self.deliveryLagMs, hearing: batch, isFinal: isFinal, resultStartMs: resultStartMs
+        ))
     }
 
     /// Time passing with no result, `sinceStartMs` after the recogniser started.

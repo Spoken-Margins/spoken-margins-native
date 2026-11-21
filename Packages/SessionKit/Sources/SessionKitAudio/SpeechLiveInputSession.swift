@@ -11,8 +11,8 @@ import Speech
 /// never touches the recorder, the audio session's category or its activation: the Margin's recorder owns those.
 @available(iOS 26.0, macOS 26.0, *)
 public final class SpeechLiveInputSession: LiveInputSession, @unchecked Sendable {
-    public let words: AsyncStream<[LiveInputWord]>
-    private let wordsContinuation: AsyncStream<[LiveInputWord]>.Continuation
+    public let words: AsyncStream<LiveInputResult>
+    private let wordsContinuation: AsyncStream<LiveInputResult>.Continuation
     private let isAuthorized: @Sendable () -> Bool
 
     // Touched only by `start()` and `stop()`, which `LiveInputTap` calls one at a time.
@@ -21,10 +21,11 @@ public final class SpeechLiveInputSession: LiveInputSession, @unchecked Sendable
     private var inputBuilder: AsyncStream<AnalyzerInput>.Continuation?
     private var resultsTask: Task<Void, Never>?
     private var tapInstalled = false
+    private var observers: [NSObjectProtocol] = []
 
     /// `isAuthorized`: whether Speech Recognition is already allowed, with no question to ask.
     public init(isAuthorized: @escaping @Sendable () -> Bool) {
-        let (stream, continuation) = AsyncStream<[LiveInputWord]>.makeStream()
+        let (stream, continuation) = AsyncStream<LiveInputResult>.makeStream()
         self.words = stream
         self.wordsContinuation = continuation
         self.isAuthorized = isAuthorized
@@ -69,8 +70,12 @@ public final class SpeechLiveInputSession: LiveInputSession, @unchecked Sendable
         resultsTask = Task {
             do {
                 for try await result in transcriber.results {
-                    let batch = Self.heardWords(in: result)
-                    if !batch.isEmpty { continuation.yield(batch) }
+                    // An empty result is kept: the recogniser revising a guess to nothing must reach the rule.
+                    continuation.yield(LiveInputResult(
+                        words: Self.heardWords(in: result),
+                        startMs: Self.milliseconds(result.range.start),
+                        isFinal: result.isFinal
+                    ))
                 }
             } catch {
                 // The stream ending with an error is the recogniser stopping; the tap reports what it heard.
@@ -99,11 +104,37 @@ public final class SpeechLiveInputSession: LiveInputSession, @unchecked Sendable
         } catch {
             throw LiveInputUnavailable("engine_start_failed:\((error as NSError).domain)/\((error as NSError).code)")
         }
+        watchForTheEngineStopping(engine, builder: builder)
+    }
+
+    /// A route change that alters the microphone's format stops an engine by itself, and an interruption takes the
+    /// microphone away. Neither ends the recogniser's results, so without this the listener would think it still
+    /// listens. Finishing the streams makes the tap report that the recogniser stopped mid-Margin: the hint goes away,
+    /// the recording goes on and the could-not-listen sound plays once.
+    private func watchForTheEngineStopping(_ engine: AVAudioEngine, builder: AsyncStream<AnalyzerInput>.Continuation) {
+        let continuation = wordsContinuation
+        let stopped: @Sendable (Notification) -> Void = { _ in
+            builder.finish()
+            continuation.finish()
+        }
+        observers.append(NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil, using: stopped
+        ))
+        #if os(iOS)
+        observers.append(NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: nil
+        ) { note in
+            let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            if raw == AVAudioSession.InterruptionType.began.rawValue { stopped(note) }
+        })
+        #endif
     }
 
     /// Lets go of everything, in the order that stops new audio first. With `finishing`, the recogniser is given a
     /// moment to deliver the words it already holds, so the last sentence is not lost.
     private func release(finishing: Bool) async {
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
+        observers = []
         if let engine {
             if tapInstalled { engine.inputNode.removeTap(onBus: 0) }
             engine.stop()
@@ -142,6 +173,12 @@ public final class SpeechLiveInputSession: LiveInputSession, @unchecked Sendable
         for await _ in done { break }
         work.cancel()
         timer.cancel()
+    }
+
+    private static func milliseconds(_ time: CMTime) -> Int? {
+        let seconds = CMTimeGetSeconds(time)
+        guard seconds.isFinite else { return nil }
+        return max(0, Int((seconds * 1000).rounded()))
     }
 
     private static func heardWords(in result: SpeechTranscriber.Result) -> [LiveInputWord] {

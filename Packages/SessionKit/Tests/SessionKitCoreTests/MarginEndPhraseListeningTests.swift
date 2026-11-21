@@ -86,4 +86,21 @@ final class MarginEndPhraseListeningTests: XCTestCase {
         XCTAssertEqual(decider.receive([word("Stop", 6_600, 6_900), word("margin.", 7_000, 7_300)], isFinal: true, sinceStartMs: 8_900), .unchanged)
         XCTAssertEqual(decider.tick(sinceStartMs: 9_300), .end)
     }
+
+    func testAGuessRevisedToNothingNeverEnds() {
+        var decider = MarginEndPhraseDecider()
+        XCTAssertEqual(decider.receive([word("stop", 6_600, 6_900), word("margin", 7_000, 7_300)], isFinal: false, sinceStartMs: 8_400, resultStartMs: 6_600), .finishing)
+        // The recogniser takes the guess back: an empty volatile result for audio from 6,600 on.
+        XCTAssertEqual(decider.receive([], isFinal: false, sinceStartMs: 8_700, resultStartMs: 6_600), .listening)
+        XCTAssertEqual(decider.tick(sinceStartMs: 9_300), .unchanged)
+        XCTAssertEqual(decider.tick(sinceStartMs: 60_000), .unchanged, "a withdrawn phrase is never confirmed")
+    }
+
+    func testAFinalThatStartsEarlierThanItsFirstWordClearsTheGuessFromItsOwnStart() {
+        var decider = MarginEndPhraseDecider()
+        // The guess starts at "okay" (6,300); the final result's range starts there too but its words start later.
+        XCTAssertEqual(decider.receive([word("okay", 6_300, 6_500), word("stop", 6_600, 6_900), word("margin", 7_000, 7_300)], isFinal: false, sinceStartMs: 8_400, resultStartMs: 6_300), .finishing)
+        XCTAssertEqual(decider.receive([word("okay", 6_300, 6_500), word("stop", 6_600, 6_900), word("marching", 7_000, 7_300)], isFinal: true, sinceStartMs: 8_700, resultStartMs: 6_300), .listening)
+        XCTAssertEqual(decider.tick(sinceStartMs: 60_000), .unchanged)
+    }
 }
