@@ -31,6 +31,8 @@ struct ExperienceItemDetailScreen: View {
     @State private var episodeLinkText = ""
     @State private var showsReactions = false
     @State private var collectionItem: LibraryItemRow?
+    /// A Margin with no place, opened from Recent Margins (#4233): it has no moment to show in the Timeline.
+    @State private var unplacedMargin: MarginRow?
     /// The kept copy of this item's PDF, when it is a PDF and this iPhone holds its file: the only case the menu offers
     /// "Export PDF with Margins" (#4338). Looked up off the main thread when the item opens.
     @State private var keptPDFOriginal: URL?
@@ -216,6 +218,9 @@ struct ExperienceItemDetailScreen: View {
             }
             .trackedSheet(isPresented: $showsReactions) {
                 ExperienceReactionsScreen().environmentObject(model)
+            }
+            .trackedSheet(item: $unplacedMargin) { row in
+                ExperienceMarginDetailView(row: row).environmentObject(model)
             }
             .alert("Which episode is this?", isPresented: $asksForEpisodeLink) {
                 TextField("Episode link", text: $episodeLinkText)
@@ -751,6 +756,14 @@ struct ExperienceItemDetailScreen: View {
             .equatable()
     }
 
+    /// A Margin with a place opens in the Timeline at that place; one with no place opens its details (#4233).
+    private func openRecentMargin(_ row: MarginRow) {
+        switch MarginRowTap.action(for: row.interjection) {
+        case .playMoment: model.openMarginInTimeline(row)
+        case .openDetails: unplacedMargin = row
+        }
+    }
+
     @ViewBuilder
     private var recentMargins: some View {
         if !model.selectedItem.interjections.isEmpty {
@@ -760,7 +773,7 @@ struct ExperienceItemDetailScreen: View {
                     VStack(spacing: 0) {
                         ForEach(Array(itemMargins.prefix(3).enumerated()), id: \.element.id) { index, row in
                             if index > 0 { Divider() }
-                            Button { model.openMarginInTimeline(row) } label: {
+                            Button { openRecentMargin(row) } label: {
                                 HStack(alignment: .top, spacing: 12) {
                                     Image(systemName: "quote.bubble.fill")
                                         .foregroundStyle(AppColors.coral)
@@ -771,7 +784,7 @@ struct ExperienceItemDetailScreen: View {
                                             .foregroundStyle(AppColors.text)
                                             .multilineTextAlignment(.leading)
                                             .lineLimit(2)
-                                        Text("At \(row.interjection.roughPercent)%")
+                                        Text(MarginPlacePresentation.itemScreenLine(for: row.interjection))
                                             .font(.caption.monospacedDigit())
                                             .foregroundStyle(AppColors.secondaryText)
                                     }
