@@ -241,6 +241,8 @@ final class FollowingShowRowsRuleTests: XCTestCase {
         let evaluation = FollowingRuleEvaluation.evaluate(subscriptions: shows, entries: entries, inputs: inputs)
         XCTAssertEqual(evaluation.setAsideEntryIds, [])
         // The Design's budget is 100 ms on the host; the ceiling here is generous so a busy runner doesn't fail it.
-        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.9 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards a rule pass that grows faster than rules times episodes.
+        XCTAssertLessThan(Date().timeIntervalSince(started), 10)
     }
 }

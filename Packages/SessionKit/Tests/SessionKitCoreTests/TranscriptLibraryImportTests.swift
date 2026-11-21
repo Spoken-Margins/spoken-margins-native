@@ -499,6 +499,8 @@ final class TranscriptLibraryImportTests: XCTestCase {
         let vtt = longVTT(cues: 10_000)
         let began = Date()
         let result = try added(try await importFile("long.vtt", vtt))
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.5 to import and 0.005 to read back s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards an import or a decode that grows with the square of the cues.
         XCTAssertLessThan(Date().timeIntervalSince(began), 15, "parse, build and save of 10,000 cues (a loose bound, so a loaded machine does not flake it)")
 
         let times = try XCTUnwrap(try store.loadTranscriptTimes(itemId: result.id))

@@ -264,6 +264,8 @@ final class PaperNoteTableTests: XCTestCase {
         _ = table.csv()
         _ = table.markdown()
         XCTAssertEqual(table.rows.count, 300)
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.02 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards a table build that rescans every paper per answer.
         XCTAssertLessThan(Date().timeIntervalSince(started), 5)
     }
 

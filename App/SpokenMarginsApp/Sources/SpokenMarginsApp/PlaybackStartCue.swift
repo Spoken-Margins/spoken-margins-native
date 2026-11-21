@@ -26,7 +26,8 @@ import SessionKit
 @MainActor
 final class PlaybackStartCue: ObservableObject {
     private var watch = PlaybackStartWatch()
-    private var cueTask: Task<Void, Never>?
+    /// The pending chime and waiting-sound checks of the start being watched. Tests await it to know the cue is done.
+    private(set) var cueTask: Task<Void, Never>?
     private var player: AVAudioPlayer?
     private var waitingPlayer: AVAudioPlayer?
     private let now: () -> Date

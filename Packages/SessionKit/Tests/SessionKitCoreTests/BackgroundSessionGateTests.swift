@@ -36,17 +36,21 @@ final class BackgroundSessionGateTests: XCTestCase {
         XCTAssertTrue(gate.claim("a"), "a released identifier can be claimed again")
     }
 
-    /// An invalidation that ends the old session wakes the waiter at once, not when its timeout runs out.
+    /// An invalidation that ends the old session wakes the waiter at once, not when its timeout runs out. The waiter's
+    /// own timeout is an hour, so it can only come back inside the 30 s ceiling if the release woke it; a gate that
+    /// stopped waking waiters would re-claim the free identifier when the timeout ran out and still return true (#4573).
     func testAWaiterIsWokenByTheReleaseNotByItsTimeout() async {
         let gate = BackgroundSessionGate()
         XCTAssertTrue(gate.claim("a"))
-        let started = ContinuousClock.now
-        async let waiting = gate.claim("a", waitingUpTo: .seconds(30))
+        var took: Bool?
+        Task { @MainActor in took = await gate.claim("a", waitingUpTo: .seconds(3600)) }
         try? await Task.sleep(for: .milliseconds(30))
         gate.release("a")
-        let took = await waiting
-        XCTAssertTrue(took)
-        XCTAssertLessThan(ContinuousClock.now - started, .seconds(10), "released well before the 30 second timeout")
+        // Waits on the answer itself, all on the main actor (an expectation wait would send this test case off it,
+        // which Linux Swift rejects); the 30 s is only a ceiling.
+        let ceiling = ContinuousClock.now + .seconds(30)
+        while took == nil, ContinuousClock.now < ceiling { try? await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(took, true, "woken by the release, long before its hour ran out, and took the identifier")
         XCTAssertTrue(gate.isHeld("a"), "the waiter now holds it")
     }
 

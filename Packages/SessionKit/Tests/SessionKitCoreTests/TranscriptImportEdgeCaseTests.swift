@@ -190,17 +190,19 @@ final class TranscriptImportEdgeCaseTests: XCTestCase {
         String(format: "%02d:%02d:%02d.%03d", ms / 3_600_000, ms / 60_000 % 60, ms / 1_000 % 60, ms % 1_000)
     }
 
-    func testTenThousandCuesParseInUnderTwoSeconds() throws {
+    func testTenThousandCuesParseWithinALooseBound() throws {
         let vtt = longVTT(cues: 10_000)
         let started = Date()
         let transcript = try parse(Data(vtt.utf8))
         let elapsed = Date().timeIntervalSince(started)
         XCTAssertEqual(transcript.cues.count, 10_000)
         XCTAssertEqual(transcript.cues.last?.speaker, "Speaker 3")
-        XCTAssertLessThan(elapsed, 2, "10,000 cues took \(elapsed) s")
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.4 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards a parser that grows with the square of the cues.
+        XCTAssertLessThan(elapsed, 5, "10,000 cues took \(elapsed) s")
     }
 
-    func testTenThousandPlainTextCuesParseInUnderTwoSeconds() throws {
+    func testTenThousandPlainTextCuesParseWithinALooseBound() throws {
         var lines = ["Long meeting", "Mar 4, 2026 10:00 AM", ""]
         for index in 0..<10_000 {
             lines.append("Speaker \(index % 4)  \(index / 60):\(String(format: "%02d", index % 60))")
@@ -211,7 +213,9 @@ final class TranscriptImportEdgeCaseTests: XCTestCase {
         let transcript = try parse(Data(lines.joined(separator: "\n").utf8))
         let elapsed = Date().timeIntervalSince(started)
         XCTAssertEqual(transcript.cues.count, 10_000)
-        XCTAssertLessThan(elapsed, 2, "10,000 plain-text cues took \(elapsed) s")
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.4 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards a parser that grows with the square of the cues.
+        XCTAssertLessThan(elapsed, 5, "10,000 plain-text cues took \(elapsed) s")
     }
 
     func testTheSizeLimitIsTenMegabytes() throws {

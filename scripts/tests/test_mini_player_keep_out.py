@@ -34,11 +34,12 @@ NO_PILL = {
     ("Gate1RootView.swift", "Gate1RootView"): "the terms sheet",
     ("Gate1RootView.swift", "InterjectionDetailView"): "pushed inside the Margin detail sheet",
     ("ItemCollectionSheet.swift", "*"): "a sheet",
-    ("CollectionItemsSheet.swift", "*"): "the New collection / Edit Items sheet from the Library (#4343)",
+    ("LibraryAddToCollectionSheet.swift", "*"): "Select's Add to Collection sheet from the Library (#4720)",
     ("PlaybackNativeTextPeekView.swift", "*"): "inside Now Playing, which hides the mini player",
     ("PlaybackTimelineSourceView.swift", "*"): "inside Now Playing, which hides the mini player",
     ("PlaybackScreen.swift", "*"): "Now Playing hides the mini player",
     ("SharingExperience.swift", "*"): "sharing sheets",
+    ("TimelineClipPicture.swift", "TimelineClipViewer"): "a full-screen cover, drawn over the whole app (#3895)",
     ("VoicesSettingsScreen.swift", "VoiceAgreementSheet"): "the licence agreement sheet before a voice download (#1819)",
 }
 
