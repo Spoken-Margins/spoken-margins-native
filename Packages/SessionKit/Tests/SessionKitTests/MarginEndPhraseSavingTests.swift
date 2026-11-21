@@ -116,7 +116,8 @@ final class MarginEndPhraseSavingTests: XCTestCase {
         XCTAssertEqual(MarginEndPhraseSaving.wordsToSave(heard: said, prepared: prepared)?.text, "That is my point.")
         MarginEndPhraseSaving.finish(prepared, wordsSaved: true)
         guard case .milliseconds(let ms) = RecordedFileDuration.measure(file) else { return XCTFail("duration") }
-        XCTAssertEqual(Double(ms), 1_700, accuracy: 150, "the phrase is cut from the audio")
+        // "point" ends at 1,500 ms and "stop" starts at 1,600: the cut is at the end of the last word kept.
+        XCTAssertEqual(Double(ms), 1_500, accuracy: 150, "the phrase is cut from the audio")
 
         // The phrase in the middle of a sentence, or the transcript disagreeing with itself: everything is kept.
         let again = try MarginEndPhraseSavingTone.write(seconds: 4, to: directory.appending(path: "other.m4a"))
