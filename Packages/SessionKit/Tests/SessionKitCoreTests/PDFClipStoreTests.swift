@@ -239,6 +239,86 @@ final class PDFClipStoreTests: XCTestCase {
         XCTAssertNil(store.data(forFloat: "", itemId: "item-a"))
     }
 
+    // MARK: Now asks which clips exist (#4588)
+
+    /// What a notification observer saw, collected from whichever thread posted it.
+    private final class NoticeLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [[AnyHashable: Any]] = []
+        func add(_ userInfo: [AnyHashable: Any]) { lock.lock(); stored.append(userInfo); lock.unlock() }
+        var notices: [[AnyHashable: Any]] { lock.lock(); defer { lock.unlock() }; return stored }
+    }
+
+    func testSavedFloatIdsAreTheOnesAmongTheAskedThatHaveAFile() throws {
+        let (store, base) = makeStore()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let bytes = Data([0xFF, 0xD8, 0xFF, 0xD9])
+        let all = ["float-p1-1", "float-p2-1", "float-p3-1"]
+        try store.replaceClips(["float-p1-1": bytes, "float-p3-1": bytes], forItem: "item-a", document: document(floatIds: all))
+
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: all), ["float-p1-1", "float-p3-1"],
+                       "one present, one missing (no picture was cut), one present")
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: ["float-p2-1"]), [])
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: ["float-p1-1", "float-p9-9", "", "../float-p1-1"]), ["float-p1-1"],
+                       "an unknown id or one that is not a file name is never a hit")
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: []), [])
+    }
+
+    func testSavedFloatIdsAreEmptyWhenTheItemHasNoFolderOrNoFolderOfItsOwn() throws {
+        let (store, base) = makeStore()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let bytes = Data([0xFF, 0xD8, 0xFF, 0xD9])
+        try store.replaceClips(["float-p1-1": bytes], forItem: "item-a", document: document(floatIds: ["float-p1-1"]))
+
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-b", among: ["float-p1-1"]), [], "another item, a PDF imported before clips were kept")
+        XCTAssertEqual(store.savedFloatIds(forItem: "", among: ["float-p1-1"]), [], "an id with no folder of its own")
+        try store.removeClips(forItem: "item-a")
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: ["float-p1-1"]), [])
+    }
+
+    func testSavingClipsTellsWhoListensWhichItemChangedAndNothingElse() throws {
+        let (store, base) = makeStore()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let log = NoticeLog()
+        let token = NotificationCenter.default.addObserver(forName: PDFClipStore.didSaveClipsNotification, object: nil, queue: nil) {
+            log.add($0.userInfo ?? [:])
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+        let bytes = Data([0xFF, 0xD8, 0xFF, 0xD9])
+
+        try store.replaceClips(["float-p1-1": bytes], forItem: "item-a", document: document(floatIds: ["float-p1-1"]))
+        XCTAssertEqual(log.notices.count, 1)
+        XCTAssertEqual(log.notices.first?[PDFClipStore.itemIdKey] as? String, "item-a")
+        XCTAssertEqual(log.notices.first?.count, 1, "the item's id and nothing else: no text, path or picture travels with it")
+
+        try store.replaceClips(["float-p1-1": bytes], forItem: "item-b", document: document(floatIds: ["float-p1-1"]))
+        XCTAssertEqual(log.notices.last?[PDFClipStore.itemIdKey] as? String, "item-b")
+
+        // Removing every clip changes what the item has, so its cards must go too.
+        try store.replaceClips([:], forItem: "item-a", document: document(floatIds: []))
+        XCTAssertEqual(log.notices.count, 3)
+        XCTAssertEqual(log.notices.last?[PDFClipStore.itemIdKey] as? String, "item-a")
+
+        // Nothing saved and nothing removed: nothing changed, nothing to tell.
+        try store.replaceClips([:], forItem: "item-never-had-any", document: nil)
+        try store.replaceClips(["float-p1-1": Data()], forItem: "item-empty", document: document(floatIds: ["float-p1-1"]))
+        XCTAssertEqual(log.notices.count, 3)
+    }
+
+    func testAFailedSaveTellsNobody() throws {
+        let (store, base) = makeStore()
+        defer { try? FileManager.default.removeItem(at: base) }
+        // A file where the clips directory should be makes the write fail.
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        try Data([1]).write(to: store.directory)
+        let log = NoticeLog()
+        let token = NotificationCenter.default.addObserver(forName: PDFClipStore.didSaveClipsNotification, object: nil, queue: nil) { log.add($0.userInfo ?? [:]) }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        XCTAssertThrowsError(try store.replaceClips(["float-p1-1": Data([1])], forItem: "item-a", document: document(floatIds: ["float-p1-1"])))
+        XCTAssertEqual(log.notices.count, 0)
+    }
+
     // MARK: The import carries them
 
     func testAFilesImportCarriesTheClipsToTheSaveAndNeverToATextFile() throws {
