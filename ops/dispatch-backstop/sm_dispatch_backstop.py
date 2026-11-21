@@ -40,6 +40,13 @@ WORKFLOWS = {
 }
 
 
+# Events whose runs count for a workflow, where not every event does the whole job. The label bridge's `pull_request_target`
+# run checks one PR; only a `schedule` or `workflow_dispatch` run sweeps every armed PR, and a PR armed with a token-made
+# label (which starts no event) waits for that sweep. Counting the one-PR runs would let a busy queue hold the sweep off.
+# A workflow not listed counts every event: its event runs read every PR or armed PR.
+COUNTED_EVENTS = {'merge-queue-label-bridge.yml': {'schedule', 'workflow_dispatch'}}
+
+
 def parse_time(text: str) -> dt.datetime:
     return dt.datetime.strptime(text, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=dt.timezone.utc)
 
@@ -58,9 +65,12 @@ def gh(method: str, path: str, token: str, body: dict | None = None):
 def newest_run(workflow: str, token: str, get=gh) -> dict | None:
     """The newest run of any event that did something, or None. A run whose conclusion is `skipped` (every job's `if:`
     was false: a merge group's check, an unarmed PR's push) did no work, so it must not hold the backstop off; on a busy
-    day those arrive every few minutes. A queued or running run has no conclusion yet and counts."""
+    day those arrive every few minutes. A queued or running run has no conclusion yet and counts. For a workflow in
+    COUNTED_EVENTS only a run of those events counts."""
     runs = get('GET', f'repos/{REPO}/actions/workflows/{workflow}/runs?per_page=30', token)['workflow_runs']
-    return next((run for run in runs if run.get('conclusion') != 'skipped'), None)
+    counted = COUNTED_EVENTS.get(workflow)
+    return next((run for run in runs if run.get('conclusion') != 'skipped'
+                 and (counted is None or run.get('event') in counted)), None)
 
 
 # The timer's own jitter (RandomizedDelaySec=60 on each tick) can make a run look a minute or two younger than the

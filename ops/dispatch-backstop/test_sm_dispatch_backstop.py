@@ -73,6 +73,23 @@ class NewestRunTests(unittest.TestCase):
         self.assertIsNone(self.pick(skipped))
         self.assertTrue(b.decide(NOW, 15, self.pick(skipped + [worked]))[0])
 
+    def test_the_bridge_counts_only_sweeping_events(self):
+        # One-PR runs (pull_request_target) must not hold the sweep off: a PR armed with a token-made label starts no
+        # event and waits for the sweep, and recent one-PR runs on other PRs are what a busy queue makes.
+        def runs_for(workflow, runs):
+            return b.newest_run(workflow, 'tok', lambda *a, **k: {'workflow_runs': runs})
+        one_pr = [{'created_at': ago(m), 'event': 'pull_request_target', 'conclusion': 'success'} for m in (3, 14, 25, 36)]
+        sweep = {'created_at': ago(40), 'event': 'schedule', 'conclusion': 'success'}
+        found = runs_for('merge-queue-label-bridge.yml', one_pr + [sweep])
+        self.assertEqual(found, sweep)
+        self.assertTrue(b.decide(NOW, 15, found)[0])  # dispatched despite four recent one-PR runs
+        self.assertIsNone(runs_for('merge-queue-label-bridge.yml', one_pr))
+        manual = {'created_at': ago(5), 'event': 'workflow_dispatch', 'conclusion': 'success'}
+        self.assertEqual(runs_for('merge-queue-label-bridge.yml', one_pr + [manual]), manual)
+        # Every other workflow counts every event.
+        for name in ('claude-audit.yml', 'merge-stall.yml', 'lane-conflicts.yml', 'main-t3.yml'):
+            self.assertEqual(runs_for(name, one_pr + [sweep]), one_pr[0], name)
+
     def test_a_queued_or_running_run_counts(self):
         running = {'created_at': ago(2), 'event': 'workflow_run', 'conclusion': None, 'status': 'in_progress'}
         self.assertEqual(self.pick([running]), running)
@@ -91,7 +108,7 @@ class TickTests(unittest.TestCase):
         return github, out.getvalue().splitlines(), failures
 
     def test_only_overdue_workflows_dispatch_and_each_gets_one_line(self):
-        runs = {name: {'created_at': ago(5), 'event': 'workflow_run'} for name in b.WORKFLOWS}
+        runs = {name: {'created_at': ago(5), 'event': 'schedule'} for name in b.WORKFLOWS}  # every event counts for these
         runs['merge-stall.yml'] = {'created_at': ago(50), 'event': 'schedule'}
         github, lines, failures = self.run_tick(runs)
         self.assertEqual(github.posts, [('merge-stall.yml', {'ref': 'main'})])
