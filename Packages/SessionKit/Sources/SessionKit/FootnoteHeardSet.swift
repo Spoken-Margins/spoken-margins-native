@@ -40,6 +40,15 @@ public struct FootnoteHeardSet: Equatable, Sendable {
         return hasHeardNote(label, itemId: itemId)
     }
 
+    /// The first chunk at or after `index` that the player plays, given the plan's chunks' `footnote` tags in order: the
+    /// definition chunks of heard notes are passed over, and every other chunk is played. Nil when nothing playable is
+    /// left, which is the end of the text. An index past the end is the end.
+    public func firstPlayableIndex(from index: Int, tags: [NarrationChunkPlanner.FootnoteTag?], itemId: String) -> Int? {
+        var next = max(0, index)
+        while next < tags.count, skips(tags[next], itemId: itemId) { next += 1 }
+        return next < tags.count ? next : nil
+    }
+
     /// Forgets one item's notes, for when its text changes or the listener starts it over from the beginning.
     public mutating func forget(itemId: String) {
         heard = heard.filter { $0.itemId != itemId }

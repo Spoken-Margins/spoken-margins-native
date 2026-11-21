@@ -60,7 +60,7 @@ public enum PreparedAudioEnqueue {
             do { item = try repository.loadItem(id: candidate.itemId) }
             catch SessionKitError.missingFixture { return nil }
             guard let text = try preparedText(item: item, repository: repository), item.deletedAt == nil,
-                  candidate.articleIdentity.map({ $0 == NarrationChunkPlanner.identity(ofArticle: text) }) ?? true else { return nil }
+                  candidate.articleIdentity.map({ NarrationChunkPlanner.isIdentity($0, ofArticle: text) }) ?? true else { return nil }
             return try operation(current, item)
         }
     }
