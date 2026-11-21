@@ -65,4 +65,12 @@ final class ItemDetailStateTextTests: XCTestCase {
         XCTAssertNotNil(first.pdfClipSource)
         XCTAssertNil(first.includingTimelineSource(nil).pdfClipSource, "a detail prepared again without a document drops the cards")
     }
+
+    func testTwoDetailsDifferWhenOnlyTheirFloatsDo() {
+        let text = "Cell A | Cell B"
+        let one = ItemDetailState(id: "pdf-a", text: text).includingTimelineSource(pdfDocument(text: text, floatIds: ["f1"]))
+        let two = ItemDetailState(id: "pdf-a", text: text).includingTimelineSource(pdfDocument(text: text, floatIds: ["f1", "f2"]))
+        XCTAssertNotEqual(one, two, "a view that compares details redraws when the cards could change")
+        XCTAssertEqual(one, ItemDetailState(id: "pdf-a", text: text).includingTimelineSource(pdfDocument(text: text, floatIds: ["f1"])))
+    }
 }

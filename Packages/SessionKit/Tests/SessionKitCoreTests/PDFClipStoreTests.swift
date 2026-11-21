@@ -259,7 +259,7 @@ final class PDFClipStoreTests: XCTestCase {
         XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: all), ["float-p1-1", "float-p3-1"],
                        "one present, one missing (no picture was cut), one present")
         XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: ["float-p2-1"]), [])
-        XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: ["float-p1-1", "float-p9-9", "", "../float-p1-1"]), ["float-p1-1"],
+        XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: ["float-p1-1", "float-p9-9", "", "../float-p1-1", "float-p1-1.jpg"]), ["float-p1-1"],
                        "an unknown id or one that is not a file name is never a hit")
         XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: []), [])
     }
@@ -274,6 +274,12 @@ final class PDFClipStoreTests: XCTestCase {
         XCTAssertEqual(store.savedFloatIds(forItem: "", among: ["float-p1-1"]), [], "an id with no folder of its own")
         try store.removeClips(forItem: "item-a")
         XCTAssertEqual(store.savedFloatIds(forItem: "item-a", among: ["float-p1-1"]), [])
+    }
+
+    func testTheClipsSavedNoticeAndItsItemKeyAreFixedNames() {
+        // PR 3's observer names them; renaming one silently would leave a Now tab that never refreshes.
+        XCTAssertEqual(PDFClipStore.didSaveClipsNotification.rawValue, "SpokenMargins.PDFClipStore.didSaveClips")
+        XCTAssertEqual(PDFClipStore.itemIdKey, "itemId")
     }
 
     func testSavingClipsTellsWhoListensWhichItemChangedAndNothingElse() throws {
