@@ -36,6 +36,10 @@ final class CatalogDrawerModel: ObservableObject {
     @Published private(set) var isSearchPending = false
     /// The import a "Follow Podcasts in Spoken Margins" Shortcut opened (#4284), shown over the drawer's list.
     @Published var shortcutImport: OPMLImportModel?
+    /// The "Got a link from a friend?" card shows on the first-launch opening while the Library holds no friend's packet (#3782).
+    @Published private(set) var showsFriendLinkCard = false
+    /// Under the card's Paste button when what was pasted holds no share link; cleared by the next paste.
+    @Published private(set) var friendLinkNote: String?
 
     private let store: SourceCatalogStore?
     private let searcher: PodcastNameSearch?
@@ -43,6 +47,10 @@ final class CatalogDrawerModel: ObservableObject {
     private let follow: @MainActor (String) async throws -> String
     private let subscriptions: @MainActor () -> [FeedSubscription]
     private let defaults: UserDefaults
+    /// Whether the Library holds a friend's packet, read off the main thread. Nil in tests and previews: no card.
+    private let libraryHoldsFriendPacket: (@Sendable () async -> Bool)?
+    /// Opens a pasted share link as a tapped one is opened. Nil in tests and previews.
+    private let openFriendLink: (@MainActor (URL) -> Void)?
     private var hasLoaded = false
     /// What Done plays on a fresh install (#2851): the first pick's newest episode or latest post, else the
     /// Welcome sample. Gets the picked sources' ids in tap order, and whether the Welcome sample may stand in when
@@ -73,8 +81,12 @@ final class CatalogDrawerModel: ObservableObject {
         follow: @escaping @MainActor (String) async throws -> String,
         makeOPMLImport: (@MainActor () -> OPMLImportModel)? = nil,
         searcher: PodcastNameSearch? = nil,
-        startFirstListen: (@MainActor ([String], Bool) async -> Void)? = nil
+        startFirstListen: (@MainActor ([String], Bool) async -> Void)? = nil,
+        libraryHoldsFriendPacket: (@Sendable () async -> Bool)? = nil,
+        openFriendLink: (@MainActor (URL) -> Void)? = nil
     ) {
+        self.libraryHoldsFriendPacket = libraryHoldsFriendPacket
+        self.openFriendLink = openFriendLink
         self.startFirstListen = startFirstListen
         self.searcher = searcher
         self.store = store
@@ -167,6 +179,7 @@ final class CatalogDrawerModel: ObservableObject {
     /// A friend's file (a packet or a share link) arrived. On a first launch it comes before the drawer (#3291).
     func friendFileArrived() {
         hasFriendFileArrived = true
+        showsFriendLinkCard = false
         if isPresented, isFirstRunOpening { friendFileOpenedUnderneath = true }
         recordFriendFileArrival()
     }
@@ -184,6 +197,12 @@ final class CatalogDrawerModel: ObservableObject {
             defaults.removeObject(forKey: Self.deferredByFriendFileKey)
             defaults.set(true, forKey: Self.owedAfterFriendFileFailedKey)
         }
+        // A drawer that stayed up (the listener had picks) was never withdrawn, so nothing above brought it back: no friend's
+        // item came, so Done may play again, and the card returns for another paste (#3782).
+        if isPresented, isFirstRunOpening {
+            friendFileOpenedUnderneath = false
+            refreshFriendLinkCard()
+        }
     }
 
     private func recordFriendFileArrival() {
@@ -200,6 +219,7 @@ final class CatalogDrawerModel: ObservableObject {
             guard !isPresented, !defaults.bool(forKey: Self.seenKey) else { return }
             present()
             isFirstRunOpening = true
+            refreshFriendLinkCard()
             // A held-back drawer is owed once: spent as it opens, so a kill with it up doesn't bring it back (#3795).
             // A friend's file arriving while it is up sets the key again (`recordFriendFileArrival`).
             defaults.removeObject(forKey: Self.deferredByFriendFileKey)
@@ -220,7 +240,36 @@ final class CatalogDrawerModel: ObservableObject {
         playsOnDismiss = false
         isWithdrawing = false
         friendFileOpenedUnderneath = false
+        showsFriendLinkCard = false
+        friendLinkNote = nil
         isPresented = true
+    }
+
+    /// Decides whether the first-launch card shows: the Library is read off the main thread, and the card appears
+    /// only if this opening is still the first-launch one when the answer comes back (#3782).
+    private func refreshFriendLinkCard() {
+        guard let libraryHoldsFriendPacket else { return }
+        Task { @MainActor [weak self] in
+            let holds = await libraryHoldsFriendPacket()
+            guard let self, self.isPresented, !self.hasFriendFileArrived else { return }
+            self.showsFriendLinkCard = FirstLaunchFriendLinkCard.isShown(
+                isFirstRunOpening: self.isFirstRunOpening, libraryHoldsFriendPacket: holds)
+        }
+    }
+
+    /// What the card's system Paste button pasted. A share link is told to the first-launch order as a friend's file
+    /// (an untouched drawer withdraws and the Welcome sample is held back; one with picks stays and the item opens under
+    /// it), then opened as a tapped link is; a failure brings the drawer back (#3801). Anything else is left alone,
+    /// with a line under the button.
+    func pasteIntoFriendLinkCard(_ content: String?) {
+        switch FirstLaunchFriendLinkCard.pasteResult(for: content) {
+        case .open(let url):
+            friendLinkNote = nil
+            friendFileArrived()
+            openFriendLink?(url)
+        case .notAFriendLink(let line):
+            friendLinkNote = line
+        }
     }
 
     /// A Shortcut passed in podcast feed links (#4284): the drawer opens, if it isn't open already, on their
@@ -427,6 +476,9 @@ struct CatalogDrawerView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                if drawer.showsFriendLinkCard, !drawer.showsSearchResults {
+                    FirstLaunchFriendLinkCardView(drawer: drawer)
+                }
                 searchFailure
                 if drawer.showsSearchResults {
                     searchResults
