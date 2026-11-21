@@ -2623,12 +2623,16 @@ final class Gate1AppModel: ObservableObject {
             startupChunkCount: Self.startupAudioChunkCount)
     }
 
+    /// The web link in pasted text. The shared rule (`PasteIntake.webLink`, also the share extension's) comes first, so
+    /// "Title" then the link is that link; the detector only finds a link inside longer text (#4809).
     static func firstURL(in text: String) -> URL? {
+        if let link = PasteIntake.webLink(in: text) { return link }
         guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
             return URL(string: text)
         }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        return detector.matches(in: text, options: [], range: range).compactMap(\.url).first
+        return detector.matches(in: text, options: [], range: range).compactMap(\.url)
+            .first { ["http", "https"].contains($0.scheme?.lowercased() ?? "") }
     }
 
     func scheduleSourceTranscriptImportIfAvailable(_ links: [SourceTranscriptLink], itemId: String) {
