@@ -76,6 +76,7 @@ struct HelpScreen: View {
                     Text("Open the Margins tab and tap a Margin to hear its recording or read its transcript.")
                     Text("Hands-free: say \"Add a Margin in Spoken Margins\" or \"Spoken Margins add a Margin\", then say your thought. It goes into your live session, or onto what's playing.")
                     Text("Hands-free ending: say \"stop margin\" or \"end margin\" when you're done. Pauses never end a Margin.")
+                    Text("After Siri says the Margin was added, Siri stays open until you dismiss it: press the side button or swipe it away. Spoken Margins has no way to close it. If your listening doesn't start again once Siri has closed, tap Play.")
                 }
                 Section("Optional AI") {
                     Text("Summarize Notes uses Apple’s on-device Foundation Model when available. Listening Maps use publisher chapters for podcasts and deterministic structure for native text.")

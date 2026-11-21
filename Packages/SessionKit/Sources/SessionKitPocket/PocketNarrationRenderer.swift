@@ -206,5 +206,6 @@ public final class PocketNarrationRenderer: @unchecked Sendable {
             append(Int16(max(-1, min(1, sample)) * 32767))
         }
         try data.write(to: url, options: .atomic)
+        DiskWriteLedgerStore.shared.record(bytes: Int64(data.count), source: .speechRender)
     }
 }

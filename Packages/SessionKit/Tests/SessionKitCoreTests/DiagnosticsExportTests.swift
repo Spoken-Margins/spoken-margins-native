@@ -246,13 +246,13 @@ final class DiagnosticsExportTests: XCTestCase {
         XCTAssertEqual(entries["targetType"], "none")
     }
 
-    func testTheExportCarriesExactlyTheElevenFixedKeysWhenThereIsNothingElse() {
+    func testTheExportCarriesExactlyTheTwelveFixedKeysWhenThereIsNothingElse() {
         let entries = DiagnosticsExport.entries(live: [:], stored: [:], fixed: fixed())
 
         XCTAssertEqual(
             Set(entries.keys),
             ["developerBuild", "developerRecording", "playbackEvents", "schemaVersion", "exportedAt",
-             "playbackStatus", "sessionPhase", "targetType", "pendingAIJobs", "responsiveness", "screenRebuilds"]
+             "playbackStatus", "sessionPhase", "targetType", "pendingAIJobs", "responsiveness", "screenRebuilds", "diskWritesBySource"]
         )
     }
 
@@ -267,6 +267,18 @@ final class DiagnosticsExportTests: XCTestCase {
 
         XCTAssertEqual(entries["screenRebuilds"], "rebuilds=1 whileShowing=1 afterDismissal=0 places=PlaybackScreen:229x1")
         XCTAssertEqual(DiagnosticsExport.entries(live: [:], stored: [:], fixed: fixed())["screenRebuilds"], "rebuilds=0", "a healthy export says zero, not nothing")
+    }
+
+    func testTheDiskWritesLineIsTheAppsOwnAndNoLiveEntryStandsInForIt() {
+        var ledger = DiskWriteLedger()
+        ledger.record(bytes: 3_100_000_000, source: .download, at: Date(timeIntervalSince1970: 1_763_510_400))
+        var written = fixed()
+        written.diskWritesBySource = ledger.summaryText
+
+        let entries = DiagnosticsExport.entries(live: ["diskWritesBySource": "stale"], stored: ["diskWritesBySource": "stale"], fixed: written)
+
+        XCTAssertEqual(entries["diskWritesBySource"], "2025-11-19 total=3100MB download=3100MB; counted=download,speech_render,speech_assembly")
+        XCTAssertEqual(DiagnosticsExport.entries(live: [:], stored: [:], fixed: fixed())["diskWritesBySource"]?.hasPrefix("none_recorded"), true)
     }
 
     func testTheListsCountIsOnlyACountAndNoLiveEntryStandsInForIt() {
