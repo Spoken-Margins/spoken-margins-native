@@ -157,12 +157,29 @@ class HostedPortableWorkflowTests(unittest.TestCase):
             for job, body in re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', jobs):
                 if any('sm-vps' in runs_on for runs_on in re.findall(r'(?m)^    runs-on: (.*)$', body)):
                     on_vps.setdefault(path.name, []).append(job)
+        self.assertEqual(on_vps, {})
+
 
 class OnlyTestingTests(unittest.TestCase):
     def test_selectors_cover_classes_and_methods_only(self):
         self.assertTrue(verification.selected('T/A/test1', 'T/A'))
         self.assertTrue(verification.selected('T/A/test1', 'T/A/test1'))
         self.assertFalse(verification.selected('T/AB/test1', 'T/A'))
+
+    def test_an_unknown_selector_fails_before_anything_is_built(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'app')
+            real_capture = verification.capture
+
+            def capture(args):
+                if args[0] in ('xcrun', 'xcodebuild', 'xcodegen'):
+                    raise AssertionError(f'nothing should run: {args}')
+                return real_capture(args)
+
+            with mock.patch.object(verification, 'capture', side_effect=capture), \
+                    mock.patch.object(verification.Run, 'command', side_effect=AssertionError('nothing should run')):
+                with self.assertRaisesRegex(RuntimeError, 'Not in the AppBehavior test plan: SpokenMarginsAppTests/Nope'):
+                    run.xcode('app', None, False, None, ['Nope'])
 
 
 if __name__ == '__main__':
