@@ -1,0 +1,22 @@
+{
+ "SessionKit/Tests/SessionKitCoreTests/EpisodeLengthBackfillTests.swift::testTwoThousandItemsAgainstFiveThousandEntriesIsFast": "1 s, ~0.007 s local: a feed scan per item instead of a lookup",
+ "SessionKit/Tests/SessionKitCoreTests/FollowListFilterTests.swift::testAListWith500ShowsFiltersAllOfThemWithinABudget": "2 s, ~0.02 s local: a filter worse than rows x members",
+ "SessionKit/Tests/SessionKitCoreTests/FollowingShowRowsRuleTests.swift::testTwoHundredRulesOverFiveThousandEpisodesAreFast": "10 s, ~0.9 s local: a rule pass worse than rules x episodes",
+ "SessionKit/Tests/SessionKitCoreTests/FootnoteAnchorsTests.swift::testAFootnoteHeavyArticleIsMatchedQuickly": "2 s, ~0.06 s local: a rescan of the text per note",
+ "SessionKit/Tests/SessionKitCoreTests/LibraryItemSummaryReadTests.swift::testTheSummaryReadOfAThreeHundredItemLibraryIsFastAndMuchFasterThanTheWholeRead": "relative: under 0.9 of the whole read timed in the same run (~0.11 on a Mac, 0.58 on Linux): a summary that still decodes the text",
+ "SessionKit/Tests/SessionKitCoreTests/ListeningRuleEvaluatorTests.swift::testTwoHundredRulesOverFiveThousandEpisodes": "10 s debug, ~1.2 s local: an evaluation worse than rules x episodes",
+ "SessionKit/Tests/SessionKitCoreTests/MarginCommentPlanTests.swift::testAVeryLongTextWithManyMarginsPlansQuickly": "10 s, ~0.3 s local: a rescan of the text for each Margin's sentence",
+ "SessionKit/Tests/SessionKitCoreTests/MarkdownHeadingChapterTests.swift::testAHugeSingleSectionIsSplitInLinearTime": "10 s, ~0.6 s local: a split that grows with the square of the section",
+ "SessionKit/Tests/SessionKitCoreTests/NarrationFootnotePlanTests.swift::testALongSourceWithManyNotesPlansQuicklyAndWithinTheBudget": "5 s, ~0.55 s local: a planner that rescans the notes per claim",
+ "SessionKit/Tests/SessionKitCoreTests/PDFSentenceLocatorTests.swift::testALongPageOfRepeatedWordsIsOnePass": "5 s, ~0.4 s local: a quadratic search over a long page",
+ "SessionKit/Tests/SessionKitCoreTests/PaperNoteTableTests.swift::testThreeHundredPapersWithTenAnswersEachBuildQuickly": "5 s, ~0.02 s local: a table build that rescans every paper per answer",
+ "SessionKit/Tests/SessionKitCoreTests/PlaybackTextReaderBrowserTests.swift::testManyChaptersOverLongTextStaysQuick": "1 s, ~0.06 s local: a recount of the text per chapter",
+ "SessionKit/Tests/SessionKitCoreTests/SQLiteStoreLockContentionTests.swift::testASmallReadDoesNotWaitForABackgroundReadToDecode": "Relative budget, not a fixed ceiling: the small read must take under half of a concurrent whole-Library read, and the test skips when that read is under 0.08 s. Guards #2103, JSON decoding moved back under the store lock, where the small read waits for the whole decode and takes about as long as the big read. The lock itself is proven on state by testASmallReadAndAWriteProceedWhileABackgroundReadIsStillOpen in the same file.",
+ "SessionKit/Tests/SessionKitCoreTests/TranscriptHandoffTests.swift::testATenThousandCueShareImportsQuickly": "5 s, ~0.5 s local: work per cue that grows with the number of cues",
+ "SessionKit/Tests/SessionKitCoreTests/TranscriptImportEdgeCaseTests.swift::testTenThousandCuesParseWithinALooseBound": "5 s, ~0.4 s local: a parser that grows with the square of the cues",
+ "SessionKit/Tests/SessionKitCoreTests/TranscriptImportEdgeCaseTests.swift::testTenThousandPlainTextCuesParseWithinALooseBound": "5 s, ~0.4 s local: a parser that grows with the square of the cues",
+ "SessionKit/Tests/SessionKitCoreTests/TranscriptItemTextTests.swift::testTenThousandCuesBuildInUnderASecond": "1 s, ~0.07 s local: text built by copying the transcript per cue",
+ "SessionKit/Tests/SessionKitCoreTests/TranscriptLibraryImportTests.swift::testATenThousandCueMeetingImportsQuicklyAndItsTimesReadBackQuickly": "15 s import (~0.5 s local) and 1 s read (~0.005 s local): an import or decode that grows with the square of the cues",
+ "SessionKit/Tests/SessionKitTests/PDFMarginPlacerTests.swift::testThreeHundredPagesAndTwoHundredMarginsPlaceWithinABound": "60 s, ~0.13 s local: a page's text read again for every Margin",
+ "SessionKit/Tests/SessionKitTests/TextListeningMapPacketTests.swift::testPlacementOfTwoHundredChaptersOnALongTextIsQuick": "20 s, ~0.3 s local: a rescan of the long text per chapter"
+}

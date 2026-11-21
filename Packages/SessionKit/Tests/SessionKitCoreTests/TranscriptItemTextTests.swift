@@ -79,6 +79,8 @@ final class TranscriptItemTextTests: XCTestCase {
         let cues = (0..<10_000).map { cue($0 * 1_000, "Speaker \($0 % 4)", "This is sentence number \($0) of a long meeting.") }
         let started = Date()
         let item = build(cues)
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.07 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards text built by copying the whole transcript per cue.
         XCTAssertLessThan(Date().timeIntervalSince(started), 1)
         XCTAssertEqual(item.cues.count, 10_000)
         XCTAssertEqual(item.cues.last.map { Array(item.text)[$0.startChar...].starts(with: Array("Speaker 3: ")) }, true)
