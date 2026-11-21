@@ -31,6 +31,8 @@ struct ItemCollectionSheet: View {
                                 Spacer()
                                 if collection.itemIDs.contains(item.id) {
                                     Image(systemName: "checkmark").foregroundStyle(AppColors.ochreText)
+                                        // The selected trait below says it; the glyph would read "checkmark" on top (#4639).
+                                        .accessibilityHidden(true)
                                 }
                             }
                             .contentShape(Rectangle())
