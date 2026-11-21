@@ -209,6 +209,35 @@ class WorkflowTests(unittest.TestCase):
         crons = [c['cron'] for c in self.load('main-t3.yml')['schedule']]
         self.assertEqual(crons, ['17 */3 * * *', '30 13 * * *', '30 22 * * *'])  # 6:30 and 15:30 America/Phoenix
 
+    def jobs(self):
+        import yaml
+        return yaml.safe_load((self.ROOT / '.github/workflows/main-t3.yml').read_text())['jobs']
+
+    def test_the_bisect_job_runs_only_after_a_red_t3_and_never_after_an_error(self):
+        """#4574: `error` and `success` prove nothing about a culprit; only `failure` names merges to bisect."""
+        jobs = self.jobs()
+        self.assertEqual(jobs['t3']['outputs'], {'state': '${{ steps.run.outputs.state }}'})
+        bisect = jobs['bisect']
+        self.assertEqual(bisect['needs'], ['decide', 't3'])  # t3 needs decide, so the trunk gate still holds
+        self.assertEqual(bisect['if'], "${{ always() && needs.t3.outputs.state == 'failure' }}")
+
+    def test_the_bisect_job_has_its_own_clock_history_and_the_rights_it_uses(self):
+        bisect = self.jobs()['bisect']
+        self.assertEqual(bisect['timeout-minutes'], 240)  # scripts/main_t3_bisect.py's budget assumes 240
+        self.assertEqual(bisect['runs-on'], self.jobs()['t3']['runs-on'])
+        self.assertEqual(bisect['permissions'], {'contents': 'read', 'statuses': 'read', 'issues': 'write', 'actions': 'read'})
+        checkout = bisect['steps'][0]
+        self.assertEqual(checkout['with']['fetch-depth'], 0)
+        self.assertEqual(checkout['with']['ref'], '${{ needs.decide.outputs.sha }}')
+
+    def test_the_bisect_job_reads_the_red_runs_evidence_and_runs_the_script_without_a_status_write(self):
+        text = (self.ROOT / '.github/workflows/main-t3.yml').read_text()
+        bisect = text[text.index('\n  bisect:'):]
+        self.assertIn('gh run download "$GITHUB_RUN_ID" --name main-t3-evidence', bisect)
+        self.assertIn('scripts/main_t3_bisect.py bisect --sha "$SHA" --run-url "$RUN_URL" --evidence "$EVIDENCE"', bisect)
+        self.assertNotIn('statuses: write', bisect)  # main-t3's status stays as the t3 job set it
+        self.assertNotIn('cache/save', bisect)  # probes build old commits; only a green main saves the cache
+
     def test_hosted_integration_no_longer_runs_on_a_push(self):
         self.assertEqual(list(self.load('hosted-integration.yml')), ['workflow_dispatch'])
 

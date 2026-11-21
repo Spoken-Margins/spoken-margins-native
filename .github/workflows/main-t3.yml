@@ -2,7 +2,8 @@
 # 3 hours, and only when main's head has no `main-t3` commit status yet, run the whole app suite (both app test plans,
 # every test) on a GitHub-hosted Mac, and record the result as a `main-t3` commit status on that SHA. Releases refuse
 # a commit without a green one (#4575). A failure opens or updates one "Main T3 failed on <sha7>" issue labelled
-# `regression`; finding the culprit is #4574. scripts/main_t3.py has the contract and the rules.
+# `regression`; finding the culprit is #4574: after a red `t3` job, the `bisect` job at the bottom runs
+# scripts/main_t3_bisect.py. scripts/main_t3.py has the contract and the rules.
 #
 # The Mac job is lane.yml's hosted T3 setup (xcode-27, Xcode 27.0): its own lane state and evidence folders, the iOS
 # runtime check, Git LFS from a cache, the Xcode compilation cache, Python 3.12 and XcodeGen. It runs main's own
@@ -90,6 +91,9 @@ jobs:
     needs: decide
     if: needs.decide.outputs.run == 'true'
     runs-on: xcode-27
+    # `failure` only when a test failed (an `error` proves nothing about main); the `bisect` job reads it.
+    outputs:
+      state: ${{ steps.run.outputs.state }}
     # The build, one simulator boot and both whole plans. hosted-integration.yml's app plan alone took about 80 min
     # with its reruns and journeys on this image; main_t3.py gives each verify-tests.py run 100 min.
     timeout-minutes: 180
@@ -200,5 +204,118 @@ jobs:
             ${{ runner.temp }}/lane-evidence/**/*.log
             ${{ runner.temp }}/lane-evidence/**/*.json
             ${{ runner.temp }}/lane-evidence/**/*.md
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # A red main-t3 names the merges since the last green; this job narrows them to one (#4574, plan on #2048). It runs
+  # only after `state == failure` (never `error`, never a skipped run), once per red commit, and only the failing test
+  # classes at each probe: about log2(merges) + 1 probes, no probe started after 130 minutes. It exits 0 whatever it
+  # finds and writes no commit status, so main-t3's own result stays as the `t3` job set it. A culprit gets one `ready`
+  # + `regression` issue; anything undecided is a note on the "Main T3 failed on <sha7>" issue and names no PR.
+  # It is its own job so the red run's 180 minutes and its own 240 are each bounded; the red run's manifests come from
+  # the `main-t3-evidence` artifact the t3 job uploads (`gh run download`, so no new action to pin).
+  bisect:
+    name: 'main-t3 bisect: which merge broke main?'
+    needs: [decide, t3]
+    if: ${{ always() && needs.t3.outputs.state == 'failure' }}
+    runs-on: xcode-27
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      statuses: read
+      issues: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SHA: ${{ needs.decide.outputs.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      SM_LANE_GITHUB_HOSTED: '1'
+      SM_PLAN_TIMEOUT_SECONDS: '3600'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.decide.outputs.sha }}
+          # Full history: the probes check out the first-parent merges between the last green and the red commit.
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+      - name: Lane folders, Xcode and the iOS runtime
+        run: |
+          {
+            echo "SM_LANE_STATE_DIR=$RUNNER_TEMP/lane-state"
+            echo "SM_LANE_EVIDENCE_DIR=$RUNNER_TEMP/lane-evidence"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/lane-state" "$RUNNER_TEMP/lane-evidence"
+          # A fresh hosted Mac has no crash-report folder, and verify-tests.py stops without one (#2557).
+          mkdir -p "$HOME/Library/Logs/DiagnosticReports"
+          xcodebuild -version
+          sysctl -n hw.ncpu hw.memsize
+          # The lane tests on iOS 26 (lane_sim.IOS_MAJOR); with no iOS 26 runtime on the image, its newest iOS.
+          runtimes=$(xcrun simctl list runtimes --json)
+          major=$(echo "$runtimes" | /usr/bin/python3 -c 'import json,sys
+          ok=[r["version"].split(".")[0] for r in json.load(sys.stdin)["runtimes"] if r.get("isAvailable") and r.get("platform")=="iOS"]
+          print("26" if "26" in ok else (max(ok, key=int) if ok else "26"))')
+          if [ "$major" != 26 ]; then
+            echo "::warning title=main-t3 iOS::No iOS 26 simulator runtime on this image; the run uses iOS $major."
+          fi
+          echo "SM_LANE_IOS_MAJOR=$major" >> "$GITHUB_ENV"
+      - name: List LFS objects
+        run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
+      - name: LFS cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
+          restore-keys: lfs-
+      - name: Fetch LFS files
+        run: |
+          # The checkout keeps no credentials; the job token is handed to this one command.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+      # The same rolling compilation cache as lane.yml's hosted T3 and hosted-app-macos.yml (scripts/ci-cas-cache.sh).
+      - name: Restore the Xcode compilation cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/cas-pack
+          key: xcode-cas-sparse-27.0-main-t3-bisect-${{ github.run_id }}
+          restore-keys: xcode-cas-sparse-27.0-
+      - name: Unpack the Xcode compilation cache
+        run: CAS="$RUNNER_TEMP/lane-state/compilation-cache" PACK="$RUNNER_TEMP/cas-pack" bash scripts/ci-cas-cache.sh unpack
+      - name: Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: XcodeGen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: command -v xcodegen >/dev/null || brew install xcodegen; xcodegen --version
+      - name: Python tools
+        env:
+          GH_TOKEN: ''
+        run: PYTHON=python3 bash scripts/bootstrap-python-tools.sh
+      - name: The red run's manifests
+        id: red
+        run: |
+          gh run download "$GITHUB_RUN_ID" --name main-t3-evidence --dir "$RUNNER_TEMP/red-evidence"
+          # The folder that holds the verify-* manifests, whatever root the artifact kept.
+          first=$(find "$RUNNER_TEMP/red-evidence" -type d -name 'verify-*' -print -quit)
+          if [ -z "$first" ]; then echo "::error::the red run's evidence has no verify-* manifests"; exit 1; fi
+          echo "dir=$(dirname "$first")" >> "$GITHUB_OUTPUT"
+      - name: Bisect the red commit
+        env:
+          EVIDENCE: ${{ steps.red.outputs.dir }}
+        run: python3 scripts/main_t3_bisect.py bisect --sha "$SHA" --run-url "$RUN_URL" --evidence "$EVIDENCE"
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: main-t3-bisect-evidence
+          path: |
+            ${{ runner.temp }}/red-evidence/**/bisect-*/**/*.log
+            ${{ runner.temp }}/red-evidence/**/main-t3-bisect.json
           if-no-files-found: ignore
           retention-days: 14
