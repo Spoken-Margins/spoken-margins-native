@@ -6,9 +6,9 @@ IFS=$'\n\t'
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 site_directory="${repository_root}/Site"
 # `ptp` is an alias in the owner's ~/.ssh/config for the VPS; set SPOKEN_MARGINS_VPS_REMOTE to use another host.
-# The login should be the normal deploy user (#2478, e.g. smdeploy@ptp), which owns the web folder and needs no root for
-# the upload; root@ptp still works until root login is switched off.
-vps_remote="${SPOKEN_MARGINS_VPS_REMOTE:-root@ptp}"
+# The alias logs in as the normal deploy user (#2478, smdeploy), which owns the web folder and needs no root for the
+# upload. Root login on the box is switched off, so do not name root@ here.
+vps_remote="${SPOKEN_MARGINS_VPS_REMOTE:-ptp}"
 ssh_key="${SPOKEN_MARGINS_VPS_SSH_KEY:-}"
 site_host="spokenmargins.proximitytoprogress.com"
 web_root="/srv/www/spokenmargins"
