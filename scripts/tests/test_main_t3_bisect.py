@@ -1,0 +1,227 @@
+"""#4574: bisecting a red scheduled main T3 to the merge that broke it (scripts/main_t3_bisect.py).
+
+The bisection itself is tested against a table of every culprit position for several list lengths, and against probes
+that fault or flake. The git range is tested on a real temporary repository.
+"""
+from __future__ import annotations
+
+import math
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import main_t3_bisect as B  # noqa: E402
+
+RED = 'f' * 40
+GREEN = 'e' * 40
+WATCHED = {'SpokenMarginsAppTests/Foo'}
+
+
+def shas(n):
+    return [f'{i:040x}' for i in range(1, n + 1)]
+
+
+def probe_for(commits, culprit, log=None, script=None):
+    """A probe where commits at or after `culprit` fail. `script` {sha: [outcomes...]} overrides the first calls."""
+    script = {k: list(v) for k, v in (script or {}).items()}
+
+    def probe(sha):
+        if log is not None:
+            log.append(sha)
+        if script.get(sha):
+            return script[sha].pop(0)
+        return B.FAIL if commits.index(sha) >= culprit else B.PASS
+
+    return probe
+
+
+class BisectTests(unittest.TestCase):
+    def test_every_culprit_position_is_found_in_about_log2_probes(self):
+        for n in (1, 2, 3, 5, 8, 17, 30, 64, 100):
+            commits = shas(n)
+            for culprit in range(n):
+                with self.subTest(n=n, culprit=culprit):
+                    log = []
+                    result = B.bisect(commits, probe_for(commits, culprit, log))
+                    self.assertEqual((result.kind, result.sha), ('culprit', commits[culprit]), result.reason)
+                    # log2(n) probes to narrow it down, plus one repeat when the failure was only seen in a probe.
+                    self.assertLessEqual(len(log), math.ceil(math.log2(n)) + 1 if n > 1 else 0)
+                    self.assertNotIn(RED, log)
+
+    def test_the_red_head_is_never_probed_and_a_head_culprit_is_not_repeated(self):
+        commits = shas(4)
+        log = []
+        result = B.bisect(commits, probe_for(commits, 3, log))
+        self.assertEqual(result.sha, commits[3])
+        self.assertNotIn(commits[3], log)  # its failure was the whole run's, with that run's own retries
+
+    def test_one_merge_since_green_is_the_culprit_with_no_probe(self):
+        result = B.bisect(['a' * 40], lambda sha: self.fail('no probe needed'))
+        self.assertEqual((result.kind, result.sha, result.runs), ('culprit', 'a' * 40, 0))
+
+    def test_nothing_between_green_and_red_decides_nothing(self):
+        result = B.bisect([], lambda sha: self.fail('no probe needed'))
+        self.assertEqual((result.kind, result.sha), ('undecided', None))
+
+    def test_a_runner_fault_gets_one_retry_then_the_bisection_is_undecided(self):
+        commits = shas(8)
+        mid = commits[3]
+        once = B.bisect(commits, probe_for(commits, 5, script={mid: [B.UNDECIDED]}))
+        self.assertEqual((once.kind, once.sha), ('culprit', commits[5]))
+        self.assertEqual([o for s, o in once.probes if s == mid], [B.UNDECIDED, B.PASS])
+        twice = B.bisect(commits, probe_for(commits, 5, script={mid: [B.UNDECIDED, B.UNDECIDED]}))
+        self.assertEqual((twice.kind, twice.sha), ('undecided', None))
+        self.assertIn(mid[:7], twice.reason)
+
+    def test_a_culprit_that_passes_on_the_repeat_is_a_flake_and_names_no_pr(self):
+        commits = shas(8)
+        # commits[5] fails on its first probe (as the bisection narrows to it) and passes when repeated.
+        result = B.bisect(commits, probe_for(commits, 5, script={commits[5]: [B.FAIL, B.PASS]}))
+        self.assertEqual((result.kind, result.sha), ('undecided', None))
+        self.assertIn('flaky', result.reason)
+
+    def test_a_culprit_that_cannot_be_repeated_names_no_pr(self):
+        commits = shas(8)
+        result = B.bisect(commits, probe_for(commits, 5, script={commits[5]: [B.FAIL, B.UNDECIDED, B.UNDECIDED]}))
+        self.assertEqual(result.kind, 'undecided')
+
+    def test_out_of_probes_or_time_is_undecided_not_a_guess(self):
+        commits = shas(64)
+        self.assertEqual(B.bisect(commits, probe_for(commits, 40), max_probes=2).kind, 'undecided')
+        self.assertEqual(B.bisect(commits, probe_for(commits, 40), time_left=lambda: False).kind, 'undecided')
+        self.assertEqual(B.bisect(commits, probe_for(commits, 40), max_probes=7).kind, 'culprit')
+
+    def test_probes_are_recorded_in_order_with_their_outcomes(self):
+        commits = shas(4)
+        result = B.bisect(commits, probe_for(commits, 1))
+        self.assertEqual(result.probes[0], (commits[1], B.FAIL))
+        self.assertEqual(result.runs, len(result.probes))
+
+
+class ClassifyTests(unittest.TestCase):
+    def failed(self, *names):
+        return {'passed': 4, 'failed': [(n, []) for n in names]}
+
+    def test_a_pass_is_a_pass(self):
+        self.assertEqual(B.classify_probe('PASS', {'passed': 9, 'failed': []}, WATCHED), B.PASS)
+
+    def test_a_failing_watched_class_is_a_fail(self):
+        self.assertEqual(B.classify_probe('FAIL', self.failed('SpokenMarginsAppTests/Foo/testA'), WATCHED), B.FAIL)
+        # one watched among others still shows the cause is there
+        both = self.failed('SpokenMarginsAppTests/Bar/testB', 'SpokenMarginsAppTests/Foo/testA')
+        self.assertEqual(B.classify_probe('FAIL', both, WATCHED), B.FAIL)
+
+    def test_a_different_failure_or_no_test_result_or_a_fault_decides_nothing(self):
+        other = self.failed('SpokenMarginsAppTests/Bar/testB')
+        self.assertEqual(B.classify_probe('FAIL', other, WATCHED), B.UNDECIDED)
+        self.assertEqual(B.classify_probe('FAIL', {'passed': 0, 'failed': []}, WATCHED), B.UNDECIDED)  # build failure
+        self.assertEqual(B.classify_probe('INCONCLUSIVE', {'passed': 0, 'failed': []}, WATCHED), B.UNDECIDED)
+        # a class name that merely starts like a watched one is not that class
+        lookalike = self.failed('SpokenMarginsAppTests/FooExtras/testA')
+        self.assertEqual(B.classify_probe('FAIL', lookalike, WATCHED), B.UNDECIDED)
+
+    def test_failing_classes_come_from_the_red_runs_manifests_by_plan(self):
+        def manifest(failed):
+            return {'steps': [{'tests': {t: {'status': 'failed' if t in failed else 'passed'} for t in
+                                         ('T/A/test1', 'T/A/test2', 'T/B/test1', 'T/C/test1')}}]}
+
+        chosen = {'app': (manifest({'T/A/test1', 'T/A/test2'}), None),
+                  'adapters': (manifest({'T/C/test1'}), manifest({'T/B/test1'}))}
+        self.assertEqual(B.failing_classes(chosen), {'app': ['T/A'], 'adapters': ['T/B', 'T/C']})
+        self.assertEqual(B.failing_classes({'app': (manifest(set()), None)}), {})
+        self.assertEqual(B.class_of('SpokenMarginsAppTests/FooTests/testBar'), 'SpokenMarginsAppTests/FooTests')
+        self.assertEqual(B.class_of('Solo'), 'Solo')
+
+
+class IssueTests(unittest.TestCase):
+    result = B.Result('culprit', 'a' * 40, 'x', [('b' * 40, B.FAIL), ('a' * 40, B.FAIL)])
+
+    def test_pr_numbers_from_merge_and_squash_subjects(self):
+        for subject, number in (('Merge pull request #4790 from Spoken-Margins/ws/4639-x', 4790),
+                                ('Fix the thing (#4501)', 4501), ('Fix the thing (#4501) ', 4501),
+                                ('Mention #12 in passing', None), ('Merge branch main', None), ('', None)):
+            with self.subTest(subject=subject):
+                self.assertEqual(B.pr_number(subject), number)
+
+    def test_one_area_label_is_carried_over_and_anything_else_is_groundwork(self):
+        self.assertEqual(B.area_label(['bug', 'area: hear it well']), 'area: hear it well')
+        self.assertEqual(B.area_label(['bug']), B.DEFAULT_AREA)
+        self.assertEqual(B.area_label(['area: hear it well', 'area: pass it on']), B.DEFAULT_AREA)
+        self.assertEqual(B.area_label(['area: hear it well', 'area: hear it well']), 'area: hear it well')
+
+    def test_the_issue_names_the_pr_the_tests_the_run_and_the_range(self):
+        tests = ['SpokenMarginsAppTests/Foo/testA', 'SpokenMarginsAppTests/Bar/testB']
+        subject = 'Merge pull request #4790 from Spoken-Margins/ws/4639-x'
+        self.assertEqual(B.culprit_title(subject, 4790, tests), 'Main T3 red: #4790 broke Foo/testA and 1 more')
+        body = B.culprit_body('a' * 40, subject, 4790, RED, GREEN, 'https://run', tests, self.result,
+                              'https://issue')
+        self.assertTrue(body.startswith(B.CULPRIT_MARKER % ('a' * 40)))
+        for text in ('PR #4790', 'https://run', f'{GREEN[:7]}..{RED[:7]}', '`Foo/testA`', '`Bar/testB`',
+                     'https://issue', '## Outcome', '## Evidence', '## Done when', '## Must not break'):
+            self.assertIn(text, body)
+
+    def test_a_title_without_a_pr_uses_the_subject_and_stays_short(self):
+        title = B.culprit_title('Some long subject ' * 20, None, ['T/A/test'])
+        self.assertLessEqual(len(title), 120)
+        self.assertTrue(title.startswith('Main T3 red: Some long subject'))
+
+    def test_the_culprit_marker_dedupes_only_for_the_same_commit_from_a_trusted_author(self):
+        def issue(number, sha, login='github-actions[bot]', association='NONE', pr=False):
+            found = {'number': number, 'body': B.CULPRIT_MARKER % sha, 'user': {'login': login},
+                     'author_association': association}
+            if pr:
+                found['pull_request'] = {}
+            return found
+
+        sha = 'a' * 40
+        self.assertEqual(B.find_open_culprit_issue([issue(9, sha), issue(7, sha)], sha)['number'], 7)
+        self.assertIsNone(B.find_open_culprit_issue([issue(7, 'c' * 40)], sha))
+        self.assertIsNone(B.find_open_culprit_issue([issue(7, sha, login='stranger')], sha))  # a look-alike
+        self.assertIsNotNone(B.find_open_culprit_issue([issue(7, sha, login='x', association='MEMBER')], sha))
+        self.assertIsNone(B.find_open_culprit_issue([issue(7, sha, pr=True)], sha))
+
+    def test_an_undecided_note_names_no_pr_and_says_why(self):
+        note = B.undecided_note(B.Result('undecided', None, 'abc1234 could not be tested', [('b' * 40, B.UNDECIDED)]),
+                                RED, GREEN, 'https://run')
+        self.assertIn('names no PR', note)
+        self.assertIn('abc1234 could not be tested', note)
+        self.assertNotIn('#', note.replace('https://run', ''))
+
+
+class GitRangeTests(unittest.TestCase):
+    def test_first_parent_commits_oldest_first_with_subjects(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            def git(*args):
+                return subprocess.run(['git', '-C', tmp, '-c', 'user.name=t', '-c', 'user.email=t@example.com',
+                                       *args], check=True, capture_output=True, text=True).stdout.strip()
+
+            git('init', '-q', '-b', 'main')
+            (Path(tmp) / 'f').write_text('0')
+            git('add', 'f')
+            git('commit', '-q', '-m', 'green')
+            green = git('rev-parse', 'HEAD')
+            for i in (1, 2):
+                git('checkout', '-q', '-b', f'topic{i}')
+                (Path(tmp) / 'f').write_text(str(i))
+                git('commit', '-q', '-am', f'work {i}')
+                git('commit', '-q', '--allow-empty', '-m', f'more work {i}')  # a side commit, not first-parent
+                git('checkout', '-q', 'main')
+                git('merge', '-q', '--no-ff', '-m', f'Merge pull request #{i}00 from x/topic{i}', f'topic{i}')
+            red = git('rev-parse', 'HEAD')
+            original = B.ROOT
+            B.ROOT = Path(tmp)
+            try:
+                found = B.merges_in_range(green, red)
+            finally:
+                B.ROOT = original
+        self.assertEqual([subject for _, subject in found],
+                         ['Merge pull request #100 from x/topic1', 'Merge pull request #200 from x/topic2'])
+        self.assertEqual(found[-1][0], red)
+        self.assertEqual([B.pr_number(s) for _, s in found], [100, 200])
+
+
+if __name__ == '__main__':
+    unittest.main()
