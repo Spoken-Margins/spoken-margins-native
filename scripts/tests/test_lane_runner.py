@@ -269,6 +269,26 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(lane.run_t2(evidence, runner=lambda *_: 0)[0], 'PASS')
             self.assertEqual(lane.run_t2(evidence, runner=lambda *_: None)[0], 'INCONCLUSIVE')
 
+    def test_both_t2_builds_use_the_restored_package_folder_when_the_job_names_one(self):
+        # #4664: a hosted T2 that fetched the packages afresh stopped on download.onnxruntime.ai's bad certificate.
+        seen = []
+        def fake(command, log, timeout):
+            seen.append(command)
+            return 0
+        with tempfile.TemporaryDirectory() as folder:
+            with mock.patch.dict(os.environ, {'SM_SPM_DIR': '/tmp/spm'}):
+                lane.run_t2(Path(folder), runner=fake)
+            self.assertEqual(len(seen), 2)
+            for command in seen:
+                self.assertEqual(command[command.index('-clonedSourcePackagesDirPath') + 1], '/tmp/spm')
+            seen.clear()
+            for unset in ({}, {'SM_SPM_DIR': '  '}):  # the build Macs: Xcode's own folder, as before
+                with mock.patch.dict(os.environ, unset):
+                    if 'SM_SPM_DIR' not in unset:
+                        os.environ.pop('SM_SPM_DIR', None)
+                    lane.run_t2(Path(folder), runner=fake)
+            self.assertTrue(all('-clonedSourcePackagesDirPath' not in command for command in seen))
+
     def test_the_simulator_and_device_builds_never_share_a_derived_data_folder(self):
         # #405: with one warm DerivedData, the simulator build after a device build failed on a missing
         # all-product-headers.yaml in the extension targets; cold builds, and every device build, passed.
