@@ -129,6 +129,44 @@ class TheShippedSources(unittest.TestCase):
     def test_sources_json_obeys_its_own_rules(self):
         self.assertEqual(vc.validate_sources(vc.load_sources()), [])
 
+    def test_the_onnx_runtime_licences_are_fetched_from_the_repository_when_their_upstream_is_gone(self):
+        # main-t3's adapters plan failed at `voice-catalog fetch` because microsoft/onnxruntime's raw LICENSE and
+        # ThirdPartyNotices.txt at v1.24.2 returned 404 (#4853). The app bundles both files at the pinned bytes, so
+        # fetch takes them from there and never asks the dead URL. Every other upstream answers 404 here too, so
+        # the only way these two files arrive is from the repository.
+        sources = copy.deepcopy(vc.load_sources())
+        voice = next(v for v in sources["voices"] if v["id"] == "supertonic-3-int8")
+        wanted = ("licenses/ONNXRUNTIME_MIT.txt", "licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt")
+        voice["files"] = [f for f in voice["files"] if f["path"] in wanted]
+        self.assertEqual([f["path"] for f in voice["files"]], list(wanted))
+
+        class Gone:
+            def __init__(self):
+                self.asked = []
+
+            def download(self, url, into):
+                self.asked.append(url)
+                return 404, 0, ""
+
+        http = Gone()
+        with tempfile.TemporaryDirectory() as state:
+            folders = vc.fetch(sources, Path(state), http=http, voice_ids=["supertonic-3-int8"], out=lambda line: None)
+            for file in voice["files"]:
+                self.assertIsNone(vc._wrong_bytes(folders["supertonic-3-int8"] / file["path"], file), file["path"])
+        self.assertEqual(http.asked, [])
+
+    def test_the_two_licences_the_repository_serves_stay_in_the_catalog_as_the_reviewed_upstream_says(self):
+        # Reading them from the repository changes how fetch gets the bytes, not what the app is told: the entry the
+        # app and the site read still lists the pinned upstream, with no mirror and nothing carried inline.
+        sources = vc.load_sources()
+        voice = next(v for v in sources["voices"] if v["id"] == "supertonic-3-int8")
+        entry = vc.voice_entry(sources, voice)
+        self.assertNotIn("mirrorFrom", entry)
+        for item in entry["files"]:
+            if item["path"] in ("licenses/ONNXRUNTIME_MIT.txt", "licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt"):
+                self.assertEqual(len(item["sources"]), 1, item["path"])
+                self.assertNotIn("content", item)
+
     def test_supertonic_comes_out_exactly_as_the_reviewed_draft_lists_it(self):
         sources = vc.load_sources()
         voice = next(v for v in sources["voices"] if v["id"] == "supertonic-3-int8")
