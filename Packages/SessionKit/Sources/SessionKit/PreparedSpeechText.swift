@@ -21,8 +21,13 @@ public struct PreparedSpeechText: Equatable, Sendable {
 
     /// Spoken offsets (in `SpeechTextNormalizer.normalize(text)`, where prepared chunks start)
     /// to `Item.text` offsets, so assembled narration's timeline stays in `Item.text`.
-    public func assemblyProjection() -> NormalizedSpeechText {
-        let spoken = SpeechTextNormalizer.normalizeWithSourceOffsets(text)
+    ///
+    /// With `asides` (the plan has note chunks, #3777) the matched citations are silent, as in the plan's own text, so
+    /// the chunks' spoken offsets line up. A text with no matched note, and a PDF, is the same either way.
+    public func assemblyProjection(asides: Bool = false) -> NormalizedSpeechText {
+        let spoken = asides && listenable == nil
+            ? NarrationChunkPlanner.silencedSpeech(source: text, endingWith: text) ?? SpeechTextNormalizer.normalizeWithSourceOffsets(text)
+            : SpeechTextNormalizer.normalizeWithSourceOffsets(text)
         guard let listenable else { return spoken }
         return NormalizedSpeechText(
             text: spoken.text,
