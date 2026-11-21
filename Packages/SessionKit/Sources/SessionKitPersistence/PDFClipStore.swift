@@ -5,7 +5,8 @@ import SessionKit
 ///
 /// The PDF is not kept after it is imported, so each clip is cut from it at import and saved here, one JPEG per
 /// float of the item's structured document, in a folder of the item's own: `<directory>/<item folder>/<float>.jpg`.
-/// Nothing reads a clip until the listener opens that Timeline. A permanent delete removes the item's folder
+/// Nothing reads a clip until the listener opens that Timeline, or the Now tab on that item (one folder listing; a
+/// clip is read when its card draws, #4588). A permanent delete removes the item's folder
 /// (`ItemOwnedFiles.pdfClipsRoot`). A clip that isn't there is not an error: the row shows its text, as it always has.
 public struct PDFClipStore: Sendable {
     /// `SpokenMargins/PDFClips/` under Application Support.
@@ -53,6 +54,19 @@ public struct PDFClipStore: Sendable {
             guard let floatId, let name = PDFClipStore.fileName(forFloat: floatId) else { return false }
             return names.contains(name)
         }
+    }
+
+    /// Posted on the main actor after an import has saved an item's clips (or cleared them). `userInfo[itemIdKey]` is
+    /// the item's id as a `String`. A screen that listed the clips earlier lists them again for that item.
+    public static let didSaveClipsNotification = Notification.Name("SpokenMargins.PDFClipStore.didSaveClips")
+    public static let itemIdKey = "itemId"
+
+    /// Which of `floatIds` have a clip saved for the item, from one listing of its folder: no clip file is opened. A
+    /// missing folder, or an item with no folder of its own, gives the empty set.
+    public func savedFloatIds(forItem itemId: String, among floatIds: [String]) -> Set<String> {
+        let available = available(forItem: itemId)
+        guard !available.isEmpty else { return [] }
+        return Set(floatIds.filter { available.contains(floatId: $0) })
     }
 
     public func available(forItem itemId: String) -> Available {

@@ -18,9 +18,15 @@ extension Gate1AppModel {
     /// belong to it. Best effort: no clip is ever a reason for an import to fail, and a row without one shows its text.
     func savePDFClips(_ clips: [String: Data], itemId: String) async {
         guard let store, let clipStore = pdfClipStore() else { return }
-        await Task.detached(priority: .utility) {
+        let saved = await Task.detached(priority: .utility) { () -> Bool in
             let document = try? store.loadStructuredDocument(itemId: itemId)
-            try? clipStore.replaceClips(clips, forItem: itemId, document: document)
+            return (try? clipStore.replaceClips(clips, forItem: itemId, document: document)) != nil
         }.value
+        // A Now tab already open on this item listed its clips before they existed; it lists them again (#4588).
+        if saved {
+            NotificationCenter.default.post(
+                name: PDFClipStore.didSaveClipsNotification, object: nil,
+                userInfo: [PDFClipStore.itemIdKey: itemId])
+        }
     }
 }
