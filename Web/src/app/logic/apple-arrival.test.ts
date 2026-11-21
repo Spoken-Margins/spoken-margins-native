@@ -61,3 +61,11 @@ test('no other packet is looked up: own audio, a Substack post, Spotify, an arti
     assert.equal(settled.lookup, undefined);
   }
 });
+
+test('rough-place Margins on an Apple episode page are not the text-only card: Apple\'s audio can carry them', async () => {
+  const rough = { margin: { ...margin, atSeconds: 0 }, percent: 20 };
+  const input = { ...read({ pageUrl: APPLE }, []), percentMargins: [rough] } as unknown as Pick<PacketRead, 'episode' | 'margins' | 'percentMargins'>;
+  assert.deepEqual(playability(input).verdict, 'needs-voice-lookup');
+  const settled = await settleAppleEpisode(input, async () => voice);
+  assert.deepEqual(playability(settled.read, settled.lookup), { verdict: 'plays' });
+});

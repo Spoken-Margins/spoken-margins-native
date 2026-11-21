@@ -5,6 +5,7 @@
 import { formatClock } from '../../shared/clock.ts';
 import type { Episode, Margin, PlaybackPosition } from '../../shared/model.ts';
 import type { PacketRead } from '../ports.ts';
+import { appleEpisodeRef } from '../../sources/apple.ts';
 import { isSubstackPostUrl } from '../../sources/substack.ts';
 import { findEpisode } from './import.ts';
 import { listenState } from './library.ts';
@@ -71,12 +72,12 @@ export function senderInitial(sender: string | undefined): string {
 
 /**
  * The Margins a friend left on an article's words that this browser can play (#4421): they need audio for the
- * article, which is the episode's own address or, for a Substack post, the post's voice, looked up when the friend taps
- * Play. On any other article there is no voice to play them on, so none counts and the page is the text-only card.
+ * article, which is the episode's own address or, for a Substack post or an Apple Podcasts episode page, the voice looked up
+ * when the friend taps Play. On any other article there is no voice to play them on, so none counts and the page is the text-only card.
  */
 export function playableArticleMargins(read: Pick<PacketRead, 'episode' | 'percentMargins'>): Margin[] {
   const { audioUrl, pageUrl } = read.episode;
-  if (!audioUrl && !(pageUrl && isSubstackPostUrl(pageUrl))) return [];
+  if (!audioUrl && !(pageUrl && (isSubstackPostUrl(pageUrl) || appleEpisodeRef(pageUrl)))) return [];
   return read.percentMargins.map((p) => p.margin);
 }
 

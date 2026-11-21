@@ -557,7 +557,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           const pageUrl = target.pageUrl;
           const found = await services.sources.findAppleEpisodeAudio(pageUrl);
           if (found) {
-            target = { ...target, ...found };
+            // The packet's own length is the edition its Margins were made on; Apple's only fills a length it lacks.
+            target = { ...target, audioUrl: found.audioUrl, audioOrigin: found.audioOrigin, durationSeconds: target.durationSeconds ?? found.durationSeconds };
             await dataRef.current.updateEpisode(target);
           }
         } catch (error) {

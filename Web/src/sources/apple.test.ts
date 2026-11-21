@@ -116,3 +116,14 @@ test('a lookup that could not be asked or answered says so, and is not "no audio
   await assert.rejects(findAppleEpisodeAudio(PAGE, { fetch: answering('{}', 503).fetch }), AppleLookupError);
   await assert.rejects(findAppleEpisodeAudio(PAGE, { fetch: answering('<html>', 200).fetch }), AppleLookupError);
 });
+
+test('the lookup carries a deadline, so a card waiting on Apple never waits forever', async () => {
+  let signal: AbortSignal | null | undefined;
+  const fetch: FetchLike = async (_input, init) => {
+    signal = init?.signal;
+    return new Response(JSON.stringify(lookup([episode({})])));
+  };
+  await findAppleEpisodeAudio(PAGE, { fetch });
+  assert.ok(signal, 'a signal was passed');
+  assert.equal(signal.aborted, false);
+});
