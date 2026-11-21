@@ -36,7 +36,7 @@ def unpaired(path: Path) -> list[int]:
 
 class DarkToolbarBackgroundVisibleTests(unittest.TestCase):
     def test_every_dark_navigation_bar_shows_its_background(self):
-        offenders = {path.name: lines for path in sorted(SOURCES.glob("*.swift")) if (lines := unpaired(path))}
+        offenders = {path.name: lines for path in sorted(SOURCES.rglob("*.swift")) if (lines := unpaired(path))}
         self.assertEqual(offenders, {}, "add .toolbarBackground(.visible, for: .navigationBar) before the dark scheme")
 
     def test_the_scan_sees_the_screens_it_guards(self):
