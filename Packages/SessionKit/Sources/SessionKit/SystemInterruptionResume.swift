@@ -125,15 +125,25 @@ public enum SpeechSystemPause: Equatable, Sendable {
 /// by how long the pause lasted (#3144, #3032 slice 3). `SessionEngine` reports the pause and asks.
 struct InterruptionResumePoint {
     private var mark: (sessionId: String, mediaTimeMs: Int, at: Date)?
+    /// The session the system paused, text included: only a time-based source has a `mark`.
+    private var pausedSessionId: String?
 
     /// The system paused the source at `mediaTimeMs` of the session. Text, read from a character, passes nil.
     mutating func paused(sessionId: String, mediaTimeMs: Int?, at: Date) {
+        pausedSessionId = sessionId
         mark = mediaTimeMs.map { (sessionId, $0, at) }
     }
 
     /// The listener played, paused, moved it, or the interruption was resumed: no step back applies.
     mutating func forget() {
         mark = nil
+        pausedSessionId = nil
+    }
+
+    /// The system paused this session's source and nothing has taken it over since (#4831). The audio client already
+    /// holds an automatic resume for it, and a second `pause()` from the engine would cancel that resume.
+    func isPausedBySystem(sessionId: String) -> Bool {
+        pausedSessionId == sessionId
     }
 
     /// How far back to step now, or nil when the source is not where the system left it (the listener or another
