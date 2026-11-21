@@ -460,6 +460,15 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     var debugStallWillBeHandled: (@Sendable () -> Void)?
     /// Runs once that handling has finished on the main actor, so a test can check its effect without a fixed wait (#2747).
     var debugStallWasHandled: (@Sendable () -> Void)?
+    /// Runs once per stall-monitor loop, after that sample has been observed and any stall handled, so a test that
+    /// says "no stall" can wait for the monitor to have sampled past the threshold instead of for a fixed time (#4368).
+    var debugStallSampleWasTaken: (@Sendable () -> Void)?
+    /// Runs when the client has finished with a render's outcome (it landed, failed or was cancelled), after the chunk
+    /// was cached, played or queued as it called for, so a test that says "nothing started" can wait for that outcome
+    /// instead of a fixed time (#4368).
+    var debugRenderWasHandled: (@Sendable () -> Void)?
+    /// Runs when the client has finished handling the end of a chunk, whatever it decided at the seam (#4368).
+    var debugChunkEndWasHandled: (@Sendable () -> Void)?
     /// How often the client asked to stop lowering other apps' audio.
     private(set) var debugBackgroundAudioReleaseCount = 0
     var debugHasStallMonitor: Bool { lock.withLock { stallMonitor != nil } }
@@ -1332,6 +1341,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func playbackItemFinished(_ item: AVPlayerItem) {
+        #if DEBUG
+        defer { debugChunkEndWasHandled?() }
+        #endif
         // Playback used some of the audio ahead: a resting render chain may start again (#1681).
         defer { resumeRenderAheadIfWanted() }
         // The queue already moved on to the chunk behind this one, with no app code: catch the bookkeeping up. When
@@ -1918,6 +1930,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func renderCancelled(request: RenderRequest) {
+        #if DEBUG
+        defer { debugRenderWasHandled?() }
+        #endif
         lock.withLock {
             guard generation == request.generation else { return }
             inFlightKeys.remove(request.key)
@@ -1933,6 +1948,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         request: RenderRequest,
         shouldPlayWhenReady: Bool
     ) async {
+        #if DEBUG
+        defer { debugRenderWasHandled?() }
+        #endif
         let action = lock.withLock { () -> (
             valid: Bool,
             autoplay: CachedAudio?,
@@ -2049,6 +2067,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         shouldPlayWhenReady: Bool,
         reason: String
     ) {
+        #if DEBUG
+        defer { debugRenderWasHandled?() }
+        #endif
         let outcome = lock.withLock { () -> (isCurrent: Bool, shouldFallback: Bool) in
             let isCurrent = generation == request.generation
             guard isCurrent else { return (false, false) }
@@ -2602,6 +2623,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         detector.reset()
                         stallOngoing = false
                     }
+                    #if DEBUG
+                    self.debugStallSampleWasTaken?()
+                    #endif
                     if !sample.active {
                         #if DEBUG
                         self.debugStallMonitorWillExit?()

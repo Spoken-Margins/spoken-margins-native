@@ -141,6 +141,37 @@ public enum SourcePicture {
         return CGImageSourceGetCount(source) > 1
     }
 
+    /// A decoded still, handed from the thread that decoded it to the one that draws it. A CGImage is immutable.
+    public struct DecodedStill: @unchecked Sendable {
+        public let image: CGImage
+    }
+
+    /// The first frame, decoded no larger than `maxPixelSize` on its long side. The decode is the slow part of showing
+    /// a picture, so a caller on the main actor uses `decodedStill` instead.
+    public static func stillImage(_ data: Data, maxPixelSize: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+            return nil
+        }
+        let options = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ] as CFDictionary
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options)
+    }
+
+    /// `stillImage`, run on a background thread, so a very large picture never holds the main actor while it decodes
+    /// (#4451). `decoder` is what runs there; a test passes one that records its thread and calls `stillImage`.
+    public static func decodedStill(
+        _ data: Data, maxPixelSize: Int,
+        decoder: @escaping @Sendable (Data, Int) -> CGImage? = { SourcePicture.stillImage($0, maxPixelSize: $1) }
+    ) async -> DecodedStill? {
+        await Task.detached(priority: .userInitiated) {
+            decoder(data, maxPixelSize).map { DecodedStill(image: $0) }
+        }.value
+    }
+
     /// The most pixels one frame of a picture may have. A frame decodes to about 4 bytes a pixel, so 16 million is about
     /// 64 MB. The 16 MB download cap limits a picture's bytes, not what it decodes to: a 100 KB single-colour GIF can
     /// be 10,000 by 10,000 pixels, 400 MB a frame.

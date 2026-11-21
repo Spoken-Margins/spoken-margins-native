@@ -57,7 +57,7 @@ struct ExperienceLibraryScreen: View {
 
     /// One identity per row, the Continue row included, so completing the top row removes that row (#585). In the
     /// Collections view a collection is one row standing for its items (#3769).
-    private var listEntries: [LibraryListing] {
+    private var listEntries: [LibraryCollectionEntry] {
         model.libraryListing(currentItemID: continueItem?.id)
     }
 
@@ -124,6 +124,8 @@ struct ExperienceLibraryScreen: View {
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
             .listStyle(.plain)
+            .scrollDismissesKeyboard(.interactively) // the search box's keyboard goes down on a drag (#4636)
+            .searchKeyboardDoneBar()
             .motionAnimation(.smooth(duration: 0.24), value: listEntries.map(\.id))
             .accessibilityIdentifier("home.screen")
             .navigationTitle(isSelecting ? selection.title : "Library")
@@ -538,7 +540,7 @@ struct ExperienceLibraryScreen: View {
     }
 
     @ViewBuilder
-    private func listRow(_ entry: LibraryListing) -> some View {
+    private func listRow(_ entry: LibraryCollectionEntry) -> some View {
         switch entry {
         case .collection(let collection, let isCurrent):
             LibraryCollectionRowView(

@@ -2043,6 +2043,75 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// Writes a Margin on `sessionId`'s item at character `atCharacter`, without a capture: the Paper note's Write it
+    /// puts an answer where the listener is or at the start of a page they pick (#4340). The anchor is built by
+    /// `textAnchor`, as a capture's is.
+    ///
+    /// The session need not be the engine's current one, and nothing here touches transport. When it is current the
+    /// snapshot's Margin count is refreshed; the session's position, progress and completion, the playhead and playback
+    /// are never changed, and the session is not saved. `id` is the caller's draft id: a second call with it writes
+    /// nothing and returns the Margin the first one saved, so a double tap on Save makes one Margin. Throws before
+    /// writing when the text is empty, the session or its item is gone, or the item has no text.
+    @discardableResult
+    public func addWrittenInterjection(
+        id: String,
+        sessionId: String,
+        atCharacter: Int,
+        text: String,
+        paperRole: PaperNoteRole? = nil
+    ) throws -> Interjection {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let session = try repository.loadSession(id: sessionId) else {
+            throw SessionKitError.invalidCommandForState("addWrittenInterjection")
+        }
+        let item = currentItem?.id == session.itemId ? currentItem : try? repository.loadItem(id: session.itemId)
+        guard let item, item.deletedAt == nil, let itemText = item.text, !itemText.isEmpty else {
+            throw SessionKitError.invalidCommandForState("addWrittenInterjection")
+        }
+        let marginId = "ij-written-\(id)"
+        let anchor = textAnchor(in: itemText, startingAt: atCharacter)
+        let margin = Interjection(
+            id: marginId,
+            itemId: session.itemId,
+            sessionId: session.id,
+            targetType: .item,
+            targetId: session.itemId,
+            createdAt: now(),
+            roughPercent: percent(for: anchor.startChar, text: itemText),
+            anchor: anchor,
+            audioPath: nil,
+            audioStatus: "discarded",
+            transcriptionStatus: "transcribed",
+            transcript: text,
+            cleanedTranscript: nil,
+            displayText: text,
+            status: "active",
+            anchorContextStatus: !anchor.anchorBefore.isEmpty || !anchor.anchorAfter.isEmpty ? .ready : .unavailable,
+            captureKind: .written,
+            paperRole: paperRole
+        )
+        // The check and the save are one transaction where the store has them, so two taps race to one Margin.
+        let saved = try inRepositoryTransaction { () throws -> Interjection in
+            if let existing = try loadInterjection(marginId, inSession: session.id) { return existing }
+            try repository.saveInterjection(margin)
+            return margin
+        }
+        if currentSession?.id == session.id {
+            lastMediaPercentageRepair = nil
+            let counter = repository as? SessionRecordCounting
+            snapshot.activeInterjectionCount = (try? counter?.activeInterjectionCount(sessionId: session.id)
+                ?? repository.loadInterjections(sessionId: session.id).filter { $0.status == "active" }.count)
+                ?? snapshot.activeInterjectionCount
+        }
+        return saved
+    }
+
+    /// Gives a Margin of `sessionId` a Paper note role, or takes it off with nil (#4340). Only the role changes.
+    /// Throws when the session or the Margin is not found.
+    public func setPaperRole(_ role: PaperNoteRole?, interjectionId: String, sessionId: String) throws {
+        try updateInterjection(interjectionId, sessionId: sessionId) { $0.paperRole = role }
+    }
+
     @discardableResult
     public func cancelWrittenInterjection(captureId: String) throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
@@ -5003,8 +5072,14 @@ public final class SessionEngine {
                 turnSegmentIndex: segmentIndex
             )
         }
-        let text = currentItem?.text ?? ""
-        let start = max(0, min(playbackPosition.textStart ?? session.position.charOffset, text.count))
+        return textAnchor(in: currentItem?.text ?? "", startingAt: playbackPosition.textStart ?? session.position.charOffset)
+    }
+
+    /// The anchor of a Margin on an item's own text that starts at character `rawStart`: it ends at the next sentence
+    /// end and carries the sentences around it. The one place this is built, so a Margin captured while listening and
+    /// one written at a chosen place (a Paper note answer, #4340) are anchored the same way.
+    func textAnchor(in text: String, startingAt rawStart: Int) -> Anchor {
+        let start = max(0, min(rawStart, text.count))
         let end = min(text.count, max(start + 1, nextBoundary(after: start, unit: "sentence", text: text)))
         let context = textAnchorShoulder(in: text, at: start)
         return Anchor(

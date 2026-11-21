@@ -10,7 +10,7 @@ extension Gate1AppModel {
     }
 
     /// What the Library lists in the current view: collection rows and item rows, the Continue row first.
-    func libraryListing(currentItemID: String?) -> [LibraryListing] {
+    func libraryListing(currentItemID: String?) -> [LibraryCollectionEntry] {
         LibraryCollectionListEngine.listing(
             rows: libraryItems, collections: libraryCollections.collections, imported: libraryCollections.folders,
             query: libraryQuery, mode: libraryCollections.viewMode, currentItemID: currentItemID)

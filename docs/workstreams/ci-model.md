@@ -1,0 +1,79 @@
+# CI model
+
+`scripts/ci_model.py` is an offline model of how a PR moves from arming to merged. Use it to test a change to the
+pipeline (a workflow, the label bridge, the merge policy, the audit) before it lands, instead of finding out on `main`.
+
+## Running it
+
+- `.venv/bin/python scripts/ci_model.py` runs every scenario against the working tree and prints one line each.
+- `.venv/bin/python scripts/ci_model.py --scenario b-lane-no-audit` prints one scenario's event log and the chain of
+  events that merged it.
+- `.venv/bin/python scripts/ci_model.py --diff origin/main` compares `main` with the working tree;
+  `--diff origin/main origin/<branch>` compares two refs. It lists the static changes (triggers, `if:`, tokens,
+  check names, script effects) and every scenario whose outcome changes.
+- `.venv/bin/python scripts/ci_model.py --extract` prints the static model as JSON.
+- `--live` re-reads the ruleset, variables, secret names and disabled workflows with `gh` instead of the snapshot.
+- `--diff <ref>` imports and runs that tree's scripts on your machine, so never point it at an untrusted branch.
+
+A CI PR should say what `--diff origin/main` printed, and update `scripts/tests/test_ci_model.py` in the same PR when
+an outcome changes on purpose.
+
+## What it models
+
+1. **Static model.** Read from `.github/workflows/*.yml` on every run: triggers (events, types, branches, paths,
+   crons, upstream workflows), concurrency groups, jobs with their `if:` and check names, variables and secrets read,
+   the token each job writes with (`GH_TOKEN`), and what the scripts it runs do (label changes, comments,
+   dispatches, re-runs, queueing, pushes), each with `file:line`.
+2. **GitHub's side.** Which event starts which workflow, `if:` evaluation (a small evaluator for GitHub
+   expressions), the rule that events caused by `GITHUB_TOKEN` start nothing except dispatches, required checks,
+   auto-merge, merge groups, the queue's timeout, and dequeueing.
+3. **The repository's own decisions are not copied.** These run from the tree under test against a fake GitHub,
+   so a change to them shows up in `--diff`:
+   - the label bridge (`merge_queue_label_bridge.main`) and the dequeue notifier (`merge_queue_dequeued.notify`);
+   - the merge policy (`merge_policy.blockers`, with its git reads replaced by the scenario's paths);
+   - the `rearm` jobs (`lane_rearm.main`, with `--results` rendered from the workflow step);
+   - the audit's eligibility (`sm_codex_audit.evaluate`, `owner_tap_alert.checks_state`) and its merge policy re-run
+     (`sm_codex_audit.rerun_merge_policy`);
+   - the Mac-check scope (`test-scope.py mac_checks_required`).
+
+State that is not in the files is the dated `SNAPSHOT` in the script: the "protect main" ruleset, variables, secret
+names, disabled workflows, and how often GitHub actually ran the schedules. By default schedules fire as observed
+(the audit about every 8 hours, the bridge sweep about every 12, against 15-minute crons); scenario `c2` shows the
+nominal cron.
+
+## Assumptions
+
+Every rule taken on trust is in `ASSUMPTIONS`, marked documented, observed or inferred, with its source. The ones
+that matter most and are not verified: a re-run asked for with `GITHUB_TOKEN` runs (A6); a failed merge group turns
+auto-merge off (A9, scenario `d2` shows the loop if it does not); merge-group events start runs whoever queued the
+PR (A8).
+
+## Limits
+
+- One PR at a time. Groups of several PRs, queue ordering and HEADGREEN grouping are not modelled.
+- Runs take no time, so races appear only when a scenario sets one up (`b3`).
+- A job with no behaviour in `BEHAVIOURS` succeeds and does nothing.
+- In `--diff`, helper modules that the imported scripts load by name (for example `comment_trust`) come from the
+  first tree loaded.
+- Some decisions are still read or written by hand, so a change to them does not show in `--diff`:
+  - the docs-only rule (inline Python in `hosted-portable.yml`) and the web paths (a `grep` in `hosted-web.yml`) are
+    read from the YAML text with a regular expression, so a reworded step falls back to a default;
+  - the audit's candidate loop (when it reads the head's checks) mirrors `sm_codex_audit.py` around line 866, and it
+    assumes the re-run is called after every posted audit inside a workflow;
+  - main-t3's `decide`, and which job catches which defect (`DEFECT_CATCHERS`, assumption A15).
+
+## Cost and catch
+
+`scripts/tests/test_ci_model.py` runs in CI. It is discovered by the fast plan's `runner-tests` step
+(`scripts/verify-tests.py`, in `PORTABLE_STEPS` and `MAC_REST_STEPS`), and the portable split runs it; the Mac-rest
+split's `runner-tests` keeps only the tests that drive Apple tools, so it skips this file.
+
+1. Cost: about 6 s of runner time per portable run, no tokens and no clicks. The model itself runs only when a
+   person or an agent runs it.
+2. Frequency: every PR whose portable job runs `runner-tests`, plus local fast runs.
+3. Catch: a change to the workflows or the scripts the model imports that breaks the model, or that makes a
+   scenario impossible (a docs PR armed by a person no longer merges, a failed group merges). The tests are written
+   so that a CI fix never turns them red: a current defect (b4) is pinned on a fixture tree with a stub
+   `lane_rearm.py`, and on the working tree a stuck outcome is only checked for naming its cause.
+4. Waste signal: the file goes red for a change that broke nothing in the pipeline, twice; or a CI change lands
+   without anyone reading `--diff`, so the model is kept up for nobody.

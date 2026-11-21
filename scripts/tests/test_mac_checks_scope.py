@@ -136,6 +136,24 @@ class MacChecksRequiredTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(self.required(path)[0])
 
+    def test_a_workflow_with_only_linux_jobs_needs_no_mac(self):
+        # #4724 held a hosted Mac for ~30 minutes for a workflow whose one job runs on ubuntu-latest.
+        for path in ('.github/workflows/merge-policy.yml', '.github/workflows/merge-queue-dequeued.yml',
+                     '.github/workflows/signoff-check.yml'):
+            with self.subTest(path=path):
+                self.assertEqual(self.required(path), (False, 'Mac checks not required: no Swift inputs'))
+
+    def test_every_workflow_with_a_job_off_ubuntu_is_a_mac_workflow(self):
+        # Any runner but ubuntu-latest (xcode-27, self-hosted, an expression) counts as a Mac, so a new Mac workflow,
+        # or a Linux one that gains a Mac job, fails here until it is listed in MAC_WORKFLOWS.
+        import re
+        off_ubuntu = set()
+        for path in sorted((ROOT / '.github/workflows').glob('*.yml')):
+            runners = re.findall(r'(?m)^\s+runs-on:\s*(.+?)\s*$', path.read_text())
+            if any(runner != 'ubuntu-latest' for runner in runners):
+                off_ubuntu.add(f'.github/workflows/{path.name}')
+        self.assertEqual(off_ubuntu, set(scope.MAC_WORKFLOWS))
+
     def test_one_swift_path_among_ops_paths_needs_them(self):
         needed, why = self.required('docs/a.md', 'ops/b.py', 'Packages/SessionKit/Sources/SessionKit/X.swift')
         self.assertTrue(needed)
@@ -515,6 +533,15 @@ class WorkflowScopeTests(unittest.TestCase):
                 self.assertNotIn('paths', on['pull_request'])
                 self.assertNotIn('paths-ignore', on['pull_request'])
                 self.assertEqual(on['merge_group'], {'types': ['checks_requested'], 'branches': ['main']})
+
+    def test_with_the_queue_switch_on_mac_rest_skips_pr_pushes_only(self):
+        # #4693: MERGE_QUEUE_MAC=queue-only keeps the Mac job off PR pushes; merge groups and dispatches still run it.
+        condition = self.jobs['mac-rest']['if']
+        self.assertIn("vars.MERGE_QUEUE_MAC != 'queue-only'", condition)
+        pr_part = condition.split("github.event_name != 'pull_request' ||", 1)
+        self.assertEqual(len(pr_part), 2, condition)
+        self.assertIn("vars.MERGE_QUEUE_MAC != 'queue-only'", pr_part[1])
+        self.assertNotIn('MERGE_QUEUE_MAC', pr_part[0])
 
     def test_the_scope_job_asks_the_rule_for_the_mac_verdict(self):
         text = (ROOT / '.github/workflows/hosted-portable.yml').read_text()

@@ -130,6 +130,67 @@ final class LibraryCollectionImportTests: XCTestCase {
         XCTAssertEqual(collection.itemIDs, ["item-1"])
     }
 
+    // MARK: A write that fails (#3769 audit)
+
+    /// File 2's write fails and file 3's succeeds: file 3's write carries file 2 into the collection too, so the stored
+    /// record never says `added` for an item the stored collection lacks, and the next launch marks nothing `removed`.
+    func testAFailedWriteIsCarriedByTheNextSoTheLaunchRuleRemovesNothing() {
+        let begun = start(walk([file("1.pdf", "a"), file("2.pdf", "b"), file("3.pdf", "c")]))
+        var storedCollection = begun.collection
+        var storedRecord = begun.record
+        var settling = LibraryCollectionImport.Settling(record: begun.record)
+        for (index, writeSucceeds) in [(0, true), (1, false), (2, true)] {
+            let job = begun.jobs[index]
+            settling.settle(job, outcome: .added(itemID: job.itemID!), now: now)
+            guard writeSucceeds else { continue }
+            let record = settling.record
+            storedCollection = settling.collection(from: storedCollection)
+            storedRecord = record
+            settling.didSave(record)
+        }
+        XCTAssertEqual(storedCollection.itemIDs, ["item-1", "item-2", "item-3"], "file 2 rode in with file 3")
+        XCTAssertEqual(storedRecord.members.map(\.state), [.added, .added, .added])
+        XCTAssertEqual(settling.pendingCount, 0)
+
+        let relaunched = LibraryFolderLaunchRule.resolved(
+            storedRecord, collection: storedCollection, existingItemIDs: ["item-1", "item-2", "item-3"])
+        XCTAssertEqual(relaunched.record.members.map(\.state), [.added, .added, .added], "nothing marked removed")
+        XCTAssertEqual(relaunched.collection, storedCollection)
+    }
+
+    /// When the last write fails, the stored record still has that member as it was before the import settled it, so
+    /// the launch rule, not a stale `added`, decides: an item that was saved joins the collection.
+    func testWhenTheLastWriteFailsTheLaunchRulePutsTheItemIn() {
+        let begun = start(walk([file("1.pdf", "a"), file("2.pdf", "b")]))
+        var settling = LibraryCollectionImport.Settling(record: begun.record)
+        settling.settle(begun.jobs[0], outcome: .added(itemID: "item-1"), now: now)
+        let storedCollection = settling.collection(from: begun.collection)
+        let storedRecord = settling.record
+        settling.didSave(storedRecord)
+        settling.settle(begun.jobs[1], outcome: .added(itemID: "item-2"), now: now) // its write fails; nothing more runs
+        XCTAssertEqual(settling.pendingCount, 1)
+
+        let relaunched = LibraryFolderLaunchRule.resolved(
+            storedRecord, collection: storedCollection, existingItemIDs: ["item-1", "item-2"])
+        XCTAssertEqual(relaunched.collection.itemIDs, ["item-1", "item-2"])
+        XCTAssertEqual(relaunched.record.members.map(\.state), [.added, .added])
+    }
+
+    /// Each write applies the pending jobs to the collection as stored at that moment, so the listener's rename or a
+    /// hand-added item between two writes is kept.
+    func testTheReplayLandsOnTheStoredCollectionNotACopy() {
+        let begun = start(walk([file("1.pdf", "a"), file("2.pdf", "b")]))
+        var settling = LibraryCollectionImport.Settling(record: begun.record)
+        settling.settle(begun.jobs[0], outcome: .added(itemID: "item-1"), now: now) // its write failed
+        settling.settle(begun.jobs[1], outcome: .added(itemID: "item-2"), now: now)
+        var stored = begun.collection
+        stored.name = "Renamed"
+        stored.itemIDs = ["mine"]
+        let written = settling.collection(from: stored)
+        XCTAssertEqual(written.name, "Renamed")
+        XCTAssertEqual(Set(written.itemIDs), ["mine", "item-1", "item-2"])
+    }
+
     // MARK: The last line
 
     func testTheLastLineCountsWhatWentInAndWhatDidNot() {

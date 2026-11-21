@@ -47,9 +47,12 @@ final class PlaybackStartCueTests: XCTestCase {
         let cue = makeCue()
 
         cue.observe(snapshot("article", .starting))
+        let pending = cue.cueTask
         clock += 0.3
         cue.observe(snapshot("article", .playing))
-        try await Task.sleep(for: .seconds(1.2))
+        // The chime is a task started with the start. A start that resolves cancels it, and once it has ended it can
+        // chime no more, so wait for it instead of for the time it would have chimed at.
+        await pending?.value
 
         XCTAssertEqual(chimes, 0)
         XCTAssertNil(recorded["lastPlaybackStartCue"])
@@ -100,7 +103,8 @@ final class PlaybackStartCueTests: XCTestCase {
         )
 
         cue.observe(snapshot("article", .starting))
-        try await Task.sleep(for: .seconds(1.2))
+        let pending = cue.cueTask
+        await pending?.value // the task checks once, sees the speech, and ends without chiming
 
         XCTAssertEqual(checks, 1)
         XCTAssertEqual(chimes, 0)
@@ -151,9 +155,10 @@ final class PlaybackStartCueTests: XCTestCase {
         )
 
         cue.observe(snapshot("podcast", .starting))
+        let pending = cue.cueTask
         clock += 0.3
         cue.observe(snapshot("podcast", .playing))
-        try await Task.sleep(for: .seconds(1.2))
+        await pending?.value // cancelled by the start resolving; once it has ended it can run no check
 
         XCTAssertEqual(checks, 0)
         XCTAssertEqual(chimes, 0)
@@ -321,8 +326,12 @@ final class PlaybackStartCueTests: XCTestCase {
         stale.playbackRequestedAt = Date().addingTimeInterval(-1)
 
         model.snapshot = stale
+        // Either the cue's task is pending, or its check has already run: it ends right after that check, with no wait
+        // in between, so a status that has moved means the task is done.
+        try await waitUntil { cue.cueTask != nil || model.snapshot.status != .starting }
+        let pending = cue.cueTask
         try await waitUntil { model.snapshot.status != .starting }
-        try await Task.sleep(for: .milliseconds(100))
+        await pending?.value
 
         XCTAssertNotEqual(model.snapshot.status, .starting, "the check brought the snapshot up to date")
         XCTAssertNil(model.diagnostics["lastPlaybackStartCue"], "so no chime played over a start that had already resolved")
@@ -386,9 +395,10 @@ final class PlaybackStartCueTests: XCTestCase {
         let cue = makeWaitingCue()
 
         cue.observe(snapshot("article", .starting))
+        let pending = cue.cueTask
         clock += 0.3
         cue.observe(snapshot("article", .playing))
-        try await Task.sleep(for: .seconds(1.2))
+        await pending?.value // cancelled by the start resolving; once it has ended it can schedule nothing
 
         XCTAssertEqual(waitingScheduled, [])
         XCTAssertFalse(waitingActive)
@@ -432,12 +442,14 @@ final class PlaybackStartCueTests: XCTestCase {
         }
 
         cue.observe(snapshot("article", .starting))
+        let pending = cue.cueTask
         clock += 1
         try await waitUntil { checks >= 3 }
 
         XCTAssertFalse(waitingActive)
         XCTAssertEqual(recorded["firstAudioMs:article"], "1000")
-        try await Task.sleep(for: .seconds(0.6))
+        // The third check saw the speech and cancelled the task. Once the task has ended it can check no more.
+        await pending?.value
         XCTAssertEqual(checks, 3, "a resolved start is not checked again")
     }
 

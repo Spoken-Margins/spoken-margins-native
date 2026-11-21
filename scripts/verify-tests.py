@@ -347,6 +347,17 @@ def refuse_unsafe(chosen, unsafe):
                            'Boot a fresh device with scripts/lane-sim-boot --fresh and pass it with --device.')
 
 
+def refuse_borrowed(chosen, device, simulator_slot_fd):
+    """Never install onto our own Test Runner while someone else is using it (2026-11-20). A run that found the Test
+    Runner already booted used to take it without a simulator slot, because "a device someone else booted is theirs,
+    and so is the slot". So a second run installed its build over a journeys run holding the slot, and every launch
+    crashed. A device the caller names with --device is the caller's own, and a lane job passes its slot down."""
+    if chosen['state'] == 'Booted' and device is None and simulator_slot_fd is None:
+        raise RuntimeError(f'{chosen.get("name")} ({chosen["udid"]}) is already booted and this run holds no simulator '
+                           'slot, so another run is probably using it. Wait for it to shut down, or boot your own with '
+                           'scripts/lane-sim-boot --fresh and pass it with --device.')
+
+
 def capture(command):
     return subprocess.check_output(command, cwd=ROOT, text=True).strip()
 
@@ -784,6 +795,8 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_map_text_gate',
                        # The public-source caller scan reads App/ and SessionKit Swift files (#3449).
                        'test_public_source_check_callers',
+                       # The search-field keyboard guard scans App/ Swift files (#4636).
+                       'test_search_field_keyboard',
                        # The server-contact guard scans App/ and SessionKit Swift files (#2842).
                        'test_server_contact_consent',
                        # The benchmark's filter must name a test in SharingTests.swift (#2133).
@@ -862,19 +875,12 @@ PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snaps
 FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
 HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
 MAC_REST_STEPS = ('hot-file-ratchet', 'runner-tests', 'ops', 'package-build', 'package', 'tools', 'shipped-compat')
-# runner-tests without the tests above: discover scripts/tests as the plain step does, then drop the listed ids.
-PORTABLE_RUNNER_LOADER = '''
-import sys, unittest
-sys.path.insert(0, "scripts/tests")
-left_out = tuple(sys.argv[1:])
-def tests(suite):
-    for item in suite:
-        yield from tests(item) if isinstance(item, unittest.TestSuite) else [item]
-kept = unittest.TestSuite(t for t in tests(unittest.defaultTestLoader.discover("scripts/tests"))
-                          if not t.id().startswith(left_out))
-sys.exit(not unittest.TextTestRunner().run(kept).wasSuccessful())
-'''
-# fast-mac-rest's runner-tests: only the tests PORTABLE_RUNNER_TESTS_LEFT_OUT names, the inverse of the loader above.
+# The whole runner-tests step, here and on the Mac, runs one test module per process, four at a time, slowest first
+# (scripts/parallel_unittest.py, #4769): in one process it took 963 s on the owner's Mac and 996 s at p50 on the hosted
+# portable job, 236 tests over a second each holding 65% of that. It prints the same "Ran N tests" and FAIL/ERROR
+# blocks, so the zero-tests check and unittest_failures read it as they read unittest's own output.
+PARALLEL_RUNNER = [sys.executable, 'scripts/parallel_unittest.py']
+# fast-mac-rest's runner-tests: only the tests PORTABLE_RUNNER_TESTS_LEFT_OUT names, the inverse of parallel_unittest.py --leave-out.
 MAC_REST_RUNNER_LOADER = '''
 import sys, unittest
 sys.path.insert(0, "scripts/tests")
@@ -1184,7 +1190,10 @@ RUNNER_TESTS_TIMEOUT = 600
 # #2488: by 2026-10-22 the step took 482-519 s on a busy day and was killed at 600 s at load 138-150, its log still a
 # stream of passing dots, so two runs of #2409 failed with "executed zero tests". It gets #1767's rule: a run still
 # printing at its budget goes on until the ceiling; one silent for the stall time is a hang and stops.
-RUNNER_TESTS_CEILING = 1200
+# 2026-11-20: on the hosted Linux runner (load 0.6) passing runs took 743, 809, 1141 and 1180 s the same afternoon, and
+# PRs #4604 and #4597 were killed at 1200 s with the log still a stream of passing dots. The portable job's 45-minute
+# limit (#4747) has room for 30 minutes here; finding the slow tests is the real fix.
+RUNNER_TESTS_CEILING = 1800
 RUNNER_TESTS_STALL_SECONDS = PACKAGE_STALL_SECONDS  # one test compiles Swift, silent for minutes at high load
 RUNNER_TESTS_LIMITS = {'timeout': RUNNER_TESTS_TIMEOUT, 'ceiling': RUNNER_TESTS_CEILING,
                        'stall_seconds': RUNNER_TESTS_STALL_SECONDS}
@@ -1838,8 +1847,9 @@ class Run:
             errors.extend(f'hot-file ratchet — {line[len("FAIL "):]}' for line in text.splitlines()
                           if line.startswith('FAIL '))
         if name in ('runner-tests', 'ops') or name.startswith('ops-'):
-            match = re.search(r'Ran (\d+) tests? in ', text)
-            entry['executed_count'] = int(match[1]) if match else 0
+            # The last summary: parallel_unittest.py prints a failing module's own "Ran" line before its total.
+            ran = re.findall(r'Ran (\d+) tests? in ', text)
+            entry['executed_count'] = int(ran[-1]) if ran else 0
             if not entry['executed_count']:
                 errors.append('Infrastructure runner executed zero tests' if name == 'runner-tests'
                               else f'{name} executed zero tests')
@@ -2030,7 +2040,7 @@ class Run:
     def host_steps(self, portable=False):
         scope, why = runner_test_scope(self.changed)
         if portable:
-            self.command('runner-tests', [sys.executable, '-c', PORTABLE_RUNNER_LOADER, *PORTABLE_RUNNER_TESTS_LEFT_OUT],
+            self.command('runner-tests', [*PARALLEL_RUNNER, '--leave-out', *PORTABLE_RUNNER_TESTS_LEFT_OUT],
                          **RUNNER_TESTS_LIMITS)
         elif in_codex_sandbox():
             self.skip('runner-tests')
@@ -2045,8 +2055,7 @@ class Run:
             self.command('runner-tests', [sys.executable, '-c', loader, *RUNNER_TEST_READERS],
                          **RUNNER_TESTS_LIMITS)
         else:
-            self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'],
-                         **RUNNER_TESTS_LIMITS)
+            self.command('runner-tests', PARALLEL_RUNNER, **RUNNER_TESTS_LIMITS)
         needed, why = ops_tests_needed(self.changed)
         if portable:
             self.ops_steps(left_out=PORTABLE_OPS_LEFT_OUT)
@@ -2313,6 +2322,7 @@ class Run:
             self.provide_supertonic_model()
         chosen, created = self.simulator(device, ios)
         refuse_unsafe(chosen, lane_sim.unsafe_devices())
+        refuse_borrowed(chosen, device, simulator_slot_fd)
         self.manifest['destination'] = chosen
         derived, identity = self.xcode_build(plan, chosen['runtime'], rebuild, require_build)
         base = ['xcodebuild', '-configuration', 'Debug', '-project', 'SpokenMarginsNative.xcodeproj', '-scheme', scheme,

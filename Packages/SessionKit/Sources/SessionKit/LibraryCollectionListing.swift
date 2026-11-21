@@ -46,8 +46,9 @@ public struct LibraryCollectionRow: Identifiable, Equatable, Sendable {
     public static func rowID(collectionID: String) -> String { "collection:" + collectionID }
 }
 
-/// One row of the Library list: an item, or a collection standing for its items (#3769).
-public enum LibraryListing: Identifiable, Equatable, Sendable {
+/// One row of the Library list in Collections view: an item, or a collection standing for its items (#3769). Named apart
+/// from the folder listing's `LibraryListing` until that listing is retired (owner, 2026-11-20).
+public enum LibraryCollectionEntry: Identifiable, Equatable, Sendable {
     case item(LibraryItemRow, isCurrent: Bool)
     case collection(LibraryCollectionRow, isCurrent: Bool)
 
@@ -102,7 +103,7 @@ public enum LibraryCollectionListEngine {
         query: LibraryQuery,
         mode: LibraryViewMode,
         currentItemID: String?
-    ) -> [LibraryListing] {
+    ) -> [LibraryCollectionEntry] {
         let collectionRows = collections.isEmpty ? [] : self.collectionRows(rows: rows, collections: collections, imported: imported)
         let namesByItem = collectionNames(collectionRows)
         guard mode == .collections, !collectionRows.isEmpty else {
@@ -134,8 +135,8 @@ public enum LibraryCollectionListEngine {
         }
         listedCollections.sort { LibraryQueryEngine.areInOrder(SortRow(collection: $0), SortRow(collection: $1), sort: query.sort) }
 
-        var listing = listedCollections.map { LibraryListing.collection($0, isCurrent: false) }
-            + items.map { LibraryListing.item($0, isCurrent: false) }
+        var listing = listedCollections.map { LibraryCollectionEntry.collection($0, isCurrent: false) }
+            + items.map { LibraryCollectionEntry.item($0, isCurrent: false) }
         if let currentItemID, let index = currentIndex(in: listing, currentItemID: currentItemID, browsing: browsing) {
             var current = listing.remove(at: index)
             switch current {
@@ -239,7 +240,7 @@ public enum LibraryCollectionListEngine {
         return result
     }
 
-    private static func currentIndex(in listing: [LibraryListing], currentItemID: String, browsing: Bool) -> Int? {
+    private static func currentIndex(in listing: [LibraryCollectionEntry], currentItemID: String, browsing: Bool) -> Int? {
         if let index = listing.firstIndex(where: { $0.itemRow?.id == currentItemID }) { return index }
         guard browsing else { return nil }
         return listing.firstIndex {

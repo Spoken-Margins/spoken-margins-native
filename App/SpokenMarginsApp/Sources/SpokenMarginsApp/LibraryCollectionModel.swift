@@ -76,6 +76,16 @@ final class LibraryCollectionModel: ObservableObject {
         }
     }
 
+    /// The per-item Add to Collection sheet's tick: puts `itemID` in the stored collection or takes it out. `included` is
+    /// what the tick means on the row the sheet drew; it lands on the stored copy, so items an import added since stay (#3769).
+    func setMembership(
+        of itemID: String, included: Bool, in collection: ItemCollection, store: SQLiteSessionStore, now: Date = Date()
+    ) async -> Outcome {
+        await update(collection.id, store: store) { current, _ in
+            ItemCollectionEditing.setting(itemID: itemID, included: included, in: current, now: now)
+        }.outcome
+    }
+
     func rename(_ collection: ItemCollection, to name: String, store: SQLiteSessionStore, now: Date = Date()) async -> Outcome {
         guard ItemCollectionEditing.normalizedName(name) != nil else { return .needsName }
         // Renames the stored copy, so items an import added since the row was drawn stay in it (#3769).

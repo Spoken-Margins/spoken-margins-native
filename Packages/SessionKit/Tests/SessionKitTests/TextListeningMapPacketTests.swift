@@ -367,6 +367,8 @@ final class TextListeningMapPacketTests: XCTestCase {
         let started = Date()
         let placement = TextListeningMapPlacer.place(map, in: source)
         XCTAssertEqual(placement.scenes.count, 200)
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.3 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards a rescan of the long text per chapter.
         XCTAssertLessThan(Date().timeIntervalSince(started), 20)
     }
 

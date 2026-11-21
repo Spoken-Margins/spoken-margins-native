@@ -101,8 +101,8 @@ public enum LibraryQueryEngine {
         return filtered.sorted { areInOrder($0, $1, sort: libraryQuery.sort) }
     }
 
-    /// The Library's order for two rows under `sort`, ties broken by id. One function, so a collection's row (#3769) is
-    /// placed by exactly the rules items follow.
+    /// The Library's order for two rows under `sort`, ties broken by id. One function, so a Library folder's row and a
+    /// collection's row (#3769) are placed among items by exactly the rules items follow.
     static func areInOrder<Row: LibraryQueryRow>(_ lhs: Row, _ rhs: Row, sort: LibrarySort) -> Bool {
         let ordered: ComparisonResult
         switch sort {

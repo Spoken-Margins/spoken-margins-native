@@ -71,8 +71,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// Several of these tests used to leave a second or more of blocking main-queue work behind (#2195). A synchronous
     /// test never spins the run loop, so that work ran during whichever later test waited first, and could push a
     /// short wait in another class past its timeout (#2104). Draining here keeps it inside the test that queued it.
-    /// A second or more is a blocked call, such as a SQLite write waiting out the store's 1 s busy timeout, so it
-    /// fails the test that left it; the target is under 0.3 s, and the lane log names any test above that.
+    /// The drain itself is the fix: it keeps the work inside the test that queued it. How long the drain took is only
+    /// printed (over 0.3 s names the test in the log), never asserted: a 1 s ceiling on a busy hosted Mac measures the
+    /// machine as much as the test (#4573). That gives up the ceiling's catch: a test that newly leaves a slow drain
+    /// behind now shows only as that printed line, not as a failure.
     override func setUp() {
         super.setUp()
         let inherited = Self.drainMainQueue(label: "before \(name)") // work an earlier class left behind isn't this test's
@@ -82,7 +84,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     override func tearDown() {
         let elapsed = Self.drainMainQueue(label: "after \(name)")
         if elapsed > 0.3 { print("Main-queue backlog \(String(format: "%.2f", elapsed)) s after \(name) (#2195)") }
-        XCTAssertLessThan(elapsed, 1.0, "this test left a second or more of blocking main-queue work behind (#2195)")
         super.tearDown()
     }
 
@@ -2092,6 +2093,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         // #148: the old timer ran out 0.7 s after the save returned, while the listening screen was still being
         // drawn, and the queued second tap on Add a Margin then started a recording. The shield now waits for the
         // screen to appear.
+        // fixed-sleep ok: time is the subject. The retired timer ran out 0.7 s after the save; sleeping past that moment
+        // is the only way to show it no longer opens the shield. A late wake only makes a regression easier to see.
+        // `MarginCaptureCoordinatorTests` holds the same rule on injected dates, with no wall clock.
         try await Task.sleep(nanoseconds: 900_000_000)
         XCTAssertTrue(model.isMarginCaptureCoolingDown, "no listening screen has appeared yet")
         model.beginInterjection()
@@ -3500,6 +3504,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let secondUndoId = try XCTUnwrap(model.trashUndo?.id)
 
         XCTAssertNotEqual(firstUndoId, secondUndoId)
+        // fixed-sleep ok: time is the subject. The older timer's deadline (80 ms after the first Undo) is the moment that
+        // must pass, and this sleep ends at 90 ms. Both timers sleep on the main actor, which wakes them in deadline order,
+        // so the older one has had its turn before this line runs. The replacement's own timer ends the test below.
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(model.trashUndo?.id, secondUndoId, "The older timer must not dismiss the replacement Undo")
         try await waitFor("replacement trash Undo to auto-dismiss") {
