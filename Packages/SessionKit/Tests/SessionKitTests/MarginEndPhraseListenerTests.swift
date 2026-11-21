@@ -27,8 +27,11 @@ final class MarginEndPhraseListenerTests: XCTestCase {
         private let lock = NSLock()
         private var stopped = 0
         private let startError: LiveInputUnavailable?
+        private let wordsOnStop: [LiveInputWord]
 
-        init(startError: LiveInputUnavailable? = nil) {
+        /// `wordsOnStop` are the last words a recogniser delivers as it is told to stop, before its stream ends.
+        init(startError: LiveInputUnavailable? = nil, wordsOnStop: [LiveInputWord] = []) {
+            self.wordsOnStop = wordsOnStop
             let (stream, continuation) = AsyncStream<[LiveInputWord]>.makeStream()
             self.words = stream
             self.continuation = continuation
@@ -39,6 +42,7 @@ final class MarginEndPhraseListenerTests: XCTestCase {
         func start() async throws { if let startError { throw startError } }
         func stop() async {
             lock.withLock { stopped += 1 }
+            if !wordsOnStop.isEmpty { continuation.yield(wordsOnStop) }
             continuation.finish()
         }
         func say(_ batch: [LiveInputWord]) { continuation.yield(batch) }
@@ -89,9 +93,10 @@ final class MarginEndPhraseListenerTests: XCTestCase {
         await listener.start()
         clock.set(10_000)
         session.say([word("hello", 2_000, 2_300, final: true)])
-        await eventually("the word is heard") { clock.now == 10_000 }
         clock.set(10 * 60_000)
-        try? await Task.sleep(for: .milliseconds(500)) // several ticks of ten quiet minutes
+        // Several ticks of ten quiet minutes. The rule itself is tested without any wait in NoQuietEndTests; this checks
+        // that the ticker adds no timer of its own.
+        try? await Task.sleep(for: .milliseconds(500))
         XCTAssertEqual(signals.all, [.hint(.listening)])
         await listener.stop()
     }
@@ -131,13 +136,14 @@ final class MarginEndPhraseListenerTests: XCTestCase {
     }
 
     func testWordsAfterAStopAreIgnored() async {
-        let session = FakeSession(), signals = Signals(), clock = Clock()
+        // Stopping a recogniser delivers its last words first: "stop margin" lands while the listener is being stopped.
+        let session = FakeSession(wordsOnStop: [word("stop", 6_600, 6_900, final: true), word("margin", 7_000, 7_300, final: true)])
+        let signals = Signals(), clock = Clock()
         let listener = make(session, signals, clock)
         await listener.start()
-        await listener.stop()
         clock.set(20_000)
-        session.say([word("stop", 6_600, 6_900), word("margin", 7_000, 7_300)])
-        try? await Task.sleep(for: .milliseconds(300))
+        await listener.stop()
+        try? await Task.sleep(for: .milliseconds(300)) // a few ticks: a stopped listener never ends anything
         XCTAssertEqual(signals.all, [.hint(.listening)])
     }
 }

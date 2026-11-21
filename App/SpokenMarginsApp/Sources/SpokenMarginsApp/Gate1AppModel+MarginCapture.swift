@@ -672,16 +672,18 @@ final class MarginEndPhraseCoordinator {
         case .hint(let hint):
             MarginEndPhraseStatus.shared.set(hint)
         case .end:
+            // "Finishing…" is over: the screen's own "Saving Margin…" takes its place, and the phrase is spent for this Margin.
+            MarginEndPhraseStatus.shared.set(.none)
             finish() // the way a tap on Save finishes: the save guard turns a second ask into nothing
         case .couldNotStart(let reason):
             MarginEndPhraseStatus.shared.set(.none)
             record("margin.endPhrase.unavailable", ["reason": reason, "run": String(signalRun)])
             // A missing permission or model is "off", as before the feature; a failure the listener can't see needs a sound.
-            if !Self.isQuietReason(reason) { MarginOutcomeCuePlayer.shared.play(.couldNotStart) }
+            if !Self.isQuietReason(reason) { MarginOutcomeCuePlayer.shared.play(.couldNotStart) { _ in } }
         case .stoppedMidMargin:
             MarginEndPhraseStatus.shared.set(.none)
             record("margin.endPhrase.unavailable", ["reason": "stopped_mid_margin", "run": String(signalRun)])
-            MarginOutcomeCuePlayer.shared.play(.couldNotStart)
+            MarginOutcomeCuePlayer.shared.play(.couldNotStart) { _ in } // the Design's one signal; it never waits on the main actor
         }
     }
 

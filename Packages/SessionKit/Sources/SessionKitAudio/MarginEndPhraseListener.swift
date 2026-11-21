@@ -80,7 +80,7 @@ public final class MarginEndPhraseListener: @unchecked Sendable {
             }
             return true
         }
-        if listening { onSignal(.hint(.listening)) }
+        if listening, !isStopped { onSignal(.hint(.listening)) }
     }
 
     /// Ends listening. Safe at any time and any number of times: before the start, while it waits, while it listens,
@@ -125,11 +125,14 @@ public final class MarginEndPhraseListener: @unchecked Sendable {
     private func emit(_ step: MarginEndPhraseDecider.Step) {
         switch step {
         case .unchanged: break
-        case .listening: onSignal(.hint(.listening))
-        case .finishing: onSignal(.hint(.finishing))
-        case .end: onSignal(.end)
+        // A hint that lost a race with the recogniser dying or a stop would say "listening" with nothing listening.
+        case .listening: if !isStopped { onSignal(.hint(.listening)) }
+        case .finishing: if !isStopped { onSignal(.hint(.finishing)) }
+        case .end: onSignal(.end) // a phrase that was heard still ends the Margin, even if the recogniser died just after
         }
     }
+
+    private var isStopped: Bool { lock.withLock { stopped } }
 
     private func tapEvent(_ kind: String, _ fields: [String: String]) {
         onEvent(kind, fields)
