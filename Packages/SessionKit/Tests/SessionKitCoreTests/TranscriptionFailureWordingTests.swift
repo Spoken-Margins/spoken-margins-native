@@ -77,7 +77,7 @@ final class TranscriptionFailureWordingTests: XCTestCase {
     }
 
     /// Codex audit on #439: with Speech Recognition off, the source window can't be transcribed
-    /// either, so the context fails too. the context words hid the actual reason.
+    /// either, so the context fails too, and the context words alone would hide the actual reason.
     func testSpeechRecognitionOffOutranksTheContextItAlsoBroke() {
         let status = TranscriptionFailureWording.marginAttention(
             transcriptionStatus: "failed",

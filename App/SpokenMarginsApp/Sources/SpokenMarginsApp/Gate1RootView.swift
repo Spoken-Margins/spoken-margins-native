@@ -349,7 +349,7 @@ struct InterjectionDetailView: View {
                     Text(anchorContextText(current.anchor.anchorAfter, status: current.captureKind == .written ? .unavailable : current.anchorContextStatus))
                         .textSelection(.enabled)
                     if current.captureKind != .written, current.anchorContextStatus == .unavailable {
-                        Button("Retry Context") {
+                        Button("Retry Finding Source Words") {
                             model.retryAnchorContext(current)
                         }
                         .accessibilityIdentifier("interjection.detail.retryContext")
