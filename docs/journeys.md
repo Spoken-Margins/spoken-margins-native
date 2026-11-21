@@ -112,6 +112,9 @@ The owner's one-phone version, with prepared packets and an episode that shares 
    - Pass: headers, footers and "Downloaded on …" stamps are not read aloud, and body text is.
 2. Record a written Margin, then reopen it later.
    - Pass: it opens at the right passage.
+3. Word (#4594). Copy `Contracts/fixtures/word/plain-paragraphs.docx` into the simulator's Files (On My iPhone), then Library, **+**, **Import from Files**, and pick it.
+   - Pass: a Text row titled "The Gettysburg Address" (the title in the document's properties, not the file name). Play reads "Four score and seven years ago…" and the clock advances. A written Margin shows on the sentence it was written at.
+   - Also pick `password-protected.docx` and `old-format.doc` from the same folder: nothing is added, and the banner says why (a password; the older .doc format, save it as .docx).
 
 ## J8 — Collections
 
@@ -266,7 +269,7 @@ A listener adds a transcript file from a meeting app (#2997, Design plan PR 4). 
 7. Import the essay `.txt`.
    - Pass: a Text row, exactly as before this feature. The banner is today's.
 8. Import the essay `.docx`.
-   - Pass: nothing is added; the banner says "“essay.docx” isn't a meeting transcript. Spoken Margins adds Word files only when they are transcripts. To hear it, copy its text and use Paste Text."
+   - Pass: a Text row, as for the essay `.txt` (#4594: a Word file that isn't a transcript is a document).
 9. Pick `teams.vtt` and `notes.md` together.
    - Pass: one banner, "Imported 2 files." When one of them can't be added, it says "Imported 1 file. 1 couldn't be added: <name>."
 10. Share the Margins of the transcript item from its Margins tab.
@@ -289,7 +292,7 @@ A listener adds a transcript file from a meeting app (#2997, Design plan PR 4). 
 18. Share the Zoom captions `.txt`, then the essay `.txt`, the same way.
     - Pass: the card says "Sent <name> to Spoken Margins." for both. In the app the Zoom file is a Transcript row; the essay is a Text row with today's banner. No screen changes.
 19. Share the essay `.docx` the same way.
-    - Pass: the card says "Sent essay to Spoken Margins." In the app nothing is added and a banner says "“essay.docx” isn't a meeting transcript. Spoken Margins adds Word files only when they are transcripts. To hear it, copy its text and use Paste Text." It is not offered again at the next foreground.
+    - Pass: the card says "Sent essay to Spoken Margins." In the app nothing is added and a banner says "“essay.docx” isn't a meeting transcript. To add it as a document, use + › Import from Files." It is not offered again at the next foreground.
 20. Share a `.vtt` larger than 10 MB (`python3 -c "print('WEBVTT\n' + ('00:00:01.000 --> 00:00:02.000\nA: x\n\n' * 400000))" > artifacts/big.vtt`, about 14 MB).
     - Pass: the card says "“big.vtt” is larger than 10 MB, so nothing was added." with **Done**. Opening the app adds nothing.
 21. Share `teams.vtt`, then force-quit Spoken Margins (swipe it away in the app switcher) before opening it. Open it, wait, then send it to the background and open it again.
