@@ -1,0 +1,201 @@
+# App tests on a branch, by dispatch (#4839, step 2 of docs/workstreams/retire-mac-ci.md). It replaces the `/lane T3`
+# request that lane.yml answered on the owner's Mac: a session, or the owner, asks for the app tests of one branch and
+# gets the result as a comment on the pull request. It is a request, never a gate: it sets no commit status and no merge
+# waits for it (owner, 2026-11-18, #4572). main-t3.yml is the trunk's own run.
+#
+#   gh workflow run branch-t3.yml --ref main -f branch=ws/123-thing -f tests='LibraryTests PlayerTests' -f pr=456
+#
+# Run it from main, not from the branch: the workflow file, its permissions and the report job's script are main's, so
+# the branch under test cannot change what the job may do. `tests` names test classes (`Class` or `Class/method`); empty
+# runs both whole plans (about 80 minutes on a 3-core hosted Mac). The branch must contain scripts/branch_t3.py, so a
+# branch cut before this landed needs `main` merged in once.
+#
+# Two jobs, so the branch's code never holds a write token:
+#   test    runs the branch's scripts on a hosted Mac with `contents: read` only, no GH_TOKEN in its environment, and
+#           leaves one result file;
+#   report  runs main's scripts/branch_t3.py on Linux with `pull-requests: write`, reads that file (handed over as a
+#           job output) as data and posts the comment. Nobody with push access is stopped by this (they can already push a workflow of their own); it
+#           keeps a bug or a hostile test from posting or writing as the workflow.
+name: branch-t3
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'The branch (or a full commit SHA) to test'
+        required: true
+      tests:
+        description: 'Test classes, space or comma separated (Class or Class/method). Empty: both whole plans'
+        required: false
+        default: ''
+      pr:
+        description: 'Pull request number to comment on (optional; the job summary always has the result)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+# A newer request for the same branch replaces an older one still running.
+concurrency:
+  group: branch-t3-${{ inputs.branch }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: 'branch-t3: app tests on the branch'
+    # Only from the trunk: the workflow file must be main's.
+    if: github.ref_name == (vars.SM_TRUNK || 'main')
+    runs-on: xcode-27
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.head.outputs.sha }}
+      # The result file, base64, for the report job (a small file: branch_t3.py cuts it to fit).
+      result: ${{ steps.result.outputs.b64 }}
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      SM_LANE_GITHUB_HOSTED: '1'
+      SM_PLAN_TIMEOUT_SECONDS: '3600'
+      SM_SPM_DIR: ${{ github.workspace }}/.build/spm
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+      - name: The commit under test
+        id: head
+        run: |
+          sha=$(git rev-parse HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ ! -f scripts/branch_t3.py ]; then
+            echo "::error::$sha has no scripts/branch_t3.py. Merge main into the branch once, then dispatch again."
+            exit 1
+          fi
+      - name: Lane folders, Xcode and the iOS runtime
+        run: |
+          {
+            echo "SM_LANE_STATE_DIR=$RUNNER_TEMP/lane-state"
+            echo "SM_LANE_EVIDENCE_DIR=$RUNNER_TEMP/lane-evidence"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/lane-state" "$RUNNER_TEMP/lane-evidence"
+          mkdir -p "$HOME/Library/Logs/DiagnosticReports"
+          xcodebuild -version
+          runtimes=$(xcrun simctl list runtimes --json)
+          major=$(echo "$runtimes" | /usr/bin/python3 -c 'import json,sys
+          ok=[r["version"].split(".")[0] for r in json.load(sys.stdin)["runtimes"] if r.get("isAvailable") and r.get("platform")=="iOS"]
+          print("26" if "26" in ok else (max(ok, key=int) if ok else "26"))')
+          if [ "$major" != 26 ]; then
+            echo "::warning title=branch-t3 iOS::No iOS 26 simulator runtime on this image; the run uses iOS $major."
+          fi
+          echo "SM_LANE_IOS_MAJOR=$major" >> "$GITHUB_ENV"
+      - name: List LFS objects
+        run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
+      - name: LFS cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
+          restore-keys: lfs-
+      - name: Fetch LFS files
+        env:
+          # The token is in this one step's environment only, and later steps run the branch's code.
+          LFS_TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$LFS_TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+      - name: Restore the Swift packages
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ env.SM_SPM_DIR }}
+          key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: spm-
+      # Restore only: a branch run never saves the compilation cache, so a branch cannot seed what main's runs read.
+      - name: Restore the Xcode compilation cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/cas-pack
+          key: xcode-cas-sparse-27.0-branch-t3-${{ github.run_id }}
+          restore-keys: xcode-cas-sparse-27.0-
+      - name: Unpack the Xcode compilation cache
+        run: CAS="$RUNNER_TEMP/lane-state/compilation-cache" PACK="$RUNNER_TEMP/cas-pack" bash scripts/ci-cas-cache.sh unpack
+      - name: Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: XcodeGen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: command -v xcodegen >/dev/null || brew install xcodegen; xcodegen --version
+      - name: Python tools
+        run: PYTHON=python3 bash scripts/bootstrap-python-tools.sh
+      - name: Run the app tests
+        env:
+          TESTS: ${{ inputs.tests }}
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          python3 scripts/branch_t3.py run --sha "$SHA" --tests "$TESTS" --out "$RUNNER_TEMP/branch-t3-result.json" \
+            --evidence "$SM_LANE_EVIDENCE_DIR/branch-${SHA:0:7}"
+      - name: Hand the result to the report job
+        id: result
+        if: always()
+        run: |
+          file="$RUNNER_TEMP/branch-t3-result.json"
+          if [ -f "$file" ] && [ "$(wc -c < "$file")" -lt 60000 ]; then
+            echo "b64=$(base64 < "$file" | tr -d '\n')" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Keep the result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: branch-t3-result
+          path: ${{ runner.temp }}/branch-t3-result.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: branch-t3-evidence
+          path: |
+            ${{ runner.temp }}/lane-evidence/**/*.log
+            ${{ runner.temp }}/lane-evidence/**/*.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  report:
+    name: 'report: comment the result'
+    needs: test
+    if: always() && github.ref_name == (vars.SM_TRUNK || 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # Main's copy of the script, never the branch's.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Comment
+        env:
+          RESULT_B64: ${{ needs.test.outputs.result }}
+          PR: ${{ inputs.pr }}
+          SHA: ${{ needs.test.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if ! printf '%s' "$PR" | grep -Eq '^[0-9]*$'; then echo "::error::pr must be a number"; exit 1; fi
+          # No result (the job stopped early) leaves an empty file, which the report reads as a runner fault.
+          printf '%s' "$RESULT_B64" | base64 -d > "$RUNNER_TEMP/branch-t3-result.json" || : > "$RUNNER_TEMP/branch-t3-result.json"
+          python3 scripts/branch_t3.py report --result "$RUNNER_TEMP/branch-t3-result.json" \
+            --run-url "$RUN_URL" --sha "$SHA" --pr "${PR:-0}"
