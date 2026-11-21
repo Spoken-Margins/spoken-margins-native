@@ -81,7 +81,7 @@ extension SharedMarginTally {
         guard total > 0 else { return nil }
         let people = Self.mergedSenders(senders)
         // A tally with no sender read (an older caller) is one friend with no name.
-        let who = Self.who(people)
+        let who = Self.who(people, spoken: spokenSuffix)
         let wordsAreNew = new == total
         let somewhatNew = new > 0 && new < total
         let marginCount = total - min(max(replies, 0), total)
@@ -105,15 +105,26 @@ extension SharedMarginTally {
         "\(n) \(isNew ? "new " : "")\(n == 1 ? noun : plural)"
     }
 
-    private static func who(_ people: [Sender]) -> String {
+    /// The words for who. On screen a long name is cut (`shownName`); spoken, VoiceOver gets the whole name, since
+    /// how "…" is spoken depends on the voice (#4648). Two different friends who read the same ("Sam" and "Sam", or
+    /// two long names cut to the same start) are "Sam and another Sam", so the line never reads as one friend twice.
+    private static func who(_ people: [Sender], spoken: Bool) -> String {
         guard !people.isEmpty else { return "a friend" }
         let named = people.filter(\.isNamed).count
+        func label(_ sender: Sender) -> String {
+            guard sender.isNamed else { return "a friend" }
+            return spoken ? sender.name : sender.shownName
+        }
         switch people.count {
         case 1:
-            return people[0].isNamed ? people[0].shownName : "a friend"
+            return label(people[0])
         case 2:
             if named == 0 { return "friends" }
-            return people.map { $0.isNamed ? $0.shownName : "a friend" }.joined(separator: " and ")
+            let first = label(people[0]), second = label(people[1])
+            if people[0].isNamed, people[1].isNamed, first.folded == second.folded {
+                return "\(first) and another \(second)"
+            }
+            return "\(first) and \(second)"
         default:
             return "\(people.count) friends"
         }

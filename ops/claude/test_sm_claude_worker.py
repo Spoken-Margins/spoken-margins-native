@@ -445,6 +445,15 @@ class TickTests(unittest.TestCase):
                 self.assertEqual(started, [])
                 self.assertIn(why, decision['why'])
 
+    def test_cloud_max_ignores_a_halt_but_not_disk_or_memory(self):
+        # 2026-11-21: the Mac tick tripped on its own pace rule while the owner had Cloud max set for the week.
+        cloud = DIAL.replace('- [x] Paced', '- [ ] Paced').replace('- [ ] Cloud max', '- [x] Cloud max')
+        decision, started, _ = self.tick(issues=[issue(7)], dial=cloud, halted=True)
+        self.assertEqual(started, [(1, 7, 'issue')], decision['why'])
+        decision, started, _ = self.tick(issues=[issue(7)], dial=cloud, halted=True, memory_ok=lambda: False)
+        self.assertEqual(started, [])
+        self.assertIn('memory pressure', decision['why'])
+
     def test_the_board_pass_runs_hourly_whatever_the_dial_says(self):
         # #3636: the hourly area-label pass runs on the Mac whatever the Dial says.
         off = DIAL.replace('- [x] Paced', '- [ ] Paced').replace('- [ ] Off', '- [x] Off')

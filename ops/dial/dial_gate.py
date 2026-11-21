@@ -232,6 +232,15 @@ def parse_usage(comments: list[dict]) -> dict:
     return {'usage': usage, 'halted': 'claude' in halted, 'halted_by': sorted(halted)}
 
 
+def breaker_holds(dial: dict, usage_info: dict) -> bool:
+    """Whether a Claude HALT on #337 stops Claude work under this Dial.
+
+    Cloud max is the owner's "ignore usage" setting (2026-11-21: he set it for the week and the Mac tick
+    tripped its own U > E + 10 rule anyway, halting the coordinator and the Mac worker). The Mac tick's rule
+    doesn't read the Dial, so every reader of the HALT asks here instead of reading `halted` alone."""
+    return bool(usage_info.get('halted')) and dial.get('mode') != 'cloud max'
+
+
 def parse_ack(comments: list[dict]) -> dict | None:
     """The coordinator's acknowledgement: `Ack fire-<id> · running N`."""
     for c in reversed(list(filter(trusted, comments))):
@@ -525,9 +534,13 @@ def status_text(now, dial, usage_info, ready_count, ack, state, decision, thread
                      f"{'estimated ' if est['estimated'] else ''}usage is {abs(gap):.0f} points {'ahead' if gap >= 0 else 'behind'} "
                      f"(Paced holds if more than {TREND_SLACK} ahead).")
     if usage_info.get('halted_by'):
-        mine = 'Claude' if usage_info['halted'] else 'not Claude'
-        lines.append(f"- Usage breaker: {' and '.join(p.capitalize() for p in usage_info['halted_by'])} halted "
-                     f"({mine}, so this gate {'holds' if usage_info['halted'] else 'is unaffected'}).")
+        if breaker_holds(dial, usage_info):
+            why = 'Claude, so this gate holds'
+        elif usage_info['halted']:
+            why = 'Claude, but Cloud max ignores usage, so this gate is unaffected'
+        else:
+            why = 'not Claude, so this gate is unaffected'
+        lines.append(f"- Usage breaker: {' and '.join(p.capitalize() for p in usage_info['halted_by'])} halted ({why}).")
     lines.append(f'- Ready issues: {ready_count}.')
     issues = lambda th: ', '.join(f'#{n}' for n in th['issues']) or 'no issue'
     codex = [th for th in of_provider(threads, 'codex') if th['state'] == 'active']
