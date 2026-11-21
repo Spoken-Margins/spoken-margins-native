@@ -137,8 +137,8 @@ class PortableStepTable(unittest.TestCase):
     def test_the_portable_plan_drops_the_apple_tests_and_checks_lfs_pointers(self):
         calls = dict(self.run_portable()[0])
         runner = calls['runner-tests']
-        self.assertEqual(runner[:2], [sys.executable, '-c'])
-        self.assertEqual(runner[3:], list(verification.PORTABLE_RUNNER_TESTS_LEFT_OUT))
+        self.assertEqual(runner, [*verification.PARALLEL_RUNNER, '--leave-out',
+                                  *verification.PORTABLE_RUNNER_TESTS_LEFT_OUT])
         self.assertEqual(calls['ops'], {'left_out': verification.PORTABLE_OPS_LEFT_OUT})
         self.assertIn('--allow-lfs-pointers', calls['contracts'])
 
@@ -160,26 +160,8 @@ class PortableStepTable(unittest.TestCase):
         by_name = dict(calls)
         self.assertEqual(by_name['ops'], ((), {}))
         self.assertNotIn('--allow-lfs-pointers', by_name['contracts'])
-        self.assertNotIn(verification.PORTABLE_RUNNER_LOADER, by_name['runner-tests'])
+        self.assertEqual(by_name['runner-tests'], verification.PARALLEL_RUNNER)  # every runner test, nothing left out
         self.assertIn('package-steps', by_name)
-
-    def test_the_runner_loader_drops_only_the_listed_tests(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            tests = Path(temporary) / 'scripts' / 'tests'
-            tests.mkdir(parents=True)
-            (tests / 'test_apple.py').write_text(
-                'import unittest\nclass A(unittest.TestCase):\n    def test_needs_xcode(self): self.fail("xcode")\n')
-            (tests / 'test_other.py').write_text(
-                'import unittest\nclass B(unittest.TestCase):\n    def test_runs(self): pass\n'
-                '    def test_needs_xcode_too(self): self.fail("xcode")\n')
-            done = subprocess.run([sys.executable, '-c', verification.PORTABLE_RUNNER_LOADER,
-                                   'test_apple.', 'test_other.B.test_needs_xcode_too'],
-                                  cwd=temporary, capture_output=True, text=True)
-            self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertIn('Ran 1 test', done.stderr)
-            failing = subprocess.run([sys.executable, '-c', verification.PORTABLE_RUNNER_LOADER, 'test_apple.'],
-                                     cwd=temporary, capture_output=True, text=True)
-            self.assertNotEqual(failing.returncode, 0)  # a test that is not listed still fails the step
 
 
 class SupertonicModelSkips(unittest.TestCase):

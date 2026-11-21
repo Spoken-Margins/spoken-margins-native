@@ -225,6 +225,8 @@ final class PDFSentenceLocatorTests: XCTestCase {
         let sentence = String(repeating: "sleep ", count: 600) + "never"
         let started = Date()
         let placement = locate(sentence, hint: 0, pages: [page])
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.4 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards a quadratic search over the long page.
         XCTAssertLessThan(Date().timeIntervalSince(started), 5)
         if case .highlight(_, _, let whole) = placement { XCTAssertFalse(whole) } else { XCTFail("the start of it is on the page") }
     }

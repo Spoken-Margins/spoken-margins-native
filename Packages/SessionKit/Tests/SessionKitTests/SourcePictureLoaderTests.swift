@@ -170,6 +170,68 @@ final class SourcePictureLoaderTests: XCTestCase {
         XCTAssertFalse(SourcePicture.canAnimate(large), "its frames would each decode at full size")
         XCTAssertFalse(SourcePicture.canAnimate(try png()), "a still picture does not animate")
     }
+
+    // MARK: A still decodes off the main thread (#4451)
+
+    /// Records which thread a decode ran on.
+    private final class DecodeThread: @unchecked Sendable {
+        private let lock = NSLock()
+        private var onMain: [Bool] = []
+        func record() { lock.lock(); onMain.append(Thread.isMainThread); lock.unlock() }
+        var ranOnMainThread: [Bool] { lock.lock(); defer { lock.unlock() }; return onMain }
+    }
+
+    /// A caller on the main actor (a Timeline row) must not decode there: ImageIO can decode a whole PNG or GIF before
+    /// it scales it down, which holds the main thread for as long as that takes.
+    @MainActor
+    func testAStillIsDecodedOffTheMainThreadWhenAskedForFromTheMainActor() async throws {
+        let side = Int(Double(SourcePicture.maximumPixels).squareRoot()) // the largest picture a row is handed
+        let large = try solidPicture(type: "public.png", width: side, height: side)
+        XCTAssertTrue(SourcePicture.isWithinDecodeBudget(large))
+        let thread = DecodeThread()
+        let decoded = await SourcePicture.decodedStill(large, maxPixelSize: 900) { data, size in
+            thread.record()
+            return SourcePicture.stillImage(data, maxPixelSize: size)
+        }
+        XCTAssertEqual(thread.ranOnMainThread, [false], "decoded once, and not on the main thread")
+        let image = try XCTUnwrap(decoded?.image)
+        XCTAssertEqual(max(image.width, image.height), 900, "scaled down to the size the row asked for")
+    }
+
+    /// While a still decodes the main actor is free: the decode here waits on a gate that only the main actor opens, so
+    /// one that ran on the main actor would never see it opened (the wait gives up after 30 seconds and the test fails).
+    @MainActor
+    func testTheMainActorStaysFreeWhileAStillDecodes() async throws {
+        let large = try solidPicture(type: "public.png", width: 3_000, height: 3_000)
+        let gate = DispatchSemaphore(value: 0)
+        let decoding = Task { @MainActor in
+            await SourcePicture.decodedStill(large, maxPixelSize: 900) { data, size in
+                guard gate.wait(timeout: .now() + 30) == .success else { return nil }
+                return SourcePicture.stillImage(data, maxPixelSize: size)
+            }
+        }
+        await Task.yield() // lets the decode start; the main actor is free to run this, then open the gate
+        gate.signal()
+        let decoded = await decoding.value
+        XCTAssertNotNil(decoded, "the gate opened while the decode was waiting on it")
+    }
+
+    func testStillSizesNeighbouringInputs() async throws {
+        let wide = try solidPicture(type: "public.png", width: 40, height: 10)
+        let tall = try solidPicture(type: "public.png", width: 10, height: 40)
+        let small = try png()
+        let wideStill = try XCTUnwrap(SourcePicture.stillImage(wide, maxPixelSize: 20))
+        XCTAssertEqual([wideStill.width, wideStill.height], [20, 5], "the long side is the cap")
+        let tallStill = try XCTUnwrap(SourcePicture.stillImage(tall, maxPixelSize: 20))
+        XCTAssertEqual([tallStill.width, tallStill.height], [5, 20])
+        XCTAssertNotNil(SourcePicture.stillImage(small, maxPixelSize: 900), "a small picture decodes")
+        let asyncSmall = await SourcePicture.decodedStill(small, maxPixelSize: 900)
+        XCTAssertNotNil(asyncSmall)
+        XCTAssertNil(SourcePicture.stillImage(Data("not a picture".utf8), maxPixelSize: 900))
+        let asyncGarbage = await SourcePicture.decodedStill(Data("not a picture".utf8), maxPixelSize: 900)
+        XCTAssertNil(asyncGarbage)
+        XCTAssertNil(SourcePicture.stillImage(Data(), maxPixelSize: 900))
+    }
 }
 
 /// Serves `/unsized.gif` as 1 KB chunks with no Content-Length, `/sized.gif` the same with a 10 MB Content-Length,

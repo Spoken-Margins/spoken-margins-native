@@ -89,6 +89,7 @@ struct CollectionItemsSheet: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .scrollDismissesKeyboard(.interactively) // the search box's keyboard goes down on a drag (#4636)
             .background(AppColors.bone)
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)

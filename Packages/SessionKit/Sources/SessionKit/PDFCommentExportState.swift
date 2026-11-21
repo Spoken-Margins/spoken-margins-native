@@ -1,21 +1,78 @@
 import Foundation
 
-/// What the "PDF with your Margins" sheet shows and offers, as a value (#4338, PR 5).
+/// What the "PDF with your Margins" sheet shows and offers, as a value (#4338, PR 5). The same sheet serves a Word
+/// document (#4595): `document` says which, and a Word comment has no page, so its rows carry no page label and stay in
+/// the order of the text.
 ///
 /// The sheet lists the listener's own Margins in page order, each with where its comment will land, lets them leave
 /// some out, and says what the button will do. None of that needs PDFKit, so it is decided here and host-tested; the
 /// app gives it the plan (`MarginCommentPlan`) and, once PDFKit has placed the comments, where each one went.
 public struct PDFCommentExportState: Equatable, Sendable {
+    /// What the copy is made from: the listener's kept PDF or their kept Word document.
+    public enum Document: Equatable, Sendable {
+        case pdf
+        case word
+
+        public var sheetTitle: String {
+            switch self {
+            case .pdf: return "PDF with your Margins"
+            case .word: return "Word document with your Margins"
+            }
+        }
+
+        /// The item ⋯ menu entry that opens the sheet.
+        public var menuTitle: String {
+            switch self {
+            case .pdf: return "Export PDF with Margins"
+            case .word: return "Export Word document with Margins"
+            }
+        }
+
+        public var fileExtension: String {
+            switch self {
+            case .pdf: return "pdf"
+            case .word: return "docx"
+            }
+        }
+
+        /// The name the file takes when the item's title leaves nothing usable.
+        var fallbackName: String {
+            switch self {
+            case .pdf: return "PDF"
+            case .word: return "Word document"
+            }
+        }
+
+        var noun: String {
+            switch self {
+            case .pdf: return "PDF"
+            case .word: return "Word document"
+            }
+        }
+    }
+
     /// Where one comment landed, reduced to what the sheet says. `PDFMarginPlacement` (SessionKitPDF) is the full answer.
     public enum Spot: Equatable, Sendable {
         /// On the sentence (or the start of it) on this zero-based page.
         case sentence(page: Int)
         /// No exact place: a note at the top of this zero-based page.
         case pageNote(page: Int)
+        /// Word: on the whole sentence, or on its start when only that was found (`whole` false).
+        case wordSentence(whole: Bool)
+        /// Word: the sentence was not found, so the comment covers the paragraph that held it.
+        case wordParagraph
+        /// Word: neither was found, so the comment covers the first paragraph with text.
+        case wordFirstParagraph
     }
 
     public enum RowStatus: Equatable, Sendable {
         case onItsSentence
+        /// Word: the whole sentence was not found, so the comment starts the sentence.
+        case onItsSentenceStart
+        /// Word: the sentence was not found; the comment covers its paragraph.
+        case inItsParagraph
+        /// Word: nothing was found; the comment covers the first paragraph.
+        case atTheStart
         /// `page` is the zero-based page; the words say it one-based.
         case pageNoExactSpot(page: Int)
         case transcriptPending
@@ -24,7 +81,7 @@ public struct PDFCommentExportState: Equatable, Sendable {
         /// Whether the listener can choose to send this Margin at all. A Margin with no words is left out.
         public var canBeIncluded: Bool {
             switch self {
-            case .onItsSentence, .pageNoExactSpot: return true
+            case .onItsSentence, .onItsSentenceStart, .inItsParagraph, .atTheStart, .pageNoExactSpot: return true
             case .transcriptPending, .noTranscript: return false
             }
         }
@@ -33,6 +90,9 @@ public struct PDFCommentExportState: Equatable, Sendable {
         public var words: String {
             switch self {
             case .onItsSentence: return "On its sentence"
+            case .onItsSentenceStart: return "On the start of its sentence"
+            case .inItsParagraph: return "On its paragraph, no exact sentence"
+            case .atTheStart: return "On the first paragraph, no exact spot"
             case .pageNoExactSpot(let page): return "On page \(page + 1), no exact spot"
             case .transcriptPending: return "Left out: transcript not ready yet"
             case .noTranscript: return "Left out: no transcript"
@@ -43,6 +103,9 @@ public struct PDFCommentExportState: Equatable, Sendable {
         public var systemImage: String {
             switch self {
             case .onItsSentence: return "text.quote"
+            case .onItsSentenceStart: return "text.quote"
+            case .inItsParagraph: return "text.alignleft"
+            case .atTheStart: return "arrow.up.doc"
             case .pageNoExactSpot: return "doc"
             case .transcriptPending: return "hourglass"
             case .noTranscript: return "exclamationmark.bubble"
@@ -78,6 +141,7 @@ public struct PDFCommentExportState: Equatable, Sendable {
     public private(set) var phase: Phase
     /// The name each comment carries, as typed. Use `authorForComments` for what is written.
     public var authorName: String
+    public let document: Document
 
     /// The longest name a comment carries.
     public static let authorNameLimit = 80
@@ -86,8 +150,9 @@ public struct PDFCommentExportState: Equatable, Sendable {
     ///   - plan: the listener's own Margins, in text order.
     ///   - spots: where each Margin of the plan was placed, by Margin id, or nil while placement is still running.
     ///   - authorName: the name last used on comments, or empty.
-    public init(plan: MarginCommentPlan, spots: [String: Spot]?, authorName: String = "") {
+    public init(plan: MarginCommentPlan, spots: [String: Spot]?, authorName: String = "", document: Document = .pdf) {
         self.authorName = authorName
+        self.document = document
         self.phase = spots == nil ? .loading : .ready
         let built: [(page: Int?, row: Row)] = plan.entries.map { entry in
             let status: RowStatus
@@ -107,11 +172,26 @@ public struct PDFCommentExportState: Equatable, Sendable {
                 case .pageNote(let found)?:
                     status = .pageNoExactSpot(page: found)
                     page = found
+                case .wordSentence(let whole)?:
+                    status = whole ? .onItsSentence : .onItsSentenceStart
+                    page = nil
+                case .wordParagraph?:
+                    status = .inItsParagraph
+                    page = nil
+                case .wordFirstParagraph?:
+                    status = .atTheStart
+                    page = nil
                 case nil:
-                    // Still placing (or this Margin could not be placed at all): the page the plan hinted at.
-                    let hint = entry.pageIndex ?? 0
-                    status = .pageNoExactSpot(page: hint)
-                    page = entry.pageIndex
+                    // Still placing (or this Margin could not be placed at all): the page the plan hinted at. A Word
+                    // document has no pages, so a comment not placed yet is said to be on the first paragraph.
+                    if document == .word {
+                        status = .atTheStart
+                        page = nil
+                    } else {
+                        let hint = entry.pageIndex ?? 0
+                        status = .pageNoExactSpot(page: hint)
+                        page = entry.pageIndex
+                    }
                 }
             }
             let words = entry.commentText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -161,8 +241,10 @@ public struct PDFCommentExportState: Equatable, Sendable {
         return String(trimmed.prefix(authorNameLimit)).trimmingCharacters(in: .whitespaces)
     }
 
-    public static func leadLine(title: String) -> String {
-        "Makes a copy of “\(title)” with each of your Margins as a comment on its sentence. The original stays as it is."
+    public static func leadLine(title: String, document: Document = .pdf) -> String {
+        document == .word
+            ? "Makes a copy of “\(title)” with each of your Margins as a Word comment on its sentence. The original stays as it is."
+            : "Makes a copy of “\(title)” with each of your Margins as a comment on its sentence. The original stays as it is."
     }
 
     public static let footnote = "Only your own Margins are included. Spoken Margins go as their words; the recording stays on your iPhone."
@@ -172,9 +254,17 @@ public struct PDFCommentExportState: Equatable, Sendable {
         count == 1 ? "Exported 1 comment." : "Exported \(count) comments."
     }
 
-    public static let writeFailedMessage = "Couldn't make the copy. Your Margins and the PDF are unchanged."
+    public static let writeFailedMessage = writeFailedMessage(document: .pdf)
     public static let lockedMessage = "This PDF is locked, so comments can't be added to it."
-    public static let unreadableMessage = "Couldn't read this PDF. Your Margins and the PDF are unchanged."
+    public static let unreadableMessage = unreadableMessage(document: .pdf)
+
+    public static func writeFailedMessage(document: Document) -> String {
+        "Couldn't make the copy. Your Margins and the \(document.noun) are unchanged."
+    }
+
+    public static func unreadableMessage(document: Document) -> String {
+        "Couldn't read this \(document.noun). Your Margins and the \(document.noun) are unchanged."
+    }
 
     // MARK: - What the listener does
 
@@ -222,7 +312,10 @@ public enum PDFCommentExportFileName {
 
     /// `title` with slashes, colons and control characters made spaces, runs of white space made one, trimmed and capped
     /// at `titleLimit` characters. An empty result reads "PDF".
-    public static func make(title: String) -> String {
+    public static func make(title: String) -> String { make(title: title, document: .pdf) }
+
+    /// The same for a Word document: `<title> (with Margins).docx`, and "Word document" when the title leaves nothing.
+    public static func make(title: String, document: PDFCommentExportState.Document) -> String {
         var cleaned = ""
         for scalar in title.unicodeScalars {
             let bad = scalar == "/" || scalar == "\\" || scalar == ":" || scalar.properties.generalCategory == .control
@@ -233,7 +326,7 @@ public enum PDFCommentExportFileName {
         var name = String(collapsed.prefix(titleLimit)).trimmingCharacters(in: .whitespaces)
         // A leading dot would hide the file.
         while name.hasPrefix(".") { name.removeFirst() }
-        if name.isEmpty { name = "PDF" }
-        return name + suffix + ".pdf"
+        if name.isEmpty { name = document.fallbackName }
+        return name + suffix + "." + document.fileExtension
     }
 }

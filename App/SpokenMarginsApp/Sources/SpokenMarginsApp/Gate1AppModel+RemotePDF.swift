@@ -6,7 +6,8 @@ import SessionKit
 extension Gate1AppModel {
     /// Imports the PDF a Link-field link serves, without changing Now Playing.
     func importPDFFromLinkField(_ url: URL) async throws -> Bool {
-        try await importRemotePDFInBackground(url: url, onboardingSteps: [.addedOwnSource])
+        let itemId = try await importRemotePDFInBackground(url: url, onboardingSteps: [.addedOwnSource])
+        libraryCollections.importCapture?.recordAdded(itemId) // a link list's PDF joins its collection (#3769)
         reportConfirmation("Added the PDF to Library without changing Now Playing.")
         return true
     }
