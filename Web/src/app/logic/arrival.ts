@@ -145,7 +145,7 @@ export const ARRIVAL_WORDS = Object.freeze({
   server: 'The server had a problem. Try again in a minute.',
   unreadable: 'This file couldn’t be opened. It may have been damaged on the way. Ask your friend to send it again.',
   article: (who: string) => `${leading(possessive(who))} Margins are on an article’s text, which the browser can’t play yet.`,
-  noEpisodeAudio: (who: string) => `This episode has no audio the browser can play. ${leading(possessive(who))} Margins are saved in your Library.`,
+  noEpisodeAudio: (who: string) => `This episode has no audio the browser can play. ${leading(possessive(who))} Margins are saved in your Library. Open this in the Spoken Margins app on iPhone to hear them with the episode.`,
   // The episode has an address but it failed to load (#3356): say so once, and offer the Margins on their own.
   episodeCantPlay: (who: string) => `This episode can’t play here, but you can still hear ${possessive(who)} Margins.`,
   hearMargins: (who: string) => `Hear ${possessive(who)} Margins`,

@@ -18,8 +18,9 @@ export interface NewestPlayableResult {
 }
 
 /**
- * The items one tap will try, newest first: Substack posts that need a page read, up to the limit, and it ends at the first
- * item whose audio is already known, since that one will play. An episode with only an Apple Podcasts or other page is never tried (#4767).
+ * The items one tap will try, newest first: Substack posts that need a page read and Apple Podcasts episode pages that need a
+ * lookup, up to the limit, and it ends at the first item whose audio is already known, since that one will play. An episode
+ * with only a Spotify or other page has nothing to look up and is never tried (#4767, #4783).
  */
 export function playCandidates(newestFirst: readonly Episode[], maxLookups = MAX_POST_LOOKUPS): Episode[] {
   const candidates: Episode[] = [];
@@ -29,7 +30,7 @@ export function playCandidates(newestFirst: readonly Episode[], maxLookups = MAX
       candidates.push(episode);
       break;
     }
-    if (episodeVoice(episode) !== 'post-lookup' || lookups >= maxLookups) continue;
+    if (episodeVoice(episode) === 'none' || lookups >= maxLookups) continue;
     lookups += 1;
     candidates.push(episode);
   }

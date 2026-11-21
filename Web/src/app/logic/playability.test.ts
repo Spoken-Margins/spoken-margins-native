@@ -23,20 +23,26 @@ const APPLE = 'https://podcasts.apple.com/us/podcast/people-parks-and-policy-wit
 const cases: Array<{ name: string; read: Read; verdict: ReturnType<typeof playability> }> = [
   { name: 'a public podcast MP3', read: read({ audioUrl: MP3 }), verdict: { verdict: 'plays' } },
   { name: 'an episode with a page and audio', read: read({ audioUrl: MP3, pageUrl: 'https://example.com/ep1' }), verdict: { verdict: 'plays' } },
-  { name: 'a Substack podcast post (the #4433 case)', read: read({ pageUrl: POST }, [], [percent('p1')]), verdict: { verdict: 'needs-voice-lookup', pageUrl: POST } },
-  { name: 'a post whose Margins have a time', read: read({ pageUrl: POST }), verdict: { verdict: 'needs-voice-lookup', pageUrl: POST } },
+  { name: 'a Substack podcast post (the #4433 case)', read: read({ pageUrl: POST }, [], [percent('p1')]), verdict: { verdict: 'needs-voice-lookup', pageUrl: POST, source: 'substack-post' } },
+  { name: 'a post whose Margins have a time', read: read({ pageUrl: POST }), verdict: { verdict: 'needs-voice-lookup', pageUrl: POST, source: 'substack-post' } },
   { name: 'a text-only Substack post with no Margins', read: read({ pageUrl: POST }, [], []), verdict: { verdict: 'cannot', reason: 'article' } },
   { name: 'an article on any other site, no Margins', read: read({ pageUrl: 'https://example.com/essay' }, [], []), verdict: { verdict: 'cannot', reason: 'article' } },
   { name: 'an article with only rough-place Margins, not a Substack post', read: read({ pageUrl: 'https://example.com/essay' }, [], [percent('p1')]), verdict: { verdict: 'cannot', reason: 'article' } },
   { name: 'a PDF (no audio, no page)', read: read({}, [], []), verdict: { verdict: 'cannot', reason: 'article' } },
   { name: 'a private-feed episode with Margins but no audio or page', read: read({}), verdict: { verdict: 'cannot', reason: 'no-episode-audio' } },
-  // #4767: a podcast shared from an Apple Podcasts or Spotify page carries that page and no audio address. Neither page is
-  // a Substack post, so no voice can be looked up on it; the old verdict sent the friend's tap to a lookup that blamed the post.
-  { name: 'an Apple Podcasts episode page with no audio address (the #4767 case)', read: read({ itemType: 'podcast', pageUrl: APPLE }), verdict: { verdict: 'cannot', reason: 'no-episode-audio' } },
+  // #4767: a podcast shared from an Apple Podcasts or Spotify page carries that page and no audio address. Neither is a
+  // Substack post, so no Substack voice is looked up on it. #4783: an Apple Podcasts episode page names its episode, so
+  // Apple's public lookup can give its audio, on the friend's tap; a page with nothing to look up is "can't play".
+  { name: 'an Apple Podcasts episode page with no audio address (the #4767 / #4783 case)', read: read({ itemType: 'podcast', pageUrl: APPLE }), verdict: { verdict: 'needs-voice-lookup', pageUrl: APPLE, source: 'apple-episode' } },
+  { name: 'an Apple Podcasts show page with no episode in it', read: read({ itemType: 'podcast', pageUrl: 'https://podcasts.apple.com/us/podcast/people-parks-and-policy/id1445582279' }), verdict: { verdict: 'cannot', reason: 'no-episode-audio' } },
+  { name: 'an Apple Podcasts page naming two episodes', read: read({ itemType: 'podcast', pageUrl: `${APPLE}&i=1000427709575` }), verdict: { verdict: 'cannot', reason: 'no-episode-audio' } },
+  { name: 'an Apple page whose episode id is not a number', read: read({ itemType: 'podcast', pageUrl: 'https://podcasts.apple.com/us/podcast/x/id1445582279?i=abc' }), verdict: { verdict: 'cannot', reason: 'no-episode-audio' } },
+  { name: 'a lookalike host with an Apple-shaped page', read: read({ itemType: 'podcast', pageUrl: 'https://podcasts.apple.com.example.org/us/podcast/x/id1445582279?i=1000427709574' }), verdict: { verdict: 'cannot', reason: 'no-episode-audio' } },
+  { name: 'an Apple page over plain http', read: read({ itemType: 'podcast', pageUrl: APPLE.replace('https:', 'http:') }), verdict: { verdict: 'cannot', reason: 'no-episode-audio' } },
   { name: 'a Spotify episode page with no audio address', read: read({ itemType: 'podcast', pageUrl: 'https://open.spotify.com/episode/4rOoJ6Egrf8K2IrywzwOMk' }), verdict: { verdict: 'cannot', reason: 'no-episode-audio' } },
   { name: 'any other site\'s episode page with no audio address', read: read({ itemType: 'podcast', pageUrl: 'https://example.com/podcast/episode-1' }), verdict: { verdict: 'cannot', reason: 'no-episode-audio' } },
-  { name: 'an Apple Podcasts page with a timed Margin and a rough-place one', read: read({ pageUrl: APPLE }, [margin('m1')], [percent('p1')]), verdict: { verdict: 'cannot', reason: 'no-episode-audio' } },
-  { name: 'a shared open.substack.com post link', read: read({ pageUrl: 'https://open.substack.com/pub/dwarkesh/p/paul-christiano-2' }), verdict: { verdict: 'needs-voice-lookup', pageUrl: 'https://open.substack.com/pub/dwarkesh/p/paul-christiano-2' } },
+  { name: 'an Apple Podcasts page with a timed Margin and a rough-place one', read: read({ pageUrl: APPLE }, [margin('m1')], [percent('p1')]), verdict: { verdict: 'needs-voice-lookup', pageUrl: APPLE, source: 'apple-episode' } },
+  { name: 'a shared open.substack.com post link', read: read({ pageUrl: 'https://open.substack.com/pub/dwarkesh/p/paul-christiano-2' }), verdict: { verdict: 'needs-voice-lookup', pageUrl: 'https://open.substack.com/pub/dwarkesh/p/paul-christiano-2', source: 'substack-post' } },
   { name: 'an Apple Podcasts page that does come with its audio address', read: read({ pageUrl: APPLE, audioUrl: 'https://feeds.soundcloud.com/stream/559432260-resourcesradio-people-parks-and-policy-with-rffs-margaret-walls.mp3' }), verdict: { verdict: 'plays' } },
   { name: 'rough-place Margins on an audio episode', read: read({ audioUrl: MP3 }, [], [percent('p1')]), verdict: { verdict: 'plays' } },
 ];
@@ -52,7 +58,16 @@ test('a post with no audio address is settled only by the voice lookup, and each
   assert.deepEqual(playability(post, 'found'), { verdict: 'plays' });
   assert.deepEqual(playability(post, 'paid'), { verdict: 'cannot', reason: 'paid-post' });
   assert.deepEqual(playability(post, 'none'), { verdict: 'cannot', reason: 'no-post-voice' });
-  assert.deepEqual(playability(post), { verdict: 'needs-voice-lookup', pageUrl: POST });
+  assert.deepEqual(playability(post), { verdict: 'needs-voice-lookup', pageUrl: POST, source: 'substack-post' });
+});
+
+test('an Apple episode is settled by Apple\'s lookup: found plays, and anything else is an episode with no audio to find', () => {
+  const apple = read({ pageUrl: APPLE });
+  assert.deepEqual(playability(apple, 'found'), { verdict: 'plays' });
+  assert.deepEqual(playability(apple, 'none'), { verdict: 'cannot', reason: 'no-episode-audio' });
+  // Apple has no paywall to report: a stray `paid` is still "no audio", never a Substack message.
+  assert.deepEqual(playability(apple, 'paid'), { verdict: 'cannot', reason: 'no-episode-audio' });
+  assert.deepEqual(playability(apple, undefined), { verdict: 'needs-voice-lookup', pageUrl: APPLE, source: 'apple-episode' });
 });
 
 test('a lookup outcome never changes a packet that already has its own audio, or has nothing to play', () => {
@@ -73,11 +88,13 @@ test('the arrival page and the check agree: the text-only card is exactly the `a
 
 // #4767: the Library tag, the player's lookup and the "play newest" walk ask the same question as the arrival card, so
 // a page that is not a Substack post is never called a post, looked up, or promised a voice.
-test('episodeVoice: own audio, a Substack post to look up, or none', () => {
+test('episodeVoice: own audio, a Substack post or an Apple episode to look up, or none', () => {
   assert.equal(episodeVoice({ audioUrl: MP3 }), 'own');
   assert.equal(episodeVoice({ audioUrl: MP3, pageUrl: APPLE }), 'own');
   assert.equal(episodeVoice({ pageUrl: POST }), 'post-lookup');
-  assert.equal(episodeVoice({ pageUrl: APPLE }), 'none');
+  assert.equal(episodeVoice({ pageUrl: APPLE }), 'apple-lookup');
+  assert.equal(episodeVoice({ pageUrl: 'https://itunes.apple.com/us/podcast/x/id1445582279?i=1000427709574' }), 'apple-lookup');
+  assert.equal(episodeVoice({ pageUrl: 'https://podcasts.apple.com/us/podcast/x/id1445582279' }), 'none');
   assert.equal(episodeVoice({ pageUrl: 'https://open.spotify.com/episode/4rOoJ6Egrf8K2IrywzwOMk' }), 'none');
   assert.equal(episodeVoice({}), 'none');
 });

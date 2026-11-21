@@ -11,7 +11,8 @@ import {
 } from './newest-playable.ts';
 
 const post = (id: string): Episode => ({ id, showId: 's', title: id, pageUrl: `https://e.test/p/${id}` });
-const applePage = (id: string): Episode => ({ id, showId: 's', title: id, pageUrl: `https://podcasts.apple.com/us/podcast/x/id1?i=${id}` });
+const applePage = (id: string): Episode => ({ id, showId: 's', title: id, pageUrl: `https://podcasts.apple.com/us/podcast/x/id1?i=${id.replace(/\D/g, '') || '1'}` });
+const spotifyPage = (id: string): Episode => ({ id, showId: 's', title: id, pageUrl: `https://open.spotify.com/episode/${id}` });
 const audio = (id: string): Episode => ({ id, showId: 's', title: id, audioUrl: `https://e.test/${id}.mp3` });
 const ids = (list: readonly Episode[]) => list.map((e) => e.id);
 
@@ -78,11 +79,23 @@ test('when nothing plays, the message names why the newest could not', async () 
   assert.deepEqual(newestPlayableMessage(silent.result), { text: MESSAGES.noVoice, tone: 'problem' });
 });
 
-// #4767: an episode saved from an Apple Podcasts page is not a post. It costs no page read, and a show of only those says
-// the page has no audio for the web, not that a post has no voice.
-test('an episode with only an Apple Podcasts page is never tried, and says why when it is all there is', async () => {
-  assert.deepEqual(ids(playCandidates([applePage('a'), post('p'), audio('b')])), ['p', 'b']);
-  assert.deepEqual(playCandidates([applePage('a'), applePage('b')]), []);
+// #4767: an episode saved from a Spotify or other page is not a post and has nothing to look up. It costs no read, and a show
+// of only those says the page has no audio for the web, not that a post has no voice.
+test('an episode with only a Spotify page is never tried, and says why when it is all there is', async () => {
+  assert.deepEqual(ids(playCandidates([spotifyPage('a'), post('p'), audio('b')])), ['p', 'b']);
+  assert.deepEqual(playCandidates([spotifyPage('a'), spotifyPage('b')]), []);
   const none = await walk([], {});
   assert.deepEqual(newestPlayableMessage(none.result), { text: MESSAGES.noWebAudio, tone: 'problem' });
+});
+
+// #4783: an Apple Podcasts episode page names its episode, so Apple's lookup can give its audio on the tap. It counts toward
+// the same limit as a post page, so one tap never asks more than a few times.
+test('an Apple Podcasts episode page is tried, within the same limit, and ends at the first audio known', async () => {
+  assert.deepEqual(ids(playCandidates([applePage('1'), spotifyPage('s'), post('p'), audio('b')])), ['1', 'p', 'b']);
+  const many = Array.from({ length: MAX_POST_LOOKUPS + 3 }, (_, i) => applePage(`${i + 1}`));
+  assert.equal(playCandidates(many).length, MAX_POST_LOOKUPS);
+  const { tried, result } = await walk([applePage('1'), applePage('2')], { '1': 'no-audio' });
+  assert.deepEqual(tried, ['1', '2']);
+  assert.equal(result.outcome, 'played');
+  assert.equal(result.firstSkip, 'no-audio');
 });

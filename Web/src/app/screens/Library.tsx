@@ -4,6 +4,7 @@ import { useData } from '../data.tsx';
 import { minutes, shortDate } from '../format.ts';
 import { PauseIcon, PlayIcon } from '../icons.tsx';
 import { useMarginFilePicker, type OpenMarginFile } from '../import.tsx';
+import { libraryVoiceTag } from '../logic/episode-voice-words.ts';
 import { episodeVoice } from '../logic/playability.ts';
 import { libraryRows, libraryRowMatches, marginAuthors, type LibraryRow } from '../logic/library.ts';
 import { usePlayer } from '../player.tsx';
@@ -96,8 +97,6 @@ export function StateTag({ row }: { row: LibraryRow }) {
     return <span className="tag tag-status">Resume at {formatClock(row.resumeAt)}</span>;
   }
   if (row.state === 'finished') return <span className="tag tag-quiet">Played</span>;
-  const voice = episodeVoice(row.episode);
-  if (voice === 'post-lookup') return <span className="tag tag-quiet">Post, voice checked when you play</span>;
-  if (voice === 'none') return <span className="tag tag-quiet">No audio in the browser</span>;
-  return <span className="tag tag-outline">New</span>;
+  const tag = libraryVoiceTag(episodeVoice(row.episode));
+  return <span className={`tag tag-${tag.style}`}>{tag.text}</span>;
 }

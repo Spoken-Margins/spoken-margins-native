@@ -101,7 +101,10 @@ export async function messageForOpenedSettled(
   const reads = playCheckHandler(host) ? checkReadHandler(host) : undefined;
   const first = playability(read);
   if (!reads || first.verdict === 'cannot') return messageForOpened(read);
-  // `needs-voice-lookup` is only ever a Substack post (`episodeVoice`), the one page the agreed read covers; any other page is already `cannot` (#4767).
+  // Only a Substack post's page is read (the agreed read). An Apple Podcasts episode page needs Apple's lookup, which the
+  // hidden web view can't make (it loads nothing but the link) and the app's reads don't cover, so it stays `unverified`:
+  // the friend's page asks Apple itself when the link is opened (#4783). Any other page is already `cannot` (#4767).
+  if (first.verdict === 'needs-voice-lookup' && first.source !== 'substack-post') return messageForOpened(read);
   try {
     let audioUrl = read.episode.audioUrl;
     if (first.verdict === 'needs-voice-lookup') {

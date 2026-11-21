@@ -8,6 +8,7 @@ import { friendMargins, readsAloud } from './logic/arrival.ts';
 import { clipRejection, EPISODE_FAILED, failureNoticeShown, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
 import { CrossingClock } from './logic/margin-autoplay.ts';
 import { MESSAGES, plainError } from './logic/messages.ts';
+import { attemptToast, attemptWithoutAudio } from './logic/episode-voice-words.ts';
 import { episodeVoice } from './logic/playability.ts';
 import { newestPlayableMessage, playCandidates, playNewestAvailable, type PlayAttempt } from './logic/newest-playable.ts';
 import { browserStorage, MIRROR_EVERY_MS, mirrorPosition } from './logic/position-mirror.ts';
@@ -548,7 +549,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           setLoading(false);
         }
       }
-      if (!target.audioUrl) return episodeVoice(target) === 'none' ? 'no-audio' : 'no-voice';
+      if (episodeVoice(target) === 'apple-lookup' && target.pageUrl) {
+        // An Apple Podcasts episode page with no audio address: Apple's public lookup names that episode's audio. It is
+        // asked on the listener's tap (or when they opened the link), never in the background (#4783).
+        setLoading(true);
+        try {
+          const pageUrl = target.pageUrl;
+          const found = await services.sources.findAppleEpisodeAudio(pageUrl);
+          if (found) {
+            target = { ...target, ...found };
+            await dataRef.current.updateEpisode(target);
+          }
+        } catch (error) {
+          // A dead connection or a refusal says so once (it is not "no audio"); a storage failure has already shown its own.
+          if (!(error instanceof NotSavedError)) toast(plainError(error), 'problem');
+          return 'stopped';
+        } finally {
+          setLoading(false);
+        }
+      }
+      if (!target.audioUrl) return attemptWithoutAudio(episodeVoice(target));
       const resume = dataRef.current.positions.find((p) => p.episodeId === id)?.seconds;
       const finished = target.durationSeconds && resume && resume >= target.durationSeconds - FINISHED_WITHIN_SECONDS;
       pendingSeek.current = options.at ?? (finished ? 0 : resume);
@@ -573,9 +593,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     async (id: string, options: OpenOptions = {}) => {
       primeClip();
       const result = await attemptOpen(id, options);
-      if (result === 'paid') toast(MESSAGES.paidPost, 'problem');
-      if (result === 'no-voice') toast(MESSAGES.noVoice, 'problem');
-      if (result === 'no-audio') toast(MESSAGES.noWebAudio, 'problem');
+      const words = attemptToast(result);
+      if (words) toast(words, 'problem');
     },
     [attemptOpen, toast, primeClip],
   );
