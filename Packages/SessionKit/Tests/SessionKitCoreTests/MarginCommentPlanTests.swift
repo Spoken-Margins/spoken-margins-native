@@ -55,6 +55,35 @@ final class MarginCommentPlanTests: XCTestCase {
         return try XCTUnwrap(plan.entries.first).sentenceText
     }
 
+    // MARK: A text item with no pages (a Word document, #4595)
+
+    func testATextItemPlansTheSameSentencesWithNoPageNeverAPageOfTheDocument() throws {
+        let text = "Intro line here.\n\nSleep helps memory. It also helps mood."
+        let anchor = try offset(of: "It also", in: text)
+        let margins = [margin("a", at: 0, transcript: "first"), margin("b", at: anchor, transcript: "second")]
+        let plain = MarginCommentPlan.make(itemId: itemId, text: text, margins: margins)
+        let paged = MarginCommentPlan.make(itemId: itemId, document: document(text, segments: [(0, text.count, 1)]), margins: margins)
+        XCTAssertEqual(plain.entries.map(\.sentenceText), ["Intro line here.", "It also helps mood."])
+        XCTAssertEqual(plain.entries.map(\.commentText), ["first", "second"])
+        XCTAssertEqual(plain.entries.map(\.precedingText), paged.entries.map(\.precedingText))
+        XCTAssertEqual(plain.entries.map(\.pageIndex), [nil, nil])
+        XCTAssertEqual(paged.entries.map(\.pageIndex), [1, 1], "the paged variant still reports a page")
+    }
+
+    func testATextItemKeepsOnlyOwnActiveMarginsAndNamesPendingOnes() throws {
+        let text = "One sentence. Another sentence."
+        let margins = [
+            margin("own", at: 0, transcript: "mine"),
+            margin("other-item", at: 0, itemId: "item-2", transcript: "elsewhere"),
+            margin("gone", at: 0, transcript: "deleted", status: "deleted"),
+            margin("pending", at: 15, transcription: "pending"),
+        ]
+        let plan = MarginCommentPlan.make(itemId: itemId, text: text, margins: margins)
+        XCTAssertEqual(plan.entries.map(\.marginId), ["own", "pending"])
+        XCTAssertEqual(plan.entries.map(\.status), [.included, .transcriptPending])
+        XCTAssertEqual(MarginCommentPlan.make(itemId: itemId, text: "", margins: margins).entries.map(\.sentenceText), ["", ""])
+    }
+
     // MARK: The sentence
 
     func testTheSentenceAroundTheAnchorTable() throws {
