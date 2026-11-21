@@ -130,6 +130,26 @@ final class FootnotePlanKindTests: XCTestCase {
         XCTAssertEqual(prose.assemblyProjection(asides: true), prose.assemblyProjection())
     }
 
+    func testNoTimelineSegmentOfTheNotesPlanHasAnInvertedCharacterRange() throws {
+        // An aside has no source characters, and its citation can follow the full stop of the sentence it ends. The
+        // segment's range then ran from after the marker back to before it, and a Margin made during the note
+        // exported that range, which a packet's validator rejects (Build 29 too).
+        let item = Item(id: "a", title: "T", mediaType: "article", text: tides, externalReference: nil, status: "ready")
+        let projection = try XCTUnwrap(PreparedSpeechText(item: item, document: nil)).assemblyProjection(asides: true)
+        let plan = Planner.articlePlan(tides, asides: true)
+        XCTAssertTrue(plan.chunks.contains { $0.sourceLength == 0 }, "the fixture has asides")
+        var ms = 0
+        for chunk in plan.chunks {
+            let pieces = NarrationTimelinePieces.pieces(
+                spokenRange: chunk.startOffset..<(chunk.startOffset + chunk.sourceLength),
+                startMs: ms, endMs: ms + 1_000, projection: projection, source: Array(tides))
+            ms += 1_000
+            for piece in pieces {
+                XCTAssertGreaterThanOrEqual(piece.endChar, piece.startChar, "chunk \(chunk.index) \(chunk.footnote.map(String.init(describing:)) ?? "body")")
+            }
+        }
+    }
+
     // MARK: The notes chapter skips what was heard
 
     /// Plays `tags` front to back the way the player steps, recording each aside that ends, and returns the indexes played.

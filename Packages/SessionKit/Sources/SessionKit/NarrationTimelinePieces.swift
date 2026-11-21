@@ -63,12 +63,16 @@ public enum NarrationTimelinePieces {
     private static func piece(
         _ spoken: Range<Int>, _ startMs: Int, _ endMs: Int, _ projection: NormalizedSpeechText, _ source: [Character]
     ) -> NarrationTimelinePiece {
-        NarrationTimelinePiece(
+        // A piece with no spoken characters (a footnote's aside, #3777) can start after a citation marker that its
+        // end, which follows the previous spoken character, stops short of. The range never runs backwards: a Margin
+        // made there exports it, and a packet with an inverted range fails to import.
+        let startChar = projection.sourceOffset(atSpokenCharacterOffset: spoken.lowerBound)
+        return NarrationTimelinePiece(
             spokenRange: spoken,
             startMs: startMs,
             endMs: endMs,
-            startChar: projection.sourceOffset(atSpokenCharacterOffset: spoken.lowerBound),
-            endChar: endChar(after: spoken.upperBound, projection: projection, source: source)
+            startChar: startChar,
+            endChar: max(startChar, endChar(after: spoken.upperBound, projection: projection, source: source))
         )
     }
 
