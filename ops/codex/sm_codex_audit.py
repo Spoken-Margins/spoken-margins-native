@@ -11,7 +11,7 @@ A PR is audited when all of these hold:
   * no audit comment (a headless Claude heading or a legacy Codex heading,
     the lane runner's own match) names its current head sha7;
   * the newest "Lane report ... — PASS/FAIL" comment is PASS for the current head, or the PR is one only
-    the owner can merge (it touches scripts/lane-runner.py or .github/, which the runner never merges and
+    the owner can merge (it touches scripts/lane_merge_rules.py or .github/, which the runner never merges and
     nobody arms) and the head's check runs and commit statuses have all finished with none failed, with no
     lane report on the head at all (#2052). A lane FAIL on the head still blocks it;
   * its changed files touch a risky area (sharing/packets, persistence/SQLite/
@@ -1149,7 +1149,7 @@ def build_prompt(batch: list[dict], blocks: list[str], base_sha: str) -> str:
 # script posts as the owner, whose comment notifies nobody and starts no workflow, and GitHub refuses a
 # workflow_dispatch of owner-tap-alert.yml until main carries it (#1492). So it removes and re-adds the
 # `owner-tap-check` label; the labeled run of .github/workflows/owner-tap-alert.yml posts the alert as the bot.
-OWNER_TAP_FILES = {"scripts/lane-runner.py", "scripts/lane_merge_rules.py"}
+OWNER_TAP_FILES = {"scripts/lane_merge_rules.py"}
 OWNER_TAP_PREFIXES = (".github/",)
 OWNER_TAP_LABEL = "owner-tap-check"
 

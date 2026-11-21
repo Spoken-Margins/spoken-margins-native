@@ -146,7 +146,7 @@ class MemoryTests(unittest.TestCase):
 class ConsumerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.runner = load_script('audit_memory_runner', 'lane-runner.py')
+        cls.runner = load_script('audit_memory_rules', 'lane_merge_rules.py')
         cls.merge = load_script('audit_memory_merge', 'merge_audit.py')
 
     def test_previously_accepted_only_is_clean_for_all_four_consumers(self):
@@ -183,7 +183,7 @@ class ConsumerTests(unittest.TestCase):
 class ClaudeConsumerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.runner = load_script('claude_audit_runner', 'lane-runner.py')
+        cls.runner = load_script('claude_audit_rules', 'lane_merge_rules.py')
         cls.merge = load_script('claude_audit_merge', 'merge_audit.py')
 
     def test_claude_comment_generation_and_rearm_once(self):

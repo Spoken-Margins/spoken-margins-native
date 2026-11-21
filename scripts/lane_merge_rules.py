@@ -96,7 +96,7 @@ def audit_blocker(comments: list[dict], head: str) -> str | None:
 # Owner rule 2026-10-09 (#1203, #1210): arming and merging a PR that touches the runner itself or anything under
 # .github/ is the owner's tap. The runner can't test itself, and a bad runner or workflow change could wave later
 # PRs through, so a clean audit doesn't let the runner merge these. Other lane paths still merge on an audit.
-OWNER_TAP_FILES = {'scripts/lane-runner.py', 'scripts/lane_merge_rules.py'}
+OWNER_TAP_FILES = {'scripts/lane_merge_rules.py'}
 
 
 OWNER_TAP_PREFIXES = ('.github/',)

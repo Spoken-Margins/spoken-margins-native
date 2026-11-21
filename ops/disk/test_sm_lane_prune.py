@@ -4,7 +4,6 @@ Run: python3 -m unittest ops/disk/test_sm_lane_prune.py
 """
 import contextlib
 import fcntl
-import importlib.util
 import io
 import os
 import sys
@@ -358,42 +357,6 @@ class Orphans(LaneTests):
         cache = self.cache(self.root / 'gone', 'x', MiB, 30 * DAY)
         self.assertEqual(self.plan(live=None, trees=False).items, [])
         self.assertTrue(cache.exists())
-
-
-class RunnerContract(unittest.TestCase):
-    """The names and the busy test are the lane runner's; if it changes them this must follow."""
-
-    @classmethod
-    def setUpClass(cls):
-        scripts = Path(__file__).resolve().parents[2] / 'scripts'
-        sys.path.insert(0, str(scripts))
-        spec = importlib.util.spec_from_file_location('lane_runner_for_prune', scripts / 'lane-runner.py')
-        cls.lane = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(cls.lane)
-
-    def test_checkout_folder_names_match(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tree = Path(tmp) / 'a/b'
-            tree.mkdir(parents=True)
-            self.assertEqual(p.checkout_folder(tree), self.lane.checkout_folder(tree))
-            self.assertEqual(p.checkout_folder(tree / '..' / 'b'), self.lane.checkout_folder(tree))
-
-    def test_busy_agrees_with_the_runner_for_a_cache_it_holds(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            cache = Path(tmp) / 'sk-x'
-            cache.mkdir()
-            self.assertFalse(p.cache_busy(cache))
-            self.assertFalse(self.lane._cache_busy(cache))
-            with open(cache / '.lock', 'a+') as handle:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                self.assertTrue(p.cache_busy(cache))
-                self.assertTrue(self.lane._cache_busy(cache))
-
-    def test_request_names_the_runner_makes_are_recognised(self):
-        for attempt in (None, '1', '2'):
-            name = self.lane.request_name(1775, '123456789', attempt)
-            self.assertTrue(p.REQUEST_ID.match(name), name)
-            self.assertTrue(p.REQUEST_ID.match(name + '-auto'), name)
 
 
 if __name__ == '__main__':

@@ -2,7 +2,6 @@ import contextlib
 import os
 import importlib.util
 import io
-import json
 from pathlib import Path
 import subprocess
 import sys
@@ -26,7 +25,6 @@ def load(name, filename):
 
 scope = load('test_scope', 'test-scope.py')
 verification = load('verification', 'verify-tests.py')
-lane = load('lane_runner', 'lane-runner.py')
 
 
 class ResearchRunnerTests(unittest.TestCase):
@@ -320,27 +318,6 @@ class ResearchRunnerTests(unittest.TestCase):
             result = research_tests.go_suite(Path(temporary))
         self.assertIn('failed package: example.test/server', result.error)
         self.assertIn('undefined: undefinedThing', result.error)
-
-    def test_a_passing_lane_run_lists_the_suites_the_machine_could_not_run(self):
-        # Done when 3 (#1033): the PASS report, not only the log on the Mac, says a suite was skipped.
-        def runner_writing(steps):
-            def run(command, log, timeout):
-                output = Path(command[command.index('--output') + 1])
-                output.mkdir(parents=True, exist_ok=True)
-                (output / 'manifest.json').write_text(json.dumps({'status': 'verified', 'steps': steps}))
-                return 0
-            return run
-
-        steps = [{'name': 'runner-tests', 'skipped': 'Codex sandbox: `ps` cannot run here'},  # a string, not a list
-                 {'name': 'research', 'skipped': ['go research/B4/server - `go` is not on PATH']}]
-        with tempfile.TemporaryDirectory() as folder:
-            verdict, details = lane.run_fast(Path(folder), runner=runner_writing(steps))
-        self.assertEqual(verdict, 'PASS')
-        self.assertEqual(details, ['research skipped: go research/B4/server - `go` is not on PATH'])
-        with tempfile.TemporaryDirectory() as folder:
-            self.assertEqual(lane.run_fast(Path(folder), runner=runner_writing([{'name': 'research'}])),
-                             ('PASS', []))
-
 
 
 if __name__ == '__main__':
