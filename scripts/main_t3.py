@@ -22,8 +22,10 @@ The contract other tools read (#4575's release gate):
   one run in 3 hours, as the schedule did. Skipped pushes are not queued: the next tick finds the head with no status.
 
 Subcommands:
-- decide --sha SHA [--floor-minutes N]: print and write `run=true|false` to $GITHUB_OUTPUT. With a floor, skip when a
-  main-t3 run other than this one (GITHUB_RUN_ID) started its simulator job in the last N minutes.
+- decide --sha SHA [--floor-minutes N] [--run-url URL]: print and write `run=true|false` to $GITHUB_OUTPUT. With a
+  floor, skip when a main-t3 run other than this one (GITHUB_RUN_ID) started its simulator job in the last N minutes.
+  With a URL, a decision to run leaves a `pending` status on the commit at once, so a second run deciding a minute
+  later (a tick beside a push run, which have separate concurrency groups) skips instead of racing the first.
 - run --sha SHA --run-url URL: set `pending`, run both app plans (AppBehavior and AudioAdapters, every test in them)
   through lane-runner.py's T3 machinery on a fresh simulator clone, set the final status, and on `failure` open or
   update the one open "Main T3 failed on <sha7>" issue (label `regression`, marker MARKER). On `success` it closes
@@ -54,6 +56,7 @@ ERROR_RETRIES = 1
 FLOOR_MINUTES = 180  # #4839: the least time between two push-started runs
 RUN_JOB_PREFIX = 'main-t3:'  # the simulator job's name in main-t3.yml; the decide job is not work
 RUNS_LOOKED_AT = 40
+CLAIM_TEXT = 'queued for a hosted Mac'  # the `pending` decide leaves before the Mac job starts
 MARKER = '<!-- main-t3-failure -->'
 STATE_MARKER = re.compile(r'<!-- main-t3-state: (\{.*?\}) -->')
 ISSUE_LABEL = 'regression'
@@ -466,6 +469,11 @@ def command_decide(args) -> int:
         if started:
             run, why = False, f'a {CONTEXT} run started at {started:%H:%M}Z, inside the {args.floor_minutes}-minute floor'
     print(f'{CONTEXT} on {args.sha[:7]}: {"run" if run else "skip"} ({why})')
+    if run and args.run_url:
+        # #4839: claim the commit now. Push runs have their own concurrency group, so a tick can decide beside a push
+        # run still doing minutes of Mac setup; without a status on the commit it would start a second whole-suite run
+        # and the two would race to write the result. `pending` is what should_run reads as "in progress".
+        set_status(args.sha, status_payload('pending', args.run_url, CLAIM_TEXT))
     write_outputs(run=str(run).lower())
     write_summary(f'{CONTEXT} on `{args.sha[:7]}`: {"run" if run else "skip"}, {why}.')
     return 0
@@ -516,6 +524,7 @@ def main(argv=None) -> int:
     decide.add_argument('--sha', required=True)
     decide.add_argument('--force', action='store_true')
     decide.add_argument('--floor-minutes', type=int, default=0)
+    decide.add_argument('--run-url', default='', help='claim the commit with a pending status when deciding to run')
     run = sub.add_parser('run')
     run.add_argument('--sha', required=True)
     run.add_argument('--run-url', required=True)

@@ -253,6 +253,62 @@ class PushFloorTests(unittest.TestCase):
         self.assertIsNotNone(self.start([run(1, 0.2, queued)]))
 
 
+class DecideClaimTests(unittest.TestCase):
+    """Audit of c75ffb7: push runs and ticks are in separate concurrency groups, so a tick can decide while a push run
+    is still in Mac setup. Without a status on the commit it started a second whole-suite run, and the two raced to
+    write the result. decide now leaves `pending` the moment it says run."""
+
+    def decide(self, store, calls, run_id, **over):
+        import argparse
+        import os
+        from unittest import mock
+        args = argparse.Namespace(**{'sha': SHA, 'force': False, 'floor_minutes': 0,
+                                     'run_url': f'https://x/runs/{run_id}', **over})
+        outputs = {}
+
+        class FixedNow(datetime.datetime):  # decide reads the clock; the statuses above are dated NOW
+            @classmethod
+            def now(cls, tz=None):
+                return NOW
+        clock = type('clock', (), {'datetime': FixedNow, 'timezone': datetime.timezone, 'timedelta': datetime.timedelta})
+
+        def set_status(sha, payload):
+            store.insert(0, {'context': payload['context'], 'state': payload['state'],
+                             'created_at': NOW.strftime('%Y-%m-%dT%H:%M:%SZ')})
+            calls.append(payload)
+        with mock.patch.object(M, 'statuses', lambda sha: list(store)), \
+                mock.patch.object(M, 'set_status', set_status), \
+                mock.patch.object(M, 'recent_runs', lambda now, floor: []), \
+                mock.patch.object(M, 'write_outputs', lambda **kw: outputs.update(kw)), \
+                mock.patch.object(M, 'write_summary', lambda text: None), \
+                mock.patch.object(M, 'datetime', clock), \
+                mock.patch.dict(os.environ, {'GITHUB_RUN_ID': str(run_id)}):
+            M.command_decide(args)
+        return outputs['run']
+
+    def test_a_tick_deciding_beside_a_push_run_still_in_setup_skips(self):
+        store, calls = [], []
+        self.assertEqual(self.decide(store, calls, 1, floor_minutes=M.FLOOR_MINUTES), 'true')   # the push run
+        self.assertEqual(self.decide(store, calls, 2), 'false')                               # the 12:17 tick
+        self.assertEqual(len(calls), 1)
+
+    def test_the_claim_is_a_pending_main_t3_status_with_the_run_url(self):
+        store, calls = [], []
+        self.decide(store, calls, 7)
+        self.assertEqual([(c['context'], c['state'], c['target_url']) for c in calls],
+                         [(M.CONTEXT, 'pending', 'https://x/runs/7')])
+
+    def test_a_decision_not_to_run_claims_nothing(self):
+        store, calls = [status('success')], []
+        self.assertEqual(self.decide(store, calls, 3), 'false')
+        self.assertEqual(calls, [])
+
+    def test_a_dispatch_with_force_claims_and_runs_beside_anything(self):
+        store, calls = [status('pending', 0.1)], []
+        self.assertEqual(self.decide(store, calls, 4, force=True), 'true')
+        self.assertEqual(len(calls), 1)
+
+
 class WorkflowTests(unittest.TestCase):
     """main-t3.yml is the trunk's one simulator run (owner, 2026-11-18)."""
     ROOT = Path(__file__).resolve().parents[2]
@@ -287,6 +343,18 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn('${{', resolve('push'))
         self.assertNotEqual(resolve('push'), resolve('schedule'))
         self.assertEqual(resolve('schedule'), resolve('workflow_dispatch'))
+
+    def test_decide_can_claim_the_commit_and_a_settle_job_clears_a_claim_the_mac_never_reported(self):
+        import yaml
+        jobs = yaml.safe_load((self.ROOT / '.github/workflows/main-t3.yml').read_text())['jobs']
+        self.assertEqual(jobs['decide']['permissions']['statuses'], 'write')
+        self.assertIn('--run-url', jobs['decide']['steps'][-1]['run'])
+        settle = jobs['settle']
+        self.assertEqual(sorted(settle['needs']), ['decide', 't3'])
+        self.assertIn('always()', settle['if'])
+        self.assertIn('needs.decide.outputs.run', settle['if'])
+        self.assertIn('main_t3.py lost', settle['steps'][-1]['run'])
+        self.assertFalse(jobs['settle']['name'].startswith(M.RUN_JOB_PREFIX))
 
     def test_the_floor_names_the_simulator_job_the_workflow_has(self):
         import yaml
