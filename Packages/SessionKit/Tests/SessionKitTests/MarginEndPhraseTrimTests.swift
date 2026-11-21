@@ -56,10 +56,10 @@ final class MarginEndPhraseTrimTests: XCTestCase {
         XCTAssertEqual(prepared.transcript.text, "That is my point.")
         XCTAssertEqual(prepared.transcript.segments.map(\.text), ["that", "is", "my", "point"])
         XCTAssertEqual(Double(prepared.durationMs), 1_700, accuracy: 120)
-        XCTAssertTrue(prepared.commit())
+        XCTAssertTrue(prepared.swapIn())
         XCTAssertEqual(RecordedFileDuration.measure(url), .milliseconds(prepared.durationMs), "the file at the same path is the short one")
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), ["margin.m4a"], "no temporary file is left beside it")
-        XCTAssertFalse(prepared.commit(), "a second commit does nothing")
+        XCTAssertFalse(prepared.swapIn(), "a second swap does nothing")
     }
 
     func testDiscardingLeavesTheOriginalAndNoTemporaryFile() async throws {
@@ -67,8 +67,8 @@ final class MarginEndPhraseTrimTests: XCTestCase {
         let before = try Data(contentsOf: url)
         let said = transcript(["that", "is", "my", "point", "stop", "margin"], text: "That is my point. Stop margin.")
         let prepared = try XCTUnwrap(await MarginEndPhraseTrim.prepare(fileURL: url, transcript: said))
-        prepared.discard()
-        XCTAssertFalse(prepared.commit(), "a discarded copy can't be committed")
+        prepared.throwAway()
+        XCTAssertFalse(prepared.swapIn(), "a discarded copy can't be swapped in")
         XCTAssertEqual(try Data(contentsOf: url), before)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), ["margin.m4a"])
     }

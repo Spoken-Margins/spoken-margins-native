@@ -13,12 +13,12 @@ import AVFoundation
 /// listener's words is worse than keeping two spoken ones.
 ///
 /// Two steps, so the caller can order them with its own write: `prepare` cuts a copy beside the original and changes
-/// nothing; `commit` swaps it in. The caller saves the words without the phrase between the two, so a failed save
+/// nothing; `swapIn` swaps it in. The caller saves the words without the phrase between the two, so a failed save
 /// leaves the audio and the words as they were, and the one failure left (the swap) keeps more of the listener's
 /// speech than the saved words show, never less.
 public enum MarginEndPhraseTrim {
     /// A cut copy of the file, verified, waiting to replace the original.
-    public final class Prepared: @unchecked Sendable {
+    public final class PreparedEndPhraseTrim: @unchecked Sendable {
         /// The words without the phrase, aligned.
         public let transcript: AlignedInterjectionTranscript
         /// The length of the cut file.
@@ -37,7 +37,7 @@ public enum MarginEndPhraseTrim {
 
         /// Replaces the original with the cut copy, in one rename. Once only; false if it didn't happen.
         @discardableResult
-        public func commit() -> Bool {
+        public func swapIn() -> Bool {
             guard claim() else { return false }
             do {
                 _ = try FileManager.default.replaceItemAt(target, withItemAt: temporary)
@@ -48,8 +48,8 @@ public enum MarginEndPhraseTrim {
             }
         }
 
-        /// Throws the copy away (the words could not be saved, or nobody will commit). Safe after a commit.
-        public func discard() {
+        /// Throws the copy away (the words could not be saved, or nobody will swap it in). Safe after a swap.
+        public func throwAway() {
             guard claim() else { return }
             try? FileManager.default.removeItem(at: temporary)
         }
@@ -82,7 +82,7 @@ public enum MarginEndPhraseTrim {
 
     /// Cuts a copy of `fileURL` before the phrase. Nil means keep everything: no phrase, a transcript that
     /// disagrees, or any failure. The original is never touched here.
-    public static func prepare(fileURL: URL, transcript: AlignedInterjectionTranscript) async -> Prepared? {
+    public static func prepare(fileURL: URL, transcript: AlignedInterjectionTranscript) async -> PreparedEndPhraseTrim? {
         #if canImport(AVFoundation)
         guard let cutPlan = plan(for: transcript) else { return nil }
         // Beside the original, so replacing it is one rename on the same volume.
@@ -104,7 +104,7 @@ public enum MarginEndPhraseTrim {
                 try? FileManager.default.removeItem(at: temporary)
                 return nil
             }
-            return Prepared(transcript: cutPlan.kept, durationMs: trimmedMs, target: fileURL, temporary: temporary)
+            return PreparedEndPhraseTrim(transcript: cutPlan.kept, durationMs: trimmedMs, target: fileURL, temporary: temporary)
         } catch {
             try? FileManager.default.removeItem(at: temporary)
             return nil
