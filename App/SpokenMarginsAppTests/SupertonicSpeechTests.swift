@@ -636,7 +636,9 @@ final class SupertonicSpeechTests: XCTestCase {
     /// sample takes at least its 100 ms interval, so a stall that was going to be noticed has been by then, however
     /// slowly the runner got there (#4368).
     private func waitForSamplesPastTheStallThreshold(_ log: StallEventLog) async throws {
-        let wanted = log.sampleCount + samplesPastTheStallThreshold
+        // One more than the threshold needs: a loop already under way when this starts read its facts before the test
+        // changed them, so it does not count toward spanning the threshold.
+        let wanted = log.sampleCount + samplesPastTheStallThreshold + 1
         try await pollUntil { log.sampleCount >= wanted }
         XCTAssertGreaterThanOrEqual(log.sampleCount, wanted, "the stall monitor kept sampling")
     }
@@ -2072,7 +2074,8 @@ final class SupertonicSpeechTests: XCTestCase {
 
         // The read finishes after the stop: what it saw is stale, so it must not move the client on to chunk B.
         blocker.release()
-        // The catch-up runs inside that read, so once it returns the client has done everything the stale facts allow.
+        // The catch-up runs inside that read, so once it returns the client has done everything the stale facts allow
+        // (the stall monitor's own read, once a second, runs the same catch-up code).
         try await pollUntil { staleRead.isSet }
         XCTAssertTrue(staleRead.isSet, "the blocked read returned")
         XCTAssertNil(client.debugQueuedChunkStart, "the stop dropped the queued chunk")
@@ -2154,8 +2157,9 @@ final class SupertonicSpeechTests: XCTestCase {
         // A play inside the item keeps the iOS voice: no bounce back to Supertonic (#1786).
         try harness.client.pause()
         try harness.play(from: chunk[1])
-        // play() sends an item the iOS voice holds straight back to the iOS voice and returns, so nothing of
-        // Supertonic's can still be on its way when it does; the checks below read that settled state.
+        // fixed-sleep ok: play() sends this item straight back to the iOS voice, but a regression that fell through to a
+        // render would land as a player start a moment later; no event marks a render that must not happen.
+        try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(harness.playerStarts, before, "Supertonic doesn't take the item back")
         XCTAssertTrue(harness.client.isSystemVoiceActive)
         XCTAssertEqual(harness.systemVoice.playedOffsets.last, chunk[1], "the iOS voice reads on from the play")
