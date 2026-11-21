@@ -9,6 +9,11 @@ extension Gate1AppModel {
     }
 
     func reportAddedToLibrary(title: String, itemId: String) {
+        if let capture = libraryCollections.importCapture { // a collection import says it once, at the end (#3769)
+            capture.recordAdded(itemId)
+            startPublicSourceCheck(itemId: itemId)
+            return
+        }
         // A new item belongs to no collection yet, so a Library narrowed to one would not list what this confirmation
         // says was added: show All, the same class of mismatch #4178 closed for the filters (#4343).
         libraryCollections.select(collectionID: nil)

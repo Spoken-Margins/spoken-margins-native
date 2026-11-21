@@ -167,6 +167,8 @@ final class MarginVoicePlayerTests: XCTestCase {
         XCTAssertTrue(player.ownIsPaused)
         XCTAssertEqual(avPlayer.rate, 0, "the voice is held")
         let heldAt = avPlayer.currentTime().seconds
+        // fixed-sleep ok: time is the subject. A held player's clock must not advance while the wall clock does; the
+        // `rate == 0` check above is the state, this is the observation that the position really stayed.
         RunLoop.main.run(until: Date().addingTimeInterval(0.6))
         XCTAssertEqual(avPlayer.currentTime().seconds, heldAt, accuracy: 0.05, "it stays where it stopped")
         XCTAssertEqual(host.ownEnded, 0)

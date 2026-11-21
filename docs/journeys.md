@@ -112,6 +112,11 @@ The owner's one-phone version, with prepared packets and an episode that shares 
    - Pass: headers, footers and "Downloaded on …" stamps are not read aloud, and body text is.
 2. Record a written Margin, then reopen it later.
    - Pass: it opens at the right passage.
+3. Word (#4594). Copy `Contracts/fixtures/word/plain-paragraphs.docx` into the simulator's Files (On My iPhone), then Library, **+**, **Import from Files**, and pick it.
+   - Pass: a Text row titled "The Gettysburg Address" (the title in the document's properties, not the file name). Play reads "Four score and seven years ago…" and the clock advances. A written Margin shows on the sentence it was written at.
+   - Also pick `password-protected.docx` and `old-format.doc` from the same folder: nothing is added, and the banner says why (a password; the older .doc format, save it as .docx).
+4. Word with Margins (#4595). On the Gettysburg item from step 3, write two written Margins on two different sentences, then tap **⋯** on the item screen.
+   - Pass: the menu has **Export Word document with Margins** (it is not there on a PDF item or on an article, and it is dimmed on this item before any Margin exists). The sheet "Word document with your Margins" lists both Margins in text order with "On its sentence", no page numbers, and the footnote. **Export 2 comments** opens the share sheet with `The Gettysburg Address (with Margins).docx`; Save to Files, then open it in Files' preview or Quick Look and record whether the comments show (recorded, not required). The original `plain-paragraphs.docx` in Files is the same size as before.
 
 ## J8 — Collections
 
@@ -194,7 +199,7 @@ The whole loop (#3222, part of #3216), with an eye on the human side: how many t
 7. The sender opens the replies packet.
    - Pass: the item says who the replies are from and how many ("Replies from <friend>", "2 replies to your Margins"), with no line explaining what a Margin is (#3889). In "Skip to <friend>'s replies" each reply plays right after the Margin it answers (#3257), the written one read aloud as "<name> wrote:" and the words. When the episode plays on instead, a reply plays at its own place without the Margin it answers. The sender can reply again.
 
-The script `J12SharingLoopJourneyUITests` runs step 2, step 3 up to the package details (not the system share sheet; it counts the taps and fails above two), and, with the friend's packet as a fixture (`SPOKEN_MARGINS_UI_TEST_COOP`, as J9), steps 4 and 5's offer, the in-place play and the Margins tab. It attaches the taps and seconds per step and the packet size. A second test, `testAnAnswerOpensTheReplySheetOnItsReceipt` (#3792), records one Margin on the friend's item and checks step 6's sheet: the reply heading, one row, no editor, no navigator, Share reachable at one tap past the player's Share. The fixture imports the friend's Margin at launch, so the script cannot catch #3263 (Margins missing until a restart); step 4 of the agent run does. Adding the episode by search needs the network, the system share sheet and the second install are outside what a script can drive, and replying then importing back needs both, so step 1's search, step 3's share sheet, and steps 6 and 7 stay with the agent run. A script pass never stands in for them, and audible content stays with the owner.
+The script `J12SharingLoopJourneyUITests` runs step 2, step 3 up to the package details (not the system share sheet; it counts the taps and fails above two), and, with the friend's packet as a fixture (`SPOKEN_MARGINS_UI_TEST_COOP`, as J9), steps 4 and 5's offer, the in-place play and the Margins tab. It attaches the taps and seconds per step and the packet size. A test, `testFriendArrivalToFirstMarginSeconds` (#3788), opens the friend's item from the Library, taps "Skip to …" as soon as it shows and attaches the seconds from the item screen's first frame to the friend's Margin playing (about 10 s is the goal; it is reported, never asserted); the episode is already in the Library there, so the Files route with the episode absent stays with the agent run. A second test, `testAnAnswerOpensTheReplySheetOnItsReceipt` (#3792), records one Margin on the friend's item and checks step 6's sheet: the reply heading, one row, no editor, no navigator, Share reachable at one tap past the player's Share. The fixture imports the friend's Margin at launch, so the script cannot catch #3263 (Margins missing until a restart); step 4 of the agent run does. Adding the episode by search needs the network, the system share sheet and the second install are outside what a script can drive, and replying then importing back needs both, so step 1's search, step 3's share sheet, and steps 6 and 7 stay with the agent run. A script pass never stands in for them, and audible content stays with the owner.
 
 ## J13 — Following lists friends and shows together, newest first
 
@@ -266,7 +271,7 @@ A listener adds a transcript file from a meeting app (#2997, Design plan PR 4). 
 7. Import the essay `.txt`.
    - Pass: a Text row, exactly as before this feature. The banner is today's.
 8. Import the essay `.docx`.
-   - Pass: nothing is added; the banner says "“essay.docx” isn't a meeting transcript. Spoken Margins adds Word files only when they are transcripts. To hear it, copy its text and use Paste Text."
+   - Pass: a Text row, as for the essay `.txt` (#4594: a Word file that isn't a transcript is a document).
 9. Pick `teams.vtt` and `notes.md` together.
    - Pass: one banner, "Imported 2 files." When one of them can't be added, it says "Imported 1 file. 1 couldn't be added: <name>."
 10. Share the Margins of the transcript item from its Margins tab.
@@ -289,7 +294,7 @@ A listener adds a transcript file from a meeting app (#2997, Design plan PR 4). 
 18. Share the Zoom captions `.txt`, then the essay `.txt`, the same way.
     - Pass: the card says "Sent <name> to Spoken Margins." for both. In the app the Zoom file is a Transcript row; the essay is a Text row with today's banner. No screen changes.
 19. Share the essay `.docx` the same way.
-    - Pass: the card says "Sent essay to Spoken Margins." In the app nothing is added and a banner says "“essay.docx” isn't a meeting transcript. Spoken Margins adds Word files only when they are transcripts. To hear it, copy its text and use Paste Text." It is not offered again at the next foreground.
+    - Pass: the card says "Sent essay to Spoken Margins." In the app nothing is added and a banner says "“essay.docx” isn't a meeting transcript. To add it as a document, use + › Import from Files." It is not offered again at the next foreground.
 20. Share a `.vtt` larger than 10 MB (`python3 -c "print('WEBVTT\n' + ('00:00:01.000 --> 00:00:02.000\nA: x\n\n' * 400000))" > artifacts/big.vtt`, about 14 MB).
     - Pass: the card says "“big.vtt” is larger than 10 MB, so nothing was added." with **Done**. Opening the app adds nothing.
 21. Share `teams.vtt`, then force-quit Spoken Margins (swipe it away in the app switcher) before opening it. Open it, wait, then send it to the background and open it again.

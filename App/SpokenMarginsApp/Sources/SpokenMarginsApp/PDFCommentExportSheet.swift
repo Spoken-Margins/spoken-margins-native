@@ -4,9 +4,9 @@ import SessionKit
 import UIKit
 #endif
 
-/// "PDF with your Margins" (#4338, PR 5): the listener's own Margins in page order, each with where its comment will
-/// land, and one button that makes a copy of the kept PDF with them as comments and offers it to the share sheet. The
-/// original is never changed. What the sheet shows is `PDFCommentExportState`; this is only the drawing.
+/// "PDF with your Margins" (#4338, PR 5), and "Word document with your Margins" (#4595): the listener's own Margins in
+/// page order (text order for Word), each with where its comment will land, and one button that makes a copy of the kept
+/// file with them as comments and offers it to the share sheet. The original is never changed. What the sheet shows is `PDFCommentExportState`; this is only the drawing.
 struct PDFCommentExportSheet: View {
     @StateObject private var export: PDFCommentExportModel
     @Environment(\.dismiss) private var dismiss
@@ -21,7 +21,7 @@ struct PDFCommentExportSheet: View {
     var body: some View {
         NavigationStack {
             content
-                .navigationTitle("PDF with your Margins")
+                .navigationTitle(export.document.sheetTitle)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
@@ -67,7 +67,7 @@ struct PDFCommentExportSheet: View {
         case .locked:
             refusal(PDFCommentExportState.lockedMessage, identifier: "pdfExport.locked")
         case .unreadable:
-            refusal(PDFCommentExportState.unreadableMessage, identifier: "pdfExport.unreadable")
+            refusal(PDFCommentExportState.unreadableMessage(document: export.document), identifier: "pdfExport.unreadable")
         case .ready, .exporting, .writeFailed:
             list
         }
@@ -87,13 +87,13 @@ struct PDFCommentExportSheet: View {
     private var list: some View {
         List {
             Section {
-                Text(PDFCommentExportState.leadLine(title: export.itemTitle))
+                Text(PDFCommentExportState.leadLine(title: export.itemTitle, document: export.document))
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
                     .listRowBackground(Color.clear)
                 if export.state.phase == .writeFailed {
                     VStack(alignment: .leading, spacing: 8) {
-                        Label(PDFCommentExportState.writeFailedMessage, systemImage: "exclamationmark.triangle")
+                        Label(PDFCommentExportState.writeFailedMessage(document: export.document), systemImage: "exclamationmark.triangle")
                         Button("Try again") { export.dismissFailure() }
                             .accessibilityIdentifier("pdfExport.tryAgain.button")
                     }

@@ -15,6 +15,11 @@ final class LibraryCollectionModel: ObservableObject {
     @Published private(set) var collections: [ItemCollection] = []
     /// The collection the Library is narrowed to; nil is All.
     @Published private(set) var selection: ItemCollectionScope?
+    /// What each imported folder or link list remembers (#3769), keyed by its collection's ID; read with the Library.
+    @Published private(set) var folders: [LibraryFolderRecord] = []
+    /// Set while a folder or link list is being imported as a collection, so the importers it calls report to it
+    /// instead of putting up a banner per file (#3769).
+    var importCapture: CollectionImportCapture?
     private var willChangeRelay: AnyCancellable?
     /// Called when this model's own save or delete changed the collections, so a Library read that began before it is
     /// seen as stale and read again, never published over what was just saved.
@@ -35,8 +40,9 @@ final class LibraryCollectionModel: ObservableObject {
 
     /// The collections as the store has them after a Library read or a save. A selected collection that is gone falls
     /// back to All; one that changed keeps its place with its current members.
-    func publish(_ stored: [ItemCollection]) {
+    func publish(_ stored: [ItemCollection], folders storedFolders: [LibraryFolderRecord]? = nil) {
         if stored != collections { collections = stored }
+        if let storedFolders, storedFolders != folders { folders = storedFolders }
         let next = LibraryCollectionScope.selection(selection, afterCollectionsChanged: stored)
         if next != selection { selection = next }
     }
@@ -47,31 +53,47 @@ final class LibraryCollectionModel: ObservableObject {
         if next != selection { selection = next }
     }
 
-    /// Makes a collection holding `itemIDs` and selects it, so the Library shows what was just made.
-    func create(name: String, itemIDs: [String], store: SQLiteSessionStore, now: Date = Date()) async -> Outcome {
+    /// Makes a collection holding `itemIDs`. With `selects`, the Library is narrowed to it, so it shows what was just made;
+    /// the Add to Collection sheet passes false, since it leaves the Library as it was.
+    func create(name: String, itemIDs: [String], store: SQLiteSessionStore, selects: Bool = true, now: Date = Date()) async -> Outcome {
         guard ItemCollectionEditing.normalizedName(name) != nil else { return .needsName }
         guard let created = ItemCollectionEditing.creating(
             name: name, itemIDs: itemIDs, id: "collection-\(UUID().uuidString)", now: now, in: collections
         ) else { return .nameTaken }
         if let failure = await save(created, store: store) { return .failed(failure) }
-        select(collectionID: created.id)
+        if selects { select(collectionID: created.id) }
         return .saved
+    }
+
+    /// The Add to Collection sheet's tick: puts `itemID` in the stored collection or takes it out. `included` is what the
+    /// tick means on the row the sheet drew; it lands on the stored copy, so items an import added since stay (#3769).
+    func setMembership(
+        of itemID: String, included: Bool, in collection: ItemCollection, store: SQLiteSessionStore, now: Date = Date()
+    ) async -> Outcome {
+        await update(collection.id, store: store) { current, _ in
+            ItemCollectionEditing.setting(itemID: itemID, included: included, in: current, now: now)
+        }.outcome
     }
 
     /// Edit Items: the collection holds exactly the ticked items, among the ones the checklist offered.
     func setItems(
         _ chosen: Set<String>, in collection: ItemCollection, choosable: [String], store: SQLiteSessionStore, now: Date = Date()
     ) async -> Outcome {
-        let edited = ItemCollectionEditing.settingItems(chosen, in: collection, choosable: choosable, now: now)
-        if let failure = await save(edited, store: store) { return .failed(failure) }
-        return .saved
+        // The stored copy, not the sheet's: an import may have added an item since the sheet opened (#3769).
+        let result = await update(collection.id, store: store) { current, _ in
+            ItemCollectionEditing.settingItems(chosen, in: current, choosable: choosable, now: now)
+        }
+        return result.outcome
     }
 
     func rename(_ collection: ItemCollection, to name: String, store: SQLiteSessionStore, now: Date = Date()) async -> Outcome {
         guard ItemCollectionEditing.normalizedName(name) != nil else { return .needsName }
-        guard let renamed = ItemCollectionEditing.renaming(collection, to: name, now: now, in: collections) else { return .nameTaken }
-        if let failure = await save(renamed, store: store) { return .failed(failure) }
-        return .saved
+        // Renames the stored copy, so items an import added since the row was drawn stay in it (#3769).
+        let result = await update(collection.id, store: store) { current, all in
+            ItemCollectionEditing.renaming(current, to: name, now: now, in: all)
+        }
+        if case .refused = result { return .nameTaken }
+        return result.outcome
     }
 
     func delete(_ collection: ItemCollection, store: SQLiteSessionStore) async -> Outcome {
@@ -85,6 +107,90 @@ final class LibraryCollectionModel: ObservableObject {
             onLocalWrite?()
             publish(stored ?? collections.filter { $0.id != collection.id })
             return .saved
+        }
+    }
+
+    /// What `update` did.
+    enum Update {
+        /// Saved; the collection as it is now stored.
+        case saved(ItemCollection)
+        /// The collection is no longer stored: deleted since the caller last looked.
+        case gone
+        /// The change declined (a name already taken); nothing was written.
+        case refused
+        case failed(Error)
+
+        var outcome: Outcome {
+            switch self {
+            case .saved, .gone: return .saved
+            case .refused: return .nameTaken
+            case .failed(let error): return .failed(error)
+            }
+        }
+    }
+
+    /// Changes one collection as the store has it now, never a copy read earlier (#3769). The read, the change and the
+    /// write run on one serial writer, so an import filling a collection and the listener renaming, editing or deleting
+    /// it can't undo each other's work, and a deleted collection is never saved back. `change` gets the stored
+    /// collection and every stored collection (for name checks) and returns the new one, or nil to decline. `record`,
+    /// when given, is saved after the collection (`LibraryFolderRecord`'s write order) only when the collection was.
+    func update(
+        _ id: String, record: LibraryFolderRecord? = nil, store: SQLiteSessionStore,
+        _ change: @escaping @Sendable (ItemCollection, [ItemCollection]) -> ItemCollection?
+    ) async -> Update {
+        enum Written: Sendable { case saved(ItemCollection, [ItemCollection]?, [LibraryFolderRecord]?), gone, refused, failed(Error) }
+        let written = await Self.offMain { () -> Written in
+            do {
+                let stored = try store.loadItemCollections()
+                guard let current = stored.first(where: { $0.id == id }) else { return .gone }
+                guard let next = change(current, stored) else { return .refused }
+                if next != current { try store.saveItemCollection(next) }
+                if let record { try store.saveLibraryFolder(record) }
+                return .saved(next, try? store.loadItemCollections(), record == nil ? nil : try? store.loadLibraryFolders())
+            } catch { return .failed(error) }
+        }
+        switch written {
+        case .gone:
+            publish(collections.filter { $0.id != id })
+            return .gone
+        case .refused: return .refused
+        case .failed(let error): return .failed(error)
+        case .saved(let next, let stored, let storedFolders):
+            var local = collections
+            if let index = local.firstIndex(where: { $0.id == id }) { local[index] = next } else { local.append(next) }
+            var localFolders = folders
+            if let record {
+                if let index = localFolders.firstIndex(where: { $0.id == record.id }) { localFolders[index] = record } else { localFolders.append(record) }
+            }
+            onLocalWrite?()
+            publish(stored ?? local, folders: record == nil ? nil : (storedFolders ?? localFolders))
+            return .saved(next)
+        }
+    }
+
+    /// An import's start (#3769): a new collection and its record, the collection first (`LibraryFolderRecord`'s write
+    /// order). A re-pick of a place whose collection already exists saves only the record, through `update`, so it can't
+    /// write back an older copy of the collection.
+    func startImport(_ collection: ItemCollection, isNew: Bool, record: LibraryFolderRecord, store: SQLiteSessionStore) async -> Update {
+        guard isNew else { return await update(collection.id, record: record, store: store) { current, _ in current } }
+        let result = await Self.offMain { () -> Result<([ItemCollection]?, [LibraryFolderRecord]?), Error> in
+            do {
+                try store.saveItemCollection(collection)
+                try store.saveLibraryFolder(record)
+            } catch { return .failure(error) }
+            return .success((try? store.loadItemCollections(), try? store.loadLibraryFolders()))
+        }
+        switch result {
+        case .failure(let error):
+            return .failed(error)
+        case .success(let (stored, storedFolders)):
+            var local = collections
+            if let index = local.firstIndex(where: { $0.id == collection.id }) { local[index] = collection } else { local.append(collection) }
+            var localFolders = folders
+            if let index = localFolders.firstIndex(where: { $0.id == record.id }) { localFolders[index] = record } else { localFolders.append(record) }
+            onLocalWrite?()
+            publish(stored ?? local, folders: storedFolders ?? localFolders)
+            return .saved(collection)
         }
     }
 
@@ -107,8 +213,16 @@ final class LibraryCollectionModel: ObservableObject {
         }
     }
 
-    /// The store is synchronous; its work runs off the main actor and the result comes back here (#2256).
+    /// Every collection write runs here, off the main actor (#2256) and one at a time, so a read-change-write in
+    /// `update` is never interleaved with another collection write (#3769).
+    private static let writer = CollectionWriter()
+
     private static func offMain<Value: Sendable>(_ work: @escaping @Sendable () -> Value) async -> Value {
-        await Task.detached(priority: .userInitiated, operation: work).value
+        await writer.run(work)
     }
+}
+
+/// Runs the store's synchronous collection writes one at a time, off the main actor (#3769).
+private actor CollectionWriter {
+    func run<Value: Sendable>(_ work: @Sendable () -> Value) -> Value { work() }
 }
