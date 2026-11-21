@@ -370,6 +370,19 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// Pauses the source for a Margin capture (begin, Save or Cancel of a written Margin, a recording's start). A source
+    /// the system already paused (Siri, a call) is left as it is: the audio client holds an automatic resume for it,
+    /// and `pause()` is the listener's own Pause to the client, which cancels that resume, so a Margin added while Siri
+    /// was open left the item silent after Siri closed (#4831). A finished source still gets the real pause: there is
+    /// nothing to resume.
+    private func pauseSourceForCapture(_ session: Session) throws {
+        if !snapshot.status.isPlaybackActive, !isFinishedAtEnd(session),
+           interruptionResumePoint.isPausedBySystem(sessionId: session.id) {
+            return
+        }
+        try audio.pause()
+    }
+
     /// Resumes after the system ended an interruption. A podcast or recording first steps back by
     /// `InterruptionRewind` for how long it was paused, so the listener picks up the thread; anything else
     /// resumes as `resumePlayback()` does. The step happens once: a retry of a refused resume starts from the
@@ -1690,14 +1703,14 @@ public final class SessionEngine {
         } else if usesNativeMediaClock {
             // Freeze native transport before sampling its clock. Sampling first
             // lets media advance before the interruption and accumulates drift.
-            try audio.pause()
+            try pauseSourceForCapture(session)
             session = try syncCurrentPositionFromAudio(session)
         } else {
             // Speech pause callbacks can report terminal state synchronously.
             // Capture text position before pausing so that callback cannot turn an
             // in-progress interjection anchor into end-of-source completion.
             session = try syncCurrentPositionFromAudio(session)
-            try audio.pause()
+            try pauseSourceForCapture(session)
         }
         marginCaptureTiming?.sourcePaused(at: ProcessInfo.processInfo.systemUptime)
         currentSession = session
@@ -1944,13 +1957,13 @@ public final class SessionEngine {
             let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
                 || session.currentTargetType == .browserOwnedMedia
             if usesNativeMediaClock {
-                try audio.pause()
+                try pauseSourceForCapture(session)
                 session = try syncCurrentPositionFromAudio(session)
             } else if endedUnseen {
                 try audio.pause() // the end of the text is the place; a stopped speech player's offset is not
             } else {
                 session = try syncCurrentPositionFromAudio(session)
-                try audio.pause()
+                try pauseSourceForCapture(session)
             }
             let anchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
             try persistSession(session)
@@ -1982,7 +1995,7 @@ public final class SessionEngine {
             if wasPlaying {
                 try? restoreWrittenInterjectionTransport(wasPlaying: true, session: originalSession)
             } else {
-                try? audio.pause()
+                try? pauseSourceForCapture(originalSession)
                 publish(status: .paused, phase: originalSession.phase)
             }
             throw error
@@ -2037,7 +2050,7 @@ public final class SessionEngine {
             // The note is already durable. Do not report this as a save failure
             // or retain a retryable draft: doing either would allow a second
             // submit to create a duplicate. Leave transport safely paused.
-            try? audio.pause()
+            try? pauseSourceForCapture(session)
             publish(status: .paused, phase: session.phase)
         }
         return snapshot
@@ -2156,7 +2169,7 @@ public final class SessionEngine {
                 publishPlaybackStart(for: session, phase: session.phase)
             }
         } else {
-            try audio.pause()
+            try pauseSourceForCapture(session)
             publish(status: .paused, phase: session.phase)
         }
     }
