@@ -10,6 +10,9 @@
 # runs both whole plans (about 80 minutes on a 3-core hosted Mac). The branch must contain scripts/branch_t3.py, so a
 # branch cut before this landed needs `main` merged in once.
 #
+# It saves no cache and its token is `contents: read`. The branch's code still runs on the runner, so it is not a
+# boundary against code that goes after the runner's own cache credentials; the dispatch has to run from main for the
+# workflow file to be main's. Only people with write access can dispatch it.
 # Two jobs, so the branch's code never holds a write token:
 #   test    runs the branch's scripts on a hosted Mac with `contents: read` only, no GH_TOKEN in its environment, and
 #           leaves one result file;
@@ -94,8 +97,9 @@ jobs:
           echo "SM_LANE_IOS_MAJOR=$major" >> "$GITHUB_ENV"
       - name: List LFS objects
         run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
+      # Restore only (actions/cache would save after the branch's tests ran, into main's cache scope).
       - name: LFS cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .git/lfs
           key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
@@ -172,7 +176,8 @@ jobs:
   report:
     name: 'report: comment the result'
     needs: test
-    if: always() && github.ref_name == (vars.SM_TRUNK || 'main')
+    # Not after a cancel: a request replaced by a newer one for the same branch would post a false "runner fault".
+    if: ${{ !cancelled() && github.ref_name == (vars.SM_TRUNK || 'main') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

@@ -64,20 +64,21 @@ def comment_body(result: dict, run_url: str) -> str:
     scope = ', '.join(f'`{t}`' for t in tests[:MAX_SELECTORS]) if tests else 'the whole app suite (both plans)'
     res = result.get('results') or {}
     failed = res.get('failed') or []
+    failed_count = max(len(failed), int(res.get('failed_count') or 0))  # the list is cut; the count is not
     lines = [MARKER, f'**branch-t3 {words}** on `{sha[:7]}`: {scope}.', '',
              f'- {T.truncate(str(result.get("description") or ""), 300)}',
-             f'- Passed: {int(res.get("passed") or 0)}. Failed: {len(failed)}.']
+             f'- Passed: {int(res.get("passed") or 0)}. Failed: {failed_count}.']
     if res.get('retried'):
         lines.append('- Passed on retry (counts as a pass): ' +
                      ', '.join(T.short_test(str(t)) for t in res['retried'][:20]))
     if failed:
-        lines += ['', f'Failing tests ({len(failed)}):']
+        lines += ['', f'Failing tests ({failed_count}):']
         for entry in failed[:T.FAILURES_SHOWN]:
             test, messages = (list(entry) + [[]])[:2] if isinstance(entry, (list, tuple)) else (str(entry), [])
             said = ' | '.join(str(m) for m in messages)
             lines.append(f'- `{T.short_test(str(test))}`' + (f': {T.truncate(said, 300)}' if said else ''))
-        if len(failed) > T.FAILURES_SHOWN:
-            lines.append(f'- and {len(failed) - T.FAILURES_SHOWN} more; the run\'s evidence has them all')
+        if failed_count > min(len(failed), T.FAILURES_SHOWN):
+            lines.append(f'- and {failed_count - min(len(failed), T.FAILURES_SHOWN)} more; the run\'s evidence has them all')
     elif state != 'success':
         lines += ['', 'What the run said:']
         lines += [f'- {T.truncate(str(d), 300)}' for d in (result.get('details') or [])[:10]]
@@ -114,7 +115,7 @@ def command_run(args) -> int:
     state = T.VERDICT_STATE.get(verdict, 'error')
     state = T.state_after_build_fault(state, results, T.fetch_fault_in_builds(evidence))
     text = T.description(state, results, details)
-    results = {'passed': results.get('passed', 0), 'retried': results.get('retried', [])[:20],  # small: it travels as a job output
+    results = {'passed': results.get('passed', 0), 'failed_count': len(results.get('failed', [])), 'retried': results.get('retried', [])[:20],  # small: it travels as a job output
                'failed': [[t, [T.truncate(m, 300) for m in msgs[:3]]] for t, msgs in results.get('failed', [])[:T.FAILURES_SHOWN]]}
     out.write_text(json.dumps({'sha': args.sha, 'state': state, 'verdict': verdict, 'description': text, 'ran': ran,
                                'crashes': crashes, 'tests': names, 'results': results,

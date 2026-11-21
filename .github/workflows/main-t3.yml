@@ -42,9 +42,14 @@ on:
 permissions:
   contents: read
 
-# One run at a time; a tick that lands while one runs waits, then finds the status and skips.
+# One run at a time among ticks and dispatches; one that lands while another runs waits, then finds the status and
+# skips. Pushes have a group of their own (#4839): a group keeps one running and one pending run, and a newer pending run
+# replaces the older, so a merge's push run must never replace a waiting release-cut dispatch or a fixed tick. A push
+# run waits behind an older push run only; the floor in `decide` counts a tick's or a dispatch's queued or running
+# simulator job, so a push still starts no second Mac run beside one. Never cancel a run in progress: it is 100 minutes
+# of work.
 concurrency:
-  group: main-t3
+  group: main-t3-${{ github.event_name == 'push' && 'push' || 'run' }}
   cancel-in-progress: false
 
 jobs:

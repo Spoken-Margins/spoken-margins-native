@@ -272,6 +272,22 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("github.event_name == 'push' && '--floor-minutes %d'" % M.FLOOR_MINUTES, text)
         self.assertIn('actions: read', text)  # the floor reads this workflow's runs
 
+    def test_a_push_run_cannot_replace_a_waiting_tick_or_dispatch(self):
+        # A concurrency group keeps one pending run and a newer pending run replaces it. In one shared group, a merge's
+        # push run replaced a waiting release-cut dispatch or fixed tick, then skipped on the floor, leaving the head
+        # untested (audit of 30f4499). Pushes get a group of their own, and nothing in progress is ever cancelled.
+        import yaml
+        data = yaml.safe_load((self.ROOT / '.github/workflows/main-t3.yml').read_text())
+        group = data['concurrency']['group']
+        self.assertIs(data['concurrency']['cancel-in-progress'], False)
+
+        def resolve(event):  # the one expression the group uses, evaluated for an event
+            return group.replace("${{ github.event_name == 'push' && 'push' || 'run' }}",
+                                 'push' if event == 'push' else 'run')
+        self.assertNotIn('${{', resolve('push'))
+        self.assertNotEqual(resolve('push'), resolve('schedule'))
+        self.assertEqual(resolve('schedule'), resolve('workflow_dispatch'))
+
     def test_the_floor_names_the_simulator_job_the_workflow_has(self):
         import yaml
         jobs = yaml.safe_load((self.ROOT / '.github/workflows/main-t3.yml').read_text())['jobs']

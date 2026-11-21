@@ -95,6 +95,23 @@ class CommentTests(unittest.TestCase):
         self.assertIn('did not finish', body)
         self.assertNotIn('<script>', body)
 
+    def test_a_capped_failure_list_still_reports_the_whole_count(self):
+        # the result file keeps 60 failures to stay small, and the comment said "Failed: 60" for 75 failures
+        failed = [[f'SpokenMarginsAppTests/T{i}/test', ['x']] for i in range(T.FAILURES_SHOWN)]
+        res = {'passed': 1, 'failed': failed, 'failed_count': 75, 'retried': []}
+        body = B.comment_body(self.result(state='failure', results=res), 'u')
+        self.assertIn('Failed: 75.', body)
+        self.assertIn('Failing tests (75)', body)
+        self.assertIn('and 15 more', body)
+
+    def test_the_result_file_carries_the_uncut_count(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / 'r.json'
+            code = B.main(['run', '--sha', SHA, '--tests', 'A;b', '--out', str(out), '--evidence', str(Path(tmp) / 'ev')])
+            self.assertEqual(code, 1)
+            self.assertEqual(json.loads(out.read_text())['results']['failed_count'], 0)
+
     def test_a_flood_of_failures_stays_inside_githubs_limit(self):
         failed = [[f'SpokenMarginsAppTests/T{i}/test', ['x' * 5000]] for i in range(500)]
         body = B.comment_body(self.result(state='failure', results={'passed': 0, 'failed': failed, 'retried': []}), 'u')
@@ -124,8 +141,20 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(checkout['with']['persist-credentials'])
 
     def test_a_branch_run_saves_no_cache_main_s_runs_would_restore(self):
-        text = (ROOT / '.github/workflows/branch-t3.yml').read_text()
-        self.assertNotIn('actions/cache/save', text)
+        # actions/cache@ restores AND saves in its post step, after the branch's tests ran, in main's cache scope; the
+        # audit of 30f4499 found the LFS step using it. Only restore-only and upload-artifact are allowed.
+        uses = [step['uses'] for job in self.load()['jobs'].values() for step in job['steps'] if 'uses' in step]
+        self.assertTrue([u for u in uses if u.startswith('actions/cache/restore@')])
+        for use in uses:
+            with self.subTest(use=use):
+                self.assertFalse(use.startswith('actions/cache@'), 'saves a cache after the branch ran')
+                self.assertFalse(use.startswith('actions/cache/save@'), 'saves a cache')
+
+    def test_a_cancelled_request_posts_no_report(self):
+        # a newer request for the same branch cancels the older; its report job would post a false runner fault
+        report = self.load()['jobs']['report']
+        self.assertIn('!cancelled()', report['if'])
+        self.assertNotIn('always()', report['if'])
 
     def test_the_report_job_runs_mains_script_not_the_branchs(self):
         job = self.load()['jobs']['report']
