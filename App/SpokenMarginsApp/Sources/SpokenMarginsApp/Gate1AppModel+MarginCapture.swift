@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SessionKit
 import Security
@@ -585,54 +586,123 @@ extension MarginCaptureSupervisor.Health {
     }
 }
 
-#if SM_MARGIN_END_PHRASE_SPIKE
-/// Spike #3940 (PR 0 of the Design), phone builds only: while a spoken Margin records, an `AVAudioEngine` input tap runs
-/// beside the recorder and feeds the on-device recogniser, and what it hears goes to Diagnostics. Nothing ends a Margin
-/// and nothing reaches the Margin, the transcript or a packet. The owner's three device checks (phone microphone
-/// unlocked, AirPods locked, a headset started by double press) read the `margin.endPhrase.spike.*` events.
-///
-/// The holder is not a stored property of `Gate1AppModel` (a hot file at its ceiling). It keeps one tap at a time and
-/// lets the last one go before the next starts.
+/// What the recording screen's hint line says about listening for the end phrase (#3940). A holder of its own, not a
+/// stored property of `Gate1AppModel` (a hot file at its ceiling); the recording screen watches it directly.
 @MainActor
-final class MarginEndPhraseSpike {
-    static let shared = MarginEndPhraseSpike()
+final class MarginEndPhraseStatus: ObservableObject {
+    static let shared = MarginEndPhraseStatus()
+    @Published private(set) var hint: MarginEndPhraseHint = .none
 
-    private var tap: LiveInputTap?
-    /// Which Margin's tap an event belongs to: the stop of a tap still finishing (it waits up to 3 s for the
-    /// recogniser) reports after the next Margin began, and its summary is its own.
+    func set(_ hint: MarginEndPhraseHint) {
+        if self.hint != hint { self.hint = hint }
+    }
+}
+
+/// Listens for "stop margin" while a spoken Margin records (#3940, PR 3 of the Design), and ends the Margin when it is
+/// said: an `AVAudioEngine` input tap runs beside the recorder and feeds the on-device recogniser, on this iPhone only.
+///
+/// Nothing here ends a Margin but the phrase (`MarginEndPhraseDecider`): not quiet, not a timer. Listening that is off
+/// or fails leaves the recording exactly as it was. It never asks for Speech Recognition permission: that question is
+/// asked where it is asked today, at the first transcription after a save, and the next Margin listens (a prompt while
+/// the microphone is live is the #2966 trap). It keeps one listener at a time and lets the last one go before the next.
+@MainActor
+final class MarginEndPhraseCoordinator {
+    static let shared = MarginEndPhraseCoordinator()
+
+    private var listener: MarginEndPhraseListener?
+    /// Which Margin a signal belongs to: a listener still finishing (it waits up to 3 s for the recogniser) signals
+    /// after the next Margin began, and that is nobody's now.
     private var run = 0
-    private var record: (@MainActor (String, [String: String]) -> Void)?
 
-    func begin(record: @escaping @MainActor (String, [String: String]) -> Void) {
+    func begin(
+        finish: @escaping @MainActor () -> Void,
+        record: @escaping @MainActor (String, [String: String]) -> Void
+    ) {
         end()
         run += 1
         let thisRun = run
-        self.record = record
-        let tap = LiveInputTap(
+        let availability = MarginEndPhraseAvailability.decide(
+            isSwitchedOn: MarginEndPhraseAvailability.isSwitchedOn(
+                stored: UserDefaults.standard.object(forKey: MarginEndPhraseAvailability.storageKey) as? Bool
+            ),
+            speech: SpeechRecognitionAccess.state,
+            languageCode: Locale.current.language.languageCode?.identifier,
+            thermalIsSeriousOrWorse: ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue
+        )
+        guard case .available = availability else {
+            if case .off(let reason) = availability {
+                record("margin.endPhrase.off", ["reason": reason.rawValue, "run": String(thisRun)])
+            }
+            return
+        }
+        let listener = MarginEndPhraseListener(
             makeSession: { SpeechLiveInputSession(isAuthorized: { SpeechRecognitionAccess.isAuthorized }) },
+            onSignal: { signal in
+                Task { @MainActor in
+                    MarginEndPhraseCoordinator.shared.handle(signal, run: thisRun, finish: finish, record: record)
+                }
+            },
             onEvent: { kind, fields in
-                Task { @MainActor in MarginEndPhraseSpike.shared.record?(kind, fields.merging(["run": String(thisRun)]) { $1 }) }
+                Task { @MainActor in
+                    guard MarginEndPhraseCoordinator.shared.run == thisRun else { return }
+                    record(kind, fields.merging(["run": String(thisRun)]) { $1 })
+                }
             }
         )
-        self.tap = tap
-        Task.detached { await tap.start() } // the tap is its own actor: nothing of it runs on main
+        self.listener = listener
+        Task.detached { await listener.start() } // the listener runs off the main thread
     }
 
-    /// Safe on a recording that never started and when called twice: the tap is single use and stops once.
+    /// Safe on a recording that never started and when called twice: the listener is single use and stops once.
     func end() {
-        guard let tap else { return }
-        self.tap = nil
-        Task.detached { await tap.stop() } // a stop that beats its start is fine: the tap then never starts
+        MarginEndPhraseStatus.shared.set(.none)
+        guard let listener else { return }
+        self.listener = nil
+        Task.detached { await listener.stop() } // a stop that beats its start is fine: it then never starts
+    }
+
+    private func handle(
+        _ signal: MarginEndPhraseListener.Signal,
+        run signalRun: Int,
+        finish: @MainActor () -> Void,
+        record: @MainActor (String, [String: String]) -> Void
+    ) {
+        guard signalRun == run, listener != nil else { return } // an older Margin's listener, or one already let go
+        switch signal {
+        case .hint(let hint):
+            MarginEndPhraseStatus.shared.set(hint)
+        case .end:
+            // "Finishing…" is over: the screen's own "Saving Margin…" takes its place, and the phrase is spent for this Margin.
+            MarginEndPhraseStatus.shared.set(.none)
+            finish() // the way a tap on Save finishes: the save guard turns a second ask into nothing
+        case .couldNotStart(let reason):
+            MarginEndPhraseStatus.shared.set(.none)
+            record("margin.endPhrase.unavailable", ["reason": reason, "run": String(signalRun)])
+            // A missing permission or model is "off", as before the feature; a failure the listener can't see needs a sound.
+            if !Self.isQuietReason(reason) { MarginOutcomeCuePlayer.shared.play(.couldNotStart) { _ in } }
+        case .stoppedMidMargin:
+            MarginEndPhraseStatus.shared.set(.none)
+            record("margin.endPhrase.unavailable", ["reason": "stopped_mid_margin", "run": String(signalRun)])
+            MarginOutcomeCuePlayer.shared.play(.couldNotStart) { _ in } // the Design's one signal; it never waits on the main actor
+        }
+    }
+
+    /// Why listening could not start for a reason the listener already knows or can't act on now.
+    nonisolated static func isQuietReason(_ reason: String) -> Bool {
+        ["speech_not_authorized", "model_not_installed", "locale_unsupported", "transcriber_unavailable"]
+            .contains { reason == $0 || reason.hasPrefix($0 + ":") }
     }
 }
 
 extension Gate1AppModel {
-    func beginMarginEndPhraseSpike() {
-        MarginEndPhraseSpike.shared.begin { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) }
+    func beginMarginEndPhraseListening() {
+        MarginEndPhraseCoordinator.shared.begin(
+            finish: { [weak self] in self?.requestFinishInterjection() },
+            record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) }
+        )
     }
 
-    func endMarginEndPhraseSpike() {
-        MarginEndPhraseSpike.shared.end()
+    func endMarginEndPhraseListening() {
+        MarginEndPhraseCoordinator.shared.end()
     }
 }
-#endif
