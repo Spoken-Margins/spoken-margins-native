@@ -203,6 +203,40 @@ final class ReplyBackTests: XCTestCase {
         XCTAssertEqual(entry.anchor.caption, "Reply to your Margin at 12:34")
     }
 
+    /// #4233: a Margin moved with no place stores a zero media time. A reply that answers it says so without a time, and
+    /// a guessed reply does not follow the parent to the episode's opening.
+    func testAReplyToAnOwnMarginWithNoPlaceNamesNoTimeAndNeverFollowsItToZero() throws {
+        func unplaced(_ margin: Interjection) -> Interjection {
+            var margin = margin
+            margin.movedOrigin = MovedMarginOrigin(
+                marginId: margin.id, itemId: "item", sessionId: "session", liveMarginId: "live-m1", fromLiveSessionId: "live",
+                fromLiveSessionTitle: "Quick session", markedAt: margin.createdAt, movedAt: margin.createdAt, placeKnown: false)
+            margin.anchor.mediaTimeMs = 0
+            return margin
+        }
+        let placed = own("m1", madeAt: 10, atMs: 754_000, sharedAs: [mine])
+        let moved = unplaced(placed)
+        let entries = { (margin: Interjection) in
+            SharedMarginReview.entries(
+                layers: [self.layer("ben")], records: ["ben": [self.friendMargin("reply", in: "ben", at: 755_000, replyingTo: self.mine)]],
+                ownMargins: [margin])
+        }
+        XCTAssertEqual(try XCTUnwrap(entries(placed).first).replyContext?.parent, .yours(interjectionId: "m1", mediaTimeMs: 754_000),
+                       "a Margin with a place is unchanged")
+        let entry = try XCTUnwrap(entries(moved).first)
+        XCTAssertEqual(entry.replyContext?.parent, .yours(interjectionId: "m1", mediaTimeMs: nil))
+        XCTAssertEqual(entry.replyContext?.caption, "Reply to your Margin")
+        // A guessed (approximate) reply to the parent goes where the parent plays. With no place there is none, so the
+        // parent plays at the reply's own time, never at 0:00.
+        let approximate = SharedMarginReview.Entry(
+            layer: entry.layer, interjection: entry.interjection, mediaTimeMs: entry.mediaTimeMs, isApproximate: true,
+            replyContext: entry.replyContext)
+        let steps = SharedMarginReview.playlist(for: [approximate], ownMargins: [moved])
+        let parentStep = try XCTUnwrap(steps.first { $0.ownParent != nil })
+        XCTAssertEqual(parentStep.anchor.mediaTimeMs, approximate.mediaTimeMs)
+        XCTAssertNotEqual(parentStep.anchor.mediaTimeMs, 0)
+    }
+
     func testAReplyAnswersAnotherFriendsMarginByName() throws {
         let theirs = MarginPacketIdentity(packageDigest: "digest-ana", packageScopedId: "ana-1")
         let entries = SharedMarginReview.entries(
