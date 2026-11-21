@@ -259,6 +259,26 @@ class SeedTests(Base):
         self.assertIsNone(seed.seed(self.root, derived, self.cache))
         self.assertEqual(list(derived.iterdir()), [])
 
+    def test_a_donor_checkout_holding_a_git_lock_is_not_used(self):
+        """git checkout writes the working files under the old HEAD and index, behind `.git/index.lock`: the
+        pins, HEAD and submodule status all still match, so only the lock shows it is mid-update."""
+        for name in ('index.lock', 'HEAD.lock', 'config.lock'):
+            with self.subTest(lock=name):
+                donor = write_packages(self.slot('donor-' + name), PINS)
+                (donor / 'checkouts' / 'MLX-SWIFT' / '.git' / name).write_text('')
+                derived = self.dir / name / 'dd'
+                self.assertIsNone(seed.seed(self.root, derived, self.cache))
+                self.assertEqual(list(derived.iterdir()), [])
+
+    def test_a_donor_submodule_holding_a_git_lock_is_not_used(self):
+        donor = write_packages(self.slot('donor'), PINS)
+        modules = donor / 'checkouts' / 'MLX-SWIFT' / '.git' / 'modules'
+        lock = next(modules.rglob('HEAD')).parent / 'index.lock'
+        lock.write_text('')
+        derived = self.dir / 'new' / 'dd'
+        self.assertIsNone(seed.seed(self.root, derived, self.cache))
+        self.assertEqual(list(derived.iterdir()), [])
+
     def test_a_donor_checkout_without_git_is_not_used(self):
         donor = write_packages(self.slot('donor'), PINS)
         shutil.rmtree(donor / 'checkouts' / 'ZIPFOUNDATION' / '.git')

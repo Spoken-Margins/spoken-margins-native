@@ -229,16 +229,29 @@ def _git(checkout: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(['git', '-C', str(checkout), *args], env=env, capture_output=True, text=True)
 
 
+def has_git_lock(git_dir: Path) -> bool:
+    """A `*.lock` file anywhere in a checkout's git folder or its submodules' (`modules/...`) except `objects`.
+
+    Git holds `index.lock` for the whole time `git checkout` writes the working files, and HEAD and the saved index
+    change only at the end, so a copy taken then has the old HEAD over a mix of old and new files."""
+    for dirpath, dirnames, filenames in os.walk(git_dir):
+        if any(name.endswith('.lock') for name in filenames):
+            return True
+        dirnames[:] = [d for d in dirnames if d != 'objects']
+    return False
+
+
 def verify(source_packages: Path, pins: Dict[str, str]) -> bool:
     """The copy records `pins`, and each checkout's HEAD is its recorded revision with readable history
-    and every submodule at its recorded commit. Catches a donor checkout caught mid-update."""
+    and every submodule at its recorded commit, and no checkout holds a git lock. Catches a donor checkout
+    caught mid-update, including one still writing files under an old HEAD."""
     if state_pins(source_packages) != pins:
         return False
     data = json.loads((Path(source_packages) / STATE).read_text())
     for dep in data['object']['dependencies']:
         checkout = Path(source_packages) / 'checkouts' / dep['subpath']
         revision = dep['state']['checkoutState']['revision']
-        if not (checkout / '.git').is_dir():
+        if not (checkout / '.git').is_dir() or has_git_lock(checkout / '.git'):
             return False
         head = _git(checkout, 'rev-parse', '--verify', '-q', 'HEAD^{commit}')
         if head.returncode != 0 or head.stdout.strip() != revision:
