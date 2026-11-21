@@ -175,6 +175,48 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
         }
     }
 
+    /// #3788: the number the Design asks for. The time from the item screen's first frame, on a friend's arrival, to the
+    /// first Margin's audio starting after one tap on "Skip to …" made as soon as the button shows (about 10 s is the
+    /// goal; the PR that reads this reports the number and files a speed issue when it is over). It is attached and
+    /// logged, never asserted: a slower build is a finding for the desk, not a failed test (see the top of this file).
+    /// The friend's packet is the launch fixture, so the episode is already in the Library: this is the arrival path
+    /// with placement and download out of the way. Opening a packet from Files with the episode absent can't be scripted
+    /// (it needs the Files app), so that case stays with the agent run (docs/journeys.md, J12 step 4).
+    func testFriendArrivalToFirstMarginSeconds() throws {
+        XCTContext.runActivity(named: "J12 arrival, step 1: The episode is in the Library (offline seed)") { _ in
+            app.launch()
+            XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Seeded episode did not appear in the Library")
+        }
+
+        XCTContext.runActivity(named: "J12 arrival, step 2: Force-quit; a friend's Margin arrives; open the item and skip to it") { _ in
+            app.terminate()
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP"] = "1"
+            app.launch()
+            XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Episode is missing from the Library after relaunch")
+            tap("library.row.\(itemId)")
+            let opened = Date()
+            XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
+            let skip = app.buttons["item.reviewNewMargins.button"].firstMatch
+            XCTAssertTrue(skip.waitForExistence(timeout: 30), "The item screen never offered \"Skip to …\"")
+            let skipShownAt = Date().timeIntervalSince(opened)
+            note(String(format: "item screen to \"Skip to …\" shown: %.1fs", skipShownAt))
+            // The intro first, never "Mark complete" or a placement status, on the first frame the choice shows (#3788).
+            XCTAssertTrue(element("item.friendIntro.sender").exists, "The item doesn't say who sent the Margins")
+            for words in ["Mark complete", "Placing in your copy", "Matching positions in your episode"] {
+                let shown = NSPredicate(format: "label CONTAINS[c] %@", words)
+                XCTAssertEqual(app.descendants(matching: .any).matching(shown).count, 0, "\"\(words)\" shows on arrival")
+            }
+            skip.tap()
+            taps += 1
+            XCTAssertTrue(element("review.playing").waitForExistence(timeout: 60), "The friend's Margin never started playing")
+            let seconds = Date().timeIntervalSince(opened)
+            note(String(format: "item screen to the friend's Margin playing: %.1fs (%@ the 10 s goal); %d taps from the Library",
+                        seconds, seconds <= 10 ? "within" : "over", taps))
+            XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+        }
+    }
+
     // MARK: Steps
 
     private func recordAMargin(seconds minimum: Int) throws {
