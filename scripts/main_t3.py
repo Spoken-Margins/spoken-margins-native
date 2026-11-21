@@ -26,7 +26,8 @@ Subcommands:
   does. Exits 0 only on `success`.
 - lost --sha SHA --run-url URL: the job died after `pending`; set `error` so the next tick retries.
 
-Bisecting a red main is #4574's: the issue names the failing tests, the previous green SHA and the merges between.
+Bisecting a red main is #4574's, in scripts/main_t3_bisect.py: this issue names the failing tests, the previous green
+SHA and the merges between; the bisection narrows them to one merge and opens a `ready` + `regression` issue for it.
 Environment: GH_TOKEN and GH_REPO (the workflow's). Stdlib only, Python 3.9-compatible.
 """
 from __future__ import annotations
