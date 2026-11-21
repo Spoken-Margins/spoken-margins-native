@@ -51,6 +51,11 @@ extension Gate1AppModel {
                 diagnostics["mediaPlaybackInterruption"] = "resume_skipped"
                 return
             }
+            // A written Margin is open: Save or Cancel plays the item, so this is neither a failure nor a retry (#4831).
+            if engine.deferResumeToWrittenCapture() {
+                diagnostics["mediaPlaybackInterruption"] = "resume_deferred_to_written_margin"
+                return
+            }
             do {
                 snapshot = try engine.resumePlaybackAfterInterruption()
                 refreshSelectedItemInBackground()
@@ -121,6 +126,11 @@ extension Gate1AppModel {
         case .endedResumeRequested:
             guard snapshot.status == .paused, let engine else {
                 noteSpeechInterruptionResume(.skipped)
+                return
+            }
+            // A written Margin is open: Save or Cancel plays the item, so this is neither a failure nor a warning (#4831).
+            if engine.deferResumeToWrittenCapture() {
+                diagnostics["speechPlaybackInterruption"] = "resume_deferred_to_written_margin"
                 return
             }
             do {

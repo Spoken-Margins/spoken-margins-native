@@ -125,6 +125,8 @@ public final class SessionEngine {
     /// completion, which a start that never began cannot set.
     private var emptyTextStart: EmptyTextStart?
     private var pendingWrittenInterjection: WrittenInterjectionCapture?
+    /// A system interruption ended while a written Margin was open, so the item resumes when the capture closes (#4831).
+    private var resumeWhenWrittenCaptureCloses = false
 
     private struct PlaybackPlan {
         var text: String
@@ -381,6 +383,23 @@ public final class SessionEngine {
             return
         }
         try audio.pause()
+    }
+
+    /// The system ended an interruption and asks the item to resume while a written Margin is open. Navigation is refused
+    /// while it is, so a resume now would throw and, with the arming spent, leave the item silent after Save or Cancel.
+    /// Returns true when a capture is open: the resume waits for Save or Cancel, which then play the item as they do
+    /// for one that was playing when the Margin began (#4831). False means nothing is open and the caller resumes now.
+    public func deferResumeToWrittenCapture() -> Bool {
+        guard pendingWrittenInterjection != nil else { return false }
+        resumeWhenWrittenCaptureCloses = true
+        interruptionResumePoint.forget()
+        return true
+    }
+
+    /// Whether the source plays on once the written Margin that just closed is saved or cancelled.
+    private func takeResumeWhenWrittenCaptureCloses(_ capture: WrittenInterjectionCapture) -> Bool {
+        defer { resumeWhenWrittenCaptureCloses = false }
+        return capture.wasPlaying || resumeWhenWrittenCaptureCloses
     }
 
     /// Resumes after the system ended an interruption. A podcast or recording first steps back by
@@ -1985,6 +2004,7 @@ public final class SessionEngine {
                 replyTo: replyTo
             )
             pendingWrittenInterjection = capture
+            resumeWhenWrittenCaptureCloses = false
             publish(status: .paused, phase: session.phase)
             return capture
         } catch {
@@ -2041,11 +2061,12 @@ public final class SessionEngine {
         try repository.saveInterjection(interjection)
         lastMediaPercentageRepair = nil
         pendingWrittenInterjection = nil
+        let resumesSource = takeResumeWhenWrittenCaptureCloses(capture)
         do {
             // A written Margin rejoins like a spoken one (#776), but a source that was
             // already paused stays exactly where the listener left it.
-            let resumed = capture.wasPlaying ? try rejoiningAfterSavedMargin(session) : session
-            try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: resumed)
+            let resumed = resumesSource ? try rejoiningAfterSavedMargin(session) : session
+            try restoreWrittenInterjectionTransport(wasPlaying: resumesSource, session: resumed)
         } catch {
             // The note is already durable. Do not report this as a save failure
             // or retain a retryable draft: doing either would allow a second
@@ -2134,8 +2155,9 @@ public final class SessionEngine {
               session.itemId == capture.itemId else {
             throw SessionKitError.invalidCommandForState("cancelWrittenInterjection")
         }
-        try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: session)
+        try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying || resumeWhenWrittenCaptureCloses, session: session)
         pendingWrittenInterjection = nil
+        resumeWhenWrittenCaptureCloses = false
         return snapshot
     }
 
@@ -5841,6 +5863,7 @@ public final class SessionEngine {
     /// beginning), so a playing client must move even when the new position is close to the live
     /// one. A plain play, resume or rate change isn't a seek (#346).
     private func playCurrentTarget(_ session: Session, seeking: Bool = false) throws {
+        interruptionResumePoint.forget() // playing again: the system's pause no longer holds (#4831)
         if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
             try audio.configureMediaContext(playbackMediaContext(for: session))
             try audio.play(targetId: session.currentTargetId, fromMediaTimeMs: session.position.mediaTimeMs ?? 0)

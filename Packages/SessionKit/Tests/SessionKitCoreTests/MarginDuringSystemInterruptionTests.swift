@@ -36,10 +36,15 @@ final class MarginDuringSystemInterruptionTests: XCTestCase {
         var charOffset: Int?
         var playing = false
         var resume = SystemInterruptionResume()
+        /// A start that gets as far as `play` and then fails, as `playCurrentTarget` can.
+        var failsSettingTheRate = false
         func prepareSpeechText(_ text: String) throws -> String { text }
         func play(targetId: String) throws { playing = true }
         func play(targetId: String, from charOffset: Int) throws { self.charOffset = charOffset; playing = true }
         func play(targetId: String, fromMediaTimeMs t: Int) throws { mediaTimeMs = t; playing = true }
+        func setPlaybackRate(_ rate: Double) throws {
+            if failsSettingTheRate { throw SessionKitError.invalidCommandForState("setPlaybackRate") }
+        }
         func pause() throws { resume.cancelAutomaticResume(); playing = false }
         func currentCharOffset() -> Int? { charOffset }
         func currentMediaTimeMs() -> Int? { mediaTimeMs }
@@ -161,5 +166,76 @@ final class MarginDuringSystemInterruptionTests: XCTestCase {
         let snapshot = try rig.engine.saveWrittenInterjection(captureId: capture.id, text: "Check this claim")
         XCTAssertTrue(rig.client.playing, "and plays again on Save")
         XCTAssertTrue(snapshot.status.isPlaybackActive)
+    }
+
+    // MARK: Siri closes while the written Margin is still open
+
+    func testSiriClosingBeforeSaveDefersTheResumeAndSavePlaysTheItem() throws {
+        let rig = try rig(item: episode)
+        try siriPausesIt(rig)
+        let capture = try rig.engine.beginWrittenInterjection()
+
+        XCTAssertTrue(rig.client.systemInterruptionEnds(), "iOS says the item may resume")
+        XCTAssertTrue(rig.engine.deferResumeToWrittenCapture(), "a Margin is open: the resume waits, it does not throw")
+        XCTAssertFalse(rig.client.playing, "nothing plays under the open Margin")
+
+        let snapshot = try rig.engine.saveWrittenInterjection(captureId: capture.id, text: "Check this claim")
+        XCTAssertTrue(rig.client.playing, "Save plays the item")
+        XCTAssertTrue(snapshot.status.isPlaybackActive)
+    }
+
+    func testSiriClosingBeforeCancelDefersTheResumeAndCancelPlaysTheItem() throws {
+        let rig = try rig(item: article)
+        try siriPausesIt(rig)
+        let capture = try rig.engine.beginWrittenInterjection()
+
+        XCTAssertTrue(rig.engine.deferResumeToWrittenCapture())
+        let snapshot = try rig.engine.cancelWrittenInterjection(captureId: capture.id)
+
+        XCTAssertTrue(rig.client.playing)
+        XCTAssertTrue(snapshot.status.isPlaybackActive)
+    }
+
+    func testNothingIsDeferredWhenNoMarginIsOpen() throws {
+        let rig = try rig(item: episode)
+        try siriPausesIt(rig)
+
+        XCTAssertFalse(rig.engine.deferResumeToWrittenCapture(), "the caller resumes now")
+        let snapshot = try rig.engine.resumePlaybackAfterInterruption()
+        XCTAssertTrue(snapshot.status.isPlaybackActive)
+    }
+
+    func testADeferredResumeDoesNotOutliveItsMargin() throws {
+        let rig = try rig(item: episode)
+        try siriPausesIt(rig)
+        let first = try rig.engine.beginWrittenInterjection()
+        XCTAssertTrue(rig.engine.deferResumeToWrittenCapture())
+        _ = try rig.engine.saveWrittenInterjection(captureId: first.id, text: "One")
+        _ = try rig.engine.pause() // the listener pauses
+
+        let second = try rig.engine.beginWrittenInterjection()
+        _ = try rig.engine.saveWrittenInterjection(captureId: second.id, text: "Two")
+
+        XCTAssertFalse(rig.client.playing, "the first Margin's deferred resume is spent")
+    }
+
+    // MARK: The system's pause is forgotten once playback starts again
+
+    func testAFailedSaveRestoreStillPausesASourceThatWasPlayingAfterALostRoute() throws {
+        let rig = try rig(item: episode)
+        // Headphones unplugged: the pause is reconciled, nothing is armed.
+        rig.client.playing = false
+        _ = try rig.engine.reconcileSystemInitiatedPause()
+        // The listener starts it again by another route (not `resumePlayback`), then writes a Margin.
+        _ = try rig.engine.playSourceFromBeginning()
+        XCTAssertTrue(rig.client.playing)
+        let capture = try rig.engine.beginWrittenInterjection()
+        XCTAssertTrue(capture.wasPlaying)
+
+        rig.client.failsSettingTheRate = true // Save's restart plays, then fails
+        _ = try rig.engine.saveWrittenInterjection(captureId: capture.id, text: "Check this claim")
+
+        XCTAssertFalse(rig.client.playing, "the catch leaves the transport paused, as its comment says")
+        XCTAssertEqual(rig.engine.snapshot.status, .paused)
     }
 }
