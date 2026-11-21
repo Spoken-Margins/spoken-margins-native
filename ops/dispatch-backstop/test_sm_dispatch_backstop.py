@@ -104,7 +104,7 @@ class TickTests(unittest.TestCase):
     def test_a_workflow_that_never_ran_dispatches(self):
         github, lines, _ = self.run_tick({}, workflows={'lane-conflicts.yml': 60})
         self.assertEqual(github.posts, [('lane-conflicts.yml', {'ref': 'main'})])
-        self.assertIn('dispatched: no run yet', lines[0])
+        self.assertIn('dispatched: no worked run yet', lines[0])
 
     def test_dry_run_dispatches_nothing_and_says_so(self):
         github, lines, _ = self.run_tick({}, dry_run=True)
