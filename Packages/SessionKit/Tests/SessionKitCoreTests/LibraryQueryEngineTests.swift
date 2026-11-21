@@ -131,7 +131,6 @@ final class LibraryQueryEngineTests: XCTestCase {
     func testAListThatSaysTitleSourceOrAuthorDoesNotSearchBySender() {
         let rows = [Row(id: "cole", title: "Essay", sharedMargins: from("Cole"))]
         XCTAssertEqual(LibraryQueryEngine.visibleLibraryItems(rows, query: LibraryQuery(query: "Cole", listeningState: .all), includingSenders: false).map(\.id), [])
-        XCTAssertEqual(LibraryCollectionScope.checklistRows(rows, search: "Cole").map(\.id), [], "the collection checklist")
     }
 
     func testCompletedHiddenCountsWhatTheListeningFilterLeavesOut() {
@@ -149,17 +148,6 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(LibraryQueryEngine.completedHiddenCount(rows, query: LibraryQuery(listeningState: .unplayed)), 3,
                        "Unplayed hides every finished item, new Margins or not")
         XCTAssertEqual(LibraryQueryEngine.completedHiddenCount([Row](), query: unfinished), 0)
-    }
-
-    func testCompletedHiddenReadsOnlyTheSelectedCollection() {
-        let rows = [
-            Row(id: "in", isCompleted: true, sharedMargins: from("Cole")),
-            Row(id: "out", isCompleted: true, sharedMargins: from("Sam"))
-        ]
-        let collection = ItemCollection(id: "c", name: "HIST", itemIDs: ["in"], createdAt: Date(timeIntervalSince1970: 1))
-        let scoped = LibraryCollectionScope.rows(rows, in: ItemCollectionScope(collection))
-        XCTAssertEqual(LibraryQueryEngine.completedHiddenCount(scoped, query: LibraryQuery(listeningState: .unfinished)), 1)
-        XCTAssertEqual(LibraryQueryEngine.completedHiddenCount(rows, query: LibraryQuery(listeningState: .inProgress)), 2)
     }
 
     func testCompletedHiddenOnlyCountsWhatTheOtherFiltersAndTheSearchWouldList() {

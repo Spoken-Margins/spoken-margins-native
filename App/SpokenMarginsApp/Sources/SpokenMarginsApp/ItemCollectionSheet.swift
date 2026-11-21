@@ -136,7 +136,7 @@ struct ItemCollectionSheet: View {
         let name = newName
         let itemID = item.id
         commit(needsName: ItemCollectionEditing.Wording.nameRequired, nameTaken: ItemCollectionEditing.Wording.nameTaken, { collections, store in
-            await collections.create(name: name, itemIDs: [itemID], store: store, selects: false)
+            await collections.create(name: name, itemIDs: [itemID], store: store)
         }, onSaved: { newName = "" })
     }
 

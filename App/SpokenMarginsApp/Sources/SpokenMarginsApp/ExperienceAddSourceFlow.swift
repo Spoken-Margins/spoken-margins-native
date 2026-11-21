@@ -527,11 +527,12 @@ struct ExperienceAddSourceFlow: View {
         }
     }
 
-    /// A Listening Edition collection (`.json`) goes to the edition import, like a PDF added from here: it lands in
-    /// the Library and nothing opens (#2373). Everything else goes the way it always did. The sheet closes unless
-    /// something could not be imported, and then it says what, under the Files button.
+    /// A picked folder becomes a collection (#3769, owner's decision 2026-11-19), and so does a link list with a title
+    /// picked on its own. Any other Listening Edition (`.json`) goes to the edition import, like a PDF added from here:
+    /// it lands in the Library and nothing opens (#2373). Everything else goes the way it always did. The sheet closes
+    /// unless something could not be imported, and then it says what, under the Files button. Collections fill in
+    /// after the sheet has closed, one at a time, each with its own banner when it is done.
     private func importDocumentsAndCollections(_ picked: [URL]) {
-        // A picked folder (#2672) goes to the edition import too, which walks it for `.json` collection files.
         let folders = picked.filter { $0.hasDirectoryPath || ((try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true) }
         let files = picked.filter { url in !folders.contains(url) }
         let editionURLs = files.filter { $0.pathExtension.lowercased() == "json" }
@@ -540,21 +541,31 @@ struct ExperienceAddSourceFlow: View {
         guard !editionURLs.isEmpty || !folders.isEmpty else { importDocuments(urls, closes: !picked.isEmpty); return }
         // The edition files are read off the main thread (#2510), so the rest waits for them.
         Task { @MainActor in
-            // A `.json` file that says it is a structured link list (#3767) adds its links; any other `.json` file
-            // goes to the edition import as before. Only the file's own `schemaVersion` decides, never its name.
-            // The same goes for the `.json` files inside a picked folder: link lists there are added, and the edition
-            // import skips them and takes the rest.
-            let picks = await model.splitLinkLists(from: editionURLs, folders: folders)
-            let editionImportRuns = picks.needsEditionImport(foldersPicked: !folders.isEmpty)
+            // A `.json` file that says it is a structured link list (#3767) adds its links, or becomes a collection
+            // when it has a title; any other `.json` file goes to the edition import as before. Only the file's own
+            // `schemaVersion` decides, never its name.
+            let split = await model.splitLinkLists(from: editionURLs).splittingCollections()
+            let picks = split.rest
+            let editionImportRuns = picks.needsEditionImport(foldersPicked: false)
             var linkResult: (allImported: Bool, message: String?) = (true, nil)
             if !picks.isEmpty { linkResult = await model.importLinkLists(picks, noteFolderTruncation: !editionImportRuns) }
             var editionsImported = true
             if editionImportRuns {
-                editionsImported = await model.importListeningEditionFiles(picks.others, folders: folders, skipping: picks.folderFilePaths)
+                editionsImported = await model.importListeningEditionFiles(picks.others)
             }
             let allImported = linkResult.allImported && editionsImported
             if !allImported { fileImportError = editionsImported ? linkResult.message : (model.lastError ?? linkResult.message) }
             model.hangTelemetry.labels.scoped("addSheet.documentImport") { importDocuments(urls, closes: allImported) }
+            // Outside the sheet's life: the model runs the imports, and the sheet may already be gone.
+            let lists = split.collections
+            let app = model
+            Task { @MainActor in
+                for folder in folders { await app.importFolderAsCollection(folder) }
+                for found in lists {
+                    guard let url = found.url, let title = found.collectionTitle else { continue }
+                    await app.importLinkListAsCollection(url, list: found.list, title: title)
+                }
+            }
         }
     }
 

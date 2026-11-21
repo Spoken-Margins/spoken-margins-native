@@ -21,7 +21,8 @@ class LibraryRowDynamicTypeTests(unittest.TestCase):
         text = _text()
         strip = text[text.index("private var onboardingStrip"):text.index("private var controls")]
         self.assertIn("if dynamicTypeSize.isAccessibilitySize", strip)
-        self.assertIn("ViewThatFits(in: .horizontal)", text[text.index("private var onboardingContent"):])
+        # A column whenever the labels don't fit on one line each, never a word split inside a button (#1939).
+        self.assertIn("AdaptiveStack {", text[text.index("private var onboardingContent"):])
         self.assertEqual(text.count("Text(\"Hear overview\")"), 1, "the two buttons are written once")
         # A label wider than the column wraps instead of being cut off (#2056).
         actions = text[text.index("private var onboardingActions"):text.index("private var onboardingDismiss")]
