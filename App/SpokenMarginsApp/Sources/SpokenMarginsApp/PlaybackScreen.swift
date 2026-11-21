@@ -451,30 +451,61 @@ struct PlaybackScreen: View {
                     .foregroundStyle(AppColors.watchSecondary)
                     .accessibilityAddTraits(.isHeader)
                 ForEach(Array(notes)) { note in
-                    Button { selectedInterjection = note } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(InterjectionPositionPresentation.detailDescription(for: note, durationMs: model.snapshot.currentPlaybackDurationMs))
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(AppColors.watchSecondary)
-                            Text(PlaybackMarginPreview.text(displayText: note.displayText,
-                                                            cleanedTranscript: note.cleanedTranscript,
-                                                            transcript: note.transcript,
-                                                            transcriptionStatus: note.transcriptionStatus,
-                                                            captureKind: note.captureKind))
-                                .font(.system(.body, design: .serif))
-                                .foregroundStyle(.white)
-                                .multilineTextAlignment(.leading)
-                                .lineLimit(3)
-                        }
-                        .padding(.leading, 12)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .overlay(alignment: .leading) { Rectangle().fill(AppColors.captureBackground).frame(width: 2) }
-                    }
-                    .buttonStyle(.plain)
+                    recentMarginRow(note)
                 }
             }
         }
+    }
+
+    /// One of the last two Margins under the player. The star (#4173) sits at the trailing edge, outside the button that opens
+    /// the detail sheet, and under the words at accessibility sizes. Only a Margin Share can send has one.
+    @ViewBuilder
+    private func recentMarginRow(_ note: Interjection) -> some View {
+        let star = PlaybackMarginRowView.Star.ownMargin(note, place: .now, model: model)
+        let preview = PlaybackMarginPreview.text(displayText: note.displayText, cleanedTranscript: note.cleanedTranscript,
+                                                 transcript: note.transcript, transcriptionStatus: note.transcriptionStatus,
+                                                 captureKind: note.captureKind)
+        let details = Button { selectedInterjection = note } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(recentMarginCaption(note, isStarred: star?.isStarred == true))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(AppColors.watchSecondary)
+                Text(preview)
+                    .font(.system(.body, design: .serif))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
+            }
+            .padding(.leading, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .leading) { Rectangle().fill(AppColors.captureBackground).frame(width: 2) }
+        }
+        .buttonStyle(.plain)
+        if let star {
+            let starButton = MarginShareStarButton(
+                isStarred: star.isStarred,
+                title: preview,
+                identifier: "playback.now.recent.\(note.id).star", action: star.action)
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    details
+                    starButton.padding(.leading, 12)
+                }
+            } else {
+                HStack(alignment: .center, spacing: 8) {
+                    details
+                    starButton
+                }
+            }
+        } else {
+            details
+        }
+    }
+
+    private func recentMarginCaption(_ note: Interjection, isStarred: Bool) -> String {
+        let place = InterjectionPositionPresentation.detailDescription(for: note, durationMs: model.snapshot.currentPlaybackDurationMs)
+        return isStarred ? "\(place) · Starred" : place
     }
 
     @ViewBuilder
