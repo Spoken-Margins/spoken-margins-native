@@ -204,6 +204,31 @@ final class PDFFigureCaptionLocatorTests: XCTestCase {
         XCTAssertEqual(regions.map(\.captionId), ["c1"])
     }
 
+    func testALineStraddlingTheCaptionsEdgeIsNeverInsideTheBox() {
+        // A line whose box overlaps the caption's top by 2 pt-ish is neither above nor below it; the band must not
+        // swallow it on its way to the next line.
+        let figureCaption = PDFFigureCaptionLocator.Caption(id: "c1", bounds: rect(0.10, 0.50, 0.80, 0.036)) // top 0.536
+        let straddler = rect(0.10, 0.53, 0.80, 0.018)                                                       // 0.53 ... 0.548
+        let far = rect(0.10, 0.85, 0.80, 0.018)
+        XCTAssertEqual(PDFFigureCaptionLocator.regions(captions: [figureCaption], textBlocks: [straddler, far]), [])
+    }
+
+    func testABlockOnlyPartlyOverInTheColumnIsNeverInsideTheBox() {
+        // A wide equation that overlaps a narrow column's band by under a third of the column: it is not the column's
+        // neighbour, but a clip of that column must not contain part of it.
+        let figureCaption = PDFFigureCaptionLocator.Caption(id: "c1", bounds: rect(0.10, 0.40, 0.35, 0.036))
+        let equation = rect(0.35, 0.60, 0.40, 0.018)
+        let above = rect(0.10, 0.90, 0.35, 0.018)
+        XCTAssertEqual(PDFFigureCaptionLocator.regions(captions: [figureCaption], textBlocks: [equation, above]), [])
+    }
+
+    func testAnEdgeTouchingTextDoesNotBlockTheBand() {
+        // Text that only shares an edge with the band (the box is kept off it by `edgeInset`) is fine.
+        let regions = PDFFigureCaptionLocator.regions(
+            captions: [caption(top: 0.46)], textBlocks: paragraph(top: 0.95, lines: 8) + paragraph(top: 0.41, lines: 6))
+        XCTAssertEqual(regions.count, 1)
+    }
+
     func testNoCaptionsMeansNoRegions() {
         // A "Figure 3 shows…" sentence in body text is a text block, never a caption.
         XCTAssertEqual(PDFFigureCaptionLocator.regions(captions: [], textBlocks: paragraph(top: 0.95, lines: 30)), [])

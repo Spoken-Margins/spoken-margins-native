@@ -127,8 +127,18 @@ public enum PDFFigureCaptionLocator {
                 candidates.append(Candidate(bounds: band, farEndIsCaption: far.isCaption))
             }
         }
+        // The box must be clear of every piece of text, whatever the column or side tests above decided: a line that
+        // straddles the caption's edge or only partly overlaps the column is no neighbour to measure from, but it
+        // must never end up inside a clip. A band with any text in it is not trusted, and neither is its caption.
+        guard !candidates.contains(where: { band in obstacles.contains { intersects($0.bounds, band.bounds) } }) else { return nil }
         guard candidates.count == 1, let only = candidates.first, !only.farEndIsCaption else { return nil }
         return only.bounds
+    }
+
+    /// True when the rectangles share any area (touching edges do not).
+    private static func intersects(_ a: PDFNormalizedRect, _ b: PDFNormalizedRect) -> Bool {
+        min(a.x + a.width, b.x + b.width) - max(a.x, b.x) > 1e-9
+            && min(a.y + a.height, b.y + b.height) - max(a.y, b.y) > 1e-9
     }
 
     /// The horizontal extent of the caption's figure: the caption's own width for a column caption, the whole text
