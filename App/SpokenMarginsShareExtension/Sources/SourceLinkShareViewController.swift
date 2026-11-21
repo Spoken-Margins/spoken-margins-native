@@ -509,34 +509,36 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         if let data = item as? Data,
            let text = String(data: data, encoding: .utf8),
            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let url = firstURL(in: cleaned), cleaned == url.absoluteString || cleaned.count < url.absoluteString.count + 20 {
-                return sharedURLImport(url, forcePDF: presentsPDF)
-            }
-            return sharedTextImport(cleaned, identifier: identifier, presentsPDF: presentsPDF)
+            return sharedTextImport(text.trimmingCharacters(in: .whitespacesAndNewlines), identifier: identifier, presentsPDF: presentsPDF)
         }
         if let dictionary = item as? [String: Any] ?? item as? NSDictionary as? [String: Any],
            let url = firstWebURL(in: dictionary) {
             return sharedURLImport(url, forcePDF: presentsPDF)
         }
         if let text = item as? String {
-            let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let url = firstURL(in: cleaned), cleaned == url.absoluteString || cleaned.count < url.absoluteString.count + 20 {
-                return sharedURLImport(url, forcePDF: presentsPDF)
-            }
-            return sharedTextImport(cleaned, identifier: identifier, presentsPDF: presentsPDF)
+            return sharedTextImport(text.trimmingCharacters(in: .whitespacesAndNewlines), identifier: identifier, presentsPDF: presentsPDF)
         }
         return nil
     }
 
-    /// Plain text shared as a string (#662): a lone link goes as that link, as Paste & go decides,
-    /// and anything else becomes a text item holding the whole text.
+    /// A string shared as text (#662): a link, alone or with a short note around it ("Title" then the link), goes as that
+    /// link, as Paste & go decides (#4809). Anything else becomes a text item holding the whole text, but only for the
+    /// plain-text types. A string of another type (UTF-8 bytes of JSON, say) is a link only when it is just the link, or,
+    /// as before, a link with under 20 characters around it.
     nonisolated private static func sharedTextImport(_ text: String, identifier: String, presentsPDF: Bool) -> SharedImport? {
-        guard SharedTextIntake.isPlainText(identifier) else { return nil }
-        switch SharedTextIntake.route(text) {
-        case .link(let url):
+        let route = SharedTextIntake.route(text)
+        if case .link(let url) = route, SharedTextIntake.isPlainText(identifier) || text == url.absoluteString {
             return sharedURLImport(url, forcePDF: presentsPDF)
+        }
+        // A link with no space before it ("Listen:https://…") isn't a word of its own to the classifier; the detector finds it.
+        if let url = firstURL(in: text), text.count < url.absoluteString.count + 20 {
+            return sharedURLImport(url, forcePDF: presentsPDF)
+        }
+        switch route {
+        case .link:
+            return nil
         case .text(let title, let body):
+            guard SharedTextIntake.isPlainText(identifier) else { return nil }
             return .sharedText(BrowserTextSharePayload(
                 id: "browser-text-\(UUID().uuidString)",
                 itemId: SharedTextIntake.newItemID(),

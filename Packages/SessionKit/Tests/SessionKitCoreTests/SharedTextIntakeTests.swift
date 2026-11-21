@@ -67,6 +67,43 @@ final class SharedTextIntakeTests: XCTestCase {
         )
     }
 
+    /// #4809: the share sheet of most apps hands over a title and the link, or a note and the link. That is the link, not a
+    /// text item holding the title and an address.
+    func testATitleOrANoteAroundTheLinkIsTheLink() {
+        let link = URL(string: "https://example.com/ep12")!
+        for shared in [
+            "Episode 12: the share sheet\nhttps://example.com/ep12",
+            "Episode 12: the share sheet\r\nhttps://example.com/ep12\r\n",
+            "Check this out https://example.com/ep12",
+            "Check this out\n\nhttps://example.com/ep12",
+            "https://example.com/ep12\nvia Example Podcasts",
+            "Listen to \"Episode 12\" (https://example.com/ep12).",
+        ] {
+            XCTAssertEqual(SharedTextIntake.route(shared), .link(link), shared.debugDescription)
+        }
+        let tracked = "https://example.com/ep12?" + String(repeating: "utm_source=share&", count: 30)
+        XCTAssertEqual(SharedTextIntake.route("Check this out \(tracked)"), .link(URL(string: tracked)!), "a long tracking link with a short note")
+    }
+
+    func testALongNoteOrTwoLinksStayText() {
+        let note = String(repeating: "A sentence about things. ", count: 20)
+        for shared in ["\(note)\nhttps://example.com/ep12", "See https://example.com/a and https://example.com/b"] {
+            guard case .text(_, let body) = SharedTextIntake.route(shared) else { return XCTFail(shared) }
+            XCTAssertEqual(body, shared)
+        }
+    }
+
+    /// The extension hands off https links only: a lone http link imports nothing, as before, and text with one around it
+    /// stays the listener's text instead of vanishing.
+    func testAnHTTPLinkWithTextAroundItStaysTextAndALoneOneIsNil() {
+        XCTAssertNil(SharedTextIntake.route("http://example.com/a"))
+        XCTAssertNil(SharedTextIntake.route("  http://example.com/a\n"))
+        XCTAssertEqual(
+            SharedTextIntake.route("Title\nhttp://example.com/a"),
+            .text(title: "Title", body: "Title\nhttp://example.com/a")
+        )
+    }
+
     func testNothingUsableIsNil() {
         XCTAssertNil(SharedTextIntake.route("  \n "))
         // The extension hands off https links only, as before.

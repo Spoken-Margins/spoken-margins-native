@@ -35,7 +35,8 @@ extension Gate1AppModel {
             return true
         }
         let submittedURL = sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let parsedURL = URL(string: submittedURL),
+        // The link comes out of what was typed or pasted, as it does for Paste & go: "Check this out https://…" is that link (#4809).
+        guard let parsedURL = PasteIntake.webLink(in: submittedURL) ?? URL(string: submittedURL),
               let scheme = parsedURL.scheme?.lowercased(),
               ["http", "https"].contains(scheme),
               parsedURL.host != nil else {
