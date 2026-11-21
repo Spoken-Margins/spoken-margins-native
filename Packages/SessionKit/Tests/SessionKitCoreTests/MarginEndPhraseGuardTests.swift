@@ -7,10 +7,16 @@ import XCTest
 /// for permission (a prompt with the microphone live is the #2966 trap; the question belongs at the first transcription).
 /// A change that needs either has to change this test in the open.
 final class MarginEndPhraseGuardTests: XCTestCase {
+    /// A source file of the package, named from the repository root.
     private func source(_ relative: String) throws -> String {
-        let app = try TestInputs.directory(.appSources)
+        let app = try TestInputs.directory(.appSources) // the checkout is found through the helper, never by an App/ path
         let root = app.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
+    }
+
+    /// A source file of the app, by its name in the app's sources folder.
+    private func appSource(_ name: String) throws -> String {
+        try String(contentsOf: TestInputs.directory(.appSources).appendingPathComponent(name), encoding: .utf8)
     }
 
     private let ruleFiles = [
@@ -27,7 +33,7 @@ final class MarginEndPhraseGuardTests: XCTestCase {
 
     /// The coordinator, the part of the app that starts and ends listening and routes the phrase to Save.
     private func coordinatorSource() throws -> String {
-        let capture = try source("App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginCapture.swift")
+        let capture = try appSource("Gate1AppModel+MarginCapture.swift")
         let start = try XCTUnwrap(capture.range(of: "final class MarginEndPhraseStatus")?.lowerBound)
         return String(capture[start...])
     }
@@ -63,8 +69,8 @@ final class MarginEndPhraseGuardTests: XCTestCase {
     }
 
     func testListeningNeverAsksForPermission() throws {
-        for file in liveFiles + ["App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpeechRecognitionAccess.swift"] {
-            let text = try source(file)
+        let sources = try liveFiles.map { ($0, try source($0)) } + [("SpeechRecognitionAccess.swift", try appSource("SpeechRecognitionAccess.swift"))]
+        for (file, text) in sources {
             XCTAssertFalse(text.contains("requestAuthorization"), "\(file) must not ask for Speech Recognition")
             XCTAssertFalse(text.contains("requestRecordPermission"), "\(file) must not ask for the microphone")
             XCTAssertFalse(text.contains("requestPermission"), "\(file) must not ask for anything")
