@@ -15,6 +15,14 @@ public struct LibraryReadSnapshot: Sendable {
     public var friendMarginsArrivedAtByItemId: [String: Date] = [:]
     /// The listener's own active Margins, counted per item (#2394). Items with none are absent.
     public var marginCountsByItemId: [String: Int] = [:]
+    /// The listener's collections, read in the same pass so the Library's chip row draws with the rows and never
+    /// snaps in after them (#4343). Nil when they were not read; a caller then keeps the collections it has.
+    public var collections: [ItemCollection]?
+    /// The records of the collections that are Library folders (#3769), imported from a folder or a titled link list, read
+    /// in the same pass so a folder's row is drawn with its items (never a first frame with them flat) and shows
+    /// "Adding 3 of 24…" while it imports. Empty until a folder is imported. Nil when they were not read (the read failed);
+    /// a caller then keeps the folders it has, because an empty list would draw every folder's items flat.
+    public var libraryFolders: [LibraryFolderRecord]?
 
     /// The items not in Recently Deleted, in the snapshot's order: what `listItemSummaries()` returns. A caller that
     /// already holds the snapshot asks this instead of reading the item table again (#2507).

@@ -152,11 +152,6 @@
       "batch": 2
     },
     {
-      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testPermanentDeleteDoesNotRestoreRecentlyDeletedItem",
-      "journey": "Library: permanently deleting an item does not bring back a recently deleted one (#3206)",
-      "batch": 2
-    },
-    {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText",
       "journey": "Now at AX5: Play, skip and sleep timer stay visible under a long title (#2056)",
       "batch": 2

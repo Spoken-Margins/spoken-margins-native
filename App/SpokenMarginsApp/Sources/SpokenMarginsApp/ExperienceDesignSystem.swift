@@ -1,5 +1,6 @@
 import SessionKit
 import SwiftUI
+import UIKit
 
 struct ExperienceEditorialHeader: View {
     let eyebrow: String
@@ -354,6 +355,10 @@ struct AppTextField: View {
 /// clear button once there is text, in a panel at least 48 pt tall. A tap anywhere in the panel focuses the field. The
 /// identifier sits on the field itself, since the UI tests query `app.textFields[...]`; the clear button's is
 /// `<identifier>.clear`.
+///
+/// The keyboard it raises always has a way down (#4636): the Search key closes it, each screen that hosts the field
+/// closes it on a drag with `.scrollDismissesKeyboard(.interactively)`, and a screen without its own Done adds
+/// `.searchKeyboardDoneBar()`. All keep the text and leave the filters alone.
 struct AppSearchField: View {
     private let placeholder: String
     private let text: Binding<String>
@@ -376,6 +381,7 @@ struct AppSearchField: View {
                 .autocorrectionDisabled()
                 .submitLabel(.search)
                 .focused($isFocused)
+                .onSubmit { isFocused = false }
                 .accessibilityIdentifier(identifier)
             if !text.wrappedValue.isEmpty {
                 Button {
@@ -395,6 +401,24 @@ struct AppSearchField: View {
         .overlay { RoundedRectangle(cornerRadius: 14).stroke(AppColors.border) }
         .contentShape(Rectangle())
         .onTapGesture { isFocused = true }
+    }
+}
+
+extension View {
+    /// A Done button on the keyboard bar of the screen that hosts an `AppSearchField` (#4636). It sits on the host's
+    /// list, not inside the field, because a toolbar declared in a List row may never reach the navigation stack. It
+    /// resigns the first responder, so the text, the filters and the sort stay as they are. Not for a sheet whose
+    /// navigation bar already has its own Done.
+    func searchKeyboardDoneBar() -> some View {
+        toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }
+                .accessibilityIdentifier("search.keyboard.done")
+            }
+        }
     }
 }
 
@@ -449,4 +473,11 @@ extension AppColors {
     static let ochreText = dynamicColor(AppSemanticColorRGB.ochreText)
     /// Warning copy and its icon, in place of the system orange (#1920).
     static let warningText = dynamicColor(AppSemanticColorRGB.warningText)
+}
+
+extension AppColors {
+    /// The system's unread blue, light and dark: the one colour for something new to the listener (#4698). Never green
+    /// or orange, so it reads for red-green colour blindness beside the evergreen. Built from the audit's own values, so
+    /// `AppColorContrastAudit` measures the dot against the row.
+    static let unread = dynamicColor(AppSystemColorRGB.blue)
 }

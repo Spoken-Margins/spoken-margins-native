@@ -29,7 +29,6 @@ final class DiagnosticsErrorTextGuardTests: XCTestCase {
     /// Lines in the app where the listener is shown the text, or it is stored for a screen, never put in the export.
     /// Each entry is a file name and a fragment of the line, with why it is not export text.
     private static let shownToTheListener: [(file: String, fragment: String, why: String)] = [
-        ("ReadLaterModel.swift", "(error as? EditionError)?.localizedDescription", "the Read Later screen's own message"),
         ("SharedMarginsImportMessage.swift", "?? error.localizedDescription", "the listener's import message, cut to plain words after"),
         ("Gate1AppModel+RemoteProvider.swift", "LocalSummaryFailurePresentation(errorDescription: error.localizedDescription)", "the summary failure card"),
         ("Gate1AppModel+RemoteProvider.swift", "String(describing: error),", "the provider failure record, kept off the export under recentFailure"),
@@ -40,7 +39,6 @@ final class DiagnosticsErrorTextGuardTests: XCTestCase {
         ("Gate1AppModel+Feedback.swift", "rawMessage = String(describing: error)", "the bug report's raw text, which lands under recentFailure and never leaves"),
         ("Gate1AppModel+ImportInbox.swift", "quarantine(payloadID: payloadID, reason: error.localizedDescription)", "the import inbox row's reason"),
         ("Gate1AppModel+SourceWindowContext.swift", "let failure = String(describing: error)", "the Margin's transcription wording; the export line uses `diagnostic`"),
-        ("Gate1AppModel+ShareDrafts.swift", "Pause analysis was unavailable (", "text on the share screen"),
         ("LocalFoundationModels.swift", "String(reflecting: error).lowercased()", "decides which failure it is; not stored"),
         ("Gate1AppModel+MarginVoiceHold.swift", "String(describing: move)", "a hand-over case name, not an error"),
         ("Gate1AppModel.swift", "String(describing: newValue)", "a navigation case name, not an error"),

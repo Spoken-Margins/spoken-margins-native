@@ -63,6 +63,9 @@ extension Gate1AppModel {
                       url: support.appending(path: "Audiobooks", directoryHint: .isDirectory)),
                 .init(name: ItemOwnedFiles.episodeMapsRoot,
                       url: support.appending(path: "SpokenMargins/EpisodeMaps", directoryHint: .isDirectory)),
+                .init(name: ItemOwnedFiles.itemOriginalsRoot,
+                      url: support.appending(path: "ItemOriginals", directoryHint: .isDirectory)),
+                .init(name: ItemOwnedFiles.pdfClipsRoot, url: Self.pdfClipStore(support: support).directory),
             ],
             marginRecordings: .init(
                 directory: support.appending(path: "SpokenMargins", directoryHint: .isDirectory),
@@ -72,7 +75,7 @@ extension Gate1AppModel {
     }
 
     /// Runs `delete`, the call that removes the items' rows, and then removes the files only those items owned (their
-    /// prepared narration chunks, saved Listening Edition, episode-map folder, and the EPUB or audiobook the app copied in
+    /// prepared narration chunks, saved Listening Edition, episode-map folder, PDF clip pictures, and the EPUB or audiobook the app copied in
     /// from Files, and the spoken Margin recordings, named by `recordingPaths`: the audio paths of the Margins the delete
     /// takes away, read with the Margins before it, quarantined ones included) off the main thread. The copied files are
     /// named by the items' ledger rows (`ledgerRows`), which the caller reads before it removes anything, next to the Margin reads, because the rows go with the items

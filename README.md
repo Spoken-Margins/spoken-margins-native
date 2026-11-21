@@ -19,7 +19,7 @@ The app is in private testing on TestFlight. There is no public App Store releas
 
 - No Android, Mac or Windows app. The Watch app is not part of the current release.
 - No public App Store release.
-- Share links (a web link that opens a shared Margin) are not turned on. The phone can seal and open them with end-to-end encryption, but creating and hosting them for the public waits for a legal review.
+- Share links (a web link that opens a shared Margin) are live only for TestFlight testers, from Build 36 (checked 2026-11-19). The phone seals them with end-to-end encryption, and a friend can open one in the app or in a browser. Offering them in a public App Store release waits for a legal review.
 - Community Listening Maps are off by default and not open to the public yet. When a listener opts in, the app sends an episode's transcript to the owner's server, which has it summarized by a third-party AI service (Anthropic's API) to make the map. The same legal review applies.
 - No third-party AI service is used from the phone. The app ships with its OpenAI provider code switched off. (The server-side maps above are the one place an outside AI service is involved.)
 - Cloud voices and any payment are not built.
@@ -30,7 +30,7 @@ The app talks to one small server that the owner runs. The server is needed only
 
 - the introductory tour (fetched at launch until you delete it) and updates to the starter podcast list (a first list is bundled in the app and works offline);
 - the optional community Listening Maps lookup and contribution, which are off until you switch them on in Settings;
-- share links, once they ship.
+- share links: the server holds the sealed Margins for 30 days and serves the page a link opens. It never serves the source audio.
 
 Everything else the app fetches comes from the sources you choose (feeds, article sites, audio hosts), from the services you connect (Readwise Reader, Raindrop.io), from Apple (for example the on-device speech model, and podcast name search), and from Spotify when you paste a Spotify link (to find the episode's title). The full list is in the [privacy policy draft](docs/legal/privacy-policy-draft.md); it is a working draft, and the live policy is published on the project's site.
 

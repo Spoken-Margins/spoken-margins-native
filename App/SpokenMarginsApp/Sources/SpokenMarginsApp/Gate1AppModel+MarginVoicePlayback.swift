@@ -270,10 +270,13 @@ extension Gate1AppModel {
         // and to nothing else (#3720). Read before the queue is modified: the call below holds the queue.
         let toneOnlyCardID = sharedMarginOffers.toneOnlyCardID
         let cardWithNoTimerIsUp = pendingImportedCommentary != nil && pendingImportedCommentary?.id == toneOnlyCardID
+        let canOffer = pendingImportedCommentary == nil && nothingElseIsGoing
+        let canReplaceCard = cardWithNoTimerIsUp && nothingElseIsGoing
+        if !canOffer, !canReplaceCard { noteSharedMarginsCrossedWhileSlotBusy(previous: previous, current: current) }
         guard let prompt = sharedMarginOffers.nextOffer(
             previous: previous, current: current, selectedItemID: selectedItem.id,
-            canOffer: pendingImportedCommentary == nil && nothingElseIsGoing,
-            canReplaceCard: cardWithNoTimerIsUp && nothingElseIsGoing,
+            canOffer: canOffer,
+            canReplaceCard: canReplaceCard,
             prompts: importedCommentaryPrompts(includeAnnounced: true)
         ) else { return }
         if cardWithNoTimerIsUp { dismissPendingImportedCommentary() } // the same clean-up as a timed card going away
@@ -605,7 +608,7 @@ extension Gate1AppModel {
         sharedMarginOffers.markAnnounced(row.interjection.id)
         let targetID = "shared::\(row.layer.id)::\(row.interjection.id)"
         startMarginMoment(
-            sequence: MarginMomentSequence(itemId: itemID, target: MarginMomentAnchor(marginId: targetID, mediaTimeMs: position.mediaTimeMs, label: row.collectionLabel), otherMargins: []),
+            sequence: MarginMomentSequence(itemId: itemID, target: MarginMomentAnchor(marginId: targetID, mediaTimeMs: position.mediaTimeMs, label: row.collectionLabel, leadInMs: row.interjection.senderLeadInMs), otherMargins: []),
             voiceURLs: [targetID: voiceURL],
             title: "\(row.collectionLabel)'s Margin",
             isApproximate: position.isApproximate

@@ -16,6 +16,12 @@
 # `pull_request` runs are built from the PR's merge ref, which GitHub does not create for a PR that already
 # conflicts, so those PRs are found by the sweep instead.
 #
+# The lane runner merges with the workflow token, which starts no workflow, so the runner's own merges to the trunk
+# never trigger the sweep either, and a `pull_request` run is not started at all for a PR GitHub can't build a merge
+# ref for (#4538: #4477 sat armed and silent for hours). An hourly schedule, five past, runs the same sweep ahead of the
+# hourly dispatch at twenty past, so a PR made stale by a runner merge or left without a merge ref is handed off
+# within the hour. Besides git's conflicts the sweep also hands off an armed PR GitHub calls unmergeable (#4538).
+#
 # The script is taken from the base branch's live tip (SM_TRUNK, default main, on push and dispatch) with no
 # credentials kept, and reads the PR head as git data only, never running it. GitHub builds a pull_request run's
 # workflow file from the PR's merge ref, so a same-repo PR that edits this file runs its own copy; only
@@ -30,6 +36,8 @@ on:
     types: [labeled, synchronize, reopened]
   push:
     branches: [next, main]
+  schedule:
+    - cron: '5 * * * *'
   workflow_dispatch:
     inputs:
       pr:

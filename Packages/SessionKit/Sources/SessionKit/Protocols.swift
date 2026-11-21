@@ -245,7 +245,8 @@ public protocol SessionRepository: AnyObject, Sendable,
     PreparedAudioRepository,
     EpisodeMapRepository,
     OfflineStorageRepository,
-    FollowedSourceRepository {}
+    FollowedSourceRepository,
+    MovedMarginOriginRepository {}
 
 public protocol AudioPlaybackClient {
     func configureMediaContext(_ context: PlaybackMediaContext?) throws

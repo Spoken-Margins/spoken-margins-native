@@ -271,6 +271,50 @@ final class SyncMergeRulesTests: XCTestCase {
         }
     }
 
+    /// #4173: taking the sharing star off is a change like any other. It used to be dropped (the unstar is nil on the
+    /// device), so the other phone stayed starred and its next edit of the Margin starred it here again.
+    func testUnstarringAMarginReachesTheOtherPhoneAndAnEditThereDoesNotRestarIt() throws {
+        var (a, b, cloud) = try twoPhonesWithOneMargin()
+        let plain = SyncFixtures.margin(id: "m1", text: "first")
+        var starred = plain
+        starred.isStarredForSharing = true
+
+        try a.edit(marginID) { record, clock in
+            MarginSync.write(starred, changedFrom: plain, into: &record, clock: &clock, wallMillis: self.t0 + 1000)
+        }
+        syncBoth(&a, &b, &cloud, at: t0 + 2000)
+        XCTAssertEqual(MarginSync.apply(try XCTUnwrap(b.record(marginID)), to: plain).isStarredForSharing, true, "the star reaches B")
+
+        // A takes it off again (the device stores nil for off).
+        try a.edit(marginID) { record, clock in
+            MarginSync.write(plain, changedFrom: starred, into: &record, clock: &clock, wallMillis: self.t0 + 3000)
+        }
+        syncBoth(&a, &b, &cloud, at: t0 + 4000)
+        for replica in [a, b] {
+            let onThisPhone = MarginSync.apply(try XCTUnwrap(replica.record(marginID)), to: starred)
+            XCTAssertNotEqual(onThisPhone.isStarredForSharing, true, "the unstar reaches both phones")
+        }
+
+        // B, now unstarred, edits only the private note: the star stays off on both.
+        var noted = plain
+        noted.privateSharingNote = "for Sam"
+        try b.edit(marginID) { record, clock in
+            MarginSync.write(noted, changedFrom: plain, into: &record, clock: &clock, wallMillis: self.t0 + 5000)
+        }
+        syncBoth(&a, &b, &cloud, at: t0 + 6000)
+        for replica in [a, b] {
+            XCTAssertEqual(replica.record(marginID)?["privateSharingNote"]?.stringValue, "for Sam")
+            XCTAssertNotEqual(MarginSync.apply(try XCTUnwrap(replica.record(marginID)), to: plain).isStarredForSharing, true)
+        }
+
+        // A star put on again after an unstar is the later write and wins.
+        try a.edit(marginID) { record, clock in
+            MarginSync.write(starred, changedFrom: plain, into: &record, clock: &clock, wallMillis: self.t0 + 7000)
+        }
+        syncBoth(&a, &b, &cloud, at: t0 + 8000)
+        XCTAssertEqual(MarginSync.apply(try XCTUnwrap(b.record(marginID)), to: plain).isStarredForSharing, true)
+    }
+
     func testPrivateFieldsAndWordsAreEncryptedAndOnlyTheDeleteStateAndTimeAreNot() {
         for field in MarginSync.textFields + ["isStarredForSharing", "anchor", "itemKey"] + SpokenNoteSync.textFields {
             XCTAssertTrue(SyncFieldSchema.isEncrypted(field: field), field)

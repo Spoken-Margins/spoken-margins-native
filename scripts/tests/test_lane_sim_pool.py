@@ -94,6 +94,13 @@ def device(name, state='Shutdown', major=26):
 class ChooseTests(unittest.TestCase):
     """The pool's rules, without a simulator: what the next desk run does (#688)."""
 
+    def setUp(self):
+        # The fake devices are iOS 26. The hosted Mac's lane sets SM_LANE_IOS_MAJOR to the iOS its image ships when it
+        # has no 26, so the pool would drop every one of them as "not an iOS 27 device" (#4643).
+        patch = mock.patch.object(lane_sim, 'IOS_MAJOR', 26)
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def choose(self, entries, devices, unsafe=None, busy=(), size=3):
         return pool.choose(entries, devices, unsafe or {}, set(busy), size)
 
@@ -211,8 +218,10 @@ class PoolDeviceTests(unittest.TestCase):
         self.record = folder / 'record.jsonl'
         self.env = {'SM_LANE_STATE_DIR': str(folder / 'state'), 'SM_LANE_SIMCTL': str(fake),
                     'SM_LANE_CRASH_REPORTS': str(folder / 'reports'), 'FAKE_RECORD': str(self.record),
-                    'FAKE_WORLD': str(self.world), 'SM_LANE_MEMORY_PRESSURE': '1'}
+                    'FAKE_WORLD': str(self.world), 'SM_LANE_MEMORY_PRESSURE': '1',
+                    'SM_LANE_IOS_MAJOR': '26'}  # the fake devices are iOS 26, however the lane's Mac is set (#4643)
         for patch in (mock.patch.dict(os.environ, self.env), mock.patch.object(lane_sim, 'CRASH_POLL_SECONDS', 0.05),
+                      mock.patch.object(lane_sim, 'IOS_MAJOR', 26),
                       mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05)):
             patch.start()
             self.addCleanup(patch.stop)

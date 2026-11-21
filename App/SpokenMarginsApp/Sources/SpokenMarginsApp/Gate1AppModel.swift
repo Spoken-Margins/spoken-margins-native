@@ -58,7 +58,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private var presentedScreen: Gate1Screen = .home
     @Published var requestedExperienceRoot: AppRoot?
     @Published var marginCollectionQuery = MarginCollectionQuery()
-    @Published var sharedMarginRows: [SharedMarginRow] = []
+    @Published var sharedMarginRows: [SharedMarginRow] = [] { didSet { updateSkimAvailability(refreshResources: false) } } // Skim's stops are these Margins (#4447)
     @Published var justHeardPeek = JustHeardPeekState() // a podcast's "Just heard" words, transcribed after the tap (#2966)
     var screen: Gate1Screen {
         get { presentedScreen }
@@ -224,7 +224,7 @@ final class Gate1AppModel: ObservableObject {
             else if oldValue.id == snapshot.itemId { activePlaybackDetail = oldValue }
             if oldValue.id != selectedItem.id { selectedListeningEdition = try? ListeningEditionStore.application().load(itemID: selectedItem.id) }
             backgroundRefresh.selectionWasAssigned()
-            skimBridge.itemDetailChanged(from: SkimResourceKey(oldValue), to: SkimResourceKey(selectedItem)); selectedItemStreamFlag.invalidate()
+            skimBridge.itemDetailChanged(from: SkimResourceKey(oldValue), to: SkimResourceKey(selectedItem)); selectedItemStreamFlag.invalidate(); if selectedItem.id == skimSource?.itemId, selectedItem.skimStopInputsDiffer(from: oldValue) { updateSkimAvailability(refreshResources: false) } // Skim's stops are read from the playing item's detail, so only its changes count (#4447)
             prepareLeveledMargins(from: oldValue)
             if oldValue.id != selectedItem.id || oldValue.externalReference != selectedItem.externalReference {
                 storedSourceFollowSuggestionCandidates = []
@@ -236,7 +236,7 @@ final class Gate1AppModel: ObservableObject {
             }
         }
     }
-    @Published var marginRows: [MarginRow] = []
+    @Published var marginRows: [MarginRow] = [] { didSet { updateSkimAvailability(refreshResources: false) } } // Skim's stops are these Margins (#4447)
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
     @Published var recordingCaptureHealth: MarginCaptureSupervisor.Health = .capturing // written by Gate1AppModel+MarginCapture only
     var captureWatcher = MarginCaptureWatcher(); var compactBeginContext = CompactBeginContext() // the latter: what came just before a Lock Screen or headset Margin start (#4414); one line, the hot-file ratchet
@@ -298,6 +298,7 @@ final class Gate1AppModel: ObservableObject {
         return snapshot.skimBridgeState?.status == .playing || snapshot.status.isPlaybackActive
     }
     let quickAccess = QuickAccessFolderState() // the Quick Folder; its changes are relayed in init (#981)
+    let libraryCollections = LibraryCollectionModel() // the Library's collection chips; relayed in init (#4343)
     @Published var sourceImportProgressMessage: String?
     @Published var importInbox: [ImportInboxEntry] = []
     @Published var sourceLinksWaitingForNetwork = 0 // shared links left pending while offline (#1546)
@@ -436,6 +437,7 @@ final class Gate1AppModel: ObservableObject {
     var databaseURLOverride: URL?
     let gate2CompactControls: Gate2CompactControlController
     let localFoundationModelClient: any LocalFoundationModelClient
+    let marginTidyProposer: MarginTidyProposer // #4339: one per app run, so a model rewrite is asked for once
     let streamingSpeechQueue = StreamingSpeechQueue(speech: SystemSpeechPlaybackClient())
     var speechPlaybackClient: AudioPlaybackClient?
     var sessionAudioPlaybackClient: AudioPlaybackClient?
@@ -617,6 +619,7 @@ final class Gate1AppModel: ObservableObject {
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.gate2CompactControls = gate2CompactControls
         self.localFoundationModelClient = UITestingHooks.localFoundationModelClient ?? localFoundationModelClient
+        self.marginTidyProposer = .forApp(client: UITestingHooks.localFoundationModelClient ?? localFoundationModelClient)
         self.databaseURLOverride = databaseURLOverride
         self.trashUndoDismissDelay = trashUndoDismissDelay
         if let interjectionTranscriptionHandler {
@@ -677,6 +680,7 @@ final class Gate1AppModel: ObservableObject {
         sanitizeTTSMode()
         settingsValueChanged()
         wireQuickAccessFolder()
+        wireLibraryCollections()
         refreshQuickAccessFolder()
         streamingSpeechQueue.onTurnDrained = { [weak self] turnId in
             self?.finishStreamingTurnIfReady(turnId)
@@ -1019,7 +1023,7 @@ final class Gate1AppModel: ObservableObject {
         backgroundRefresh.requestAnnouncement() // the reload that publishes also announces audio that finished while away and schedules audio and episode-map preparation (they walk the fresh rows)
         refreshLibraryRowsInBackground(mustPublish: true)
         if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() } // a background task may have ended while the app was away (#534)
-        refreshQuickAddFeed(force: false)
+        refreshQuickAddFeed(force: false, trigger: .foreground)
     }
 
     func clearReproducibleOfflineAudio() {
@@ -1060,10 +1064,6 @@ final class Gate1AppModel: ObservableObject {
         return sharedMarginRows.filter {
             marginCollectionQuery.includes(itemID: $0.layer.itemId) && marginCollectionQuery.matches([$0.interjection.approvedTranscript, $0.itemTitle, $0.collectionLabel])
         }
-    }
-
-    func marginSourceContext(_ row: MarginRow) -> String? {
-        MarginCollection.sourceContext(anchorBefore: row.interjection.anchor.anchorBefore, anchorAfter: row.interjection.anchor.anchorAfter)
     }
 
     /// Opens the Margin a notes-folder link names (#171).
@@ -1528,16 +1528,8 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    var visibleLibraryItems: [LibraryItemRow] {
-        LibraryQueryEngine.visibleLibraryItems(libraryItems, query: libraryQuery)
-    }
-
     static func loadLibraryListeningFilter(defaults: UserDefaults) -> LibraryListeningStateFilter {
         LibraryQueryEngine.loadLibraryListeningFilter(defaults: defaults)
-    }
-
-    var libraryIsCaughtUp: Bool {
-        LibraryQueryEngine.libraryIsCaughtUp(libraryItems, query: libraryQuery)
     }
 
     var libraryHidesCompleted: Bool {
@@ -2333,20 +2325,20 @@ final class Gate1AppModel: ObservableObject {
                         return
                     }
                     var stable = handoff; stable.itemId = id
-                    try importBrowserTextInBackground(stable)
+                    try await importBrowserTextInBackgroundReloadingOffMain(stable)
                     reportConfirmation("Added article. Your reading service has not been changed.")
                 } else {
                     // URL-only services use the existing local readable-page importer,
                     // including its visible unsupported/paywall failure behavior.
                     guard let url = URL(string: document.url) else { throw EditionError.invalid("Invalid article URL.") }
-                    var handoff = try await readablePageExtractor.extract(url: url)
+                    var handoff = try await listenerReadablePageExtractor.extract(url: url)
                     let id = "read-later-" + ListeningEdition.digest(document.url + "\n" + handoff.text)
                     let store = try requireStore()
                     if let found = try? store.loadItemSummary(id: id), found.deletedAt == nil {
                         reportConfirmation("This article is already in your Library."); return
                     }
                     handoff.itemId = id
-                    try importBrowserTextInBackground(handoff)
+                    try await importBrowserTextInBackgroundReloadingOffMain(handoff)
                     reportConfirmation("Added article from its original website.")
                 }
             } catch { reportFailure(error, context: "Article import failed") }
@@ -2906,7 +2898,7 @@ final class Gate1AppModel: ObservableObject {
             ledger: ledger,
             applicationSupportDirectory: support
         )
-        followedSourceCoordinator = FollowedSourceCoordinator(repository: store, artworkFile: support.appending(path: FollowingArtworkCache.fileName), itemArtworkFile: support.appending(path: ItemArtworkStore.fileName), signals: .app)
+        followedSourceCoordinator = FollowedSourceCoordinator(repository: store, artworkFile: support.appending(path: FollowingArtworkCache.fileName), itemArtworkFile: support.appending(path: ItemArtworkStore.fileName), setAside: FollowingRuleInputs.setAside(store: store), signals: .app)
         guidedOnboardingCoordinator = GuidedOnboardingCoordinator(
             directory: support.appending(path: "GuidedOnboarding", directoryHint: .isDirectory),
             ledger: ledger

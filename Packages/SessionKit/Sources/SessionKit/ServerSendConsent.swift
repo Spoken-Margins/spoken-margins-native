@@ -13,6 +13,9 @@ import Foundation
 public enum ServerSendFeature: String, CaseIterable, Sendable {
     /// "Share as link" (#487): the sealed packet and preview go to our server.
     case shareLinks = "share-links"
+    /// Starting or joining a club (#1799): the sealed club name, and each post's sealed packet, go to our server.
+    /// No club screen asks for this yet; the words are `ClubConsentCopy`.
+    case clubs = "clubs"
 }
 
 public enum ServerSendConsent {
@@ -63,5 +66,39 @@ public enum ShareLinkConsentCopy {
         You can send the file instead. It goes straight to your friend and never touches our server.
         """
     public static let accept = "Share as Link"
+    public static let decline = "Not Now"
+}
+
+/// What the listener reads before they first start or join a club (#1799, `docs/design/club-mailbox.md` sections 2, 3, 6
+/// and 8). Drafted from the design note, so it says what the server stores and what a club cannot do; the owner's
+/// wording replaces it, and it is not shown until the club screens ship (slice 5). When the code starts to send
+/// more, the words change in the same PR and `ServerSendConsent.disclosureVersion` goes up. "90 days" is the
+/// server's idle expiry for a club (section 3); "when you open the app" is design section 6, which has no background
+/// polling and no push. Unlike a share link, a club makes no App Attest code for the phone: club requests carry no
+/// install identity (section 5), so this alert does not mention one.
+public enum ClubConsentCopy {
+    public static let title = "Start or join a club?"
+    public static let message = """
+        A club is a box on our server that you and your friends share. Whoever starts a club sends its name and \
+        the name they chose for themselves. Everyone who posts sends each Margin with its audio and text, a short \
+        excerpt of the source, the source's title and address, and a random code made on your phone for that \
+        club, in the same kind of packet as a file. All of it is locked on your phone with a key that is only in \
+        the invite link. We can't read it, except in one case: if someone reports the club as abuse material, \
+        the report carries the whole link and we keep it for a year.
+
+        Anyone who has the link can read the club, from its first post, and post to it. A post can't be taken \
+        back, and there is no way to take someone out: you start a new club.
+
+        Our server keeps no list of members and no names, and your phone makes no code of its own for a club. \
+        Each time your phone looks at a club, the server sees the club's number and a proof that you have the \
+        link. It also sees how big each post is, their order and the day the club was last used. Like any \
+        website, it sees your network address, scrambled and kept only in memory, for up to an hour. It deletes \
+        a club after 90 days with no post and no visit, or after 7 days if nobody has posted.
+
+        Your phone looks for new posts when you open the app or pull to refresh, not in the background.
+
+        You can send a friend the file instead. It goes straight to them and never touches our server.
+        """
+    public static let accept = "Continue"
     public static let decline = "Not Now"
 }

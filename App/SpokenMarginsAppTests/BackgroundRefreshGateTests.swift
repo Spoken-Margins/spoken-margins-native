@@ -238,6 +238,52 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertTrue(model.libraryItems.contains { $0.id == id }, "the imported item is on the shelf when the import returns")
     }
 
+    /// #2256: a caller already in a `Task` (a shared link's article, an Import Inbox payload, a followed article, a read-later
+    /// save) awaits the off-main reload instead of reading the whole Library on the main thread after the write.
+    func testAnAwaitedBrowserTextImportReadsTheLibraryOffTheMainThreadAndHasTheRowWhenItReturns() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let held = HeldReads()
+        holdReads(held, on: model)
+        held.releaseAll()
+        model.libraryItems = sentinelRows()
+        let handoff = BrowserTextHandoff(
+            captureMode: .readablePage,
+            source: BrowserTextSource(url: "https://example.com/awaited-import", title: "Awaited import"),
+            text: "An article added from a shared link while the app is in the foreground.",
+            contentFormat: .plainText)
+
+        let id = try await model.importBrowserTextInBackgroundReloadingOffMain(handoff)
+
+        XCTAssertGreaterThanOrEqual(held.count, 1, "the Library is read through the off-main read, not on the main thread (#2256)")
+        XCTAssertTrue(model.libraryItems.contains { $0.id == id }, "the added item is on the shelf when the import returns")
+        XCTAssertFalse(model.libraryItems.map(\.id).contains("sentinel"), "the awaited reload replaced the earlier rows")
+    }
+
+    func testAPacketsPodcastReadsTheLibraryOffTheMainThreadAndHasTheRowWhenItReturns() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let held = HeldReads()
+        holdReads(held, on: model)
+        held.releaseAll()
+        let audioURL = "https://audio.example/packet-episode.mp3"
+        let request = LinkResolutionRequest(
+            id: "shared-package-test", inputURL: "https://audio.example/packet-episode", sourceSurface: "spoken_margins_package",
+            createdAt: Date())
+        let result = LinkResolutionResult(
+            requestId: request.id, status: .playable, originalLink: SourceLink(url: audioURL, role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: audioURL, role: "media"), title: "Packet episode", durationMs: 300_000,
+                audioURL: audioURL, confidence: 1))
+
+        let item = try await model.persistResolvedSourceLinkInBackgroundReloadingOffMain(
+            request: request, result: result, listenerAdded: false)
+
+        let id = try XCTUnwrap(item?.id)
+        XCTAssertGreaterThanOrEqual(held.count, 1, "the Library is read through the off-main read, not on the main thread (#2256)")
+        XCTAssertTrue(model.libraryItems.contains { $0.id == id }, "the packet's podcast is on the shelf when the acquisition returns")
+    }
+
     func testTheForegroundAnnouncementSurvivesAnOvertakingReloadAndFiresOnce() {
         let gate = BackgroundRefreshGate()
         XCTAssertFalse(gate.takeAnnouncement(), "nothing asked for one")
@@ -509,11 +555,12 @@ final class BackgroundRefreshGateTests: XCTestCase {
         let margin = try XCTUnwrap(model.selectedItem.interjections.first)
         XCTAssertNotEqual(margin.isStarredForSharing, true)
 
-        model.setInterjectionStarredForSharing(margin.id, starred: true)
-        XCTAssertNotEqual(model.selectedItem.interjections.first?.isStarredForSharing, true,
-                          "the star must not read the item before it returns")
+        model.setStarredForSharing(margin, starred: true, place: .detail)
+        // The star shows at once, from the Margin the one-row write returned: Share reads the selected item, and a Margin
+        // starred a moment ago must start selected (#4173). The item itself is still read in the background, not here (#2505).
+        XCTAssertEqual(model.selectedItem.interjections.first?.isStarredForSharing, true, "the star shows before any reload")
         await model.settleItemReload()
-        XCTAssertEqual(model.selectedItem.interjections.first?.isStarredForSharing, true, "the background read shows the star")
+        XCTAssertEqual(model.selectedItem.interjections.first?.isStarredForSharing, true, "the background read keeps the star")
 
         model.setInterjectionPrivateSharingNote(margin.id, note: "For Sam")
         XCTAssertNil(model.selectedItem.interjections.first?.privateSharingNote, "the note must not read the item before it returns")

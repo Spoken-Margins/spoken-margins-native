@@ -144,6 +144,12 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
                 app.buttons["item.markCompleteVisible.button"].exists,
                 "Mark complete leads the item before the friend's Margins are heard"
             )
+            // #3788: on arrival the friend sees the intro, not "Mark complete" and not a placement status, in any element.
+            for words in ["Mark complete", "Placing in your copy", "Matching positions in your episode"] {
+                let shown = NSPredicate(format: "label CONTAINS[c] %@", words)
+                XCTAssertEqual(app.descendants(matching: .any).matching(shown).count, 0, "\"\(words)\" shows on arrival")
+            }
+            XCTAssertFalse(element("item.arrival.waitingLine").exists, "The waiting line shows with nothing to wait for")
             play.tap()
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "The episode did not start")
             XCTAssertEqual(app.buttons["playback.itemTitle.button"].label, episodeTitle, "A different item is playing")

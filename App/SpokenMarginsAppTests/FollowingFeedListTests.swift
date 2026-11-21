@@ -1,4 +1,5 @@
 import XCTest
+import SessionKit
 import SessionKitPersistence
 import SessionKitSharing
 @testable import SessionKit
@@ -36,8 +37,13 @@ final class FollowingFeedListTests: XCTestCase {
                 anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "\(name)'s note"
             ))
         }
+        // The Library row reads "N min" for both the time left and the whole length (#4698, #4701), so the started
+        // item has to be minutes long: with every item under a minute both rows would say "under 1 min" and the
+        // progress-versus-length check below could not tell them apart. About 12 minutes at the default 1x speech
+        // rate; 40% heard leaves about 7, while the unstarted items stay under one minute.
+        let longPassage = String(repeating: "A passage to listen to. ", count: 420)
         for itemId in ["ada-new", "ada-old", "blair", "cole", "shanti", "professor"] {
-            try store.saveItem(Item(id: itemId, title: "On \(itemId)", mediaType: "text", text: "A passage to listen to.", externalReference: "local", status: "ready"))
+            try store.saveItem(Item(id: itemId, title: "On \(itemId)", mediaType: "text", text: itemId == "ada-old" ? longPassage : "A passage to listen to.", externalReference: "local", status: "ready"))
         }
         try store.saveSession(Session(id: "ada-old-session", itemId: "ada-old", status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "ada-old", position: Position(charOffset: 8), completionPercent: 40, playbackRate: 1))
         try shareMargin(from: "Ada", on: "ada-new", recorded: hours(1), received: hours(1))
@@ -107,10 +113,16 @@ final class FollowingFeedListTests: XCTestCase {
             XCTAssertEqual(ada.items.map(\.title), ["On ada-new", "On ada-old"])
             XCTAssertEqual(ada.items.map(\.countLabel), ["1 Margin", "1 Margin"])
             XCTAssertEqual(ada.items.map(\.newLabel), ["1 new", "1 new"], "the friend's unheard Margins are counted in words")
-            // The Library row's wording after the length: source, kind, then progress.
-            let details = ada.items.map { model.followingFriendItemDetail($0)?.rest }
-            XCTAssertEqual(details.first??.hasSuffix("Text"), true, "each item carries the Library row's kind: \(details)")
-            XCTAssertEqual(details.last??.hasSuffix("Text · 40%"), true, "progress reads as on the Library row: \(details)")
+            // The Library row's wording (#4062): progress words first, then source and kind.
+            let details = ada.items.map { model.followingFriendItemDetail($0) }
+            XCTAssertEqual(details.map { $0?.rest }, ["local · Text", "local · Text"], "each item carries the Library row's source and kind")
+            let started = model.libraryItems.first { $0.id == "ada-old" }
+            XCTAssertNotNil(started, "the started item is in the Library")
+            let libraryProgress = started.flatMap { LibraryRowLines(row: $0, playbackSpeed: model.speechPlaybackRateMultiplier).progress }
+            XCTAssertNotNil(libraryProgress)
+            XCTAssertNotEqual(libraryProgress, "under 1 min", "the started item is minutes long, so its time left is not the short-item fallback")
+            XCTAssertEqual(details.last??.length, libraryProgress, "progress reads as on the Library row")
+            XCTAssertNotEqual(details.last??.length, details.first??.length, "the started item shows its progress, not the length the unstarted one shows")
         }
     }
 }

@@ -50,6 +50,8 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     public private(set) var isSettled = false
     /// A friend's file held the drawer back, in this launch or an earlier one. Stays true once the drawer shows.
     public private(set) var wasHeldBack: Bool
+    /// An earlier launch's friend's file held the drawer back; a failure in this launch doesn't undo that.
+    private let wasHeldBackBeforeThisLaunch: Bool
 
     /// Whether Done with nothing picked (or a pick that couldn't start) may play the Welcome sample. It may not
     /// when a friend's file held the drawer back (#3796).
@@ -75,6 +77,7 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     public init(drawerOwed: Bool, owedFromEarlierLaunch: Bool = false) {
         phase = drawerOwed ? .owed : .notOwed
         wasHeldBack = drawerOwed && owedFromEarlierLaunch
+        wasHeldBackBeforeThisLaunch = wasHeldBack
     }
 
     /// The drawer is still owed while a friend's file holds it back; the app keeps that for the next launch.
@@ -104,6 +107,19 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
         case .notOwed, .waitingForFriendItem, .waitingForLibrary:
             return .none
         }
+    }
+
+    /// A friend's link or file failed to open and the sheet saying so was closed with OK or Close (#3801), not on Try
+    /// Again, which stays waiting. The drawer the file withdrew comes back: at once when the listener is on the
+    /// Library and the launch has settled, else owed to the next time they reach it. It no longer counts as held
+    /// back because of this file, so Done with nothing picked plays the Welcome sample as on any first launch, unless
+    /// an earlier launch's friend's file held it back (that friend's item is in the Library). A failure with the drawer
+    /// never withdrawn (it had picks, or nothing was owed) changes nothing.
+    public mutating func friendFileFailed(place: Place) -> Action {
+        guard phase == .waitingForFriendItem else { return .none }
+        wasHeldBack = wasHeldBackBeforeThisLaunch
+        phase = .owed
+        return moved(to: place)
     }
 
     /// The listener's place changed.

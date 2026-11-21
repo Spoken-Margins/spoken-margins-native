@@ -156,17 +156,22 @@ struct SettingsScreen: View, Equatable {
                             .accessibilityLabel("Refresh iOS Voices")
                             .accessibilityIdentifier("settings.refreshSpeechVoices.button")
                         }
-                        Picker("Speech Voice", selection: model.screenBinding(\.speechVoiceIdentifier)) {
-                            Text("System Spoken Content Voice (Siri falls back)").tag("")
-                            ForEach(inputs.speechVoiceOptions) { voice in
-                                Text("\(voice.name) · \(voice.language) · \(voice.quality)")
-                                    .tag(voice.id)
-                            }
+                        NavigationLink {
+                            SpeechVoiceListScreen(
+                                voices: inputs.speechVoiceOptions,
+                                chosenIdentifier: inputs.speechVoiceIdentifier,
+                                select: { identifier in
+                                    model.speechVoiceIdentifier = identifier
+                                    model.ttsVoiceSelectionChanged()
+                                })
+                            .miniPlayerKeepOut()
+                        } label: {
+                            LabeledContent(
+                                "Speech Voice",
+                                value: SpeechVoiceListScreen.menu(
+                                    voices: inputs.speechVoiceOptions, chosenIdentifier: inputs.speechVoiceIdentifier).valueText)
                         }
                         .accessibilityIdentifier("settings.speechVoice.picker")
-                        .onCompatibleChange(of: inputs.speechVoiceIdentifier) { _ in
-                            model.ttsVoiceSelectionChanged()
-                        }
                     }
                     VStack(alignment: .leading) {
                         HStack {

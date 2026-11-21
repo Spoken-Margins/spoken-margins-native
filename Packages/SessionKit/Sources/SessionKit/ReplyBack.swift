@@ -1,7 +1,7 @@
 import Foundation
 
 /// Sending replies back (#3221, step 6-8 of the sharing loop #3216). After a listener has heard a friend's Margins and
-/// answered some, the Share action offers "Send replies to <friend>": the replies are chosen, the listener's other new
+/// answered some, the Share action offers "Share replies with <friend>": the replies are chosen, the listener's other new
 /// Margins on the item are offered unselected, and nothing the friend sent goes back. The packet itself is the ordinary
 /// one; a reply already carries its link to the parent (#472), so Builds 32 and 34 import it as before.
 public struct ReplyBackOffer: Equatable, Sendable {
@@ -14,7 +14,12 @@ public struct ReplyBackOffer: Equatable, Sendable {
     public let friendLabels: [String]
 
     public var friendName: String { ReplyBackOffer.names(friendLabels) }
-    public var title: String { "Send replies to \(friendName)" }
+    /// The row's words and the sheet's heading (#3906): Share, the one verb for sending to a person, and what the
+    /// sheet holds. "Share replies with Ana" when a Margin answers a friend's; "Share your Margins with Ana" when the
+    /// listener's new Margins are not replies, so the row never calls them replies.
+    public var title: String {
+        replies.isEmpty ? "Share your Margins with \(friendName)" : "Share replies with \(friendName)"
+    }
     /// Every Margin the share sheet lists, in the order they were made.
     public var candidates: [Interjection] { (replies + others).sorted(by: ReplyBackOffer.madeBefore) }
     /// Whether the sheet starts with this Margin included. With linked replies, those and only those (#3221). With none,
@@ -155,7 +160,10 @@ extension SharedMarginReview {
                     steps.append(Step(
                         anchor: MarginMomentAnchor(
                             marginId: parentMarginId(id), mediaTimeMs: at,
-                            isApproximate: place == nil && entry.isApproximate, caption: caption, isYours: true
+                            isApproximate: place == nil && entry.isApproximate, caption: caption, isYours: true,
+                            // The run-up before the pair is the sender's for the reply it leads into (#4171): the parent sorts
+                            // first at that place, so the review's start and the first hop are counted from it.
+                            leadInMs: entry.interjection.senderLeadInMs
                         ),
                         entry: nil, ownParent: parent
                     ))
@@ -163,7 +171,8 @@ extension SharedMarginReview {
                 if entry.isApproximate, let place = parentPlaces[id] {
                     replyAnchor = MarginMomentAnchor(
                         marginId: entry.marginId, mediaTimeMs: place, label: entry.senderLabel, isApproximate: true,
-                        caption: entry.replyContext?.caption, isReadAloud: entry.interjection.isWritten
+                        caption: entry.replyContext?.caption, isReadAloud: entry.interjection.isWritten,
+                        leadInMs: entry.interjection.senderLeadInMs
                     )
                 }
             }

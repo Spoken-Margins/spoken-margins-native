@@ -24,22 +24,41 @@ extension Gate1AppModel {
     func persistResolvedSourceLinkInBackground(
         request: LinkResolutionRequest,
         result: LinkResolutionResult,
-        listenerAdded: Bool,
-        readsLibraryOffMain: Bool = false
+        listenerAdded: Bool
+    ) throws -> Item? {
+        guard let item = try writeResolvedSourceLinkInBackground(request, result: result, listenerAdded: listenerAdded) else {
+            return nil
+        }
+        refreshLibraryRowsInBackground(mustPublish: true) // adding a link: a whole-Library read on main hung each add (#2505)
+        return finishResolvedSourceLink(item, result: result)
+    }
+
+    /// `persistResolvedSourceLinkInBackground` for a caller that is already in a `Task` (a packet's podcast, #2256): the
+    /// Library read after the write runs off the main thread and is awaited, so the rows are on screen when this returns.
+    func persistResolvedSourceLinkInBackgroundReloadingOffMain(
+        request: LinkResolutionRequest,
+        result: LinkResolutionResult,
+        listenerAdded: Bool
+    ) async throws -> Item? {
+        guard let item = try writeResolvedSourceLinkInBackground(request, result: result, listenerAdded: listenerAdded) else {
+            return nil
+        }
+        try await reloadLibraryRowsOffMain(store: try requireStore())
+        return finishResolvedSourceLink(item, result: result)
+    }
+
+    private func writeResolvedSourceLinkInBackground(
+        _ request: LinkResolutionRequest, result: LinkResolutionResult, listenerAdded: Bool
     ) throws -> Item? {
         let store = try requireStore()
         if engine == nil {
             installEngine(try makeEngine(store: store))
         }
-        guard let engine,
-              let item = try engine.importResolvedSourceLinkInBackground(request, result: result, listenerAdded: listenerAdded) else {
-            return nil
-        }
-        if readsLibraryOffMain {
-            refreshLibraryRowsInBackground(mustPublish: true) // adding a link: a whole-Library read on main hung each add (#2505)
-        } else {
-            libraryItems = try loadLibraryRows(store: store)
-        }
+        guard let engine else { return nil }
+        return try engine.importResolvedSourceLinkInBackground(request, result: result, listenerAdded: listenerAdded)
+    }
+
+    private func finishResolvedSourceLink(_ item: Item, result: LinkResolutionResult) -> Item {
         diagnostics["lastBackgroundSourceLinkImport"] = item.id
         markOnboardingSteps([.addedOwnSource, .addedPodcast])
         schedulePodcastDownloadIfNeeded(itemId: item.id)
@@ -84,11 +103,11 @@ extension Gate1AppModel {
         let fetched = FetchedPageMemo() // the voiceover lookup reads the post page from here (#810)
         let resolution = try await LinkArticleFallback.resolve(
             request, url: url, resolver: sourceLinkResolver, remembering: fetched, allowsArticle: feedEntry == nil,
-            using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }
+            using: listenerReadablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }
         )
         guard case .podcast(let result) = resolution else {
             if case .article(let article) = resolution {
-                let itemId = try importBrowserTextInBackground(article, listenerAdded: listenerAdded)
+                let itemId = try await importBrowserTextInBackgroundReloadingOffMain(article, listenerAdded: listenerAdded)
                 rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: fetched)
                 return itemId
             }

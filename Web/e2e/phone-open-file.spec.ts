@@ -38,6 +38,8 @@ async function refuseFirstAutoplay(page: Page): Promise<void> {
     const play = HTMLMediaElement.prototype.play;
     let refused = false;
     HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+      // The player readies its clip element with a moment of silence (#4472); that is not the episode starting.
+      if (this.src.startsWith('data:audio/wav')) return play.call(this);
       if (!refused) {
         refused = true;
         return Promise.reject(new DOMException('play() needs a tap', 'NotAllowedError'));

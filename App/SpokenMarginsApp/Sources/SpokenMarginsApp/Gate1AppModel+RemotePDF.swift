@@ -6,7 +6,8 @@ import SessionKit
 extension Gate1AppModel {
     /// Imports the PDF a Link-field link serves, without changing Now Playing.
     func importPDFFromLinkField(_ url: URL) async throws -> Bool {
-        try await importRemotePDFInBackground(url: url, onboardingSteps: [.addedOwnSource])
+        let itemId = try await importRemotePDFInBackground(url: url, onboardingSteps: [.addedOwnSource])
+        libraryCollections.importCapture?.recordAdded(itemId) // a link list's PDF joins its collection (#3769)
         reportConfirmation("Added the PDF to Library without changing Now Playing.")
         return true
     }
@@ -46,6 +47,8 @@ extension Gate1AppModel {
             documentStructure: extracted.documentStructure
         )
         let itemId = try await importBrowserTextInBackgroundOffMain(handoff, structuredDocument: extracted.document)
+        await keepOriginalPDF(data, itemId: itemId) // #4338: a PDF imported again replaces its item's copy (#556)
+        await savePDFClips(extracted.clips, itemId: itemId)
         diagnostics["lastRemotePDFImport"] = url.absoluteString
         markOnboardingSteps(onboardingSteps)
         return itemId
@@ -57,8 +60,10 @@ extension Gate1AppModel {
     /// A PDF the share sheet saved to the app group (#828 returns the new item for the pending-share message).
     func importLocalSharedPDFInBackground(url: URL) async throws -> String {
         #if canImport(PDFKit)
-        let extracted = try await Task.detached(priority: .userInitiated) {
-            try NativePDFDocumentExtractor.extractStructured(from: url)
+        let (extracted, sourceSHA256) = try await Task.detached(priority: .userInitiated) {
+            // The file is hashed a chunk at a time and read by PDFKit from disk; its bytes are never held (#4338).
+            let hash = try? SourceCatalogVerifier.sha256(ofFileAt: url)
+            return (try NativePDFDocumentExtractor.extractStructured(fromFile: url, sourceSHA256: hash), hash)
         }.value
         let fileTitle = url.deletingPathExtension().lastPathComponent
         let title = extracted.title ?? (fileTitle.isEmpty ? "Shared PDF" : fileTitle)
@@ -74,6 +79,8 @@ extension Gate1AppModel {
             documentStructure: extracted.documentStructure
         )
         let itemId = try await importBrowserTextInBackgroundOffMain(handoff, structuredDocument: extracted.document)
+        await keepOriginalPDF(copying: url, itemId: itemId, expectedSHA256: sourceSHA256) // #4338
+        await savePDFClips(extracted.clips, itemId: itemId)
         diagnostics["lastSharedPDFImport"] = url.lastPathComponent
         markOnboardingSteps([.addedOwnSource, .addedFromSafari])
         return itemId
@@ -100,6 +107,25 @@ extension Gate1AppModel {
     func finishBackgroundBrowserTextImport(_ item: Item, handoff: BrowserTextHandoff) throws -> String {
         if item.mediaType == "pdf" { PreparedSpeechHooks.texts.invalidate(itemId: item.id) }
         libraryItems = try loadLibraryRows(store: try requireStore())
+        return recordBackgroundBrowserTextImport(item, handoff: handoff)
+    }
+
+    /// `importBrowserTextInBackground` for a caller that is already in a `Task`: the new item is written as before, and
+    /// the whole-Library read that follows runs off the main thread and is awaited, so the rows are on screen when this
+    /// returns (what `reportAddedToLibrary` and `openItem` read next). The synchronous version stays for the callers
+    /// that cannot await (#2256).
+    @discardableResult
+    func importBrowserTextInBackgroundReloadingOffMain(
+        _ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil, listenerAdded: Bool = true
+    ) async throws -> String {
+        let item = try browserTextImportEngine().importBrowserTextInBackground(
+            Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument, listenerAdded: listenerAdded)
+        return try await finishBackgroundBrowserTextImportOffMain(item, handoff: handoff)
+    }
+
+    func finishBackgroundBrowserTextImportOffMain(_ item: Item, handoff: BrowserTextHandoff) async throws -> String {
+        if item.mediaType == "pdf" { PreparedSpeechHooks.texts.invalidate(itemId: item.id) }
+        try await reloadLibraryRowsOffMain(store: try requireStore())
         return recordBackgroundBrowserTextImport(item, handoff: handoff)
     }
 

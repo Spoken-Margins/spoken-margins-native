@@ -1,5 +1,5 @@
-# Hosted integration run (#1389 phase 2, part B): test each new tip of the trunk (SM_TRUNK, main since #1492) on a
-# GitHub-hosted Mac instead of the owner's, with the same script the Mac's launchd job runs
+# Hosted integration run (#1389 phase 2, part B), by hand only since #4573 (see `on:` below): test the trunk's tip
+# (SM_TRUNK, main since #1492) on a GitHub-hosted Mac instead of the owner's, with the same script the Mac's launchd job runs
 # (ops/testdesk/sm_integration_run.py --hosted): --plan app, two re-runs of any failing test on the same build, the scripted journeys in
 # TestPlans/scripted-journeys.json, then one `Lane report integration-<sha7>` on #184 with
 # `run by: hosted integration`. scripts/phone-build reads that report unchanged.
@@ -22,10 +22,11 @@
 # No secrets: a read-only checkout, and the job token may only comment on issues (#184).
 name: hosted-integration
 
+# Manual dispatch only since #4573 (owner, 2026-11-18): main-t3.yml is the trunk's one simulator run, on a schedule,
+# and records a `main-t3` commit status that the phone build and the release gate read (#4575). This run no longer
+# starts on a push; most of its push runs were cancelled by the next merge anyway. It still works when dispatched on
+# the trunk (it posts its #184 report as before) or on a branch to prove a change to it (it posts nothing).
 on:
-  push:
-    # Both trunks (#1492); the job runs only for the one SM_TRUNK names.
-    branches: [next, main]
   workflow_dispatch:
 
 permissions:
@@ -80,6 +81,18 @@ jobs:
           auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
 
+      # The packages the app build fetched before, handed to xcodebuild by scripts/verify-tests.py through SM_SPM_DIR
+      # (#4664): download.onnxruntime.ai served an invalid certificate on 2026-11-21 and failed every run that fetched
+      # the binary targets afresh. hosted-app-macos.yml saves this cache; this run only restores it.
+      - name: Restore the Swift packages
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ github.workspace }}/.build/spm
+          key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: spm-
+      - name: Use the restored packages
+        run: echo "SM_SPM_DIR=$GITHUB_WORKSPACE/.build/spm" >> "$GITHUB_ENV"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'

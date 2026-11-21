@@ -24,6 +24,16 @@ extension Gate1AppModel {
     @discardableResult
     func beginSourceLinkImportFromForm(startSession: Bool = true) -> Bool {
         guard !sourceLinkGate.isBusy else { return false }
+        // A friend's share link is not a source to resolve: open it as a tapped link, clear the field and let the sheet
+        // close (#3782). Pasting it into the field used to import it as a web page the app could not read.
+        if case .shareLink(let link) = PasteIntake.classify(sourceLinkURL) {
+            sourceLinkURL = ""
+            sourceLinkSafariOffer = nil
+            sourceLinkImportMessage = nil
+            sourceLinkImportState = "success"
+            openShareLink(link)
+            return true
+        }
         let submittedURL = sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let parsedURL = URL(string: submittedURL),
               let scheme = parsedURL.scheme?.lowercased(),
@@ -105,6 +115,8 @@ extension Gate1AppModel {
         sourceLinkSafariOffer = nil
     }
 
+    static let collectionImportNeedsChoiceMessage = "Several episodes match this link. Add it on its own to choose one."
+
     func presentSourceLinkCandidateReviewIfAvailable(
         request: LinkResolutionRequest,
         result: LinkResolutionResult,
@@ -116,6 +128,12 @@ extension Gate1AppModel {
             return url.scheme?.lowercased() == "https"
         }
         guard result.status == .needsReview, playableCandidates.count > 1 else { return false }
+        // During a collection import nobody is there to choose: the link counts as not added, with the reason, instead
+        // of a review sheet left open after the import ends (#3769).
+        guard libraryCollections.importCapture == nil else {
+            reportWarning(Self.collectionImportNeedsChoiceMessage)
+            return true
+        }
         var reviewResult = result
         reviewResult.candidates = playableCandidates
         sourceLinkCandidateReview = SourceLinkCandidateReviewState(

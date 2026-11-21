@@ -42,9 +42,10 @@ public struct LiveSessionRecord: Codable, Equatable, Sendable {
             self.createdAt = createdAt
         }
 
-        /// An active Margin of the item; nil for one that was deleted.
+        /// An active Margin of the item; nil for one that was deleted, and for a moved Margin with no place on the item
+        /// (#4233): there is no place in the recording to line it up at, and `0` would be a made-up one.
         public init?(_ margin: Interjection) {
-            guard margin.status == "active" else { return nil }
+            guard margin.status == "active", margin.hasPlace else { return nil }
             let text = [margin.cleanedTranscript, margin.transcript, margin.displayText]
                 .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .first { !$0.isEmpty }

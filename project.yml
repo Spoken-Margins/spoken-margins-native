@@ -131,6 +131,10 @@ targets:
         product: SessionKitEPUB
       - package: SessionKit
         product: SessionKitFeeds
+      # The PDFKit half of exporting Margins as comments in a copy of a PDF (#4338). Linked now so the export sheet's
+      # PR adds no project change; nothing calls it yet.
+      - package: SessionKit
+        product: SessionKitPDF
       - package: PhononTTS
         product: ptts
       - package: KokoroCoreML

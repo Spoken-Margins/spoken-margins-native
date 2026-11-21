@@ -69,7 +69,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             // Tap 1 (#1507): Share on the playback screen opens the sheet on its review, with Share pinned.
             tap("playback.shareMargins.button")
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The Share Margins sheet did not open")
-            let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
+            let cleanUpQuestion = app.alerts["Remove ums and long pauses?"]
             if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
             XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 8), "Share did not open on the review step")
             // Tap 2 is Share here, which opens the iOS share sheet. It has to be on screen without scrolling.
@@ -156,10 +156,11 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             beginStep()
             tap("playback.shareMargins.button") // tap 1
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The Share sheet did not open")
-            XCTAssertFalse(app.alerts["Clean selected Margins automatically?"].waitForExistence(timeout: 2),
+            XCTAssertFalse(app.alerts["Remove ums and long pauses?"].waitForExistence(timeout: 2),
                            "The cleanup question showed on the reply sheet")
             XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 8), "The reply sheet did not open on its review")
-            XCTAssertTrue(element("build23.sender.heading").label.hasPrefix("Send replies to"), "The sheet is not the reply sheet: \(element("build23.sender.heading").label)")
+            let heading = element("build23.sender.heading").label // "Share replies with <friend>", or "Share your Margins with <friend>" when none is linked as a reply (#3906)
+            XCTAssertTrue(heading.hasPrefix("Share replies with") || heading.hasPrefix("Share your Margins with"), "The sheet is not the reply sheet: \(element("build23.sender.heading").label)")
             XCTAssertFalse(element("build23.sender.review.navigator").exists, "The reply review drew the Margin navigator")
             let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "build23.sender.review.selector."))
             XCTAssertGreaterThanOrEqual(rows.count, 1, "The receipt should hold a row for the Margin going")
@@ -171,6 +172,48 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             XCTAssertLessThanOrEqual(taps - tapsAtStepStart, 1, "The reply review is more than one tap past Share")
             note("reply sheet open on its receipt after \(taps - tapsAtStepStart) tap(s); the system share sheet is not scripted")
             tap("build23.sender.cancel")
+        }
+    }
+
+    /// #3788: the number the Design asks for. The time from the item screen's first frame, on a friend's arrival, to the
+    /// first Margin's audio starting after one tap on "Skip to …" made as soon as the button shows (about 10 s is the
+    /// goal; the PR that reads this reports the number and files a speed issue when it is over). It is attached and
+    /// logged, never asserted: a slower build is a finding for the desk, not a failed test (see the top of this file).
+    /// The friend's packet is the launch fixture, so the episode is already in the Library: this is the arrival path
+    /// with placement and download out of the way. Opening a packet from Files with the episode absent can't be scripted
+    /// (it needs the Files app), so that case stays with the agent run (docs/journeys.md, J12 step 4).
+    func testFriendArrivalToFirstMarginSeconds() throws {
+        XCTContext.runActivity(named: "J12 arrival, step 1: The episode is in the Library (offline seed)") { _ in
+            app.launch()
+            XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Seeded episode did not appear in the Library")
+        }
+
+        XCTContext.runActivity(named: "J12 arrival, step 2: Force-quit; a friend's Margin arrives; open the item and skip to it") { _ in
+            app.terminate()
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP"] = "1"
+            app.launch()
+            XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Episode is missing from the Library after relaunch")
+            tap("library.row.\(itemId)")
+            let opened = Date()
+            XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
+            let skip = app.buttons["item.reviewNewMargins.button"].firstMatch
+            XCTAssertTrue(skip.waitForExistence(timeout: 30), "The item screen never offered \"Skip to …\"")
+            let skipShownAt = Date().timeIntervalSince(opened)
+            note(String(format: "item screen to \"Skip to …\" shown: %.1fs", skipShownAt))
+            // The intro first, never "Mark complete" or a placement status, on the first frame the choice shows (#3788).
+            XCTAssertTrue(element("item.friendIntro.sender").exists, "The item doesn't say who sent the Margins")
+            for words in ["Mark complete", "Placing in your copy", "Matching positions in your episode"] {
+                let shown = NSPredicate(format: "label CONTAINS[c] %@", words)
+                XCTAssertEqual(app.descendants(matching: .any).matching(shown).count, 0, "\"\(words)\" shows on arrival")
+            }
+            skip.tap()
+            taps += 1
+            XCTAssertTrue(element("review.playing").waitForExistence(timeout: 60), "The friend's Margin never started playing")
+            let seconds = Date().timeIntervalSince(opened)
+            note(String(format: "item screen to the friend's Margin playing: %.1fs (%@ the 10 s goal); %d taps from the Library",
+                        seconds, seconds <= 10 ? "within" : "over", taps))
+            XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
         }
     }
 

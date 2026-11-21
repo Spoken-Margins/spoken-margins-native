@@ -38,7 +38,7 @@ public enum SharedMarginReview {
         public var anchor: MarginMomentAnchor {
             MarginMomentAnchor(
                 marginId: marginId, mediaTimeMs: mediaTimeMs, label: senderLabel, isApproximate: isApproximate,
-                caption: replyContext?.caption, isReadAloud: interjection.isWritten
+                caption: replyContext?.caption, isReadAloud: interjection.isWritten, leadInMs: interjection.senderLeadInMs
             )
         }
     }

@@ -12,6 +12,7 @@ import ast
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -131,10 +132,10 @@ class ShaInComment(unittest.TestCase):
         self.assertFalse(A.is_audit_comment(reply))
         self.assertIsNone(A.head_audit([reply], HEAD))
 
-    def test_audit_headings_match_the_lane_runner(self):
-        runner = (Path(__file__).resolve().parents[2] / "scripts" / "lane-runner.py").read_text()
-        m = re.search(r"^AUDITS = .*$", runner, re.M)
-        self.assertIsNotNone(m, "scripts/lane-runner.py no longer defines AUDITS on one line")
+    def test_audit_headings_match_the_merge_rules(self):
+        rules = (Path(__file__).resolve().parents[2] / "scripts" / "lane_merge_rules.py").read_text()
+        m = re.search(r"^AUDITS = .*$", rules, re.M)
+        self.assertIsNotNone(m, "scripts/lane_merge_rules.py no longer defines AUDITS on one line")
         self.assertEqual(ast.literal_eval(ast.parse(m.group(0)).body[0].value), A.AUDIT_HEADINGS)
 
     def test_comment_not_starting_with_codex_audit_is_ignored(self):
@@ -206,7 +207,10 @@ class CandidateFilter(unittest.TestCase):
         }
         for p, area in paths.items():
             self.assertIn(area, A.risky_areas([p]), p)
-        self.assertEqual(A.risky_areas(["App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackScreen.swift"]), [])
+        # An app file is audio by its name (test-scope.py APP_AUDIO), so the merge policy holds PlaybackScreen.swift
+        # for an audit; this list used to say it was not risky, and #4666 waited on an audit nobody ran (#4843).
+        self.assertEqual(A.risky_areas(["App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackScreen.swift"]), ["audio"])
+        self.assertEqual(A.risky_areas(["App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift"]), [])
 
     LANE_PATHS = [
         ".github/workflows/lane.yml", ".github/workflows/hosted-portable.yml", "scripts/lane-runner.py",
@@ -967,16 +971,30 @@ class HostedAudit(unittest.TestCase):
         # is run for each way the workflow starts, so a guard turned into a comment or into `true` fails (#3704).
         workflow = W.load("claude-audit.yml")
         job = workflow["jobs"]["audit"]
-        for event, conclusion, runs in (("workflow_run", "skipped", False), ("workflow_run", "success", True),
-                                        ("workflow_run", "failure", True), ("workflow_run", "cancelled", True),
-                                        ("workflow_dispatch", "", True), ("schedule", "", True)):
-            with self.subTest(event=event, conclusion=conclusion):
+        for event, conclusion, source, runs in (
+                ("workflow_run", "skipped", "pull_request", False), ("workflow_run", "success", "pull_request", True),
+                ("workflow_run", "failure", "pull_request", True), ("workflow_run", "cancelled", "pull_request", True),
+                ("workflow_run", "success", "workflow_dispatch", True),
+                ("workflow_run", "success", "merge_group", False), ("workflow_run", "failure", "merge_group", False),
+                ("workflow_dispatch", "", "", True), ("schedule", "", "", True)):
+            with self.subTest(event=event, conclusion=conclusion, source=source):
                 self.assertEqual(W.evaluate_condition(
                     job.get("if", True), github_event_name=event,
-                    github_event_workflow_run_conclusion=conclusion), runs)
+                    github_event_workflow_run_conclusion=conclusion,
+                    github_event_workflow_run_event=source), runs)
         # The group is the job's own, so the skipped run is dropped before it can replace the run waiting in it.
         self.assertEqual(job["concurrency"], {"group": "claude-audit", "cancel-in-progress": False})
         self.assertNotIn("concurrency", workflow)
+
+    def test_a_pr_s_hosted_checks_finishing_starts_the_audit(self):
+        # With lane.yml disabled for the merge queue (2026-11-20) the lane report never comes, and the schedule ran 3
+        # times in 24 hours, so the hosted checks finishing must start the audit themselves.
+        workflow = W.load("claude-audit.yml")
+        on = workflow.get("on") or workflow.get(True)
+        self.assertEqual(on["workflow_run"]["types"], ["completed"])
+        for name in ("hosted-portable", "hosted-web"):
+            self.assertIn(name, on["workflow_run"]["workflows"])
+            self.assertEqual(W.load(f"{name}.yml")["name"], name)
 
     def test_on_the_mac_the_label_event_starts_it_and_nothing_is_dispatched(self):
         with patch.dict(os.environ):
@@ -997,6 +1015,34 @@ class HostedAudit(unittest.TestCase):
         self.assertEqual(command[:4], ["gh", "workflow", "run", "owner-tap-alert.yml"])
         self.assertIn("pr=7", command)
         self.assertEqual(run.call_count, 1)  # no label change: it would start nothing
+
+    def test_after_an_audit_the_merge_policy_check_on_the_head_runs_again(self):
+        # #4693: a workflow_dispatch check doesn't satisfy a required check, so the PR's own pull_request run reruns.
+        head = "a" * 40
+        runs = {"workflow_runs": [{"id": 11, "status": "completed", "created_at": "2026-11-19T10:00:00Z"},
+                                  {"id": 12, "status": "completed", "created_at": "2026-11-19T11:00:00Z"}]}
+        calls = []
+
+        def run(cmd, **kwargs):
+            calls.append(cmd)
+            return SimpleNamespace(returncode=0, stdout=json.dumps(runs), stderr="")
+        with patch.object(A, "run", side_effect=run):
+            self.assertEqual(A.rerun_merge_policy(head), "merge policy check re-run")
+        self.assertIn(f"event=pull_request&head_sha={head}", calls[0][2])
+        self.assertIn("merge-policy.yml", calls[0][2])
+        self.assertEqual(calls[1][:4], ["gh", "run", "rerun", "12"])
+
+    def test_the_merge_policy_rerun_leaves_a_running_check_and_a_missing_workflow_alone(self):
+        for answer, said in ((SimpleNamespace(returncode=0, stdout=json.dumps({"workflow_runs": [
+                                 {"id": 1, "status": "in_progress", "created_at": "x"}]}), stderr=""),
+                              "merge policy check still running"),
+                             (SimpleNamespace(returncode=0, stdout='{"workflow_runs": []}', stderr=""),
+                              "no merge policy check to re-run"),
+                             (SimpleNamespace(returncode=1, stdout="", stderr="HTTP 404: Not Found"),
+                              "no merge policy check to re-run")):
+            with self.subTest(said=said), patch.object(A, "run", return_value=answer) as run:
+                self.assertEqual(A.rerun_merge_policy("b" * 40), said)
+                self.assertEqual(run.call_count, 1)
 
     def test_a_tap_alert_that_can_t_be_dispatched_is_tried_again_and_said_on_the_pr(self):
         # Nothing asks again for this audit, so the PR would wait for a tap nobody was told about.
@@ -1083,6 +1129,93 @@ class OwnerTapAlertDispatch(unittest.TestCase):
         self.assertIn(f"LABEL = '{A.OWNER_TAP_LABEL}'", (root / "scripts" / "owner_tap_alert.py").read_text())
 
 
+class MergePolicyHeldPrAudit(unittest.TestCase):
+    """The audit script audits every PR the merge policy holds for an audit, not only the paths in its own list (#4843).
+
+    The policy reads test-scope.py's categories (lane-runner.py merge_blockers, AUDITED). Six armed PRs sat red on
+    `merge policy` for hours because an app file named Playback*, *Audio*, Share* or *Packet* is audio or packets
+    there and was not on RISKY_PATTERNS, so the script never read their finished checks and skipped them."""
+    ROOT = Path(__file__).resolve().parents[2]
+    APP = "App/SpokenMarginsApp/Sources/SpokenMarginsApp/"
+    # The files of the stuck PRs: #4666 (the Now screen's star), #4811 (a link with text around it) and #4822.
+    STUCK = {
+        "#4666": [APP + "Gate1RootView.swift", APP + "PlaybackMarginRowView.swift", APP + "PlaybackMarginShareStarButton.swift",
+                  APP + "PlaybackMarginsView.swift", APP + "PlaybackNowView.swift", APP + "PlaybackScreen.swift",
+                  "App/SpokenMarginsAppTests/MarginShareStarRowTests.swift",
+                  "Packages/SessionKit/Sources/SessionKit/ExperienceColorContrast.swift",
+                  "Packages/SessionKit/Sources/SessionKit/ShareStarPlace.swift",
+                  "Packages/SessionKit/Tests/SessionKitCoreTests/ShareStarOfferTests.swift", "docs/journeys.md"],
+        "#4811": [APP + "Gate1AppModel+SourceLinkForm.swift", APP + "Gate1AppModel.swift",
+                  "App/SpokenMarginsShareExtension/Sources/SourceLinkShareViewController.swift",
+                  "Packages/SessionKit/Sources/SessionKit/ClipboardIntakeClassifier.swift",
+                  "Packages/SessionKit/Sources/SessionKit/PasteIntake.swift",
+                  "Packages/SessionKit/Tests/SessionKitCoreTests/PasteIntakeTests.swift"],
+    }
+
+    def find(self, files, state="ok", comments=()):
+        with patch.object(A, "fetch_comments", return_value=list(comments)), patch.object(A, "fetch_files", return_value=files), \
+             patch.object(A, "head_checks_state", return_value=(state, [])), patch.object(A, "FAILURES", {}):
+            return A.find_candidates([pr()])
+
+    @staticmethod
+    def as_files(paths):
+        return [{"filename": p, "additions": 3, "deletions": 1} for p in paths]
+
+    def scope(self):
+        spec = importlib.util.spec_from_file_location("scope_for_audit_test_4843", self.ROOT / "scripts" / "test-scope.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_stuck_prs_file_sets_are_risky_in_the_area_the_policy_names(self):
+        self.assertEqual(A.risky_areas(self.STUCK["#4666"]), ["audio", "sharing"])
+        self.assertEqual(A.risky_areas(self.STUCK["#4811"]), ["sharing"])
+
+    def test_a_pr_the_policy_holds_is_a_candidate_once_its_checks_finish(self):
+        for number, paths in self.STUCK.items():
+            with self.subTest(pr=number):
+                cands, skips, _ = self.find(self.as_files(paths))
+                self.assertEqual([c["number"] for c in cands], [366])
+                self.assertTrue(cands[0]["reason"].startswith("risky: "), cands[0]["reason"])
+                self.assertEqual(skips, {})
+
+    def test_it_still_waits_for_its_checks_and_an_ordinary_app_file_is_still_skipped(self):
+        for state in ("pending", "failed"):
+            with self.subTest(state=state):
+                cands, skips, _ = self.find(self.as_files(self.STUCK["#4666"]), state)
+                self.assertEqual((cands, skips), ([], {f"checks {state}": 1}))
+        cands, skips, _ = self.find(self.as_files([self.APP + "Gate1RootView.swift", "docs/journeys.md"]))
+        self.assertEqual((cands, skips), ([], {"no lane report": 1}))
+
+    def test_a_rename_is_read_on_both_sides_and_a_bare_path_does_not_stop_the_run(self):
+        # The policy diffs with --no-renames, so renaming PlaybackFoo.swift to Foo.swift is held as audio.
+        renamed = [{"filename": self.APP + "Foo.swift", "previous_filename": self.APP + "PlaybackFoo.swift",
+                    "additions": 0, "deletions": 0}]
+        self.assertEqual(A.risky_areas(A.changed_paths(renamed)), ["audio"])
+        cands, skips, _ = self.find(renamed)
+        self.assertEqual(([c["number"] for c in cands], skips), ([366], {}))
+        self.assertEqual(A.risky_areas(["Packages/SessionKit/Sources", "Packages/SessionKit/Sources/"]), [])
+
+    def test_every_kind_the_policy_audits_is_read_from_test_scope(self):
+        # lane-runner.py AUDITED is the policy's list of kinds. A kind added there without a line in
+        # SCOPE_AUDIT_AREAS would hold PRs for an audit this script never runs.
+        spec = importlib.util.spec_from_file_location("lane_runner_for_audit_test_4843", self.ROOT / "scripts" / "lane-runner.py")
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        self.assertEqual(set(A.SCOPE_AUDIT_AREAS), set(runner.AUDITED))
+
+    def test_no_tracked_file_is_held_by_the_policy_but_not_risky_here(self):
+        # The class guard: the policy's own classification of every file in the tree, against risky_areas.
+        scope = self.scope()
+        tracked = subprocess.run(["git", "ls-files", "-z"], cwd=self.ROOT, capture_output=True, text=True,
+                                 check=True).stdout.split("\0")
+        nowhere = Path("/nonexistent-tree-for-scope-categories")
+        held = [p for p in tracked if p and scope.classify_path(nowhere, p).category in A.SCOPE_AUDIT_AREAS]
+        self.assertGreater(len(held), 50)  # the tree has audio, persistence and packet files; fewer means the walk broke
+        for p in held:
+            self.assertTrue(A.risky_areas([p]), f"{p} is held for an audit by the merge policy but not risky here")
+
+
 class OwnerTapPrAudit(unittest.TestCase):
     """A PR only the owner merges is never armed, so it gets no lane report; its finished checks stand in (#2052)."""
     TAP_FILES = [{"filename": ".github/workflows/hosted-portable.yml", "additions": 3, "deletions": 1}]
@@ -1122,6 +1255,24 @@ class OwnerTapPrAudit(unittest.TestCase):
     def test_a_pr_that_is_not_owner_tap_still_needs_its_lane_pass(self):
         cands, skips, _ = self.find([], self.APP_FILES)
         self.assertEqual((cands, skips), ([], {"no lane report": 1}))
+
+    RISKY_FILES = [{"filename": "Packages/SessionKit/Sources/SessionKitPersistence/Store.swift",
+                    "additions": 3, "deletions": 1}]
+
+    def test_a_risky_pr_with_finished_checks_is_audited_without_a_lane_report(self):
+        """The lane is off for the merge queue (#4693): no PR gets a lane report, so a risky head was never audited."""
+        for comments in ([], [self.OLD_LANE]):
+            with self.subTest(comments=comments):
+                cands, skips, _ = self.find(comments, self.RISKY_FILES)
+                self.assertEqual([c["number"] for c in cands], [366])
+                self.assertTrue(cands[0]["reason"].startswith("risky: "), cands[0]["reason"])
+                self.assertEqual(skips, {})
+
+    def test_a_risky_pr_waits_while_checks_run_or_after_one_failed(self):
+        for state in ("pending", "failed"):
+            with self.subTest(state=state):
+                cands, skips, _ = self.find([], self.RISKY_FILES, state)
+                self.assertEqual((cands, skips), ([], {f"checks {state}": 1}))
 
     def test_the_checks_are_read_only_for_a_pr_that_could_be_audited(self):
         with patch.object(A, "head_checks_state") as checks:

@@ -1171,23 +1171,6 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertNotEqual(second.recordsByItemId["episode"]?.failureReason, "Downloads are restarting. Try again in a moment.")
     }
 
-    func testGateHandsAnIdentifierToOneWaiterAtATimeAndTimesOut() async {
-        let gate = BackgroundSessionGate()
-        XCTAssertTrue(gate.claim("a"))
-        XCTAssertFalse(gate.claim("a"), "a held identifier cannot be claimed twice")
-        XCTAssertTrue(gate.claim("b"), "identifiers are independent")
-        let timedOut = await gate.claim("a", waitingUpTo: .milliseconds(50))
-        XCTAssertFalse(timedOut)
-
-        async let first = gate.claim("a", waitingUpTo: .milliseconds(200))
-        async let second = gate.claim("a", waitingUpTo: .milliseconds(200))
-        try? await Task.sleep(for: .milliseconds(30))
-        gate.release("a")
-        let results = await [first, second]
-        XCTAssertEqual(results.filter { $0 }.count, 1, "only one waiter takes the identifier: \(results)")
-        gate.release("never-held")   // harmless
-    }
-
     private func makeBackgroundCoordinator(
         _ fixture: (root: URL, support: URL, store: SQLiteSessionStore),
         identifier: String,

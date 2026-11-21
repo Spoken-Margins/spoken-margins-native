@@ -82,6 +82,64 @@ final class WrittenMarginSkimAppTests: XCTestCase {
         fixture.model.selectedItem.importedCommentaryInterjections[fixture.layer.id]?.first?.isNewToListener == false
     }
 
+    /// #4447: the owner's playback screen showed no Skim arrows with two of a friend's Margins ahead. Whether Skim can
+    /// go forward was worked out only when the playhead or the item changed, so Margins that finished loading while
+    /// the source sat paused left the arrows as they were before the Margins arrived. The chapter row must follow the
+    /// Margins as they arrive, with no tick and no tap to nudge it.
+    func testSkimArrowsAppearWhenAFriendsMarginsArriveWhileTheSourceIsPaused() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.sharedMarginRows = []
+        model.pause()
+        model.seekMedia(toMediaTimeMs: 100)
+        try await fixture.waitUntil("the source is paused before the Margin") {
+            model.snapshot.status != .playing && (model.snapshot.currentMediaTimeMs ?? Int.max) < 900
+        }
+        model.refreshSkimAvailabilityForTesting()
+        XCTAssertFalse(model.snapshot.canSkimForward, "precondition: with no Margins loaded there is nowhere to Skim to")
+
+        model.sharedMarginRows = [SharedMarginRow(interjection: fixture.record, layer: fixture.layer, itemTitle: "Real source")]
+
+        XCTAssertTrue(model.snapshot.canSkimForward, "the Margin that arrived is a stop ahead, so forward Skim is offered")
+        XCTAssertTrue(model.showsSkimRow, "the chapter row draws its arrows")
+        XCTAssertEqual(model.chapterRowForwardControl, .skim)
+        // And it goes the other way when they leave (a hidden sender's, a deleted layer): no stale arrow to nowhere.
+        model.sharedMarginRows = []
+        XCTAssertFalse(model.snapshot.canSkimForward, "with the Margins gone there is nowhere to Skim to again")
+    }
+
+    /// #4447, the other way the Margins can arrive late: the friend's layer is on the scrubber (its rows loaded) but the
+    /// item's own records for that layer are read in afterwards, as the item detail loads in the background. A layer with
+    /// no records is not playable, so its Margins are no stop until they land. The arrows must follow the records, not
+    /// wait for a tick that a paused source never sends.
+    func testSkimArrowsAppearWhenTheItemsFriendRecordsLoadAfterTheMarginRows() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        let loadedRecords = model.selectedItem.importedCommentaryInterjections
+        XCTAssertFalse(loadedRecords.isEmpty, "precondition: the fixture's item carries the friend's records")
+        model.pause()
+        model.seekMedia(toMediaTimeMs: 100)
+        try await fixture.waitUntil("the source is paused before the Margin") {
+            model.snapshot.status != .playing && (model.snapshot.currentMediaTimeMs ?? Int.max) < 900
+        }
+        // Pause and seek each start a background reload of the item, which would put the records back: let it land first.
+        await model.settleItemReload()
+        model.selectedItem.importedCommentaryInterjections = [:]
+        model.sharedMarginRows = [SharedMarginRow(interjection: fixture.record, layer: fixture.layer, itemTitle: "Real source")]
+        model.refreshSkimAvailabilityForTesting()
+        XCTAssertFalse(model.snapshot.canSkimForward, "precondition: the layer has no records yet, so its Margin is no stop")
+
+        model.selectedItem.importedCommentaryInterjections = loadedRecords
+
+        XCTAssertTrue(model.snapshot.canSkimForward, "the records arrived, so the Margin is a stop ahead and forward Skim is offered")
+        XCTAssertTrue(model.showsSkimRow, "the chapter row draws its arrows")
+        // And when the item's detail is replaced by one with none (a reload that lost them), the arrow goes with them.
+        model.selectedItem.importedCommentaryInterjections = [:]
+        XCTAssertFalse(model.snapshot.canSkimForward, "no records, no stop, no arrow to nowhere")
+    }
+
     // Skim forward lands on the friend's written Margin and the reading plays, as a voice Margin's recording does.
     func testSkimForwardStopsAtAFriendsWrittenMarginAndItsReadingPlays() async throws {
         let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: uniqueWords())

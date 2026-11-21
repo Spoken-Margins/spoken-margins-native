@@ -8,6 +8,8 @@ extension Gate1AppModel {
         /// A link went to the source-link import; its progress shows in `sourceLinkImportState`.
         case resolvingLink
         case addedText
+        /// A friend's share link opened as a tapped one does (#3782); its progress and failure show as a tapped link's do.
+        case openingShareLink
         /// Nothing was created; the message says why.
         case notAdded(String)
     }
@@ -17,8 +19,11 @@ extension Gate1AppModel {
     /// only when `startSession` says so; the Library's copied-link card (#2944) and Paste & go never do.
     @discardableResult
     func pasteAndGo(_ content: String?, html: String? = nil, startSession: Bool = false) -> PasteAndGoOutcome {
-        switch ClipboardIntakeClassifier.classify(content) {
-        case .link(let url):
+        switch PasteIntake.classify(content) {
+        case .shareLink(let url):
+            openShareLink(url)
+            return .openingShareLink
+        case .intake(.link(let url)):
             sourceLinkURL = url.absoluteString
             guard beginSourceLinkImportFromForm(startSession: startSession) else {
                 return .notAdded(isResolvingSourceLink
@@ -26,7 +31,7 @@ extension Gate1AppModel {
                     : sourceLinkImportMessage ?? "This link could not be added.")
             }
             return .resolvingLink
-        case .text(let title, let body):
+        case .intake(.text(let title, let body)):
             // Leave whatever the listener was typing on the Text route as it was.
             let draft = (title: importTitle, text: importText)
             defer { (importTitle, importText) = draft }
@@ -36,7 +41,7 @@ extension Gate1AppModel {
             importTextItem(startListening: false)
             if let lastError { return .notAdded(lastError) }
             return .addedText
-        case .unusable(let reason):
+        case .intake(.unusable(let reason)):
             return .notAdded(reason.message)
         }
     }
@@ -45,7 +50,7 @@ extension Gate1AppModel {
     /// offers Safari and returns nil, so the caller still shows the resolver's own "no audio" result.
     func readLinkAsArticleOrOfferSafari(_ url: URL, after result: LinkResolutionResult, startSession: Bool) async -> BrowserTextHandoff? {
         do {
-            return try await LinkArticleFallback.article(for: url, after: result, startSession: startSession, using: readablePageExtractor) {
+            return try await LinkArticleFallback.article(for: url, after: result, startSession: startSession, using: listenerReadablePageExtractor) {
                 diagnostics["lastSourceLinkArticleFallback"] = $0
             }
         } catch {
@@ -57,6 +62,8 @@ extension Gate1AppModel {
     /// Offers Safari when an https page refused the app or couldn't be read as an article. Offline and
     /// timeout failures don't get the offer: Safari wouldn't do better, and the retry banner covers them.
     func offerSafariIfUnreadable(_ url: URL, error: Error) {
+        // A collection import reports the link as not added instead; an offer left behind would name one link of many (#3769).
+        guard libraryCollections.importCapture == nil else { return }
         guard url.scheme?.lowercased() == "https", let reason = Self.safariOfferReason(for: error) else { return }
         sourceLinkSafariOffer = OpenInSafariOffer(url: url, reason: reason)
     }

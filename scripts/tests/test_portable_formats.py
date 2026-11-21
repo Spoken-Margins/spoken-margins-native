@@ -224,10 +224,48 @@ class BothDirectionsTests(unittest.TestCase):
         self.assertEqual(report.warnings, [], 'the key is part of the format, not an ignored one')
         self.assertNotIn('readAloud', fmt.SWIFT_TYPES['SharedInterjectionPackageRecord'],
                          'SWIFT_TYPES is what the shipped readers need; the key is not one of those')
-        self.assertEqual(contracts.FIELDS_ADDED_AFTER_BUILD_29, {'SharedInterjectionPackageRecord': {'readAloud': 'Bool?'}})
+        self.assertEqual(contracts.FIELDS_ADDED_AFTER_BUILD_29['SharedInterjectionPackageRecord']['readAloud'], 'Bool?')
         schema = json.loads((contracts.PUBLIC_CONTRACTS / 'schemas' / 'shared-commentary-layer.schema.json').read_text())
         self.assertEqual(schema['$defs']['interjection']['properties']['readAloud']['type'], 'boolean')
         self.assertNotIn('readAloud', schema['$defs']['interjection']['required'])
+
+    def test_the_senders_lead_in_is_a_known_optional_margin_key(self):
+        # #4171: written only when it isn't 20 s (or an earlier share used another length); no capability.
+        layer = self.layer()
+        layer['interjections'][0]['leadInMs'] = 60_000
+        self.set_layer(layer)
+        report = fmt.read_packet(self.packet())
+        self.assertEqual(report.errors, [])
+        self.assertEqual(report.warnings, [], 'the key is part of the format, not an ignored one')
+        self.assertNotIn('leadInMs', fmt.SWIFT_TYPES['SharedInterjectionPackageRecord'])
+        self.assertEqual(contracts.FIELDS_ADDED_AFTER_BUILD_29['SharedInterjectionPackageRecord']['leadInMs'], 'Int?')
+        schema = json.loads((contracts.PUBLIC_CONTRACTS / 'schemas' / 'shared-commentary-layer.schema.json').read_text())
+        lead_in = schema['$defs']['interjection']['properties']['leadInMs']
+        self.assertEqual((lead_in['type'], lead_in['minimum'], lead_in['maximum']), ('integer', 0, 300_000))
+        self.assertNotIn('leadInMs', schema['$defs']['interjection']['required'])
+
+    def test_a_lead_in_outside_the_range_is_clamped_by_readers_and_a_wrong_type_is_refused(self):
+        # Neighbouring values: the edges, one past each edge, zero, a fraction, a string, a boolean, null.
+        table = [(0, 'valid', []), (300_000, 'valid', []), (20_000, 'valid', []), (-1, 'valid', ['lead-in-clamped']),
+                 (300_001, 'valid', ['lead-in-clamped']), (10**9, 'valid', ['lead-in-clamped']),
+                 (None, 'valid', []), (1.5, 'invalid-manifest', []), ('60000', 'invalid-manifest', []),
+                 (True, 'invalid-manifest', []), (2 ** 63, 'invalid-manifest', []), (2 ** 63 - 1, 'valid', ['lead-in-clamped']),
+                 (-2 ** 63, 'invalid-manifest', [])]
+        for value, expected, warnings in table:
+            with self.subTest(value=value):
+                layer = self.layer()
+                layer['interjections'][0]['leadInMs'] = value
+                self.set_layer(layer)
+                report = fmt.read_packet(self.packet())
+                self.assertEqual(verdict(self.packet()), expected)
+                self.assertEqual([w.code for w in report.warnings], warnings)
+
+    def test_the_lead_in_corpus_packet_carries_a_minute(self):
+        report = fmt.read_packet(EXAMPLES / 'lead-in-per-margin.spokenmargins')
+        self.assertEqual((report.errors, report.warnings), ([], []))
+        manifest, artifacts, _ = fmt.unpack((EXAMPLES / 'lead-in-per-margin.spokenmargins').read_bytes())
+        layer_path = next(d['path'] for d in manifest['artifacts'] if d['kind'] == 'commentary_layer')
+        self.assertEqual([m.get('leadInMs') for m in json.loads(artifacts[layer_path])['interjections']][0], 60_000)
 
     def test_a_field_added_after_build_29_is_held_to_its_declared_type(self):
         # Without the allowance the app's extra key is drift; with a different type it is drift too.

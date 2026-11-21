@@ -78,7 +78,8 @@ class Fakes(unittest.TestCase):
         fake.chmod(0o755)
         self.pids = self.dir / 'pids'
         self.env = {**os.environ, 'SM_LANE_STATE_DIR': str(self.dir / 'state'), 'SM_LANE_XCODEBUILD': str(fake),
-                    'FAKE_PIDS': str(self.pids), 'SM_TEST_FINISH_GRACE_SECONDS': '1'}
+                    'FAKE_PIDS': str(self.pids), 'SM_TEST_FINISH_GRACE_SECONDS': '1',
+                    'SM_LANE_PACKAGE_SEED': 'off'}  # clones no real packages into this checkout
 
     def tearDown(self):
         # Never leave a fake behind, whatever the test did.

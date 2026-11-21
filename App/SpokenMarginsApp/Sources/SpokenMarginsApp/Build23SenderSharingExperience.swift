@@ -36,6 +36,10 @@ struct Build23SenderSharingExperience: View {
             .modifier(ShareLinkPresentation(sender: linkSender, packageURL: coordinator.verifiedShareFileURL) { packet in
                 coordinator.recordSystemShareCompleted(packetURL: packet)
             })
+            .onChange(of: linkSender.state) { _, state in
+                // The link's share sheet is about to show it: the star counts start again (#4173).
+                if case .ready = state { coordinator.recordSystemShareShown() }
+            }
             .task { isLinkOffered = await linkSender.isOffered() }
             .onDisappear { linkSender.takedownNoticeWasShown() }
         #else
@@ -116,6 +120,10 @@ struct Build23SenderSharingExperience: View {
         .safeAreaInset(edge: .bottom) {
             if snapshot.stage != .share {
                 VStack(alignment: .leading, spacing: 8) {
+                    // The step the sender can act on sits directly above the button that ends the task (#3839).
+                    if let step = snapshot.pinnedStep {
+                        Build23PinnedStepLine(step: step)
+                    }
                     linkStatusLines
                     primaryAction(snapshot)
                         .controlSize(.large)
@@ -151,15 +159,15 @@ struct Build23SenderSharingExperience: View {
             dropStaleShareRequests(stage: stage, previewState: coordinator.snapshot.previewState)
             announceStage(stage)
         }
-        .alert("Clean selected Margins automatically?", isPresented: $isAutoCleanChoicePresented) {
-            Button("Clean selected") {
+        .alert(ShareCleanupWords.alertTitle, isPresented: $isAutoCleanChoicePresented) {
+            Button(ShareCleanupWords.alertAccept) {
                 coordinator.send(.setAutoCleanSelectedEnabled(true))
             }
-            Button("Not now", role: .cancel) {
+            Button(ShareCleanupWords.alertDecline, role: .cancel) {
                 coordinator.send(.setAutoCleanSelectedEnabled(false))
             }
         } message: {
-            Text("Spoken Margins can remove filler words and tighten pauses for the Margins you include. You can review every change, undo it, or turn this off later.")
+            Text(ShareCleanupWords.alertMessage)
         }
         .trackedSheet(isPresented: $isSystemSharePresented, onDismiss: finishSystemShare) {
             if let packageURL = verifiedShareURLForPresentation {
@@ -250,7 +258,9 @@ struct Build23SenderSharingExperience: View {
             state: linkSender.state,
             companionNote: linkSender.companionNote,
             showsTakedownNotice: linkSender.showsTakedownNotice,
-            onTakedownNoticeDrawn: { linkSender.takedownNoticeWasDrawn() }
+            onTakedownNoticeDrawn: { linkSender.takedownNoticeWasDrawn() },
+            playCheckLine: linkSender.playCheckLine,
+            playCheckLinkID: linkSender.playCheckLinkID
         )
         if sharesLink, lines.hasLines {
             lines
@@ -290,7 +300,7 @@ struct Build23SenderSharingExperience: View {
                     isEnabled: coordinator.verifiedShareFileURL != nil && !isMakingLink,
                     identifier: "build23.sender.share.present"
                 ) {
-                    presentVerifiedSystemShare()
+                    sendPreviewedFile()
                 }
             }
         default:
@@ -372,7 +382,7 @@ struct Build23SenderSharingExperience: View {
                 Divider()
 
                 Toggle(
-                    "Clean selected automatically",
+                    ShareCleanupWords.switchLabel,
                     isOn: Binding(
                         get: { snapshot.autoCleanSelectedEnabled },
                         set: { coordinator.send(.setAutoCleanSelectedEnabled($0)) }
@@ -381,9 +391,7 @@ struct Build23SenderSharingExperience: View {
                 .font(.headline)
                 .accessibilityIdentifier("build23.sender.auto-clean")
 
-                Text(snapshot.autoCleanSelectedEnabled
-                    ? "On for this and future shares. Turn it off to undo cleanup applied automatically to this draft."
-                    : "Off. You can still clean individual Margins during review.")
+                Text(ShareCleanupWords.switchCaption(isOn: snapshot.autoCleanSelectedEnabled))
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
 
@@ -394,7 +402,7 @@ struct Build23SenderSharingExperience: View {
                     )
                     .tint(AppColors.evergreen)
                     AdaptiveStack {
-                        Text("Cleaning \(snapshot.preparationCompleted) of \(snapshot.preparationTotal)")
+                        Text(ShareCleanupWords.running(completed: snapshot.preparationCompleted, total: snapshot.preparationTotal))
                             .font(.subheadline)
                         AdaptiveSpacer()
                         Button("Cancel", role: .cancel) {
@@ -405,11 +413,11 @@ struct Build23SenderSharingExperience: View {
                     if snapshot.preparationFailures == 0 {
                         Build23StatusLabel(
                             icon: "checkmark.circle.fill",
-                            title: "Cleaned \(snapshot.preparationCompleted) selected Margins",
+                            title: ShareCleanupWords.bulkResult(completed: snapshot.preparationCompleted, failed: 0),
                             tint: AppColors.evergreen
                         )
                     } else {
-                        FailureMessageLabel("Cleaned \(snapshot.preparationCompleted - snapshot.preparationFailures); \(snapshot.preparationFailures) kept their available Original or Text version.")
+                        FailureMessageLabel(ShareCleanupWords.bulkResult(completed: snapshot.preparationCompleted, failed: snapshot.preparationFailures))
                             .font(.subheadline)
                     }
                 }
@@ -743,7 +751,7 @@ struct Build23SenderSharingExperience: View {
                     Build23VerifiedShareActions(
                         isFileShareEnabled: coordinator.verifiedShareFileURL != nil && !isMakingLink,
                         fileIsSecondChoice: sharesLink,
-                        onShareFile: presentVerifiedSystemShare
+                        onShareFile: sendPreviewedFile
                     )
 
                     Build23VerifiedRecipientPreviewPanel(preview: verifiedPreview)
@@ -892,9 +900,17 @@ struct Build23SenderSharingExperience: View {
         coordinator.send(.selectMargin(visibleMargins.first?.id))
     }
 
+    /// A send tap on the preview stage, where the packet is already made: log the selection, then show the system sheet.
+    /// "Open system share sheet" reopens the same send, so it calls `presentVerifiedSystemShare` alone (#4173).
+    private func sendPreviewedFile() {
+        coordinator.recordShareSelection()
+        presentVerifiedSystemShare()
+    }
+
     private func presentVerifiedSystemShare() {
         coordinator.send(.presentSystemShare)
         guard let verifiedURL = coordinator.verifiedShareFileURL else { return }
+        coordinator.recordSystemShareShown()
         verifiedShareURLForPresentation = verifiedURL
         isSystemSharePresented = true
     }
@@ -906,6 +922,7 @@ struct Build23SenderSharingExperience: View {
 
     /// Makes the packet if it isn't ready, then sends it the way the listener asked.
     private func share(_ kind: Build23PendingShare) {
+        coordinator.recordShareSelection() // one line per tap; not in deliver, so a tap never logs twice (#4173)
         if coordinator.verifiedShareFileURL != nil {
             deliver(kind)
             return
@@ -941,7 +958,8 @@ struct Build23SenderSharingExperience: View {
             pendingShare = nil
         }
         #if SM_SHARE_LINK_CREATION
-        if !Build23ShareRequestPolicy.keepsLink(stage: stage, previewState: previewState), linkSender.state != .idle {
+        if !Build23ShareRequestPolicy.keepsLink(stage: stage, previewState: previewState),
+           linkSender.state != .idle || linkSender.playCheckLine != nil {
             linkSender.reset()
         }
         #endif

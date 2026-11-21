@@ -77,7 +77,7 @@ struct Gate1RootView: View {
         }
         .trackedSheet(isPresented: $catalogDrawer.isPresented, onDismiss: {
             catalogDrawer.didDismiss()
-            model.refreshFollowedSources(force: false)
+            model.refreshFollowedSources(force: false, trigger: .afterFollow)
         }) {
             CatalogDrawerView()
                 .environmentObject(catalogDrawer)
@@ -310,7 +310,7 @@ struct InterjectionDetailView: View {
                         isOn: Binding(
                             get: { currentInterjection.isStarredForSharing == true },
                             set: {
-                                model.setInterjectionStarredForSharing(current.id, sessionId: current.sessionId, starred: $0)
+                                model.setStarredForSharing(current, starred: $0, place: .manage)
                             }
                         )
                     )
@@ -523,6 +523,7 @@ enum AppColors {
     static let watchBackground = dynamicColor(AppSemanticColorRGB.watchBackground)
     static let watchControl = dynamicColor(AppSemanticColorRGB.watchControl)
     static let watchSecondary = dynamicColor(AppSemanticColorRGB.listeningSecondary)
+    static let watchStar = dynamicColor(AppSemanticColorRGB.watchStar)
     static let dangerText = dynamicColor(AppSemanticColorRGB.dangerText)
     static let dangerBackground = dynamicColor(AppSemanticColorRGB.dangerBackground)
     static let interjectText = dynamicColor(AppSemanticColorRGB.captureText)

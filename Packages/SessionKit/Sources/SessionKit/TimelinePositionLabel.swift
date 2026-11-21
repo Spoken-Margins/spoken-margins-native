@@ -46,6 +46,20 @@ public enum TimelinePositionLabel {
         durationMs.flatMap { PlaybackPositionText.percent(position: currentMs, length: $0) }
     }
 
+    /// The percent a text item's scrubber prints for a character offset: nearest whole percent, 0...100, and 0 while the length is
+    /// unknown. The playback screen's scrubber and the Timeline's current line both call this, so they can't disagree (#3862).
+    public static func textScrubberPercent(offset: Double, length: Int) -> Int {
+        guard length > 0 else { return 0 }
+        return max(0, min(100, Int((offset / Double(length) * 100).rounded())))
+    }
+
+    /// The media scrubber's VoiceOver value with the listener's percent added: "1:06:48 of 1:43:00, 64 percent". The value is
+    /// returned unchanged while the duration is unknown, so no number is made up.
+    public static func appendingSpokenPercent(to value: String, currentMs: Int, durationMs: Int?) -> String {
+        guard let percent = mediaPercent(currentMs: currentMs, durationMs: durationMs) else { return value }
+        return "\(value), \(PlaybackPositionText.spoken(percent: percent))"
+    }
+
     /// The current card's line: the current label with the listener's position, on whatever kind of card is current.
     /// Media: "Current chapter · 1:06:48 · 64%", and "Current chapter · 1:06:48" while the duration is unknown. Text:
     /// "Current chapter · 47%". With nothing to add it is the label alone.

@@ -1,6 +1,18 @@
 import SwiftUI
 import SessionKit
 
+/// Where the listener is now, for the current card's line (#3862): the clock and percent on media, the percent on text.
+/// Built from the playback snapshot only while the Timeline's item is the one playing.
+struct TimelineCurrentPosition: Equatable {
+    var isMedia: Bool
+    var ms: Int?
+    var percent: Int?
+
+    func line(for currentLabel: String) -> String {
+        TimelinePositionLabel.currentLine(currentLabel: currentLabel, currentMs: ms, percent: percent, isMedia: isMedia)
+    }
+}
+
 /// The canonical row list for standalone Timeline and its playback window (#448).
 /// A chapter row folds and unfolds the rows under it (#3895); `folding` says which are folded.
 struct PlaybackTimelineListView<Details: View>: View {
@@ -8,8 +20,13 @@ struct PlaybackTimelineListView<Details: View>: View {
     let currentIDs: Set<String>
     var folding = TimelineChapterFolding()
     var toggleChapter: (String) -> Void = { _ in }
+    /// Added to the current card's line, so the listener can compare their place with the cards' (#3862).
+    var currentPosition: TimelineCurrentPosition? = nil
     let perform: (TimelineRailEntry.Action) -> Void
+    /// Opens the picture of a table or figure row at full screen (#3895).
+    var openClip: (TimelineSourceContent.Entry) -> Void = { _ in }
     @ViewBuilder var details: (TimelineRailEntry.Action) -> Details
+    @Environment(\.timelineClips) private var clips
 
     var body: some View {
         let rows = entries.map(\.foldingRow)
@@ -23,7 +40,13 @@ struct PlaybackTimelineListView<Details: View>: View {
                     TimelineRailRow(entry: entry, isCurrent: currentIDs.contains(entry.id),
                                     isFirst: index == 0, isLast: index == visible.count - 1,
                                     hidden: summary,
-                                    action: { perform(entry.action) })
+                                    clip: TimelineRowClip(entry: entry, in: clips),
+                                    // Only the current card carries the position, so a playback tick redraws one row.
+                                    currentLine: currentIDs.contains(entry.id) ? currentPosition?.line(for: entry.currentLabel) : nil,
+                                    action: { perform(entry.action) },
+                                    openClip: {
+                                        if case .sourceText(let source) = entry.action { openClip(source) }
+                                    })
                         .equatable()
                         .contextMenu { details(entry.action) }
                         // The same actions for VoiceOver and Switch Control, which can't long-press (#1917).
@@ -85,11 +108,16 @@ private struct TimelineRailRow: View, Equatable {
     let isLast: Bool
     /// Set when this chapter is folded: what its hidden rows hold (#3895).
     var hidden: TimelineChapterFolding.HiddenSummary? = nil
+    /// Set when this table or figure has a picture saved (#3895).
+    var clip: TimelineRowClip? = nil
+    /// The current card's line with the listener's position (#3862); nil on other cards, and the label alone when unknown.
+    var currentLine: String? = nil
     let action: () -> Void
+    var openClip: () -> Void = {}
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.entry == rhs.entry && lhs.isCurrent == rhs.isCurrent && lhs.isFirst == rhs.isFirst && lhs.isLast == rhs.isLast
-            && lhs.hidden == rhs.hidden
+            && lhs.hidden == rhs.hidden && lhs.clip == rhs.clip && lhs.currentLine == rhs.currentLine
     }
 
     var body: some View {
@@ -118,12 +146,12 @@ private struct TimelineRailRow: View, Equatable {
                             .fixedSize(horizontal: false, vertical: true)
                         if entry.isNew { NewMarginBadge() }
                         if !dynamicTypeSize.isAccessibilitySize { Spacer() }
-                        Text("\(entry.position)%")
+                        Text(entry.cornerLabel)
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(AppColors.secondaryText)
                     }
                     if isCurrent {
-                        Label(entry.currentLabel, systemImage: "speaker.wave.2.fill")
+                        Label(currentLine ?? entry.currentLabel, systemImage: "speaker.wave.2.fill")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(AppColors.dynamicColor(TimelineRowPalette.currentLabelColor))
                     } else if hidden?.containsCurrent == true {
@@ -137,11 +165,17 @@ private struct TimelineRailRow: View, Equatable {
                         .foregroundStyle(AppColors.text)
                         .multilineTextAlignment(.leading)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
+                    if let clip {
+                        TimelineClipPicture(clip: clip, open: openClip)
+                    }
                     Text(entry.detail)
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .multilineTextAlignment(.leading)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 4)
+                    if case .sourceElement(let element) = entry.action {
+                        TimelineSourceElementPreview(element: element)
+                    }
                     if let hidden {
                         Text(hidden.text)
                             .font(.footnote.weight(.semibold))
@@ -163,9 +197,19 @@ private struct TimelineRailRow: View, Equatable {
             .padding(.bottom, 12)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(isCurrent ? "\(entry.currentLabel). " : "")\(entry.isNew ? "New to you. " : "")\(entry.provenanceLabel), \(entry.position) percent. \(entry.title). \(entry.detail)\(hiddenSpoken)")
+        .accessibilityLabel("\(isCurrent ? "\(currentSpoken). " : "")\(entry.isNew ? "New to you. " : "")\(entry.provenanceLabel), \(entry.spokenPosition). \(entry.title). \(entry.detail)\(clipSpoken)\(hiddenSpoken)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { action() }
+    }
+
+    /// What VoiceOver adds when the row has a picture: its label, so it is known before the "View" action is chosen.
+    private var clipSpoken: String {
+        clip.map { ". \($0.spokenLabel)" } ?? ""
+    }
+
+    /// The current line as VoiceOver reads it: the separators become pauses.
+    private var currentSpoken: String {
+        (currentLine ?? entry.currentLabel).replacingOccurrences(of: " · ", with: ", ")
     }
 
     /// What VoiceOver adds after a folded chapter's own words: what is hidden, and whether the playhead is in it.
@@ -218,6 +262,24 @@ extension TimelineProvenance {
         case .userResponse: .userResponse
         case .sharedMargin: .sharedMargin
         case .assistantResponse: .assistantResponse
+        }
+    }
+}
+
+/// What a picture, embed or table row shows under its words: the page's own picture (a GIF plays), a video's still,
+/// or the first rows of the table (owner, 2026-11-14). A picture loads when its row is drawn (owner, 2026-11-17), so
+/// the import itself still fetches nothing but the page (#2032). A link row has no preview; tapping it opens the link.
+private struct TimelineSourceElementPreview: View {
+    let element: SourceElement
+
+    var body: some View {
+        if let url = element.previewImageURL {
+            SourcePictureView(url: url, accessibilityText: element.altText ?? element.label, maxPixelSize: 900)
+                .frame(maxHeight: 260)
+                .padding(.top, 4)
+        } else if element.kind == .table, let rows = element.rows {
+            SourceTableView(rows: rows, bodyRowLimit: 4)
+                .padding(.top, 4)
         }
     }
 }

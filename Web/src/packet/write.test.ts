@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { PacketError } from './errors.ts';
-import { episode, show, voiceMargins, writePlaceholder, writeVoice, writeWritten, writtenMargins } from './fixtures.ts';
+import { appParent, episode, show, voiceMargins, writePlaceholder, writeReplyNamed, writeReplyUnnamed, writeVoice, writeWritten, writtenMargins } from './fixtures.ts';
 import { packetMarginId, readPacket } from './read.ts';
 import { conversationId, sharedWords, writePacket } from './write.ts';
 import { voicePlaceholder } from '../shared/placeholder.ts';
@@ -16,10 +16,29 @@ const unlimited = { totalBytes: Infinity, compressionRatio: Infinity, entryBytes
 test('the committed web fixtures are what the writer writes now', async () => {
   for (const [name, write] of [
     ['web-written.spokenmargins', writeWritten], ['web-voice.spokenmargins', writeVoice], ['web-voice-placeholder.spokenmargins', writePlaceholder],
+    ['web-reply.spokenmargins', writeReplyNamed], ['web-reply-unnamed.spokenmargins', writeReplyUnnamed],
   ] as const) {
     const committed = await readPacket(load(name));
     const fresh = await write();
     assert.equal(fresh.contentDigest, committed.contentDigest, `${name}: regenerate with node Web/src/packet/fixtures.ts`);
+  }
+});
+
+test('the web replies to the app\'s packet name its digest, and the conversation artifact is optional (#4107, B2)', async () => {
+  const parent = await appParent();
+  for (const [name, sender] of [['web-reply.spokenmargins', 'Web fixture'], ['web-reply-unnamed.spokenmargins', undefined]] as const) {
+    const files = await readZip(load(name), unlimited);
+    const manifest = JSON.parse(new TextDecoder().decode(files.get('manifest.json')));
+    assert.deepEqual(manifest.requiredCapabilities, ['spoken-margins.commentary-layer.v1'], `${name}: a reply needs no new capability`);
+    const conversation = manifest.artifacts.find((a: { kind: string }) => a.kind === 'conversation');
+    assert.equal(conversation?.required, false, `${name}: an older build reads the replies as plain Margins`);
+    assert.equal(manifest.senderDisplayLabel, sender, name);
+    const replies = JSON.parse(new TextDecoder().decode(files.get('artifacts/margin-conversation.json'))).replies;
+    assert.deepEqual(replies.map((r: { packageScopedId: string }) => r.packageScopedId), ['margin-0001', 'margin-0002']);
+    for (const reply of replies) {
+      assert.equal(reply.parentPackageDigest, parent.contentDigest, `${name}: names the packet Ana's app wrote`);
+      assert.equal(reply.parentPackageScopedId, 'a-1');
+    }
   }
 });
 

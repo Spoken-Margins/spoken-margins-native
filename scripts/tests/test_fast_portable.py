@@ -78,11 +78,13 @@ class PortableStepTable(unittest.TestCase):
         for folder in verification.PORTABLE_OPS_LEFT_OUT:
             self.assertTrue(any((ROOT / folder).glob('test_*.py')), folder)
 
-    def run_portable(self, plan='fast-portable'):
+    def run_portable(self, plan='fast-portable', pr_quick=False):
         calls, skipped, slots = [], [], []
         with tempfile.TemporaryDirectory() as temporary:
             (Path(temporary) / 'node_modules').mkdir()
             run = verification.Run(Path(temporary) / 'run', plan)
+            if pr_quick:
+                run.manifest['pr_quick'] = True
             with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, args))), \
                     patch.object(run, 'ops_steps', side_effect=lambda **kw: calls.append(('ops', kw))), \
                     patch.object(verification, 'ROOT', Path(temporary)), \
@@ -104,6 +106,33 @@ class PortableStepTable(unittest.TestCase):
         for name in verification.PORTABLE_LEFT_OUT:
             self.assertIn(name, printed)
         self.assertEqual(slots, [], 'the Mac-wide host-test slot is not for a hosted job')
+
+    def test_the_pr_quick_tier_leaves_only_runner_tests_to_the_merge_group(self):
+        full = [name for name, _ in self.run_portable()[0]]
+        calls, skipped, slots, printed = self.run_portable(pr_quick=True)
+        self.assertEqual([name for name, _ in calls], [name for name in full if name != 'runner-tests'])
+        self.assertEqual(skipped, {**verification.PORTABLE_LEFT_OUT, **verification.PR_QUICK_LEFT_OUT})
+        self.assertIn('runner-tests: skipped (the PR quick tier leaves it to the merge group', printed)
+        self.assertNotIn('fast-portable runner-tests left out', printed)
+        self.assertEqual(slots, [])
+
+    def test_the_workflow_runs_the_quick_tier_on_prs_only(self):
+        workflow = (ROOT / '.github/workflows/hosted-portable.yml').read_text()
+        portable = workflow[workflow.index('\n  portable:'):workflow.index('\n  scope:')]
+        self.assertIn("PR_QUICK: ${{ github.event_name == 'pull_request' && '--pr-quick' || '' }}", portable)
+        self.assertIn('verify-tests.py --plan fast-portable $PR_QUICK', portable)
+        core = portable[portable.index('- name: SessionKitCoreTests on Linux'):]
+        core = core[:core.index('\n      - ')]
+        self.assertIn("if: github.event_name != 'pull_request'", core)
+        # A quick PR pass must not be recorded as the whole plan.
+        self.assertIn('plan=fast-portable-pr-quick tree=', portable)
+        self.assertIn('if [ "$EVENT" = pull_request ]; then', portable)
+
+    def test_pr_quick_is_refused_with_any_other_plan(self):
+        done = subprocess.run([sys.executable, str(SCRIPTS / 'verify-tests.py'), '--plan', 'fast', '--pr-quick', '--list'],
+                              capture_output=True, text=True, cwd=ROOT)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn('--pr-quick goes with --plan fast-portable only', done.stderr)
 
     def test_the_portable_plan_runs_the_exact_command_of_each_node_and_research_step(self):
         # Names alone let a step's command become `true` unnoticed (#3706): pin the argv, and the options that
@@ -137,8 +166,8 @@ class PortableStepTable(unittest.TestCase):
     def test_the_portable_plan_drops_the_apple_tests_and_checks_lfs_pointers(self):
         calls = dict(self.run_portable()[0])
         runner = calls['runner-tests']
-        self.assertEqual(runner[:2], [sys.executable, '-c'])
-        self.assertEqual(runner[3:], list(verification.PORTABLE_RUNNER_TESTS_LEFT_OUT))
+        self.assertEqual(runner, [*verification.PARALLEL_RUNNER, '--leave-out',
+                                  *verification.PORTABLE_RUNNER_TESTS_LEFT_OUT])
         self.assertEqual(calls['ops'], {'left_out': verification.PORTABLE_OPS_LEFT_OUT})
         self.assertIn('--allow-lfs-pointers', calls['contracts'])
 
@@ -160,26 +189,8 @@ class PortableStepTable(unittest.TestCase):
         by_name = dict(calls)
         self.assertEqual(by_name['ops'], ((), {}))
         self.assertNotIn('--allow-lfs-pointers', by_name['contracts'])
-        self.assertNotIn(verification.PORTABLE_RUNNER_LOADER, by_name['runner-tests'])
+        self.assertEqual(by_name['runner-tests'], verification.PARALLEL_RUNNER)  # every runner test, nothing left out
         self.assertIn('package-steps', by_name)
-
-    def test_the_runner_loader_drops_only_the_listed_tests(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            tests = Path(temporary) / 'scripts' / 'tests'
-            tests.mkdir(parents=True)
-            (tests / 'test_apple.py').write_text(
-                'import unittest\nclass A(unittest.TestCase):\n    def test_needs_xcode(self): self.fail("xcode")\n')
-            (tests / 'test_other.py').write_text(
-                'import unittest\nclass B(unittest.TestCase):\n    def test_runs(self): pass\n'
-                '    def test_needs_xcode_too(self): self.fail("xcode")\n')
-            done = subprocess.run([sys.executable, '-c', verification.PORTABLE_RUNNER_LOADER,
-                                   'test_apple.', 'test_other.B.test_needs_xcode_too'],
-                                  cwd=temporary, capture_output=True, text=True)
-            self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertIn('Ran 1 test', done.stderr)
-            failing = subprocess.run([sys.executable, '-c', verification.PORTABLE_RUNNER_LOADER, 'test_apple.'],
-                                     cwd=temporary, capture_output=True, text=True)
-            self.assertNotEqual(failing.returncode, 0)  # a test that is not listed still fails the step
 
 
 class SupertonicModelSkips(unittest.TestCase):

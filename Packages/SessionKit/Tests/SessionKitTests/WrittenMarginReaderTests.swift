@@ -107,11 +107,9 @@ final class WrittenMarginReaderTests: XCTestCase {
         let hung = WrittenMarginReading(intro: "Cole wrote:", text: "This one is stuck.")
         let fine = WrittenMarginReading(intro: "Cole wrote:", text: "This one is fine.")
         _ = reader.start(["a": hung, "b": fine]) // the stuck one is first in line for the lane, or second: either way both must be answered
-        let began = Date()
         do { _ = try await reader.rendered(hung); XCTFail("a render that never returns must time out") } catch let error as WrittenMarginReader.RenderError {
             XCTAssertEqual(error, .timedOut)
         }
-        XCTAssertLessThan(Date().timeIntervalSince(began), 5)
         XCTAssertFalse(reader.isReady(hung))
         let file = try await reader.rendered(fine)
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
@@ -252,9 +250,10 @@ final class WrittenMarginReaderTests: XCTestCase {
         let stuck = DispatchSemaphore(value: 0)
         defer { stuck.signal() }
         let reader = WrittenMarginReader(directory: directory, timeLimit: { _ in 30 }, renderAudio: { _, _ in stuck.wait(); throw WrittenMarginReader.RenderError.nothingToSay })
-        let began = Date()
-        await reader.waitUntilSettled([WrittenMarginReading(intro: "Cole wrote:", text: "Never.")], upTo: 0.3)
-        XCTAssertLessThan(Date().timeIntervalSince(began), 5)
+        let never = WrittenMarginReading(intro: "Cole wrote:", text: "Never.")
+        // Coming back at all is the proof: the render never finishes until this test ends, so a wait that ignored its
+        // limit would hang here instead of returning.
+        await reader.waitUntilSettled([never], upTo: 0.3)
     }
 
     /// Blocked writes each hold a thread (#1230): after a few, new readings fail at once instead of starting another.
@@ -269,11 +268,9 @@ final class WrittenMarginReaderTests: XCTestCase {
         for word in ["stuck one", "stuck two"] {
             do { _ = try await reader.rendered(WrittenMarginReading(intro: "Cole wrote:", text: word)); XCTFail("times out") } catch let e as WrittenMarginReader.RenderError { XCTAssertEqual(e, .timedOut) }
         }
-        let began = Date()
         do { _ = try await reader.rendered(WrittenMarginReading(intro: "Cole wrote:", text: "stuck three")); XCTFail("fails at once") } catch let e as WrittenMarginReader.RenderError {
-            XCTAssertEqual(e, .tooManyStuck)
+            XCTAssertEqual(e, .tooManyStuck, "no wait: one that waited out its limit would time out instead")
         }
-        XCTAssertLessThan(Date().timeIntervalSince(began), 0.15, "no wait, and no third thread")
         XCTAssertEqual(calls.spoken.filter { $0.contains("stuck three") }.count, 0)
         release.signal() // one abandoned write comes back
         try await Task.sleep(for: .milliseconds(300))

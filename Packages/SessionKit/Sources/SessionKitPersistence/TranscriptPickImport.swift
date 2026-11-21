@@ -4,8 +4,9 @@ import SessionKit
 /// What a pick from Files does with the files the transcript rule looks at (#2997).
 ///
 /// A `.vtt`, `.srt`, `.docx` or `.txt` goes through `TranscriptLibraryImport`. Anything the rule does not take (a
-/// `.txt` that isn't a transcript, `.md`, `.pdf`, and every other type) comes back in `passthrough`, in the order
-/// picked, for today's text import, which is unchanged. Reading each file, the parse and the store write all run
+/// `.txt` or `.docx` that isn't a transcript, `.md`, `.pdf`, and every other type) comes back in `passthrough`, in the
+/// order picked, for today's text import. A Word file there becomes a document item (#4594); one that won't open is
+/// passed on too, so the document import refuses it with its own reason (a password, the old `.doc` format). Reading each file, the parse and the store write all run
 /// off the caller's actor, one file after another.
 ///
 /// The caller holds the security-scoped access to the picked URLs for the whole call.
@@ -51,10 +52,10 @@ public enum TranscriptPickImport {
             guard isCandidate(url) else { result.passthrough.append(url); continue }
             let name = url.lastPathComponent
             let fileExtension = url.pathExtension.lowercased()
-            // The cap is checked before the file is read. A `.txt` over it skips the transcript rule and imports as
-            // today; a `.vtt`, `.srt` or `.docx` over it is refused.
+            // The cap is checked before the file is read. A `.txt` or `.docx` over it skips the transcript rule and
+            // imports as a document, which has its own cap; a `.vtt` or `.srt` over it is refused.
             if let size = fileSize(url), size > TranscriptImport.maximumBytes {
-                if fileExtension == "txt" { result.passthrough.append(url) }
+                if fileExtension == "txt" || fileExtension == "docx" { result.passthrough.append(url) }
                 else { result.refusals.append(TranscriptImportMessage(.tooLarge, fileName: name)) }
                 continue
             }
@@ -72,13 +73,11 @@ public enum TranscriptPickImport {
                 // A `.txt` that is not UTF-8 and not a transcript keeps today's import and its words (design, section 2);
                 // an empty one, and every other type, is refused with its own sentence.
                 if fileExtension == "txt", message.kind == .couldNotRead { result.passthrough.append(url) }
+                else if fileExtension == "docx", passesOnWordFailure(message.kind) { result.passthrough.append(url) }
                 else { result.refusals.append(message) }
             case .notTranscript:
-                if fileExtension == "docx" {
-                    result.refusals.append(TranscriptImportMessage(.docxNotATranscript, fileName: name))
-                } else {
-                    result.passthrough.append(url)
-                }
+                // A Word document that isn't a meeting transcript is a document (#4594), as a `.txt` is.
+                result.passthrough.append(url)
             }
         }
         return result
@@ -113,6 +112,12 @@ public enum TranscriptPickImport {
             }
         }
         return ordered
+    }
+
+    /// A Word file the transcript rule couldn't read, or found empty, goes to the document import, which says why in
+    /// the words of a document (#4594). What the rule says of a transcript it read stays its own.
+    private static func passesOnWordFailure(_ kind: TranscriptImportMessage.Kind) -> Bool {
+        kind == .docxUnreadable || kind == .empty || kind == .tooLarge
     }
 
     private static func fileSize(_ url: URL) -> Int? {

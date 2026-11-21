@@ -120,7 +120,7 @@ public enum ClipboardIntakeClassifier {
     }
 
     /// Drops quotes, brackets and sentence punctuation that cling to a link copied out of prose.
-    private static func stripWrapping(_ token: String) -> String {
+    static func stripWrapping(_ token: String) -> String {
         let leading: Set<Character> = ["<", "(", "[", "\"", "'", "“", "‘", "«"]
         let trailing: Set<Character> = [">", ")", "]", "\"", "'", "”", "’", "»", ".", ",", ";", ":", "!", "?"]
         let pairs: [Character: Character] = [")": "(", "]": "["]

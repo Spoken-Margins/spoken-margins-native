@@ -64,6 +64,10 @@ struct DiagnosticsExportInputs: Sendable {
         // The tracker is thread-safe and holds only places and counts, so it is read here, not copied with the inputs (#4337).
         var exported = self.fixed
         exported.screenRebuilds = PresentationTracker.shared.summary
+        // Thread-safe and kept in a file, so a heavy day from an earlier launch is in this export too (#4389).
+        exported.diskWritesBySource = DiskWriteLedgerStore.shared.summaryText
+        // Only a count of shows in two or more lists, no names (#4046). Lists that can't be read leave the key out.
+        exported.listsShowsInTwoOrMore = store.flatMap { try? $0.loadFollowLists() }.map(FollowListScreens.showsInTwoOrMore)
         let text = try DiagnosticsExport.jsonText(DiagnosticsExport.entries(live: live, stored: stored, fixed: exported))
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Diagnostics", isDirectory: true)
         return try DiagnosticsExportFile.write(text, build: fixed.developerBuild, exportedAt: fixed.exportedAt, to: directory)
