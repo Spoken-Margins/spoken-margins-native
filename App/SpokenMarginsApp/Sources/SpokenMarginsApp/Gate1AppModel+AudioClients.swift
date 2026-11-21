@@ -73,8 +73,7 @@ extension Gate1AppModel {
             }
             let coordinator = PreparedAudioCoordinator(
                 repository: store,
-                rootDirectory: supportDirectory.appending(path: "PreparedAudio", directoryHint: .isDirectory),
-                report: preparedAudioReport
+                rootDirectory: supportDirectory.appending(path: "PreparedAudio", directoryHint: .isDirectory)
             )
             preparedAudioCoordinator = coordinator
             let hooks = PreparedSpeechHooks(store: store, coordinator: coordinator, signatureTask: signatureTask) // #336
