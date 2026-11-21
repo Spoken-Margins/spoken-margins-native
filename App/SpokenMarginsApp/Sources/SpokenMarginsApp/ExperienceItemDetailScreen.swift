@@ -633,12 +633,13 @@ struct ExperienceItemDetailScreen: View {
             Button {
                 confirmsNewSession = true
             } label: {
-                Label("New session", systemImage: "plus.circle")
+                Label("Start over", systemImage: "plus.circle")
                     .frame(minHeight: 40)
                     .expandedHitArea(vertical: 2)
             }
             .buttonStyle(.bordered)
             .tint(AppColors.evergreen)
+            .accessibilityHint("Begins a separate pass. Your current place and Margins stay where they are.")
             .accessibilityIdentifier("item.startNew.button")
         }
 
@@ -678,7 +679,7 @@ struct ExperienceItemDetailScreen: View {
 
     private var structure: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Chapters", detail: "Authored source structure")
+            sectionHeading("Chapters", detail: "The chapters and headings in the source itself")
             if !model.selectedItem.navigation.isEmpty {
                 ExperienceSurface {
                     ExperienceCanonicalNavigationTree(
@@ -754,9 +755,9 @@ struct ExperienceItemDetailScreen: View {
                 }
             } else {
                 ExperienceSurface {
-                    Label("No authored chapters", systemImage: "doc.text")
+                    Label("No chapters in this source", systemImage: "doc.text")
                         .font(.headline)
-                    Text("Listening is available from the beginning. A generated map is optional and lives under Advanced.")
+                    Text("You can listen from the beginning. A Listening Map, if you want one, is under Advanced.")
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .padding(.top, 4)
@@ -825,7 +826,7 @@ struct ExperienceItemDetailScreen: View {
 
     private var sessions: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Listening sessions", detail: "Each pass keeps its own position and Margins")
+            sectionHeading("Listening sessions", detail: "Each one keeps its own place and Margins")
             if model.selectedItem.sessionRows.isEmpty {
                 ExperienceSurface { Text("No sessions yet.").foregroundStyle(AppColors.secondaryText) }
             } else {
