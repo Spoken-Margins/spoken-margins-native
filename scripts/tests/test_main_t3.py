@@ -105,6 +105,26 @@ class StatusTests(unittest.TestCase):
             'runner fault: The cloned simulator did not boot'))
         self.assertIn('no test result', M.description('failure', {'failed': []}, ['Build before simulator boot: x']))
 
+    def test_the_status_line_names_the_fault_not_the_build_time(self):
+        # 846e7e5 (2026-11-21): 1899 app tests passed, the adapters plan could not fetch a licence text, and the status
+        # said "runner fault: shared build before simulator boot took 7m44s".
+        details = ['shared build before simulator boot took 7m44s (reused: False); evidence: /w/verify-build/manifest.json',
+                   'boot of the cloned simulator took 2m25s (memory pressure at boot: normal)',
+                   'app: passed on retry: none',
+                   'adapters: Process exit 2 (see /w/verify-adapters/supertonic-model.log).',
+                   'template preparation and simulator clone took 11m02s']
+        self.assertEqual(M.description('error', {'passed': 1899, 'failed': []}, details),
+                         'runner fault: adapters: Process exit 2 (see /w/verify-adapters/supertonic-model.log).')
+        self.assertTrue(M.description('failure', {'failed': []}, details).startswith(
+            'failed, no test result: adapters: Process exit 2'))
+        for neutral in details[:3] + details[4:]:  # all neutral: the first still shows, as before
+            with self.subTest(neutral=neutral[:30]):
+                self.assertEqual(M.first_problem([neutral], 'none'), neutral)
+        self.assertEqual(M.first_problem(['', ''], 'none'), 'none')
+        self.assertEqual(M.first_problem(['app: passed on retry: Foo/testBar', 'x failed'], 'none'), 'x failed')
+        self.assertEqual(M.first_problem(['Build before simulator boot: Process exit 74'], 'none'),
+                         'Build before simulator boot: Process exit 74')
+
     def test_every_description_fits_githubs_limit(self):
         many = [(f'SpokenMarginsAppTests/Class{i}/testSomethingLong{i}', []) for i in range(40)]
         for state, results, details in (('failure', {'failed': many}, []), ('error', {}, ['x ' * 200]),
