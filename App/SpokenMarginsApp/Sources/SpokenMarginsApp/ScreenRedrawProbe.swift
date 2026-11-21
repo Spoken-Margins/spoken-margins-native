@@ -1,4 +1,6 @@
+import Combine
 import Foundation
+import SwiftUI
 import Synchronization
 
 #if DEBUG
@@ -14,7 +16,17 @@ enum ScreenRedrawProbe {
     /// reached the screen's equality check (a parent redraw) or the screen was invalidated by something it watches.
     private nonisolated static let equalityChecks = Mutex<[String: Int]>([:])
 
+    /// How often each thing a screen watches announced a change, by the name the screen gave it. A body-run count over
+    /// the limit says a screen was redrawn; this says which of the screen's own objects asked for it (#4379).
+    private(set) static var publishes: [String: Int] = [:]
+
+    /// Screens whose body prints SwiftUI's own reason for each run (`Self._printChanges()`), set by a test that is
+    /// chasing a redraw. Off otherwise: the output is one line per run.
+    static var printsChanges: Set<String> = []
+
     static func record(_ screen: String) { bodyRuns[screen, default: 0] += 1 }
+
+    static func recordPublish(_ source: String) { publishes[source, default: 0] += 1 }
 
     static func count(_ screen: String) -> Int { bodyRuns[screen, default: 0] }
 
@@ -24,6 +36,16 @@ enum ScreenRedrawProbe {
 
     nonisolated static func equalityCheckCount(_ screen: String) -> Int {
         equalityChecks.withLock { $0[screen, default: 0] }
+    }
+}
+
+extension View {
+    /// Counts each announcement of the screen's own objects in `ScreenRedrawProbe.publishes`, under `"<screen>.<name>"`.
+    /// `onReceive` redraws nothing by itself, so the screen runs as it does without this.
+    func recordsPublishes(screen: String, of sources: KeyValuePairs<String, ObservableObjectPublisher>) -> some View {
+        onReceive(Publishers.MergeMany(sources.map { name, publisher in publisher.map { _ in name } })) { name in
+            ScreenRedrawProbe.recordPublish("\(screen).\(name)")
+        }
     }
 }
 #endif
