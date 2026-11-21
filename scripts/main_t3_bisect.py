@@ -9,8 +9,9 @@ What it does, after a `failure` (never after `error`, which proves nothing about
 2. Takes the first-parent commits in `last green..red`, oldest first. The red head is known to fail; the last green is
    known to pass.
 3. Bisects them. Each probe checks out one commit and runs only the failing classes through lane-runner.py's T3
-   machinery (the same build, simulator clone, crash-flood stop and retries as the whole run). Cost: about log2(merges)
-   probes, plus one repeat of the culprit when its failure was seen only in a probe.
+   machinery (the same build, simulator clone, crash-flood stop and retries as the whole run). A commit that predates a
+   class does not run it and counts as a pass. Cost: about log2(merges) probes, plus one more on the culprit: the
+   culprit's failing classes must fail on their own, twice if its first failure was in a probe, or it is not named.
 4. Says what it found. A culprit gets one `ready` + `regression` issue naming the merge, its PR and the failing tests.
    Anything it cannot decide (a runner fault twice on one commit, a commit that does not build, a different test
    failing, the culprit passing on a repeat, no green in history, out of time or probes) is posted as a note on the
@@ -28,6 +29,8 @@ The scripts/ folder is restored to the red commit's before each probe, so an old
 
 Subcommand:
 - bisect --sha RED --run-url URL --evidence DIR: as above. Exits 0 whatever it finds; the red status is already set.
+  Needs a checkout with full history (fetch-depth: 0) and the red run's evidence folder, so it runs in the red run's
+  job, or a job that downloads that evidence and sets up the Mac as main-t3.yml's t3 job does.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's). Stdlib only, Python 3.9-compatible.
 """
@@ -48,9 +51,15 @@ import main_t3 as t3
 ROOT = t3.ROOT
 CULPRIT_MARKER = '<!-- main-t3-culprit: %s -->'
 CULPRIT_MARKER_RE = re.compile(r'<!-- main-t3-culprit: ([0-9a-f]{40}) -->')
-MAX_PROBES = 8  # 2**8 = 256 merges; log2(30) is 5, and a runner-fault retry or the confirming repeat needs a few more
+MAX_PROBES = 10  # log2(30) is 5 and log2(256) is 8; the culprit's own probe and a runner-fault retry need a few more
 UNDECIDED_RETRIES = 1
-BUDGET_SECONDS = 200 * 60  # the workflow job's limit minus what it spends before the first probe
+# One probe is a build and one run of a few classes, never the whole plans. Each verify-tests.py run in it gets
+# PROBE_TIMEOUT (a probe is at most three: the build and two plans). No probe starts after BUDGET_SECONDS, which leaves
+# the last one room to end and the result to be posted inside the bisect job's 240 minutes (the job sets
+# timeout-minutes: 240): 240 min - 20 min of setup - 3 * 30 min = 130 min.
+PROBE_TIMEOUT = 30 * 60
+BUDGET_SECONDS = 130 * 60
+TEST_SOURCES = 'App/SpokenMarginsAppTests'
 DEFAULT_AREA = 'area: groundwork'
 PR_NUMBER = re.compile(r'Merge pull request #(\d+)|\(#(\d+)\)\s*$')
 
@@ -110,7 +119,11 @@ def classify_probe(verdict: str, results: dict, watched: set) -> str:
 
 def bisect(commits: list, probe, max_probes: int = MAX_PROBES, time_left=lambda: True) -> Result:
     """Find the first failing commit in `commits` (oldest first). The last one is known to fail and the commit before
-    the first is known to pass. `probe(sha)` returns PASS, FAIL or UNDECIDED; `time_left()` is False when out of time."""
+    the first is known to pass. `probe(sha)` returns PASS, FAIL or UNDECIDED; `time_left()` is False when out of time.
+
+    The red head is known to fail only in the whole suite. A culprit is named only after the watched classes have
+    failed in a probe of the culprit itself: for the head too, since a failure that comes from another test's pollution
+    or a flake does not reproduce when its classes run alone, and blaming the newest merge for it would be a guess."""
     if not commits:
         return Result('undecided', None, 'there are no commits between the last green and the red one', [])
     probes = []
@@ -145,14 +158,16 @@ def bisect(commits: list, probe, max_probes: int = MAX_PROBES, time_left=lambda:
         else:
             bad = mid
     culprit = commits[bad]
-    if bad != len(commits) - 1:
-        # Its failure was seen once, in a probe. The red head's was seen by the whole run, with its own retries.
+    seen = sum(1 for sha, outcome in probes if sha == culprit and outcome == FAIL)
+    if seen < 2 if bad != len(commits) - 1 else seen < 1:
+        # A probe that found it failing is one sighting; the head's whole run is not a sighting of its classes alone.
         again = run(culprit)
         if again is None:
-            return undecided(f'out of probes or time before {culprit[:7]} could be repeated')
+            return undecided(f'out of probes or time before {culprit[:7]} could be checked on its own')
         if again != FAIL:
-            return undecided(f'{culprit[:7]} failed once and then {"passed" if again == PASS else "could not be tested"}'
-                             ': a flaky test, not a culprit')
+            how = 'passed' if again == PASS else 'could not be tested'
+            return undecided(f'{culprit[:7]} failed in the whole suite or a first probe, then {how} with only its failing '
+                             'classes: a flaky test or one that depends on others, not a culprit')
     return Result('culprit', culprit, f'{culprit[:7]} is the first failing commit', probes)
 
 
@@ -246,9 +261,22 @@ def check_out(sha: str, red: str) -> None:
         git('-c', f'http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}', 'lfs', 'pull')
 
 
+def present_classes(grouped: dict, root: Path) -> dict:
+    """The watched classes whose Swift class is declared in the checked-out tree, by plan. A class a PR added is not in
+    the commits before it, and verify-tests.py refuses a selector its plan does not hold."""
+    sources = [path.read_text(errors='replace') for path in sorted((root / TEST_SOURCES).rglob('*.swift'))]
+    present = {}
+    for plan, classes in grouped.items():
+        here = [c for c in classes if any(re.search(r'\bclass\s+' + re.escape(c.split('/')[-1]) + r'\b', text)
+                                          for text in sources)]
+        if here:
+            present[plan] = here
+    return present
+
+
 def make_probe(grouped: dict, watched: set, red: str, run_id: str, evidence: Path):
     lane = t3.load_lane_runner()
-    lane.T3_TIMEOUT = t3.RUN_TIMEOUT
+    lane.T3_TIMEOUT = PROBE_TIMEOUT
     count = [0]
 
     def probe(sha: str) -> str:
@@ -257,8 +285,13 @@ def make_probe(grouped: dict, watched: set, red: str, run_id: str, evidence: Pat
         out.mkdir(parents=True, exist_ok=True)
         try:
             check_out(sha, red)
+            here = present_classes(grouped, ROOT)
+            if not here:
+                print(f'Probe {sha[:7]}: none of the watched classes exist yet, so they cannot fail here -> pass',
+                      flush=True)
+                return PASS
             verdict, _where, _ran, details, _crashes, _ = lane._run_t3_grouped(
-                {plan: list(classes) for plan, classes in grouped.items()}, f'bisect-{sha[:7]}-{run_id}', out)
+                {plan: list(classes) for plan, classes in here.items()}, f'bisect-{sha[:7]}-{run_id}', out)
         except Exception as error:  # noqa: BLE001 - a fault in the machinery decides nothing about the commit
             print(f'Probe {sha[:7]} stopped: {error!r}', flush=True)
             return UNDECIDED
@@ -293,7 +326,11 @@ def command_bisect(args) -> int:
     grouped = failing_classes(chosen)
     results = t3.collect_results(chosen)
     failed_tests = [t for t, _ in results['failed']]
-    failure_issue = t3.find_open_issue(t3.open_issues())
+    try:
+        failure_issue = t3.find_open_issue(t3.open_issues())
+    except (RuntimeError, ValueError) as error:
+        print(f'Could not list the open issues: {error}', flush=True)
+        failure_issue = None
     green = None
     try:
         green = t3.find_last_green(red)
@@ -305,17 +342,26 @@ def command_bisect(args) -> int:
     elif not green:
         result = Result('undecided', None, f'no green {t3.CONTEXT} in the last {t3.HISTORY_PAGES * 100} commits', [])
     else:
-        commits = merges_in_range(green, red)
-        subjects = dict(commits)
-        started = time.monotonic()
-        probe = make_probe(grouped, watched_tests(grouped), red, args.run_id, evidence)
+        result = None
         try:
-            result = bisect([sha for sha, _ in commits], probe, time_left=lambda: time.monotonic() - started < args.budget)
-        finally:
+            commits = merges_in_range(green, red)
+        except RuntimeError as error:
+            commits = []
+            result = Result('undecided', None, f'the commits since the last green could not be listed: {error}', [])
+        subjects = dict(commits)
+        if not commits and result is None:
+            result = bisect([], None)
+        if commits:
+            started = time.monotonic()
+            probe = make_probe(grouped, watched_tests(grouped), red, args.run_id, evidence)
             try:
-                git('checkout', '--force', '--detach', red)
-            except RuntimeError as error:
-                print(f'Could not return to {red[:7]}: {error}', flush=True)
+                result = bisect([sha for sha, _ in commits], probe,
+                                time_left=lambda: time.monotonic() - started < args.budget)
+            finally:
+                try:
+                    git('checkout', '--force', '--detach', red)
+                except RuntimeError as error:
+                    print(f'Could not return to {red[:7]}: {error}', flush=True)
     (evidence / 'main-t3-bisect.json').write_text(json.dumps(
         {'red': red, 'green': green, 'classes': grouped, 'kind': result.kind, 'culprit': result.sha,
          'reason': result.reason, 'probes': result.probes}, indent=2) + '\n')

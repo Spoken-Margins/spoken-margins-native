@@ -47,20 +47,33 @@ class BisectTests(unittest.TestCase):
                     log = []
                     result = B.bisect(commits, probe_for(commits, culprit, log))
                     self.assertEqual((result.kind, result.sha), ('culprit', commits[culprit]), result.reason)
-                    # log2(n) probes to narrow it down, plus one repeat when the failure was only seen in a probe.
-                    self.assertLessEqual(len(log), math.ceil(math.log2(n)) + 1 if n > 1 else 0)
-                    self.assertNotIn(RED, log)
+                    # log2(n) probes to narrow it down, plus one more on the culprit itself.
+                    self.assertLessEqual(len(log), math.ceil(math.log2(n)) + 1)
+                    self.assertEqual(log.count(commits[culprit]), 1 if culprit == n - 1 else 2)
+                    if culprit == n - 1:
+                        self.assertEqual(log[-1], commits[-1])  # the head is checked on its own, last
 
-    def test_the_red_head_is_never_probed_and_a_head_culprit_is_not_repeated(self):
+    def test_a_head_culprit_is_probed_once_on_its_own_classes(self):
         commits = shas(4)
         log = []
         result = B.bisect(commits, probe_for(commits, 3, log))
         self.assertEqual(result.sha, commits[3])
-        self.assertNotIn(commits[3], log)  # its failure was the whole run's, with that run's own retries
+        self.assertEqual(log.count(commits[3]), 1)
 
-    def test_one_merge_since_green_is_the_culprit_with_no_probe(self):
-        result = B.bisect(['a' * 40], lambda sha: self.fail('no probe needed'))
-        self.assertEqual((result.kind, result.sha, result.runs), ('culprit', 'a' * 40, 0))
+    def test_a_failure_that_does_not_reproduce_in_isolation_names_no_pr(self):
+        # The whole run failed FooTests (another test's pollution, or a flake that outlived the retries), and every
+        # commit passes with only FooTests: blaming the newest merge would be a guess.
+        for n in (1, 2, 6):
+            commits = shas(n)
+            with self.subTest(n=n):
+                result = B.bisect(commits, lambda sha: B.PASS)
+                self.assertEqual((result.kind, result.sha), ('undecided', None))
+                self.assertIn('depends on others', result.reason)
+
+    def test_one_merge_since_green_is_the_culprit_after_one_probe_of_it(self):
+        log = []
+        result = B.bisect(['a' * 40], probe_for(['a' * 40], 0, log))
+        self.assertEqual((result.kind, result.sha, log), ('culprit', 'a' * 40, ['a' * 40]))
 
     def test_nothing_between_green_and_red_decides_nothing(self):
         result = B.bisect([], lambda sha: self.fail('no probe needed'))
@@ -92,7 +105,10 @@ class BisectTests(unittest.TestCase):
         commits = shas(64)
         self.assertEqual(B.bisect(commits, probe_for(commits, 40), max_probes=2).kind, 'undecided')
         self.assertEqual(B.bisect(commits, probe_for(commits, 40), time_left=lambda: False).kind, 'undecided')
-        self.assertEqual(B.bisect(commits, probe_for(commits, 40), max_probes=7).kind, 'culprit')
+        self.assertEqual(B.bisect(commits, probe_for(commits, 40), max_probes=8).kind, 'culprit')
+        big = shas(256)
+        self.assertEqual(B.bisect(big, probe_for(big, 100)).kind, 'culprit')  # the default cap holds 256 merges
+        self.assertEqual(B.bisect(big, probe_for(big, 100, script={big[127]: [B.UNDECIDED]})).kind, 'culprit')
 
     def test_probes_are_recorded_in_order_with_their_outcomes(self):
         commits = shas(4)
@@ -189,6 +205,98 @@ class IssueTests(unittest.TestCase):
         self.assertIn('names no PR', note)
         self.assertIn('abc1234 could not be tested', note)
         self.assertNotIn('#', note.replace('https://run', ''))
+
+
+class PresentClassesTests(unittest.TestCase):
+    def test_only_classes_declared_in_the_checked_out_tests_are_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tests = Path(tmp) / B.TEST_SOURCES / 'Sub'
+            tests.mkdir(parents=True)
+            (tests / 'A.swift').write_text('final class FooTests: XCTestCase {}\nfinal class FooTestsExtra: XCTestCase {}')
+            grouped = {'app': ['SpokenMarginsAppTests/FooTests', 'SpokenMarginsAppTests/NewTests'],
+                       'adapters': ['SpokenMarginsAppTests/NewTests'], 'other': ['SpokenMarginsAppTests/Foo']}
+            self.assertEqual(B.present_classes(grouped, Path(tmp)), {'app': ['SpokenMarginsAppTests/FooTests']})
+            self.assertEqual(B.present_classes({}, Path(tmp)), {})
+            self.assertEqual(B.present_classes(grouped, Path(tmp) / 'missing'), {})
+
+
+class CommandTests(unittest.TestCase):
+    """command_bisect end to end with git, gh and the lane replaced by recorders."""
+
+    def run_command(self, result_for, failure_issue=True, git_fails=False):
+        import argparse
+        import json
+        import os
+        calls = []
+        commits = [(sha, f'Merge pull request #{i}00 from x/y') for i, sha in enumerate(shas(4), 1)]
+        failed = {'steps': [{'tests': {'SpokenMarginsAppTests/Foo/testA': {'status': 'failed'}}}]}
+        issue = {'number': 5, 'html_url': 'https://github.com/o/r/issues/5', 'body': B.t3.MARKER,
+                 'user': {'login': 'github-actions[bot]'}}
+
+        def gh(*args, stdin=None):
+            calls.append((args, stdin))
+            if args[:2] == ('api', 'repos/o/r/issues/100'):
+                return json.dumps({'labels': [{'name': 'area: hear it well'}]})
+            return 'https://github.com/o/r/issues/9'
+
+        def merges(green, red):
+            if git_fails:
+                raise RuntimeError('git log: bad object')
+            return commits
+
+        patches = [(B.t3, 'gh', gh), (B.t3, 'repo', lambda: 'o/r'), (B.t3, 'open_issues',
+                                                                       lambda: [issue] if failure_issue else []),
+                   (B.t3, 'find_last_green', lambda sha: GREEN), (B.t3, 'read_manifests',
+                                                                    lambda ev: {'verify-app': failed}),
+                   (B, 'merges_in_range', merges), (B, 'make_probe', lambda *a: result_for),
+                   (B, 'git', lambda *a: ''), (os, 'chdir', lambda p: None)]
+        saved = [(o, n, getattr(o, n)) for o, n, _ in patches]
+        for o, n, v in patches:
+            setattr(o, n, v)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                args = argparse.Namespace(sha=RED, run_url='https://run', run_id='1', evidence=tmp, budget=10**6)
+                self.assertEqual(B.command_bisect(args), 0)
+                saved_json = json.loads((Path(tmp) / 'main-t3-bisect.json').read_text())
+        finally:
+            for o, n, v in saved:
+                setattr(o, n, v)
+        return calls, saved_json
+
+    def test_a_culprit_opens_one_ready_regression_issue_with_the_prs_area_and_comments_on_the_failure_issue(self):
+        calls, record = self.run_command(lambda sha: B.FAIL)
+        creates = [c for c in calls if c[0][:2] == ('issue', 'create')]
+        self.assertEqual(len(creates), 1)
+        args, body = creates[0]
+        labels = [args[i + 1] for i, a in enumerate(args) if a == '--label']
+        self.assertEqual(sorted(labels), ['area: hear it well', 'ready', 'regression'])
+        self.assertIn('PR #100', body)
+        self.assertEqual(record['kind'], 'culprit')
+        self.assertEqual(record['classes'], {'app': ['SpokenMarginsAppTests/Foo']})
+        comments = [c for c in calls if c[0][:2] == ('issue', 'comment')]
+        self.assertEqual([c[0][2] for c in comments], ['5'])
+        self.assertIn('https://github.com/o/r/issues/9', comments[0][1])
+
+    def test_an_undecided_run_opens_no_issue_and_names_no_pr_on_the_failure_issue(self):
+        calls, record = self.run_command(lambda sha: B.UNDECIDED)
+        self.assertEqual([c for c in calls if c[0][:2] == ('issue', 'create')], [])
+        comments = [c for c in calls if c[0][:2] == ('issue', 'comment')]
+        self.assertEqual(len(comments), 1)
+        self.assertIn('names no PR', comments[0][1])
+        self.assertEqual(record['kind'], 'undecided')
+
+    def test_a_failed_git_log_is_an_undecided_note_not_a_crash(self):
+        calls, record = self.run_command(lambda sha: B.FAIL, git_fails=True)
+        self.assertEqual(record['kind'], 'undecided')
+        self.assertIn('could not be listed', record['reason'])
+        self.assertEqual([c for c in calls if c[0][:2] == ('issue', 'create')], [])
+
+    def test_the_two_issue_kinds_are_never_mistaken_for_each_other(self):
+        failure = {'number': 1, 'body': B.t3.MARKER, 'user': {'login': 'github-actions[bot]'}}
+        culprit = {'number': 2, 'body': B.CULPRIT_MARKER % ('a' * 40), 'user': {'login': 'github-actions[bot]'}}
+        self.assertEqual(B.t3.find_open_issue([failure, culprit])['number'], 1)
+        self.assertIsNone(B.t3.find_open_issue([culprit]))
+        self.assertIsNone(B.find_open_culprit_issue([failure], 'a' * 40))
 
 
 class GitRangeTests(unittest.TestCase):
