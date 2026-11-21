@@ -50,6 +50,8 @@ public enum MarginEndPhrase {
         public var endMs: Int
         /// Where the last phrase of the run starts. It is `startMs` unless the phrase was said again straight away.
         public var finalPhraseStartMs: Int
+        /// The index, among the words' tokens, of the phrase's first token.
+        var firstTokenIndex: Int
         /// Where to cut the audio so the phrase is gone: a little before its first word.
         public var cutAtMs: Int { max(0, startMs - MarginEndPhrase.cutLeadMs) }
     }
@@ -88,7 +90,7 @@ public enum MarginEndPhrase {
             start = earlier
         }
         return Match(firstWordIndex: tokens[start].wordIndex, startMs: tokens[start].startMs, endMs: last.endMs,
-                     finalPhraseStartMs: finalStartMs)
+                     finalPhraseStartMs: finalStartMs, firstTokenIndex: start)
     }
 
     // MARK: Words
@@ -146,6 +148,90 @@ public enum MarginEndPhrase {
         }
         for index in start..<end where tokens[index + 1].startMs - tokens[index].endMs > maxWordGapMs { return nil }
         return start
+    }
+}
+
+/// A saved Margin's transcript with the trailing end phrase taken off (#3940, the cut, PR 2).
+public struct MarginEndPhraseCut: Sendable, Equatable {
+    /// Where to cut the audio: 150 ms before the phrase's first word, in the saved file's time.
+    public var cutAtMs: Int
+    /// The transcript text without the phrase, with the punctuation before it kept.
+    public var text: String
+    /// How many leading words (segments) are kept. The rest are the phrase.
+    public var keptWordCount: Int
+}
+
+extension MarginEndPhrase {
+    /// The cut for a saved Margin whose final words are `words` (one per transcript segment) and whose full text is
+    /// `text`: where to cut, the text without the phrase, and how many words stay. `nil` means keep everything: no
+    /// phrase at the end, a phrase that shares a word with the speech before it, text that doesn't end with the
+    /// words the phrase was found in (the recogniser's two readings disagree, and losing the listener's words is
+    /// worse than keeping "stop margin"), or nothing left once the phrase is gone.
+    public static func cut(text: String, words: [MarginEndPhraseWord]) -> MarginEndPhraseCut? {
+        guard let match = trailingPhrase(in: words), match.firstWordIndex > 0 else { return nil }
+        let tokens = tokenize(words)
+        let first = match.firstTokenIndex
+        // The phrase must start its own recognised word: one word holding "okay stop" can't be split, and a phrase
+        // with no token before it leaves nothing to keep.
+        guard first > 0, tokens[first - 1].wordIndex != tokens[first].wordIndex else { return nil }
+        // Cut before the phrase, but never into the last kept word: recogniser times often touch, and 150 ms back
+        // from a phrase that starts the moment the word ends would clip it. Overlapping words keep everything.
+        let lastKeptEndMs = tokens[first - 1].endMs
+        guard lastKeptEndMs <= match.startMs else { return nil }
+        let cutAtMs = max(match.cutAtMs, lastKeptEndMs)
+        guard cutAtMs > 0 else { return nil }
+        let droppedTokens = tokens[first...].map(\.text)
+        guard let trimmed = textDroppingTrailingTokens(text, expecting: droppedTokens) else { return nil }
+        return MarginEndPhraseCut(cutAtMs: cutAtMs, text: trimmed, keptWordCount: match.firstWordIndex)
+    }
+
+    /// `text` without its last `expecting.count` word tokens, only when those are exactly `expecting`; the text
+    /// before them keeps its own punctuation and loses trailing space. `nil` when they differ or nothing is left.
+    static func textDroppingTrailingTokens(_ text: String, expecting: [String]) -> String? {
+        let normalised = text.precomposedStringWithCanonicalMapping
+        var runs: [(token: String, start: String.Index)] = []
+        var current: String.Index?
+        var index = normalised.startIndex
+        func close(at end: String.Index) {
+            guard let start = current else { return }
+            current = nil
+            let token = normalised[start..<end].lowercased()
+                .replacingOccurrences(of: "\u{2019}", with: "'")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "'"))
+            if !token.isEmpty { runs.append((token, start)) }
+        }
+        while index < normalised.endIndex {
+            let character = normalised[index]
+            if character.isLetter || character.isNumber || character == "'" || character == "\u{2019}" {
+                if current == nil { current = index }
+            } else {
+                close(at: index)
+            }
+            index = normalised.index(after: index)
+        }
+        close(at: normalised.endIndex)
+        guard runs.count > expecting.count, runs.suffix(expecting.count).map(\.token) == expecting else { return nil }
+        let cutIndex = runs[runs.count - expecting.count].start
+        // Only the end of the kept text is touched, and only what led into the phrase: an opening quote or bracket
+        // that touches it ("He said \"stop margin\"") goes with it, then trailing space, then one dash that stood
+        // alone ("He said \u{2014} stop margin"). A quote or apostrophe that closes a word, and anything at the start
+        // of the text, is the listener's own and stays.
+        let touching = Set("\"\u{201C}\u{2018}'([{\u{00AB}")
+        var end = cutIndex
+        while end > normalised.startIndex {
+            let before = normalised.index(before: end)
+            guard touching.contains(normalised[before]) else { break }
+            end = before
+        }
+        var kept = String(normalised[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let dashes = Set("\u{2014}\u{2013}-")
+        if let last = kept.last, dashes.contains(last) {
+            let beforeDash = kept.dropLast()
+            if beforeDash.last?.isWhitespace == true {
+                kept = String(beforeDash).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return kept.isEmpty ? nil : kept
     }
 }
 
