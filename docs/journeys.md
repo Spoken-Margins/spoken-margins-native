@@ -141,6 +141,8 @@ The owner's one-phone version, with prepared packets and an episode that shares 
    - Pass: close Margins play without an extra jump back. Stop pauses the episode where it is; if no Margin of the review has played yet, it goes back to where the listener was. Pause and Stop behave as they do for "Play this moment".
 6. Back on the Now screen with the episode paused before the friend's Margins (#4447), with the item's own Margins and the friend's both ahead, press the Skim arrows either side of the chapter title, then open the Margins tab and tap the play button on a friend's row and on one of your own.
    - Pass: both Skim arrows are on the screen as soon as the Margins are, with no tap or play first, and the forward one is bright. Each press lands where its words say (the next Margin's lead-in, or the Margin itself when already inside it) and the pinned card names the Margin. Each Margins-tab play button jumps to about 20 s before that Margin and plays it; a Margin that cannot play says why, in words, and never does nothing. Report what each press did and where the playhead landed. Owner-found regression: build 37, 2026-11-17.
+7. The same on an article or PDF (#4447): import a friend's packet for an article in the Library, open the article, open the Margins tab and tap the play button on the friend's row.
+   - Pass: the play button is enabled whenever the row shows a place, jumps the text to that passage and offers the friend's Margin there (the pinned card names it). A Margin with no place in this copy says why, in words, and never does nothing. Before this the button was disabled for every Margin placed by its text, because it asked for a time in the item.
 
 ## J10 — Everything local works with the product server unreachable
 

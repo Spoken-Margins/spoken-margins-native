@@ -48,7 +48,7 @@ struct PlaybackMarginsView: View {
                             detail: "\(row.collectionLabel) · \(row.positionDescription)",
                             isShared: true, identifier: "margins.shared.row.\(row.id)",
                             canPlay: row.canPlayFromMarginsList,
-                            showDetails: { selectedSharedMargin = row }, play: { model.playSharedMarginMoment(row) })
+                            showDetails: { selectedSharedMargin = row }, play: { model.playSharedMarginFromMarginsList(row) })
                     }
                 }
                 Button(action: model.openMargins) {

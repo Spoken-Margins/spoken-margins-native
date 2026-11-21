@@ -78,6 +78,7 @@ private struct OptionalAccessibilityValue: ViewModifier {
 extension SharedMarginRow {
     /// The Now tab's "Nearby Margins" row.
     var canPlayFromNearbyList: Bool { SharedMarginAudio.canOffer(interjection) }
-    /// The Margins tab's row also needs a place in the episode to jump to.
-    var canPlayFromMarginsList: Bool { canPlayFromNearbyList && SharedMarginPlaybackPosition(interjection) != nil }
+    /// The Margins tab's row also needs a place to jump to: a time in the episode, or a matched passage of the text
+    /// (`SharedMarginListPlay`, #4447).
+    var canPlayFromMarginsList: Bool { SharedMarginListPlay.canPlay(interjection) }
 }
