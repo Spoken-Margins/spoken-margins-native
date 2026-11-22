@@ -1048,6 +1048,35 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             : snapshot.2.sourceOffset(atSpokenCharacterOffset: max(snapshot.1, snapshot.3 ?? snapshot.1))
     }
 
+    /// Where the text continues when the note now being read is cut short with the paragraph-forward button (#3777):
+    /// the source offset of the first chunk after the run of notes at this citation, skipping a heard note's
+    /// definition, or the end of the text when nothing is left. Nil when the chunk now playing is not an aside.
+    func footnoteContinuationSourceOffset() -> Int? {
+        applyQueuedAdvance(finished: nil)
+        return lock.withLock { () -> Int? in
+            guard !fallbackIsActive,
+                  let index = generationPlan.firstIndex(where: { $0.key == currentChunk }) else { return nil }
+            let tags = generationPlan.map(\.footnote)
+            let next: Int
+            switch FootnoteNoteControls.paragraphForward(from: index, tags: tags) {
+            case .notOnANote:
+                return nil
+            case .endOfText:
+                return preparedSpeechProjection.sourceOffset(atSpokenCharacterOffset: preparedSpeechProjection.text.count)
+            case .continueAt(let chunk):
+                next = chunk
+            }
+            var target = next
+            if let identity = articleIdentity {
+                guard let playable = heardNotes.firstPlayableIndex(from: next, tags: tags, itemId: identity) else {
+                    return preparedSpeechProjection.sourceOffset(atSpokenCharacterOffset: preparedSpeechProjection.text.count)
+                }
+                target = playable
+            }
+            return preparedSpeechProjection.sourceOffset(atSpokenCharacterOffset: generationPlan[target].startOffset)
+        }
+    }
+
     #if DEBUG
     /// The render headroom the resume mark would read for the current generation in the app's current state (#2703).
     func debugRenderHeadroom(isStandIn: Bool) -> Double? {
