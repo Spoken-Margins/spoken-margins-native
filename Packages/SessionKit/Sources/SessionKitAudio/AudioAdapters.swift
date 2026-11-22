@@ -972,7 +972,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
         try PlaybackAudioSessionPolicy.ensurePlaybackCategory(
             options: PlaybackAudioSessionPolicy.options(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio)
         )
-        try AVAudioSession.sharedInstance().setActive(true)
+        try AudioSessionOperationLabel.scoped(AudioSessionOperationLabel.speechActivate) { try AVAudioSession.sharedInstance().setActive(true) }
         #endif
         lastTargetId = targetId
         lastStartOffset = charOffset
@@ -1142,7 +1142,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
         if mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
         #endif
         #if os(iOS) || os(watchOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        try? AudioSessionOperationLabel.scoped(AudioSessionOperationLabel.speechRelease) { try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
         #endif
         #endif
     }
@@ -2498,7 +2498,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
         if mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
         #endif
         #if os(iOS) || os(watchOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        try? AudioSessionOperationLabel.scoped(AudioSessionOperationLabel.mediaRelease) { try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
         #endif
         #endif
     }
