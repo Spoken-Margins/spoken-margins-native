@@ -833,3 +833,48 @@ test('after the first reply leaves, the page offers the iPhone app once, and not
   await expect(playing.getByRole('region', { name: 'Get the iPhone app' })).toHaveCount(0);
   await context.close();
 });
+
+// #4614: a podcast with dynamic ads is a different file on each request, and a Margin carries only the sender's clock
+// time, so a copy of a different length may put a Margin off its words. The player says so, with the size of the
+// length difference. The specs serve 180 s of audio: `vectorvoice01` names that length (no note), `vectorvoice33` names
+// 213 s, 33 s more (about 15% of the longer copy: "about 35 seconds", not "may not line up").
+const NOTE_SHORTER = 'Your copy is about 35 seconds shorter than Web fixture\u2019s, so Margins may be that far off.';
+
+test('a copy 33 seconds shorter than the sender\u2019s says so on the countdown and under the Margin, in its last place (#4614)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  await page.goto(`${STUB}/l/vectorvoice33#${KEY}`);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  const cue = playing.getByTestId('margin-cue');
+  await expect(cue).toContainText('Web fixture\u2019s first Margin in');
+  // The note arrives once the audio reports its length, as the card's last line, under both buttons.
+  const note = cue.getByTestId('margin-cue-length-note');
+  await expect(note).toHaveText(NOTE_SHORTER);
+  expect(await cue.locator(':scope > *').last().getAttribute('data-testid')).toBe('margin-cue-length-note');
+  await expect(cue.getByRole('button', { name: /^Skip to/ })).toBeVisible();
+  // The Margin at 0:30 plays: the same note sits under its card, outside the status region.
+  await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 28; });
+  const arrived = playing.getByTestId('arrived-margin');
+  await expect(arrived).toContainText('Web fixture wrote this', { timeout: 30_000 });
+  const under = playing.getByTestId('arrived-margin-length-note');
+  await expect(under).toHaveText(NOTE_SHORTER);
+  await expect(arrived.getByTestId('arrived-margin-length-note')).toHaveCount(0);
+  await context.close();
+});
+
+test('a copy of the sender\u2019s own length shows no note on the countdown or under the Margin (#4614)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  await page.goto(LINK);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
+  // Wait for the audio to report its length, so "no note" is not just "no length yet".
+  await expect.poll(() => page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.duration)).toBeGreaterThan(100);
+  await expect(playing.getByTestId('margin-cue-length-note')).toHaveCount(0);
+  await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 28; });
+  await expect(playing.getByTestId('arrived-margin')).toContainText('Web fixture wrote this', { timeout: 30_000 });
+  await expect(playing.getByTestId('arrived-margin-length-note')).toHaveCount(0);
+  await context.close();
+});
