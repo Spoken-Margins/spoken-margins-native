@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Tell the owner's phone when a PR into next waits only for his merge tap (#2047).
 
-The lane runner never merges a PR touching `scripts/lane-runner.py` or anything under `.github/` (owner rule
-2026-10-09, `owner_tap_paths` in scripts/lane-runner.py); the owner merges those himself. Nothing told him when
+No agent merges a PR touching `scripts/lane_merge_rules.py` or anything under `.github/` (owner rule
+2026-10-09, `owner_tap_paths` in scripts/lane_merge_rules.py); the owner merges those himself. Nothing told him when
 one was ready: every agent comment is posted under his own account, and GitHub never notifies anyone of their
 own activity. On 2026-10-18 #1964, #1966, #2038 and #1885 sat waiting only for his tap.
 
@@ -72,7 +72,7 @@ import comment_trust  # noqa: E402
 
 # The owner-tap paths (scripts/lane_merge_rules.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). A test keeps them equal.
 OWNER_LOGIN = 'uncomposed'  # who to @mention; the repo's owner is the org after #2169
-OWNER_TAP_FILES = {'scripts/lane-runner.py', 'scripts/lane_merge_rules.py'}
+OWNER_TAP_FILES = {'scripts/lane_merge_rules.py'}
 OWNER_TAP_PREFIXES = ('.github/',)
 # The audit formats (scripts/lane_merge_rules.py AUDITS, AUDIT_SHA, CLEAN_AUDIT). A test keeps them equal.
 AUDITS = ('**Codex audit (Astra)', '## Codex audit', '**Claude audit on `')
@@ -91,7 +91,7 @@ OWN_CHECKS = {'owner-tap-alert'}
 GATE_CHECKS = {'merge policy'}
 LABEL = 'owner-tap-check'  # the Mac's and the audit script's way to ask Actions for a check (--via-label)
 TAP_LABEL = 'needs-owner-tap'  # persistent: this PR waits only for the owner's merge tap
-TAP_LABEL_DESCRIPTION = "Waits only for the owner's merge tap (.github or lane-runner change)"
+TAP_LABEL_DESCRIPTION = "Waits only for the owner's merge tap (.github or merge-rules change)"
 TAP_LABEL_COLOR = '0075ca'  # blue
 ALREADY_ALERTED = 'already alerted on'
 # The check that runs scripts/tests/test_workflow_files.py on every PR (workflow-files.yml, #2596) and what that test

@@ -1389,5 +1389,43 @@ class BootRetryTests(unittest.TestCase):
         self.assertIn(UDID, posted)
 
 
+class IosMajorTests(unittest.TestCase):
+    """main-t3.yml sets SM_LANE_IOS_MAJOR for the hosted Mac's runtime; unset, the lane's own major stands.
+    Moved from the retired test_lane_hosted_app.py (#4769)."""
+
+    def test_ios_major_follows_the_hosted_override(self):
+        code = 'import lane_sim; print(lane_sim.IOS_MAJOR)'
+        for value, expected in (('', '26'), ('27', '27')):
+            with self.subTest(value=value):
+                env = dict(os.environ, SM_LANE_IOS_MAJOR=value)
+                out = subprocess.check_output([sys.executable, '-c', code], cwd=SCRIPTS, text=True, env=env)
+                self.assertEqual(out.strip(), expected)
+
+
+class MemoryPressureReadingTests(unittest.TestCase):
+    """lane_slots.memory_pressure_level reads the kernel's level, as `memory_pressure` reports it. Every other test
+    replaces it. Moved from the retired test_lane_beside_simulator.py (#4769)."""
+
+    def level(self, output=None, error=None):
+        def sysctl(command, text):
+            self.assertEqual(command, ['sysctl', '-n', 'kern.memorystatus_vm_pressure_level'])
+            if error:
+                raise error
+            return output
+        with mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': ''}), \
+                mock.patch('subprocess.check_output', side_effect=sysctl):
+            return lane_slots.memory_pressure_level()
+
+    def test_the_kernel_s_levels_are_read(self):
+        self.assertEqual(self.level('1\n'), 1)
+        self.assertEqual(self.level('2\n'), 2)
+        self.assertEqual(self.level('4'), 4)
+
+    def test_an_unreadable_level_is_none(self):
+        self.assertIsNone(self.level('kern.memorystatus_vm_pressure_level: unknown oid\n'))
+        self.assertIsNone(self.level(error=subprocess.CalledProcessError(1, 'sysctl')))
+        self.assertIsNone(self.level(error=FileNotFoundError('sysctl')))
+
+
 if __name__ == '__main__':
     unittest.main()

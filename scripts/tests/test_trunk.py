@@ -21,10 +21,6 @@ sys.path.insert(0, str(SCRIPTS))
 import trunk  # noqa: E402
 import merge_audit  # noqa: E402
 
-_spec = importlib.util.spec_from_file_location('lane_runner_for_trunk', SCRIPTS / 'lane-runner.py')
-lane = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(lane)
-
 MAIN = {'SM_TRUNK': 'main'}
 NEXT = {'SM_TRUNK': 'next'}   # any branch other than the default
 
@@ -113,7 +109,7 @@ class WorkflowTrunkTests(unittest.TestCase):
 
     def test_workflows_that_push_or_post_run_only_for_the_trunk(self):
         """A push to any branch but the trunk starts nothing that writes."""
-        gated = {'lane.yml': 5, 'merge-audit.yml': 1, 'hosted-integration.yml': 3, 'substack-canary.yml': 1, 'main-t3.yml': 1,
+        gated = {'merge-audit.yml': 1, 'hosted-integration.yml': 3, 'substack-canary.yml': 1, 'main-t3.yml': 1,
                  'lane-conflicts.yml': 2}
         texts = self.workflows()
         for name, count in gated.items():
@@ -125,29 +121,6 @@ class WorkflowTrunkTests(unittest.TestCase):
         for name in ('merge-audit.yml', 'owner-tap-alert.yml'):
             with self.subTest(workflow=name):
                 self.assertIn('scripts/trunk.py', self.workflows()[name])
-
-    def test_lane_jobs_pass_sm_trunk_to_the_runner(self):
-        text = self.workflows()['lane.yml']
-        self.assertEqual(text.count("SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}"), 4)  # lane, automerge, automerge-mac (#2459), release
-
-
-class LaneRunnerTrunkTests(unittest.TestCase):
-    def test_the_report_names_the_trunk_when_no_base_is_given(self):
-        with mock.patch.dict(os.environ, MAIN):
-            body = lane.report('r1', 'PASS', 'a' * 40, 'b' * 40, 'T2', 'here', 1.0, 'ran', [], '', '', '', {})
-        self.assertIn('tested merged with main at bbbbbbb', body)
-
-    def test_a_local_run_without_base_uses_the_trunk(self):
-        seen = {}
-
-        def stop(tree, base, into=None):
-            seen['base'] = base
-            raise SystemExit(0)
-
-        with mock.patch.dict(os.environ, MAIN), mock.patch.object(lane, 'base_scripts_fallback', side_effect=stop):
-            with self.assertRaises(SystemExit):
-                lane.main(['--pr', '1', '--event-head', 'a' * 40, '--run-id', '1', '--tree', str(ROOT)])
-        self.assertEqual(seen['base'], 'main')
 
 
 class MergeAuditTrunkTests(unittest.TestCase):
@@ -200,7 +173,7 @@ class MacJobsTrunkTests(unittest.TestCase):
 class NoHardCodedNextTests(unittest.TestCase):
     """The scripts #1492 step 1 covers name no branch literally; prose and stored record keys may still say next."""
 
-    FILES = ['scripts/lane-runner.py', 'scripts/merge_audit.py', 'scripts/phone-build', 'scripts/daily-phone-plan',
+    FILES = ['scripts/lane_t3.py', 'scripts/lane_merge_rules.py', 'scripts/merge_audit.py', 'scripts/phone-build', 'scripts/daily-phone-plan',
              'scripts/sm_status.py', 'scripts/lane_conflicts.py', 'scripts/owner_tap_alert.py',
              'scripts/hot_file_ratchet.py', 'scripts/test-scope.py', 'scripts/split_move.py',
              'scripts/integration-precheck.py', 'scripts/sim-build-latest', 'scripts/sim_builds.py', 'scripts/verify-tests.py',

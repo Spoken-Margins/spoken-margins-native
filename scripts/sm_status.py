@@ -26,7 +26,7 @@ Flags (`!!` red, `!` look) mark what a reply must not hide:
   t3-unqueued         a /lane T3 request is unanswered and the PR has neither `lane:queued` nor `lane:running`
                       (a T3 is optional and holds no merge since #4572; this only says nothing will answer it)
   scope-unknown       the diff couldn't be classified, so audit and simulator-test needs are not judged
-  owner-tap           touches scripts/lane-runner.py or .github/: the runner never merges it, only the owner does
+  owner-tap           touches scripts/lane_merge_rules.py or .github/: the runner never merges it, only the owner does
   unreadable          a read for this PR failed, so nothing about it can be called quiet
 
 It only reads GitHub (GET requests) and keeps no state. Needs GH_TOKEN or GITHUB_TOKEN (or `gh auth token`).
@@ -81,7 +81,7 @@ BRANCH_ISSUE = re.compile(r'^ws/(\d+)-')
 SHOWN_LABELS = ('automerge', 'needs-mac', 'lane:queued', 'lane:running', 'merge-audit', 'priority')
 # Mirrors lane_merge_rules.py AUDITED, OWNER_TAP_FILES and OWNER_TAP_PREFIXES; a test keeps them equal.
 AUDITED_CATEGORIES = {'audio': 'audio', 'persistence': 'persistence', 'packet': 'packets'}
-OWNER_TAP_FILES = {'scripts/lane-runner.py', 'scripts/lane_merge_rules.py'}
+OWNER_TAP_FILES = {'scripts/lane_merge_rules.py'}
 OWNER_TAP_PREFIXES = ('.github/',)
 FAILING = {'failure', 'timed_out', 'startup_failure', 'action_required'}
 NO_VERDICT = {'skipped', 'neutral', 'cancelled', 'stale', None, ''}
