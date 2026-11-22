@@ -21,7 +21,7 @@ It can re-install code that has already merged into `main` onto the four fixed t
 ops/server-deploy/install-on-server.sh ptp <public-key-file> <main-sha>
 ```
 
-It copies the files over normal key login, then runs `bootstrap-root.sh` in one sudo session (one password prompt): installs the tool and wrapper, creates `smci`, writes the key line, installs the sudoers drop-in after `visudo -cf`, and redeploys the backstop through the tool.
+It opens one ssh connection and one sudo session (one password prompt) and sends the files inside the command; root unpacks them into its own private folder and runs `bootstrap-root.sh`, which installs the tool and wrapper, creates `smci`, writes the key line, installs the sudoers drop-in after `visudo -cf`, and redeploys the backstop through the tool.
 
 ## Adding a target
 
