@@ -21,6 +21,13 @@ label into the queue's own commands. merge-queue-label-bridge.yml runs it from m
   without the label may be the owner's own Merge tap or a maintainer's `gh pr merge`. A PR leaves the queue only on
   the `unlabeled` event, a hold `edited`/`converted_to_draft` event, or merge_queue_dequeued.py's label removal.
 
+The owner's own `owner-tap` label arms a PR the same way (#4939): it is his tap on a PR that touches `.github/` or
+`scripts/lane_merge_rules.py`, which no agent arms, and (owner, 2026-11-22) such a PR goes through the queue on that
+label. Only the sweep and the one-PR runs read it: the workflow's `labeled` event still wakes the job for `automerge`
+alone, so a PR tapped with `owner-tap` is queued by the next sweep (the VPS backstop fires one when none ran in 15
+minutes). `needs-fix` still stops it, and only `automerge` added again says "fixed". Removing a label takes the PR out
+only when neither arming label is left.
+
 Every call is tried a few times. One plain line per PR. Exit 1 when a PR could not be queued or unqueued, so the
 run shows red. The next sweep retries a failed queueing. A failed unqueue is not retried (the sweep never takes a
 PR out), so it posts a comment on the PR saying it is still set to merge and how to take it out.
@@ -36,6 +43,7 @@ import time
 import unicodedata
 
 LABEL = 'automerge'
+OWNER_TAP = 'owner-tap'  # the owner's tap on a PR only he merges; it arms like `automerge` (#4939)
 FIX_LABEL = 'needs-fix'
 TRIES = 3
 MARKER = '<!-- merge-queue-label-bridge not-queued -->'
@@ -177,6 +185,15 @@ def labels(pr):
     return {node['name'] for node in ((pr.get('labels') or {}).get('nodes') or [])}
 
 
+def armed(pr):
+    """Whether the PR carries a label that asks for the queue: `automerge`, or the owner's `owner-tap`."""
+    return bool(labels(pr) & {LABEL, OWNER_TAP})
+
+
+def arming_labels(pr):
+    return ' and '.join(f'`{name}`' for name in (LABEL, OWNER_TAP) if name in labels(pr)) or f'`{LABEL}`'
+
+
 def take_out(github, pr, out):
     """Auto-merge off and out of the queue. True when nothing is left set to merge."""
     number = pr['number']
@@ -198,14 +215,14 @@ def queue(github, pr, out=sys.stdout, rearmed=False):
     if pr.get('state') != 'OPEN':
         print(f'#{number}: not open, nothing to do', file=out)
         return True
-    if LABEL not in labels(pr):
-        print(f'#{number}: no `{LABEL}` label, nothing to queue', file=out)
+    if not armed(pr):
+        print(f'#{number}: no `{LABEL}` or `{OWNER_TAP}` label, nothing to queue', file=out)
         return True
     why = not_queueable(pr)
     if why:
         ok = take_out(github, pr, out)
         if MARKER not in github.comments(number):
-            github.comment(number, f'{MARKER}\nNot queued for merging: {why}. The `{LABEL}` label stays, but the merge '
+            github.comment(number, f'{MARKER}\nNot queued for merging: {why}. The {arming_labels(pr)} label stays, but the merge '
                                    'queue will not take this PR until that changes and the label is added again.')
         print(f'#{number}: not queued, {why}', file=out)
         return ok
@@ -229,8 +246,8 @@ def queue(github, pr, out=sys.stdout, rearmed=False):
 def unqueue(github, pr, out=sys.stdout):
     """Take one PR back out: no auto-merge, and out of the queue if it is in. True when done."""
     number = pr['number']
-    if LABEL in labels(pr):
-        print(f'#{number}: `{LABEL}` is back on, left queued', file=out)
+    if armed(pr):
+        print(f'#{number}: {arming_labels(pr)} is on, left queued', file=out)
         return True
     try:
         ok = take_out(github, pr, out)
@@ -247,10 +264,10 @@ def unqueue(github, pr, out=sys.stdout):
 
 
 def sweep(github, out):
-    armed = [pr for pr in github.open_pulls() if LABEL in labels(pr)]
-    print(f'{len(armed)} open PRs carry `{LABEL}`', file=out)
+    waiting = [pr for pr in github.open_pulls() if armed(pr)]
+    print(f'{len(waiting)} open PRs carry `{LABEL}` or `{OWNER_TAP}`', file=out)
     results = []
-    for pr in armed:
+    for pr in waiting:
         try:
             # The list is a snapshot; act on the PR as it is now.
             results.append(queue(github, github.pull(pr['number']), out))
@@ -269,8 +286,8 @@ def main(argv=None, github=None, out=sys.stdout):
     parser.add_argument('--sweep', action='store_true', help='queue every armed PR')
     args = parser.parse_args(argv)
     github = github or GitHub(args.repo)
-    if args.action in ('labeled', 'unlabeled') and args.label != LABEL:
-        print(f'label `{args.label}` is not `{LABEL}`: nothing to do', file=out)
+    if args.action in ('labeled', 'unlabeled') and args.label not in (LABEL, OWNER_TAP):
+        print(f'label `{args.label}` is not `{LABEL}` or `{OWNER_TAP}`: nothing to do', file=out)
         return 0
     try:
         if args.sweep or not args.pr:
@@ -278,7 +295,7 @@ def main(argv=None, github=None, out=sys.stdout):
         pr = github.pull(args.pr)
         if args.action == 'unlabeled':
             return 0 if unqueue(github, pr, out) else 1
-        return 0 if queue(github, pr, out, rearmed=args.action == 'labeled') else 1
+        return 0 if queue(github, pr, out, rearmed=args.action == 'labeled' and args.label == LABEL) else 1
     except Failed as error:
         print(f'could not reach GitHub: {error}', file=out)
         return 1

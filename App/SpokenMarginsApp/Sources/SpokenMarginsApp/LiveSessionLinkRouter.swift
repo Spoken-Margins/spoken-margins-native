@@ -64,6 +64,14 @@ final class LiveSessionLinkRouter: ObservableObject {
         cover = Cover(sessionId: sessionId, window: window)
     }
 
+    /// Opens the live session screen on its start card, for Record a Margin with nothing running (#4923). No link waits
+    /// on it, so nothing closes it but the screen: `open` would drop the cover after `presentationGrace`, because a
+    /// start card never registers as a running screen.
+    func openStartCard() {
+        pendingAction = nil
+        cover = Cover(sessionId: nil, window: nil)
+    }
+
     /// A screen showing the running session appeared or went away.
     func runningScreenAppeared() { screensOpen += 1 }
 

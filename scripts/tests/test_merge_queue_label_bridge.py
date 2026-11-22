@@ -185,6 +185,62 @@ class RetitleTests(unittest.TestCase):
         self.assertEqual((github.disabled, github.dequeued, github.merged), ([], [], []))
 
 
+def tapped(number, **kw):
+    """A PR carrying the owner's `owner-tap` label and no `automerge`."""
+    return pr(number, armed=False, extra=['owner-tap'], **kw)
+
+
+class OwnerTapTests(unittest.TestCase):
+    """The owner's `owner-tap` label queues a PR like `automerge` does (owner, 2026-11-22, #4939)."""
+
+    def test_the_sweep_queues_a_pr_that_carries_only_owner_tap(self):
+        github = FakeGitHub({1: tapped(1, auto=False), 2: pr(2, armed=False), 3: pr(3, auto=False)})
+        code, out = run(github, '--sweep')
+        self.assertEqual((code, github.merged), (0, [1, 3]))
+        self.assertIn('2 open PRs carry', out)
+
+    def test_a_one_pr_run_queues_it_too(self):
+        github = FakeGitHub({1: tapped(1, auto=False)})
+        self.assertEqual((run(github, '--pr', '1', '--action', 'edited')[0], github.merged), (0, [1]))
+        github = FakeGitHub({1: tapped(1, auto=False)})
+        self.assertEqual((run(github, '--pr', '1', '--action', 'labeled', '--label', 'owner-tap')[0], github.merged),
+                         (0, [1]))
+
+    def test_holds_still_apply_and_the_comment_names_the_label(self):
+        for kw in ({'draft': True}, {'title': 'DO NOT MERGE: x'}):
+            with self.subTest(kw=kw):
+                github = FakeGitHub({1: tapped(1, auto=False, **kw)})
+                self.assertEqual((run(github, '--sweep')[0], github.merged), (0, []))
+                self.assertEqual(len(github.posted), 1)
+                self.assertIn('`owner-tap` label stays', github.posted[0][1])
+
+    def test_needs_fix_stops_it_and_only_automerge_added_again_says_fixed(self):
+        github = FakeGitHub({1: pr(1, armed=False, auto=False, extra=['owner-tap', 'needs-fix'])})
+        self.assertEqual((run(github, '--sweep')[0], github.merged, github.removed), (0, [], []))
+        self.assertEqual((run(github, '--pr', '1', '--action', 'labeled', '--label', 'owner-tap')[0], github.merged,
+                          github.removed), (0, [], []))
+        github = FakeGitHub({1: pr(1, auto=False, extra=['owner-tap', 'needs-fix'])})
+        run(github, '--pr', '1', '--action', 'labeled', '--label', 'automerge')
+        self.assertEqual((github.merged, github.removed), ([1], [(1, 'needs-fix')]))
+
+    def test_removing_automerge_from_a_tapped_pr_leaves_it_queued(self):
+        github = FakeGitHub({1: tapped(1, queued=True)})
+        self.assertEqual(run(github, '--pr', '1', '--action', 'unlabeled', '--label', 'automerge')[0], 0)
+        self.assertEqual((github.disabled, github.dequeued), ([], []))
+
+    def test_removing_owner_tap_takes_a_pr_with_no_automerge_out(self):
+        github = FakeGitHub({1: pr(1, armed=False, queued=True)})
+        self.assertEqual(run(github, '--pr', '1', '--action', 'unlabeled', '--label', 'owner-tap')[0], 0)
+        self.assertEqual((github.disabled, github.dequeued), ([1], ['PR_1']))
+
+    def test_a_neighbouring_label_does_nothing(self):
+        for label in ('owner-tap-check', 'needs-owner-tap', 'owner-tapped'):
+            with self.subTest(label=label):
+                github = FakeGitHub({1: pr(1, armed=False, auto=False)})
+                self.assertEqual((run(github, '--pr', '1', '--action', 'labeled', '--label', label)[0], github.merged),
+                                 (0, []))
+
+
 class UnqueueTests(unittest.TestCase):
     def test_removing_the_label_turns_auto_merge_off_and_dequeues_a_queued_pr(self):
         github = FakeGitHub({7: pr(7, armed=False, queued=True)})
@@ -243,7 +299,7 @@ class SweepTests(unittest.TestCase):
                              3: pr(3, armed=False), 4: pr(4, auto=False), 5: pr(5, queued=True)})
         code, out = run(github, '--sweep')
         self.assertEqual((code, github.merged), (0, [1, 4]))
-        self.assertIn('4 open PRs carry `automerge`', out)
+        self.assertIn('4 open PRs carry `automerge` or `owner-tap`', out)
 
     def test_the_sweep_leaves_a_pr_set_to_merge_without_the_label_alone(self):
         # The owner's own Merge tap on a `.github/` PR, or a maintainer's `gh pr merge`, carries no label.
