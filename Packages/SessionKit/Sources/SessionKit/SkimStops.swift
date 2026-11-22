@@ -14,11 +14,16 @@ public struct SkimStop: Sendable, Equatable {
     public let id: String
     /// In the item's playback unit: milliseconds for media, characters for spoken text.
     public let position: Int
+    /// A friend's Margin that is never spoken (`SharedMarginAudio.canOffer` is false): Skim goes to its place and
+    /// plays on, with no lead-in and no voice, as it does for a chapter (#4934). Its `kind` stays `.margin`, so it still
+    /// beats the scene summary in `SkimStopRouting.choose`.
+    public let isSilent: Bool
 
-    public init(kind: Kind, id: String, position: Int) {
+    public init(kind: Kind, id: String, position: Int, isSilent: Bool = false) {
         self.kind = kind
         self.id = id
         self.position = max(0, position)
+        self.isSilent = isSilent
     }
 
     public static func chapter(_ chapter: Chapter) -> SkimStop {
@@ -52,6 +57,11 @@ public struct SkimStop: Sendable, Equatable {
         guard let position, position >= 0 else { return nil }
         return SkimStop(kind: .margin, id: margin.id, position: position)
     }
+
+    /// A friend's Margin that is never spoken, at the same place `margin(_:unit:)` gives it, or nil with none (#4934).
+    public static func silentMargin(_ margin: ImportedCommentaryInterjection, unit: SkimStops.PositionUnit) -> SkimStop? {
+        Self.margin(margin, unit: unit).map { SkimStop(kind: .margin, id: $0.id, position: $0.position, isSilent: true) }
+    }
 }
 
 /// Where Skim goes next or back to, and where a Margin's lead-in starts (#458).
@@ -66,6 +76,17 @@ public struct SkimStops: Sendable, Equatable {
         case milliseconds
         /// Spoken text, where positions are characters; converts the lead-in's length.
         case characters(perSecond: Double)
+
+        /// `ms` of source time in this unit, with no clamp: the same conversion as `SkimStops.leadInLength(ms:)`
+        /// without its 30 s to 2 min limits, for a window shorter than a lead-in (#4934).
+        public func positions(forMs ms: Int) -> Int {
+            switch self {
+            case .milliseconds: return ms
+            case .characters(let perSecond):
+                let rate = perSecond.isFinite ? min(max(0, perSecond), 1_000_000) : 0
+                return Int((Double(ms) / 1_000 * rate).rounded())
+            }
+        }
     }
 
     public enum LeadInClamp: Sendable, Equatable {
@@ -134,13 +155,7 @@ public struct SkimStops: Sendable, Equatable {
 
     /// Lead-in length in the item's unit, after clamping the requested time to 30 s through 2 min.
     public func leadInLength(ms: Int) -> Int {
-        let clamped = min(max(ms, Self.minimumLeadInMs), Self.maximumLeadInMs)
-        switch unit {
-        case .milliseconds: return clamped
-        case .characters(let perSecond):
-            let rate = perSecond.isFinite ? min(max(0, perSecond), 1_000_000) : 0
-            return Int((Double(clamped) / 1_000 * rate).rounded())
-        }
+        unit.positions(forMs: min(max(ms, Self.minimumLeadInMs), Self.maximumLeadInMs))
     }
 
     // MARK: Private
@@ -163,7 +178,8 @@ public struct SkimStops: Sendable, Equatable {
 
     private func target(at index: Int, leadInMs: Int) -> Target {
         let stop = stops[index]
-        guard stop.kind == .margin else { return Target(stop: stop, leadInStart: nil, leadInClamp: nil) }
+        // A chapter, or a Margin that is never spoken, has no lead-in: there is no voice for it to lead into (#4934).
+        guard stop.kind == .margin, !stop.isSilent else { return Target(stop: stop, leadInStart: nil, leadInClamp: nil) }
         let wanted = stop.position - leadInLength(ms: leadInMs)
         let bound = lowerBound(before: index)
         let start = max(wanted, bound.position)

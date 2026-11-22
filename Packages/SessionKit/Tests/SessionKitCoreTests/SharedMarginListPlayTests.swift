@@ -92,4 +92,69 @@ final class SharedMarginListPlayTests: XCTestCase {
             XCTAssertTrue(SharedMarginListPlay.canPlay(timed, in: layer), "timed Margin, layer \(name): its moment plays as before")
         }
     }
+
+    // MARK: Going to a Margin that is never spoken (#4934)
+
+    private func written(
+        _ words: String = "A thought.", senderReadAloud: Bool? = nil, listenerReadAloud: Bool? = nil, audioPath: String? = nil,
+        senderMs: Int? = 9_000, _ resolution: ImportedAnchorResolution = .init(evidenceClass: .exactEdition, localMediaTimeMs: 9_000)
+    ) -> ImportedCommentaryInterjection {
+        ImportedCommentaryInterjection(
+            id: "imported-1", layerId: "layer-1", packageScopedId: "pkg::ij-003",
+            createdAt: Date(timeIntervalSince1970: 1_790_000_000),
+            anchorEvidence: PortableAnchorEvidence(anchorType: senderMs == nil ? .text : .media, mediaTimeMs: senderMs),
+            approvedTranscript: words, audioPath: audioPath, resolution: resolution,
+            senderReadAloud: senderReadAloud, listenerReadAloud: listenerReadAloud
+        )
+    }
+
+    // One row per way a friend's Margin is silent, and the neighbours that are not: `canGo` is the place half of
+    // `canPlay`, so a Margin with nothing to play still has somewhere to go.
+    func testTheGoToTableBesideThePlayTable() {
+        defer { WrittenMarginSpeech.useVoiceCheck(nil) }
+        WrittenMarginSpeech.useVoiceCheck(nil)
+        let rows: [(String, ImportedCommentaryInterjection, canOffer: Bool, canGo: Bool, canPlay: Bool)] = [
+            ("read aloud", written(), true, true, true),
+            ("reading off by the sender", written(senderReadAloud: false), false, true, false),
+            ("reading off by the listener", written(listenerReadAloud: false), false, true, false),
+            ("sender off, listener back on", written(senderReadAloud: false, listenerReadAloud: true), true, true, true),
+            ("emoji only", written("😀🎉"), false, true, false),
+            ("placeholder words", written("Voice Margin at 12:34"), false, true, false),
+            ("a recording", written(audioPath: "margin.m4a"), true, true, true),
+            ("a recording that is gone (still offerable)", written(audioPath: "gone.m4a"), true, true, true),
+            ("no place", written("A thought.", senderMs: nil, .init(evidenceClass: .unresolved)), true, false, false),
+            ("silent and no place", written(senderReadAloud: false, senderMs: nil, .init(evidenceClass: .unresolved)), false, false, false),
+        ]
+        for (name, margin, canOffer, canGo, canPlay) in rows {
+            XCTAssertEqual(SharedMarginAudio.canOffer(margin), canOffer, "\(name): canOffer")
+            XCTAssertEqual(SharedMarginListPlay.canGo(margin, in: layer()), canGo, "\(name): canGo")
+            XCTAssertEqual(SharedMarginListPlay.canPlay(margin, in: layer()), canPlay, "\(name): canPlay")
+        }
+    }
+
+    func testAMarginWithNoVoiceOnThisPhoneCanBeGoneTo() {
+        defer { WrittenMarginSpeech.useVoiceCheck(nil) }
+        WrittenMarginSpeech.useVoiceCheck { _ in false }
+        let note = written("Une pensée.")
+        XCTAssertFalse(SharedMarginAudio.canOffer(note))
+        XCTAssertTrue(SharedMarginListPlay.canGo(note, in: layer()))
+        XCTAssertFalse(SharedMarginListPlay.canPlay(note, in: layer()))
+    }
+
+    func testAPassageOfTextFollowsItsLayerForGoToAsForPlay() {
+        let passage = ImportedAnchorResolution(evidenceClass: .articleTextVerified, localStartChar: 300)
+        let silent = written(senderReadAloud: false, senderMs: nil, passage)
+        let layers: [(String, ImportedCommentaryLayer, Bool)] = [
+            ("on", layer(), true),
+            ("turned off", layer(enabled: false), false),
+            ("deleted", layer(deleted: true), false),
+            ("matched to the wrong source", layer(status: .wrongSource), false),
+            ("still resolving", layer(status: .pending), true),
+        ]
+        for (name, layer, expected) in layers {
+            XCTAssertEqual(SharedMarginListPlay.canGo(silent, in: layer), expected, "layer \(name)")
+        }
+        // A timed Margin goes whatever the toggle, as it plays.
+        XCTAssertTrue(SharedMarginListPlay.canGo(written(senderReadAloud: false), in: layer(enabled: false)))
+    }
 }
