@@ -72,6 +72,36 @@ extension PlaybackLivePassage {
         }
     }
 
+    /// How big a card is, from its picture's aspect and the room there is, without reading the picture (#4588). The
+    /// frame is known before the file is read, so nothing jumps when the picture arrives.
+    public enum ClipCardLayout {
+        /// Room to the left of a card: the diamond gutter (18) and the spacing after it (10), so a card starts where the
+        /// sentence highlight starts.
+        public static let leadingInset = 28.0
+        public static let minimumHeight = 44.0
+        /// The Timeline row's cap (`TimelineClipPresentation.rowMaximumHeight`).
+        public static let maximumHeight = 220.0
+        /// A card is never taller than this share of the visible text area.
+        public static let visibleShare = 0.45
+
+        /// The card's width: the list's, less the leading inset. Never negative.
+        public static func width(listWidth: Double) -> Double { max(0, listWidth - leadingInset) }
+
+        /// The tallest a card may be in a text area `visibleHeight` points tall. Never below the minimum, so a card is
+        /// always a target a finger can hit.
+        public static func tallest(visibleHeight: Double) -> Double {
+            max(minimumHeight, min(maximumHeight, visibleHeight * visibleShare))
+        }
+
+        /// The card's height for a picture of this aspect (width over height) at this width: the width divided by the
+        /// aspect, held between the minimum and `tallest`. A picture with no usable aspect gets the minimum.
+        public static func height(width: Double, aspect: Double, visibleHeight: Double) -> Double {
+            let ceiling = tallest(visibleHeight: visibleHeight)
+            guard width > 0, aspect.isFinite, aspect > 0 else { return minimumHeight }
+            return min(ceiling, max(minimumHeight, width / aspect))
+        }
+    }
+
     /// Where following scrolls: to the lit sentence, as it always has, or to a card whose caption is being read.
     public enum ScrollTarget: Equatable, Sendable {
         case sentence

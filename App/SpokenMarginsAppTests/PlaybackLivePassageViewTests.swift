@@ -1,4 +1,5 @@
 import SessionKit
+import SessionKitPersistence
 import SwiftUI
 import UIKit
 import XCTest
@@ -91,6 +92,88 @@ final class PlaybackLivePassageViewTests: XCTestCase {
         XCTAssertEqual(NowSceneRowCounter.bodies, drawn, "A tick that keeps the same sentence draws no row")
     }
 
+    // MARK: Table and figure cards (#4588)
+
+    /// A table and a figure with a picture each stand in the scene before the sentence that holds their caption, in the
+    /// order of the text, and are drawn there. An article has no document and so no cards.
+    func testAPDFsPicturesAreDrawnBeforeTheirCaptionsAndAnArticleDrawsNone() async throws {
+        let itemID = "passage-clips-\(UUID().uuidString)"
+        let parts: [(id: String, role: StructuredDocument.Role, text: String)] = [
+            ("a", .body, "Intro sentence one. Intro sentence two."),
+            ("t", .table, "a 1 2\nb 3 4"),
+            ("b", .body, "Table 1. Results by arm. More body here."),
+            ("fig", .figureText, "axis"),
+            ("c", .body, "Figure 2. Accuracy by model. Last sentence here."),
+        ]
+        var text = ""
+        var segments: [StructuredDocument.Segment] = []
+        for part in parts {
+            if !text.isEmpty { text += "\n\n" }
+            segments.append(.init(id: part.id, role: part.role, range: .init(start: text.count, length: part.text.count)))
+            text += part.text
+        }
+        let floats: [StructuredDocument.Float] = [
+            .init(id: "t1", kind: .table, label: nil, pageIndex: 0, bounds: .init(x: 0.1, y: 0.5, width: 0.6, height: 0.2),
+                  captionSegmentId: nil, textSegmentId: "t"),
+            .init(id: "f1", kind: .figure, label: nil, pageIndex: 0, bounds: .init(x: 0.1, y: 0.2, width: 0.6, height: 0.2),
+                  captionSegmentId: nil, textSegmentId: "fig"),
+        ]
+        let document = StructuredDocument(
+            extraction: .init(engine: "test", version: 1, sourceSHA256: nil, pageCount: 1, textSHA256: nil),
+            text: text, segments: segments, markers: [], floats: floats)
+
+        let model = makeModel(target: .itemTextTTS, text: text)
+        model.selectedItem = ItemDetailState(id: itemID, title: "Paper", text: text).includingTimelineSource(document)
+        model.snapshot.itemId = itemID
+        model.snapshot.currentTextStart = 0
+        let store = Gate1AppModel.pdfClipStore(support: try model.applicationSupportDirectory())
+        let picture = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 100)).jpegData(withCompressionQuality: 0.8) { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 300, height: 100))
+        }
+        try store.replaceClips(["t1": picture, "f1": picture], forItem: itemID, document: document)
+        addTeardownBlock { try? store.removeClips(forItem: itemID) }
+
+        NowClipCardCounter.reset()
+        let controller = NowSceneController()
+        let mounted = try mount(model, inScrollView: true, controller: controller)
+        defer { mounted.close() }
+        try await waitForAppearance(mounted)
+        // Wait on the condition, with a deadline that is only a ceiling.
+        let deadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < deadline, Set(NowClipCardCounter.floatIds) != ["t1", "f1"] {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(Set(NowClipCardCounter.floatIds), ["t1", "f1"], "both pictures are drawn in the scene")
+        let shape = (controller.state?.shownItems ?? []).map { item -> String in
+            switch item {
+            case .sentence(let sentence): sentence.text
+            case .clip(let floatId, _): "card \(floatId)"
+            }
+        }
+        let table = try XCTUnwrap(shape.firstIndex(of: "card t1"))
+        let figure = try XCTUnwrap(shape.firstIndex(of: "card f1"))
+        XCTAssertEqual(shape[table + 1], "Table 1.", "the table's card stands before the sentence that holds its caption")
+        XCTAssertEqual(shape[figure + 1], "Figure 2.", "the figure's card stands before its caption's sentence")
+        XCTAssertLessThan(table, figure, "cards stand in the order of the text")
+
+        mounted.close()
+        // An article has no document: the scene is its sentences and nothing else.
+        let articleModel = makeModel(target: .itemTextTTS)
+        NowClipCardCounter.reset()
+        let articleController = NowSceneController()
+        let article = try mount(articleModel, inScrollView: true, controller: articleController)
+        defer { article.close() }
+        try await waitForAppearance(article)
+        let articleDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < articleDeadline, (articleController.state?.shownItems.count ?? 0) == 0 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse((articleController.state?.shownItems ?? []).isEmpty, "the article's sentences are in the scene")
+        XCTAssertTrue((articleController.state?.shownItems ?? []).allSatisfy { $0.sentence != nil }, "and no card among them")
+        XCTAssertEqual(NowClipCardCounter.bodies, 0, "an article draws no card")
+    }
+
     private func makeModel(target: TargetType, text: String? = nil) -> Gate1AppModel {
         let database = FileManager.default.temporaryDirectory
             .appendingPathComponent("passage-view-\(UUID().uuidString).sqlite")
@@ -107,12 +190,11 @@ final class PlaybackLivePassageViewTests: XCTestCase {
         return model
     }
 
-    private func mount(_ model: Gate1AppModel, inScrollView: Bool = false) throws -> MountedPassage {
+    private func mount(_ model: Gate1AppModel, inScrollView: Bool = false, controller: NowSceneController = NowSceneController()) throws -> MountedPassage {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
         let appeared = Appearance()
         // The one-point sibling proves the host appeared even when the passage has no children.
-        let controller = NowSceneController()
         let root = VStack(spacing: 0) {
             // As on the Now tab: the reader wraps the page scroll view, whose proxy the passage scrolls with.
             ScrollViewReader { proxy in

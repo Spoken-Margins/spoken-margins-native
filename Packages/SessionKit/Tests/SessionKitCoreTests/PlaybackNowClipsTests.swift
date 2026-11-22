@@ -279,4 +279,31 @@ final class PlaybackNowClipsTests: XCTestCase {
         XCTAssertEqual(target(scene, lit: 2, clips: [(-1, 2, 150)], visible: big.visibleHeight, row: { _ in row }), .sentence)
         XCTAssertEqual(PlaybackLivePassage.ClipHold.rowHeight(fragments: [sentence], metrics: .init(columnWidth: 0, visibleHeight: 1, bodyPointSize: 17, lineHeight: 22)), .infinity)
     }
+
+    // MARK: Card size
+
+    func testACardIsTheListWidthLessTheGutterAndItsHeightFollowsTheAspect() {
+        typealias Layout = PlaybackLivePassage.ClipCardLayout
+        XCTAssertEqual(Layout.width(listWidth: 350), 322)
+        XCTAssertEqual(Layout.width(listWidth: 10), 0, "never negative")
+        // Aspect is width over height: 322 wide at 2.0 is 161 tall.
+        XCTAssertEqual(Layout.height(width: 322, aspect: 2, visibleHeight: 800), 161)
+        // A tall picture is held at 220 points, or at 45% of a short text area when that is less.
+        XCTAssertEqual(Layout.height(width: 322, aspect: 0.5, visibleHeight: 800), 220)
+        XCTAssertEqual(Layout.height(width: 322, aspect: 0.5, visibleHeight: 400), 180, accuracy: 0.001)
+        // A wide strip is held at the 44 point minimum, so it is still a target a finger can hit.
+        XCTAssertEqual(Layout.height(width: 322, aspect: 20, visibleHeight: 800), 44)
+        // A text area so short that 45% is under the minimum still gives the minimum, never less.
+        XCTAssertEqual(Layout.height(width: 322, aspect: 1, visibleHeight: 50), 44)
+        XCTAssertEqual(Layout.tallest(visibleHeight: 0), 44)
+    }
+
+    func testACardWithNoUsableAspectOrWidthGetsTheMinimum() {
+        typealias Layout = PlaybackLivePassage.ClipCardLayout
+        for aspect in [0.0, -1.0, .nan, .infinity] {
+            XCTAssertEqual(Layout.height(width: 322, aspect: aspect, visibleHeight: 800), 44, "aspect \(aspect)")
+        }
+        XCTAssertEqual(Layout.height(width: 0, aspect: 1.5, visibleHeight: 800), 44)
+        XCTAssertEqual(Layout.height(width: -5, aspect: 1.5, visibleHeight: 800), 44)
+    }
 }

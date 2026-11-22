@@ -138,11 +138,16 @@ struct PlaybackScreen: View {
                             // view makes itself reports `.animating`), which stops the scene following playback (#4453).
                             .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.1) { nowScene.sentencesOnScreen($0) }
                             .onScrollPhaseChange { _, phase in
+                                if case .idle = phase { nowScene.scrollPhaseChanged(isIdle: true) } else { nowScene.scrollPhaseChanged(isIdle: false) }
                                 switch phase {
                                 case .interacting, .decelerating: nowScene.listenerScrolled()
                                 case .idle: nowScene.scrollCameToRest()
                                 default: break
                                 }
+                            }
+                            // The text area's height: the most a card may take and what a held card has room for (#4588).
+                            .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.height } action: { _, height in
+                                nowScene.setVisibleHeight(Double(height))
                             }
                             .overlay(alignment: .bottom) {
                                 // Only over this item's own scene: not over a podcast, nor while another item plays.
