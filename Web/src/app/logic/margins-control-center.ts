@@ -313,6 +313,17 @@ export function pendingStart(atSeconds: number, time: number): 'wait' | 'play' |
   return time <= atSeconds + PENDING_GRACE_SECONDS ? 'play' : 'drop';
 }
 
+/** How far from a start's own landing a seek may report and still be that landing (a browser rounds currentTime). */
+export const START_LANDING_SLACK_SECONDS = 0.5;
+
+/**
+ * Whether a start the listener tapped, which moved to `seekTo`, still stands after a seek that landed at `landedAt`. Only
+ * its own seek keeps it: a scrub away leaves the tap behind, so its Margins never play minutes later against Autoplay.
+ */
+export function startSurvivesSeek(seekTo: number, landedAt: number): boolean {
+  return Math.abs(landedAt - seekTo) <= START_LANDING_SLACK_SECONDS;
+}
+
 /**
  * Where a start control goes and what it plays: a row's own lead-in, or straight into the Margin when the playhead is
  * already inside that lead-in (never backwards inside it). `queue` is what plays when playback reaches it.

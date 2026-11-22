@@ -8,7 +8,7 @@ import { friendMargins, readingIntro, readsAloud } from './logic/arrival.ts';
 import { clipRejection, EPISODE_FAILED, failureNoticeShown, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
 import { CrossingClock } from './logic/margin-autoplay.ts';
 import { MarginTurns } from './logic/margin-turns.ts';
-import { arrival, hearingOf, pendingStart } from './logic/margins-control-center.ts';
+import { arrival, hearingOf, pendingStart, startSurvivesSeek } from './logic/margins-control-center.ts';
 import { MESSAGES, plainError } from './logic/messages.ts';
 import { attemptToast, attemptWithoutAudio } from './logic/episode-voice-words.ts';
 import { episodeVoice } from './logic/playability.ts';
@@ -211,8 +211,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // The last friend's Margin heard, so a Margin begun while it sounds or just after answers it (#4107; reply-memory.ts).
   const replyMemory = useRef<ReplyMemory>(NOTHING_HEARD);
   const shownTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // The Margins the listener last asked to hear, waiting for playback to reach them (MarginStart).
-  const pendingStartRef = useRef<(MarginStart & { episodeId: string }) | undefined>(undefined);
+  // The Margins the listener last asked to hear, waiting for playback to reach them (MarginStart), and where that tap
+  // moved to: any other seek leaves it behind (startSurvivesSeek).
+  const pendingStartRef = useRef<(MarginStart & { episodeId: string; seekTo: number }) | undefined>(undefined);
   const dataRef = useRef(data);
   dataRef.current = data;
 
@@ -580,7 +581,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           retry(audio);
           return 'played';
         }
-        pendingStartRef.current = options.start && { ...options.start, episodeId: id };
+        pendingStartRef.current = options.start && { ...options.start, episodeId: id, seekTo: options.at ?? audio.currentTime };
         if (options.at !== undefined) audio.currentTime = options.at;
         await audio.play().catch(() => undefined);
         return 'played';
@@ -636,7 +637,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       pendingSeek.current = options.at ?? (finished ? 0 : resume);
       crossing.current.reset();
       loadedId.current = id;
-      pendingStartRef.current = options.start && { ...options.start, episodeId: id };
+      pendingStartRef.current = options.start && { ...options.start, episodeId: id, seekTo: pendingSeek.current ?? 0 };
       // Margins on the post's words are placed on the audio's own length, which only the audio can say (#4421).
       placement.current = options.placeMargins ? { id, episode: target, place: options.placeMargins } : undefined;
       apply({ kind: 'source-changed' });
@@ -808,8 +809,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         clearTimeout(shownTimer.current);
         setArrived(undefined);
       }
-      pendingStartRef.current = { ...start, episodeId: id };
       seek(seekTo);
+      // Where the seek landed, clamped to the episode: the seek event that follows is this tap's own.
+      pendingStartRef.current = { ...start, episodeId: id, seekTo: audio.currentTime };
       play();
     },
     [seek, play, stopClip],
@@ -906,6 +908,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           // Moving leaves the Margins waiting their turn behind; cleared first, so the reading's end begins none of them.
           turns.current.clear();
           stopReading();
+          const asked = pendingStartRef.current;
+          if (asked && !startSurvivesSeek(asked.seekTo, event.currentTarget.currentTime)) pendingStartRef.current = undefined;
           crossing.current.seeking(event.currentTarget.currentTime);
           comeUp.current.clear();
         }}

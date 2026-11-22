@@ -152,6 +152,15 @@ test('a tapped start waits for its Margin, plays on reaching it, and is dropped 
   assert.equal(mcc.pendingStart(100, 103.1), 'drop');
 });
 
+test('a tapped start is left behind by any seek but its own (audit 5 on #4505)', () => {
+  // "Jump to this Margin" at 10:00 moves to its lead-in at 9:40; that seek keeps the start, as its browser may round it.
+  assert.equal(mcc.startSurvivesSeek(580, 580), true);
+  assert.equal(mcc.startSurvivesSeek(580, 580.3), true);
+  // The listener then scrubs back to 2:00, or a little way on: the Margin must not play by itself eight minutes later.
+  assert.equal(mcc.startSurvivesSeek(580, 120), false);
+  assert.equal(mcc.startSurvivesSeek(580, 595), false);
+});
+
 test('a row’s start control goes to its lead-in, or straight in from inside the lead-in, never back', () => {
   const rows = mcc.rows([
     { id: 'a', own: false, sender: 'Sam', parentId: null, timeMs: 60_000, heard: false, words: 'a', starred: false, sourceTextBefore: null },
