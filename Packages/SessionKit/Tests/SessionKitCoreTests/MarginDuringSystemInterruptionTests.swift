@@ -268,10 +268,24 @@ final class MarginDuringSystemInterruptionTests: XCTestCase {
         XCTAssertEqual(AddMarginPlaybackTrace(before: before, after: after).fields(saved: true)["stayedPlaying"], "true")
     }
 
-    /// The case the trace exists to tell apart: dictation's interruption ended without iOS saying audio may start, so
-    /// nothing resumes the item and Add Margin finds it paused. That is not Add Margin pausing it.
+    /// Dictation's interruption ended without iOS saying audio may start. The client asks for no resume and the app is
+    /// never told, so the engine still holds the system's pause: Add Margin finds `paused_by_system`, and the log shows
+    /// no `media.interruption_ended` after it. That order, not the state alone, says Add Margin did not pause it.
+    func testAnInterruptionThatEndsWithoutPermissionToResumeLeavesTheItemPausedBySystem() throws {
+        let rig = try rig(item: episode)
+        try siriPausesIt(rig)
+        XCTAssertFalse(rig.client.resume.ended(InterruptionEnd(rawOptions: 0)), "iOS did not say audio may start")
+
+        XCTAssertEqual(traceState(rig), .pausedBySystem)
+        let capture = try rig.engine.beginWrittenInterjection()
+        _ = try rig.engine.saveWrittenInterjection(captureId: capture.id, text: "Check this claim")
+        XCTAssertFalse(rig.client.playing, "nothing resumes it; Add Margin neither paused nor resumed it")
+    }
+
+    /// The listener's own Pause is `paused`, not the system's.
     func testTheTraceShowsAnItemPausedByTheListenerAsNotPausedBySystem() throws {
         let rig = try rig(item: episode)
+        try siriPausesIt(rig)
         _ = try rig.engine.pause()
         XCTAssertEqual(traceState(rig), .paused)
     }
@@ -283,6 +297,7 @@ final class MarginDuringSystemInterruptionTests: XCTestCase {
         XCTAssertEqual(T.state(status: .paused, pausedBySystem: true, hasSession: true), .pausedBySystem)
         XCTAssertEqual(T.state(status: .paused, pausedBySystem: false, hasSession: true), .paused)
         XCTAssertEqual(T.state(status: .idle, pausedBySystem: false, hasSession: true), .paused)
+        XCTAssertEqual(T.state(status: .recording, pausedBySystem: false, hasSession: true), .paused)
         XCTAssertEqual(T.state(status: .failed, pausedBySystem: false, hasSession: true), .failed)
         XCTAssertEqual(T.state(status: .playing, pausedBySystem: false, hasSession: false), .nothingOpen)
     }
