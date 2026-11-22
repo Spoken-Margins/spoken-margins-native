@@ -95,7 +95,8 @@ final class MarginEndPhraseGuardTests: XCTestCase {
         // No other source marks a Margin: the ledger's answer is true only for a phrase-ended save.
         for file in ["Gate1AppModel.swift", "Gate1AppModel+MarginInterruption.swift", "Gate1AppModel+SourceWindowContext.swift",
                      "ExperienceRecordingScreen.swift", "MarginRecordingScreen.swift"] {
-            XCTAssertFalse(try appSource(file).contains("markEndedByPhrase"), "\(file) must not mark a Margin as phrase-ended")
+            let text = try appSource(file)
+            XCTAssertFalse(text.contains("markEndedByPhrase"), "\(file) must not mark a Margin as phrase-ended")
         }
     }
 
