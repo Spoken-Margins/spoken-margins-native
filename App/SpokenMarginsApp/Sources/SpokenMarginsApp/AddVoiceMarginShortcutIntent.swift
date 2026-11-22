@@ -15,25 +15,22 @@ enum AddVoiceMarginAction {
     static func perform(
         audio source: URL, toItemId itemId: String?, in model: Gate1AppModel,
         files: LiveSessionFileWorker = .shared, supportDirectory: URL? = nil,
-        durationMs: @escaping @Sendable (URL) -> Int? = AudioFileLength.milliseconds(of:), now: Date = Date()
+        durationMs: @escaping @Sendable (URL) -> Int? = VoiceMarginFiles.defaultDuration, now: Date = Date()
     ) async throws -> String {
-        let support = try supportDirectory ?? FileManager.default.url(
-            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
-        )
+        let support = try supportDirectory ?? VoiceMarginFiles.supportDirectory()
         let prepared: VoiceMarginImport.Prepared
         do {
-            // Measuring and copying a long recording (about 100 MB at ten minutes, uncompressed) stays off the main actor.
-            prepared = try await Task.detached(priority: .userInitiated) {
-                try VoiceMarginImport.prepare(source: source, supportDirectory: support, durationMs: durationMs)
-            }.value
+            prepared = try await VoiceMarginFiles.prepare(source: source, support: support, durationMs: durationMs)
         } catch let refusal as VoiceMarginImport.Refusal {
             throw AddMarginShortcutError.voiceRefused(refusal)
         }
-        var kept = false
-        defer { if !kept { VoiceMarginImport.discard(prepared, supportDirectory: support) } }
-        let name = try await file(prepared, toItemId: itemId, in: model, files: files, now: now)
-        kept = true
-        return name
+        do {
+            return try await file(prepared, toItemId: itemId, in: model, files: files, now: now)
+        } catch {
+            // No Margin names the copy, so it is removed, never the Shortcut's own file.
+            await VoiceMarginFiles.discard(prepared, support: support)
+            throw error
+        }
     }
 
     /// Where the recording goes, once it is the app's own. Returns what Siri says it went to.
@@ -110,23 +107,49 @@ enum AddVoiceMarginAction {
     }
 }
 
-/// Opens the file a Shortcut passed for as long as `body` runs. A file the Shortcut holds by address is read in place,
-/// with the access it granted; one that came as bytes is written to a temporary file first, removed afterwards.
-@MainActor
-enum AddVoiceMarginFile {
-    static func withURL<T>(of file: IntentFile, _ body: (URL) async throws -> T) async throws -> T {
+/// The file work of Add Voice Margin, off the main actor: measuring and copying a long recording (about 100 MB at ten
+/// minutes, uncompressed), removing a copy no Margin names, and holding a Shortcut's bytes in a temporary file.
+enum VoiceMarginFiles {
+    static let defaultDuration: @Sendable (URL) -> Int? = { AudioFileLength.milliseconds(of: $0) }
+
+    static func supportDirectory() throws -> URL {
+        try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+    }
+
+    static func prepare(
+        source: URL, support: URL, durationMs: @escaping @Sendable (URL) -> Int?
+    ) async throws -> VoiceMarginImport.Prepared {
+        try VoiceMarginImport.prepare(source: source, supportDirectory: support, durationMs: durationMs)
+    }
+
+    static func discard(_ prepared: VoiceMarginImport.Prepared, support: URL) async {
+        VoiceMarginImport.discard(prepared, supportDirectory: support)
+    }
+
+    /// The file a Shortcut passed, readable at `url` until `remove()`. A file the Shortcut holds by address is read in
+    /// place, with the access it granted (`remove` lets go of that access); one that came as bytes is written to a
+    /// temporary file, which `remove` deletes. Neither ever touches the Shortcut's own file.
+    struct Staged: Sendable {
+        let url: URL
+        let remove: @Sendable () -> Void
+    }
+
+    static func stage(_ file: IntentFile) async throws -> Staged {
         if let url = file.fileURL {
             let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            return try await body(url)
+            return Staged(url: url) { if scoped { url.stopAccessingSecurityScopedResource() } }
         }
         let directory = FileManager.default.temporaryDirectory.appending(path: "add-voice-margin-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
         let name = (file.filename as NSString).lastPathComponent
         let url = directory.appending(path: name.isEmpty ? "recording.m4a" : name)
-        try file.data.write(to: url)
-        return try await body(url)
+        do {
+            try file.data.write(to: url)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+        return Staged(url: url) { try? FileManager.default.removeItem(at: directory) }
     }
 }
 
@@ -164,9 +187,9 @@ struct AddVoiceMarginToSpokenMarginsIntent: AppIntent {
             throw AddMarginShortcutError.libraryUnavailable
         }
         let itemId = item?.id
-        let name = try await AddVoiceMarginFile.withURL(of: audio) { url in
-            try await AddVoiceMarginAction.perform(audio: url, toItemId: itemId, in: model)
-        }
+        let staged = try await VoiceMarginFiles.stage(audio)
+        defer { staged.remove() }
+        let name = try await AddVoiceMarginAction.perform(audio: staged.url, toItemId: itemId, in: model)
         return .result(dialog: IntentDialog(stringLiteral: SiriMarginRoute.confirmation(named: name)))
     }
 }
