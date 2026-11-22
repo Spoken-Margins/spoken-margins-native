@@ -6,6 +6,7 @@ import { PacketError } from './errors.ts';
 import { appParent, episode, show, voiceMargins, writePlaceholder, writeReplyNamed, writeReplyUnnamed, writeVoice, writeWritten, writtenMargins } from './fixtures.ts';
 import { packetMarginId, readPacket } from './read.ts';
 import { conversationId, sharedWords, writePacket } from './write.ts';
+import type { Margin } from '../shared/model.ts';
 import { voicePlaceholder } from '../shared/placeholder.ts';
 import { listZip, readZip } from './zip.ts';
 
@@ -190,11 +191,58 @@ test('a starred Margin writes the very bytes an unstarred one does: a star never
   assert.equal(b.contentDigest, a.contentDigest);
 });
 
-test('a Margin’s copyLengthSeconds is never written into a packet: the packet’s only length is the item’s (#4614)', async () => {
-  const tagged = voiceMargins().map((m) => ({ ...m, copyLengthSeconds: 9999 }));
-  const plain = await writePacket(episode, voiceMargins(), { show, sender: 'Web fixture', packageId: 'package-web-fixture-voice', createdAt: new Date('2026-10-30T12:00:00.000Z') });
-  const withField = await writePacket(episode, tagged, { show, sender: 'Web fixture', packageId: 'package-web-fixture-voice', createdAt: new Date('2026-10-30T12:00:00.000Z') });
-  assert.equal(withField.contentDigest, plain.contentDigest);
-  const entries = await readZip(withField.bytes, unlimited);
-  for (const bytes of entries.values()) assert.equal(new TextDecoder().decode(bytes).includes('9999'), false);
+const written = async (margins: Margin[]) => {
+  const { bytes } = await writePacket(episode, margins, { show, sender: 'Web fixture', packageId: 'package-copy-length', createdAt: new Date('2026-11-22T12:00:00.000Z') });
+  const files = await readZip(bytes, unlimited);
+  const manifest = JSON.parse(new TextDecoder().decode(files.get('manifest.json')));
+  const layer = JSON.parse(new TextDecoder().decode(files.get('artifacts/commentary-layer.json')));
+  return { bytes, manifest, percents: layer.interjections.map((i: { anchor: { roughPercent?: number } }) => i.anchor.roughPercent) };
+};
+const own = (id: string, atSeconds: number, createdAt: string, copyLengthSeconds?: number): Margin => ({
+  id, episodeId: episode.id, atSeconds, createdAt, text: `Margin ${id}.`, ...(copyLengthSeconds !== undefined && { copyLengthSeconds }),
+});
+
+test('a Margin’s copyLengthSeconds never becomes its own key: the packet carries it only as the item’s durationMs (#4175)', async () => {
+  const { bytes } = await written([own('a', 60, '2026-11-22T10:00:00Z', 1946.018)]);
+  const entries = await readZip(bytes, unlimited);
+  for (const [path, data] of entries) assert.equal(/copyLength/i.test(new TextDecoder().decode(data)), false, path);
+});
+
+test('the packet’s durationMs is the copy length of the newest own Margin that has one, else the episode’s (#4175)', async () => {
+  // Two loads: an older Margin on a 1913 s copy, a newer one on a 1946.018 s copy.
+  const two = await written([own('old', 600, '2026-11-22T10:00:00Z', 1913), own('new', 1200, '2026-11-22T11:00:00Z', 1946.018)]);
+  assert.equal(two.manifest.item.durationMs, 1946018);
+  // The order the Margins arrive in does not matter, and an unmeasured newer Margin does not hide a measured older one.
+  const reordered = await written([own('new', 1200, '2026-11-22T11:00:00Z'), own('old', 600, '2026-11-22T10:00:00Z', 1913)]);
+  assert.equal(reordered.manifest.item.durationMs, 1913000);
+  // None measured: the episode's own length, as before.
+  const none = await written([own('a', 600, '2026-11-22T10:00:00Z')]);
+  assert.equal(none.manifest.item.durationMs, 1_800_000);
+  // The packet reads back with each timed Margin carrying that length.
+  const back = await readPacket(two.bytes, { episodeId: episode.id });
+  for (const m of back.margins) assert.equal(m.copyLengthSeconds, 1946.018);
+});
+
+test('each Margin’s roughPercent is of the copy it was made on, else of the packet’s length (#4175)', async () => {
+  // 600 s is 31% of 1913 s but 30% of 1946.018 s; the unmeasured one uses the packet's 1946.018 s.
+  const result = await written([own('old', 600, '2026-11-22T10:00:00Z', 1913), own('new', 600, '2026-11-22T11:00:00Z', 1946.018), own('bare', 600, '2026-11-22T11:30:00Z')]);
+  assert.deepEqual(result.percents, [31, 30, 30]);
+});
+
+test('a friend’s Margin, a Margin with no words and a bad length never set the packet’s length (#4175)', async () => {
+  const friend: Margin = { ...own('friend', 300, '2026-11-22T12:00:00Z', 9999), author: 'Cole' };
+  const wordless: Margin = { ...own('empty', 400, '2026-11-22T13:00:00Z', 7777), text: '' };
+  const result = await written([own('mine', 600, '2026-11-22T10:00:00Z', 1913), friend, wordless]);
+  assert.equal(result.manifest.item.durationMs, 1913000);
+  for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const ignored = await written([own('mine', 600, '2026-11-22T10:00:00Z', bad)]);
+    assert.equal(ignored.manifest.item.durationMs, 1_800_000, `copyLengthSeconds ${bad}`);
+  }
+});
+
+test('the newest own Margin’s length wins whatever order they arrive in: a tie goes to the later id (#4175)', async () => {
+  const a = own('a', 100, '2026-11-22T10:00:00Z', 1913);
+  const b = own('b', 200, '2026-11-22T10:00:00Z', 1946.018);
+  assert.equal((await written([a, b])).manifest.item.durationMs, 1946018);
+  assert.equal((await written([b, a])).manifest.item.durationMs, 1946018);
 });

@@ -110,7 +110,7 @@ export function placeImport(
   episodes: readonly Episode[],
   now = new Date().toISOString(),
   existing: readonly Margin[] = [],
-  options: { unnamedAuthor?: string } = {},
+  options: { unnamedAuthor?: string; backup?: boolean } = {},
 ): PlacedImport {
   const own = findEpisode(read, episodes);
   let episode: Episode;
@@ -144,7 +144,15 @@ export function placeImport(
   // itself and gets a countdown, and the page calls the sender "your friend" (#2168, #4226). The caller passes
   // `unnamedAuthorFor(arrival)`, so a restored backup keeps its own Margins unsigned.
   const { unnamedAuthor } = options;
-  const placed = read.margins.map((m) => ({ ...m, episodeId: episode.id, ...(unnamedAuthor && !m.author?.trim() && { author: unnamedAuthor }) }));
+  // A backup packet's length is one value for up to 50 Margins that may have been made on different copies (or on none that
+  // was measured), so it says nothing about any one of them. A restored Margin keeps no copy length rather than gain one
+  // it never had; the packet writer then falls back to the episode's own length, as it did before #4175.
+  const ownCopy = (m: Margin): Margin => {
+    if (!options.backup || m.copyLengthSeconds === undefined) return m;
+    const { copyLengthSeconds: _copy, ...rest } = m;
+    return rest;
+  };
+  const placed = read.margins.map((m) => ({ ...ownCopy(m), episodeId: episode.id, ...(unnamedAuthor && !m.author?.trim() && { author: unnamedAuthor }) }));
   const margins = placed.filter((m) => !existing.some((e) => sameMargin(e, m, episode.title)));
   const landAt = placed.length ? Math.min(...placed.map((m) => m.atSeconds)) : undefined;
   const pending = read.percentMargins.map(({ margin, percent }) => ({

@@ -6,6 +6,7 @@ import { useData } from '../data.tsx';
 import { downloadFile } from '../download.ts';
 import { useRestoreFocus } from '../focus.ts';
 import { BackIcon, CloseIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenIcon, PlayIcon, ShareIcon, SkipIcon, StopIcon } from '../icons.tsx';
+import { withCopyLength } from '../logic/copy-length.ts';
 import { cueFor, friendMargins, leading, possessive, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
@@ -678,6 +679,7 @@ function WriteMargin({
   onDone: () => void;
 }) {
   const data = useData();
+  const player = usePlayer();
   const { toast } = useUi();
   const [text, setText] = useState('');
   const input = useRef<HTMLTextAreaElement>(null);
@@ -686,7 +688,9 @@ function WriteMargin({
   const save = async () => {
     const value = text.trim();
     if (!value) return;
-    const margin = withReplyChoice({ id: newId(), episodeId, atSeconds: at, createdAt: new Date().toISOString(), text: value }, reply);
+    // The Margin keeps the length of the copy it was made on, so a packet can say which copy its times belong to (#4175).
+    const copyLength = player.episode?.id === episodeId ? player.measuredLengthSeconds : undefined;
+    const margin = withCopyLength(withReplyChoice({ id: newId(), episodeId, atSeconds: at, createdAt: new Date().toISOString(), text: value }, reply), copyLength);
     try {
       await data.addMargin(margin);
       toast(`Margin saved at ${formatClock(at)}.`);
@@ -753,6 +757,9 @@ function RecordMargin({
   const data = useData();
   const player = usePlayer();
   const { toast } = useUi();
+  // The length of the copy playing now, read where the Margin is built (the save runs after the recording stops).
+  const copyLengthRef = useRef<number | undefined>(undefined);
+  copyLengthRef.current = player.episode?.id === episodeId ? player.measuredLengthSeconds : undefined;
   const [recording, setRecording] = useState<VoiceRecording | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [problem, setProblem] = useState<string>();
@@ -895,7 +902,10 @@ function RecordMargin({
   const saveNew = (voice: RecordedVoice, stoppedAt: Date) => {
     setSaving('saving');
     writes.current = writes.current.then(async () => {
-      const bare = withReplyChoice(voiceMarginOnStop({ id: marginId.current, episodeId, atSeconds: at, recordedAt: stoppedAt, voice }), replyRef.current);
+      const bare = withCopyLength(
+        withReplyChoice(voiceMarginOnStop({ id: marginId.current, episodeId, atSeconds: at, recordedAt: stoppedAt, voice }), replyRef.current),
+        copyLengthRef.current,
+      );
       const margin = withWords(bare, wordsRef.current, placeholderRef.current) ?? bare;
       try {
         await data.addMargin(margin);

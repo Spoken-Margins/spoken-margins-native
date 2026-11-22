@@ -31,7 +31,7 @@ function useLandPacket(onLanded: (landing: Landing) => void): (bytes: Uint8Array
     async (bytes, fileName, arrival) => {
       const read = await services.packets.readPacket(bytes, fileName);
       const current = dataRef.current;
-      const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins, { unnamedAuthor: unnamedAuthorFor(arrival) });
+      const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins, { unnamedAuthor: unnamedAuthorFor(arrival), backup: arrival === 'backup' });
       if (placed.show) await current.follow(placed.show, [placed.episode]);
       else if (placed.newEpisode) await current.updateEpisode(placed.episode);
       for (const margin of placed.margins) await current.addMargin(margin);

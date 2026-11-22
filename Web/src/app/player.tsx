@@ -51,6 +51,13 @@ export interface PlayerApi {
   loading: boolean;
   time: number;
   duration: number | undefined;
+  /**
+   * The length of the copy loaded now, in seconds: the first finite, positive length the audio reports for a load,
+   * kept unchanged until the next load clears it, so a Margin made on this copy and the note on a friend's Margin never
+   * renumber when the browser refines it. Never the stored length in `duration`, which can be a feed's or a packet's
+   * (#4175, #4614).
+   */
+  measuredLengthSeconds: number | undefined;
   rate: number;
   /**
    * Opens an episode. `at` jumps to a moment (a Margin); otherwise it resumes where the listener left off. `episode`
@@ -151,6 +158,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [time, setTime] = useState(0);
   const [mediaDuration, setMediaDuration] = useState<number>();
+  const [measuredLengthSeconds, setMeasuredLengthSeconds] = useState<number>();
   const lastSave = useRef(0);
   const lastMirror = useRef(0);
   const pendingSeek = useRef<number | undefined>(undefined);
@@ -207,6 +215,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     lastMirror.current = Date.now();
     mirrorPosition(browserStorage(), place);
   }, [placeNow]);
+
+  /** The first finite, positive length this load reports is the copy's length; later refinements don't change it (#4175). */
+  const keepFirstLength = useCallback((seconds: number) => {
+    if (Number.isFinite(seconds) && seconds > 0) setMeasuredLengthSeconds((kept) => kept ?? seconds);
+  }, []);
 
   /** Hands the waiting article Margins the length of the audio that just loaded, once. */
   const placeWhenLengthKnown = useCallback(
@@ -426,6 +439,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const at = Number.isFinite(audio.currentTime) && audio.currentTime > 0 ? audio.currentTime : undefined;
       pendingSeek.current = at;
       setLoading(true);
+      // A reload asks for the file again, and a dynamic-ad podcast can answer with another copy: measure it afresh (#4175).
+      setMeasuredLengthSeconds(undefined);
       audio.load();
       void audio.play().catch(onPlayRejected);
     },
@@ -580,6 +595,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       apply({ kind: 'source-changed' });
       setEpisodeId(id);
       setMediaDuration(undefined);
+      setMeasuredLengthSeconds(undefined);
       setTime(pendingSeek.current ?? 0);
       audio.src = target.audioUrl;
       audio.playbackRate = dataRef.current.settings.playbackRate;
@@ -792,8 +808,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [episode, playing, duration, rate, time]);
 
   const api = useMemo<PlayerApi>(
-    () => ({ episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, play, pause, skip, seek, skipMargin, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
-    [episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, play, pause, skip, seek, skipMargin, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
+    () => ({ episode, playing, loading, time, duration, measuredLengthSeconds, rate, open, openNewestPlayable, toggle, play, pause, skip, seek, skipMargin, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
+    [episode, playing, loading, time, duration, measuredLengthSeconds, rate, open, openNewestPlayable, toggle, play, pause, skip, seek, skipMargin, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
   );
 
   return (
@@ -806,6 +822,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         onLoadedMetadata={(event) => {
           const audio = event.currentTarget;
           if (Number.isFinite(audio.duration)) setMediaDuration(audio.duration);
+          keepFirstLength(audio.duration);
           placeWhenLengthKnown(audio);
           if (pendingSeek.current !== undefined) {
             audio.currentTime = Math.min(pendingSeek.current, Number.isFinite(audio.duration) ? audio.duration : pendingSeek.current);
@@ -815,6 +832,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         onDurationChange={(event) => {
           const d = event.currentTarget.duration;
           if (Number.isFinite(d)) setMediaDuration(d);
+          keepFirstLength(d);
           placeWhenLengthKnown(event.currentTarget);
         }}
         onSeeking={(event) => {
