@@ -30,6 +30,12 @@ import (
 // against Apple". Do not make up the file: a capture from fakeattest proves
 // nothing.
 //
+// A phone build makes it (#4818): Settings, in the Diagnostics group, "Capture
+// App Attest for the Server Test" (it needs the sender check's agreement once,
+// so make a share link first). It shares device-capture.json; put that file in
+// testdata/. The app writes exactly the shape below, and
+// AppAttestDeviceCaptureTests fails if its field names drift from this struct.
+//
 //	{
 //	  "appId": "J8SWC6J3VY.com.spokenmargins.native",
 //	  "environment": "development",              // or "production"
