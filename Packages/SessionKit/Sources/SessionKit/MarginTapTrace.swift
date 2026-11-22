@@ -60,6 +60,8 @@ public enum MarginTapReason: String, CaseIterable, Equatable, Sendable {
     /// A Margin with no position in the source: a friend's that sent none, or your own moved from a live session
     /// with no place (#4233).
     case noPosition = "no_position"
+    /// A friend's Margin whose layer the listener has turned off.
+    case marginsOff = "margins_off"
     /// A friend's Margin with no recording and no reading to play.
     case noAudio = "no_audio"
     /// A written Margin whose reading is still being made; the tap plays when it is ready.

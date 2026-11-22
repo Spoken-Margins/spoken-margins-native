@@ -5,16 +5,26 @@ extension Gate1AppModel {
     /// as before. One the app matched at a passage of the listener's article or PDF has no time to seek to, so it goes
     /// the way a Skim stop on text does (`startSkimMargin`): to the passage, then the Margin. The button is enabled by
     /// `SharedMarginRow.canPlayFromMarginsList`, which asks `SharedMarginListPlay` for the same two places.
+    /// Either way the tap leaves one `margin.tap` line; `playSharedMarginMoment` writes its own.
     func playSharedMarginFromMarginsList(_ row: SharedMarginRow) {
         guard SharedMarginListPlay(row.interjection) == .textPassage else { return playSharedMarginMoment(row) }
-        guard !rejectNavigationOrSessionMutationWhileRecording("play_shared_margin_from_list") else { return }
+        recordMarginTap(.shared, startSharedMarginAtPassage(row))
+    }
+
+    private func startSharedMarginAtPassage(_ row: SharedMarginRow) -> MarginTapOutcome {
+        guard !rejectNavigationOrSessionMutationWhileRecording("play_shared_margin_from_list") else { return .refused(.recordingInProgress) }
         guard SharedMarginPrompts.isLayerPlaybackEligible(row.layer, records: [row.interjection]) else {
-            return reportFailure("This friend's Margins are turned off. Turn them on to hear this one.")
+            reportFailure("This friend's Margins are turned off. Turn them on to hear this one.")
+            return .refused(.marginsOff)
         }
-        guard row.layer.itemId == selectedItem.id,
-              let prompt = importedCommentaryPrompts(includeAnnounced: true).first(where: { $0.interjection.id == row.interjection.id }) else {
-            return reportFailure("This shared Margin isn't ready to play here yet.")
+        guard row.layer.itemId == selectedItem.id else {
+            reportFailure("This shared Margin isn't ready to play here yet.")
+            return .refused(.itemDidNotOpen)
         }
-        playSharedMarginNow(prompt)
+        guard let prompt = importedCommentaryPrompts(includeAnnounced: true).first(where: { $0.interjection.id == row.interjection.id }) else {
+            reportFailure("This shared Margin isn't ready to play here yet.")
+            return .refused(.marginUnavailable)
+        }
+        return playSharedMarginNow(prompt) ? .started : .refused(.noPosition) // the jump reported why
     }
 }
