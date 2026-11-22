@@ -308,6 +308,14 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
             && environment["SPOKEN_MARGINS_UI_TEST_COOP"] == "1"
     }
 
+    /// Whether the friend's Margin a co-op relaunch imports is the written one that is never read aloud
+    /// (`coopSilentInterjection`, #4934): `SPOKEN_MARGINS_UI_TEST_COOP_SILENT=1` beside the co-op switches. It changes the
+    /// Margin's kind, never whether one is imported, so alone it does nothing.
+    public static func importsSilentCoopMargin(arguments: [String], environment: [String: String]) -> Bool {
+        importsCoopLayer(arguments: arguments, environment: environment)
+            && environment["SPOKEN_MARGINS_UI_TEST_COOP_SILENT"] == "1"
+    }
+
     /// Whether a launch also follows one show for the Following tab and its show screen (#3863):
     /// `SPOKEN_MARGINS_UI_TEST_FOLLOWED_SHOW=1`. It adds to the Library the launch seeds (the `text` and podcast seeds,
     /// and a kept Library) and changes nothing else. The fixture seed does not carry it.

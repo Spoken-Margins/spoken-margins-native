@@ -55,6 +55,30 @@ final class MarginsTabPodcastAppTests: XCTestCase {
         }
     }
 
+    // The Margins tab's Go-to on a friend's silent row (#4934), from the owner's #4447 position: far past the Margin. The row
+    // is enabled as a Go-to and not as Play; the tap lands at the Margin's own place, plays on and starts no moment.
+    func testTheSilentFriendsRowGoesToItsPlaceFromFarPastItAndPlaysOn() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: "Look at this part.", senderReadAloud: false)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        let row = friendRow(fixture)
+        model.sharedMarginRows = [row]
+        try await playFarPastTheMargin(fixture)
+        XCTAssertFalse(row.canPlayFromMarginsList, "nothing to play")
+        XCTAssertTrue(row.goesToFromList, "the row's button goes there")
+
+        model.goToSharedMargin(row)
+        defer { model.pause() }
+
+        XCTAssertNil(model.lastError)
+        XCTAssertNil(model.marginMoment, "no lead-in and no voice")
+        XCTAssertEqual(model.screen, .playback)
+        try await fixture.waitUntil("the source is at the Margin's own place and playing on") {
+            model.snapshot.status == .playing && (model.snapshot.currentMediaTimeMs ?? Int.max) < 5_000
+        }
+        XCTAssertEqual(model.pinnedMarginCard?.stage, .silentHere(words: "Look at this part.", isApproximate: false))
+    }
+
     // The same tap while the source is paused far past the Margin: a paused source goes back too, and plays.
     func testTheFriendsRowPlaysItsMomentFromAPausedSourceFarPastIt() async throws {
         let fixture = try await ReturnFixture.make(sourcePlaying: true)

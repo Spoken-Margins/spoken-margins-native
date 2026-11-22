@@ -73,6 +73,8 @@ extension Gate1AppModel {
             return PinnedMarginCard(subject: subject, stage: .comingUp(msRemaining: remaining), position: position, noun: sourceNoun,
                 nextPress: nextMarginPress, run: run, targetLeadInMs: moment.target.leadInMs)
         }
+        // A friend's Margin the listener went to that is never read aloud: its words, while the source is still near it (#4934).
+        if let landing = shownSilentMarginLanding { return landing.card(noun: sourceNoun) }
         if let saved = friendAnswerSavedCard { return saved }
         // Auto-play off still holds the slot: Next Margin is reachable between Margins and the title never moves.
         guard let next = nextSharedMargin else { return friendLastMarginCard }
@@ -86,7 +88,7 @@ extension Gate1AppModel {
 
     /// What the open source is called on the card: from the open item's own stored facts (the Library row's), else from
     /// whether it plays as media. Never hard-coded to "episode" (#3597).
-    private var sourceNoun: SourceNoun {
+    var sourceNoun: SourceNoun {
         if let row = libraryItems.first(where: { $0.id == snapshot.itemId }) {
             return SourceNoun(mediaType: row.mediaType, sourceReference: row.sourceReference, sourceReferenceType: row.sourceReferenceType)
         }

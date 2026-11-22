@@ -44,7 +44,10 @@ extension Gate1AppModel {
     }
 
     func skimMomentPress(direction: SkimDirection) -> SkimStopRouting.MomentPress {
-        SkimStopRouting.press(direction: direction, moment: SkimStopRouting.MomentState(marginMoment, positionMs: marginMomentPositionMs))
+        // Every Skim press asks this first, and a press ends the card for a silent Margin the listener went to (#4934). The next
+        // change makes the silent Margin a stop and reads `silentMarginLanding` in `skimStopChoice`, so it moves the clearing after that.
+        silentMarginLanding = nil
+        return SkimStopRouting.press(direction: direction, moment: SkimStopRouting.MomentState(marginMoment, positionMs: marginMomentPositionMs))
     }
 
     func skimRunMomentPress(_ press: SkimStopRouting.MomentPress) {

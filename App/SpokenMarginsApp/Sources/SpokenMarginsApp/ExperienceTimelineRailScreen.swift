@@ -657,8 +657,11 @@ struct ExperienceTimelineRailScreen: View {
             model.jumpToListeningMapScene(scene, fromTimeline: true)
         case .sharedMargin(let row):
             // #158: play the moment directly; details stay on long-press. A written Margin set not to be read aloud, or with
-            // no voice on this phone (#3402), has nothing to play, so the tap opens its details, where its words are (#3427).
-            if row.interjection.isWritten, !SharedMarginAudio.canOffer(row.interjection) {
+            // no voice on this phone (#3402), has nothing to play: when it has a place the tap goes there with no voice (#4934),
+            // and when it has none it opens its details, where its words are (#3427).
+            if row.layer.itemId != nil, SilentMarginWords.friendGoesTo(row.interjection, in: row.layer) {
+                model.goToSharedMargin(row)
+            } else if row.interjection.isWritten, !SharedMarginAudio.canOffer(row.interjection) {
                 selectedSharedMargin = row
             } else {
                 model.playSharedMarginMoment(row)

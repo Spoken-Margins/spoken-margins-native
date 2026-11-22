@@ -300,6 +300,7 @@ extension Gate1AppModel {
         sharedMarginReturn.promptShown(sourceWasPlaying: pausesSource)
         if pausesSource, snapshot.status.isPlaybackActive { pause() }
         if !prompt.layer.isMuted { playImportedCommentaryCue() }
+        silentMarginLanding = nil // a Margin that sounds, or waits to, takes the silent one's card (#4934)
         pendingImportedCommentary = prompt
         importedCommentaryAutoPlayTask?.cancel()
         importedCommentaryAutoPlayTask = nil
