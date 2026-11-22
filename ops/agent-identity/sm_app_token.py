@@ -16,8 +16,10 @@ How the token is made:
 
 Exit 0 and the token on stdout, or exit 1 with the reason on stderr (and nothing on stdout).
 
-    sm_app_token.py              print a token (cached or new)
-    sm_app_token.py --check      mint and print who the token is and when it expires, never the token
+    sm_app_token.py                       print a token (cached or new)
+    sm_app_token.py --min-life 50         ... renewed when it has 50 minutes or less left (10 to 55; default 10)
+    sm_app_token.py --gh-config DIR       write it to DIR/hosts.yml for GH_CONFIG_DIR instead of printing it
+    sm_app_token.py --check               mint and print who the token is and when it expires, never the token
 """
 from __future__ import annotations
 
@@ -119,9 +121,9 @@ def parse_time(value: str) -> dt.datetime:
     return dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
 
 
-def usable(entry: dict | None, now: dt.datetime) -> bool:
+def usable(entry: dict | None, now: dt.datetime, margin: dt.timedelta = REUSE_MARGIN) -> bool:
     try:
-        return bool(entry and entry.get('token')) and parse_time(entry['expires_at']) - now > REUSE_MARGIN
+        return bool(entry and entry.get('token')) and parse_time(entry['expires_at']) - now > margin
     except (KeyError, TypeError, ValueError):
         return False
 
@@ -154,15 +156,41 @@ def locked(path: Path):
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def token(cache: Path = CACHE, now: dt.datetime | None = None, pem_source=keychain_pem, mint=request_token) -> str:
+def token(cache: Path = CACHE, now: dt.datetime | None = None, pem_source=keychain_pem, mint=request_token,
+          margin: dt.timedelta = REUSE_MARGIN) -> str:
     now = now or dt.datetime.now(dt.timezone.utc)
     with locked(cache):
         entry = read_cache(cache)
-        if usable(entry, now):
+        if usable(entry, now, margin):
             return entry['token']
         entry = mint(app_jwt(pem_source(), now.timestamp()))
         write_cache(cache, entry)
         return entry['token']
+
+
+GH_HOSTS = 'github.com:\n    oauth_token: {token}\n    user: spoken-margins-agent[bot]\n    git_protocol: https\n'
+
+
+def write_gh_config(directory: Path, value: str) -> None:
+    """gh's hosts.yml in `directory`, holding the App token (0600 in a 0700 folder, replaced atomically).
+
+    Processes that run with GH_CONFIG_DIR set to this folder read the token afresh on every `gh` call, and git does
+    too through `gh auth git-credential`. So a session that outlives one token keeps working while the next
+    sm-agent-env start (the 10-minute launchd jobs) rewrites the file. A static GH_TOKEN can't do that."""
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory.chmod(0o700)
+    target = directory / 'hosts.yml'
+    text = GH_HOSTS.format(token=value)
+    try:
+        if target.read_text() == text:
+            return
+    except OSError:
+        pass
+    temp = directory / 'hosts.yml.tmp'
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as handle:
+        handle.write(text)
+    os.replace(temp, target)
 
 
 def check() -> int:
@@ -178,14 +206,40 @@ def check() -> int:
     return 0
 
 
+def parse_args(args: list[str]) -> dict | None:
+    """{'check', 'gh_config', 'min_life'} from the arguments, or None when they are not understood."""
+    found = {'check': False, 'gh_config': None, 'min_life': None}
+    while args:
+        flag, args = args[0], args[1:]
+        if flag == '--check':
+            found['check'] = True
+        elif flag in ('--gh-config', '--min-life') and args:
+            value, args = args[0], args[1:]
+            if flag == '--gh-config':
+                found['gh_config'] = Path(value)
+            elif value.isdigit() and 10 <= int(value) <= 55:
+                found['min_life'] = int(value)
+            else:
+                return None
+        else:
+            return None
+    return found
+
+
 def main(argv: list[str]) -> int:
     try:
-        if argv[1:] == ['--check']:
-            return check()
-        if argv[1:]:
+        args = parse_args(argv[1:])
+        if args is None:
             print(__doc__, file=sys.stderr)
             return 2
-        print(token())
+        if args['check']:
+            return check()
+        margin = dt.timedelta(minutes=args['min_life']) if args['min_life'] else REUSE_MARGIN
+        value = token(margin=margin)
+        if args['gh_config']:
+            write_gh_config(args['gh_config'], value)
+        else:
+            print(value)
         return 0
     except TokenError as error:
         print(f'sm-app-token: {error}', file=sys.stderr)
