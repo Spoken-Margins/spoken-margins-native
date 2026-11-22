@@ -779,7 +779,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return
         }
         applyFootnoteSilencing(targetId: targetId)
-        let spokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
+        let requestedSpokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
+        let spokenOffset = lock.withLock {
+            spokenOffsetBeforeNote(requested: requestedSpokenOffset, targetId: targetId, isSeek: isSeek)
+        }
         replaceBundledVoiceChunks(after: spokenOffset, targetId: targetId)
         let before = resumeDiagnostics(targetId: targetId, spokenOffset: spokenOffset)
         let action = resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset, isSeek: isSeek)
@@ -3506,6 +3509,24 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// Whether the chunk now playing is an aside. Call with the lock held.
     private var currentChunkIsAside: Bool {
         generationPlan.first(where: { $0.key == currentChunk })?.isAside == true
+    }
+
+    /// Where a play on a paused client goes when the chunk now playing is a note and the play asks for the place the
+    /// client reported while it read (the aside's own offset, the citing sentence's end, which the next body chunk
+    /// shares): the start of the citing sentence's last chunk, so the plan's own order reads the note again after it.
+    /// Left at that offset the play would start the body chunk after the note and drop the note without a word (#3777).
+    /// The reported place itself stays the citing sentence's end: Back, Skim's offers and the progress read it, and a
+    /// place that moved earlier while a note read would make them act on a move that was not the listener's. A play
+    /// that is a seek, a play on a client that is playing (a rate change), and a place other than the held one are the
+    /// listener's own and keep their offset. Call with the lock held.
+    private func spokenOffsetBeforeNote(requested: Int, targetId: String, isSeek: Bool) -> Int {
+        guard !isSeek, transportIntent == .paused, currentTargetId == targetId,
+              let index = generationPlan.firstIndex(where: { $0.key == currentChunk }),
+              generationPlan[index].isAside, generationPlan[index].startOffset == requested,
+              let held = FootnoteNoteControls.heldStartOffset(
+                forChunkAt: index, tags: generationPlan.map(\.footnote), startOffsets: generationPlan.map(\.startOffset))
+        else { return requested }
+        return held
     }
 
     /// Where playback goes when the chunk now playing ends. The plan's own order when an aside is on either side of

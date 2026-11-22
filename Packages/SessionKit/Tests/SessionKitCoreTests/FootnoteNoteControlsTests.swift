@@ -67,6 +67,52 @@ final class FootnoteNoteControlsTests: XCTestCase {
         XCTAssertNil(Controls.resumeIndex(forChunkAt: 0, tags: []))
     }
 
+    // MARK: - Where a resume during a note starts
+
+    func testAResumeDuringANoteStartsAtTheCitingSentencesLastChunk() {
+        // Offsets of the same plan shape as `tags`: an aside starts where the body chunk after it starts.
+        let offsets = [0, 40, 40, 90, 90, 130, 160, 160, 200, 260, 300]
+        let held = { Controls.heldStartOffset(forChunkAt: $0, tags: self.tags, startOffsets: offsets) }
+        XCTAssertEqual(held(1), 0)
+        XCTAssertEqual(held(3), 40)
+        XCTAssertEqual(held(4), 40, "the second chunk of a long note resumes at the sentence too")
+        XCTAssertEqual(held(6), 130)
+        XCTAssertEqual(held(7), 130, "the second note at one citation")
+    }
+
+    func testOutsideANoteAResumeKeepsItsOwnOffset() {
+        let offsets = [0, 40, 40, 90, 90, 130, 160, 160, 200, 260, 300]
+        for index in [0, 2, 5, 8, 9, 10, -1, 11, 99] {
+            XCTAssertNil(Controls.heldStartOffset(forChunkAt: index, tags: tags, startOffsets: offsets), "\(index)")
+        }
+        XCTAssertNil(Controls.heldStartOffset(forChunkAt: 1, tags: tags, startOffsets: [0, 1]), "offsets that do not line up with the plan")
+    }
+
+    func testANoteBeforeAnyBodyChunkResumesAtTheFirstChunkAfterIt() {
+        XCTAssertEqual(Controls.heldStartOffset(forChunkAt: 0, tags: [.aside("1"), nil], startOffsets: [0, 0]), 0)
+        XCTAssertEqual(Controls.heldStartOffset(forChunkAt: 1, tags: [.aside("1"), .aside("2"), nil], startOffsets: [5, 5, 5]), 5)
+    }
+
+    // MARK: - Against the real planner
+
+    func testResumingDuringTheRealPlansNotesPlaysTheCitingSentenceThenTheNote() throws {
+        let plan = NarrationChunkPlanner.articlePlan(article, asides: true).chunks
+        let tags = plan.map(\.footnote), offsets = plan.map(\.startOffset)
+        let asides = tags.indices.filter { Controls.isAside(at: $0, tags: tags) }
+        XCTAssertEqual(asides.count, 3)
+        for index in asides {
+            let held = try XCTUnwrap(Controls.heldStartOffset(forChunkAt: index, tags: tags, startOffsets: offsets), "\(index)")
+            // The chunk a play from that offset starts: the body chunk covering it, as the client's lookup finds it.
+            let covering = try XCTUnwrap(plan.indices.first {
+                tags[$0] == nil && held >= offsets[$0] && held < offsets[$0] + max(1, plan[$0].sourceLength)
+            }, "\(index)")
+            XCTAssertLessThan(covering, index, "the sentence, not the text after the note")
+            XCTAssertTrue(((covering + 1)..<index).allSatisfy { Controls.isAside(at: $0, tags: tags) },
+                          "only notes sit between that chunk and this note, so the plan's own order reads the note next")
+            XCTAssertLessThan(held, offsets[index], "an aside's own offset is the sentence's end and would skip the note")
+        }
+    }
+
     // MARK: - One note's chunks
 
     func testANoteRangeCoversEveryNeighbouringChunkWithItsLabelAndNoOther() {
