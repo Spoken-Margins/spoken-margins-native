@@ -58,6 +58,7 @@ REPRO_START = re.compile(r'^[ \t#*_-]*repro attempt[ \t*_]*:?[ \t*_]*$', re.I)
 REPRO_FIELD = re.compile(r'^[ \t*_-]*(tried|result|needs from owner)[ \t*_]*:[ \t*_]*(.*?)[ \t*_]*$', re.I)
 HEADING = re.compile(r'^[ \t]*(?:#{1,6}[ \t]|\*\*[^*\n:]+\*\*[ \t]*$)')   # a # heading, or a line that is only bold text
 LIST_ITEM = re.compile(r'^[ \t]*(?:[-*+]|\d+[.)])[ \t]')
+OWNER_PASS = re.compile(r'^[ \t#*_-]*owner pass on phone pass\b', re.I)   # scripts/daily-phone-plan's close comment: his own phone is the strongest proof
 OWNER_CHECK = re.compile(r'^[ \t>#*_-]*owner check(?![ \t*_:]*(?:not|none|n/a)\b)\b', re.I | re.M)
 PLACEHOLDER = re.compile(r'^(?:tbd|todo|n/?a|none|nothing|-+|\.{2,}|…)$', re.I)
 ANGLE = re.compile(r'<[^<>\n]+>')   # an unfilled template slot such as <what you observed>
@@ -80,6 +81,7 @@ class Entry:
 
     def __init__(self, kind: str, fields: Optional[dict] = None, reason: str = '', pr_side: bool = False):
         self.kind, self.fields, self.reason, self.pr_side = kind, fields or {}, reason, pr_side
+        self.repeated: list[str] = []   # fields that appear twice in one record: which one counts is unclear, so it is held
 
 
 class Verdict:
@@ -109,6 +111,10 @@ def parse(text: Optional[str], pr_side: bool = False) -> list[Entry]:
         if not line.strip():
             blank = True
             continue
+        if OWNER_PASS.match(line):
+            current = None
+            entries.append(Entry('owner_pass', pr_side=pr_side))
+            continue
         waiver = WAIVER.match(line)
         if waiver:
             current = None
@@ -129,7 +135,9 @@ def parse(text: Optional[str], pr_side: bool = False) -> list[Entry]:
         if field:
             name = field.group(1).lower()
             if name in current.fields:
-                last = ''   # a repeated field (prose that happens to start with "Result:") never overwrites the first
+                last = ''
+                if name not in current.repeated:
+                    current.repeated.append(name)   # held in problems_of: a PASS then a later FAIL line must not pass
             else:
                 last = name
                 current.fields[name] = field.group(2)
@@ -162,9 +170,9 @@ def commit_of(value: str) -> str:
     return match.group(1).lower() if match else ''
 
 
-def problems_of(fields: dict) -> list[str]:
+def problems_of(fields: dict, repeated: Optional[list] = None) -> list[str]:
     """Why a proof record does not count, or [] when it does."""
-    found = []
+    found = [f'its `{_label(name)}:` line appears twice; keep one value, or start a new record' for name in repeated or []]
     for name in FIELDS:
         if name not in fields:
             found.append(f'it has no `{_label(name)}:` line')
@@ -198,14 +206,17 @@ def waiver_problem(reason: str) -> Optional[str]:
 
 
 def judge(entries: list[Entry]) -> Verdict:
-    """The newest record decides: a later FAIL undoes an earlier PASS, and a later waiver stands in for both."""
+    """The newest record decides: a later FAIL undoes an earlier PASS, and a later waiver stands in for both. An
+    `Owner PASS on phone pass` comment (the daily phone plan's close comment) is the owner's own run and proves it."""
     if not entries:
         return Verdict('none')
     last = entries[-1]
     if last.kind == 'waiver':
         problem = waiver_problem(last.reason)
         return Verdict('invalid', [problem]) if problem else Verdict('waived')
-    found = problems_of(last.fields)
+    if last.kind == 'owner_pass':
+        return Verdict('proved')
+    found = problems_of(last.fields, last.repeated)
     if found:
         return Verdict('invalid', found)
     return Verdict('proved', commit=commit_of(last.fields['commit']))
@@ -317,7 +328,7 @@ def pr_blockers(api, number: int, pull: dict, comments: list, own_commits: Calla
     for target, issue in targets:
         items = timed_items(pull, comments) + [(c.get('created_at') or '', c.get('body') or '', False) for c in api.issue_comments(target)]
         verdict = judge(entries_for(items, target, several=len(targets) > 1))
-        if verdict.status == 'proved':
+        if verdict.status == 'proved' and verdict.commit:
             stale = stale_after(verdict.commit, own_commits(), paths_after)
             if stale:
                 verdict = Verdict('invalid', [stale])
@@ -375,29 +386,33 @@ def issue_items(comments: list) -> list[tuple]:
 
 
 def closing_items(gh, number: int) -> list[tuple]:
-    """The records on the PR(s) that closed issue <number>, as (time, text, pr_side) items. A PR counts when its body or
-    the closing commit's message carries a closing keyword for the issue (the text merge policy reads). PRs come from the
-    last `closed` event's commit and, when that has none, from merged PRs the timeline shows referencing the issue."""
+    """The PR-side records that speak for issue <number> after it closed, as (time, text, pr_side) items. This is the
+    one reader the sweep and `--issue N --pr M` share: every merged PR of this repository that the issue's timeline ties
+    to it (the PR of the closing commit, and each merged PR the timeline shows referencing it), whatever keyword it used,
+    because a change that couldn't be run first says `Part of #N` and gets its proof after the merge. Their bodies count
+    when the author is trusted, their comments when trusted; an `Issue:` line in a record limits which issues it covers."""
     events = gh.api(f'issues/{number}/timeline?per_page=100', paginate=True)
     closed = [e for e in events if e.get('event') == 'closed']
     sha = (closed[-1].get('commit_id') if closed else None) or ''
     pulls: dict[int, dict] = {}
-    message = ''
     if sha:
-        message = ((gh.api(f'commits/{sha}') or {}).get('commit') or {}).get('message') or ''
         for pull in gh.api(f'commits/{sha}/pulls?per_page=20', paginate=True):
             pulls[pull['number']] = pull
     for event in events:
         source = (event.get('source') or {}).get('issue') or {}
-        if event.get('event') == 'cross-referenced' and 'pull_request' in source and source.get('number') not in pulls:
+        if event.get('event') != 'cross-referenced' or 'pull_request' not in source or source.get('number') in pulls:
+            continue
+        repo = (source.get('repository') or {}).get('full_name')
+        if repo and repo.lower() != gh.repo.lower():
+            continue   # another repository's PR (ops-private) that mentions this number
+        try:
             pull = gh.api(f'pulls/{source["number"]}')
-            if pull.get('merged_at'):
-                pulls[pull['number']] = pull
+        except RuntimeError:
+            continue   # not a PR of this repository
+        if pull.get('merged_at'):
+            pulls[pull['number']] = pull
     found: list[tuple] = []
     for pull in pulls.values():
-        text = (pull.get('body') or '') + '\n' + message
-        if number not in closing_issues(text, pull['number'], gh.repo):
-            continue
         comments = comment_trust.trusted_only(gh.api(f'issues/{pull["number"]}/comments?per_page=100', paginate=True))
         found.extend(timed_items(pull, comments))
     return found

@@ -138,7 +138,6 @@ class ParseTests(unittest.TestCase):
         cases = {
             'bold pseudo-heading': GOOD + '\n**How you checked it**\nResult: FAIL in the old build\nCommit: nothing\n',
             'paragraph after a blank line': GOOD + '\nThe run was fine, but the old build fails.\nIssue: 99 times\n',
-            'repeated Result': GOOD + 'Result: FAIL - later prose\n',
         }
         for name, text in cases.items():
             with self.subTest(name):
@@ -147,6 +146,23 @@ class ParseTests(unittest.TestCase):
         self.assertNotIn('but the old build', proof.parse(cases['paragraph after a blank line'])[0].fields['result'])
         listed = GOOD.replace('2. Tapped Open in Spoken Margins\n', '\n2. Tapped Open in Spoken Margins\n')
         self.assertIn('Tapped Open', proof.parse(listed)[0].fields['steps'])   # a numbered list may have blank lines
+
+    def test_a_repeated_field_in_one_record_is_held(self):
+        # A PASS then a later FAIL line under one header: which one counts is unclear, so it does not pass.
+        for text in (GOOD + 'Result: FAIL - regressed on aaaaaaa0\n', GOOD + 'Commit: bbbbbbb0\n'):
+            verdict = entries_verdict(text)
+            self.assertEqual(verdict.status, 'invalid')
+            self.assertTrue(any('appears twice' in p for p in verdict.problems), verdict.problems)
+        # A new header starts a new record: the later record decides.
+        self.assertEqual(entries_verdict(GOOD + '\n**Real-use proof**\n' + GOOD.split('\n', 1)[1]).status, 'proved')
+
+    def test_the_owner_pass_comment_from_the_phone_plan_is_a_proof(self):
+        pass_comment = 'Owner PASS on phone pass 2026-11-23, build abc1234.\nThe link opened at the right moment.'
+        self.assertEqual(entries_verdict(pass_comment).status, 'proved')
+        fail = GOOD.replace('PASS - the episode opened at 12:41 and played', 'FAIL - broke again')
+        self.assertEqual(entries_verdict(pass_comment + '\n' + fail).status, 'invalid')
+        self.assertEqual(entries_verdict(fail + '\n' + pass_comment).status, 'proved')
+        self.assertEqual(entries_verdict('Owner PASS on a pass of mine').status, 'none')
 
     def test_a_record_ends_at_the_next_heading(self):
         text = GOOD + '\n## Notes\nPath: somewhere else\nResult: FAIL\n'
@@ -377,15 +393,48 @@ class SweepTests(unittest.TestCase):
         recent = '2026-11-30T23:50:00Z'   # ten minutes before the test's "now": the proof may be a minute behind
         gh = self.Gh([self.closed(11, when=recent)], {})
         self.assertEqual(self.run_sweep(gh, apply=True)['flagged'], [])
-        # The PR of the closing commit does not say it closes this issue: its proof is not this issue's.
+        # The PR of the closing commit has a proof whose Issue line names another issue: it is not this issue's.
         gh = self.Gh([self.closed(12)], {}, timeline={12: [{'event': 'closed', 'commit_id': 'deadbee'}]},
-                     pulls={'deadbee': [{'number': 31, 'body': 'Closes #99\n\n' + GOOD, 'created_at': '2026-11-22T09:00:00Z',
+                     pulls={'deadbee': [{'number': 31, 'body': 'Closes #99\n\n' + GOOD + 'Issue: #99\n', 'created_at': '2026-11-22T09:00:00Z',
                                          'author_association': 'OWNER', 'user': {'login': 'x'}}]})
         self.assertEqual(len(self.run_sweep(gh)['flagged']), 1)
         # Reopened once already (the sweep's marker is on the issue) and closed again by hand: left closed.
         gh = self.Gh([self.closed(13)], {13: [comment(proof.MARKER + '\nReopened')]})
         report = self.run_sweep(gh, apply=True)
         self.assertEqual((report['again'], report['reopened'], gh.writes), ([13], [], []))
+
+    def test_the_phone_plans_owner_pass_close_comment_is_not_reopened(self):
+        gh = self.Gh([self.closed(16)], {16: [comment('Owner PASS on phone pass 2026-11-23, build abc1234.\nPlayed fine.')]})
+        report = self.run_sweep(gh, apply=True)
+        self.assertEqual((report['proved'], report['flagged'], gh.writes), (1, [], []))
+
+    def test_a_hand_close_with_proof_on_a_part_of_pr_passes_the_gate_and_the_sweep_alike(self):
+        part_of = {'number': 34, 'merged_at': '2026-11-22T10:00:00Z', 'body': 'Part of #17', 'created_at': '2026-11-22T09:00:00Z',
+                   'author_association': 'OWNER', 'user': {'login': 'x'}}
+        proof_comment = comment(GOOD, '2026-11-22T11:00:00Z')
+        gh = self.Gh([self.closed(17)], {34: [proof_comment]}, timeline={17: [
+            {'event': 'closed', 'commit_id': None},
+            {'event': 'cross-referenced', 'source': {'issue': {'number': 34, 'pull_request': {}, 'repository': {'full_name': 'o/r'}}}}]})
+        gh.pull_by_number = {34: part_of}
+        report = self.run_sweep(gh, apply=True)
+        self.assertEqual((report['proved'], report['flagged'], gh.writes), (1, [], []))
+        # The same two sources, read the way `--issue 17 --pr 34` reads them, agree.
+        items = proof.issue_items([]) + proof.timed_items(part_of, [proof_comment])
+        self.assertTrue(proof.judge(proof.entries_for(items, 17)).ok)
+
+    def test_a_cross_reference_from_another_repository_or_a_non_pr_is_skipped_not_an_error(self):
+        gh = self.Gh([self.closed(18)], {}, timeline={18: [
+            {'event': 'closed', 'commit_id': None},
+            {'event': 'cross-referenced', 'source': {'issue': {'number': 5, 'pull_request': {}, 'repository': {'full_name': 'o/ops-private'}}}},
+            {'event': 'cross-referenced', 'source': {'issue': {'number': 6, 'pull_request': {}, 'repository': {'full_name': 'o/r'}}}}]})
+        orig = gh.api
+        def api(path, paginate=False, method='GET', fields=None):
+            if path == 'pulls/6':
+                raise RuntimeError('404')
+            return orig(path, paginate, method, fields)
+        gh.api = api
+        report = self.run_sweep(gh)
+        self.assertEqual((len(report['flagged']), report['unknown']), (1, []))
 
     def test_a_pr_whose_body_says_part_of_but_whose_commit_says_closes_still_counts(self):
         # merge policy reads body plus commit messages; the sweep reads the same text, or it would reopen what merge policy passed.
