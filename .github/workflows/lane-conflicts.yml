@@ -18,9 +18,12 @@
 #
 # The lane runner merges with the workflow token, which starts no workflow, so the runner's own merges to the trunk
 # never trigger the sweep either, and a `pull_request` run is not started at all for a PR GitHub can't build a merge
-# ref for (#4538: #4477 sat armed and silent for hours). An hourly schedule, five past, runs the same sweep ahead of the
-# hourly dispatch at twenty past, so a PR made stale by a runner merge or left without a merge ref is handed off
-# within the hour. Besides git's conflicts the sweep also hands off an armed PR GitHub calls unmergeable (#4538).
+# ref for (#4538: #4477 sat armed and silent for hours). An hourly sweep, ahead of the hourly dispatch at twenty past,
+# hands off a PR made stale by a runner merge or left without a merge ref within the hour. Since #4866 that hourly start
+# is the VPS's (ops/dispatch-backstop/ fires `workflow_dispatch` when no run began in the last 60 minutes): GitHub ran the
+# hourly cron 3 times of 24 in the 24 hours to 2026-11-21. The pull_request and push events above are the usual start; the
+# one daily cron is the last resort if the VPS is down. Besides git's conflicts the sweep also hands off an armed PR
+# GitHub calls unmergeable (#4538).
 #
 # The script is taken from the base branch's live tip (SM_TRUNK, default main, on push and dispatch) with no
 # credentials kept, and reads the PR head as git data only, never running it. GitHub builds a pull_request run's
@@ -37,7 +40,7 @@ on:
   push:
     branches: [next, main]
   schedule:
-    - cron: '5 * * * *'
+    - cron: '5 6 * * *'  # last resort only (#4866); the hourly tick is the VPS's (ops/dispatch-backstop/)
   workflow_dispatch:
     inputs:
       pr:

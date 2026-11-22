@@ -4,11 +4,19 @@
 # Mac. scripts/merge_stall_watch.py decides: nothing on the trunk for an hour, and an armed PR that hasn't moved for an
 # hour. It then opens one issue that @mentions him, which the GitHub mobile app pushes, and closes it when something
 # merges. It runs nobody's PR code: the script comes from the trunk, and it reads PRs only through the API.
+#
+# Start (#4866): a stall is the absence of progress, so no event can announce it; what an event can do is look each time
+# a PR's hosted checks finish (`workflow_run`), which is when progress is made or isn't. The 15-minute cron GitHub dropped
+# (3 runs of 96 in the 24 hours to 2026-11-21) is replaced by the VPS (ops/dispatch-backstop/), which fires
+# `workflow_dispatch` when no run began in the last 15 minutes. The one daily tick is the last resort if the VPS is down.
 name: merge-stall
 
 on:
+  workflow_run:
+    workflows: [hosted-portable, hosted-web, hosted-sessionkit-linux]
+    types: [completed]
   schedule:
-    - cron: '7,22,37,52 * * * *'
+    - cron: '7 6 * * *'  # last resort only
   workflow_dispatch:
 
 permissions:
