@@ -190,6 +190,22 @@ test('a second packet’s preview shows a Margin already here as the stored copy
   assert.equal(shown[2].heard, undefined);
 });
 
+test('a new reply to a Margin already stored is stored under the stored copy, not as an orphan (audit 2 on 53fc52e)', () => {
+  // Sam's packet A brought X; packet B carries X again under its own id, with Sam's new reply Z to it.
+  const storedX: Margin = { id: 'packet:A:x', episodeId: mine.id, atSeconds: 190, createdAt: '2026-10-30T00:00:00Z', text: 'X', author: 'Sam', heard: true };
+  const packetB = read({ title: 'T', guid: 'g-1' }, {
+    sender: 'Sam',
+    margins: [
+      { id: 'packet:B:x', episodeId: 'packet:B', atSeconds: 190, createdAt: '2026-10-30T00:00:00Z', text: 'X', author: 'Sam' },
+      { id: 'packet:B:z', episodeId: 'packet:B', atSeconds: 230, createdAt: '2026-10-30T00:02:00Z', text: 'Z', author: 'Sam', replyToId: 'packet:B:x' },
+    ],
+  });
+  const placed = placeImport(packetB, [show], [mine], undefined, [storedX], { unnamedAuthor: unnamedAuthorFor('link') });
+  // X is a duplicate and isn't stored again; Z is, and it hangs under the X the store holds, as the preview showed it.
+  assert.deepEqual(placed.margins.map((m) => [m.id, m.replyToId]), [['packet:B:z', 'packet:A:x']]);
+  assert.deepEqual(placed.held.find((m) => m.id === 'packet:B:z')?.replyToId, 'packet:A:x');
+});
+
 const pct = (id: string, percent: number, extra: Partial<Margin> = {}): PercentMargin => ({
   percent,
   margin: { id: `packet:d:${id}`, episodeId: 'packet:d', atSeconds: 0, createdAt: '2026-11-16T00:00:00Z', text: id, ...extra },

@@ -159,13 +159,15 @@ export function placeImport(
   };
   const placed = read.margins.map((m) => ({ ...ownCopy(m), episodeId: episode.id, ...(unnamedAuthor && !m.author?.trim() && { author: unnamedAuthor }) }));
   const stored = new Map(placed.map((m) => [m.id, existing.find((e) => sameMargin(e, m, episode.title))]));
-  const margins = placed.filter((m) => !stored.get(m.id));
   const held = placed.map((m) => {
     const copy = stored.get(m.id);
     if (copy) return copy;
     const parent = m.replyToId === undefined ? undefined : stored.get(m.replyToId);
     return parent ? { ...m, replyToId: parent.id } : m;
   });
+  // What is stored is what the preview showed: a new reply to a Margin already here hangs under the stored copy, whose id
+  // the packet's own id for it would never find (audit 2 on #4505).
+  const margins = held.filter((_, i) => !stored.get(placed[i].id));
   const landAt = placed.length ? Math.min(...placed.map((m) => m.atSeconds)) : undefined;
   const pending = read.percentMargins.map(({ margin, percent }) => ({
     percent,
