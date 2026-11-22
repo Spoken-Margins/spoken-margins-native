@@ -1619,8 +1619,8 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
     with the tip this job started on, because a fresh run is merged onto the newest tip and main moves while the job
     waits (#2596). The caller reads back the tip the last poll used.
     A check that failed with a lane-fault annotation (hosted_lane_fault) is started again once, whatever run_again says,
-    and waited for; a second faulted run of it on the head is a plain failure (#4085). So is one that failed before
-    automerge was added again (hosted_rearmed_after_failure, #4584); its second failure is a FAIL too.
+    and waited for; a second faulted run on the head, of any hosted check, is a plain failure (#4085). So is one that
+    failed before automerge was added again (hosted_rearmed_after_failure, #4584); its second failure is a FAIL too.
     run_again: there is no Mac to fall back on (#3501), so a check that can't be had (cancelled, skipped, never ran) is
     started again as a stale one is, within the same limits, rather than given up on. A read that failed says nothing
     about the checks, so it is only waited out. A check a fresh run skips as well won't change with more runs: the
@@ -1776,11 +1776,11 @@ def hosted_checks_missing(why: str, fallback: str = NEEDS_MAC) -> tuple[str, str
         return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
             f'not merged: {why}. The check failed before automerge was added again, so it is started again once, and '
             'the run could not be had or finished: run it again (remove and re-add automerge). A second failure of '
-            'the check on this head reports FAIL.']
+            'a hosted check on this head reports FAIL.']
     if HOSTED_LANE_FAULT.search(why):  # #4085: before FAIL; hosted_lane_fault leaves the marker off a repeated fault
         return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
             f'not merged: {why}. Runner fault, not this PR\'s code: run again (remove and re-add automerge). The '
-            'second fault of the same check on this head reports FAIL.']
+            'second fault on this head, in any hosted check, reports FAIL.']
     if HOSTED_FAILED.search(why):
         return 'FAIL', 'hosted checks', 'hosted fast checks: failed', [
             f'not merged: {why}. Its log is in the PR\'s checks; fix it and push.']
