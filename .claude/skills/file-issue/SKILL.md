@@ -12,8 +12,8 @@ Search open issues first. On a duplicate, comment there instead of filing. One p
 ## Body headings
 
 - **Outcome:** one or two sentences on what's different for the listener or the pipeline when it's done.
-- **Evidence:** what was seen, with the build number or `main` commit. For a bug: steps, expected, actual.
-- **Done when:** numbered, checkable items, including the test that must fail without the fix.
+- **Evidence:** what was seen, with the build number or `main` commit. For a bug: steps, expected, actual, and the real input that failed (the link or file itself, when it isn't private).
+- **Done when:** numbered, checkable items, including the test that must fail without the fix. For an issue in a listener-facing area (any area but groundwork), the last item is the real-use proof: "A `**Real-use proof**` of the real link, file or screen, run start to finish, is on the issue or the PR" (docs/workstreams/real-use-proof.md). The issue can't close without it.
 - **Must not break:** the journeys ([docs/journeys.md](../../../docs/journeys.md)), packets, the database, and the owner's Library and recordings it could touch.
 - **Cost and catch:** required when the work adds or changes a recurring cost (a lane step, a scheduled job, an agent loop, a per-PR check). Its cost per run, how often it runs, what it catches with evidence, and the signal that would show it's waste.
 
@@ -24,7 +24,7 @@ Search open issues first. On a duplicate, comment there instead of filing. One p
 - `ready` only when every heading above is filled in and the issue fits the standing calls. Fill missing headings yourself when the issue honestly supports it.
 - `where:mac` only when it needs Mac hardware, signed-in Mac accounts or a physical device, not merely an iOS build.
 - `owner-asked` when the owner asked for it himself.
-- Never add or remove `priority`; only the owner or the lead session sets it.
+- `priority`: add it when the owner has called the issue his top priority (owner, 2026-11-22: "yes", agents may set it then), quoting his words on the issue. Otherwise never add it, and never remove it; only the owner or the lead session does.
 - An outsider's issue (not OWNER, MEMBER or COLLABORATOR) gets `needs-triage-review` and a short reply, never `ready`.
 
 ## Milestone
