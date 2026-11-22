@@ -144,7 +144,7 @@ final class PodcastToArticleMemoryTests: XCTestCase {
         }
         try await pollUntil { (position() ?? 0) > (isArticle ? 0 : 200) }
         guard let start = position(), start > (isArticle ? 0 : 200) else {
-            // Stop at the first failure: seven more 30 s waits would only run into the plan's time limit.
+            // Stop at the first failure: up to eleven more 30 s waits would only run into the plan's time limit.
             throw ScenarioStopped(description: "\(isArticle ? "the article" : "the podcast") never started playing: "
                                   + "item \(model.snapshot.itemId ?? "none"), status \(model.snapshot.status)")
         }
@@ -199,7 +199,7 @@ final class PodcastToArticleMemoryTests: XCTestCase {
                     sessionId: "friend-session", createdAt: Date(), approvedTranscript: "Listen to this part, number \(index).",
                     anchorBefore: "", anchorAfter: "", status: .senderApproved
                 ),
-                // Past the 20-odd seconds the podcast plays here: a friend's Margin pauses the source to play itself.
+                // Past the 30-odd seconds the podcast plays here: a friend's Margin pauses the source to play itself.
                 anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 90_000 + index * 10_000),
                 representation: .textOnly
             )

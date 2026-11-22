@@ -37,55 +37,57 @@ final class MemoryFootprintVerdictTests: XCTestCase {
     }
 
     func testSteadySwitchesAndPlaybackReadSteady() {
-        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 340, 345, 338], podcastAt: [330, 335, 332]))
-        XCTAssertEqual(verdict, .steady(switches: 7, playbackMinutes: 20))
-        XCTAssertEqual(verdict.diagnosticsLine, "steady: 7 switches, 20 playback minutes measured")
+        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 340, 345, 338, 342, 340],
+                                                              podcastAt: [330, 335, 332, 336, 333]))
+        XCTAssertEqual(verdict, .steady(switches: 11, playbackMinutes: 30))
+        XCTAssertEqual(verdict.diagnosticsLine, "steady: 11 switches, 30 playback minutes measured")
     }
 
     func testTheFirstSwitchIntoATypeLoadingItsEngineIsNotGrowth() {
-        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 400, 402], podcastAt: [390, 391]))
-        XCTAssertEqual(verdict, .steady(switches: 5, playbackMinutes: 15), "the voice loading at the first switch into text is not a leak")
+        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 400, 402, 401, 403, 402],
+                                                              podcastAt: [390, 391, 390, 392, 391]))
+        XCTAssertEqual(verdict, .steady(switches: 11, playbackMinutes: 30), "the voice loading at the first switch into text is not a leak")
     }
 
     func testMemoryLeftBehindAtEachSwitchIntoTextIsGrowthPerSwitch() {
-        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 340, 380, 420], podcastAt: [100, 100, 100]))
+        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 340, 380, 420, 460, 500],
+                                                              podcastAt: [100, 100, 100, 100, 100]))
         XCTAssertEqual(verdict, .growingPerSwitch(mediaTypes: ["text"], megabytesPerSwitch: 40))
         XCTAssertEqual(verdict.diagnosticsLine, "growing 40MB per switch into text")
     }
 
     func testMemoryLeftBehindAtEachSwitchIntoThePodcastIsGrowthPerSwitch() {
-        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [300, 300, 300, 300], podcastAt: [330, 360, 390]))
+        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [300, 300, 300, 300, 300, 300],
+                                                              podcastAt: [330, 360, 390, 420, 450]))
         XCTAssertEqual(verdict, .growingPerSwitch(mediaTypes: ["podcast"], megabytesPerSwitch: 30))
     }
 
     /// Memory one item leaves behind is already in the footprint as the next item starts, so when listening alternates
     /// it shows in both types' switches. The verdict names both rather than guessing which one leaves it.
     func testGrowthThatShowsInBothTypesNamesBoth() {
-        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 340, 380, 420], podcastAt: [330, 375, 420]))
+        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 340, 380, 420, 460, 500],
+                                                              podcastAt: [330, 375, 420, 465, 510]))
         XCTAssertEqual(verdict, .growingPerSwitch(mediaTypes: ["podcast", "text"], megabytesPerSwitch: 45))
         XCTAssertEqual(verdict.diagnosticsLine, "growing 45MB per switch into podcast and text")
     }
 
     func testGrowthJustUnderTheSwitchThresholdIsSteady() {
-        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 300, 309, 318], podcastAt: [300, 300, 300]))
-        XCTAssertEqual(verdict, .steady(switches: 7, playbackMinutes: 20), "9 MB a switch is under the 10 MB threshold")
+        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 300, 309, 318, 327, 336],
+                                                              podcastAt: [300, 300, 300, 300, 300]))
+        XCTAssertEqual(verdict, .steady(switches: 11, playbackMinutes: 30), "9 MB a switch is under the 10 MB threshold")
     }
 
     func testGrowthAtTheSwitchThresholdIsGrowth() {
-        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 300, 310, 320], podcastAt: [300, 300, 300]))
+        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 300, 310, 320, 330, 340],
+                                                              podcastAt: [300, 300, 300, 300, 300]))
         XCTAssertEqual(verdict, .growingPerSwitch(mediaTypes: ["text"], megabytesPerSwitch: 10))
     }
 
     func testOneReloadAmongSteadySwitchesIsNotGrowth() {
-        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 300, 302, 500, 503], podcastAt: [90, 90, 90, 90]))
-        XCTAssertEqual(verdict, .steady(switches: 9, playbackMinutes: 25),
-                       "one 198 MB jump among +2 and +3 is a reload, not memory left behind each time")
-    }
-
-    /// The lane's run has four switches into the article: two changes. One of them a reload must not decide it.
-    func testOneReloadInTheTwoChangesOfFourSwitchesIsNotGrowth() {
-        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 300, 302, 500], podcastAt: [90, 90, 90]))
-        XCTAssertEqual(verdict, .steady(switches: 7, playbackMinutes: 20))
+        let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 300, 302, 500, 503, 505],
+                                                              podcastAt: [90, 90, 90, 90, 90]))
+        XCTAssertEqual(verdict, .steady(switches: 11, playbackMinutes: 30),
+                       "one 198 MB jump among +2, +3 and +2 is a reload, not memory left behind each time")
     }
 
     func testTheSwitchesAfterMemoryWarningsReloadAndAreNotGrowth() {
@@ -117,10 +119,10 @@ final class MemoryFootprintVerdictTests: XCTestCase {
         return samples([(.launch, "none", 111)] + steps)
     }
 
-    /// Four switches into each type leave two changes, both in the warm-up: the first lane run read it as growth.
-    func testFourSwitchesReadTheVoiceWarmUpAsGrowth() {
-        XCTAssertEqual(MemoryFootprintVerdict(samples: measuredRun(perType: 4)),
-                       .growingPerSwitch(mediaTypes: ["transcript_backed_media"], megabytesPerSwitch: 18))
+    /// Four switches into each type leave two changes, both in the warm-up: the first lane run read them as 18 MB per
+    /// switch. Two changes can't tell settling from memory left behind, so they say nothing.
+    func testFourSwitchesAreTooFewToTellTheVoiceWarmUpFromGrowth() {
+        XCTAssertEqual(MemoryFootprintVerdict(samples: measuredRun(perType: 4)), .tooFewSamples)
     }
 
     func testTheMeasuredRunSeesPastTheVoiceWarmUp() {
@@ -173,7 +175,7 @@ final class MemoryFootprintVerdictTests: XCTestCase {
     }
 
     func testOnlySamplesSinceTheLastLaunchCount() {
-        var before = switches(textAt: [100, 340, 380, 420], podcastAt: [100, 100, 100])
+        var before = switches(textAt: [100, 340, 380, 420, 460, 500], podcastAt: [100, 100, 100, 100, 100])
         before += samples([(.launch, "none", 6), (.itemStart, "text", 300)])
         XCTAssertEqual(MemoryFootprintVerdict(samples: before), .tooFewSamples, "the growth before the relaunch is a closed chapter")
     }
