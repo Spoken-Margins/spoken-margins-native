@@ -69,7 +69,7 @@ extension Gate1AppModel {
         // saying `added` for an item its collection lacks (#3769 audit).
         var settling = LibraryCollectionImport.Settling(record: start.record)
         switch await libraryCollections.startImport(start.collection, isNew: start.isNew, record: start.record, store: store) {
-        case .saved(let stored): name = stored.name
+        case .saved(let stored, _): name = stored.name
         case .gone, .refused: return nil
         case .failed(let error):
             reportPastImportCapture { reportFailure(error, context: "Couldn't add “\(name)”") }
@@ -88,7 +88,7 @@ extension Gate1AppModel {
                 pending.collection(from: current)
             }
             switch result {
-            case .saved(let stored):
+            case .saved(let stored, _):
                 name = stored.name
                 settling.didSave(record)
             case .gone: deleted = true

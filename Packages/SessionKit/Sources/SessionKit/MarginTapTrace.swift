@@ -57,7 +57,8 @@ public enum MarginTapReason: String, CaseIterable, Equatable, Sendable {
     case marginUnavailable = "margin_unavailable"
     /// A friend's Margin whose source is not in the Library.
     case sourceNotInLibrary = "source_not_in_library"
-    /// A friend's Margin with no position in the episode.
+    /// A Margin with no position in the source: a friend's that sent none, or your own moved from a live session
+    /// with no place (#4233).
     case noPosition = "no_position"
     /// A friend's Margin with no recording and no reading to play.
     case noAudio = "no_audio"

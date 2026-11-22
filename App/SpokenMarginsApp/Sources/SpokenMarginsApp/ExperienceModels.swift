@@ -55,7 +55,7 @@ struct MarginRow: Identifiable, Equatable, Sendable {
             placeName: place?.chapterName, mediaTimeMs: interjection.anchor.mediaTimeMs,
             meetingClockMs: place?.meetingClockMs,
             paragraph: place?.paragraph, roughPercent: interjection.roughPercent,
-            createdAt: interjection.createdAt, now: now)
+            hasPlace: interjection.hasPlace, createdAt: interjection.createdAt, now: now)
     }
 
     /// Set when a call, Siri, the headphones or a closed app ended this recording early, until the listener opens it (#1976).

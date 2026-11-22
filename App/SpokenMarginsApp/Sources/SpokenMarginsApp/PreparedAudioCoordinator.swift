@@ -121,11 +121,18 @@ actor PreparedAudioCoordinator {
     private let repository: any SessionRepository
     private let rootDirectory: URL
     private let fileManager: FileManager
+    /// Called, with a Diagnostics key and a short value, wherever saved chunks are dropped or a manifest is started over,
+    /// so an export says which one happened to a listener's audio and why (#4383).
+    private let report: @Sendable (String, String) -> Void
 
-    init(repository: any SessionRepository, rootDirectory: URL, fileManager: FileManager = .default) {
+    init(
+        repository: any SessionRepository, rootDirectory: URL, fileManager: FileManager = .default,
+        report: @escaping @Sendable (String, String) -> Void = { _, _ in }
+    ) {
         self.repository = repository
         self.rootDirectory = rootDirectory
         self.fileManager = fileManager
+        self.report = report
     }
 
     func begin(
@@ -164,7 +171,8 @@ actor PreparedAudioCoordinator {
                 segments: [SpeakableSegment(id: locator.segmentId, text: sourceText, locator: locator)]
             ))
         }
-        if var existing = try repository.loadPreparedAudioManifest(id: manifestId),
+        let stored = try repository.loadPreparedAudioManifest(id: manifestId)
+        if var existing = stored,
            existing.signature == signature,
            existing.plannedChunkCount == plan.count,
            Self.isMade(from: sourceText, existing) {
@@ -178,7 +186,11 @@ actor PreparedAudioCoordinator {
             } else if existing.state == .needsRepreparation {
                 // Its narration was detached or a chunk failed its checksum (#278). Keep only the
                 // chunks whose files are still intact, render the rest, and assemble again.
+                let before = existing.chunks.count
                 existing.chunks = existing.chunks.filter(isIntact)
+                if existing.chunks.count != before {
+                    report("preparedAudio.chunksDropped:\(itemId)", "not_intact kept=\(existing.chunks.count) of=\(before) planned=\(plan.count)")
+                }
                 existing.artifact = nil
                 existing.state = .preparing
                 existing.failureCode = nil
@@ -192,6 +204,18 @@ actor PreparedAudioCoordinator {
             invalid.state = .needsRepreparation
             invalid.updatedAt = Date()
             try repository.savePreparedAudioManifest(invalid)
+            report("preparedAudio.retired:\(itemId)", "other_signature chunks=\(old.chunks.count) was=\(old.state.rawValue) engine=\(old.signature.engine)")
+        }
+        // The same words under the same voice, saved for a plan of another size: the chunks whose own stretch of the text
+        // still matches the new plan are still this item's audio, so they are kept rather than started over (#4383). Words
+        // that changed (`isMade` false) or another voice (a different manifest id) never carry over.
+        var carried: [PreparedAudioChunk] = []
+        if let stored, stored.signature == signature, Self.isMade(from: sourceText, stored) {
+            carried = Self.matchingChunks(in: stored, plan: plan, sourceText: sourceText).filter(isIntact)
+        }
+        if let stored {
+            let reason = Self.isMade(from: sourceText, stored) ? "plan_size" : "source_text"
+            report("preparedAudio.restarted:\(itemId)", "\(reason) kept=\(carried.count) of=\(stored.chunks.count) planned=\(stored.plannedChunkCount)->\(plan.count) was=\(stored.state.rawValue)")
         }
         let manifest = PreparedAudioManifest(
             id: manifestId,
@@ -200,6 +224,7 @@ actor PreparedAudioCoordinator {
             signature: signature,
             state: .preparing,
             plannedChunkCount: plan.count,
+            chunks: carried,
             articleIdentity: NarrationChunkPlanner.identity(ofArticle: sourceText)
         )
         try repository.savePreparedAudioManifest(manifest)

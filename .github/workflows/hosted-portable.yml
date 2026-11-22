@@ -4,6 +4,8 @@
 # validators, the test inventory, the browser-extraction and share-link suites, and the research suites. It
 # prints each step it leaves out and a host test fails if a fast-plan step is in neither list. The same job builds
 # SessionKit's Linux targets and runs SessionKitCoreTests in the swift image (#3529), so a red test frees the Mac early.
+# On a PR push (2026-11-20) the job runs a quick tier instead: the plan with --pr-quick (no runner-tests) and no Linux
+# SessionKitCoreTests; the merge group and dispatches run everything (see the "Portable fast plan" step).
 # The second job, `sessionkit`, runs `--plan fast-hosted-sessionkit` on a GitHub-hosted Mac: SessionKit's build and
 # SessionKitCoreTests. The third, `mac-rest` (#2459), runs `--plan fast-mac-rest` on another GitHub-hosted Mac with
 # the BlackHole virtual audio output installed: what neither of the others runs (SessionKitTests and
@@ -154,8 +156,21 @@ jobs:
         run: |
           bash scripts/bootstrap-python-tools.sh
           npm ci
+      # PR quick tier (2026-11-20): on a PR push this job is the first signal, so it runs only the cheap portable steps
+      # (--pr-quick leaves runner-tests out) and skips the Linux SessionKitCoreTests below. The merge group, which
+      # every PR must pass to merge, runs the whole plan and the Linux tests, as do dispatches. Measured from 17 PR runs
+      # and 14 merge groups after MERGE_QUEUE_MAC went queue-only (scripts/ci_step_budgets.py profile): on a PR this
+      # job took 28 minutes at p50, runner-tests 1,180 s at p95 and the Linux core tests 512 s at p50, and the other
+      # portable steps about 90 s together.
+      # Cost and catch: saves about 25 hosted Linux minutes per PR push, and the PR's first test result comes in about
+      # 4 minutes instead of 28. What it can cost: a PR that breaks runner-tests or a Linux-only SessionKit test now
+      # learns it in the merge group, which drops it and retests the PRs behind it (about 58 job-minutes a group).
+      # Waste signal: in a month, merge groups that failed on runner-tests or the Linux core tests, times 58 minutes,
+      # outweigh 25 minutes times the PR pushes; then run the whole plan on PRs again.
       - name: Portable fast plan
-        run: .venv/bin/python scripts/verify-tests.py --plan fast-portable
+        env:
+          PR_QUICK: ${{ github.event_name == 'pull_request' && '--pr-quick' || '' }}
+        run: .venv/bin/python scripts/verify-tests.py --plan fast-portable $PR_QUICK
       # #2681: SessionKit also builds on Linux (the daily Substack canary runs on it), but no per-PR check compiled it
       # there, so #2671's Foundation-only `.bySentences` broke the Linux build on main unnoticed. #3529: and it runs
       # SessionKitCoreTests here, in the same swift image and dependency cache as hosted-sessionkit-linux.yml, so a red
@@ -169,17 +184,20 @@ jobs:
       # What it can cost: a test that fails only on Linux now blocks a merge. Waste signal: three months in which no
       # PR's first red is here, or the tests pass 5 minutes.
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        if: github.event_name != 'pull_request'
         with:
           path: .build-linux
           key: sessionkit-linux-swift6.2.4-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
           restore-keys: sessionkit-linux-swift6.2.4-
       - name: SessionKitCoreTests on Linux
         id: core
+        # The merge group runs them; a PR's quick tier does not (above).
+        if: github.event_name != 'pull_request'
         run: .venv/bin/python scripts/linux_core_tests.py run
       # What this job ran, by name, to set beside the Mac's list: scripts/linux_core_tests.py compare (#3529). The
       # Mac's run keeps its result file the same way, because its parallel run prints no line for a passing test.
       - name: Keep the Linux test list
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-core-tests
@@ -197,10 +215,17 @@ jobs:
           retention-days: 7
       - name: Record what was tested, for the lane runner
         if: success() && (github.event_name == 'pull_request' || inputs.base != '')
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           # GitHub's merge commit: parent 1 is the base, parent 2 the PR's head. The runner matches the tree.
           parents=$(git cat-file -p HEAD | awk '/^parent /{print $2}' | tr '\n' ' ')
-          echo "::notice title=lane-hosted-tested::plan=fast-portable tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
+          # A PR's quick tier is not the whole plan, so it must not be read as one.
+          if [ "$EVENT" = pull_request ]; then
+            echo "::notice title=lane-hosted-tested::plan=fast-portable-pr-quick tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
+          else
+            echo "::notice title=lane-hosted-tested::plan=fast-portable tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
+          fi
       - name: Report time
         if: always()
         run: |
@@ -234,6 +259,7 @@ jobs:
         env:
           BASE: ${{ inputs.base }}
           QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          EVENT: ${{ github.event_name }}
         run: |
           # A merge group: everything the group adds to main's tip (its base_sha), not only the last PR's diff, so a
           # group whose head entry is docs-only still runs the Mac checks for a Swift PR ahead of it (the queue merges
@@ -245,7 +271,9 @@ jobs:
           if [ -n "$QUEUE_BASE" ]; then
             git diff --name-only --no-renames "$QUEUE_BASE" HEAD > "$list" || rm -f "$list"
             git show "$QUEUE_BASE:scripts/test-scope.py" > "$rule" 2> /dev/null || rm -f "$rule"
-          elif git rev-parse --verify --quiet HEAD^2 > /dev/null; then
+          # Not a dispatch: a dispatch on the trunk checks out its tip, a merge commit whose HEAD^2 is the last merged PR,
+          # and that PR's files are not a diff to test (a seeding dispatch must run every step, #4664).
+          elif [ "$EVENT" != workflow_dispatch ] && git rev-parse --verify --quiet HEAD^2 > /dev/null; then
             git diff --name-only --no-renames "$(git merge-base HEAD^1 HEAD^2)" HEAD^2 > "$list" || rm -f "$list"
             git show HEAD^1:scripts/test-scope.py > "$rule" 2> /dev/null || rm -f "$rule"
           elif [ -n "$BASE" ]; then
@@ -509,11 +537,22 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: requirements-dev.txt
+      # This job's own key (#4664). Its `tools` step builds Packages/SessionKitTools into .build/tools, which fetches the
+      # onnxruntime binary targets again from download.onnxruntime.ai (an invalid certificate there failed this job's
+      # `tools` step on 2026-11-21, after `package` had passed from the cache). The `sessionkit` job above shares the
+      # plain key and never runs `tools`, so whichever of the two saved first decided that .build/tools was never
+      # cached. Keyed apart, and on the tools package's own files too, this job saves a .build that holds it. The
+      # fallback to the shared prefix keeps the first run warm; a cache is saved only by a run that passed.
+      # A run reads only its own ref's caches and the default branch's, and a merge group's ref is new every time, so
+      # the entry that serves the queue is the one saved from main: dispatch this workflow on main after the key
+      # changes (shipped-build-compat.yml restores the same entry).
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: Packages/SessionKit/.build
-          key: sessionkit-macos-xcode27.0-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
-          restore-keys: sessionkit-macos-xcode27.0-
+          key: sessionkit-mac-rest-xcode27.0-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved', 'Packages/SessionKitTools/Package.swift', 'Packages/SessionKitTools/Package.resolved') }}
+          restore-keys: |
+            sessionkit-mac-rest-xcode27.0-
+            sessionkit-macos-xcode27.0-
       - name: Python tools
         run: bash scripts/bootstrap-python-tools.sh
       # Before BlackHole, as the `sessionkit` job ran them (#2596). The second plan's build is then incremental.
@@ -546,13 +585,18 @@ jobs:
       - name: Changed files
         env:
           QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          EVENT: ${{ github.event_name }}
+          DISPATCH_BASE: ${{ inputs.base }}
         run: |
           # A merge group: everything the group adds to main's tip, as in the `scope` job.
           if [ -n "$QUEUE_BASE" ]; then
             git diff --name-only --no-renames "$QUEUE_BASE" HEAD > "$RUNNER_TEMP/changed-files.txt"
             echo "CHANGED_ARGS=--changed-files $RUNNER_TEMP/changed-files.txt" >> "$GITHUB_ENV"
             echo "$(grep -c . "$RUNNER_TEMP/changed-files.txt" || true) changed files in the merge group"
-          elif git rev-parse --verify --quiet HEAD^2 > /dev/null; then
+          # A dispatch with no base is not a merge to read a diff from: on the trunk it checks out the tip, a merge commit
+          # whose HEAD^2 is the last merged PR, and that PR's files would skip `tools` in the run that seeds the cache
+          # (#4664). With a base, the step above merged it in, so HEAD^2 is the dispatched commit.
+          elif { [ "$EVENT" != workflow_dispatch ] || [ -n "$DISPATCH_BASE" ]; } && git rev-parse --verify --quiet HEAD^2 > /dev/null; then
             git diff --name-only --no-renames "$(git merge-base HEAD^1 HEAD^2)" HEAD^2 > "$RUNNER_TEMP/changed-files.txt"
             echo "CHANGED_ARGS=--changed-files $RUNNER_TEMP/changed-files.txt" >> "$GITHUB_ENV"
             echo "$(grep -c . "$RUNNER_TEMP/changed-files.txt" || true) changed files"

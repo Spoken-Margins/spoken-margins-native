@@ -3,7 +3,7 @@
 import { readPacket } from '../packet/read.ts';
 import { recordVoiceMargin } from '../packet/record.ts';
 import { writePacket } from '../packet/write.ts';
-import { readFeed, readSubstackVoice, searchPodcasts } from '../sources/index.ts';
+import { findAppleEpisodeAudio, readFeed, readSubstackVoice, searchPodcasts } from '../sources/index.ts';
 import { downloadSizeLabel } from '../transcribe/catalog.ts';
 import { createTranscriber } from '../transcribe/client.ts';
 import type { PacketPort, RecorderPort, Services, SourcesPort, TranscriberPort } from './ports.ts';
@@ -29,6 +29,15 @@ const sources: SourcesPort = {
       audioUrl: voice.audioUrl,
       audioOrigin: voice.origin,
       ...(voice.durationSeconds !== undefined && { durationSeconds: voice.durationSeconds }),
+    };
+  },
+  async findAppleEpisodeAudio(pageUrl) {
+    const found = await findAppleEpisodeAudio(pageUrl);
+    if (!found) return null;
+    return {
+      audioUrl: found.audioUrl,
+      audioOrigin: found.audioOrigin,
+      ...(found.durationSeconds !== undefined && { durationSeconds: found.durationSeconds }),
     };
   },
 };

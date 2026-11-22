@@ -167,6 +167,37 @@ class VerificationTests(unittest.TestCase):
                 self.assertIn(setting, build)
                 self.assertNotIn(setting, tests)
 
+    def test_package_cache_folder_applies_to_the_build_and_the_test_step(self):
+        # #4664: main-t3's hosted Mac restores the packages it fetched before, so a bad certificate on a binary-target
+        # host (download.onnxruntime.ai, 2026-11-21) cannot stop the build. Unset, the command is what it was.
+        self.assertEqual(verification.package_cache_settings({}), [])
+        self.assertEqual(verification.package_cache_settings({'SM_SPM_DIR': '  '}), [])
+        self.assertEqual(verification.package_cache_settings({'SM_SPM_DIR': '/w/.build/spm'}),
+                         ['-clonedSourcePackagesDirPath', '/w/.build/spm'])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            self.app_test_root(root)
+            commands = []
+            device = {'udid': 'U', 'state': 'Booted', 'runtime': 'iOS-26', 'name': 'Other'}
+            with patch.object(verification, 'ROOT', root), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', return_value='toolchain'), \
+                    patch.object(verification.Run, 'simulator', return_value=(device, False)), \
+                    patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                    patch.dict(os.environ, {'SM_SPM_DIR': '/w/.build/spm'}), \
+                    patch.object(verification.Run, 'command',
+                                 side_effect=lambda name, args, **kw: commands.append((name, args))):
+                run = verification.Run(Path(temporary) / 'run', 'app')
+                run.xcode('app', 'U', rebuild=False)
+            build = dict(commands)['build-for-testing']
+            tests = dict(commands)['xcode-tests']
+            # Both steps name the folder: xcodebuild resolves the package graph again before it tests, and a step
+            # without it would fetch the binary targets into an empty derived-data folder (audit on 0908501).
+            for command in (build, tests):
+                self.assertEqual(command[command.index('-clonedSourcePackagesDirPath') + 1], '/w/.build/spm')
+
     def setUp(self):
         # The host steps look up and write SessionKit pass records in the lane's state folder (#1328): keep a
         # developer's or the lane Mac's real records out of these tests (tests/test_sessionkit_steps.py covers them).
@@ -357,7 +388,7 @@ class VerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary) / 'state'
             state.mkdir()
-            (state / 'desk-simulator-pool.json').write_text(json.dumps({'devices': {'pool-device': {'name': 'SM Lane Desk pool 1'}}}))
+            (state / 'desk-simulator-pool.json').write_text(json.dumps({'devices': {'POOL-0001': {'name': 'SM Lane Desk pool 1'}}}))
             seen = {}
 
             def shutdown(command, **kwargs):
@@ -366,7 +397,7 @@ class VerificationTests(unittest.TestCase):
                 return mock.Mock(returncode=0)
 
             run = verification.Run(Path(temporary) / 'run', 'test')
-            run.manifest['destination'] = {'udid': 'pool-device'}
+            run.manifest['destination'] = {'udid': 'POOL-0001'}
             run.crash_baseline = {}
             crashes = [f'WidgetRenderer_Default-2026-09-24-10000{i}.ips' for i in range(3)]
             with patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}), \
@@ -374,7 +405,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification.subprocess, 'run', side_effect=shutdown):
                 with self.assertRaises(RuntimeError):
                     run.command('crash-check', [sys.executable, '-c', 'import time; time.sleep(60)'])
-            self.assertIn('crash flood', seen['unsafe_at_shutdown']['pool-device']['reason'])
+            self.assertIn('crash flood', seen['unsafe_at_shutdown']['POOL-0001']['reason'])
 
     def test_a_crash_report_renamed_while_it_is_read_is_skipped(self):
         # integration-4ca9d9c (#767): macOS wrote `.SpokenMarginsApp-….ips`, then renamed it between
@@ -661,9 +692,9 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual(scope, 'readers')
         self.assertIn('test_research_tests', verification.RUNNER_TEST_READERS)
         self.assertIn('test_hot_file_ratchet', verification.RUNNER_TEST_READERS)
-        # The lane runner's T3 tests plan against the real TestPlans/ and app test sources: renaming an app test
+        # The T3 tests plan against the real TestPlans/ and app test sources: renaming an app test
         # or editing a plan must still reach them (found in review of #898).
-        for name in ('test_lane_runner.ScopeClassTests', 'test_lane_runner.T3Tests',
+        for name in ('test_lane_runner.ScopeClassTests', 'test_lane_t3.T3Tests',
                      'test_lane_runner.OnlyTestingTests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit'):
             self.assertIn(name, verification.RUNNER_TEST_READERS)
         for path in ('TestPlans/AudioAdapters.xctestplan', 'App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift'):

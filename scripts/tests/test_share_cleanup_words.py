@@ -9,7 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCES = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
-FILES = ["Build23SenderSharingExperience.swift", "Build23SenderSharingComponents.swift", "Gate1AppModel+ShareDrafts.swift"]
+FILES = ["Build23SenderSharingExperience.swift", "Build23SenderSharingComponents.swift", "Gate1AppModel+ShareDrafts.swift",
+         "Gate1AppModel+BulkSharePreparation.swift"]
 RETIRED = [
     "Clean selected", "Clean this Margin", "Pause analysis was unavailable", "Cleaned voice could not",
     "Cleaned voice storage", "The cleaned audio preview", "Cleaned audio could not", "Cleanup applied",
@@ -33,7 +34,7 @@ class ShareCleanupWordsGuard(unittest.TestCase):
             self.assertIn("ShareCleanupWords.", _code(name), name)
 
     def test_a_cleanup_failure_never_puts_its_reason_on_the_screen(self):
-        text = _code("Gate1AppModel+ShareDrafts.swift")
+        text = _code("Gate1AppModel+ShareDrafts.swift") + _code("Gate1AppModel+BulkSharePreparation.swift")
         for line in text.splitlines():
             if "preparationMessage" in line or ".warning" in line:
                 self.assertNotRegex(line, r"\\\((reason|failure|result\.failure|analysisFailure)", line.strip())

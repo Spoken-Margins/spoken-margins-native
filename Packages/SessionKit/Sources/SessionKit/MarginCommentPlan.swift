@@ -57,7 +57,21 @@ public struct MarginCommentPlan: Equatable, Sendable {
 
     /// Plans the comments for `margins` on the item `itemId` whose text is `document`.
     public static func make(itemId: String, document: StructuredDocument, margins: [Interjection]) -> MarginCommentPlan {
-        let characters = Array(document.text)
+        make(itemId: itemId, text: document.text, margins: margins) { index in
+            page(of: index, in: document.segments, pageCount: document.extraction.pageCount)
+        }
+    }
+
+    /// Plans the comments for an item that has text and no pages: a Word document, whose item is its plain text (#4595).
+    /// Every entry's `pageIndex` is nil, because a Word file has no page the app can name.
+    public static func make(itemId: String, text: String, margins: [Interjection]) -> MarginCommentPlan {
+        make(itemId: itemId, text: text, margins: margins) { _ in nil }
+    }
+
+    private static func make(
+        itemId: String, text: String, margins: [Interjection], pageOf: (Int) -> Int?
+    ) -> MarginCommentPlan {
+        let characters = Array(text)
         let sentences = SentenceBounds.ranges(in: characters)
         let own = margins
             .filter { $0.itemId == itemId && $0.targetType == .item && $0.status == "active" && $0.anchor.anchorType == .text }
@@ -85,7 +99,7 @@ public struct MarginCommentPlan: Equatable, Sendable {
                 sentence: sentence,
                 sentenceText: sentence.map { String(characters[$0]) } ?? "",
                 precedingText: sentence.map { String(characters[max(0, $0.lowerBound - precedingLength)..<$0.lowerBound]) } ?? "",
-                pageIndex: position.flatMap { page(of: $0, in: document.segments, pageCount: document.extraction.pageCount) },
+                pageIndex: position.flatMap(pageOf),
                 commentText: status == .included ? words : "",
                 status: status
             )

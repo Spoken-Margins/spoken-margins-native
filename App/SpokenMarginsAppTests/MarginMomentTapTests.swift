@@ -144,6 +144,22 @@ final class MarginMomentTapTests: XCTestCase {
         XCTAssertEqual(tapLines(model), ["own/refused/recording_in_progress"])
     }
 
+    /// #4233 turns down a Margin with no place before anything is read; that refusal leaves its line too (#4447).
+    func testAMarginWithNoPlaceIsTurnedDownAndSaysSo() async throws {
+        let (model, row) = try fixture()
+        defer { model.endMarginMoment(); model.pause() }
+        var margin = row.interjection
+        margin.movedOrigin = MovedMarginOrigin(
+            marginId: margin.id, itemId: margin.itemId, sessionId: margin.sessionId,
+            liveMarginId: "live-1", fromLiveSessionId: "live", fromLiveSessionTitle: "Quick session",
+            markedAt: margin.createdAt, movedAt: margin.createdAt, placeKnown: false)
+        MarginMomentTap.start(MarginRow(interjection: margin, itemTitle: row.itemTitle, sessionDate: nil), model: model)
+        await model.settleItemOpen()
+        XCTAssertNil(model.marginMoment)
+        XCTAssertNotNil(model.lastError)
+        XCTAssertEqual(tapLines(model), ["own/refused/no_position"])
+    }
+
     func testEachTapMakesExactlyOneLine() async throws {
         let (model, row) = try fixture()
         defer { model.endMarginMoment(); model.pause() }

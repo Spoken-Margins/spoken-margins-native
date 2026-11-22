@@ -152,7 +152,7 @@ extension SharedMarginReview {
             if case .yours(let id, let ms)? = entry.replyContext?.parent, let parent = own[id], parent.isSpokenItemMargin {
                 // A guessed reply goes where its parent plays: the parent's own place on this copy, or where an earlier
                 // reply already put the parent's step.
-                let place = parentPlaces[id] ?? (entry.isApproximate ? parent.anchor.mediaTimeMs : nil)
+                let place = parentPlaces[id] ?? (entry.isApproximate && parent.hasPlace ? parent.anchor.mediaTimeMs : nil)
                 if parentPlaces[id] == nil {
                     let caption = "Your Margin" + (ms.map { " at \(ReplyContext.clock($0))" } ?? "")
                     let at = place ?? entry.mediaTimeMs
@@ -221,7 +221,8 @@ extension SharedMarginReview {
         func context(_ parent: MarginReplyParent) -> ReplyContext {
             switch parent.parent {
             case .local(let id)?:
-                return ReplyContext(parent: .yours(interjectionId: id, mediaTimeMs: own[id]?.anchor.mediaTimeMs))
+                // A reply to an own Margin that has no place (#4233) names the Margin without a time: its stored zero is not one.
+                return ReplyContext(parent: .yours(interjectionId: id, mediaTimeMs: own[id].flatMap { $0.hasPlace ? $0.anchor.mediaTimeMs : nil }))
             case .imported(let id)?:
                 guard let margin = importedById[id], let layer = layerById[margin.layerId] else { return ReplyContext(parent: .missing) }
                 return ReplyContext(parent: .shared(

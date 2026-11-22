@@ -6,8 +6,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { PlayIcon } from '../icons.tsx';
 import { arrivalResumeAt, playHint, playableArticleMargins, ARRIVAL_WORDS, GET_APP_LINK, arrivalFacts, possessive, type ArrivalFacts } from '../logic/arrival.ts';
 import { placeImport, unnamedAuthorFor } from '../logic/import.ts';
-import { playability } from '../logic/playability.ts';
-import { messageForFailure, messageForOpenedSettled, reportPlayCheck, type PlayCheckMessage } from '../play-check.ts';
+import { settleAppleEpisode } from '../logic/apple-arrival.ts';
+import { playability, type VoiceLookup } from '../logic/playability.ts';
+import { messageForFailure, messageForOpenedSettled, playCheckHandler, reportPlayCheck, type PlayCheckMessage } from '../play-check.ts';
 import { placeMarginsOnAudio } from '../place-margins.ts';
 import { plainError } from '../logic/messages.ts';
 import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkRef } from '../logic/share-link.ts';
@@ -22,7 +23,7 @@ import { useUi } from '../ui.tsx';
 type State =
   | { status: 'opening' }
   | { status: 'failed'; message: string }
-  | { status: 'ready'; read: PacketRead; facts: ArrivalFacts; expires?: string };
+  | { status: 'ready'; read: PacketRead; facts: ArrivalFacts; expires?: string; lookup?: VoiceLookup };
 
 /** Words for a link that wouldn't open. A cut-off link and an unopenable key read the same: the friend re-copies it. */
 function failureWords(error: unknown): string {
@@ -102,9 +103,20 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
       let opened: PacketRead | undefined;
       try {
         const { bytes, expires } = await openSharedPacketWithExpiry(serverFor(link.link));
-        const read = await services.packets.readPacket(bytes, 'shared.spokenmargins');
-        setState({ status: 'ready', read, facts: arrivalFacts(read.sender, [...read.margins, ...playableArticleMargins(read)]), ...(expires === undefined ? {} : { expires }) });
-        opened = read;
+        const packet = await services.packets.readPacket(bytes, 'shared.spokenmargins');
+        // An Apple Podcasts episode page with no audio address: Apple's lookup finds its audio now, so Play starts at once.
+        // Not inside the sender's hidden check, which reads only through the app (`messageForOpenedSettled`).
+        const { read, lookup } = playCheckHandler()
+          ? { read: packet, lookup: undefined }
+          : await settleAppleEpisode(packet, (pageUrl) => services.sources.findAppleEpisodeAudio(pageUrl));
+        setState({
+          status: 'ready',
+          read,
+          facts: arrivalFacts(read.sender, [...read.margins, ...playableArticleMargins(read)]),
+          ...(expires === undefined ? {} : { expires }),
+          ...(lookup && { lookup }),
+        });
+        opened = packet;
         message = undefined;
       } catch (error) {
         setState({ status: 'failed', message: failureWords(error) });
@@ -231,12 +243,12 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
     );
   }
 
-  const { read, facts, expires } = state;
+  const { read, facts, expires, lookup } = state;
   const who = facts.who;
   const episode = read.episode;
   // What the browser can do with this packet is one function's answer, so the sender's check says the same (#4454).
   // A Substack post has no audio address yet: its voice is looked up when the friend taps Play, as for a pasted link.
-  const can = playability(read);
+  const can = playability(read, lookup);
   const article = can.verdict === 'cannot' && can.reason === 'article';
   const unplayable = can.verdict === 'cannot' && can.reason === 'no-episode-audio';
   const articleAddress = webAddress(episode.pageUrl);

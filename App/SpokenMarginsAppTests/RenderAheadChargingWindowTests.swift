@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitAudio
 import XCTest
 @testable import SpokenMarginsApp
 

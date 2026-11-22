@@ -37,6 +37,11 @@ enum MarginMomentTap {
 
     static func start(_ row: MarginRow, model: Gate1AppModel) {
         guard !model.rejectNavigationOrSessionMutationWhileRecording("play_margin_moment") else { return model.recordMarginTap(.own, .refused(.recordingInProgress)) }
+        // A Margin with no place has no moment (#4233). The rows route it to its details; any other caller is told why.
+        guard MarginRowTap.action(for: row.interjection) == .playMoment else {
+            model.recordMarginTap(.own, .refused(.noPosition))
+            return model.reportFailure(MarginPlaceError.noPlace, context: "Could not play this Margin's position")
+        }
         let store: SQLiteSessionStore
         do { store = try model.requireStore() } catch {
             model.recordMarginTap(.own, .refused(.storeUnavailable))

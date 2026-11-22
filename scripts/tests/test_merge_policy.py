@@ -160,10 +160,10 @@ class BlockerTests(unittest.TestCase):
         self.assertIn('#7 at fffffff may not merge: the check could not read what it needs', out.getvalue())
 
     def test_the_real_rules_load_from_this_checkout(self):
-        # The default classify and owner-tap rules are test-scope.py's and lane-runner.py's, not copies.
+        # The default classify and owner-tap rules are test-scope.py's and lane_merge_rules.py's, not copies.
         self.assertTrue(callable(policy.scope_policy().classify))
-        self.assertEqual(policy.lane().OWNER_TAP_FILES, {'scripts/lane-runner.py'})
-        self.assertEqual(policy.lane().owner_tap_paths(scope_of(['.github/a.yml', 'b.py'], {})), ['.github/a.yml'])
+        self.assertEqual(policy.rules().OWNER_TAP_FILES, {'scripts/lane-runner.py', 'scripts/lane_merge_rules.py'})
+        self.assertEqual(policy.rules().owner_tap_paths(scope_of(['.github/a.yml', 'b.py'], {})), ['.github/a.yml'])
 
 
 class JudgeTests(unittest.TestCase):
