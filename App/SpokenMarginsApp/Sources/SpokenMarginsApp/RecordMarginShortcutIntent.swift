@@ -20,15 +20,22 @@ enum RecordMarginShortcutAction {
             playerHasSession: model.hasActiveSession,
             alreadyRecording: model.snapshot.isRecording || LiveSessionSpokenMargins.isRecordingOnPhone
         ))
+        // The player's start is dropped without a word while a Margin is being written or saved
+        // (`dispatchGate2CompactCommand`), so the diagnostic says whether that was the case.
+        let navigationLocked = model.recordingNavigationIsLocked
         switch route {
         case .alreadyRecording:
             break
-        case .liveSession, .sessionStartCard:
+        case .liveSession:
             router.open(.speak)
+        case .sessionStartCard:
+            router.openStartCard()
         case .playerItem:
             model.dispatchGate2CompactCommand(.beginInterjection, origin: origin)
         }
-        model.recordDeveloperDiagnostic("margin.record_intent", ["route": route.diagnosticName])
+        model.recordDeveloperDiagnostic("margin.record_intent", [
+            "route": route.diagnosticName, "navigationLocked": String(navigationLocked),
+        ])
         return route
     }
 }
