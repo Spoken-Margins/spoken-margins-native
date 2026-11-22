@@ -815,13 +815,11 @@ struct ExperienceMarginsScreen: View, Equatable {
 
     /// A friend's Margin the phone never reads aloud, with a place in an item in the Library: a tap goes there with no voice.
     private func sharedRowGoesTo(_ row: SharedMarginRow) -> Bool {
-        row.layer.itemId != nil && SilentMarginWords.friendGoesTo(row.interjection, in: row.layer)
+        SilentMarginWords.libraryRowTap(row.interjection, in: row.layer) == .goTo
     }
 
     private func sharedRowPlays(_ row: SharedMarginRow) -> Bool {
-        row.layer.itemId != nil
-            && SharedMarginPlaybackPosition(row.interjection) != nil
-            && !(row.interjection.isWritten && !SharedMarginAudio.canOffer(row.interjection))
+        SilentMarginWords.libraryRowTap(row.interjection, in: row.layer) == .playMoment
     }
 
     /// The listener's own reply, shown in the conversation it belongs to.

@@ -26,6 +26,24 @@ public enum SilentMarginWords {
             && MarginPlacePresentation.offersGoToMoment(margin)
     }
 
+    /// What a tap on a friend's row in the Library's Margins screen does (#4934, and #158's rule before it): a Margin with a place
+    /// in an item in the Library plays its moment, unless it is never read aloud, in which case it goes there with no voice; one
+    /// with no place, no item in the Library, or no way to go opens its details. `friendGoesTo` is asked first and is the whole test of
+    /// "never read aloud": `isWritten` is false for words with nothing to say (only emoji, a placeholder, empty), so a test of
+    /// `isWritten && !canOffer` lets exactly those rows through to a Play that fails (found by the audit on 988782d).
+    public enum LibraryRowTap: Equatable, Sendable { case playMoment, goTo, openDetails }
+
+    public static func libraryRowTap(
+        _ margin: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer
+    ) -> LibraryRowTap {
+        guard layer.itemId != nil else { return .openDetails }
+        if friendGoesTo(margin, in: layer) { return .goTo }
+        guard SharedMarginPlaybackPosition(margin) != nil, SharedMarginAudio.canOffer(margin) || !margin.isWritten else {
+            return .openDetails
+        }
+        return .playMoment
+    }
+
     /// The row's detail line with the "not read aloud" ending when its button goes to the Margin.
     public static func detail(_ line: String, goesTo: Bool) -> String {
         goesTo ? line + notReadAloudSuffix : line

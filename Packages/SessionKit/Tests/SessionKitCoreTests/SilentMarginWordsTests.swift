@@ -54,6 +54,33 @@ final class SilentMarginWordsTests: XCTestCase {
         }
     }
 
+    // The audit on 988782d: a friend's row whose words are only emoji, a placeholder or empty is not `isWritten`, so a Library tap
+    // that asked `isWritten && !canOffer` played it and failed. One answer per row, go-to asked first.
+    func testALibraryRowTapGoesToEveryMarginNeverReadAloudAndPlaysTheRest() {
+        defer { WrittenMarginSpeech.useVoiceCheck(nil) }
+        WrittenMarginSpeech.useVoiceCheck(nil)
+        let unplaced = ImportedAnchorResolution(evidenceClass: .unresolved)
+        let rows: [(String, ImportedCommentaryInterjection, SilentMarginWords.LibraryRowTap)] = [
+            ("read aloud", friend(), .playMoment),
+            ("a recording", friend(audioPath: "margin.m4a"), .playMoment),
+            ("a recording that is gone", friend(audioPath: "gone.m4a"), .playMoment),
+            ("reading off by the sender", friend(senderReadAloud: false), .goTo),
+            ("reading off by the listener", friend(listenerReadAloud: false), .goTo),
+            ("emoji only", friend("🎧"), .goTo),
+            ("placeholder words", friend("Voice Margin at 12:34"), .goTo),
+            ("empty words", friend(""), .goTo),
+            ("silent, no place", friend(senderReadAloud: false, senderMs: nil, unplaced), .openDetails),
+            ("read aloud, no place", friend(senderMs: nil, unplaced), .openDetails),
+        ]
+        for (name, margin, expected) in rows {
+            XCTAssertEqual(SilentMarginWords.libraryRowTap(margin, in: layer()), expected, name)
+        }
+        var missing = layer()
+        missing.itemId = nil
+        XCTAssertEqual(SilentMarginWords.libraryRowTap(friend(senderReadAloud: false), in: missing), .openDetails, "no item in the Library")
+        XCTAssertEqual(SilentMarginWords.libraryRowTap(friend(), in: missing), .openDetails)
+    }
+
     func testAPassageFollowsItsLayerAsGoToDoes() {
         let passage = friend(senderReadAloud: false, senderMs: nil, .init(evidenceClass: .articleTextVerified, localStartChar: 300))
         XCTAssertTrue(SilentMarginWords.friendGoesTo(passage, in: layer()))
