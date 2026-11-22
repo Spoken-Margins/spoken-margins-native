@@ -14,7 +14,7 @@ Re-check the citations if the network code changes before submission.
 
 ### Short answer
 
-- **Does the app collect data?** Draft answer: **Yes, one type: "Other User Content", linked to the user, not used for tracking.** The reason is the optional Readwise sync (row 12): when a listener turns on "Send Margins to Readwise", Margin text and the passage around it go from the phone to their own Readwise account. Over-declaring is safe; under-declaring is the compliance risk (owner's walkthrough on #175, 2026-10-17). Whether that sync is "collection" at all is attorney question 7 ([attorney-questions.md](../legal/attorney-questions.md)). Nothing else is collected, on one condition (question Q1): the owner's server must keep no logs that tie an IP address to a request beyond serving it.
+- **Does the app collect data?** Draft answer: **Yes, one type: "Other User Content", linked to the user, not used for tracking.** The reason is the optional Readwise sync (row 12): when a listener turns on "Send Margins to Readwise", Margin text and the passage around it go from the phone to their own Readwise account. Over-declaring is safe; under-declaring is the compliance risk (owner's walkthrough on #175, 2026-10-17). Whether that sync is "collection" at all is attorney question 7 ([attorney-questions.md](../legal/attorney-questions.md)). Nothing else is collected on the condition in Q1, which is now met: the owner's server keeps no logs that tie an IP address to a request beyond serving it.
 - **Tracking:** No. The app has no ad or analytics SDK and never calls App Tracking Transparency, AdServices, `ASIdentifierManager` or `identifierForVendor`. The only packages are onnxruntime 1.24.2 and ZIPFoundation 0.9.20.
 
 ### What leaves the device
@@ -96,7 +96,7 @@ It also says there is "no developer-operated … backend", but rows 1 and 2 use 
 
 ### Questions for Cole
 
-- **Q1. Server logs.** Does the VPS web server keep access logs (IP address, time, path) for `/onboarding/`? If they're kept only briefly for security, the label stays at "Other User Content" alone. If they're kept longer, or used for anything else, answer "Coarse location" or "Other data" as collected, not linked, not tracking. My pick: keep logs short-lived and say so in the privacy policy.
+- **Q1. Server logs. Answered 2026-11-22 (#2034).** The server keeps no visitor addresses: the web server writes no access log, the journals hold none, and the firewall log holds only blocked probes of closed ports. The hosting provider's console offers no firewall, access or network log. The provider may keep its own network logs, which we can't see or turn off; Apple counts data as collected only when the developer or its partners can keep it longer than the request needs, so the label stays at "Other User Content" alone. The owner chose to say this plainly, without naming the provider, rather than ask the provider in writing.
 
 ## 2. App Review notes (DRAFT)
 
