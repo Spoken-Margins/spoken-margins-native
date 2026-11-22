@@ -1,6 +1,6 @@
 # Push the owner's phone when a PR into next waits only for his merge tap (#2047).
 #
-# The lane runner never merges a PR touching scripts/lane-runner.py or .github/ (owner rule 2026-10-09). Agents
+# Only the owner merges a PR touching scripts/lane_merge_rules.py or .github/ (owner rule 2026-10-09). Agents
 # post as the owner, and GitHub doesn't notify anyone of their own activity, so nothing told him one was ready:
 # on 2026-10-18 #1964, #1966, #2038 and #1885 sat waiting only for his tap. scripts/owner_tap_alert.py posts one
 # comment as github-actions[bot] that @mentions the owner, once per head, when such a PR is ready (not a draft,
@@ -32,7 +32,7 @@ on:
     branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
     # Not opened or synchronize: the head's checks have only just started, and their own last job decides.
     types: [reopened, ready_for_review, labeled]
-    paths: ['.github/**', 'scripts/lane-runner.py', 'scripts/lane_merge_rules.py']
+    paths: ['.github/**', 'scripts/lane_merge_rules.py']
   push:
     branches: [main]
     paths: ['.github/workflows/**', 'scripts/tests/test_workflow_files.py']

@@ -57,6 +57,61 @@ final class AddSourceAndTimelinePullTests: XCTestCase {
         ), 32, "Long content must still reach its real bottom before the pull counts")
     }
 
+    // #4816: scrolling to the bottom of Now never changes the tab; only a finger still pulling past the bottom does.
+    func testTimelinePullOpensOnlyWhileTheFingerIsStillDragging() {
+        var pull = TimelinePullTracker()
+        XCTAssertFalse(pull.overscrollChanged(0))
+        pull.dragChanged(isDragging: true)
+        XCTAssertFalse(pull.overscrollChanged(40), "Short of the activation distance")
+        XCTAssertTrue(pull.overscrollChanged(80))
+        XCTAssertFalse(pull.overscrollChanged(120), "One pull opens Timeline once")
+    }
+
+    func testScrollingToTheBottomOfNowDoesNotOpenTimeline() {
+        // (a) A fling that reaches the bottom and rubber-bands past it: the finger is up, the scroll is coasting.
+        var fling = TimelinePullTracker()
+        fling.dragChanged(isDragging: true)
+        XCTAssertFalse(fling.overscrollChanged(0))
+        fling.dragChanged(isDragging: false)
+        XCTAssertFalse(fling.overscrollChanged(90), "A coasting bounce is not a pull")
+        XCTAssertFalse(fling.overscrollChanged(0))
+
+        // (b) The next scene is shorter, so the old offset sits past the new bottom for a moment, with no finger down.
+        var sceneAdvance = TimelinePullTracker()
+        XCTAssertFalse(sceneAdvance.overscrollChanged(300), "A scene change is not a pull")
+
+        // (c) Back on Now with the previous overscroll still on record, a new touch alone does not open Timeline,
+        // and neither does a drag that started inside leftover overscroll.
+        var leftover = TimelinePullTracker()
+        XCTAssertFalse(leftover.overscrollChanged(300))
+        leftover.dragChanged(isDragging: true)
+        XCTAssertFalse(leftover.overscrollChanged(310), "The drag did not begin at rest at the bottom")
+
+        // (d) The next scene is shorter while the listener's thumb rests on the text: rest to far past the bottom in
+        // one step, with the finger down.
+        var restingThumb = TimelinePullTracker()
+        restingThumb.dragChanged(isDragging: true)
+        XCTAssertFalse(restingThumb.overscrollChanged(0))
+        XCTAssertFalse(restingThumb.overscrollChanged(300), "Content changing under a resting finger is not a pull")
+        XCTAssertFalse(restingThumb.overscrollChanged(310))
+    }
+
+    func testTimelinePullNeedsANewDragAfterItOpened() {
+        var pull = TimelinePullTracker()
+        pull.dragChanged(isDragging: true)
+        XCTAssertFalse(pull.overscrollChanged(30))
+        XCTAssertTrue(pull.overscrollChanged(90))
+        XCTAssertFalse(pull.overscrollChanged(95))
+        _ = pull.overscrollChanged(0)
+        XCTAssertFalse(pull.overscrollChanged(30))
+        XCTAssertTrue(pull.overscrollChanged(90), "Back at rest and pulling again, in the same drag, is a new pull")
+        pull.dragChanged(isDragging: false)
+        XCTAssertFalse(pull.overscrollChanged(0))
+        pull.dragChanged(isDragging: true)
+        XCTAssertFalse(pull.overscrollChanged(20))
+        XCTAssertTrue(pull.overscrollChanged(80))
+    }
+
     /// #3217: every way in is one tile in the grid, no two do the same thing, and Files is a single tile.
     func testAddSourceGridHoldsEveryWayInOnceWithOneFilesTile() {
         XCTAssertEqual(

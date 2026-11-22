@@ -106,7 +106,7 @@ class BlockerTests(unittest.TestCase):
     def test_the_runner_itself_waits_for_the_tap_and_the_audit_helper_labels_do_not_count(self):
         for labels in ((), ('owner-tap-check',), ('needs-owner-tap',)):
             with self.subTest(labels=labels):
-                reasons, _ = self.check({'scripts/lane-runner.py': 'x\n'}, FakeGitHub(labels=labels))
+                reasons, _ = self.check({'scripts/lane_merge_rules.py': 'x\n'}, FakeGitHub(labels=labels))
                 self.assertTrue(any('only the owner merges' in r for r in reasons), reasons)
 
     def test_a_lane_change_needs_a_clean_audit_of_its_head(self):
@@ -162,7 +162,7 @@ class BlockerTests(unittest.TestCase):
     def test_the_real_rules_load_from_this_checkout(self):
         # The default classify and owner-tap rules are test-scope.py's and lane_merge_rules.py's, not copies.
         self.assertTrue(callable(policy.scope_policy().classify))
-        self.assertEqual(policy.rules().OWNER_TAP_FILES, {'scripts/lane-runner.py', 'scripts/lane_merge_rules.py'})
+        self.assertEqual(policy.rules().OWNER_TAP_FILES, {'scripts/lane_merge_rules.py'})
         self.assertEqual(policy.rules().owner_tap_paths(scope_of(['.github/a.yml', 'b.py'], {})), ['.github/a.yml'])
 
 

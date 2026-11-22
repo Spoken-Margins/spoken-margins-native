@@ -190,7 +190,10 @@ final class PlaybackLivePassageViewTests: XCTestCase {
         return model
     }
 
-    private func mount(_ model: Gate1AppModel, inScrollView: Bool = false, controller: NowSceneController = NowSceneController()) throws -> MountedPassage {
+    private func mount(_ model: Gate1AppModel, inScrollView: Bool = false, controller suppliedController: NowSceneController? = nil) throws -> MountedPassage {
+        // Made here, not as a default argument: a default argument is evaluated outside the main actor, and the
+        // controller's initializer is main-actor isolated (the hosted app build failed on it).
+        let controller = suppliedController ?? NowSceneController()
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
         let appeared = Appearance()

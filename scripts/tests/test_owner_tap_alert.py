@@ -14,7 +14,7 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import owner_tap_alert as alert  # noqa: E402
 
-spec = importlib.util.spec_from_file_location('lane_runner_for_tap_alert', SCRIPTS / 'lane-runner.py')
+spec = importlib.util.spec_from_file_location('lane_merge_rules_for_tap_alert', SCRIPTS / 'lane_merge_rules.py')
 lane = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lane)
 
@@ -67,7 +67,7 @@ class ReadinessTable(unittest.TestCase):
             ('a rename out of .github counts', {'files': [{'filename': 'docs/x.yml',
                                                          'previous_filename': '.github/x.yml'}],
                                                 'comments': []}, True, 'ready'),
-            ('lane-runner.py itself', {'files': [{'filename': 'scripts/lane-runner.py'}]}, True, 'ready'),
+            ('the merge rules themselves', {'files': [{'filename': 'scripts/lane_merge_rules.py'}]}, True, 'ready'),
             ('draft', {'p': pr(draft=True)}, False, 'draft'),
             ('fork head', {'p': pr(head={'sha': HEAD, 'repo': {'full_name': 'eve/app'}})}, False, 'not in this'),
             ('fork deleted', {'p': pr(head={'sha': HEAD, 'repo': None})}, False, 'not in this'),
@@ -160,8 +160,8 @@ class AlertBody(unittest.TestCase):
         self.assertEqual(ready(comments=CLEAN + [comment]), (False, f'already alerted on {HEAD[:7]}'))
 
 
-class SameRulesAsTheRunner(unittest.TestCase):
-    def test_constants_match_lane_runner(self):
+class SameRulesAsTheMergeRules(unittest.TestCase):
+    def test_constants_match_the_merge_rules(self):
         self.assertEqual(alert.OWNER_TAP_FILES, lane.OWNER_TAP_FILES)
         self.assertEqual(alert.OWNER_TAP_PREFIXES, lane.OWNER_TAP_PREFIXES)
         self.assertEqual(alert.AUDITS, lane.AUDITS)

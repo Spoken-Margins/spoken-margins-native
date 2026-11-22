@@ -1,7 +1,6 @@
 """The T3 machinery in scripts/lane_t3.py: process limits, the shared build, the simulator claim and boot
 rules, the verdict, fresh-clone and overload reruns, and the retry-pass tally. scripts/main_t3.py runs it
-on main (#4573). Moved out of test_lane_runner.py with the code (#4769). A test that still calls
-`runner.` reaches the retired per-PR dispatcher in lane-runner.py and goes with it."""
+on main (#4573). Moved out of test_lane_runner.py with the code (#4769)."""
 import os
 
 os.environ.pop('SM_TRUNK', None)
@@ -13,7 +12,6 @@ import importlib.util
 import json
 import shutil
 import signal
-import subprocess
 import sys
 import tempfile
 import time
@@ -28,10 +26,6 @@ sys.path.insert(0, str(SCRIPTS / 'tests'))
 spec = importlib.util.spec_from_file_location('lane_t3', SCRIPTS / 'lane_t3.py')
 lane = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lane)
-# The retired per-PR dispatcher, for the tests that still reach it (#4769).
-runner_spec = importlib.util.spec_from_file_location('lane_runner', SCRIPTS / 'lane-runner.py')
-runner = importlib.util.module_from_spec(runner_spec)
-runner_spec.loader.exec_module(runner)
 
 HEAD = 'a' * 40
 
@@ -127,34 +121,6 @@ def overloaded_manifest(load=293.6, tests=38):
                        'errors': ['Process exit 124', 'Could not reconcile xcresult individual tests: exit status 64']}]}
 
 
-class FakeRepo:
-    """Repository-wide GitHub calls for the auto-revert: comments everywhere, #337, new issues."""
-
-    def __init__(self, comments=(), ops=()):
-        self.all, self.ops = list(comments), list(ops)
-        self.posted, self.opened, self.since = [], [], []
-
-    def comments_since(self, since):
-        self.since.append(since)
-        return iter(self.all)
-
-    def issue_comments(self, number):
-        assert number == runner.OPS_ISSUE
-        return list(self.ops)
-
-    def comment(self, number, body):
-        self.posted.append((number, body))
-        self.ops.append({'body': body})
-        return f'https://github.com/o/r/issues/{number}#issuecomment-{len(self.posted)}'
-
-    def title(self, number):
-        return f'PR {number} title'
-
-    def open_issue(self, title, body, labels):
-        self.opened.append((title, body, labels))
-        return 'https://github.com/o/r/issues/700'
-
-
 class ProcessTests(unittest.TestCase):
     """Timeouts stop the whole group, so no xcodebuild keeps running outside the build slots."""
 
@@ -240,18 +206,6 @@ class T3Tests(unittest.TestCase):
     PLANS = {'app': {'SpokenMarginsAppTests/A/test1', 'SpokenMarginsAppTests/A/test2'},
              'adapters': {'SpokenMarginsAppTests/Audio/test1'}}
 
-    def test_a_class_goes_to_every_plan_that_runs_part_of_it(self):
-        plans = {'app': {'SpokenMarginsAppTests/A/test1'}, 'adapters': {'SpokenMarginsAppTests/A/test2'}}
-        self.assertEqual(runner.plan_for_tests(['A', 'A/test2'], plans),
-                         ({'app': ['SpokenMarginsAppTests/A'],
-                           'adapters': ['SpokenMarginsAppTests/A', 'SpokenMarginsAppTests/A/test2']}, []))
-
-    def test_tests_are_grouped_by_plan_and_unknown_ones_are_reported(self):
-        grouped, unknown = runner.plan_for_tests(['A', 'SpokenMarginsAppTests/Audio/test1', 'Missing', 'A/test9'],
-                                               self.PLANS)
-        self.assertEqual(grouped, {'app': ['SpokenMarginsAppTests/A'], 'adapters': ['SpokenMarginsAppTests/Audio/test1']})
-        self.assertEqual(unknown, ['Missing', 'A/test9'])
-
     def test_verdicts_separate_failures_from_lane_trouble(self):
         failing = lane.summarize_manifest({'status': 'failed_or_incomplete', 'steps': [
             {'name': 'xcode-tests', 'tests': {'A/test1': {'status': 'passed'}, 'A/test2': {'status': 'failed'}}}]})
@@ -300,22 +254,6 @@ class T3Tests(unittest.TestCase):
                 self.assertEqual(any('ran 0 of the requested tests' in line for line in details), verdict == 'FAIL')
                 audio_only_plan = any(selectors == loopback for _, selectors in plans.values())
                 self.assertEqual(any('only AudioLoopback tests were requested' in line for line in details), audio_only_plan)
-
-    def test_only_a_deliberate_wait_is_a_hold(self):
-        held = ['not merged by the runner: the Codex or Claude audit on the head `aaaaaaa` has blocking findings.']
-        self.assertTrue(runner.is_hold('INCONCLUSIVE', ['tested nothing'] + held))
-        self.assertTrue(runner.is_hold('INCONCLUSIVE', ['not merged by the runner: it touches .github/']))
-        self.assertFalse(runner.is_hold('INCONCLUSIVE', ['The Mac\'s simulator slots stayed busy']))
-        self.assertFalse(runner.is_hold('INCONCLUSIVE', []))
-        self.assertFalse(runner.is_hold('FAIL', held))
-        self.assertFalse(runner.is_hold('PASS', held))
-
-    def test_the_outcome_tells_the_workflow_whether_an_inconclusive_run_was_a_hold(self):
-        for held in (True, False):
-            with tempfile.TemporaryDirectory() as folder, mock.patch.dict(os.environ, {'GITHUB_OUTPUT': f'{folder}/out'}):
-                runner.record_outcome('INCONCLUSIVE', held)
-                self.assertEqual((Path(folder) / 'out').read_text(),
-                                 f'reported=true\nverdict=INCONCLUSIVE\nheld={str(held).lower()}\n')
 
     def test_an_interrupted_build_or_a_flood_is_inconclusive_not_a_failure(self):
         timed_out = lane.summarize_manifest({'steps': [{'name': 'build-for-testing', 'interrupted': True,
@@ -468,25 +406,6 @@ class T3Tests(unittest.TestCase):
         self.assertIn('- [Attachment manifest](</mac/manifest.json>)', details)
         self.assertIn('- [recording.mp4](</mac/recording.mp4>)', details)
 
-    def test_large_attachment_listing_keeps_t3_failure_report_postable(self):
-        prefix = '/mac/' + 'long-path/' * 25
-        files = [prefix + f'debug-{n}.txt' for n in range(999)] + [prefix + 'recording.mp4']
-        manifest = {'status': 'failed_or_incomplete', 'steps': [{
-            'tests': {'T/A/testBad': {'status': 'failed'}},
-            'attachments': [{'test': 'T/A/testBad', 'manifest': prefix + 'manifest.json',
-                             'files': files}]}]}
-        summaries, statuses, _, details = lane.run_plans(
-            {'app': ['T/A']}, lambda *args: manifest, Path('/mac/run'))
-        verdict = lane.t3_verdict(summaries, statuses)
-        text = runner.report('r', verdict, HEAD, HEAD, 'T3', 'simulator', 1, '1 failed',
-                           details, 'none', '/mac/run', 'audible content', {})
-        self.assertLess(len(text), 65536)
-        self.assertIn('— FAIL', text)
-        self.assertIn('observed: failed', text)
-        self.assertIn('more file links omitted', text)
-        self.assertIn('recording.mp4', text)
-        self.assertEqual(manifest['steps'][0]['attachments'][0]['files'], files)
-
     def test_a_flood_stops_the_remaining_plans(self):
         calls = []
 
@@ -500,13 +419,6 @@ class T3Tests(unittest.TestCase):
         self.assertIn('not run', statuses)
         self.assertTrue(any('not run: adapters' in line for line in details))
         self.assertEqual(lane.t3_verdict(summaries, statuses), 'INCONCLUSIVE')
-
-    def test_a_t3_request_without_tests_or_with_unknown_tests_does_not_boot_anything(self):
-        import lane_sim
-        with mock.patch.object(lane_sim, 'newest_runtime', side_effect=AssertionError('no simulator should be made')), \
-                mock.patch.object(lane_sim, 'clone_temporary', side_effect=AssertionError('no simulator should be made')):
-            self.assertEqual(runner.run_t3([], 'r', Path('/tmp'))[0], 'INCONCLUSIVE')
-            self.assertEqual(runner.run_t3(['NoSuchTestClassAnywhere'], 'r', Path('/tmp'))[0], 'FAIL')
 
 
 class T3VerifyTestsLaunchTests(unittest.TestCase):
@@ -590,151 +502,6 @@ class T3VerifyTestsLaunchTests(unittest.TestCase):
         self.assertEqual(verdict, 'INCONCLUSIVE')
         self.assertTrue(any("the runner's 1s budget for the whole verify-tests.py run" in line for line in details), details)
         self.assertFalse(any('wrote no manifest' in line for line in details), details)
-
-
-class RunnerDeviceTests(unittest.TestCase):
-    """#440 and #411: every lane job swept "SM Lane Runner" simulators when it started, and an automerge job on
-    the second runner (sm-lane-mac-2) deleted a T3's live device on the main runner mid-run, four times on
-    2026-09-30 (e.g. 14:12:43 "Deleted leftover simulator SM Lane Runner pr432-r36724477838")."""
-
-    def setUp(self):
-        self.state = tempfile.TemporaryDirectory()
-        self.addCleanup(self.state.cleanup)
-        patcher = mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': self.state.name})
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def sweep(self, names):
-        listing = {'devices': {'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-            {'name': name, 'udid': f'U{index}'} for index, name in enumerate(names)]}}
-        commands = []
-
-        def bounded(command, timeout, **_):
-            commands.append(command)
-            self.assertLessEqual(timeout, runner.SWEEP_SIMCTL_TIMEOUT)
-            return json.dumps(listing) if command[2] == 'list' else ''
-
-        import simctl_preflight
-        with mock.patch.object(simctl_preflight, 'problem', return_value=None), \
-                mock.patch.object(simctl_preflight, 'bounded_output', side_effect=bounded):
-            runner.sweep_runner_simulators()
-        return [c[-1] for c in commands if c[:3] == ['xcrun', 'simctl', 'delete']]
-
-    def test_a_hanging_simctl_stops_the_sweep_fast_and_leaves_no_process_behind(self):
-        """#2591: on 2026-10-24, after an Xcode update, `xcrun simctl list` ran `xcodebuild -runFirstLaunch`,
-        which waited on a password dialog forever, and the sweep's bare check_output waited with it."""
-        import simctl_preflight
-        import threading
-        with tempfile.TemporaryDirectory() as tmp:
-            pids = Path(tmp) / 'pids'
-            fake = Path(tmp) / 'xcrun'  # stands in for xcrun: a child that never answers, like the password wait
-            fake.write_text(f'#!/bin/sh\nsleep 300 &\necho "$$ $!" > {pids}\nwait\n')
-            fake.chmod(0o755)
-            out = []
-            sweep = threading.Thread(target=runner.sweep_runner_simulators, daemon=True)
-            try:
-                with mock.patch.dict(os.environ, {'PATH': f'{tmp}:{os.environ.get("PATH", "")}'}), \
-                        mock.patch.object(simctl_preflight, 'problem', return_value=None), \
-                        mock.patch.object(runner, 'SWEEP_SIMCTL_TIMEOUT', 1, create=True), \
-                        mock.patch('builtins.print', side_effect=lambda *a, **_: out.append(' '.join(map(str, a)))):
-                    sweep.start()
-                    sweep.join(15)
-                    self.assertFalse(sweep.is_alive(), 'the sweep is still waiting on a simctl that never answers')
-                started = [int(pid) for pid in pids.read_text().split()]
-                time.sleep(0.2)
-                for pid in started:
-                    with self.assertRaises(ProcessLookupError, msg=f'pid {pid} outlived the sweep'):
-                        os.kill(pid, 0)
-                self.assertTrue(any('gave no answer' in line and 'runFirstLaunch' in line for line in out), out)
-            finally:
-                if pids.exists():  # only the stand-in's own processes, if the sweep left them
-                    for pid in (int(p) for p in pids.read_text().split()):
-                        with contextlib.suppress(ProcessLookupError, PermissionError):
-                            os.kill(pid, signal.SIGKILL)
-
-    def test_a_simctl_that_would_wait_on_xcode_s_install_is_never_run(self):
-        import simctl_preflight
-        why = 'CoreSimulator is older than Xcode expects (1.0, Xcode wants 2.0); run it'
-        with tempfile.TemporaryDirectory() as tmp:
-            ran = Path(tmp) / 'ran'
-            fake = Path(tmp) / 'xcrun'  # never the Mac's own simctl, which may be the one that hangs
-            fake.write_text(f'#!/bin/sh\ntouch {ran}\nexit 1\n')
-            fake.chmod(0o755)
-            with mock.patch.dict(os.environ, {'PATH': f'{tmp}:{os.environ.get("PATH", "")}'}), \
-                    mock.patch.object(simctl_preflight, 'problem', return_value=why), \
-                    mock.patch('builtins.print') as printed:
-                runner.sweep_runner_simulators()
-            self.assertFalse(ran.exists(), 'simctl ran although the preflight named why it would hang')
-        self.assertIn(why, printed.call_args.args[0])
-
-    def test_a_failed_delete_is_not_reported_as_deleted(self):
-        import simctl_preflight
-        listing = json.dumps({'devices': {'r': [{'name': lane.RUNNER_SIMULATOR_PREFIX + 'pr3-r3', 'udid': 'U0'}]}})
-
-        def bounded(command, timeout, **_):
-            if command[2] == 'delete':
-                raise subprocess.CalledProcessError(1, command)
-            return listing if command[2] == 'list' else ''
-
-        with mock.patch.object(simctl_preflight, 'problem', return_value=None), \
-                mock.patch.object(simctl_preflight, 'bounded_output', side_effect=bounded), \
-                mock.patch('builtins.print') as printed:
-            runner.sweep_runner_simulators()
-        lines = [c.args[0] for c in printed.call_args_list]
-        self.assertFalse(any(line.startswith('Deleted') for line in lines), lines)
-
-    def test_a_sweep_leaves_a_running_t3_s_device_alone_and_deletes_leftovers(self):
-        claim = lane.claim_runner_device('SM Lane Runner pr432-r36724477838')
-        try:
-            deleted = self.sweep(['SM Lane Runner pr432-r36724477838', 'SM Lane Runner pr9-r1', 'SpokenMargins Test Runner'])
-        finally:
-            lane.release_runner_device(claim)
-        self.assertEqual(deleted, ['U1'])
-
-    def test_a_device_whose_job_has_ended_is_swept(self):
-        lane.release_runner_device(lane.claim_runner_device('SM Lane Runner pr1-r1'))
-        self.assertEqual(self.sweep(['SM Lane Runner pr1-r1']), ['U0'])
-
-    def test_a_crashed_job_s_claim_ends_with_its_process(self):
-        name = 'SM Lane Runner pr2-r2'
-        code = (f'import importlib.util, sys, time; spec = importlib.util.spec_from_file_location("l", {str(SCRIPTS / "lane-runner.py")!r}); '
-                f'l = importlib.util.module_from_spec(spec); spec.loader.exec_module(l); held = l.claim_runner_device({name!r}); '
-                'print("held", flush=True); time.sleep(60)')
-        child = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE, text=True,
-                                 env=dict(os.environ, SM_LANE_STATE_DIR=self.state.name))
-        try:
-            self.assertEqual(child.stdout.readline().strip(), 'held')
-            self.assertTrue(runner.runner_device_claimed(name))
-        finally:
-            child.kill()
-            child.wait()
-            child.stdout.close()
-        self.assertFalse(runner.runner_device_claimed(name))
-
-    def test_the_t3_job_holds_its_device_s_claim_from_before_it_exists_until_it_is_deleted(self):
-        import lane_sim
-        seen = {}
-        name = lane.RUNNER_SIMULATOR_PREFIX + 'pr7-r7'
-
-        def create(created, runtime, **kw):
-            seen['at create'] = runner.runner_device_claimed(created)
-            return 'U'
-
-        def release(udid):
-            seen['at delete'] = runner.runner_device_claimed(name)
-
-        with mock.patch.object(lane_sim, 'clone_temporary', side_effect=create), \
-                mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release', side_effect=release), \
-                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
-                mock.patch.object(lane, 'boot_t3_device', return_value=(None, {})), \
-                mock.patch.object(lane, 'run_plans', return_value=([lane.summarize_manifest({'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]})], ['verified'],
-                                                                   ['A (1 passed)'], [])), \
-                tempfile.TemporaryDirectory() as temporary:
-            lane._t3_on_fresh_device({'app': ['T/A']}, 'pr7-r7', Path(temporary),
-                                     'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
-        self.assertEqual(seen, {'at create': True, 'at delete': True})
-        self.assertFalse(runner.runner_device_claimed(name))
-        self.assertEqual(list(Path(self.state.name).glob('runner-device-*')), [])
 
 
 class T3PreparationTests(unittest.TestCase):
@@ -894,36 +661,6 @@ class RecoveredStallTests(unittest.TestCase):
         self.assertEqual(verdict, 'FAIL')
         self.assertEqual(lane.recovered_startup_stalls({'steps': [step]}), [])
 
-    def test_each_recovered_stall_is_logged_on_705_with_its_evidence(self):
-        with tempfile.TemporaryDirectory() as folder:
-            for plan, step in (('app', stalled_step()), ('adapters', stalled_step(tests=5)),
-                               ('quiet', {'name': 'xcode-tests', 'exit_code': 0, 'errors': [], 'tests': {}})):
-                (Path(folder) / f'verify-{plan}').mkdir()
-                (Path(folder) / f'verify-{plan}' / 'manifest.json').write_text(json.dumps({'steps': [step]}))
-            posted = []
-            count = runner.log_recovered_stalls(Path(folder), 5, HEAD, 'https://example.test/report', posted.append)
-        self.assertEqual(count, 2)
-        self.assertEqual(len(posted), 2)
-        self.assertIn('`adapters` plan', posted[0])
-        self.assertIn('retry then passed 5 test(s)', posted[0])
-        self.assertIn('`app` plan', posted[1])
-        for body in posted:
-            self.assertIn('PR #5 at `aaaaaaa` (https://example.test/report)', body)
-            self.assertIn('xcode-tests-stall-1/', body)
-            self.assertIn('90.2s after launch', body)
-
-    def test_a_failed_log_comment_never_fails_the_job(self):
-        with tempfile.TemporaryDirectory() as folder:
-            (Path(folder) / 'verify-app').mkdir()
-            (Path(folder) / 'verify-app' / 'manifest.json').write_text(json.dumps({'steps': [stalled_step()]}))
-
-            def refuse(body):
-                raise RuntimeError('GitHub API unavailable')
-
-            with mock.patch('builtins.print'):
-                self.assertEqual(runner.log_recovered_stalls(Path(folder), 5, HEAD, 'u', refuse), 0)
-
-
 
 class BootStallRetryTests(unittest.TestCase):
     """A T3 clone whose boot stalls gets one fresh clone; every stall is logged on #705 (owner's call 2026-10-11)."""
@@ -970,28 +707,6 @@ class BootStallRetryTests(unittest.TestCase):
         self.assertIn('failed too', details[0])
         saved = json.loads((evidence / lane.BOOT_STALLS).read_text())
         self.assertEqual([s['udid'] for s in saved['stalls']], ['U1', 'U2'])
-
-    def test_the_boot_stalls_are_posted_on_705_with_the_report_and_verdict(self):
-        for outcome, verdict, expected in (
-                ('recovered on a fresh device (`U2`, ready after 40s)', 'PASS',
-                 'Boot stall recovered on a fresh device; the run then ended PASS'),
-                ('recovered on a fresh device (`U2`, ready after 40s)', 'FAIL',
-                 'Boot stall recovered on a fresh device; the run then ended FAIL'),
-                ('not recovered (two in a row), so the run stays INCONCLUSIVE', 'INCONCLUSIVE',
-                 'Boot stall, not recovered (two in a row)')):
-            with self.subTest(verdict=verdict), tempfile.TemporaryDirectory() as folder:
-                (Path(folder) / lane.BOOT_STALLS).write_text(json.dumps({'label': 'runner boot U1', 'outcome': outcome,
-                    'stalls': [{'udid': 'U1', 'error': 'SpringBoard restarted', 'pressure': 'normal'}]}))
-                posted = []
-                self.assertEqual(runner.log_recovered_stalls(Path(folder), 5, HEAD, 'https://example.test/r',
-                                                           posted.append, verdict), 1)
-                self.assertTrue(posted[0].startswith(expected), posted[0])
-                self.assertIn('T3 run for PR #5 at `aaaaaaa` (https://example.test/r)', posted[0])
-                self.assertIn('clone `U1` (memory pressure normal): SpringBoard restarted', posted[0])
-
-    def test_no_boot_stall_file_posts_nothing(self):
-        with tempfile.TemporaryDirectory() as folder:
-            self.assertEqual(runner.log_recovered_stalls(Path(folder), 5, HEAD, 'u', self.fail, 'PASS'), 0)
 
 
 class FreshCloneRerunTests(unittest.TestCase):
@@ -1289,25 +1004,6 @@ class FreshCloneRerunTests(unittest.TestCase):
         self.assertEqual((verdict, devices, crashes), ('INCONCLUSIVE', ['U1', 'U2'], 'none'))  # two stalls
         self.assertTrue(any('SpringBoard-z.ips' in line and 'U1' in line for line in details))
 
-    def test_each_rerun_is_logged_on_the_stall_issue(self):
-        with tempfile.TemporaryDirectory() as folder:
-            (Path(folder) / lane.FRESH_RERUNS).write_text(json.dumps([{
-                'plan': 'app', 'stalled': 'U1', 'fresh': 'U2', 'status': 'verified', 'passed': 195,
-                'first': '/e/verify-app', 'output': '/e/verify-app-fresh',
-                'stalls': [{'attempt': 1, 'after_seconds': 90.1, 'diagnosis': 'no host app process'}]}]))
-            # A recovered stall inside the rerun is not posted as "counted as a PASS": the rerun is evidence only.
-            fresh = Path(folder) / 'verify-app-fresh'
-            fresh.mkdir()
-            recovered = passing_manifest()
-            recovered['steps'][0].update(startup_recovered=True, startup_stalls=[{'attempt': 1}])
-            (fresh / 'manifest.json').write_text(json.dumps(recovered))
-            posted = []
-            self.assertEqual(runner.log_recovered_stalls(Path(folder), 5, HEAD, 'https://example.test/r', posted.append), 1)
-        self.assertIn('the `app` plan of the T3 run for PR #5 at `aaaaaaa` (https://example.test/r)', posted[0])
-        self.assertIn('Launch 1 on clone `U1`: no test output 90.1s after launch; no host app process', posted[0])
-        self.assertIn('fresh-clone rerun: passed 195 tests; verdict stays INCONCLUSIVE (two stalls, owner '
-                      '2026-10-11/2026-10-23) (clone `U2`)', posted[0])
-
 
 class RetryPassTests(unittest.TestCase):
     """Owner's call 2026-10-24 (#2596, #2176): every T3 report says what passed on retry, and each retry-pass is tallied."""
@@ -1425,6 +1121,68 @@ class PlanDurationTests(unittest.TestCase):
             _, _, ran, _ = lane.run_plans({'app': ['T/A']}, run_plan, Path('/e'))
         self.assertEqual(ran, ['A (1 passed; app plan, build and tests, 15m12s)'])
 
+
+class RepoGhCliTests(unittest.TestCase):
+    """lane.Repo against a fake `gh` on PATH that records its argv and prints queued answers.
+
+    No other test calls the real one, so the REST paths, the `labels[]` field and the `--paginate --jq`
+    flags would otherwise never be produced. Moved here with Repo (#4769)."""
+
+    FAKE_GH = "#!{python}\nimport json, os, sys\n" \
+              "folder = os.environ['FAKE_GH_DIR']\n" \
+              "with open(folder + '/calls.jsonl', 'a') as calls:\n" \
+              "    calls.write(json.dumps(sys.argv[1:]) + '\\n')\n" \
+              "answers = json.load(open(folder + '/answers.json'))\n" \
+              "answer = answers.pop(0) if answers else {{'stdout': '', 'exit': 0}}\n" \
+              "json.dump(answers, open(folder + '/answers.json', 'w'))\n" \
+              "sys.stdout.write(answer['stdout'])\n" \
+              "sys.exit(answer['exit'])\n"
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.folder = Path(temporary.name)
+        (self.folder / 'bin').mkdir()
+        gh = self.folder / 'bin/gh'
+        gh.write_text(self.FAKE_GH.format(python=sys.executable))
+        gh.chmod(0o755)
+        patcher = mock.patch.dict(os.environ, {'PATH': f'{self.folder / "bin"}:{os.environ["PATH"]}',
+                                               'FAKE_GH_DIR': str(self.folder)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.answer()
+
+    def answer(self, *answers):
+        """What the next gh calls print: a string (exit 0) or (string, exit code); then silence, exit 0."""
+        (self.folder / 'answers.json').write_text(json.dumps([
+            {'stdout': a, 'exit': 0} if isinstance(a, str) else {'stdout': a[0], 'exit': a[1]} for a in answers]))
+
+    def calls(self):
+        log = self.folder / 'calls.jsonl'
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def test_repo_reads_comments_a_page_at_a_time_until_a_short_page(self):
+        repo = lane.Repo('owner/repo')
+        self.answer(json.dumps([{'n': n} for n in range(100)]), json.dumps([{'n': 100}]))
+        self.assertEqual([c['n'] for c in repo.comments_since('2026-10-01T00:00:00Z')], list(range(101)))
+        self.assertEqual(self.calls(), [
+            ['api', 'repos/owner/repo/issues/comments?since=2026-10-01T00:00:00Z&sort=created&direction=asc'
+                    f'&per_page=100&page={page}'] for page in (1, 2)])
+
+    def test_repo_comments_title_and_new_issue_use_the_expected_paths_and_fields(self):
+        repo = lane.Repo('owner/repo')
+        self.answer(json.dumps({'body': 'x'}) + '\n', json.dumps({'html_url': 'https://example.test/c2'}),
+                    json.dumps({'title': 'Change the lane'}), json.dumps({'html_url': 'https://example.test/i9'}))
+        self.assertEqual([c['body'] for c in repo.issue_comments(337)], ['x'])
+        self.assertEqual(repo.comment(337, 'Lane auto-revert: x'), 'https://example.test/c2')
+        self.assertEqual(repo.title(441), 'Change the lane')
+        self.assertEqual(repo.open_issue('Lane broke', 'details', ['lane-fault', 'urgent']), 'https://example.test/i9')
+        self.assertEqual(self.calls(), [
+            ['api', '--paginate', '--jq', '.[] | @json', 'repos/owner/repo/issues/337/comments'],
+            ['api', 'repos/owner/repo/issues/337/comments', '-f', 'body=Lane auto-revert: x'],
+            ['api', 'repos/owner/repo/pulls/441'],
+            ['api', 'repos/owner/repo/issues', '-f', 'title=Lane broke', '-f', 'body=details',
+             '-f', 'labels[]=lane-fault', '-f', 'labels[]=urgent']])
 
 
 if __name__ == '__main__':
