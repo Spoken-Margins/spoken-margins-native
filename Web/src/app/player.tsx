@@ -9,6 +9,8 @@ import { clipRejection, EPISODE_FAILED, failureNoticeShown, nextFailure, type Fa
 import { CrossingClock } from './logic/margin-autoplay.ts';
 import { arrival, hearingOf, pendingStart } from './logic/margins-control-center.ts';
 import { MESSAGES, plainError } from './logic/messages.ts';
+import { attemptToast, attemptWithoutAudio } from './logic/episode-voice-words.ts';
+import { episodeVoice } from './logic/playability.ts';
 import { newestPlayableMessage, playCandidates, playNewestAvailable, type PlayAttempt } from './logic/newest-playable.ts';
 import { browserStorage, MIRROR_EVERY_MS, mirrorPosition } from './logic/position-mirror.ts';
 import { NotSavedError } from './logic/storage.ts';
@@ -61,6 +63,13 @@ export interface PlayerApi {
   loading: boolean;
   time: number;
   duration: number | undefined;
+  /**
+   * The length of the copy loaded now, in seconds: the first finite, positive length the audio reports for a load,
+   * kept unchanged until the next load clears it, so a Margin made on this copy and the note on a friend's Margin never
+   * renumber when the browser refines it. Never the stored length in `duration`, which can be a feed's or a packet's
+   * (#4175, #4614).
+   */
+  measuredLengthSeconds: number | undefined;
   rate: number;
   /**
    * Opens an episode. `at` jumps to a moment (a Margin); otherwise it resumes where the listener left off. `episode`
@@ -85,6 +94,11 @@ export interface PlayerApi {
   startMargins(seekTo: number, start: MarginStart): void;
   skip(seconds: number): void;
   seek(seconds: number): void;
+  /**
+   * Ends the friend's Margin that is sounding or held, as if it had finished: the next queued Margin plays, or the
+   * episode carries on from where it was. Pause only holds a Margin; this is how to be done with it (#4473).
+   */
+  skipMargin(): void;
   setRate(rate: number): void;
   /** The current time, read straight from the audio element (for a Margin's anchor). */
   now(): number;
@@ -161,6 +175,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [time, setTime] = useState(0);
   const [mediaDuration, setMediaDuration] = useState<number>();
+  const [measuredLengthSeconds, setMeasuredLengthSeconds] = useState<number>();
   const lastSave = useRef(0);
   const lastMirror = useRef(0);
   const pendingSeek = useRef<number | undefined>(undefined);
@@ -180,7 +195,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const crossing = useRef(new CrossingClock());
   // What to do after a blocked clip is played from the tap (the rest of a run of Margins without the episode).
   const blockedDone = useRef<(() => void) | undefined>(undefined);
-  const clip = useRef<{ element: HTMLAudioElement; url: string } | null>(null);
+  // `end` finishes the clip as if it had played out: what comes next (a queued Margin, the episode) follows.
+  const clip = useRef<{ element: HTMLAudioElement; url: string; end: () => void } | null>(null);
   const clipQueue = useRef<Margin[]>([]);
   // The voice reading a friend's written Margin aloud, while it does.
   const reading = useRef<Reading | undefined>(undefined);
@@ -218,6 +234,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     lastMirror.current = Date.now();
     mirrorPosition(browserStorage(), place);
   }, [placeNow]);
+
+  /** The first finite, positive length this load reports is the copy's length; later refinements don't change it (#4175). */
+  const keepFirstLength = useCallback((seconds: number) => {
+    if (Number.isFinite(seconds) && seconds > 0) setMeasuredLengthSeconds((kept) => kept ?? seconds);
+  }, []);
 
   /** Hands the waiting article Margins the length of the audio that just loaded, once. */
   const placeWhenLengthKnown = useCallback(
@@ -313,7 +334,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const element = clipPlayer();
     const previous = clip.current;
     if (previous) URL.revokeObjectURL(previous.url);
-    const mine = { element, url };
+    const mine = { element, url, end: () => undefined as void };
     clip.current = mine;
     detachClip(element);
     element.src = url;
@@ -330,6 +351,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (next) playClip(next, onDone);
       else if (onDone) onDone();
       else void audio.play().catch(() => undefined);
+    };
+    mine.end = () => {
+      element.pause();
+      finish();
     };
     element.onended = finish;
     element.onerror = finish;
@@ -444,6 +469,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const at = Number.isFinite(audio.currentTime) && audio.currentTime > 0 ? audio.currentTime : undefined;
       pendingSeek.current = at;
       setLoading(true);
+      // A reload asks for the file again, and a dynamic-ad podcast can answer with another copy: measure it afresh (#4175).
+      setMeasuredLengthSeconds(undefined);
       audio.load();
       void audio.play().catch(onPlayRejected);
     },
@@ -548,7 +575,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       save();
       stopClip();
       setArrived(undefined);
-      if (!target.audioUrl && target.pageUrl) {
+      if (episodeVoice(target) === 'post-lookup' && target.pageUrl) {
         // A Substack post: its voice is looked up now, because the listener tapped it (owner, 2026-10-21).
         setLoading(true);
         try {
@@ -568,7 +595,29 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           setLoading(false);
         }
       }
-      if (!target.audioUrl) return 'no-voice';
+      if (episodeVoice(target) === 'apple-lookup' && target.pageUrl) {
+        // An Apple Podcasts episode page with no audio address: Apple's public lookup names that episode's audio. It is
+        // asked on the listener's tap (or when they opened the link), never in the background (#4783).
+        setLoading(true);
+        try {
+          const pageUrl = target.pageUrl;
+          const title = target.title;
+          // The show's feed is read only when Apple's lookup doesn't list the episode, and through the server only with the listener's OK.
+          const found = await relay((relayAllowed) => services.sources.findAppleEpisodeAudio(pageUrl, { relayAllowed, title }));
+          if (found) {
+            // The packet's own length is the edition its Margins were made on; Apple's only fills a length it lacks.
+            target = { ...target, audioUrl: found.audioUrl, audioOrigin: found.audioOrigin, durationSeconds: target.durationSeconds ?? found.durationSeconds };
+            await dataRef.current.updateEpisode(target);
+          }
+        } catch (error) {
+          // A dead connection or a refusal says so once (it is not "no audio"); a storage failure has already shown its own.
+          if (!(error instanceof NotSavedError)) toast(plainError(error), 'problem');
+          return 'stopped';
+        } finally {
+          setLoading(false);
+        }
+      }
+      if (!target.audioUrl) return attemptWithoutAudio(episodeVoice(target));
       const resume = dataRef.current.positions.find((p) => p.episodeId === id)?.seconds;
       const finished = target.durationSeconds && resume && resume >= target.durationSeconds - FINISHED_WITHIN_SECONDS;
       pendingSeek.current = options.at ?? (finished ? 0 : resume);
@@ -580,6 +629,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       apply({ kind: 'source-changed' });
       setEpisodeId(id);
       setMediaDuration(undefined);
+      setMeasuredLengthSeconds(undefined);
       setTime(pendingSeek.current ?? 0);
       audio.src = target.audioUrl;
       audio.playbackRate = dataRef.current.settings.playbackRate;
@@ -594,8 +644,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     async (id: string, options: OpenOptions = {}) => {
       primeClip();
       const result = await attemptOpen(id, options);
-      if (result === 'paid') toast(MESSAGES.paidPost, 'problem');
-      if (result === 'no-voice') toast(MESSAGES.noVoice, 'problem');
+      const words = attemptToast(result);
+      if (words) toast(words, 'problem');
     },
     [attemptOpen, toast, primeClip],
   );
@@ -687,17 +737,48 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (anythingSounding()) pauseSound();
   }, [anythingSounding, pauseSound]);
 
+  /**
+   * Done with the friend's Margin that is sounding or held (#4473): a clip ends as if it had played out, so the next
+   * queued Margin or the episode follows; a written one that is being read stops being read and its card goes.
+   */
+  const skipMargin = useCallback(() => {
+    primeClip();
+    const current = clip.current;
+    if (current) {
+      current.end();
+      return;
+    }
+    clearTimeout(shownTimer.current);
+    const audio = audioRef.current;
+    if (reading.current) stopReading();
+    if (audio) audio.volume = 1;
+    setArrived((a) => (a?.blocked ? a : undefined));
+  }, [primeClip, stopReading]);
+
   const seek = useCallback((seconds: number) => {
     const audio = audioRef.current;
     if (!audio || !audio.src) return;
     // A Skip or a scrub is the listener's tap: the clip element is readied in it, for the Margin coming up (#4472).
     primeClip();
+    // Moving to another place leaves the friend's Margin behind: it stops, and the episode plays from the new place
+    // if the Margin was sounding (a Margin held by Pause leaves the episode held too). Otherwise the clip and the
+    // episode would sound together, with controls for only the clip (#4473).
+    const current = clip.current;
+    let resume = false;
+    if (!failedRef.current && (current || reading.current)) {
+      resume = current ? !current.element.paused : !audio.paused;
+      stopClip();
+      clearTimeout(shownTimer.current);
+      audio.volume = 1;
+      setArrived((a) => (a?.blocked ? a : undefined));
+    }
     const max = Number.isFinite(audio.duration) ? audio.duration : Number.POSITIVE_INFINITY;
     audio.currentTime = Math.min(Math.max(0, seconds), max);
     setTime(audio.currentTime);
+    if (resume) void audio.play().catch(() => undefined);
     // The scrub itself is the place, even if the page goes before the browser reports the seek finished (#4096).
     remember();
-  }, [remember, primeClip]);
+  }, [remember, primeClip, stopClip]);
 
   const skip = useCallback((seconds: number) => seek((audioRef.current?.currentTime ?? 0) + seconds), [seek]);
 
@@ -779,8 +860,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [episode, playing, duration, rate, time]);
 
   const api = useMemo<PlayerApi>(
-    () => ({ episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, play, pause, startMargins, skip, seek, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
-    [episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, play, pause, startMargins, skip, seek, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
+    () => ({ episode, playing, loading, time, duration, measuredLengthSeconds, rate, open, openNewestPlayable, toggle, play, pause, startMargins, skip, seek, skipMargin, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
+    [episode, playing, loading, time, duration, measuredLengthSeconds, rate, open, openNewestPlayable, toggle, play, pause, startMargins, skip, seek, skipMargin, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
   );
 
   return (
@@ -793,6 +874,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         onLoadedMetadata={(event) => {
           const audio = event.currentTarget;
           if (Number.isFinite(audio.duration)) setMediaDuration(audio.duration);
+          keepFirstLength(audio.duration);
           placeWhenLengthKnown(audio);
           if (pendingSeek.current !== undefined) {
             audio.currentTime = Math.min(pendingSeek.current, Number.isFinite(audio.duration) ? audio.duration : pendingSeek.current);
@@ -802,6 +884,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         onDurationChange={(event) => {
           const d = event.currentTarget.duration;
           if (Number.isFinite(d)) setMediaDuration(d);
+          keepFirstLength(d);
           placeWhenLengthKnown(event.currentTarget);
         }}
         onSeeking={(event) => {

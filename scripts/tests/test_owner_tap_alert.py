@@ -14,7 +14,7 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import owner_tap_alert as alert  # noqa: E402
 
-spec = importlib.util.spec_from_file_location('lane_runner_for_tap_alert', SCRIPTS / 'lane-runner.py')
+spec = importlib.util.spec_from_file_location('lane_merge_rules_for_tap_alert', SCRIPTS / 'lane_merge_rules.py')
 lane = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lane)
 
@@ -67,11 +67,13 @@ class ReadinessTable(unittest.TestCase):
             ('a rename out of .github counts', {'files': [{'filename': 'docs/x.yml',
                                                          'previous_filename': '.github/x.yml'}],
                                                 'comments': []}, True, 'ready'),
-            ('lane-runner.py itself', {'files': [{'filename': 'scripts/lane-runner.py'}]}, True, 'ready'),
+            ('the merge rules themselves', {'files': [{'filename': 'scripts/lane_merge_rules.py'}]}, True, 'ready'),
             ('draft', {'p': pr(draft=True)}, False, 'draft'),
             ('fork head', {'p': pr(head={'sha': HEAD, 'repo': {'full_name': 'eve/app'}})}, False, 'not in this'),
             ('fork deleted', {'p': pr(head={'sha': HEAD, 'repo': None})}, False, 'not in this'),
             ('mergeability unknown', {'p': pr(mergeable=None)}, False, 'not worked out'),
+            ('owner already tapped', {'p': pr(labels=[{'name': 'owner-tap'}])}, False, 'already tapped'),
+            ('another label', {'p': pr(labels=[{'name': 'needs-mac'}])}, True, 'ready'),
             ('conflict', {'p': pr(mergeable=False, mergeable_state='dirty')}, False, 'conflicts'),
             ('failing check', {'runs': GREEN + [run('host', conclusion='failure')]}, False, 'checks failed: host'),
             ('cancelled check', {'runs': [run('lane', conclusion='cancelled')]}, False, 'checks failed'),
@@ -134,6 +136,19 @@ class ReadinessTable(unittest.TestCase):
                 self.assertIn(why, reason)
 
 
+class GateChecks(unittest.TestCase):
+    """#4693: a red "merge policy" waits for the audit and the tap, so it can't be what holds either of them back."""
+
+    def test_a_red_merge_policy_gate_is_not_a_failed_check(self):
+        self.assertEqual(alert.checks_state([run('hosted fast: portable'), run('merge policy', conclusion='failure')], []),
+                         ('ok', []))
+
+    def test_a_real_failure_beside_it_still_fails(self):
+        state, names = alert.checks_state([run('hosted fast: portable', conclusion='failure'),
+                                           run('merge policy', conclusion='failure')], [])
+        self.assertEqual((state, names), ('failed', ['hosted fast: portable']))
+
+
 class AlertBody(unittest.TestCase):
     def test_mentions_owner_and_carries_marker_for_the_full_head(self):
         body = alert.alert_body(pr(), ['.github/workflows/lane.yml'], 'uncomposed', audited=True)
@@ -147,8 +162,8 @@ class AlertBody(unittest.TestCase):
         self.assertEqual(ready(comments=CLEAN + [comment]), (False, f'already alerted on {HEAD[:7]}'))
 
 
-class SameRulesAsTheRunner(unittest.TestCase):
-    def test_constants_match_lane_runner(self):
+class SameRulesAsTheMergeRules(unittest.TestCase):
+    def test_constants_match_the_merge_rules(self):
         self.assertEqual(alert.OWNER_TAP_FILES, lane.OWNER_TAP_FILES)
         self.assertEqual(alert.OWNER_TAP_PREFIXES, lane.OWNER_TAP_PREFIXES)
         self.assertEqual(alert.AUDITS, lane.AUDITS)
@@ -309,8 +324,27 @@ class PersistentLabel(unittest.TestCase):
         self.assertEqual(api.labels, [])
         api = FakeApi(labels=[self.TAP])
         api.get = lambda path: pr(mergeable=None, labels=[{'name': self.TAP}])
-        alert.check_pr(api, 7, 'uncomposed', dry_run=False)
+        with mock.patch.object(alert, 'MERGEABLE_WAIT', 0):
+            alert.check_pr(api, 7, 'uncomposed', dry_run=False)
         self.assertEqual(api.labels, [])
+
+    def test_a_pr_the_owner_has_tapped_loses_the_label_and_gets_no_alert(self):
+        api = self.check(labels=[self.TAP, 'owner-tap'])
+        self.assertEqual((api.labels, api.tap_ops, api.posted), ([('remove', 7, self.TAP)], [], []))
+        api = self.check(labels=['owner-tap'])
+        self.assertEqual((api.labels, api.tap_ops, api.posted), ([], [], []))
+
+    def test_unknown_mergeability_is_asked_again_before_giving_up(self):
+        answers = [pr(mergeable=None), pr(mergeable=None), pr()]
+        api = FakeApi()
+        api.get = lambda path: answers.pop(0)
+        with mock.patch.object(alert, 'MERGEABLE_WAIT', 0):
+            self.assertTrue(alert.get_pr(api, 7)['mergeable'])
+        self.assertEqual(answers, [])
+        answers[:] = [pr(mergeable=None)] * 9
+        with mock.patch.object(alert, 'MERGEABLE_WAIT', 0):
+            self.assertIsNone(alert.get_pr(api, 7)['mergeable'])
+        self.assertEqual(len(answers), 9 - alert.MERGEABLE_TRIES)
 
     def test_a_failing_label_write_does_not_stop_the_alert(self):
         api = FakeApi()
@@ -533,6 +567,16 @@ class Workflow(unittest.TestCase):
         self.assertIn(f"github.event.label.name == '{alert.LABEL}'", self.text)
         self.assertIn('--clear-label "$CLEAR"', self.text)
 
+    def test_the_token_may_write_labels_and_comments_on_a_pr(self):
+        # With `pull-requests: read` every label and comment write on a PR answered 403 (#4939).
+        self.assertIn('\n  pull-requests: write\n', self.text)
+        self.assertNotIn('pull-requests: read', self.text)
+
+    def test_the_owner_tap_label_and_a_schedule_start_a_check(self):
+        self.assertIn('types: [reopened, ready_for_review, labeled, unlabeled]', self.text)
+        self.assertIn('"owner-tap-check","owner-tap"', self.text)
+        self.assertRegex(self.text, r"(?m)^  schedule:\n    - cron: '\d+(,\d+)* \* \* \* \*'$")
+
     def test_concurrency_is_per_pr(self):
         self.assertIn("group: owner-tap-alert-${{ inputs.pr || github.event.pull_request.number || 'sweep' }}",
                       self.text)
@@ -545,12 +589,16 @@ class Workflow(unittest.TestCase):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
                 head, _, job = text.partition('\n  owner-tap-alert:\n')
                 self.assertTrue(job, 'no owner-tap-alert job')
+                # Read this job only. A job after it (the rearm job, which needs `actions: write`) is not the alert's.
+                job = re.split(r'\n  [A-Za-z0-9_-]+:\n', job, maxsplit=1)[0] + '\n'
                 self.assertIn('    name: owner-tap-alert\n', job)
                 self.assertIn(f'    needs: {needs}\n', job)
                 self.assertIn('    if: always() && github.event.pull_request.head.repo.full_name == github.repository\n',
                               job)
                 self.assertIn('    runs-on: ubuntu-latest\n', job)
                 self.assertIn('      issues: write\n', job)
+                self.assertIn('      pull-requests: write\n', job)  # a PR's label and comment need it (#4939)
+                self.assertNotIn('pull-requests: read', job)
                 self.assertNotIn('actions: write', job)
                 self.assertIn('      actions: read\n', job)  # the guard run's recorded base (#2714)
                 self.assertIn('ref: ${{ github.event.pull_request.base.sha }}', job)

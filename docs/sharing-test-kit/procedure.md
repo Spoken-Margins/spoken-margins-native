@@ -50,7 +50,7 @@ https://hpr.nyc3.cdn.digitaloceanspaces.com/eps/hpr4737/hpr4737.mp3
 6. Tap play. Leave it playing for two minutes with the app open. It takes that long because the app saves fingerprints of a streaming episode only after about 70 seconds of playing.
 7. Drag the scrubber back to about 1:00. Let it play for 15 seconds.
 8. Record a Margin. Tap the record button on the mini player, or **Add a Margin** on Now Playing. Say one short sentence. Tap **Save & resume**.
-9. Open the **Margins** tab. Find "hpr4737" and tap **Share** next to its name. The **Share Margins** sheet opens. Tap **Review 1**, at the bottom. If it asks "Clean selected Margins automatically?", tap **Not now**. Tap **Share 1**.
+9. Open the **Margins** tab. Find "hpr4737" and tap **Share** next to its name. The **Share Margins** sheet opens. Tap **Review 1**, at the bottom. If it asks "Remove ums and long pauses?", tap **Not now**. Tap **Share 1**.
 
 **You should see:** the iOS share sheet opens. Cancel it. That is the pass for #536.
 

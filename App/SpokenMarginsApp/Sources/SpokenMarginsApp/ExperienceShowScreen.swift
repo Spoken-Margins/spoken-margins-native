@@ -18,6 +18,9 @@ struct ExperienceShowScreen: View {
     @State private var upNext: ShowUpNext?
     /// The Library's size when this screen last looked, so a change reads the entries again (see the task below).
     @State private var libraryCountSeen: Int?
+    /// The follow lists (#4046): the Lists row's value, and the sheet it opens.
+    @ObservedObject private var listsState = FollowListsState.shared
+    @State private var isShowingLists = false
 
     init(subscriptionID: String, lookedAtOnOpen: Date?, artwork: FollowingArtworkCache) {
         self.subscriptionID = subscriptionID
@@ -55,11 +58,17 @@ struct ExperienceShowScreen: View {
             // The library state is read here with the entries: both are set together, under the revision this task keys on.
             let entries = model.followingShowEntries, looked = lookedAtOnOpen
             let library = model.followingLibraryEpisodes, rate = model.speechPlaybackRateMultiplier
+            let inputs = model.followingRuleInputs
             let built = await Task.detached(priority: .userInitiated) { () -> ([FollowingShowEpisode], ShowUpNext?) in
+                // The same evaluator the Following rows read (#4046): the card never names an episode a rule set aside.
+                let rules = FollowingRuleEvaluation.evaluate(
+                    subscriptions: [subscription], entries: entries, inputs: inputs, libraryEpisodes: library)
+                let setAside = rules.outcome(for: subscription.id).setAside
                 let card = FollowingUpNext.card(
-                    entries: entries.filter { $0.subscriptionId == subscription.id }, libraryEpisodes: library)
+                    entries: entries.filter { $0.subscriptionId == subscription.id && !setAside.contains($0.id) },
+                    libraryEpisodes: library)
                 return (
-                    FollowingShowRows.episodes(of: subscription, in: entries, lookedAt: looked),
+                    FollowingShowRows.episodes(of: subscription, in: entries, lookedAt: looked, rules: rules),
                     card.map { ShowUpNext(card: $0, rate: rate) })
             }.value
             episodes = built.0
@@ -74,6 +83,7 @@ struct ExperienceShowScreen: View {
         let listed = episodes.filter { $0.id != upNext?.card.entry.id }
         return List {
             headerRow(for: subscription, title: title)
+            listsRow(for: subscription)
             if let upNext {
                 ShowUpNextCard(upNext: upNext)
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
@@ -121,6 +131,38 @@ struct ExperienceShowScreen: View {
         .refreshable { await model.pullToRefreshFollowing() }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .task { await model.reloadFollowLists() }
+        .trackedSheet(isPresented: $isShowingLists) {
+            FollowListPickerSheet(subscription: subscription)
+                .environmentObject(model)
+        }
+    }
+
+    /// "Lists", the lists this show is in ("News, Commute", or "None") and a chevron. It opens "Lists for <show>" (#4046).
+    @ViewBuilder
+    private func listsRow(for subscription: FeedSubscription) -> some View {
+        Button { isShowingLists = true } label: {
+            HStack(spacing: 8) {
+                Text("Lists")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(AppColors.text)
+                Spacer(minLength: 8)
+                Text(FollowListWords.rowValue(listsState.lists(containing: subscription)))
+                    .font(.body)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .multilineTextAlignment(.trailing)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Choose which lists this show is in.")
+        .accessibilityIdentifier("show.lists")
+        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
     }
 
     @ViewBuilder

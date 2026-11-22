@@ -153,6 +153,62 @@ final class PlayerItemMarkTests: XCTestCase {
         return try XCTUnwrap(store.loadSession(id: session.id))
     }
 
+    // MARK: An article read aloud with the on-device voice (#4561)
+
+    /// The Watch offered "On this episode" for an article read aloud, and the Margin landed in a new quick session: an
+    /// article with no recording has no media time, so this threw `unsupportedTarget`. Given the text place where the
+    /// Watch paused it, it lands there.
+    func testAWatchMarginOnAnArticleReadAloudLandsAtTheTextPlaceItWasPausedAt() throws {
+        let before = try saveArticle(withRecording: false)
+        let second = (sentences[0].count + 1)..<(sentences.joined(separator: " ").count)
+
+        let saved = try PlayerItemMargin.placeSpoken(
+            audioPath: "LiveSessions/w2.m4a", atMediaTimeMs: 0, markedAt: taken, itemId: "article", repository: store,
+            readAloudPlace: .textOffset(second.lowerBound + 6)
+        )
+
+        XCTAssertEqual(saved.sessionId, "session-article")
+        XCTAssertEqual(saved.audioPath, "LiveSessions/w2.m4a")
+        XCTAssertTrue(second.contains(saved.anchor.startChar), "on the sentence it was paused in: \(saved.anchor.startChar)")
+        XCTAssertNil(saved.anchor.mediaTimeMs)
+        XCTAssertEqual(try store.loadSession(id: before.id), before, "the article resumes where it was left")
+    }
+
+    /// With no pause on record (the Watch could not reach the phone to pause it), a Margin the listener aimed at the
+    /// article still lands on it, at the article's saved place, never in a quick session.
+    func testWithNoPauseOnRecordItLandsAtTheArticlesSavedPlace() throws {
+        let second = (sentences[0].count + 1)..<(sentences.joined(separator: " ").count)
+        let before = try saveArticle(withRecording: false, resumeChar: second.lowerBound + 2)
+
+        let saved = try PlayerItemMargin.placeSpoken(
+            audioPath: "LiveSessions/w3.m4a", atMediaTimeMs: 0, markedAt: taken, itemId: "article", repository: store,
+            readAloudPlace: .savedPlace
+        )
+
+        XCTAssertTrue(second.contains(saved.anchor.startChar), "\(saved.anchor.startChar)")
+        XCTAssertEqual(try store.loadSession(id: before.id), before)
+    }
+
+    /// The neighbours: a place past the end or before the start is kept inside the text; without a read-aloud place an
+    /// article read aloud still refuses a media time, so a Margin nobody aimed at it is never put there by guess.
+    func testReadAloudPlacesAreClampedAndAMediaTimeAloneIsStillRefused() throws {
+        let before = try saveArticle(withRecording: false)
+        let length = sentences.joined(separator: " ").count
+
+        let late = try PlayerItemMargin.placeSpoken(
+            audioPath: "late.m4a", atMediaTimeMs: 0, markedAt: taken, itemId: "article", repository: store, readAloudPlace: .textOffset(length + 500)
+        )
+        let early = try PlayerItemMargin.placeSpoken(
+            audioPath: "early.m4a", atMediaTimeMs: 0, markedAt: taken, itemId: "article", repository: store, readAloudPlace: .textOffset(-40)
+        )
+        XCTAssertLessThanOrEqual(late.anchor.startChar, length)
+        XCTAssertGreaterThanOrEqual(early.anchor.startChar, 0)
+        XCTAssertThrowsError(
+            try PlayerItemMargin.placeSpoken(audioPath: "plain.m4a", atMediaTimeMs: 1_000, markedAt: taken, itemId: "article", repository: store)
+        ) { XCTAssertEqual($0 as? PlayerItemMargin.Failure, .unsupportedTarget) }
+        XCTAssertEqual(try store.loadSession(id: before.id), before)
+    }
+
     func testAWatchMarginTakenWhileThePublisherRecordingPlayedLandsOnTheArticleWordsAtThatTime() throws {
         let before = try saveArticle()
 

@@ -231,7 +231,9 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
         let kept = SpeechSilenceTrim.speechRange(in: joined, sampleRate: Self.sampleRate).map { Array(joined[$0]) } ?? joined
         let trimmedSilence = TimeInterval(joined.count - kept.count) / TimeInterval(Self.sampleRate)
         let audioURL = outputDirectory.appending(path: "kokoro-\(UUID().uuidString).wav")
-        try KokoroWaveFile.data(samples: kept, sampleRate: Self.sampleRate).write(to: audioURL, options: .atomic)
+        let wave = KokoroWaveFile.data(samples: kept, sampleRate: Self.sampleRate)
+        try wave.write(to: audioURL, options: .atomic)
+        DiskWriteLedgerStore.shared.record(bytes: Int64(wave.count), source: .speechRender)
         generatedAudioURLs.insert(audioURL)
         return SupertonicNarrationResult(
             audioURL: audioURL,

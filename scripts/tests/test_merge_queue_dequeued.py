@@ -1,0 +1,388 @@
+"""scripts/merge_queue_dequeued.py: one comment per removed group, and never a cancel of a live group's run (#4693)."""
+import io
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts'))
+
+import merge_queue_dequeued as mq  # noqa: E402
+
+LIVE, DEAD, OTHER = 'a' * 40, 'b' * 40, 'c' * 40
+
+
+class FakeGitHub:
+    """The GitHub class's three calls, answered from dicts. A value that is an exception is raised."""
+
+    def __init__(self, gets=None, heads=None, post_error=None):
+        self.gets = gets or {}
+        self.heads = heads if heads is not None else set()
+        self.post_error = post_error
+        self.posts = []
+        self.deletes = []
+        self.reads = []
+
+    def get(self, path):
+        self.reads.append(path)
+        for prefix, value in self.gets.items():
+            if path.startswith(prefix):
+                if isinstance(value, Exception):
+                    raise value
+                return value
+        return {}
+
+    def queue_heads(self):
+        if isinstance(self.heads, Exception):
+            raise self.heads
+        return self.heads
+
+    def post(self, path, body):
+        if self.post_error:
+            raise self.post_error
+        self.posts.append((path, body))
+
+    requeue_ok = True
+    requeued = 0
+
+    def requeue(self, number):
+        self.requeued += 1
+        return self.requeue_ok
+
+    def delete(self, path):
+        if self.post_error:
+            raise self.post_error
+        self.deletes.append(path)
+
+
+def run(id_, sha, branch):
+    return {'id': id_, 'head_sha': sha, 'head_branch': branch, 'created_at': f'2026-11-19T10:0{id_}:00Z'}
+
+
+def event(number=7, reason='CI_FAILURE', merged=False, armed=True):
+    labels = [{'name': 'automerge'}] if armed else [{'name': 'docs'}]
+    return {'reason': reason, 'pull_request': {'number': number, 'merged': merged, 'head': {'sha': OTHER},
+                                               'labels': labels}}
+
+
+class CancelTests(unittest.TestCase):
+    def active(self, *runs):
+        return {'actions/runs?status=in_progress': {'workflow_runs': list(runs)}}
+
+    def test_a_run_whose_group_is_still_queued_is_never_cancelled(self):
+        github = FakeGitHub(self.active(run(1, LIVE, f'{mq.QUEUE_PREFIX}pr-7-x'), run(2, DEAD, f'{mq.QUEUE_PREFIX}pr-8-y')),
+                            heads={LIVE})
+        self.assertEqual(mq.cancel_dead(github, out=io.StringIO()), [2])
+        self.assertEqual(github.posts, [('actions/runs/2/cancel', {})])
+
+    def test_an_unreadable_entry_list_cancels_nothing(self):
+        github = FakeGitHub(self.active(run(2, DEAD, f'{mq.QUEUE_PREFIX}pr-8-y')), heads=mq.ReadFailed('graphql'))
+        out = io.StringIO()
+        self.assertEqual(mq.cancel_dead(github, out=out), [])
+        self.assertEqual(github.posts, [])
+        self.assertIn('cancelled nothing', out.getvalue())
+
+    def test_an_unreadable_run_list_cancels_nothing(self):
+        github = FakeGitHub({'actions/runs?status=': mq.ReadFailed('runs')}, heads=set())
+        self.assertEqual(mq.cancel_dead(github, out=io.StringIO()), [])
+        self.assertEqual(github.posts, [])
+
+    def test_runs_on_other_branches_are_left_alone(self):
+        github = FakeGitHub(self.active(run(3, DEAD, 'feature/x'), run(4, DEAD, 'main')), heads=set())
+        self.assertEqual(mq.cancel_dead(github, out=io.StringIO()), [])
+
+    def test_an_empty_queue_cancels_every_queue_run(self):
+        # The last entry left: every group is gone.
+        github = FakeGitHub(self.active(run(5, DEAD, f'{mq.QUEUE_PREFIX}pr-8-y')), heads=set())
+        self.assertEqual(mq.cancel_dead(github, out=io.StringIO()), [5])
+
+    def test_the_runs_are_listed_before_the_entries_are_read(self):
+        # A group's entry exists before its run. Reading entries first could miss an entry created in between and
+        # cancel its brand-new run; listing runs first cannot.
+        order = []
+        github = FakeGitHub(self.active(run(1, LIVE, f'{mq.QUEUE_PREFIX}pr-7-x')), heads={LIVE})
+        get, heads = github.get, github.queue_heads
+        github.get = lambda path: (order.append('runs'), get(path))[1]
+        github.queue_heads = lambda: (order.append('entries'), heads())[1]
+        mq.cancel_dead(github, out=io.StringIO())
+        self.assertEqual(order[-1], 'entries')
+        self.assertNotIn('entries', order[:-1])
+
+
+class NotifyTests(unittest.TestCase):
+    def github(self, comments=(), check_conclusion='failure', group=True):
+        runs = [run(1, DEAD, f'{mq.QUEUE_PREFIX}pr-7-old'), run(2, LIVE, f'{mq.QUEUE_PREFIX}pr-7-new'),
+                run(3, OTHER, f'{mq.QUEUE_PREFIX}pr-70-z')] if group else []
+        return FakeGitHub({
+            'actions/runs?event=merge_group': {'workflow_runs': runs},
+            f'commits/{LIVE}/check-runs': {'check_runs': [
+                {'name': 'hosted fast: portable', 'conclusion': 'success', 'completed_at': '2026-11-19T10:05:00Z'},
+                {'name': 'hosted fast: Mac rest', 'conclusion': check_conclusion, 'completed_at': '2026-11-19T10:09:00Z',
+                 'html_url': 'https://example.test/run/9'}]},
+            'issues/7/comments': list(comments),
+        })
+
+    def test_it_names_the_failed_check_of_the_latest_group_and_labels_the_pr(self):
+        github = self.github()
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+        (path, body), label = github.posts
+        self.assertEqual(path, 'issues/7/comments')
+        self.assertIn('"hosted fast: Mac rest"', body['body'])
+        self.assertIn('https://example.test/run/9', body['body'])
+        self.assertIn(mq.MARKER.format(head=LIVE), body['body'])  # the newest group, not pr-70's or the old one
+        self.assertIn('then add `automerge` again', body['body'])
+        self.assertNotIn('gh pr merge', body['body'])
+        self.assertEqual(label, ('issues/7/labels', {'labels': ['needs-fix']}))
+
+    def test_a_failure_removal_takes_automerge_off_so_the_bridge_does_not_queue_it_again(self):
+        # Without this the label bridge's 15-minute sweep would queue the failing PR again at once, rebuilding every
+        # group behind it four times an hour. Re-arming is adding `automerge` again, as with the old lane.
+        for reason in ('CI_FAILURE', 'MERGE_CONFLICT', 'CI_TIMEOUT', ''):
+            with self.subTest(reason=reason):
+                github = self.github()
+                mq.notify(github, event(reason=reason), out=io.StringIO())
+                self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
+
+    def test_a_merged_pr_keeps_automerge(self):
+        for e in (event(merged=True), event(reason='MERGED')):
+            github = self.github()
+            mq.notify(github, e, out=io.StringIO())
+            self.assertEqual(github.deletes, [])
+
+    def test_a_manual_removal_takes_automerge_off_without_needs_fix(self):
+        # Taking a PR out by hand means "stop". If `automerge` stayed, the bridge's sweep would queue it again
+        # within 15 minutes.
+        for reason in ('MANUAL', 'DEQUEUED_MANUALLY'):
+            with self.subTest(reason=reason):
+                github = self.github()
+                mq.notify(github, event(reason=reason), out=io.StringIO())
+                self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
+                self.assertEqual([path for path, _ in github.posts], ['issues/7/comments'])
+                body = github.posts[0][1]['body']
+                self.assertIn('taken out by hand', body)
+                self.assertIn('add `automerge` again', body)
+                self.assertNotIn('Failed check', body)
+
+    def test_a_manual_removal_of_an_unlabelled_pr_removes_nothing_and_claims_nothing(self):
+        # The owner's own Merge tap on a `.github/` PR carries no `automerge`.
+        github = self.github()
+        mq.notify(github, event(reason='MANUAL', armed=False), out=io.StringIO())
+        self.assertEqual(github.deletes, [])
+        body = github.posts[0][1]['body']
+        self.assertIn('taken out by hand', body)
+        self.assertNotIn('automerge', body)
+
+    def test_a_failure_of_an_unlabelled_pr_adds_needs_fix_but_deletes_no_label(self):
+        github = self.github()
+        mq.notify(github, event(armed=False), out=io.StringIO())
+        self.assertEqual(github.deletes, [])
+        self.assertIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
+
+    def test_a_group_cancelled_by_its_time_limit_stays_armed_once(self):
+        # 2026-11-20: #4746 and #4684 left the queue when "hosted fast: portable" hit timeout-minutes, which ends as
+        # `cancelled`. Nothing in either PR failed, yet both got needs-fix and lost automerge.
+        github = self.github(check_conclusion='cancelled')
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told: retry')
+        self.assertEqual(github.deletes, [])
+        self.assertEqual([path for path, _ in github.posts], ['issues/7/comments'])
+        body = github.posts[0][1]['body']
+        self.assertIn('"hosted fast: Mac rest"', body)
+        self.assertIn('cancelled, not failed', body)
+        self.assertIn(mq.RETRY_MARKER, body)
+
+    def test_a_cancelled_group_is_set_to_merge_again_here_not_left_for_the_sweep(self):
+        # #4937: the retry used to wait for the bridge's sweep, which runs only when the VPS backstop or a schedule
+        # GitHub mostly drops starts it; with the backstop's token refused the PR sat armed and unqueued, its comment
+        # promising "within 15 minutes".
+        github = self.github(check_conclusion='cancelled')
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told: retry')
+        self.assertEqual(github.requeued, 1)
+        self.assertIn('set to merge again now', github.posts[0][1]['body'])
+        self.assertEqual(github.deletes, [])
+
+    def test_a_failed_requeue_says_the_sweep_will_do_it(self):
+        github = self.github(check_conclusion='cancelled')
+        github.requeue_ok = False
+        mq.notify(github, event(), out=io.StringIO())
+        self.assertIn("label bridge's sweep will queue it", github.posts[0][1]['body'])
+
+    def test_a_queue_timeout_with_no_check_reported_is_retried_once(self):
+        # A merge group whose Mac check never started (no runner free for 120 minutes) times out with no failed and
+        # no cancelled check. Nothing in the PR failed, yet it got needs-fix and lost automerge (#4937 harness:
+        # */mac-slow-once).
+        for reason in ('CI_TIMEOUT', 'CHECKS_TIMED_OUT'):
+            with self.subTest(reason=reason):
+                github = self.github(check_conclusion='in_progress')
+                self.assertEqual(mq.notify(github, event(reason=reason), out=io.StringIO()), 'told: retry')
+                self.assertEqual(github.requeued, 1)
+                self.assertEqual(github.deletes, [])
+                self.assertNotIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
+                self.assertIn('did not report before the queue', github.posts[0][1]['body'])
+
+    def test_a_second_queue_timeout_is_held_as_a_failure(self):
+        earlier = {'body': f'{mq.MARKER.format(head="0" * 40)}\n{mq.RETRY_MARKER}'}
+        github = self.github(check_conclusion='in_progress', comments=[earlier])
+        self.assertEqual(mq.notify(github, event(reason='CI_TIMEOUT'), out=io.StringIO()), 'told')
+        self.assertEqual(github.requeued, 0)
+        self.assertIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
+
+    def test_an_unlabelled_pr_that_times_out_is_told_to_tap_merge_again(self):
+        # #4942 audit: the owner's own Merge tap carries no `automerge`. Its retry comment promised the bridge's sweep,
+        # which only queues labelled PRs, so the PR sat out of the queue while its comment said it would be retried.
+        for reason, conclusion in (('CI_TIMEOUT', 'in_progress'), ('CI_FAILURE', 'cancelled')):
+            with self.subTest(reason=reason):
+                github = self.github(check_conclusion=conclusion)
+                self.assertEqual(mq.notify(github, event(reason=reason, armed=False), out=io.StringIO()), 'told: retry')
+                self.assertEqual((github.requeued, github.deletes), (0, []))
+                body = github.posts[0][1]['body']
+                self.assertIn('tap Merge again', body)
+                self.assertNotIn('sweep', body)
+                self.assertNotIn('It keeps', body)
+
+    def test_a_failure_with_no_failed_check_found_still_needs_a_fix(self):
+        # Not a timeout and nothing cancelled: the reason says the group failed, so the PR is held as before.
+        github = self.github(check_conclusion='in_progress')
+        self.assertEqual(mq.notify(github, event(reason='CI_FAILURE'), out=io.StringIO()), 'told')
+        self.assertEqual(github.requeued, 0)
+
+    def test_a_second_cancelled_group_is_held_as_a_failure(self):
+        earlier = {'body': mq.MARKER.format(head=DEAD) + '\n' + mq.RETRY_MARKER}
+        github = self.github(check_conclusion='cancelled', comments=[earlier])
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+        self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
+        self.assertIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
+        body = github.posts[0][1]['body']
+        self.assertIn('cancelled on its last try too', body)
+        self.assertNotIn(mq.RETRY_MARKER, body)
+
+    def test_a_real_failure_beside_a_cancel_is_still_a_failure(self):
+        github = self.github()
+        github.gets[f'commits/{LIVE}/check-runs']['check_runs'].append(
+            {'name': 'hosted web: build and Playwright', 'conclusion': 'cancelled', 'completed_at': '2026-11-19T10:10:00Z'})
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+        self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
+        self.assertIn('"hosted fast: Mac rest"', github.posts[0][1]['body'])
+
+    def test_a_manual_removal_of_a_cancelled_group_still_means_stop(self):
+        github = self.github(check_conclusion='cancelled')
+        mq.notify(github, event(reason='MANUAL'), out=io.StringIO())
+        self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
+
+    def test_deleting_a_label_that_is_already_gone_is_fine(self):
+        github = mq.GitHub('o/r', sleep=lambda _: None)
+
+        def gone(args, data=None):
+            raise subprocess.CalledProcessError(1, 'gh', stderr='gh: Label does not exist (HTTP 404)')
+        github._gh = gone
+        github.delete('issues/7/labels/automerge')  # no raise
+
+        def broken(args, data=None):
+            raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 500')
+        github._gh = broken
+        with self.assertRaises(subprocess.CalledProcessError):
+            github.delete('issues/7/labels/automerge')
+
+    def test_one_comment_per_group(self):
+        told = {'body': 'earlier\n' + mq.MARKER.format(head=LIVE)}
+        github = self.github(comments=[told])
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'skipped: already told')
+        self.assertEqual(github.posts, [])
+
+    def test_a_new_group_gets_a_new_comment(self):
+        github = self.github(comments=[{'body': mq.MARKER.format(head=DEAD)}])
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+
+    def test_a_merged_pr_gets_nothing(self):
+        for e in (event(merged=True), event(reason='MERGED')):
+            github = self.github()
+            self.assertEqual(mq.notify(github, e, out=io.StringIO()), 'skipped: merged')
+            self.assertEqual(github.posts, [])
+
+    def test_a_manual_removal_gets_a_comment_but_no_label(self):
+        github = self.github()
+        mq.notify(github, event(reason='MANUAL'), out=io.StringIO())
+        self.assertEqual([path for path, _ in github.posts], ['issues/7/comments'])
+
+    def test_a_conflict_with_no_group_run_says_so_and_keys_on_the_pr_head(self):
+        github = self.github(group=False)
+        mq.notify(github, event(reason='MERGE_CONFLICT'), out=io.StringIO())
+        body = github.posts[0][1]['body']
+        self.assertIn('conflicts with main', body)
+        self.assertIn(mq.MARKER.format(head=OTHER), body)
+
+    def test_an_invalid_merge_commit_is_a_conflict_not_a_retry(self):
+        # #4942, 2026-11-22: dequeued with INVALID_MERGE_COMMIT after #4941 and #4930 merged ahead of it. The comment
+        # said "No failed check found" and told an unlabelled PR to add `automerge`; merging main in was the fix.
+        for armed in (True, False):
+            with self.subTest(armed=armed):
+                github = self.github(check_conclusion='in_progress')
+                self.assertEqual(mq.notify(github, event(reason='INVALID_MERGE_COMMIT', armed=armed),
+                                           out=io.StringIO()), 'told')
+                self.assertEqual(github.requeued, 0)
+                body = github.posts[0][1]['body']
+                self.assertIn('Merge main into the branch', body)
+                self.assertNotIn('No failed check found', body)
+                self.assertNotIn(mq.RETRY_MARKER, body)
+                self.assertIn('add `automerge` again' if armed else 'tap Merge again', body)
+
+    def test_a_failed_read_posts_nothing_and_does_not_raise(self):
+        github = self.github()
+        github.gets['issues/7/comments'] = mq.ReadFailed('comments')
+        out = io.StringIO()
+        self.assertEqual(mq.notify(github, event(), out=out), 'skipped: read failed')
+        self.assertEqual(github.posts, [])
+        self.assertIn('::warning::', out.getvalue())
+
+    def test_a_failed_post_does_not_raise(self):
+        github = self.github()
+        github.post_error = subprocess.CalledProcessError(1, 'gh')
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'skipped: post failed')
+
+
+class RetryTests(unittest.TestCase):
+    def test_reads_retry_then_raise_read_failed(self):
+        github = mq.GitHub('o/r', sleep=lambda _: None)
+        calls = []
+
+        def failing(args, data=None):
+            calls.append(args)
+            raise subprocess.CalledProcessError(1, 'gh')
+        github._gh = failing
+        with self.assertRaises(mq.ReadFailed):
+            github.get('pulls/1')
+        with self.assertRaises(mq.ReadFailed):
+            github.queue_heads()
+        self.assertEqual(len(calls), 2 * mq.TRIES)
+
+    def test_a_blip_then_an_answer_reads_the_queue(self):
+        github = mq.GitHub('o/r', sleep=lambda _: None)
+        answers = [subprocess.CalledProcessError(1, 'gh'),
+                   subprocess.CompletedProcess([], 0, stdout='{"data":{"repository":{"mergeQueue":{"entries":'
+                                                             '{"nodes":[{"headCommit":{"oid":"%s"}}]}}}}}' % LIVE)]
+
+        def answer(args, data=None):
+            value = answers.pop(0)
+            if isinstance(value, Exception):
+                raise value
+            return value
+        github._gh = answer
+        self.assertEqual(github.queue_heads(), {LIVE})
+
+
+class WorkflowTests(unittest.TestCase):
+    def test_the_workflow_runs_mains_script_on_dequeue_and_no_pr_code(self):
+        import yaml
+        workflow = yaml.safe_load((ROOT / '.github/workflows/merge-queue-dequeued.yml').read_text())
+        self.assertEqual(workflow[True], {'pull_request_target': {'types': ['dequeued']}})
+        steps = workflow['jobs']['dequeued']['steps']
+        checkout = steps[0]['with']
+        self.assertEqual(checkout['ref'], 'main')
+        self.assertEqual(checkout['sparse-checkout'], 'scripts/merge_queue_dequeued.py')
+        self.assertFalse(checkout['persist-credentials'])
+        text = (ROOT / '.github/workflows/merge-queue-dequeued.yml').read_text()
+        self.assertNotIn('github.event.pull_request.head', text)  # no PR ref checked out or interpolated
+
+
+if __name__ == '__main__':
+    unittest.main()

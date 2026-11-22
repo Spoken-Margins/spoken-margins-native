@@ -14,6 +14,9 @@ final class CatalogDrawerModel: ObservableObject {
     /// Set while a friend's file holds the first-run opening back (#3291), so a launch whose friend's item never opened
     /// leaves the drawer to the next one. Cleared when the drawer is seen.
     static let deferredByFriendFileKey = "catalogDrawerDeferredByFriendFileV1"
+    /// Set when a friend's file failed and the drawer it withdrew has not come back yet (#3801), so the next launch
+    /// still owes the drawer, with nothing held back. Cleared when the drawer is seen.
+    static let owedAfterFriendFileFailedKey = "catalogDrawerOwedAfterFriendFileFailedV1"
 
     @Published var isPresented = false
     @Published var selectedSubject: String? { didSet { refreshEntries() } }
@@ -33,6 +36,10 @@ final class CatalogDrawerModel: ObservableObject {
     @Published private(set) var isSearchPending = false
     /// The import a "Follow Podcasts in Spoken Margins" Shortcut opened (#4284), shown over the drawer's list.
     @Published var shortcutImport: OPMLImportModel?
+    /// The "Got a link from a friend?" card shows on the first-launch opening while the Library holds no friend's packet (#3782).
+    @Published private(set) var showsFriendLinkCard = false
+    /// Under the card's Paste button when what was pasted holds no share link; cleared by the next paste.
+    @Published private(set) var friendLinkNote: String?
 
     private let store: SourceCatalogStore?
     private let searcher: PodcastNameSearch?
@@ -40,6 +47,13 @@ final class CatalogDrawerModel: ObservableObject {
     private let follow: @MainActor (String) async throws -> String
     private let subscriptions: @MainActor () -> [FeedSubscription]
     private let defaults: UserDefaults
+    /// Whether the Library holds a friend's packet, read off the main thread. Nil in tests and previews: no card.
+    private let libraryHoldsFriendPacket: (@Sendable () async -> Bool)?
+    /// Opens a pasted share link as a tapped one is opened. Nil in tests and previews.
+    private let openFriendLink: (@MainActor (URL) -> Void)?
+    /// The sheet for a friend's link that failed to open, which this drawer shows while it is up (a sheet from the root
+    /// can't present over it). Nil in tests and previews.
+    let packetOpenFailures: PacketOpenFailurePresenter?
     private var hasLoaded = false
     /// What Done plays on a fresh install (#2851): the first pick's newest episode or latest post, else the
     /// Welcome sample. Gets the picked sources' ids in tap order, and whether the Welcome sample may stand in when
@@ -70,8 +84,14 @@ final class CatalogDrawerModel: ObservableObject {
         follow: @escaping @MainActor (String) async throws -> String,
         makeOPMLImport: (@MainActor () -> OPMLImportModel)? = nil,
         searcher: PodcastNameSearch? = nil,
-        startFirstListen: (@MainActor ([String], Bool) async -> Void)? = nil
+        startFirstListen: (@MainActor ([String], Bool) async -> Void)? = nil,
+        libraryHoldsFriendPacket: (@Sendable () async -> Bool)? = nil,
+        openFriendLink: (@MainActor (URL) -> Void)? = nil,
+        packetOpenFailures: PacketOpenFailurePresenter? = nil
     ) {
+        self.libraryHoldsFriendPacket = libraryHoldsFriendPacket
+        self.openFriendLink = openFriendLink
+        self.packetOpenFailures = packetOpenFailures
         self.startFirstListen = startFirstListen
         self.searcher = searcher
         self.store = store
@@ -140,12 +160,14 @@ final class CatalogDrawerModel: ObservableObject {
     /// The root view appeared: whether this launch owes the first-run opening. It waits for `settleFirstRun`, so a
     /// friend's file the app was opened with comes first (#3291).
     func noteLaunch(libraryWasEmptyAtLaunch: Bool, followedSourceCount: Int) {
+        let heldBack = defaults.bool(forKey: Self.deferredByFriendFileKey)
+        let owedAfterFailure = defaults.bool(forKey: Self.owedAfterFriendFileFailedKey)
         welcomeOrder = FirstLaunchWelcomeOrder(drawerOwed: FirstLaunchWelcomeOrder.drawerOwed(
             libraryWasEmptyAtLaunch: libraryWasEmptyAtLaunch,
-            deferredFromEarlierLaunch: defaults.bool(forKey: Self.deferredByFriendFileKey),
+            deferredFromEarlierLaunch: heldBack || owedAfterFailure,
             hasSeenDrawer: defaults.bool(forKey: Self.seenKey),
             followedSourceCount: followedSourceCount
-        ), owedFromEarlierLaunch: defaults.bool(forKey: Self.deferredByFriendFileKey))
+        ), owedFromEarlierLaunch: heldBack, owedAfterEarlierFailure: owedAfterFailure)
         // The system can hand the file over before the root view appears.
         if hasFriendFileArrived { recordFriendFileArrival() }
     }
@@ -162,8 +184,30 @@ final class CatalogDrawerModel: ObservableObject {
     /// A friend's file (a packet or a share link) arrived. On a first launch it comes before the drawer (#3291).
     func friendFileArrived() {
         hasFriendFileArrived = true
+        showsFriendLinkCard = false
         if isPresented, isFirstRunOpening { friendFileOpenedUnderneath = true }
         recordFriendFileArrival()
+    }
+
+    /// The sheet that said a friend's link or file could not be opened has closed. The drawer that file withdrew comes
+    /// back: at once on the Library, otherwise at the next visit. Nothing is held back by that file any more, so Done
+    /// with nothing picked plays the Welcome sample as on any first launch (#3801).
+    func friendFileFailed(at place: FirstLaunchWelcomeOrder.Place) {
+        // A failure that lands before the root view notes the launch must not be replayed as an arrival by `noteLaunch`.
+        hasFriendFileArrived = false
+        apply(welcomeOrder.friendFileFailed(place: place))
+        // Still owed (not on the Library yet) but no longer held back by this file: a kill now must not leave the next
+        // launch thinking a friend's item is in the Library (the audit on PR #4597).
+        if welcomeOrder.carry == .drawerOwed {
+            defaults.removeObject(forKey: Self.deferredByFriendFileKey)
+            defaults.set(true, forKey: Self.owedAfterFriendFileFailedKey)
+        }
+        // A drawer that stayed up (the listener had picks) was never withdrawn, so nothing above brought it back: no friend's
+        // item came, so Done may play again, and the card returns for another paste (#3782).
+        if isPresented, isFirstRunOpening {
+            friendFileOpenedUnderneath = false
+            refreshFriendLinkCard()
+        }
     }
 
     private func recordFriendFileArrival() {
@@ -180,9 +224,11 @@ final class CatalogDrawerModel: ObservableObject {
             guard !isPresented, !defaults.bool(forKey: Self.seenKey) else { return }
             present()
             isFirstRunOpening = true
+            refreshFriendLinkCard()
             // A held-back drawer is owed once: spent as it opens, so a kill with it up doesn't bring it back (#3795).
             // A friend's file arriving while it is up sets the key again (`recordFriendFileArrival`).
             defaults.removeObject(forKey: Self.deferredByFriendFileKey)
+            defaults.removeObject(forKey: Self.owedAfterFriendFileFailedKey)
         case .withdrawDrawer:
             isWithdrawing = true
             isPresented = false
@@ -199,7 +245,36 @@ final class CatalogDrawerModel: ObservableObject {
         playsOnDismiss = false
         isWithdrawing = false
         friendFileOpenedUnderneath = false
+        showsFriendLinkCard = false
+        friendLinkNote = nil
         isPresented = true
+    }
+
+    /// Decides whether the first-launch card shows: the Library is read off the main thread, and the card appears
+    /// only if this opening is still the first-launch one when the answer comes back (#3782).
+    private func refreshFriendLinkCard() {
+        guard let libraryHoldsFriendPacket else { return }
+        Task { @MainActor [weak self] in
+            let holds = await libraryHoldsFriendPacket()
+            guard let self, self.isPresented, !self.hasFriendFileArrived else { return }
+            self.showsFriendLinkCard = FirstLaunchFriendLinkCard.isShown(
+                isFirstRunOpening: self.isFirstRunOpening, libraryHoldsFriendPacket: holds)
+        }
+    }
+
+    /// What the card's system Paste button pasted. A share link is told to the first-launch order as a friend's file
+    /// (an untouched drawer withdraws and the Welcome sample is held back; one with picks stays and the item opens under
+    /// it), then opened as a tapped link is; a failure brings the drawer back (#3801). Anything else is left alone,
+    /// with a line under the button.
+    func pasteIntoFriendLinkCard(_ content: String?) {
+        switch FirstLaunchFriendLinkCard.pasteResult(for: content) {
+        case .open(let url):
+            friendLinkNote = nil
+            friendFileArrived()
+            openFriendLink?(url)
+        case .notAFriendLink(let line):
+            friendLinkNote = line
+        }
     }
 
     /// A Shortcut passed in podcast feed links (#4284): the drawer opens, if it isn't open already, on their
@@ -247,6 +322,7 @@ final class CatalogDrawerModel: ObservableObject {
     func markSeen() {
         defaults.set(true, forKey: Self.seenKey)
         defaults.removeObject(forKey: Self.deferredByFriendFileKey)
+        defaults.removeObject(forKey: Self.owedAfterFriendFileFailedKey)
     }
 
     func load() async {
@@ -399,12 +475,28 @@ final class CatalogDrawerModel: ObservableObject {
     }
 }
 
+/// Shows a failed friend's link from inside the drawer, when the drawer has a presenter to show (never in previews).
+private struct DrawerPacketOpenFailureSheet: ViewModifier {
+    let drawer: CatalogDrawerModel
+
+    func body(content: Content) -> some View {
+        if let presenter = drawer.packetOpenFailures {
+            content.packetOpenFailureSheet(presenter: presenter, drawer: drawer)
+        } else {
+            content
+        }
+    }
+}
+
 struct CatalogDrawerView: View {
     @EnvironmentObject private var drawer: CatalogDrawerModel
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                if drawer.showsFriendLinkCard, !drawer.showsSearchResults {
+                    FirstLaunchFriendLinkCardView(drawer: drawer)
+                }
                 searchFailure
                 if drawer.showsSearchResults {
                     searchResults
@@ -435,6 +527,7 @@ struct CatalogDrawerView: View {
                 }
             }
         }
+        .modifier(DrawerPacketOpenFailureSheet(drawer: drawer))
         .accessibilityIdentifier("catalog.drawer")
     }
 
@@ -709,7 +802,8 @@ struct CatalogSubjectChipLabel: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            if isSelected { Image(systemName: "checkmark").font(.caption.weight(.bold)) }
+            // The chip's selected trait says it; the glyph would read "checkmark" on top (#4639).
+            if isSelected { Image(systemName: "checkmark").font(.caption.weight(.bold)).accessibilityHidden(true) }
             Text(title).font(.subheadline.weight(isSelected ? .semibold : .regular))
         }
         .padding(.horizontal, 12)
@@ -726,6 +820,7 @@ extension FirstLaunchWelcomeOrder.Place {
     init(_ model: Gate1AppModel) {
         let covered = model.spokenMarginsPackageImportReview != nil || model.isTermsOfUsePresented || model.isHelpPresented
             || model.isSharingInterjectionsPresented || model.writtenMarginDraft != nil || model.snapshot.isRecording
+            || model.packetOpenFailures.presented != nil
         if covered {
             self = .elsewhere
         } else if model.screen == .home {
@@ -760,7 +855,9 @@ private struct FirstLaunchWelcomeOrderModifier: ViewModifier {
 }
 
 extension View {
+    /// Also hosts the sheet for a friend's link or file that failed to open, because closing it brings the drawer back (#3801).
     func firstLaunchWelcomeOrder(model: Gate1AppModel, drawer: CatalogDrawerModel) -> some View {
         modifier(FirstLaunchWelcomeOrderModifier(model: model, drawer: drawer))
+            .packetOpenFailureSheet(model: model, drawer: drawer)
     }
 }

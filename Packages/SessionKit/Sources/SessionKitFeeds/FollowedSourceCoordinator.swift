@@ -16,6 +16,8 @@ public enum FollowedSourceError: Error, LocalizedError {
     case htmlResponseTooLarge
     case invalidResponse
     case noFeedCandidates
+    /// The address answered 401 or 403 (#4176): a private feed turned the link down, or a public one turned a bot away.
+    case refused
 
     public var errorDescription: String? {
         switch self {
@@ -25,6 +27,7 @@ public enum FollowedSourceError: Error, LocalizedError {
         case .htmlResponseTooLarge: "The source website exceeds the 1 MB discovery limit. Try its RSS feed URL directly."
         case .invalidResponse: "The source did not return a supported feed."
         case .noFeedCandidates: "This website doesn't offer a feed Spoken Margins can follow."
+        case .refused: "The feed turned this link down. Try again later, or for a paid show, copy a fresh RSS link from the creator\u{2019}s page."
         }
     }
 
@@ -37,6 +40,7 @@ public enum FollowedSourceError: Error, LocalizedError {
         case .htmlResponseTooLarge: "html_response_too_large"
         case .invalidResponse: "invalid_response"
         case .noFeedCandidates: "no_feed_candidates"
+        case .refused: "refused"
         }
     }
 }
@@ -76,10 +80,21 @@ public actor FollowedSourceCoordinator {
     private var artwork: FollowingArtworkStore
     /// The picture of each Library item that came from a followed feed, in a second side file (#3864).
     private var itemArtworkRecord: ItemArtworkFile
+    /// The entry ids of one show that the listener's rules and Show less marks set aside (#4046): its stored episodes, the
+    /// show. "Add everything new" leaves them out. Nil, as it is until the app passes the evaluator, sets nothing aside.
+    public typealias SetAside = @Sendable ([FeedEntry], FeedSubscription) -> Set<String>
+    private let setAside: SetAside?
+    /// Whether the listener marked an episode "Not for me" (#4285): asked with the feed's normalized key and one of
+    /// the episode's own keys (GUID, page address, audio address). A marked episode is saved as `.dismissed`, so
+    /// unfollowing and following again, which deletes the stored entries, can't bring it back.
+    private let suppressedEntry: (@Sendable (_ feedKey: String, _ entryKey: String) -> Bool)?
 
     public init(repository: any SessionRepository, session: URLSession? = nil, artworkFile: URL? = nil,
-                itemArtworkFile: URL? = nil, signals: ListeningSignalRecorder?) {
+                itemArtworkFile: URL? = nil, setAside: SetAside? = nil, signals: ListeningSignalRecorder?,
+                suppressedEntry: (@Sendable (_ feedKey: String, _ entryKey: String) -> Bool)? = nil) {
         self.repository = repository
+        self.setAside = setAside
+        self.suppressedEntry = suppressedEntry
         self.artwork = FollowingArtworkStore(file: artworkFile)
         // Not read here: this init runs on the caller's thread, which is the main thread in the app. The first
         // call into the actor reads it.
@@ -124,19 +139,30 @@ public actor FollowedSourceCoordinator {
         lastDiscoveryTrace = []
         guard let url = URL(string: link) else { throw FollowedSourceError.invalidURL }
         contactedHosts = []
+        var directFetchRefused = false
         if url.scheme?.lowercased() == "https" {
             do {
                 let parsed = try await fetch(url: url, subscription: nil)
                 return [candidate(url: url, parsed: parsed, relation: "direct", confidence: 1)]
             } catch {
                 lastDiscoveryTrace.append("direct: not a feed (\(Self.diagnosticCode(for: error)))")
+                if case FollowedSourceError.refused = error { directFetchRefused = true }
             }
+        }
+        // A link the feed refused on a paid-show host (Patreon, Supercast, Memberful and the like) has nothing for
+        // Substack's lookup to find, and that lookup would send the token to the host again (#4176). Any other
+        // refused link, a Substack post page that turns a bot away included, still gets the lookup.
+        if directFetchRefused, let host = url.host, ShareableLinkPolicy.shareableLink("https://\(host)/") == nil {
+            throw FollowedSourceError.refused
         }
         // B2: a Substack post, home page, share link or profile names its publication by origin,
         // so old and tracked links need no feed membership. Other sites return nil here.
         if let substack = await substackCandidate(for: link) {
             return [substack]
         }
+        // A refused link (#4176) may carry a listener's private token. HTML discovery would send the same address
+        // again and then probe /feed, /rss and the rest, so the refusal ends the search here.
+        if directFetchRefused { throw FollowedSourceError.refused }
         do {
             return try await genericDiscover(url: url, requiringItemMembership: requiringItemMembership)
         } catch {
@@ -523,6 +549,15 @@ public actor FollowedSourceCoordinator {
                 new: saved.entries, existing: saved.previous,
                 policy: subscription.state == .muted ? nil : subscription.newItemPolicy
             )
+            // An episode a rule skips, or the listener marked Show less, stays in Following but is not added on its own.
+            // The stored episodes are what `save` just wrote plus the ones it kept from before (imported and dismissed
+            // tombstones), so there is no second read that could fail and drop an episode for good.
+            if !toAdd.isEmpty, let setAside {
+                let retained = Set(saved.entries.map(\.id))
+                let kept = saved.previous.filter { !retained.contains($0.id) && $0.state != .unseen && $0.state != .seen }
+                let skipped = setAside(saved.entries + kept, subscription)
+                toAdd.removeAll { skipped.contains($0.id) }
+            }
             subscription.lastRefreshAt = now
             try repository.saveFeedSubscription(subscription)
             try repository.saveFeedRefreshState(FeedRefreshState(
@@ -552,6 +587,11 @@ public actor FollowedSourceCoordinator {
         return toAdd
     }
 
+    /// What a failing HTTP status means to the listener: 401 and 403 are the address being turned down (#4176).
+    private static func error(forStatus status: Int) -> FollowedSourceError {
+        status == 401 || status == 403 ? .refused : .invalidResponse
+    }
+
     private func fetch(url: URL, subscription: FeedSubscription?) async throws -> ParsedFeed {
         if let host = url.host?.lowercased() { contactedHosts.insert(host) }
         var request = URLRequest(url: url)
@@ -561,7 +601,7 @@ public actor FollowedSourceCoordinator {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw FollowedSourceError.invalidResponse }
         if http.statusCode == 304 { throw HTTPNotModified() }
-        guard (200..<300).contains(http.statusCode) else { throw FollowedSourceError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else { throw Self.error(forStatus: http.statusCode) }
         guard data.count <= Self.maximumFeedBytes else { throw FollowedSourceError.responseTooLarge }
         var parsed = try parser.parse(data: data, contentType: http.value(forHTTPHeaderField: "Content-Type"))
         // RSS often omits a self link. Redirect aliases must use the final
@@ -614,7 +654,7 @@ public actor FollowedSourceCoordinator {
 
     private func fetchHTML(url: URL) async throws -> String {
         let page = try await loadHTML(url: url)
-        guard (200..<300).contains(page.status) else { throw FollowedSourceError.invalidResponse }
+        guard (200..<300).contains(page.status) else { throw Self.error(forStatus: page.status) }
         guard let html = page.html else { throw FollowedSourceError.htmlResponseTooLarge }
         return html
     }
@@ -673,10 +713,11 @@ public actor FollowedSourceCoordinator {
         let retainedIDs = Set(retainedItems.map { Self.entryID(subscriptionID: subscription.id, itemID: $0.id) })
 
         let seenAt = Date()
+        let feedKey = FeedURLKey.make(subscription.source.canonicalURL)
         var saved: [FeedEntry] = []
         for item in retainedItems {
             let id = Self.entryID(subscriptionID: subscription.id, itemID: item.id)
-            let entry = FeedEntry(
+            var entry = FeedEntry(
                 id: id,
                 subscriptionId: subscription.id,
                 canonicalURL: item.url,
@@ -693,6 +734,11 @@ public actor FollowedSourceCoordinator {
                 episodeGUID: item.guid,
                 firstSeenAt: FollowBaseline.firstSeenAt(existing: existing[id], followMoment: followMoment, now: seenAt)
             )
+            // Before anything reads the state (Add every new item takes `.unseen` entries only). An episode the
+            // listener already added stays imported.
+            if entry.state != .imported, entry.state != .dismissed, isMarkedNotForMe(entry, feedKey: feedKey) {
+                entry.state = .dismissed
+            }
             try repository.saveFeedEntry(entry)
             saved.append(entry)
             // Every retained entry, stored or not: the recorder publishes each one once, so entries
@@ -707,6 +753,12 @@ public actor FollowedSourceCoordinator {
             try repository.deleteFeedEntry(id: entry.id)
         }
         return (saved, existingEntries)
+    }
+
+    private func isMarkedNotForMe(_ entry: FeedEntry, feedKey: String?) -> Bool {
+        guard let suppressedEntry, let feedKey else { return false }
+        return NotForMeStore.entryKeys(guid: entry.episodeGUID, canonicalURL: entry.canonicalURL, audioURL: entry.audioURL)
+            .contains { suppressedEntry(feedKey, $0) }
     }
 
     private static func entryID(subscriptionID: String, itemID: String) -> String {
@@ -729,8 +781,11 @@ private struct HTTPNotModified: Error, LocalizedError {
     var errorDescription: String? { "not_modified" }
 }
 
-private final class BoundedRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    private let maximumRedirects: Int
+/// Follows at most `maximumRedirects` redirects per task, each to an https address (#3817). Internal so tests can
+/// call `urlSession(_:task:willPerformHTTPRedirection:...)` directly: a stub `URLProtocol` can't test it, because
+/// what a session does after the protocol reports a redirect differs between OS versions (#4681).
+final class BoundedRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    let maximumRedirects: Int
     private let lock = NSLock()
     private var counts: [Int: Int] = [:]
 

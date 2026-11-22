@@ -42,13 +42,16 @@ struct PlaybackMarginsView: View {
                     if entry.origin == .own, let row = ownByID[entry.id] {
                         PlaybackMarginRowView(title: row.preview, detail: row.placeDescription(),
                             isShared: false, identifier: "margins.row.\(row.id)",
+                            goesTo: SilentMarginWords.ownWrittenGoesTo(row.interjection), sourceNoun: model.sourceNoun,
+                            star: .ownMargin(row.interjection, place: .playerMargins, model: model),
                             showDetails: { selectedMargin = row }, play: { MarginMomentTap.start(row, model: model) })
                     } else if entry.origin == .shared, let row = sharedByID[entry.id] {
                         PlaybackMarginRowView(title: row.interjection.approvedTranscript,
-                            detail: "\(row.collectionLabel) · \(row.positionDescription)",
+                            detail: SilentMarginWords.detail("\(row.collectionLabel) · \(row.positionDescription)", goesTo: row.goesToFromList),
                             isShared: true, identifier: "margins.shared.row.\(row.id)",
-                            canPlay: row.canPlayFromMarginsList,
-                            showDetails: { selectedSharedMargin = row }, play: { model.playSharedMarginMoment(row) })
+                            canPlay: row.canPlayFromMarginsList || row.goesToFromList,
+                            goesTo: row.goesToFromList, sourceNoun: model.sourceNoun,
+                            showDetails: { selectedSharedMargin = row }, play: { model.goToSharedMargin(row) })
                     }
                 }
                 Button(action: model.openMargins) {

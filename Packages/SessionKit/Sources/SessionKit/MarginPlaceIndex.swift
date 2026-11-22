@@ -136,7 +136,7 @@ public enum MarginPlaces {
     }
 
     /// Keyed by `MarginCollection.PrivateEntry.id`. Only Margins on the item itself have a place; responses and
-    /// summaries aren't in the source.
+    /// summaries aren't in the source, and neither is a moved Margin captured with no position (`hasPlace`, #4233).
     /// - A Margin at a text position gets its chapter name and paragraph number. The item's text is only read, and
     ///   only as far as its last such Margin, when there is one.
     /// - A Margin with a clock time gets the name of the publisher chapter its time falls in, from `loadMediaChapters`.
@@ -157,7 +157,7 @@ public enum MarginPlaces {
     ) -> [String: Place] {
         let itemsById = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var result: [String: Place] = [:]
-        for (itemId, group) in Dictionary(grouping: entries.filter { $0.interjection.targetType == .item }, by: \.interjection.itemId) {
+        for (itemId, group) in Dictionary(grouping: entries.filter { $0.interjection.targetType == .item && $0.interjection.hasPlace }, by: \.interjection.itemId) {
             let atText = group.filter { $0.interjection.anchor.mediaTimeMs == nil }
             // A transcript item's meeting times, read once for the item and only for a transcript (#2997).
             let times = itemsById[itemId]?.externalReferenceType == TranscriptItemText.referenceType && !atText.isEmpty

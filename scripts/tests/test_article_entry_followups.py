@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCES = ROOT / 'App' / 'SpokenMarginsApp' / 'Sources' / 'SpokenMarginsApp'
 
 # A call that puts article text into the Library.
-IMPORT_CALL = re.compile(r'\b(?:importBrowserTextItem|importBrowserTextInBackground|importBrowserTextInBackgroundOffMain|importClippedPage)\(')
+IMPORT_CALL = re.compile(r'\b(?:importBrowserTextItem|importBrowserTextInBackground|importBrowserTextInBackgroundOffMain|importBrowserTextInBackgroundReloadingOffMain|importClippedPage)\(')
 # A call that looks for the publisher's own voice for the item just imported.
 LOOKUP_CALL = re.compile(r'\b(?:rememberSharedLinkVoiceover|lookUpVoiceover|importClippedPage|publisherAudioLookup)\(')
 
@@ -29,7 +29,7 @@ INVENTORY = {
     'Gate1AppModel+FollowedSources.swift': (2, 'lookup', 'Following: publisherAudioLookup on a tap; a refresh defers it to opening (#2368)'),
     'Gate1AppModel+ImportInbox.swift': (2, 'open-time', 'share-sheet text payloads drained at launch (open-time), and a clip link open, which runs importClippedPage and so the lookup (#810)'),
     'Gate1AppModel+PublisherAudio.swift': (1, 'lookup', 'importClippedPage: Safari clip, lookup after the import (#810)'),
-    'Gate1AppModel+RemotePDF.swift': (3, 'not-web', 'PDF imports'),
+    'Gate1AppModel+RemotePDF.swift': (4, 'not-web', 'PDF imports, and the engine call inside importBrowserTextInBackgroundReloadingOffMain, the awaiting twin of the import funnel whose callers are listed in their own files (#2256)'),
     'Gate1AppModel+SharedItemAcquisition.swift': (1, 'open-time', 'a shared item whose article is fetched later'),
     'Gate1AppModel+SourceLinkBackground.swift': (1, 'lookup', 'link imported in the background (#810)'),
     'Gate1AppModel+SourceLinkForeground.swift': (1, 'lookup', 'link imported with the app in front (#810)'),

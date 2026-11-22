@@ -3397,6 +3397,10 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
         activeRoute == .speech ? speech.currentRecoveryCharOffset() : nil
     }
 
+    public func footnoteContinuationSourceOffset() -> Int? {
+        activeRoute == .speech ? speech.footnoteContinuationSourceOffset() : nil
+    }
+
     public func currentMediaTimeMs() -> Int? {
         activeRoute == .media ? media.currentMediaTimeMs() : nil
     }

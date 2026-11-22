@@ -12,12 +12,12 @@ final class PlaybackSegmentPaletteTests: XCTestCase {
         return measurement.ratio
     }
 
-    func testThePaletteHoldsTheValuesTheViewsDrewBeforeTheAuditSawThem() {
+    func testThePaletteHoldsTheOpaqueWhitePillWithPlateGreenWords() {
         XCTAssertEqual(PlaybackSegmentPalette.trayAlpha, 0.06)
-        XCTAssertEqual(PlaybackSegmentPalette.paneSelectedFillAlpha, 0.18)
-        XCTAssertEqual(PlaybackSegmentPalette.filterSelectedFillAlpha, 0.40)
+        XCTAssertEqual(PlaybackSegmentPalette.paneSelectedFillAlpha, 1)
+        XCTAssertEqual(PlaybackSegmentPalette.filterSelectedFillAlpha, 1)
         XCTAssertEqual(PlaybackSegmentPalette.fill, AppSemanticColorRGB.white)
-        XCTAssertEqual(PlaybackSegmentPalette.selectedLabel, AppSemanticColorRGB.white)
+        XCTAssertEqual(PlaybackSegmentPalette.selectedLabel, AppSemanticColorRGB.listeningBackground)
         XCTAssertEqual(PlaybackSegmentPalette.unselectedLabel, AppSemanticColorRGB.white)
         XCTAssertEqual(PlaybackSegmentPalette.plate, AppSemanticColorRGB.listeningBackground)
     }
@@ -27,45 +27,43 @@ final class PlaybackSegmentPaletteTests: XCTestCase {
         let tray = PlaybackSegmentPalette.tray.light
         XCTAssertEqual(tray, AppSemanticColorRGB.white.light.composited(over: plate, alpha: 0.06))
         XCTAssertEqual(PlaybackSegmentPalette.paneSelectedPill.light,
-                       AppSemanticColorRGB.white.light.composited(over: tray, alpha: 0.18))
+                       AppSemanticColorRGB.white.light.composited(over: tray, alpha: PlaybackSegmentPalette.paneSelectedFillAlpha))
         XCTAssertEqual(PlaybackSegmentPalette.filterSelectedPill.light,
-                       AppSemanticColorRGB.white.light.composited(over: tray, alpha: 0.40))
+                       AppSemanticColorRGB.white.light.composited(over: tray, alpha: PlaybackSegmentPalette.filterSelectedFillAlpha))
         // The plate is the same in both appearances, so the layers are too.
         XCTAssertEqual(PlaybackSegmentPalette.tray.light, PlaybackSegmentPalette.tray.dark)
         XCTAssertEqual(PlaybackSegmentPalette.paneSelectedPill.light, PlaybackSegmentPalette.paneSelectedPill.dark)
     }
 
-    func testTheAuditNamesAllFivePairsAndEveryOneIsInTheWholeAudit() {
+    func testTheAuditNamesAllSixPairsAndEveryOneIsInTheWholeAudit() {
         let names = AppColorContrastAudit.playbackSegmentPairs.map(\.name)
         XCTAssertEqual(names, [
             "pane switch selected fill against tray", "pane switch selected label",
-            "filter selected fill against tray", "filter selected label", "segment unselected label on tray"
+            "filter selected fill against tray", "filter selected label", "segment unselected label on tray",
+            "segment selected bar on pill"
         ])
         XCTAssertEqual(Set(names).count, names.count)
         let all = Set(AppColorContrastAudit.allPairs.map(\.name))
         for name in names { XCTAssertTrue(all.contains(name), name) }
     }
 
-    func testTodaysRatiosMatchTheNumbersTheDesignQuotes() throws {
-        XCTAssertEqual(try ratio("pane switch selected fill against tray"), 1.69, accuracy: 0.02)
-        XCTAssertEqual(try ratio("filter selected label"), 3.41, accuracy: 0.02)
-        XCTAssertEqual(try ratio("filter selected fill against tray"), 3.10, accuracy: 0.02)
-        XCTAssertGreaterThanOrEqual(try ratio("pane switch selected label"), 4.5)
+    func testTheRatiosMatchTheNumbersTheDesignQuotes() throws {
+        // Pill against tray: 10.54:1 (was 1.69 for the pane switch and 3.10 for the filter).
+        XCTAssertEqual(try ratio("pane switch selected fill against tray"), 10.54, accuracy: 0.05)
+        XCTAssertEqual(try ratio("filter selected fill against tray"), 10.54, accuracy: 0.05)
+        // Plate green on white: 12.63:1 in both controls (the filter was 3.41).
+        XCTAssertEqual(try ratio("pane switch selected label"), 12.63, accuracy: 0.05)
+        XCTAssertEqual(try ratio("filter selected label"), 12.63, accuracy: 0.05)
+        XCTAssertEqual(try ratio("segment selected bar on pill"), 12.63, accuracy: 0.05)
         XCTAssertGreaterThanOrEqual(try ratio("segment unselected label on tray"), 4.5)
     }
 
-    func testExactlyTheTwoFailingPairsAreKnownFailuresInEachAppearance() {
+    func testNoSegmentPairFailsInEitherAppearanceAndNoneIsAKnownFailure() {
         let segmentNames = Set(AppColorContrastAudit.playbackSegmentPairs.map(\.name))
-        let failing = Set(AppColorContrastAudit.measurements(for: AppColorContrastAudit.playbackSegmentPairs)
-            .filter(\.fails).map { "\($0.pair)|\($0.appearance)" })
-        let known = Set(AppColorContrastAudit.knownFailures.filter { segmentNames.contains($0.pair) }
-            .map { "\($0.pair)|\($0.appearance)" })
-        XCTAssertEqual(failing, [
-            "pane switch selected fill against tray|light", "pane switch selected fill against tray|dark",
-            "filter selected label|light", "filter selected label|dark"
-        ])
-        XCTAssertEqual(known, failing, "A known failure that passes, or a failure that is not known, fails the audit")
-        XCTAssertTrue(AppColorContrastAudit.knownFailures.filter { segmentNames.contains($0.pair) }
-            .allSatisfy { $0.fixedBy == "#3735" })
+        let measurements = AppColorContrastAudit.measurements(for: AppColorContrastAudit.playbackSegmentPairs)
+        XCTAssertEqual(measurements.count, segmentNames.count * 2, "every pair is measured light and dark")
+        XCTAssertTrue(measurements.filter(\.fails).isEmpty)
+        XCTAssertTrue(AppColorContrastAudit.knownFailures.filter { segmentNames.contains($0.pair) }.isEmpty,
+                      "#3735 is fixed: its known failures are removed")
     }
 }

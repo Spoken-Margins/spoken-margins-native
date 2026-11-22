@@ -129,10 +129,10 @@ class CopiesStayEqual(unittest.TestCase):
                     self.assertEqual(dial_gate.trusted(item), trust.trusted(item))
                     self.assertEqual(holds.trusted(item), trust.trusted(item))
 
-    def test_the_lane_runner_names_the_same_people_once_it_checks(self):
-        source = (SCRIPTS / 'lane-runner.py').read_text()
+    def test_the_merge_rules_name_the_same_people_once_they_check(self):
+        source = (SCRIPTS / 'lane_merge_rules.py').read_text()  # moved out of lane-runner.py (#4769)
         if 'TRUSTED_ASSOCIATIONS' in source:  # #1797 adds the runner's own check; when it lands the sets must agree
-            spec = importlib.util.spec_from_file_location('lane_runner_for_trust', SCRIPTS / 'lane-runner.py')
+            spec = importlib.util.spec_from_file_location('lane_merge_rules_for_trust', SCRIPTS / 'lane_merge_rules.py')
             runner = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(runner)
             self.assertEqual(tuple(runner.TRUSTED_ASSOCIATIONS), trust.TRUSTED_ASSOCIATIONS)

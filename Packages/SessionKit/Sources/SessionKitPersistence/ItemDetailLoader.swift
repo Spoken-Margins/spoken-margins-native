@@ -48,7 +48,9 @@ public struct ItemDetailLoader {
         // take is added, so a time read back now could name other words (#3664). It keeps the words it was made on.
         let isNote = SpokenNoteItem.isSpokenNote(mediaType: item.mediaType)
         func placedByTime(_ margin: Interjection) -> Bool {
-            margin.targetType == .item && margin.anchor.mediaTimeMs != nil
+            // A moved Margin with no place stores a zero media time that names the episode's opening, not its moment
+            // (#4233): it keeps the empty context it has rather than words from the start of the episode.
+            margin.targetType == .item && margin.hasPlace && margin.anchor.mediaTimeMs != nil
                 && !(isNote && SpokenNoteMargins.isSentenceAnchored(margin.anchor))
         }
         // Only a Margin that is placed by media time needs the segments to name its surrounding words.

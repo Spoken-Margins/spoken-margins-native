@@ -71,8 +71,10 @@ extension Gate1AppModel {
             }
             let remaining = moment.msUntilTarget(currentMediaTimeMs: moment.review == nil ? (marginMomentPositionMs ?? moment.startMediaTimeMs) : snapshot.currentMediaTimeMs)
             return PinnedMarginCard(subject: subject, stage: .comingUp(msRemaining: remaining), position: position, noun: sourceNoun,
-                nextPress: nextMarginPress, run: run)
+                nextPress: nextMarginPress, run: run, targetLeadInMs: moment.target.leadInMs)
         }
+        // A friend's Margin the listener went to that is never read aloud: its words, while the source is still near it (#4934).
+        if let landing = shownSilentMarginLanding { return landing.card(noun: sourceNoun) }
         if let saved = friendAnswerSavedCard { return saved }
         // Auto-play off still holds the slot: Next Margin is reachable between Margins and the title never moves.
         guard let next = nextSharedMargin else { return friendLastMarginCard }
@@ -80,12 +82,13 @@ extension Gate1AppModel {
         let arrival = sharedMarginArrival(next.prompt)
         return PinnedMarginCard(
             subject: .friend(SharedPacketArrival.senderName(next.prompt.senderLabel)), stage: .upNext(msRemaining: remaining, arrival: arrival),
-            position: PinnedMarginCard.position(next.prompt.index, of: next.prompt.count), noun: sourceNoun, nextPress: nextMarginPress)
+            position: PinnedMarginCard.position(next.prompt.index, of: next.prompt.count), noun: sourceNoun, nextPress: nextMarginPress,
+            targetLeadInMs: next.prompt.interjection.senderLeadInMs)
     }
 
     /// What the open source is called on the card: from the open item's own stored facts (the Library row's), else from
     /// whether it plays as media. Never hard-coded to "episode" (#3597).
-    private var sourceNoun: SourceNoun {
+    var sourceNoun: SourceNoun {
         if let row = libraryItems.first(where: { $0.id == snapshot.itemId }) {
             return SourceNoun(mediaType: row.mediaType, sourceReference: row.sourceReference, sourceReferenceType: row.sourceReferenceType)
         }
@@ -122,11 +125,15 @@ extension Gate1AppModel {
         if let moment = marginMoment {
             return moment.isPlayingMargin
                 ? .momentVoice(isReview: moment.isReview, isLastMargin: moment.unplayed.isEmpty)
-                : .momentLeadIn(isReview: moment.isReview, positionMs: snapshot.currentMediaTimeMs, targetMs: moment.target.mediaTimeMs)
+                : .momentLeadIn(
+                    isReview: moment.isReview, positionMs: snapshot.currentMediaTimeMs, targetMs: moment.target.mediaTimeMs,
+                    targetLeadInMs: moment.target.leadInMs)
         }
         guard let next = nextSharedMargin else { return nil }
         guard let ms = next.mediaTimeMs else { return nil }
-        return .sharedPlayback(positionMs: snapshot.currentMediaTimeMs, nextMarginMs: ms, arrival: sharedMarginArrival(next.prompt))
+        return .sharedPlayback(
+            positionMs: snapshot.currentMediaTimeMs, nextMarginMs: ms, arrival: sharedMarginArrival(next.prompt),
+            nextLeadInMs: next.prompt.interjection.senderLeadInMs)
     }
 
     /// The card's Next Margin: the first press goes to the next Margin's lead-in, the second goes straight to the
@@ -161,10 +168,13 @@ extension Gate1AppModel {
     }
 
     /// Goes to a friend's Margin and plays it, whether the listener asked from the card or the episode got there.
-    func playSharedMarginNow(_ prompt: ImportedCommentaryPrompt) {
+    /// False when the jump failed; it has told the listener why.
+    @discardableResult
+    func playSharedMarginNow(_ prompt: ImportedCommentaryPrompt) -> Bool {
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: true) } // the episode comes back, so the jump reads it as playing
         dismissPendingImportedCommentary()
-        guard jumpToImportedCommentary(interjectionID: prompt.interjection.id) else { return }
+        guard jumpToImportedCommentary(interjectionID: prompt.interjection.id) else { return false }
         listenToPendingImportedCommentary()
+        return true
     }
 }

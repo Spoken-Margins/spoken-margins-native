@@ -146,10 +146,13 @@ test('the play button on a show passes over a paid newest post and starts the ne
   await page.locator('.play-newest').click();
   const nowPlaying = page.getByRole('dialog', { name: OLDER });
   await expect(nowPlaying).toBeVisible();
-  await expect.poll(() => elapsed(page), { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
-  expect(pageReads).toHaveLength(1);
+  // The note is up for six seconds from the moment the walk ends, so it is waited on as a state first. Waiting for two
+  // seconds of audio before looking let a slow runner's audio clock outlast the note: it failed twice in the merge queue
+  // with the episode playing at 0:04 and no note on the page.
   await expect(page.getByText('Its newest post can’t be played here, so this is the newest one that can.')).toBeVisible();
   await expect(page.getByText(/This post is for paid subscribers/)).toHaveCount(0);
+  expect(pageReads).toHaveLength(1);
+  await expect.poll(() => elapsed(page), { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
   await shot(page, info, '26-play-newest-skips-paid');
 });
 

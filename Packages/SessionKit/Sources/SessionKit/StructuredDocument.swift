@@ -101,14 +101,19 @@ public struct StructuredDocument: Codable, Equatable, Sendable {
         public var pageIndex: Int
         public var bounds: PDFNormalizedRect
         public var captionSegmentId: String?
+        /// The segment that holds this table's or figure's own printed text, when the extractor found its
+        /// place on the page (#3895). A segment that runs over a page break has one float per page. Optional,
+        /// so documents saved before it existed still decode, and absent when unknown.
+        public var textSegmentId: String?
 
-        public init(id: String, kind: Kind, label: String?, pageIndex: Int, bounds: PDFNormalizedRect, captionSegmentId: String?) {
+        public init(id: String, kind: Kind, label: String?, pageIndex: Int, bounds: PDFNormalizedRect, captionSegmentId: String?, textSegmentId: String? = nil) {
             self.id = id
             self.kind = kind
             self.label = label
             self.pageIndex = pageIndex
             self.bounds = bounds
             self.captionSegmentId = captionSegmentId
+            self.textSegmentId = textSegmentId
         }
     }
 
@@ -145,6 +150,34 @@ public struct StructuredDocument: Codable, Equatable, Sendable {
         self.floats = floats
         self.outline = outline
     }
+
+    /// The document without the page regions of table and figure text (#3895) and of picture-only figures found from
+    /// their captions (#4587): those floats, and the segment links to them. A re-import compares documents with this,
+    /// so an extraction that only added regions to a PDF already in the Library is not taken for a changed paper
+    /// (which would make a second copy of the item). A caption float has no `textSegmentId` and names its caption
+    /// segment; no segment links to it.
+    public var withoutClipGeometry: StructuredDocument {
+        var copy = self
+        func isClipRegion(_ float: Float) -> Bool {
+            float.textSegmentId != nil || float.captionSegmentId != nil
+        }
+        let removed = Set(floats.filter(isClipRegion).map(\.id))
+        guard !removed.isEmpty else { return copy }
+        copy.floats = floats.filter { !isClipRegion($0) }
+        for index in copy.segments.indices {
+            if let id = copy.segments[index].floatId, removed.contains(id) { copy.segments[index].floatId = nil }
+        }
+        return copy
+    }
+
+    /// What a re-import compares: the document without clip regions (#3895) and without the hash of the PDF file it
+    /// came from (#4338). The hash is nil on every PDF added before the original was kept, and differs when a publisher
+    /// serves the same words in new bytes, so neither makes the words a different paper.
+    public var comparedOnReimport: StructuredDocument {
+        var copy = withoutClipGeometry
+        copy.extraction.sourceSHA256 = nil
+        return copy
+    }
 }
 
 /// One line of extracted text with the role the extractor gave it.
@@ -160,6 +193,11 @@ public struct StructuredDocumentLine: Equatable, Sendable {
     public var endsWithSoftHyphen: Bool
     /// Outline chapters that start at this line without a printed heading (#355).
     public var outlineEntries: [OutlineEntry]
+    /// Where the line sits on its page, as a fraction of the page's crop box with the origin at the bottom
+    /// left (PDF space). Set by the extractor for table and figure text only, and only when it is sure of it:
+    /// a rotated page has none (#3895). Once it is set on every line, picture-only figures are found from their
+    /// captions (#4587); with any line on a page unplaced, that page gets none.
+    public var bounds: PDFNormalizedRect?
 
     public struct OutlineEntry: Equatable, Sendable {
         public var title: String
@@ -171,7 +209,7 @@ public struct StructuredDocumentLine: Equatable, Sendable {
         }
     }
 
-    public init(text: String, role: StructuredDocument.Role, pageIndex: Int? = nil, level: Int? = nil, superscripts: [Range<Int>] = [], endsWithSoftHyphen: Bool = false, outlineEntries: [OutlineEntry] = []) {
+    public init(text: String, role: StructuredDocument.Role, pageIndex: Int? = nil, level: Int? = nil, superscripts: [Range<Int>] = [], endsWithSoftHyphen: Bool = false, outlineEntries: [OutlineEntry] = [], bounds: PDFNormalizedRect? = nil) {
         self.text = text
         self.role = role
         self.pageIndex = pageIndex
@@ -179,6 +217,7 @@ public struct StructuredDocumentLine: Equatable, Sendable {
         self.superscripts = superscripts
         self.endsWithSoftHyphen = endsWithSoftHyphen
         self.outlineEntries = outlineEntries
+        self.bounds = bounds
     }
 }
 
@@ -191,7 +230,8 @@ public enum StructuredDocumentBuilder {
         engine: String,
         version: Int,
         pageCount: Int,
-        sourceSHA256: String? = nil
+        sourceSHA256: String? = nil,
+        captionTextArea: Bool = true
     ) -> StructuredDocument {
         var text = ""
         var length = 0
@@ -203,6 +243,13 @@ public enum StructuredDocumentBuilder {
         // The previous body line ended in a superscript run that is not finished ("19,34–").
         var superscriptContinues = false
         var continuedMarkers: [StructuredDocument.TextRange] = []
+        // Where the table and figure text lines sit on their pages, by the segment they ended up in (#3895).
+        var placed: [PDFClipLocator.Line] = []
+        // Every line that has a place on its page, and the pages with a line that has none (#4587).
+        var locatedLines: [PDFCaptionFloatBuilder.Line] = []
+        var unplacedPages: Set<Int> = []
+        // How many lines open a caption with each label, by segment (#4587): every line, placed or not.
+        var captionLabelCounts: [String: Int] = [:]
 
         for line in lines {
             pendingOutline += line.outlineEntries
@@ -239,6 +286,19 @@ public enum StructuredDocumentBuilder {
                     level: line.role == .heading || line.role == .title ? line.level : nil,
                     pageIndex: line.pageIndex
                 ))
+            }
+            let segmentId = segments[segments.count - 1].id
+            if let label = PDFCaptionFloatBuilder.openingLabel(role: line.role, text: cleaned.text) {
+                captionLabelCounts[PDFCaptionFloatBuilder.openingLabelKey(segmentId: segmentId, label: label), default: 0] += 1
+            }
+            if let bounds = line.bounds, let pageIndex = line.pageIndex {
+                if let kind = PDFClipLocator.kind(of: line.role) {
+                    placed.append(.init(segmentId: segments[segments.count - 1].id, kind: kind, pageIndex: pageIndex, bounds: bounds))
+                }
+                locatedLines.append(.init(segmentId: segments[segments.count - 1].id, text: cleaned.text, role: line.role,
+                                          pageIndex: pageIndex, bounds: bounds))
+            } else if let pageIndex = line.pageIndex, ![.title, .pageHeader, .pageFooter].contains(line.role) {
+                unplacedPages.insert(pageIndex)
             }
             let cleanedCharacters = Array(cleaned.text)
             if line.endsWithSoftHyphen, cleanedCharacters.last == "-" {
@@ -277,6 +337,15 @@ public enum StructuredDocumentBuilder {
         }
         markers += printedCitationMarkers(in: text, segments: segments, excluding: markers)
         markers.sort { $0.range.start < $1.range.start }
+        let textFloats = PDFClipLocator.floats(from: placed)
+        for float in textFloats {
+            guard let segmentId = float.textSegmentId,
+                  let index = segments.firstIndex(where: { $0.id == segmentId }), segments[index].floatId == nil else { continue }
+            segments[index].floatId = float.id
+        }
+        let floats = textFloats + PDFCaptionFloatBuilder.floats(
+            from: locatedLines, unplacedPages: unplacedPages, textFloats: textFloats, useTextArea: captionTextArea,
+            labelCounts: captionLabelCounts)
         return StructuredDocument(
             extraction: StructuredDocument.Extraction(
                 engine: engine,
@@ -288,6 +357,7 @@ public enum StructuredDocumentBuilder {
             text: text,
             segments: segments,
             markers: markers,
+            floats: floats,
             outline: outline.isEmpty ? nil : outline
         )
     }

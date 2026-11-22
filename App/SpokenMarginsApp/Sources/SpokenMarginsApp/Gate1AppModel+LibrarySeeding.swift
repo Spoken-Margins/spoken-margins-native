@@ -30,6 +30,7 @@ extension Gate1AppModel {
     func bootstrapLibraryIfNeeded() {
         guard pendingUITestingSeed != nil || (libraryItems.isEmpty && store == nil) else { return }
         SessionShareFiles.removeLeftovers() // files of a multi-session share whose sheet died with the app (#1528)
+        removeInterruptedPDFOriginalWrites() // temporary files of an original PDF a quit cut short (#4338)
         do {
             let store = try requireStore()
             libraryAccessError = nil
@@ -92,12 +93,14 @@ extension Gate1AppModel {
             // manifest from an obsolete voice or model identity.
             // The Recently Deleted rows come from this same read: the snapshot already holds deleted items, so a
             // second `listDeletedItemSummaries` pass would read the whole item table again (#2508).
-            let launchData = try LibraryReadSnapshot.read(store: store, hiddenSenders: hiddenSenders.current)
+            let launchData = settleCollectionImports( // an import ended mid-way is settled before the first draw (#3769)
+                try LibraryReadSnapshot.read(store: store, hiddenSenders: hiddenSenders.current), store: store)
             rows = LibraryRowBuilder.rows(from: launchData, context: startupAudioContext)
             let deletedRows = Self.recentlyDeletedRows(from: launchData)
             try reconcileOnboardingEvidence(items: launchData.liveItems, store: store)
             try recoverInterruptedAIJobs(store: store); settleOrphanedTranscriptions(store: store)
             libraryItems = rows
+            if let stored = launchData.collections { libraryCollections.publish(stored, folders: launchData.libraryFolders) }
             recentlyDeletedItems = deletedRows
             let availableItemIDs = Set(rows.map(\.id))
             var writtenMarginNotice: String?

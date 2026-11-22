@@ -35,12 +35,15 @@ final class LiveSessionMarginDetailAppTests: XCTestCase {
         LiveSessionMargin(id: "b", text: "", markedAt: now, sessionOffsetMs: 2_000, isBlindMark: true)
     }
 
-    private func mount(_ margin: LiveSessionMargin) throws -> MountedTree {
+    private func mount(
+        _ margin: LiveSessionMargin, photoPage: LiveSessionPlace? = nil,
+        keepHeardPlace: @escaping () -> Void = {}, declineHeardPlace: @escaping () -> Void = {}
+    ) throws -> MountedTree {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first { $0.isKeyWindow }
         let view = LiveSessionMarginDetailView(
-            margin: margin, sessionTitle: "Staff meeting", position: "1:05 in",
-            keepHeardPlace: {}, declineHeardPlace: {}, saveText: { _ in }, delete: {})
+            margin: margin, sessionTitle: "Staff meeting", position: "1:05 in", photoPage: photoPage,
+            keepHeardPlace: keepHeardPlace, declineHeardPlace: declineHeardPlace, saveText: { _ in }, delete: {})
         let host = UIHostingController(rootView: view)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -63,6 +66,30 @@ final class LiveSessionMarginDetailAppTests: XCTestCase {
         XCTAssertFalse(ids.contains("marginDetail.more.button"))
         XCTAssertFalse(ids.contains("marginDetail.playMoment.button"))
         XCTAssertFalse(ids.contains("marginDetail.playRecording.button"), "A written Margin has no recording to hear")
+    }
+
+    /// #2708: a page number read from the photo is offered the way a page heard in the words is, with Keep and No.
+    func testAPageReadFromAPhotoIsOfferedWithKeepAndNo() async throws {
+        var kept = 0
+        var declined = 0
+        let tree = try mount(written(), photoPage: LiveSessionPlace(unit: .page, value: 118),
+                             keepHeardPlace: { kept += 1 }, declineHeardPlace: { declined += 1 })
+        defer { tree.close() }
+        _ = try await tree.waitForNode("the offer") {
+            $0.identifier == "marginDetail.photoPage.label" && $0.label == "Read \u{201C}118\u{201D} on the page. Keep it as a checkpoint?"
+        }
+        _ = try await tree.waitForNode("No") { $0.identifier == "marginDetail.declinePhotoPage.button" }
+        XCTAssertEqual(kept + declined, 0, "Mounting keeps and turns down nothing")
+        XCTAssertTrue(tree.activate { $0.identifier == "marginDetail.keepPhotoPage.button" }, "Keep refused the activation")
+        XCTAssertEqual(kept, 1)
+        XCTAssertEqual(declined, 0)
+    }
+
+    func testNoOfferShowsWhenNoPageWasRead() async throws {
+        let tree = try mount(written())
+        defer { tree.close() }
+        _ = try await tree.waitForNode("the screen") { $0.identifier == "marginDetail.screen" }
+        XCTAssertFalse(tree.nodes().contains { $0.identifier == "marginDetail.photoPage.label" })
     }
 
     func testASpokenMarginOffersTheRecording() async throws {

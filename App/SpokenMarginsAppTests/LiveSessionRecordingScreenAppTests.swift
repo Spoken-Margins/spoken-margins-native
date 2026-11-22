@@ -149,6 +149,139 @@ final class LiveSessionRecordingScreenAppTests: XCTestCase {
         XCTAssertNil(capture.recordingStartedAt, "cancel clears it, which is why it is read first")
         XCTAssertEqual(handedOver, .some(.some(began)))
     }
+
+    // MARK: Record a Margin with nothing running (#4927)
+
+    /// A capture recording for the quick destination, with nothing saved: the Margin has no session to go to until it stops.
+    @MainActor
+    private func quickRecording(in root: URL) -> (LiveSessionSpokenCapture, LiveSessionFileWorker, StandInMarginRecorder) {
+        let files = LiveSessionFileWorker(root: root)
+        let recorder = StandInMarginRecorder()
+        let capture = LiveSessionSpokenCapture(files: files, recorder: recorder, transcribe: { _ in nil })
+        capture.start(sessionId: LiveSessionSpokenCapture.quickDestination)
+        return (capture, files, recorder)
+    }
+
+    @MainActor
+    private func quickView(_ capture: LiveSessionSpokenCapture) -> LiveSessionRecordingView {
+        LiveSessionRecordingView(
+            capture: capture, sessionId: LiveSessionSpokenCapture.quickDestination, anchorTitle: QuickMarginRecordingView.title,
+            anchorSubtitle: { QuickMarginRecordingView.subtitle }, onWriteInstead: { _ in },
+            anchorCaption: QuickMarginRecordingView.caption, offersWriteInstead: false
+        )
+    }
+
+    @MainActor
+    func testFinishFilesAQuickRecordingIntoAQuickSessionWithTheMarginSpoken() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (capture, files, recorder) = quickRecording(in: root)
+        XCTAssertTrue(capture.isRecordingQuick)
+        XCTAssertFalse(capture.isRecording(for: "s"), "no session screen takes a quick recording as its own")
+        quickView(capture).actions.finish()
+        try await pollUntil(timeout: .seconds(10)) { await files.allSessions().contains { $0.margins.isEmpty == false } }
+        let sessions = await files.allSessions()
+        XCTAssertEqual(sessions.count, 1)
+        let session = try XCTUnwrap(sessions.first)
+        XCTAssertEqual(session.isQuick, true)
+        let margin = try XCTUnwrap(session.margins.first)
+        XCTAssertTrue(margin.isSpoken)
+        XCTAssertEqual(margin.spokenOn, "phone")
+        XCTAssertFalse(capture.isRecordingQuick)
+        let ended = (stops: await recorder.stops, cancels: await recorder.cancels)
+        XCTAssertEqual(ended.stops, 1)
+        XCTAssertEqual(ended.cancels, 0)
+    }
+
+    @MainActor
+    func testCancelThrowsAQuickRecordingAwayAndStartsNoQuickSession() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (capture, files, recorder) = quickRecording(in: root)
+        var cancelled = 0
+        let view = LiveSessionRecordingView(
+            capture: capture, sessionId: LiveSessionSpokenCapture.quickDestination, anchorTitle: "t", anchorSubtitle: { "" },
+            onWriteInstead: { _ in }, onCancelled: { cancelled += 1 }, offersWriteInstead: false
+        )
+        view.actions.cancel()
+        XCTAssertFalse(capture.isRecordingQuick)
+        XCTAssertEqual(cancelled, 1)
+        let ended = try await ending(of: recorder)
+        XCTAssertEqual(ended.cancels, 1)
+        XCTAssertEqual(ended.stops, 0)
+        let sessions = await files.allSessions()
+        XCTAssertTrue(sessions.isEmpty, "a discarded recording leaves no empty quick session behind")
+    }
+
+    @MainActor
+    func testTheQuickRecordingScreenSaysWhereTheMarginGoesAndOffersNoWriteInstead() throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (capture, _, _) = quickRecording(in: root)
+        let state = quickView(capture).state
+        XCTAssertFalse(state.offersWriteInstead)
+        XCTAssertEqual(state.anchorCaption, QuickMarginRecordingView.caption)
+        XCTAssertEqual(state.anchorTitle, QuickMarginRecordingView.title)
+        // A live session's screen is as it was: it offers Write instead and is captioned "Live session".
+        let live = LiveSessionRecordingView(capture: capture, sessionId: "s", anchorTitle: "t", anchorSubtitle: { "" }, onWriteInstead: { _ in })
+        XCTAssertTrue(live.state.offersWriteInstead)
+        XCTAssertEqual(live.state.anchorCaption, "Live session")
+    }
+
+    @MainActor
+    func testAQuickRecordingTakesItsTranscriptIntoTheQuickSession() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = LiveSessionFileWorker(root: root)
+        let capture = LiveSessionSpokenCapture(files: files, recorder: StandInMarginRecorder(), transcribe: { _ in "a thought while driving" })
+        capture.start(sessionId: LiveSessionSpokenCapture.quickDestination)
+        quickView(capture).actions.finish()
+        try await pollUntil(timeout: .seconds(10)) {
+            await files.allSessions().first?.margins.first?.text == "a thought while driving"
+        }
+        let sessions = await files.allSessions()
+        let session = try XCTUnwrap(sessions.first)
+        XCTAssertEqual(session.isQuick, true)
+    }
+
+    /// The recording is already going when its screen is asked for. A screen that never appears must not leave it running
+    /// with no Finish or Cancel: it is stopped and filed as it is.
+    @MainActor
+    func testAQuickRecordingWhoseScreenNeverAppearsIsStoppedAndFiled() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (capture, files, recorder) = quickRecording(in: root)
+        let router = LiveSessionLinkRouter()
+        router.openQuickRecording(capture: capture)
+        try await pollUntil(timeout: .seconds(10)) { !capture.isRecordingQuick }
+        XCTAssertNil(router.cover)
+        try await pollUntil(timeout: .seconds(10)) { await files.allSessions().contains { $0.margins.isEmpty == false } }
+        let stops = await recorder.stops
+        XCTAssertEqual(stops, 1)
+        XCTAssertNotNil(capture.notice, "the listener is told why it ended")
+    }
+
+    @MainActor
+    func testAQuickRecordingWhoseScreenAppearedKeepsRecording() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (capture, _, _) = quickRecording(in: root)
+        let router = LiveSessionLinkRouter()
+        router.openQuickRecording(capture: capture)
+        router.quickScreenAppeared()
+        try await Task.sleep(for: LiveSessionLinkRouter.presentationGrace + .milliseconds(500)) // past the grace
+        XCTAssertTrue(capture.isRecordingQuick)
+        XCTAssertEqual(router.cover?.quickRecording, true)
+    }
+
+    @MainActor
+    func testALinkNeverReplacesAQuickRecordingsScreen() {
+        let router = LiveSessionLinkRouter()
+        router.openQuickRecording(capture: LiveSessionSpokenCapture(files: LiveSessionFileWorker(root: makeRoot())))
+        let shown = router.cover
+        router.open(.speak)
+        XCTAssertEqual(router.cover, shown)
+    }
 }
 
 /// A recorder that needs no microphone (#4311): it starts at once, `stop` hands back a recording, and it counts how each

@@ -175,6 +175,12 @@ public struct LiveSessionMargin: Codable, Equatable, Sendable, Identifiable {
     /// A photo of the page this Margin is about (#2708), kept on this phone only. Optional, so a session saved by an
     /// earlier build still reads; it is never written into a packet or a share link.
     public var photo: LiveSessionPhoto?
+    /// The page number read from this Margin's photo (#2708), offered to the listener as a checkpoint and never kept
+    /// until they say so. Only the number is stored; the words recognised in the photo are thrown away. Optional, so an
+    /// earlier build ignores it.
+    public var photoPlace: LiveSessionPlace?
+    /// True once the photo has been read for a page number, whether or not it had one, so it is read once.
+    public var photoRead: Bool?
 
     public init(
         id: String, text: String, markedAt: Date, sessionOffsetMs: Int = 0, whereNote: String? = nil, isBlindMark: Bool = false,

@@ -202,4 +202,45 @@ final class PlayerRunRecorderTests: XCTestCase {
         }
         XCTAssertEqual(busy.runs(at: at(10_000)).count, PlayerRunRecorder.capacity)
     }
+
+    // MARK: Articles read aloud (#4561)
+
+    private func reading(_ char: Int, item: String = "article") -> PlayerRunRecorder.Observation {
+        .init(itemId: item, mediaTimeMs: nil, rate: 1, isPlaying: true, textOffset: char)
+    }
+
+    private func readingPaused(_ char: Int, item: String = "article") -> PlayerRunRecorder.Observation {
+        .init(itemId: item, mediaTimeMs: nil, rate: 1, isPlaying: false, isPaused: true, textOffset: char)
+    }
+
+    /// The Watch pauses the phone a moment after it starts recording. The place the article was paused at is where that
+    /// Margin belongs, though reading has resumed (and moved on) by the time the recording reaches the phone.
+    func testAnArticlePausedByTheWatchIsFoundAtItsPausedPlace() {
+        var recorder = PlayerRunRecorder()
+        recorder.observe(reading(100), at: at(0))
+        recorder.observe(readingPaused(140), at: at(10.6))
+        recorder.observe(reading(140), at: at(30))
+        recorder.observe(reading(220), at: at(40))
+        XCTAssertEqual(recorder.readAloudPlace(itemId: "article", near: at(10)), 140, "recording began just before the pause arrived")
+        XCTAssertEqual(recorder.readAloudPlace(itemId: "article", near: at(20)), 140, "taken while it was paused")
+        XCTAssertTrue(recorder.runs(at: at(41)).isEmpty, "text read aloud still makes no media-time run")
+    }
+
+    func testTableOfReadAloudPausesThatDoNotHoldAMargin() {
+        struct Row { var name: String; var observations: [(PlayerRunRecorder.Observation, TimeInterval)]; var item = "article"; var near: TimeInterval }
+        let rows = [
+            Row(name: "nothing recorded", observations: [], near: 5),
+            Row(name: "another item", observations: [(reading(1), 0), (readingPaused(9), 5)], item: "other", near: 5),
+            Row(name: "paused with no reading first (restored at launch)", observations: [(readingPaused(9), 5)], near: 5),
+            Row(name: "taken long after reading resumed", observations: [(reading(1), 0), (readingPaused(9), 5), (reading(9), 8)], near: 60),
+            Row(name: "taken long before the pause", observations: [(reading(1), 0), (readingPaused(9), 50)], near: 5),
+            Row(name: "paused longer ago than the hold", observations: [(reading(1), 0), (readingPaused(9), 5)], near: 5 + PlayerRunRecorder.parkedHold + 1),
+            Row(name: "an episode pause is not a text place", observations: [(playing(1_000, item: "article"), 0), (pausedOn("article", ms: 6_000), 5)], near: 5)
+        ]
+        for row in rows {
+            var recorder = PlayerRunRecorder()
+            for (observation, seconds) in row.observations { recorder.observe(observation, at: at(seconds)) }
+            XCTAssertNil(recorder.readAloudPlace(itemId: row.item, near: at(row.near)), row.name)
+        }
+    }
 }

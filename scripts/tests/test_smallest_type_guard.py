@@ -40,13 +40,9 @@ def long_caption2_texts(source):
 # Shortening the copy is the owner's voice and is not part of this guard.
 PINNED_FOOTNOTE = {
     'Build23RecipientSharingExperience.swift': ['Deleting this import removes your local copy only.'],
-    'Build23SenderSharingComponents.swift': ['These excerpts help place the Margin for the recipient.'],
-    'SharingExperience.swift': [
-        'The recipient will rebuild it from this link.',
-        'This Spoken Margins sample is app-authored',
-        'The full listened-to text will be included so the recipient',
-        'This cannot be included.',
-    ],
+    # Build23SenderSharingComponents.swift: the placement caption now comes from ShareReviewCardWords; its size is
+    # pinned in test_share_review_card_words.py (#3839).
+    # SharingExperience.swift held four pinned sentences, all in the old InterjectionSharingView, deleted in #3839.
     'Gate1RootView.swift': ['This note helps you choose what to send.'],
     'ExportScreen.swift': ['Native audio exports include only bounded listening context'],
     'SettingsScreen.swift': [

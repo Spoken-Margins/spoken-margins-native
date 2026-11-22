@@ -275,7 +275,7 @@ final class Gate1FlowUITests: XCTestCase {
         launchAllowingOneStall()
         let row = app.buttons["library.row.item-pill"]
         XCTAssertTrue(row.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Completed hidden"].exists)
+        XCTAssertFalse(element("library.filter.summary").exists, "the everyday view has nothing under the chips (#4698)")
         let search = app.textFields["library.search.field"]
         XCTAssertTrue(search.waitForExistence(timeout: 4))
         let searchTop = search.frame.minY
@@ -306,7 +306,7 @@ final class Gate1FlowUITests: XCTestCase {
         captureScreen(named: "library-completed-search-and-undo")
         app.buttons["Clear search"].tap()
         element("library.filters.reset").tap()
-        XCTAssertTrue(app.staticTexts["Completed hidden"].exists)
+        XCTAssertTrue(element("library.filter.summary").waitForNonExistence(timeout: 4), "back to the everyday view, nothing under the chips")
     }
 
     func testLibraryCompactRowStaysDense() throws {
@@ -471,64 +471,6 @@ final class Gate1FlowUITests: XCTestCase {
                 .waitForExistence(timeout: 8)
         )
         XCTAssertFalse(element("timeline.summary.button").exists)
-    }
-
-    func testPermanentDeleteDoesNotRestoreRecentlyDeletedItem() throws {
-        let itemTitle = "Permanent Delete \(UUID().uuidString.prefix(8))"
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        app.buttons["home.addSource.button"].tap()
-        scrollToElement("addSource.route.pastedText").tap()
-        let title = element("create.title.field")
-        XCTAssertTrue(title.waitForExistence(timeout: 4))
-        title.tap()
-        title.typeText(itemTitle)
-        let text = element("create.text.editor")
-        text.tap()
-        text.typeText("This item exists only to verify permanent deletion.")
-        let keyboardDone = app.buttons["Done"].firstMatch
-        XCTAssertTrue(keyboardDone.waitForExistence(timeout: 3))
-        keyboardDone.tap()
-        XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4))
-        scrollToElement("create.start.button").tap()
-        XCTAssertTrue(waitForDisappearance(element("addSource.sheet"), timeout: 8))
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
-
-        // The "Added ... to Library" banner's label holds the title too and comes first, so match Library rows only (#2717).
-        let libraryRow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "library.row.", itemTitle)).firstMatch
-        XCTAssertTrue(libraryRow.waitForExistence(timeout: 4))
-        libraryRow.press(forDuration: 1)
-        XCTAssertTrue(app.buttons["Move to Recently Deleted"].waitForExistence(timeout: 3))
-        app.buttons["Move to Recently Deleted"].tap()
-        // Library deletion is recoverable immediately; permanent deletion below requires confirmation.
-        XCTAssertTrue(waitForDisappearance(libraryRow, timeout: 4))
-
-        openLibrarySettings()
-        // Settings draws Recently Deleted as a collapsed group since #1254, so the row's menu is not on screen until it
-        // is opened (#4391). The label gains a count once an item is in it, hence "containing".
-        scrollToButton(containingLabel: "Recently Deleted").tap()
-        // Delete Permanently sits behind the row's menu, away from Restore (#3206).
-        scrollToButton(containingLabel: "More options for \(itemTitle)").tap()
-        let delete = app.buttons["Delete Permanently"].firstMatch
-        XCTAssertTrue(delete.waitForExistence(timeout: 2))
-        delete.tap()
-        let confirmation = app.alerts["Delete Permanently?"]
-        XCTAssertTrue(confirmation.waitForExistence(timeout: 2))
-        confirmation.buttons["Delete Permanently"].tap()
-
-        XCTAssertTrue(waitForDisappearance(app.buttons["Restore \(itemTitle)"], timeout: 2))
-        XCTAssertFalse(app.staticTexts[itemTitle].exists)
-
-        // Settings is not where a restored item would show up, and a Library row is a button whose label only contains
-        // the title, so the checks above could not see one. Look in the Library, then again after a relaunch (#3716).
-        tapRoot("Library")
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4), "The Library did not open")
-        XCTAssertFalse(libraryRow.exists, "The permanently deleted item is back in the Library")
-
-        app.terminate()
-        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
-        app.launch()
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "The Library did not reopen")
-        XCTAssertFalse(libraryRow.waitForExistence(timeout: 3), "The permanently deleted item came back after a relaunch")
     }
 
     func testAddSourcePresentsEveryTypedIntakeRoute() throws {

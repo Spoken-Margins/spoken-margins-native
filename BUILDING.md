@@ -68,6 +68,8 @@ Only SessionKit's core tests run. Use the wrapper, not `swift test`, because Swi
 scripts/run-sessionkit-linux-tests.sh
 ```
 
+Stage files by path, never `git add -A`: if a raw `swift test` ran, the rewritten `Package.resolved` goes in with it. The "merge policy" check holds a PR that changes `Packages/SessionKit/Package.resolved` without `Packages/SessionKit/Package.swift`; the fix is `git checkout origin/main -- Packages/SessionKit/Package.resolved` (merge `main` first if your branch is behind it and `main` changed that file).
+
 ## Build the app for the simulator
 
 No Apple developer account is needed:

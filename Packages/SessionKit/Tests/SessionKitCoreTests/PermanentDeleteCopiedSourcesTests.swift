@@ -15,6 +15,7 @@ final class PermanentDeleteCopiedSourcesTests: XCTestCase {
     private var prepared: URL { support.appending(path: "PreparedAudio", directoryHint: .isDirectory) }
     private var editions: URL { support.appending(path: "SpokenMargins/ListeningEditions", directoryHint: .isDirectory) }
     private var maps: URL { support.appending(path: "SpokenMargins/EpisodeMaps", directoryHint: .isDirectory) }
+    private var clips: URL { support.appending(path: "SpokenMargins/PDFClips", directoryHint: .isDirectory) }
 
     private let epub = "epub-6f1c2d3e-0000-4000-8000-000000000001"
     private let book = "audiobook-6f1c2d3e-0000-4000-8000-000000000002"
@@ -34,8 +35,11 @@ final class PermanentDeleteCopiedSourcesTests: XCTestCase {
             PermanentDeletePurge.Root(name: ItemOwnedFiles.sourceDocumentsRoot, url: sources),
             PermanentDeletePurge.Root(name: ItemOwnedFiles.audiobooksRoot, url: audiobooks),
             PermanentDeletePurge.Root(name: ItemOwnedFiles.episodeMapsRoot, url: maps),
+            PermanentDeletePurge.Root(name: ItemOwnedFiles.pdfClipsRoot, url: clips),
             PermanentDeletePurge.Root(name: ItemOwnedFiles.preparedAudioRoot, url: prepared),
             PermanentDeletePurge.Root(name: ItemOwnedFiles.listeningEditionsRoot, url: editions),
+            // Every item's targets name its kept original (#4338), so the app, and a test that stands for it, registers the root.
+            PermanentDeletePurge.Root(name: ItemOwnedFiles.itemOriginalsRoot, url: support.appending(path: "ItemOriginals", directoryHint: .isDirectory)),
         ]
         if let removeFile { return PermanentDeletePurge(journalDirectory: journal, roots: roots, removeFile: removeFile) }
         return PermanentDeletePurge(journalDirectory: journal, roots: roots)
@@ -148,6 +152,7 @@ final class PermanentDeleteCopiedSourcesTests: XCTestCase {
         try write(audiobooks.appending(path: "\(book).m4b"))
         try write(maps.appending(path: "\(epub)/signature.shazamsignature"))
         try write(maps.appending(path: "\(other)/signature.shazamsignature"))
+        try write(clips.appending(path: "\(epub)/float-p1-1.jpg")); try write(clips.appending(path: "\(other)/float-p1-1.jpg"))
 
         // The rows are read before the delete, as the app does.
         let ids = [epub, book]
@@ -162,10 +167,13 @@ final class PermanentDeleteCopiedSourcesTests: XCTestCase {
         XCTAssertFalse(exists(maps.appending(path: epub)))
         XCTAssertTrue(exists(sources.appending(path: "\(other).epub")), "an item that stays keeps its EPUB")
         XCTAssertTrue(exists(maps.appending(path: other)), "and its map folder")
+        XCTAssertFalse(exists(clips.appending(path: epub)), "the deleted item's PDF pictures go")
+        XCTAssertTrue(exists(clips.appending(path: "\(other)/float-p1-1.jpg")), "an item that stays keeps its pictures")
         XCTAssertTrue(outcome.kept.isEmpty)
         XCTAssertEqual(outcome.removed.filter { $0.root == ItemOwnedFiles.sourceDocumentsRoot }.count, 1)
         XCTAssertEqual(outcome.removed.filter { $0.root == ItemOwnedFiles.audiobooksRoot }.count, 1)
         XCTAssertEqual(outcome.removed.filter { $0.root == ItemOwnedFiles.episodeMapsRoot }.count, 2)
+        XCTAssertEqual(outcome.removed.filter { $0.root == ItemOwnedFiles.pdfClipsRoot }.count, 2)
         XCTAssertEqual(try store.loadAllItemIds(), [other])
         let left = ((try? manager.contentsOfDirectory(atPath: journal.path)) ?? []).filter { $0.hasSuffix(".json") }
         XCTAssertTrue(left.isEmpty, "every file went, so the record is dropped")
@@ -224,8 +232,9 @@ final class PermanentDeleteCopiedSourcesTests: XCTestCase {
         ) { try store.deleteItem(id: "a b") }).value
         XCTAssertTrue(exists(maps.appending(path: "a-b")), "a-b still uses the folder")
         XCTAssertEqual(
-            Set(outcome.reappeared.map(\.root)), [ItemOwnedFiles.episodeMapsRoot, ItemOwnedFiles.preparedAudioRoot],
-            "both folder rules see a-b")
+            Set(outcome.reappeared.map(\.root)),
+            [ItemOwnedFiles.episodeMapsRoot, ItemOwnedFiles.preparedAudioRoot, ItemOwnedFiles.pdfClipsRoot],
+            "every folder rule sees a-b")
     }
 
     func testAFolderNoOtherIdMapsToGoesWithTheItem() {

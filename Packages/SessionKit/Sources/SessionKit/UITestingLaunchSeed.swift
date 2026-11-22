@@ -180,6 +180,22 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         )
     }
 
+    /// A friend's written Margin that is never read aloud, at the same place as `coopInterjection`: no recording, and the
+    /// sender asked that it not be read (#4934). It is not `SharedMarginAudio.canOffer`, so Skim and the Margins tab's Go-to
+    /// are what take the listener to it.
+    public static func coopSilentInterjection(createdAt: Date) -> ImportedCommentaryInterjection {
+        ImportedCommentaryInterjection(
+            id: coopMarginId, layerId: coopLayerId, packageScopedId: coopMarginId, createdAt: createdAt,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: coopMarginMediaTimeMs),
+            approvedTranscript: "A friend's UI test Margin.",
+            audioPath: nil,
+            resolution: ImportedAnchorResolution(
+                evidenceClass: .exactEdition, localMediaTimeMs: coopMarginMediaTimeMs, confidence: 1
+            ),
+            senderReadAloud: false
+        )
+    }
+
     /// The listener's saved place on the seeded podcast, as the Session that Continue would resume (#4100): in progress
     /// at `placeSeconds`, or finished (100%, Continue then starts again from 0) when that is the end of the episode or
     /// past it. The place is clamped to the episode.
@@ -290,6 +306,14 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         arguments.contains("--ui-testing")
             && environment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] == "1"
             && environment["SPOKEN_MARGINS_UI_TEST_COOP"] == "1"
+    }
+
+    /// Whether the friend's Margin a co-op relaunch imports is the written one that is never read aloud
+    /// (`coopSilentInterjection`, #4934): `SPOKEN_MARGINS_UI_TEST_COOP_SILENT=1` beside the co-op switches. It changes the
+    /// Margin's kind, never whether one is imported, so alone it does nothing.
+    public static func importsSilentCoopMargin(arguments: [String], environment: [String: String]) -> Bool {
+        importsCoopLayer(arguments: arguments, environment: environment)
+            && environment["SPOKEN_MARGINS_UI_TEST_COOP_SILENT"] == "1"
     }
 
     /// Whether a launch also follows one show for the Following tab and its show screen (#3863):

@@ -67,7 +67,19 @@ Trace expectations name distinct observations: navigation uses the runtime ancho
 
 Prefer the cheapest layer that exercises the failed boundary. Keep the production app model/router/archive/store in integration tests; inject costly resolution, rendering or OS lookup. Start from a populated library with distinct identities when testing imports. Exercise both completion and recovery, and inspect persisted results after reconstruction.
 
-For asynchronous bugs, explicitly control completion order: start A, start B, finish A late; seek then pause; cancel then deliver completion; mutate a reviewed package after preview. Prefer expectations or controllable gates to fixed sleeps. Real-time waits remain appropriate only for bounded OS/media behavior. Do not compute expected results by calling the production policy under test.
+For asynchronous bugs, explicitly control completion order: start A, start B, finish A late; seek then pause; cancel then deliver completion; mutate a reviewed package after preview. See [Waiting in tests](#waiting-in-tests) for how a test waits. Do not compute expected results by calling the production policy under test.
+
+### Waiting in tests
+
+Wait on state, never on the clock. In the week of 2026-11-11, 9 of the 13 simulator-test failures that were not deliberate mutations came from the test, not the app: a fixed wait, a deadline close to the normal time, or an expectation left stale. Each one held a PR that was fine.
+
+1. **No sleep-then-assert.** Don't `Task.sleep`, `Thread.sleep` or `asyncAfter` for a fixed time and then assert that the work is done. Wait for the condition the work makes true: `pollUntil { ... }` in app tests (`App/SpokenMarginsAppTests/PollUntil.swift`), an `XCTestExpectation` fulfilled by the code, or a gate or continuation the test controls.
+2. **A deadline is a ceiling, not an estimate.** Use `pollUntil`'s 30 s default unless the test claims the work happens within a time. Then pass that time, so a regression that is merely late still fails. Never set a deadline to roughly how long the work takes on your machine: a hosted Mac under load can take two or three times as long (a 20 s loudness wait took 43 s on #4141).
+3. **No counted loops.** `for _ in 0..<N { sleep }` is a deadline written as a count. `scripts/app_test_poll_loops.py` rejects it (#4131).
+4. **"Nothing happens" needs an event to wait for.** To show something does *not* happen, wait for a later event that proves the moment has passed (the next tick, a completion, a second request), then assert. A bare sleep only proves the test slept.
+5. **Real time only where time is the subject.** Media and OS behaviour that is about elapsed time (a player reaching a position, a timer firing) may wait in real time, still through a condition and a generous ceiling, with a comment naming why.
+6. **When a wait fails, the message names the state.** Assert the awaited state after the wait, so the failure reads "export still running", not "timed out".
+7. **No wall-clock ceiling in a correctness test (#4573).** "The caller never waits" or "the read does not wait for the writer" is proved on state: hold the resource the slow work needs (a semaphore, a parked pipe, an open write transaction), make the call, and check it came back while the resource was still held (`assertReturnsWhileHeld` in SessionKitCoreTests). A 2 s ceiling on a Library read took 2.26 s on a busy hosted Mac and held the merge queue for an hour (#4743, #4760). A real performance budget ("3000 notes in one pass") keeps a ceiling at least 5x the typical local time, a comment naming the scaling bug, and an entry with that reason in `scripts/test_clock_ceilings_allowlist.json`; `scripts/test_clock_ceilings.py` fails on any other.
 
 Before trusting a regression assertion, introduce a bounded counterexample in an isolated experiment or test its negative case: wrong-session text of the same size, stale item identity, wrong anchor kind, missing trace selection, zero executed tests. The check must fail for the intended reason. Do not weaken a failing expectation until the current release contract and runtime evidence establish why it is stale.
 

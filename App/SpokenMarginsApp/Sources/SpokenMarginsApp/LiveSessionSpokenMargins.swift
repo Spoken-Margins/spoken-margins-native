@@ -151,6 +151,11 @@ actor LiveSessionPhoneRecorder: LiveSessionMarginRecorder {
 final class LiveSessionSpokenCapture: ObservableObject {
     static let shared = LiveSessionSpokenCapture()
 
+    /// What `sessionId` holds for a recording that belongs to no session yet: Record a Margin with nothing running
+    /// (#4927). It is filed into a quick session when it stops, by `LiveSessionFileWorker.fileSpokenMarginAsQuick`. It
+    /// is not a session's id, so no Live Activity card is touched for it and no session screen claims it.
+    static let quickDestination = "quick-capture"
+
     /// The session the phone is recording a spoken Margin for, or nil.
     @Published private(set) var sessionId: String?
     /// When the recording started, for the recording screen's clock; nil when nothing records.
@@ -200,6 +205,9 @@ final class LiveSessionSpokenCapture: ObservableObject {
     }
 
     func isRecording(for id: String?) -> Bool { id != nil && sessionId == id }
+
+    /// The recording is Record a Margin's, with no session to hold it (#4927).
+    var isRecordingQuick: Bool { sessionId == Self.quickDestination }
 
     /// Starts recording a spoken Margin for `id`. During a call it says to use the Watch instead: the call holds the
     /// phone's microphone, so nothing would be recorded.
@@ -302,6 +310,9 @@ final class LiveSessionSpokenCapture: ObservableObject {
     /// The Lock Screen card says a spoken Margin records, with Finish, or goes back to Mark (#3499). One update at a
     /// time, each following the recording as it is when written.
     func syncCard(for id: String) {
+        // A recording with no session has no card. `isCard` would also match a card an earlier build started, which
+        // names no session, and turn it to "Recording" for a Margin that isn't that session's (#4927).
+        guard id != Self.quickDestination else { return }
         let previous = cardUpdate
         cardUpdate = Task { [weak self] in
             await previous?.value
@@ -333,7 +344,13 @@ final class LiveSessionSpokenCapture: ObservableObject {
     ) async {
         let marginId = "phone-\(UUID().uuidString.lowercased())"
         let filed: LiveSession?
-        if let staged {
+        if sessionId == quickDestination {
+            // Nothing ran when it began: a quick session takes it, joining one that holds this moment (#4927).
+            filed = await files.fileSpokenMarginAsQuick(
+                marginId: marginId, audioPath: recording.audioPath, markedAt: placedAt ?? recording.startedAt,
+                durationMs: recording.durationMs, spokenOn: "phone"
+            )
+        } else if let staged {
             // The picture is moved into place first and the Margin that names it is saved after (#2708); a picture that
             // can't be kept never costs the listener their words.
             let result = await files.attachSpokenMargin(

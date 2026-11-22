@@ -88,6 +88,51 @@ async function startAtLanding(nowPlaying: ReturnType<Page['getByRole']>) {
   if (await offer.isVisible()) await offer.click();
 }
 
+/**
+ * What the episode and the clips did, sent out by the page on the console as it happens. Reading it takes no
+ * `evaluate`, so a test can wait on it through a lead-in without handing WebKit a gesture; and a failure prints it.
+ */
+type MediaTrace = { lines: string[]; episodeAt: number; clipStarts: number; clipEnds: number };
+
+async function traceMedia(page: Page): Promise<MediaTrace> {
+  const trace: MediaTrace = { lines: [], episodeAt: 0, clipStarts: 0, clipEnds: 0 };
+  page.on('console', (message) => {
+    const text = message.text();
+    if (!text.startsWith('media-trace ')) return;
+    trace.lines.push(text.slice(12));
+    const [, who, what, at] = text.split(' ');
+    if (who === 'episode' && at) trace.episodeAt = Number(at);
+    if (who === 'clip' && what === 'playing') trace.clipStarts++;
+    if (who === 'clip' && what === 'ended') trace.clipEnds++;
+  });
+  await page.addInitScript(() => {
+    const t0 = performance.now();
+    const say = (who: string, what: string, el: HTMLMediaElement) =>
+      console.log(`media-trace ${who} ${what} ${el.currentTime.toFixed(2)} wall=${((performance.now() - t0) / 1000).toFixed(1)}s ready=${el.readyState}`);
+    const events = ['playing', 'pause', 'ended', 'error', 'waiting', 'stalled', 'seeking', 'seeked'];
+    const watched = new WeakSet<HTMLMediaElement>();
+    let lastTick = 0;
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+      const who = this.dataset.testid === 'audio' ? 'episode' : this.src.startsWith('data:') ? 'prime' : 'clip';
+      if (!watched.has(this)) {
+        watched.add(this);
+        for (const type of events) this.addEventListener(type, () => say(this.dataset.testid === 'audio' ? 'episode' : this.src.startsWith('data:') ? 'prime' : 'clip', type, this));
+        if (who === 'episode') {
+          this.addEventListener('timeupdate', () => {
+            if (performance.now() - lastTick < 500) return;
+            lastTick = performance.now();
+            say('episode', 'at', this);
+          });
+        }
+      }
+      say(who, 'play()', this);
+      return play.call(this);
+    };
+  });
+  return trace;
+}
+
 test.beforeEach(async ({ page }) => {
   await serveFixtures(page);
 });
@@ -155,6 +200,7 @@ test('skipping forward past a Margin does not play it', async ({ page }) => {
 });
 
 test('while a spoken Margin plays, the main button shows Pause and pauses it; Play carries it on (#4473)', async ({ page }) => {
+  test.setTimeout(120_000);
   await watchPlays(page, false);
   // Every clip element, so the test can see whether the friend's voice is paused. The clip plays at a third of its
   // speed, so its 2.8 s last long enough for the taps to land while it plays.
@@ -170,6 +216,7 @@ test('while a spoken Margin plays, the main button shows Pause and pauses it; Pl
     };
   });
   const clipPaused = () => page.evaluate(() => window.__clipElements.at(-1)?.paused ?? null);
+  const trace = await traceMedia(page);
   const nowPlaying = await openFile(page);
   await startAtLanding(nowPlaying);
   const card = nowPlaying.getByTestId('arrived-margin');
@@ -193,7 +240,67 @@ test('while a spoken Margin plays, the main button shows Pause and pauses it; Pl
   await main.click();
   await expect.poll(clipPaused).toBe(false);
   await expect(main).toHaveAccessibleName('Pause');
-  await expect.poll(() => audioTime(page), { timeout: 15_000 }).toBeGreaterThan(held + 0.5);
+  try {
+    // The clip ends first. Its time is the clip's own, at a third of its speed, and slower again where the runner's
+    // media clock lags the wall (hosted CI's Chrome: a clip "playing" for 1.7 s moved 0.01 s), so wait on its end.
+    await expect.poll(() => trace.clipEnds, { timeout: 60_000, intervals: [500] }).toBeGreaterThan(0);
+    await expect.poll(() => audioTime(page), { timeout: 15_000 }).toBeGreaterThan(held + 0.5);
+  } catch (error) {
+    console.log(`Media trace:\n${trace.lines.join('\n')}`);
+    throw error;
+  }
+});
+
+/** Every clip element is recorded, and plays at a third of its speed, so a tap lands while the friend's voice sounds. */
+async function slowClips(page: Page) {
+  await page.addInitScript(() => {
+    const play = HTMLMediaElement.prototype.play;
+    window.__clipElements = [];
+    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+      if (this !== document.querySelector('audio[data-testid="audio"]') && !this.src.startsWith('data:audio/wav')) {
+        if (!window.__clipElements.includes(this)) window.__clipElements.push(this);
+        this.playbackRate = 0.33;
+      }
+      return play.call(this);
+    };
+  });
+  return () => page.evaluate(() => window.__clipElements.at(-1)?.paused ?? null);
+}
+
+test('"Skip this Margin" ends the Margin that is playing and the episode carries on from there (#4473)', async ({ page }) => {
+  test.setTimeout(120_000);
+  await watchPlays(page, false);
+  const clipPaused = await slowClips(page);
+  const nowPlaying = await openFile(page);
+  await startAtLanding(nowPlaying);
+  const card = nowPlaying.getByTestId('arrived-margin');
+  await expect(card).toContainText('Sam is speaking', { timeout: 20_000 });
+  await expect.poll(clipPaused, { timeout: 10_000 }).toBe(false);
+  const before = await audioTime(page);
+  await nowPlaying.getByTestId('skip-margin').click();
+  // The friend's voice stops, the card goes, and the episode plays on, well before the clip would have ended by itself.
+  await expect.poll(clipPaused).toBe(true);
+  await expect(card).toHaveCount(0);
+  await expect(nowPlaying.locator('.play-button')).toHaveAccessibleName('Pause');
+  await expect.poll(() => audioTime(page), { timeout: 5_000 }).toBeGreaterThan(before + 0.5);
+});
+
+test('scrubbing out of a playing Margin stops it and the episode plays from the new place (#4473)', async ({ page }) => {
+  test.setTimeout(120_000);
+  await watchPlays(page, false);
+  const clipPaused = await slowClips(page);
+  const nowPlaying = await openFile(page);
+  await startAtLanding(nowPlaying);
+  const card = nowPlaying.getByTestId('arrived-margin');
+  await expect(card).toContainText('Sam is speaking', { timeout: 20_000 });
+  await expect.poll(clipPaused, { timeout: 10_000 }).toBe(false);
+  await nowPlaying.getByLabel('Position').fill('100');
+  await expect.poll(clipPaused).toBe(true);
+  await expect(card).toHaveCount(0);
+  await expect(nowPlaying.locator('.play-button')).toHaveAccessibleName('Pause');
+  await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThan(100);
+  const there = await audioTime(page);
+  await expect.poll(() => audioTime(page), { timeout: 5_000 }).toBeGreaterThan(there + 0.3);
 });
 
 // #4472: after "Skip to just before" the next Margin comes up 20 s after the listener's last tap. Safari (WebKit, the
@@ -211,8 +318,9 @@ const leadInRows: Array<{ name: string; list: Margin[]; clipsAt: number[] }> = [
 
 for (const row of leadInRows) {
   test(`after "Skip to just before", ${row.name} plays by itself when playback reaches it (#4472)`, async ({ page }) => {
-    test.setTimeout(90_000);
+    test.setTimeout(150_000);
     await watchPlays(page, false);
+    const trace = await traceMedia(page);
     const nowPlaying = await openFile(page, row.list);
     await startAtLanding(nowPlaying);
     // The landing Margin plays, the episode runs on past it, and the countdown offers the lead-in Skip.
@@ -226,6 +334,16 @@ for (const row of leadInRows) {
     // tests above passed while the owner's phone refused the clip.
     const span = row.clipsAt[row.clipsAt.length - 1] - row.clipsAt[0];
     await page.waitForTimeout((20 + span + 3.5 * row.clipsAt.length + 3) * 1000);
+    if (trace.episodeAt < row.clipsAt[row.clipsAt.length - 1] + 1) {
+      // The time above is the lead-in at real speed. A slow runner plays it slower, so wait on the console-fed trace
+      // (no page reads) until the episode is past the last Margin.
+      try {
+        await expect.poll(() => trace.episodeAt, { timeout: 60_000, intervals: [500] }).toBeGreaterThan(row.clipsAt[row.clipsAt.length - 1] + 1);
+      } catch (error) {
+        console.log(`Media trace:\n${trace.lines.join('\n')}`);
+        throw error;
+      }
+    }
     // No Margin waits behind a Play: each clip is heard where it sits, and the episode carries on after the last.
     await expect(nowPlaying.getByRole('button', { name: /^Play Sam’s Margin/ })).toHaveCount(0);
     const clips = (await plays(page)).slice(before).filter((p) => p.kind === 'clip');

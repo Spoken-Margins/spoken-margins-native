@@ -45,12 +45,14 @@ public enum TodaysMarginsDigest {
     }
 
     /// Where the Margin sits, in the listener's terms: the clock time in a recording, how far through a text, or what
-    /// it was said about when it isn't on the source itself.
+    /// it was said about when it isn't on the source itself. Empty for a moved Margin that has no place on its item
+    /// (`hasPlace`, #4233): its stored zeros would read "about 0% through", so the digest says nothing about where.
     public static func place(of margin: Interjection) -> String {
         switch margin.targetType {
         case .summaryTurn: return "on the summary"
         case .assistantTurn: return "on an answer"
         case .item:
+            guard margin.hasPlace else { return "" }
             if let ms = margin.anchor.mediaTimeMs { return "at \(MarginDeepLink.clockPosition(ms: ms))" }
             return "about \(min(100, max(0, margin.roughPercent)))% through"
         }
@@ -145,6 +147,8 @@ public enum TodaysMarginsDigest {
     ///
     ///     > The listener's words.
     ///
+    /// A Margin with no place on its item has no line under the heading.
+    ///
     /// The words are quoted line by line, so a Margin that says "# Plan" can't read as a heading of the digest. A title
     /// goes on one line with Markdown's inline marks escaped.
     public static func markdown(
@@ -170,7 +174,7 @@ public enum TodaysMarginsDigest {
         for entry in entries {
             lines.append("")
             lines.append("## \(clock.string(from: entry.takenAt)) · \(oneLine(entry.itemTitle))")
-            lines.append(entry.place)
+            if !entry.place.isEmpty { lines.append(entry.place) }
             lines.append("")
             let words = entry.words.isEmpty ? notTranscribedYet : entry.words
             lines.append(contentsOf: words.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: .newlines).map { $0.isEmpty ? ">" : "> \($0)" })

@@ -75,6 +75,28 @@ public struct SourceCatalogStarterRow: Codable, Equatable, Sendable {
     public var curatedBy: String?
 }
 
+/// A persona pack (#4285): a few shows and writers picked for one kind of listener, followed together from the
+/// first-run drawer. `entryIds` may name entries in any order; the validator keeps only entries the drawer offers.
+public struct SourceCatalogPack: Codable, Equatable, Hashable, Sendable, Identifiable {
+    public static let maxTitleLength = 40
+    public static let maxSummaryLength = 90
+    public static let minEntries = 4
+    public static let maxEntries = 12
+
+    public var id: String
+    public var title: String
+    /// One line on who the pack is for.
+    public var summary: String
+    public var entryIds: [String]
+
+    public init(id: String, title: String, summary: String, entryIds: [String]) {
+        self.id = id
+        self.title = title
+        self.summary = summary
+        self.entryIds = entryIds
+    }
+}
+
 public struct SourceCatalogChartPosition: Codable, Equatable, Hashable, Sendable {
     public var provenanceId: String
     public var rank: Int
@@ -110,11 +132,16 @@ public struct SourceCatalogEntry: Codable, Equatable, Hashable, Sendable, Identi
     /// The first subject is the primary one.
     public var subjects: [String]
     public var explicit: Bool?
+    /// ISO 8601 times of the feed's newest items as of the catalog's `generatedAt`, at most 20 (#4285). Pace is
+    /// counted from these on the phone. Read them through `recentPublishedDates`.
+    public var recentPublishedAt: [String]?
     public var chartPositions: [SourceCatalogChartPosition]?
     public var externalIds: SourceExternalIds?
     public var provenanceIds: [String]
 
-    public init(id: String, kind: SourceKind, contentKind: SourceContentKind, title: String, author: String? = nil, feedURL: String, artworkURL: String? = nil, websiteURL: String? = nil, summary: String? = nil, subjects: [String], explicit: Bool? = nil, chartPositions: [SourceCatalogChartPosition]? = nil, externalIds: SourceExternalIds? = nil, provenanceIds: [String]) {
+    public static let maxRecentPublishedDates = 20
+
+    public init(id: String, kind: SourceKind, contentKind: SourceContentKind, title: String, author: String? = nil, feedURL: String, artworkURL: String? = nil, websiteURL: String? = nil, summary: String? = nil, subjects: [String], explicit: Bool? = nil, recentPublishedAt: [String]? = nil, chartPositions: [SourceCatalogChartPosition]? = nil, externalIds: SourceExternalIds? = nil, provenanceIds: [String]) {
         self.id = id
         self.kind = kind
         self.contentKind = contentKind
@@ -126,10 +153,14 @@ public struct SourceCatalogEntry: Codable, Equatable, Hashable, Sendable, Identi
         self.summary = summary
         self.subjects = subjects
         self.explicit = explicit
+        self.recentPublishedAt = recentPublishedAt
         self.chartPositions = chartPositions
         self.externalIds = externalIds
         self.provenanceIds = provenanceIds
     }
+
+    /// `recentPublishedAt` as dates, in the order given. A string that isn't an ISO 8601 time is dropped.
+    public var recentPublishedDates: [Date] { (recentPublishedAt ?? []).compactMap(SourceCatalogDates.parse) }
 
     public var primarySubject: String? { subjects.first }
 
@@ -157,7 +188,12 @@ public struct SourceCatalog: Codable, Equatable, Sendable {
     public var provenance: [SourceCatalogProvenance]
     public var subjects: [SourceCatalogSubject]
     public var starterRows: [SourceCatalogStarterRow]?
+    /// Persona packs (#4285). Nil in a catalog from before packs; older builds ignore the field.
+    public var packs: [SourceCatalogPack]?
     public var entries: [SourceCatalogEntry]
+
+    /// `generatedAt` as a date, or nil when it isn't an ISO 8601 time. Pace is counted as of this moment.
+    public var generatedAtDate: Date? { SourceCatalogDates.parse(generatedAt) }
 
     /// Subjects that have at least one entry the drawer offers, in catalog order.
     public var visibleSubjects: [SourceCatalogSubject] {
@@ -200,17 +236,26 @@ public struct SourceCatalog: Codable, Equatable, Sendable {
         return entries.first { Self.feedKey($0.feedURL) == key }
     }
 
-    static func feedKey(_ raw: String) -> String? {
-        guard var components = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let host = components.host?.lowercased(), !host.isEmpty else { return nil }
-        components.scheme = "https"
-        components.host = host
-        components.fragment = nil
-        if components.path.count > 1, components.path.hasSuffix("/") {
-            components.path.removeLast()
+    /// The key a feed URL is matched by (`FeedURLKey`). Public so a hide kept on the phone (#4285) matches the same
+    /// way a follow does.
+    public static func feedKey(_ raw: String) -> String? { FeedURLKey.make(raw) }
+}
+
+/// Reads the ISO 8601 times a catalog carries, with or without fractional seconds.
+enum SourceCatalogDates {
+    /// The formatter only reads three fractional digits, and the schema allows any number, so the fraction is taken
+    /// off first and added back.
+    static func parse(_ raw: String) -> Date? {
+        var base = raw
+        var fraction = 0.0
+        if let match = raw.range(of: #"\.[0-9]+"#, options: .regularExpression) {
+            guard let value = Double("0" + raw[match]) else { return nil }
+            fraction = value
+            base.removeSubrange(match)
         }
-        // Paths are case-sensitive (Simplecast ids are mixed case), so only scheme and host fold.
-        return components.string
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: base).map { $0.addingTimeInterval(fraction) }
     }
 }
 
@@ -255,6 +300,19 @@ public enum SourceCatalogValidator {
                   seenFeeds.insert(feedKey).inserted else { return nil }
             if let artwork = entry.artworkURL, !isHTTPS(artwork) { entry.artworkURL = nil }
             if let website = entry.websiteURL, !isHTTPS(website) { entry.websiteURL = nil }
+            if let dates = entry.recentPublishedAt, dates.count > SourceCatalogEntry.maxRecentPublishedDates {
+                // The schema gives no order, so keep the newest 20, not the first 20. A time that doesn't parse sorts last.
+                let newestFirst = dates.enumerated().sorted { lhs, rhs in
+                    let (left, right) = (SourceCatalogDates.parse(lhs.element), SourceCatalogDates.parse(rhs.element))
+                    switch (left, right) {
+                    case let (left?, right?): return left == right ? lhs.offset < rhs.offset : left > right
+                    case (.some, nil): return true
+                    case (nil, .some): return false
+                    case (nil, nil): return lhs.offset < rhs.offset
+                    }
+                }
+                entry.recentPublishedAt = newestFirst.prefix(SourceCatalogEntry.maxRecentPublishedDates).map(\.element)
+            }
             return entry
         }
         result.starterRows = catalog.starterRows?.compactMap { row in
@@ -263,8 +321,33 @@ public enum SourceCatalogValidator {
             row.entryIds = row.entryIds.filter(seenIds.contains)
             return row.entryIds.isEmpty ? nil : row
         }
+        let offered = Set(result.entries.filter(\.isOfferedAsStarter).map(\.id))
+        result.packs = validatedPacks(catalog.packs, offered: offered)
         guard result.entries.contains(where: \.isFollowable) else { throw SourceCatalogValidationError.noUsableEntries }
         return result
+    }
+
+    /// Packs (#4285), cleaned the way the schema and `validate-contracts.py` say a pack must be: the first of two
+    /// packs with one id wins; a pack whose id isn't a lower-case slug (as the schema says), or with an empty or over-long title or an over-long summary, goes; its entry
+    /// ids lose repeats, unknown ids and entries the drawer doesn't offer (explicit, or not followable here), then
+    /// keep the first 12; a pack left with fewer than 4 goes. A pack is dropped, never reworded.
+    static func validatedPacks(_ packs: [SourceCatalogPack]?, offered: Set<String>) -> [SourceCatalogPack]? {
+        guard let packs else { return nil }
+        var seenPackIds = Set<String>()
+        return packs.compactMap { pack in
+            var pack = pack
+            // Lengths count Unicode scalars, as JSON Schema's maxLength does, so the app and the contract agree.
+            guard pack.id.range(of: "^[a-z0-9][a-z0-9-]{0,39}$", options: .regularExpression) != nil,
+                  !pack.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  pack.title.unicodeScalars.count <= SourceCatalogPack.maxTitleLength,
+                  !pack.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  pack.summary.unicodeScalars.count <= SourceCatalogPack.maxSummaryLength,
+                  seenPackIds.insert(pack.id).inserted else { return nil }
+            var seenEntries = Set<String>()
+            pack.entryIds = Array(pack.entryIds.filter { offered.contains($0) && seenEntries.insert($0).inserted }
+                .prefix(SourceCatalogPack.maxEntries))
+            return pack.entryIds.count >= SourceCatalogPack.minEntries ? pack : nil
+        }
     }
 
     static func isHTTPS(_ raw: String) -> Bool {

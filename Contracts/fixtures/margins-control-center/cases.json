@@ -5,7 +5,7 @@
     "leadInMs": 20000,
     "startFromBeginningMs": 0,
     "leadInExcerptCharacters": 110,
-    "missingParentNote": "reply to a Margin you don't have",
+    "missingParentNote": "Reply to a Margin that isn't on this phone",
     "ownSender": "you"
   },
   "labels": {
@@ -1847,7 +1847,7 @@
             "timeMs": 50000,
             "startHereMs": 30000,
             "starred": false,
-            "note": "reply to a Margin you don't have",
+            "note": "Reply to a Margin that isn't on this phone",
             "arrival": "plays"
           }
         ],

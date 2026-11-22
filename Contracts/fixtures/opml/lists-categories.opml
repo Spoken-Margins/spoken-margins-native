@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0" xmlns:podcast="https://podcastindex.org/namespace/1.0" xmlns:sm="https://spokenmargins.com/ns/lists/1">
+  <head><title>Categories as lists</title></head>
+  <body>
+    <outline type="rss" text="The Daily" xmlUrl="https://feeds.simplecast.com/Sl5CSM3S" category="/News,/Daily habits"/>
+    <outline type="rss" text="Hard Fork" xmlUrl="https://feeds.simplecast.com/6HKOhNgS" category="/Tech/AI, News" podcast:guid="  6a7b9c1e-0000-5000-8000-000000000001  "/>
+    <outline type="rss" text="Radiolab" xmlUrl="https://feeds.simplecast.com/EmVW7VGp" category="/News" sm:skip="rerun*, best of*" sm:more="deep dive*"/>
+    <outline type="rss" text="No category" xmlUrl="https://example.com/plain.xml"/>
+  </body>
+</opml>

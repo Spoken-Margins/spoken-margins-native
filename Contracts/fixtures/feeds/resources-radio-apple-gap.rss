@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A trimmed copy of the Resources Radio feed (feeds.soundcloud.com), saved 2026-11-22: its newest episode, a lookalike, and the
+     2019-01-13 episode that Apple's lookup of the show does not list (#4783). Titles, links, guids and enclosures are the feed's own;
+     there are no descriptions. -->
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>Resources Radio</title>
+    <link>https://soundcloud.com/resourcesradio</link>
+    <itunes:author>Resources for the Future</itunes:author>
+    <item>
+      <title>Setting Research Priorities for Climate Assessments, with Melissa Kenney</title>
+      <link>https://soundcloud.com/resourcesradio/setting-research-priorities-for-climate-assessments-with-melissa-kenney</link>
+      <guid isPermaLink="false">tag:soundcloud,2010:tracks/2439980430</guid>
+      <pubDate>Tue, 17 Nov 2026 17:00:14 +0000</pubDate>
+      <itunes:duration>00:35:48</itunes:duration>
+      <enclosure type="audio/mpeg" url="https://feeds.soundcloud.com/stream/2439980430-resourcesradio-setting-research-priorities-for-climate-assessments-with-melissa-kenney.mp3" length="34371468"/>
+    </item>
+    <item>
+      <title>Understanding the Barriers to Affordable Homeowners Insurance, with Margaret Walls and Penny Liao</title>
+      <link>https://soundcloud.com/resourcesradio/understanding-the-barriers-to-affordable-homeowners-insurance-with-margaret-walls-and-penny-liao</link>
+      <guid isPermaLink="false">tag:soundcloud,2010:tracks/2336118488</guid>
+      <pubDate>Mon, 08 Jun 2026 00:00:00 +0000</pubDate>
+      <itunes:duration>00:34:30</itunes:duration>
+      <enclosure type="audio/mpeg" url="https://feeds.soundcloud.com/stream/2336118488-resourcesradio-understanding-the-barriers-to-affordable-homeowners-insurance-with-margaret-walls-and-penny-liao.mp3" length="33122211"/>
+    </item>
+    <item>
+      <title>People, Parks, and Policy, with RFF's Margaret Walls</title>
+      <link>https://soundcloud.com/resourcesradio/people-parks-and-policy-with-rffs-margaret-walls</link>
+      <guid isPermaLink="false">tag:soundcloud,2010:tracks/559432260</guid>
+      <pubDate>Sun, 13 Jan 2019 00:00:00 +0000</pubDate>
+      <itunes:duration>00:21:35</itunes:duration>
+      <enclosure type="audio/mpeg" url="https://feeds.soundcloud.com/stream/559432260-resourcesradio-people-parks-and-policy-with-rffs-margaret-walls.mp3" length="20723669"/>
+    </item>
+  </channel>
+</rss>

@@ -148,6 +148,36 @@ final class FriendArrivalStartTests: XCTestCase {
         XCTAssertEqual(kept, KeptFriendStart())
     }
 
+    // MARK: The item screen's facts
+
+    func testTheItemScreensFactsMapToTheStartRule() {
+        let wanted: [(NativeTextStartupAudioState, Start.Readiness)] = [
+            (.notRequired, .ready), (.ready, .ready), (.paused, .ready),
+            (.waiting, .waiting), (.preparing, .waiting), (.failed, .failed)
+        ]
+        for (state, play) in wanted {
+            XCTAssertEqual(Start(startupAudio: state, firstMargin: .recording(onPhone: true)).play, play, "\(state)")
+        }
+    }
+
+    func testTheFirstMarginsAudioMapsFromTheOneResolver() {
+        let url = URL(fileURLWithPath: "/tmp/a.m4a")
+        let reading = WrittenMarginReading(intro: "Cole wrote:", text: "Words", itemId: "item")
+        let cases: [(SharedMarginAudio, Start.FirstMarginAudio, Start.Readiness)] = [
+            (.voiceFile(url), .recording(onPhone: true), .ready),
+            (.readingReady(reading, file: url), .reading(isReady: true), .ready),
+            (.readingRendering(reading, file: url), .reading(isReady: false), .waiting),
+            (.cannotBeRead, .unavailable, .ready)
+        ]
+        let long = WrittenMarginReading(intro: "Cole wrote:", text: String(repeating: "a", count: 2_000), itemId: "item")
+        XCTAssertEqual(Start.FirstMarginAudio(.readingRendering(long, file: url)), .reading(isReady: true),
+                       "a long note is not rendered ahead, so it is not waited for here")
+        for (audio, mapped, skip) in cases {
+            XCTAssertEqual(Start.FirstMarginAudio(audio), mapped)
+            XCTAssertEqual(Start(episodeCanStart: true, firstMargin: mapped).skip, skip)
+        }
+    }
+
     // MARK: Helpers
 
     private func layer(finishedPass: Bool) -> ImportedCommentaryLayer {

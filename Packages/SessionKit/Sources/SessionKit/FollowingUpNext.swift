@@ -34,7 +34,13 @@ public enum FollowingUpNext {
     /// A writer's feed (Substack) often has no summary, and the body's first lines are the best preview of an article.
     public static func descriptionText(of entry: FeedEntry) -> String? {
         ItemMetadata.plainDescription(from: entry.summary)
-            ?? ItemMetadata.plainDescription(from: entry.fullBody)
+            ?? ItemMetadata.plainDescription(from: entry.fullBody.map(withoutHeadingMarks))
+    }
+
+    /// A feed body keeps its headings as Markdown heading lines (#4461); a preview shows their words in one flowing line, not the marks.
+    private static func withoutHeadingMarks(_ body: String) -> String {
+        body.replacingOccurrences(of: #"(?m)^#{1,6}[ \t]+"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s*\n\s*"#, with: " ", options: .regularExpression)
     }
 
     /// The Up next card for a show, nil when `pick` finds nothing.

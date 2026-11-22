@@ -24,6 +24,8 @@ extension PinnedMarginCard {
             case stopPlayingMine
             case listen
             case dismiss
+            /// Hides the card for a Margin the listener went to that is never spoken; the source keeps playing (#4934).
+            case dismissSilentMargin
 
             /// Held while a Margin is being recorded (`recordingNavigationIsLocked`): drawn dimmed, not hidden.
             public var followsNavigationLock: Bool { self == .goToNextMargin }
@@ -43,7 +45,7 @@ extension PinnedMarginCard {
         let ahead = noun.inSentence
         let skip = Action(job: .skipThisMargin, title: "Skip this Margin", hint: "Stops this Margin and carries on with the \(ahead).", prominence: .secondary)
         let stop = Action(
-            job: .stopReview, title: "Stop",
+            job: .stopReview, title: "Stop Margins",
             hint: "Stops these Margins and pauses the \(ahead). If none of them has played yet, it goes back to where you were.",
             prominence: .quiet)
         switch stage {
@@ -70,6 +72,9 @@ extension PinnedMarginCard {
                 return [Action(job: .stopPlayingMine, title: "Stop playing my Margins", hint: "Your other Margins stop playing by themselves.", prominence: .secondary)]
             }
             return upNextAction(arrival: arrival, ahead: ahead).map { [$0] } ?? []
+        case .silentHere:
+            // No Next Margin: the Skim arrows sit right under the card.
+            return [Action(job: .dismissSilentMargin, title: "Dismiss", hint: "Hides this card. The \(ahead) keeps playing.", prominence: .quiet)]
         case .answerSaved, .lastMargin:
             return []
         }
@@ -85,6 +90,20 @@ extension PinnedMarginCard {
     private var playNowTitle: String {
         guard case .friend = subject else { return "Play it now" }
         return "Skip to \(subject.buttonName ?? "it") now"
+    }
+
+    /// How far before the Margin the hop goes: the sender's choice for this Margin (#4171), else the review's 20 sec.
+    private var leadInSeconds: Int {
+        (targetLeadInMs ?? MarginMomentSequence.reviewLeadInMs) / 1_000
+    }
+
+    /// "20 seconds", "1 minute", "90 seconds": a whole number of minutes reads as minutes.
+    static func span(seconds: Int) -> String {
+        if seconds >= 60, seconds % 60 == 0 {
+            let minutes = seconds / 60
+            return "\(minutes) minute\(minutes == 1 ? "" : "s")"
+        }
+        return "\(seconds) second\(seconds == 1 ? "" : "s")"
     }
 
     private func hopTitle(seconds: Int) -> String {
@@ -104,8 +123,8 @@ extension PinnedMarginCard {
             ]
         }
         if case .seekToLeadIn = nextPress {
-            let seconds = MarginMomentSequence.reviewLeadInMs / 1_000
-            let hop = Action(job: .goToNextMargin, title: hopTitle(seconds: seconds), hint: "Moves the \(ahead) to about \(seconds) seconds before this Margin.", prominence: .primary)
+            let seconds = leadInSeconds
+            let hop = Action(job: .goToNextMargin, title: hopTitle(seconds: seconds), hint: "Moves the \(ahead) to about \(Self.span(seconds: seconds)) before this Margin.", prominence: .primary)
             return [hop, stop]
         }
         return [playNow, stop]
@@ -113,15 +132,15 @@ extension PinnedMarginCard {
 
     /// Between a friend's Margins the one button is the press the tap makes. No later Margin, no button.
     private func upNextAction(arrival: Arrival, ahead: String) -> Action? {
-        let leadInSeconds = MarginMomentSequence.reviewLeadInMs / 1_000
+        let leadInSeconds = self.leadInSeconds
         switch nextPress {
         case .unavailable:
             return nil
         case .seekToLeadIn:
             if arrival == .onRequest {
-                return Action(job: .goToNextMargin, title: "Hear it again", hint: "Moves the \(ahead) to about \(leadInSeconds) seconds before this Margin, so you can hear it again.", prominence: .secondary)
+                return Action(job: .goToNextMargin, title: "Hear it again", hint: "Moves the \(ahead) to about \(Self.span(seconds: leadInSeconds)) before this Margin, so you can hear it again.", prominence: .secondary)
             }
-            return Action(job: .goToNextMargin, title: hopTitle(seconds: leadInSeconds), hint: "Moves the \(ahead) to about \(leadInSeconds) seconds before the next Margin.", prominence: .secondary)
+            return Action(job: .goToNextMargin, title: hopTitle(seconds: leadInSeconds), hint: "Moves the \(ahead) to about \(Self.span(seconds: leadInSeconds)) before the next Margin.", prominence: .secondary)
         case .playMarginNow:
             // A Margin the card calls heard says "Hear it again", whichever press the tap makes; the words and the button agree.
             if arrival == .onRequest {

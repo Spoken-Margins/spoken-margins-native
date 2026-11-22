@@ -110,6 +110,22 @@ public enum PlaybackLivePassage {
         return index.window
     }
 
+    /// Every sentence of one chapter, for a view that shows the whole scene and scrolls (#4453). The rows are the same
+    /// value for as long as the chapter and its Margins are: the lit sentence is `currentIndex`, kept apart from them,
+    /// so a playback tick that moves the light changes no row. A row's `isCurrent` is always false here.
+    public struct Scene: Sendable, Equatable {
+        /// The chapter the scene is; nil when the item has no chapters (the whole text is one scene).
+        public let chapterTitle: String?
+        /// Where the scene starts in the item's text. It names the scene, and a later scene starts later.
+        public let chapterStart: Int
+        /// Where the scene's own text ends: its chapter's end, kept inside the text. Text that no chapter holds is in no scene.
+        public let chapterEnd: Int
+        /// All the scene's sentences, in reading order. Empty when it has no text.
+        public let sentences: [Sentence]
+
+        public static let empty = Scene(chapterTitle: nil, chapterStart: 0, chapterEnd: 0, sentences: [])
+    }
+
     /// A selectable chapter and its current sentence in UIKit/Foundation UTF-16 coordinates.
     public struct Reader: Equatable, Sendable {
         public let chapterTitle: String?
@@ -118,11 +134,15 @@ public enum PlaybackLivePassage {
     }
 
     /// Immutable parsed chapter. Reusing its identity proves playback ticks do not split the text again.
-    public final class IndexedChapter: Sendable {
+    public final class IndexedChapter: @unchecked Sendable {
         public let title: String?
         public let bounds: Range<Int>
         private let characters: [Character]
         fileprivate let ranges: [Range<Int>]
+        // The scene's rows, built on first use and kept: `rowLock` guards both. A chapter shown only as a window never builds them.
+        private let rowLock = NSLock()
+        private var cachedRows: [Sentence]?
+        private var rowBuilds = 0
 
         fileprivate init(title: String?, bounds: Range<Int>, characters: [Character]) {
             self.title = title
@@ -138,6 +158,50 @@ public enum PlaybackLivePassage {
             let start = text.index(text.startIndex, offsetBy: range.lowerBound - bounds.lowerBound)
             let end = text.index(text.startIndex, offsetBy: range.upperBound - bounds.lowerBound)
             return Reader(chapterTitle: title, text: text, currentSentenceRange: NSRange(start..<end, in: text))
+        }
+
+        /// How many times this chapter built its rows. One, however many ticks, seeks and Margin changes follow.
+        public var rowBuildCount: Int {
+            rowLock.lock()
+            defer { rowLock.unlock() }
+            return rowBuilds
+        }
+
+        /// The sentence containing `offset`; nil when the chapter has no sentences.
+        public func currentSentence(at offset: Int) -> Int? {
+            ranges.isEmpty ? nil : PlaybackLivePassage.sentenceIndex(containing: offset, in: ranges)
+        }
+
+        /// The whole chapter as a scene. Rows are built once; Margins only replace the rows they sit on.
+        public func scene(margins: [Margin] = []) -> Scene {
+            // A chapter with no sentence (whitespace only, or empty at the end of the text) has no row for a Margin to sit on.
+            guard !ranges.isEmpty else { return Scene(chapterTitle: title, chapterStart: bounds.lowerBound, chapterEnd: bounds.upperBound, sentences: []) }
+            var rows = baseRows()
+            var anchored: [Int: [Margin]] = [:]
+            for margin in margins where isInChapter(margin.offset, bounds: bounds, textLength: characters.count) {
+                anchored[sentenceIndex(containing: margin.offset, in: ranges), default: []].append(margin)
+            }
+            for (index, found) in anchored {
+                let row = rows[index]
+                let sorted = found.sorted { $0.offset == $1.offset ? $0.id < $1.id : $0.offset < $1.offset }
+                rows[index] = Sentence(start: row.start, end: row.end, text: row.text, isCurrent: false,
+                                       diamonds: sorted.map { Diamond(id: $0.id, origin: $0.origin) })
+            }
+            return Scene(chapterTitle: title, chapterStart: bounds.lowerBound, chapterEnd: bounds.upperBound, sentences: rows)
+        }
+
+        private func baseRows() -> [Sentence] {
+            rowLock.lock()
+            defer { rowLock.unlock() }
+            if let cachedRows { return cachedRows }
+            let rows = ranges.map { range -> Sentence in
+                let trimmed = trimmedEnd(of: range, in: characters)
+                return Sentence(start: trimmed.lowerBound, end: trimmed.upperBound, text: String(characters[trimmed]),
+                                isCurrent: false, diamonds: [])
+            }
+            cachedRows = rows
+            rowBuilds += 1
+            return rows
         }
 
         fileprivate func window(current: Int, margins: [Margin], before: Int, after: Int) -> Window {
@@ -181,7 +245,25 @@ public enum PlaybackLivePassage {
         private var selection: Selection?
         public private(set) var chapter: IndexedChapter?
         public private(set) var window: Window = .empty
+        /// The whole scene the playhead is in, and its lit sentence (#4453). Kept by `updateScene`, apart from `window`.
+        public private(set) var scene: Scene = .empty
+        public private(set) var currentSentence: Int?
+        private struct SceneSelection: Equatable, Sendable {
+            let chapter: ChapterKey
+            let margins: [Margin]
+        }
+        private var sceneSelection: SceneSelection?
         public var characterCount: Int { characters.count }
+
+        /// What `updateScene` changed.
+        public enum SceneChange: Equatable, Sendable {
+            /// Nothing: the same scene and the same lit sentence.
+            case none
+            /// Only the lit sentence moved. The scene's rows are the value they were.
+            case lit
+            /// The scene is another chapter, or its Margins changed.
+            case scene
+        }
 
         public init(text: String, chapters: [Chapter] = []) {
             characters = Array(text)
@@ -209,6 +291,33 @@ public enum PlaybackLivePassage {
             guard value != window else { return false }
             window = value
             return true
+        }
+
+        /// Moves the scene and its lit sentence to `offset`. The chapter is parsed once, its rows built once, and a
+        /// tick that stays in the scene changes no row, so a long scene costs nothing per tick (#4453).
+        @discardableResult
+        public mutating func updateScene(offset: Int, margins: [Margin] = []) -> SceneChange {
+            guard !characters.isEmpty else { return .none }
+            let span = PlaybackLivePassage.chapter(at: offset, in: chapters, textLength: characters.count)
+            let key = ChapterKey(title: span?.title, bounds: span?.range ?? 0..<characters.count)
+            let parsed = cache[key] ?? IndexedChapter(title: key.title, bounds: key.bounds, characters: characters)
+            cache[key] = parsed
+            chapter = parsed
+            let lit = parsed.currentSentence(at: offset)
+            // Only the Margins in this chapter: one added or removed elsewhere leaves the scene as it is.
+            let inScene = margins.filter { isInChapter($0.offset, bounds: key.bounds, textLength: characters.count) }
+            let next = SceneSelection(chapter: key, margins: inScene)
+            var change = SceneChange.none
+            if next != sceneSelection {
+                sceneSelection = next
+                scene = parsed.scene(margins: inScene)
+                change = .scene
+            }
+            if lit != currentSentence {
+                currentSentence = lit
+                if change == .none { change = .lit }
+            }
+            return change
         }
     }
 

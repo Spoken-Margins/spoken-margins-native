@@ -74,7 +74,10 @@ struct HelpScreen: View {
                     Text("Tap the record button on the mini player, or Add a Margin on Now Playing, speak your note, then tap Save & resume. The Margin stays attached to the point you were hearing.")
                     Text("Playback restarts before transcription runs in the background. A short pause can still occur while the app saves the recording and switches the audio session back to playback.")
                     Text("Open the Margins tab and tap a Margin to hear its recording or read its transcript.")
-                    Text("Hands-free: say \"Add a Margin in Spoken Margins\", then say your thought. It goes into your live session, or onto what's playing.")
+                    Text("Hands-free: say \"Add a Margin in Spoken Margins\" or \"Spoken Margins add a Margin\", then say your thought. It goes into your live session, or onto what's playing.")
+                    Text("Not driving? Add Record a Margin from the Shortcuts app to Back Tap or the Action Button. It opens Spoken Margins and starts recording. Add a Margin stays the one for hands-free use.")
+                    Text("Hands-free ending: say \"stop margin\" or \"end margin\" when you're done. Pauses never end a Margin.")
+                    Text("After Siri says the Margin was added, Siri stays open until you dismiss it: press the side button or swipe it away. Spoken Margins has no way to close it. If your listening doesn't start again once Siri has closed, tap Play.")
                 }
                 Section("Optional AI") {
                     Text("Summarize Notes uses Apple’s on-device Foundation Model when available. Listening Maps use publisher chapters for podcasts and deterministic structure for native text.")

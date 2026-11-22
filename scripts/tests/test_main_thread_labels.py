@@ -12,7 +12,7 @@ from pathlib import Path
 SOURCES = Path(__file__).resolve().parents[2] / 'App/SpokenMarginsApp/Sources/SpokenMarginsApp'
 
 SITES = {
-    'ExperienceItemDetailScreen.swift': ['episodeLinked'],
+    'ExperienceItemDetailScreen.swift': ['episodeLinked', 'itemShare'],
     'Gate1AppModel+AudioClients.swift': [
         'mediaInterruption', 'nowPlayingCommand', 'mediaStartTrace', 'mediaStallTrace', 'postResumeEvidence'],
     'Gate1AppModel+FileImport.swift': ['obsidianImportFinish'],

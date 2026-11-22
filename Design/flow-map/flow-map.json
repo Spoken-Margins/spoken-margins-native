@@ -3002,6 +3002,34 @@
    "present_line": null,
    "condition": "",
    "notes": "Recipient sheet sends .confirmImport (Build23RecipientSharingExperience.swift:244 -> Build23SharingSeams.swift:533) -> confirmSpokenMarginsPackageImport -> coordinator.confirm; on success showImportedItem sets screen = .item and review = nil closes the sheet. Trigger is not in my files."
+  },
+  {
+   "id": "e184",
+   "from": "ExperienceItemDetailScreen",
+   "to": "Build23SenderSharingExperience",
+   "control": "Share Margins (square.and.arrow.up), header",
+   "control_kind": "button",
+   "presentation": "sheet",
+   "file": "ExperienceItemDetailScreen.swift",
+   "line": 104,
+   "anchor": "Button(action: share) {",
+   "present_line": null,
+   "condition": "The listener has Margins on the item",
+   "notes": "share() asks model.itemShareStart(); on .share, openItemShareSheet() -> openPlaybackShareStartingWithFriendAnswers() opens the player's Share sheet (Gate1RootView.swift), or the reply sheet on a friend's item the listener answered. With nothing to send it shows the Nothing to share yet alert instead (#4229)."
+  },
+  {
+   "id": "e185",
+   "from": "ExperienceItemDetailScreen",
+   "to": "Build23SenderSharingExperience",
+   "control": "Item options > Share Margins (square.and.arrow.up)",
+   "control_kind": "button",
+   "presentation": "sheet",
+   "file": "ExperienceItemDetailScreen.swift",
+   "line": 117,
+   "anchor": "Button(\"Share Margins\", systemImage: \"square.and.arrow.up\", action: share)",
+   "present_line": null,
+   "condition": "The listener has Margins on the item",
+   "notes": "share() asks model.itemShareStart(); on .share, openItemShareSheet() -> openPlaybackShareStartingWithFriendAnswers() opens the player's Share sheet (Gate1RootView.swift), or the reply sheet on a friend's item the listener answered. With nothing to send it shows the Nothing to share yet alert instead (#4229)."
   }
  ],
  "omitted": {

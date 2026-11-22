@@ -74,6 +74,17 @@ export interface Margin {
    */
   readAloud?: false;
   /**
+   * How much of the episode the sender asked their friend to hear before this Margin, in seconds, 0 to 300, from the
+   * packet's `leadInMs` (#4171). Absent means the usual 20 seconds. Never written to a packet by the web.
+   */
+  leadInSeconds?: number;
+  /**
+   * The length of the copy this Margin was made on, in seconds (#4614, #4175): from the packet's `item.durationMs` for a
+   * friend's Margin on a podcast, from the player for the listener's own. A podcast with dynamic ads is a different file
+   * on each request, so the player compares this with the copy it loaded. Absent when the length is unknown.
+   */
+  copyLengthSeconds?: number;
+  /**
    * The listener starred their own Margin to share (#4172): Share starts only the starred ones ticked, as the iPhone app's
    * does. Kept in this browser only. It is never written to a packet or a backup, so a restored Margin comes back unstarred.
    * Only ever `true`; absent means not starred.

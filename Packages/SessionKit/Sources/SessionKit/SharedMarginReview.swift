@@ -38,7 +38,7 @@ public enum SharedMarginReview {
         public var anchor: MarginMomentAnchor {
             MarginMomentAnchor(
                 marginId: marginId, mediaTimeMs: mediaTimeMs, label: senderLabel, isApproximate: isApproximate,
-                caption: replyContext?.caption, isReadAloud: interjection.isWritten
+                caption: replyContext?.caption, isReadAloud: interjection.isWritten, leadInMs: interjection.senderLeadInMs
             )
         }
     }
@@ -79,8 +79,11 @@ public enum SharedMarginReview {
         durationMs: Int? = nil
     ) -> [Entry] {
         let contexts = replyContexts(layers: layers, records: records, ownMargins: ownMargins)
+        // A copy of the listener's own Margin that came back in a packet is not a friend's to offer (#4697), the same
+        // rule the Library row's count uses, so the row and the offer say the same number.
+        let ownIdentities = OwnMarginEchoes.identities(of: ownMargins)
         return layers.flatMap { layer -> [Entry] in
-            let layerRecords = records[layer.id] ?? []
+            let layerRecords = OwnMarginEchoes.withoutEchoes(records[layer.id] ?? [], in: layer, ownIdentities: ownIdentities)
             guard SharedMarginPrompts.isLayerPlaybackEligible(layer, records: layerRecords) else { return [] }
             return layerRecords.compactMap { record -> Entry? in
                 // The same test and the same time the automatic prompts use. A Margin plays where it was placed, else

@@ -15,6 +15,10 @@ Usage: scripts/xcodebuild-lane <xcodebuild arguments>
 - A `test` or `test-without-building` run that has printed its test summary and then stays silent for
   scripts/xcodebuild_finish.py's grace period is stopped, says so, and returns the result its summary shows (#2053).
   That is a pass only when the summary covers the whole run (one bundle selected, or xcodebuild's own banner).
+- A build folder with no `SourcePackages` is first seeded by an APFS clone of a local copy whose pins match
+  the workspace's Package.resolved, and then builds with `-skipPackageUpdates` (scripts/lane_package_seed.py).
+  A fresh worktree otherwise fetched every package from GitHub: 34 minutes on 2026-11-18. After a good build
+  its packages are kept as the shared copy for those pins, once per pins hash.
 - Information-only calls (-version, -list, -showBuildSettings, -exportArchive, ...) skip all three.
 - Every call first links the main checkout's git-ignored Config/Local.xcconfig, the signing team, into a
   worktree that has none (#1841), so device builds and archives in any worktree sign as the main checkout does.
@@ -30,6 +34,7 @@ import threading
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lane_slots import build_slot  # noqa: E402
+import lane_package_seed  # noqa: E402
 import sm_build_cache  # noqa: E402
 import xcodebuild_finish  # noqa: E402
 
@@ -93,6 +98,12 @@ def main(argv):
                    and a in {'build', 'build-for-testing', 'archive', 'test', 'test-without-building',
                              'analyze', 'clean', 'install', 'installsrc', 'docbuild'}), 'build')
     label = f'xcodebuild {action}'
+    root = worktree_root()
+    cache = sm_build_cache.cache_root()
+    note = lambda line: print(line, file=sys.stderr, flush=True)  # noqa: E731
+    if action not in {'clean', 'test-without-building'} and lane_package_seed.seed(root, Path(derived), cache, note):
+        if '-skipPackageUpdates' not in args:
+            args.append('-skipPackageUpdates')
     with build_slot(label):
         print(f'[lane] DerivedData: {derived}', file=sys.stderr, flush=True)
         if action in {'test', 'test-without-building'}:
@@ -106,6 +117,8 @@ def main(argv):
             for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
                 signal.signal(signum, forward)
             result = process.wait()
+    if result == 0 and action not in {'clean', 'test-without-building'}:
+        lane_package_seed.keep_shared(root, Path(derived), cache, note)
     return 128 - result if result < 0 else result
 
 

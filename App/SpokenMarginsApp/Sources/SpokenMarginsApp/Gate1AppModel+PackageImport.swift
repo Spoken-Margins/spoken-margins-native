@@ -129,28 +129,38 @@ extension Gate1AppModel {
     }
 
     var shareLinkOpener: ShareLinkOpener { packageImport.shareLinkOpener }
+    var packetOpenFailures: PacketOpenFailurePresenter { packageImport.openFailures }
 
     /// A tapped share link (https on the share host): download, unseal, then the usual import review (#488).
     func openShareLink(_ url: URL) {
+        // The listener's own link, not the failure sheet's Try Again: it takes the opener over from any Try Again.
+        packetOpenFailures.anotherLinkStarted()
+        startShareLinkOpen(url)
+    }
+
+    private func startShareLinkOpen(_ url: URL) {
         guard let link = ShareLinkURL(url: url) else {
-            reportFailure("This isn't a Spoken Margins share link.")
+            shareLinkOpener.cancel() // the last thing the listener opened is this, so an earlier download says nothing
+            packetOpenFailures.present(PacketOpenFailureSheetContent(unparsedShareHostURL: url), retry: nil)
             return
         }
-        withdrawRetryOffer("shareLink:\(link.id)")
         diagnostics["lastShareLink"] = link.key == nil ? "opening:no_key" : "opening"
+        let sheetWords = packetOpenFailures.generation
+        let tryAgain: @MainActor () -> Void = { [weak self] in self?.startShareLinkOpen(url) }
         shareLinkOpener.open(
             link,
             stage: { [weak self] file in
                 guard let self else { return }
                 let opened = await self.stageSpokenMarginsPackageImport(from: file, shareLinkId: link.id)
                 self.diagnostics["lastShareLink"] = opened ? "opened" : "rejected"
+                // A Try Again that worked: the sheet goes and the arrival begins. A refused file has put its own words up;
+                // any other failure went to the banner, and the sheet's old words go so the banner can be seen.
+                self.packetOpenFailures.openEnded(opened: opened, since: sheetWords)
             },
-            fail: { [weak self] message, retryable in
+            fail: { [weak self] failure in
                 self?.diagnostics["lastShareLink"] = "failed"
-                let retry: UserFeedbackEvent.Retry? = retryable
-                    ? .init(key: "shareLink:\(link.id)") { [weak self] in self?.openShareLink(url) }
-                    : nil
-                self?.reportFailure(message, retry: retry)
+                let content = PacketOpenFailureSheetContent(failure, linkID: link.id)
+                self?.packetOpenFailures.present(content, retry: content.isRetryable ? tryAgain : nil)
             }
         )
     }
@@ -328,7 +338,7 @@ extension Gate1AppModel {
             diagnostics["lastSharedPodcastAcquisition"] = diagnostic
         }
         guard result.status == .playable,
-              let importedItem = try persistResolvedSourceLinkInBackground(request: request, result: result, listenerAdded: false) else {
+              let importedItem = try await persistResolvedSourceLinkInBackgroundReloadingOffMain(request: request, result: result, listenerAdded: false) else {
             throw SessionKitError.persistenceFailed("shared_podcast_item_not_created")
         }
         return importedItem.id
@@ -357,12 +367,13 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
             reportSuccess: { [weak model] in model?.reportSuccess($0) },
             reportConfirmation: { [weak model] in model?.reportConfirmation($0) },
             reportFailureMessage: { [weak model] in model?.reportFailure($0) },
+            presentOpenFailure: { [weak model] in model?.packetOpenFailures.present($0, retry: nil) },
             reportFailure: { [weak model] error, context in model?.reportFailure(error, context: context) },
             openItem: { [weak model] in model?.openItem(id: $0) },
             showImportedItem: { [weak model] itemId, store in
                 guard let model else { return }
                 model.activeItemId = itemId
-                model.libraryItems = try model.loadLibraryRows(store: store)
+                // The Library rows were loaded off the main thread by `refreshImportedLibrary`, which runs before this (#2256).
                 model.selectedItem = try model.loadItemDetail(id: itemId, store: store)
                 model.updateSkimAvailability() // a map added from a packet reaches Skim even where the chapters read the same (#1471)
                 // The Margins and Now tabs read these rows, not selectedItem; without this they stay empty until relaunch (#3263).
@@ -411,7 +422,7 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
             navigationIsLocked: { [weak model] in model?.recordingNavigationIsLocked ?? false },
             refreshImportedLibrary: { [weak model] store in
                 guard let model else { return }
-                model.libraryItems = try model.loadLibraryRows(store: store)
+                try await model.reloadLibraryRowsOffMain(store: store) // on screen when it returns, as the direct read was
             },
             labels: model.hangTelemetry.labels
         )

@@ -120,13 +120,11 @@ final class ListeningSignalRecorderTests: XCTestCase {
         let (source, item) = Self.podcast
         let start = Self.time("2026-09-02T19:00:00Z")
 
-        // A call that waits for the queue is freed after three seconds, so it fails below instead of hanging the run.
-        pipe.release(after: 3)
-
-        func returnsAtOnce(_ name: String, _ call: () -> Void) {
-            let began = Date()
-            call()
-            XCTAssertLessThan(Date().timeIntervalSince(began), 0.5, "\(name) waited for the recorder's queue")
+        // Each call runs on another thread while the pipe stays parked; one that waits for the queue cannot come back
+        // until the pipe is freed, so it fails on that state rather than on a clock (#4573). The pipe is freed only if
+        // a call is still stuck at the ceiling, so the stuck thread can end.
+        func returnsAtOnce(_ name: String, _ call: @escaping @Sendable () -> Void) {
+            assertReturnsWhileHeld(name, onTimeout: { _ = pipe.release() }, call)
         }
 
         // Closing a listening interval writes it at once, which opens the pipe and parks the queue.
@@ -601,10 +599,6 @@ private final class ParkedPipe: @unchecked Sendable {
     private var leftovers = Data()
 
     init(path: String) { self.path = path }
-
-    func release(after seconds: TimeInterval) {
-        DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { _ = self.release() }
-    }
 
     /// Frees the queue, and returns what it wrote into the pipe (nothing, when its first write failed).
     @discardableResult

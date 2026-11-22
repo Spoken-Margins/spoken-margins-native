@@ -1,6 +1,6 @@
 // Sending replies back to the friend who shared (#2168 phase 2, after the iPhone app's #3221). The rules mirror
 // Packages/SessionKit/Sources/SessionKit/ReplyBack.swift (`ReplyBackOffer`): Share on an episode that holds a friend's
-// Margins offers "Send replies to <friend>", the listener's replies pre-picked and their other new Margins offered
+// Margins offers "Share replies with <friend>" (#3906), the listener's replies pre-picked and their other new Margins offered
 // unpicked, and nothing the friend sent goes back. Plain TypeScript with no DOM, so `npm run test:web` covers it.
 // One more difference (#3784): with no reply in the list, it starts the listener's Margins made since the page opened
 // picked, because every Margin made before replies were recorded carries no link (`preselected`).
@@ -27,7 +27,7 @@ export interface ReplyBackOffer {
   others: Margin[];
   /** Whose Margins the replies answer; with no replies, every friend on the episode. */
   friendLabels: string[];
-  /** "Send replies to Ana" (Swift :16, :20). */
+  /** "Share replies with Ana" when a Margin answers a friend's, "Share your Margins with Ana" when none does (Swift `title`, #3906). */
   title: string;
   /** Every Margin the list shows, in the order they were made (Swift :18). */
   candidates: Margin[];
@@ -104,7 +104,7 @@ export function replyBackOffer(margins: readonly Margin[]): ReplyBackOffer | und
     replies,
     others,
     friendLabels,
-    title: `Send replies to ${friendNames(friendLabels)}`,
+    title: `${replies.length > 0 ? 'Share replies with' : 'Share your Margins with'} ${friendNames(friendLabels)}`,
     candidates: [...replies, ...others].sort(madeBefore),
   };
 }

@@ -34,7 +34,14 @@ public struct ItemListeningChoices: Equatable, Sendable {
         /// A reply whose parent Margin is not in this Library (#4174): replies never carry the Margin they answer.
         public let parentMissing: Bool
 
-        public init(senderName: String, audioDurationMs: Int?, transcript: String, replyToYouParentId: String? = nil, parentMissing: Bool = false) {
+        /// The run-up the sender chose for this Margin (#4171), nil for the review's own length.
+        public let leadInMs: Int?
+
+        public init(
+            senderName: String, audioDurationMs: Int?, transcript: String, replyToYouParentId: String? = nil,
+            parentMissing: Bool = false, leadInMs: Int? = nil
+        ) {
+            self.leadInMs = leadInMs.map(SenderLeadIn.clamped)
             self.senderName = senderName
             self.audioDurationMs = audioDurationMs
             self.transcript = transcript
@@ -167,11 +174,11 @@ public struct ItemListeningChoices: Equatable, Sendable {
     }
 
     /// How long "Skip to …" takes, in whole minutes and never under one: each Margin, written ones at the on-device
-    /// voice's pace, plus the review's lead-in before each.
+    /// voice's pace, plus the review's lead-in before each (the sender's own length for a Margin that has one, #4171).
     static func marginsOnlyMinutes(_ margins: [WaitingMargin]) -> Int {
         let leadInMs = ListeningMoment.rule(for: .reviewNewMargins).leadInMs
         let totalMs = margins.reduce(0) { sum, margin in
-            sum + leadInMs + max(0, margin.audioDurationMs ?? spokenLengthMs(of: margin.transcript))
+            sum + (margin.leadInMs ?? leadInMs) + max(0, margin.audioDurationMs ?? spokenLengthMs(of: margin.transcript))
         }
         return max(1, Int((Double(totalMs) / 60_000).rounded()))
     }
@@ -191,7 +198,8 @@ extension SharedMarginReview.Entry {
             audioDurationMs: interjection.audioDurationMs,
             transcript: interjection.approvedTranscript,
             replyToYouParentId: replyContext?.yoursParentId,
-            parentMissing: replyContext?.parent == .missing
+            parentMissing: replyContext?.parent == .missing,
+            leadInMs: interjection.senderLeadInMs
         )
     }
 }

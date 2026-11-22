@@ -7,30 +7,22 @@ public struct SharedMarginTally: Hashable, Sendable {
 
     public let total: Int
     public let new: Int
+    /// Who sent them (#3794): the friends whose Margins these are, merged by sender, as `SharedMarginTally.Sender`.
+    /// Empty from a caller that doesn't read them; `senderLine` then says "a friend".
+    public let senders: [Sender]
+    /// How many of `total` are replies to the listener's own Margins (#3889's rule), for `senderLine`'s words.
+    public let replies: Int
 
-    public init(total: Int, new: Int) {
+    public init(total: Int, new: Int, senders: [Sender] = [], replies: Int = 0) {
         let total = max(0, total)
         self.total = total
         self.new = min(max(0, new), total)
+        // Names read in a second statement can disagree with the count if a write came between them; then the names
+        // are dropped and the line says "a friend", rather than naming people for Margins that are not there.
+        let merged = Self.mergedSenders(senders)
+        self.senders = merged.reduce(0) { $0 + $1.count } == total ? merged : []
+        self.replies = min(max(0, replies), total)
     }
 
     public var isEmpty: Bool { total == 0 }
-
-    /// The Library row's line: "3 shared Margins · 1 new", "2 new shared Margins", "1 shared Margin".
-    /// Nil when nobody shared a Margin on the item.
-    public var libraryLine: String? {
-        guard total > 0 else { return nil }
-        let noun = total == 1 ? "shared Margin" : "shared Margins"
-        if new == total { return "\(total) new \(noun)" }
-        if new == 0 { return "\(total) \(noun)" }
-        return "\(total) \(noun) · \(new) new"
-    }
-
-    /// What VoiceOver says for the line: the words, not the dot.
-    public var accessibilityLine: String? {
-        guard total > 0 else { return nil }
-        let noun = total == 1 ? "Margin" : "Margins"
-        let base = "\(total) \(noun) from other listeners"
-        return new == 0 ? base : "\(base), \(new) new to you"
-    }
 }

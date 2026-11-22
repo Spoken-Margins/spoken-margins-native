@@ -103,6 +103,7 @@ struct LiveSessionView: View, Equatable {
     var body: some View {
         #if DEBUG
         let _ = ScreenRedrawProbe.record("liveSession")
+        let _ = ScreenRedrawProbe.printsChanges.contains("liveSession") ? Self._printChanges() : ()
         #endif
         NavigationStack {
             Group {
@@ -121,6 +122,8 @@ struct LiveSessionView: View, Equatable {
             .navigationTitle("Live session")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(isRunningScreen ? AppColors.listeningBackground : AppColors.bone, for: .navigationBar)
+            // As on the player (#4607): the dark scheme reaches the status bar only while the bar's background is shown.
+            .toolbarBackground(isRunningScreen ? .visible : .automatic, for: .navigationBar)
             .toolbarColorScheme(isRunningScreen ? .dark : nil, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -254,6 +257,13 @@ struct LiveSessionView: View, Equatable {
         }
         // Outermost, so the mini player and every sheet and cover this screen opens have the model to watch themselves.
         .environmentObject(model)
+        #if DEBUG
+        // What redraws this screen, by source, for `LiveSessionRedrawTests` (#4379).
+        .recordsPublishes(screen: "liveSession", of: [
+            "controller": controller.objectWillChange, "feed": feed.objectWillChange, "finish": finish.objectWillChange,
+            "links": links.objectWillChange, "capture": capture.objectWillChange,
+        ])
+        #endif
     }
 
     /// Back to where the listener came from. The session keeps running; a spoken Margin still recording is saved, not
@@ -514,7 +524,7 @@ struct LiveSessionView: View, Equatable {
             switch wanted {
             case .liveRecording: controller.isRecordingSpoken
             case .camera: isTakingPhoto && controller.isRunning && !controller.isRecordingSpoken
-            case .liveWriting: controller.isRunning && !controller.isRecordingSpoken
+            case .liveWriting: !controller.isRecordingSpoken && (controller.isRunning || keepsBegunPhoto())
             }
         }
         Task {
@@ -608,14 +618,32 @@ struct LiveSessionView: View, Equatable {
 
     private func openRecorder(with staged: LiveSessionPhotoStore.Staged) {
         isTakingPhoto = false
-        // The session may have ended or started a recording while the camera was open.
-        guard controller.isRunning, !controller.isRecordingSpoken else {
+        // The session may have ended or started a recording while the camera was open. A photo taken as it ended is
+        // kept: the microphone must not start past the End, so the Margin is written, in the ended session (#3847).
+        switch LiveSessionBegunMargin.afterPhoto(
+            isRunning: controller.isRunning, isRecordingSpoken: controller.isRecordingSpoken,
+            photoAt: photoTappedAt, in: controller.session
+        ) {
+        case .record:
+            controller.startSpokenMargin(photo: staged, placedAt: photoTappedAt)
+            cover = .liveRecording
+        case .write:
+            // A direct swap from the camera cover, as the recording branch does. `present` would give up with the
+            // camera cover still set and drop the photo.
+            writingPhoto = staged
+            writingNotice = nil
+            writingStartedAt = photoTappedAt
+            cover = .liveWriting
+        case .discard:
             controller.discardPhoto(staged)
             cover = nil
-            return
         }
-        controller.startSpokenMargin(photo: staged, placedAt: photoTappedAt)
-        cover = .liveRecording
+    }
+
+    /// Whether a photo is waiting for words and the session still takes a Margin begun at `writingStartedAt`: it has
+    /// ended, but is not saved to the Library (#3847).
+    private func keepsBegunPhoto() -> Bool {
+        writingPhoto != nil && controller.checkBegunMargin(markedAt: writingStartedAt) != .refused
     }
 
     /// Throws away a photo that was waiting for a written Margin that can no longer be opened.
@@ -638,7 +666,7 @@ struct LiveSessionView: View, Equatable {
     private func beginWriting(startedAt: Date? = nil) {
         // A spoken Margin still recording keeps its screen; a Write link can't swap it for the writing sheet and
         // leave the microphone on.
-        guard controller.isRunning, !controller.isRecordingSpoken, cover != .camera else {
+        guard controller.isRunning || keepsBegunPhoto(), !controller.isRecordingSpoken, cover != .camera else {
             dropWaitingPhoto() // nothing will take it now, so it is not left to the next launch's sweep
             return
         }
@@ -718,6 +746,7 @@ struct LiveSessionView: View, Equatable {
             LiveSessionMarginDetailView(
                 margin: margin, sessionTitle: session.title,
                 position: LiveSessionMarginsList.positionLabel(for: margin, in: session),
+                photoPage: session.photoPageOffer(forMarginId: margin.id),
                 keepHeardPlace: { controller.keepHeardPlace(id: margin.id) },
                 declineHeardPlace: { controller.declineHeardPlace(id: margin.id) },
                 saveText: { controller.updateText(id: margin.id, text: $0) },
@@ -792,7 +821,13 @@ struct LiveSessionView: View, Equatable {
             .buttonStyle(.bordered)
             .tint(.white)
             .disabled(finish.isSaving)
-            Button("Discard Session", role: .destructive) { confirmsDiscard = true }
+            // The destructive role alone is the system red, which is dim on this dark card (#4443). The icon keeps it a
+            // button for a listener who can't tell the red from the card.
+            Button(role: .destructive) { confirmsDiscard = true } label: {
+                Label("Discard Session", systemImage: "trash").frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .tint(AppColors.watchDanger)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

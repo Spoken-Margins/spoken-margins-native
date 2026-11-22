@@ -312,3 +312,26 @@ test('an unusable X-Final-URL is ignored, not trusted', async () => {
     assert.equal(read.finalUrl, undefined, junk);
   }
 });
+
+// The sender's share check (#4454, 2026-11-17): the Share link tap is the owner's action for one read of the post page.
+test('the sender\'s share check may read a post page, through the app\'s own transport, and never falls back to the relay', async () => {
+  const calls: string[] = [];
+  const fetch = stubFetch({ [POST_URL]: { body: feedFixture('substack-voiceover-page.html'), url: POST_URL } }, calls);
+  const voice = await readSubstackVoice(POST_URL, { transport: { kind: 'native', fetch }, reason: 'sender-share-check', relayBase: RELAY, consent: true });
+  assert.equal(voice?.origin, 'substack-voiceover');
+  assert.deepEqual(calls, [POST_URL]);
+
+  // A read the app couldn't make is the network's: the relay would be a leak, so it is never tried even with consent.
+  const failed: string[] = [];
+  const down = stubFetch({}, failed);
+  await assert.rejects(readSubstackVoice(POST_URL, { transport: { kind: 'native', fetch: down }, reason: 'sender-share-check', relayBase: RELAY, consent: true }), TypeError);
+  assert.deepEqual(failed, [POST_URL], 'nothing was asked of the relay');
+});
+
+test('the share check is a tap for a post page and nothing else is: a page read for a feed or a search stays refused', async () => {
+  const fetch = stubFetch({ [POST_URL]: { body: feedFixture('substack-voiceover-page.html'), url: POST_URL } });
+  assert.equal((await readUrl(POST_URL, { fetch, reason: 'sender-share-check' })).via, 'direct');
+  for (const reason of [undefined, 'feed-refresh', 'search'] as const) {
+    await assert.rejects(readUrl(POST_URL, { fetch, reason }), PostPageReadRefused, String(reason));
+  }
+});

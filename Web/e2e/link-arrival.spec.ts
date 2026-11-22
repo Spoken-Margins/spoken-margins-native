@@ -25,6 +25,27 @@ test.beforeEach(async ({}, info) => {
 
 const audioTime = (page: Page) => page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.currentTime);
 
+/**
+ * Waits until every write the page has already started to the Margins store has landed. IndexedDB runs read-write
+ * transactions on one store in the order they were made, so an empty read-write transaction made now finishes only after
+ * the earlier ones. A test that reloads to see what was kept calls this first: a reload kills a write still in flight, and
+ * the page shows the pending star at once, so the screen alone can't say the second of two quick taps has been written (#4525).
+ */
+const settleMarginWrites = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open('spoken-margins');
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const tx = open.result.transaction('margins', 'readwrite');
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error ?? new Error('The Margins store write was aborted.'));
+        };
+      }),
+  );
+
 async function friendPage(context: BrowserContext): Promise<Page> {
   const page = await context.newPage();
   await serveFixtures(page);
@@ -101,6 +122,13 @@ async function journey(page: Page, info: { project: { name: string } } & Paramet
   expect(await audioTime(page)).toBeLessThan(15);
   await expect(cue.getByTestId('margin-cue-clock')).toHaveText(/^0:\d\d$/);
   await shot(page, info as never, `${label}-3-lead-in`);
+  // 3b. Inside the lead-in, "Start a minute earlier" goes a minute back, here to the start of the episode (#4171); the
+  // first Skip then lands inside the lead-in again.
+  await cue.getByTestId('margin-cue-earlier').click();
+  await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeLessThan(5);
+  await expect(cue.getByTestId('margin-cue-earlier')).toHaveCount(0);
+  await cue.getByRole('button', { name: 'Skip to just before Web fixture' }).click();
+  await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThanOrEqual(9.5);
   await cue.getByRole('button', { name: 'Skip to Web fixture now' }).click();
 
   // 4. The Margin plays in place: its card says who and which, and the words show while the voice reads them.
@@ -708,6 +736,7 @@ test('a double tap on Select all and on a star ends where the buttons say, not w
   await expect(list.getByRole('button', { name: 'Select none' })).toBeVisible();
   // In the Margins tab after a reload: a star made above is kept, and a double tap on an unstarred Margin writes on then
   // off, so it is off in the store too (a second reload shows what was kept).
+  await settleMarginWrites(page);
   await page.reload();
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
   const stored = (words: string) => page.locator('li.margin').filter({ hasText: words }).getByRole('button', { name: 'Star for sharing' });
@@ -715,6 +744,7 @@ test('a double tap on Select all and on a star ends where the buttons say, not w
   await expect(stored('First note.')).toHaveAttribute('aria-pressed', 'false');
   await stored('First note.').dblclick();
   await expect(stored('First note.')).toHaveAttribute('aria-pressed', 'false');
+  await settleMarginWrites(page); // the second tap's write, not only the button, before the reload (#4525)
   await page.reload();
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
   await expect(stored('First note.')).toHaveAttribute('aria-pressed', 'false');
@@ -759,6 +789,7 @@ test('star two of four Margins and Share starts only those ticked and writes onl
   // A star is not in the file at all.
   expect(JSON.stringify(sent.paths)).not.toContain('star');
   // Stars are kept with the Margin: a fresh page of the same browser still has them, and a tap clears one.
+  await settleMarginWrites(page);
   await page.reload();
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
   const inTab = page.locator('li.margin').filter({ hasText: 'Second note.' });
@@ -767,5 +798,44 @@ test('star two of four Margins and Share starts only those ticked and writes onl
   await inTab.getByRole('button', { name: 'Star for sharing' }).click();
   await expect(inTab.getByRole('button', { name: 'Star for sharing' })).toHaveAttribute('aria-pressed', 'false');
   await expect(inTab).not.toContainText('Starred');
+  await context.close();
+});
+
+test('after the first reply leaves, the page offers the iPhone app once, and not again after Not now (#4671)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  const openShare = async () => {
+    await page.goto(LINK);
+    await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+    return page.getByRole('dialog', { name: EPISODE });
+  };
+  const saveFile = async (playing: Page) => {
+    const downloading = page.waitForEvent('download');
+    await playing.getByRole('button', { name: 'Save as a file' }).click();
+    await downloading;
+  };
+  let playing = await openShare();
+  await playing.getByRole('button', { name: 'Write a Margin' }).click();
+  await playing.getByLabel(/Your Margin at/).fill('My answer.');
+  await playing.getByRole('button', { name: 'Save Margin' }).click();
+  const invite = playing.getByRole('region', { name: 'Get the iPhone app' });
+  // Not before the reply has left.
+  await expect(invite).toHaveCount(0);
+  await saveFile(playing);
+  await expect(invite).toBeVisible();
+  await expect(invite.getByRole('link', { name: 'Get Spoken Margins for iPhone' })).toHaveAttribute('href', 'https://spokenmargins.com/join');
+  await expect(invite).toContainText('tap your friend’s link again');
+  await expect(invite).toContainText('One file per item');
+  await invite.getByRole('button', { name: 'Not now' }).click();
+  await expect(invite).toHaveCount(0);
+  // A second reply, and a fresh page of the same browser, show nothing.
+  await saveFile(playing);
+  await expect(page.getByText(/Saved 1 Margin as /)).toBeVisible();
+  await expect(invite).toHaveCount(0);
+  await page.reload();
+  playing = await openShare();
+  await playing.getByRole('checkbox', { name: /My answer\./ }).check();
+  await saveFile(playing);
+  await expect(playing.getByRole('region', { name: 'Get the iPhone app' })).toHaveCount(0);
   await context.close();
 });

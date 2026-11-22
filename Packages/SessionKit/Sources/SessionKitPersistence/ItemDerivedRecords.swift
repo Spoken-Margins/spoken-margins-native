@@ -218,14 +218,24 @@ extension SQLiteSessionStore {
         return slices
     }
 
-    /// Keeps the slices for the next read. A cache write, never worth making a read wait: it is skipped when another
-    /// thread holds the write connection, and when any item was written since the read began (the slices may already
-    /// be out of date). A failure to write is ignored.
-    private func storeSlices(_ slices: [ItemSlice], ifNoItemWrittenSince generation: Int) {
-        guard !slices.isEmpty, connectionLock.try() else { return }
+    /// Runs a cache write for a read that has just finished, and never makes the read wait for it. It is skipped when
+    /// another thread holds this connection, when any item was written since the read began (what it would keep may
+    /// already be out of date), and when another connection or process holds SQLite's write lock: the busy timeout is
+    /// off for the write, because the store's 1 s wait is for a save that must not be dropped, not for a cache (#4761).
+    /// A failure to write is ignored.
+    private func writeCacheForRead(ifNoItemWrittenSince generation: Int, _ operation: () throws -> Void) {
+        guard connectionLock.try() else { return }
         defer { connectionLock.unlock() }
         guard itemRevisionLock.withLock({ itemWriteGeneration }) == generation else { return }
-        try? withTransaction {
+        sqlite3_busy_timeout(db, 0)
+        defer { sqlite3_busy_timeout(db, writeBusyTimeoutMs) }
+        try? withTransaction(operation)
+    }
+
+    /// Keeps the slices for the next read, on the terms of `writeCacheForRead`.
+    private func storeSlices(_ slices: [ItemSlice], ifNoItemWrittenSince generation: Int) {
+        guard !slices.isEmpty else { return }
+        writeCacheForRead(ifNoItemWrittenSince: generation) {
             for slice in slices {
                 try save(kind: Self.itemSliceKind, id: slice.item.id, sessionId: nil, itemId: slice.item.id,
                          value: StoredItemSlice(format: StoredItemSlice.currentFormat, token: slice.token, item: slice.item,
@@ -360,10 +370,8 @@ extension SQLiteSessionStore {
 
     /// Kept for the next match, on the same terms as `storeSlices`.
     private func storeDigests(_ records: [StoredItemTextDigests], ifNoItemWrittenSince generation: Int) {
-        guard !records.isEmpty, connectionLock.try() else { return }
-        defer { connectionLock.unlock() }
-        guard itemRevisionLock.withLock({ itemWriteGeneration }) == generation else { return }
-        try? withTransaction {
+        guard !records.isEmpty else { return }
+        writeCacheForRead(ifNoItemWrittenSince: generation) {
             for record in records {
                 try save(kind: Self.itemTextDigestKind, id: record.itemId, sessionId: nil, itemId: record.itemId, value: record)
             }

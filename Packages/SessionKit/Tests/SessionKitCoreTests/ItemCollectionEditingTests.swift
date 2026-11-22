@@ -67,6 +67,21 @@ final class ItemCollectionEditingTests: XCTestCase {
         XCTAssertEqual(ItemCollectionEditing.toggling(itemID: "i1", in: added, now: later).itemIDs, ["i2"])
     }
 
+    /// The sheet's tick says which way to go, and lands on the stored copy: items added since the row was drawn stay
+    /// (#3769 audit), and a tick that matches what is stored changes nothing.
+    func testSettingMembershipKeepsWhatTheStoredCopyGainedAndIsIdempotent() {
+        let drawn = collection("c", "Week", ["a", "b"])
+        var stored = drawn
+        stored.itemIDs += ["c", "d"] // an import added these after the sheet drew the row
+        let ticked = ItemCollectionEditing.setting(itemID: "x", included: !drawn.itemIDs.contains("x"), in: stored, now: later)
+        XCTAssertEqual(ticked.itemIDs, ["a", "b", "c", "d", "x"])
+        XCTAssertEqual(ticked.updatedAt, later)
+        let unticked = ItemCollectionEditing.setting(itemID: "a", included: false, in: stored, now: later)
+        XCTAssertEqual(unticked.itemIDs, ["b", "c", "d"])
+        XCTAssertEqual(ItemCollectionEditing.setting(itemID: "c", included: true, in: stored, now: later), stored,
+                       "already in: unchanged, not taken out the way a toggle of the stored copy would")
+    }
+
     // MARK: Margins scope
 
     func testACollectionScopeIncludesOnlyItsItems() {
@@ -171,5 +186,36 @@ final class ItemCollectionEditingTests: XCTestCase {
         query.selectScope(tag: "collection:a", collections: [collection("a", "HIST", ["i1"])])
         XCTAssertEqual(query.text, "wages")
         XCTAssertEqual(query.filter, .starred)
+    }
+
+    // MARK: New collection and Edit Items (#4343)
+
+    func testCreatingWithManyItemsKeepsTheirOrderOnceEachAndAllowsNone() {
+        let made = ItemCollectionEditing.creating(name: " HIST  210 ", itemIDs: ["b", "a", "b"], id: "c", now: now, in: [])
+        XCTAssertEqual(made?.name, "HIST 210")
+        XCTAssertEqual(made?.itemIDs, ["b", "a"])
+        XCTAssertEqual(ItemCollectionEditing.creating(name: "Empty", itemIDs: [], id: "e", now: now, in: [])?.itemIDs, [])
+        XCTAssertNil(ItemCollectionEditing.creating(name: "  ", itemIDs: ["a"], id: "x", now: now, in: []))
+        XCTAssertNil(ItemCollectionEditing.creating(name: "hist 210", itemIDs: ["a"], id: "x", now: now, in: [collection("c", "HIST 210")]))
+    }
+
+    func testSettingItemsAddsInTheLibrarysOrderAndRemovesUntickedOnes() {
+        let course = collection("c", "HIST 210", ["a", "b"])
+        let edited = ItemCollectionEditing.settingItems(["a", "d", "c"], in: course, choosable: ["a", "b", "c", "d"], now: later)
+        XCTAssertEqual(edited.itemIDs, ["a", "c", "d"])
+        XCTAssertEqual(edited.updatedAt, later)
+        XCTAssertEqual(edited.id, "c")
+    }
+
+    func testSettingItemsKeepsMembersTheChecklistCannotShowSoARestoredItemComesBack() {
+        let course = collection("c", "HIST 210", ["trashed", "a"])
+        let edited = ItemCollectionEditing.settingItems(["a"], in: course, choosable: ["a", "b"], now: later)
+        XCTAssertEqual(edited.itemIDs, ["trashed", "a"])
+        XCTAssertEqual(edited.updatedAt, now, "Nothing changed, so nothing is bumped")
+    }
+
+    func testSettingItemsIgnoresAChosenIdTheChecklistNeverOffered() {
+        let course = collection("c", "HIST 210", [])
+        XCTAssertEqual(ItemCollectionEditing.settingItems(["ghost"], in: course, choosable: ["a"], now: later).itemIDs, [])
     }
 }

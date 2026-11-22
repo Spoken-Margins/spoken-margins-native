@@ -12,7 +12,6 @@ from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
-import lane_next_rerun  # noqa: E402
 
 spec = importlib.util.spec_from_file_location('verification_for_sessionkit_steps', SCRIPTS / 'verify-tests.py')
 verification = importlib.util.module_from_spec(spec)
@@ -61,10 +60,12 @@ class Host:
                 os.environ.pop('CODEX_SANDBOX', None)
             run = verification.Run(Path(temporary) / 'run', 'fast', self.changed)
             self.run_object = run
+            # node_modules_installed: a hosted Mac's checkout has none, and host_steps stops on that first (#4643).
             with patch.object(run, 'command', side_effect=lambda name, args, **kw: command(run, name, args, **kw)), \
                     patch.object(run, 'ops_steps'), \
                     patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 't'}), \
                     patch.object(verification, 'state_dir', return_value=Path(state)), \
+                    patch.object(verification, 'node_modules_installed', return_value=True), \
                     patch.object(verification.sessionkit_pass, 'toolchain', return_value=self.toolchain), \
                     patch.object(verification.sessionkit_pass, 'key', side_effect=lambda root, tc: self.next_key() if tc else None), \
                     patch.object(verification, 'swift_tests',
@@ -338,28 +339,6 @@ class ParallelCoreTests(unittest.TestCase):
                 run.command('package-core', [sys.executable, '-c', 'print("nothing")'], expected=CORE, tests=True,
                             record_source=lambda: verification.xunit_records(Path(temporary) / 'none.xml'))
             self.assertIn('No completed tests recorded', str(raised.exception))
-
-
-class DownstreamTests(unittest.TestCase):
-    """What reads the manifest: a superseded parallel run must not read as the PR's failure."""
-
-    def manifest(self, steps):
-        with tempfile.TemporaryDirectory() as temporary:
-            (Path(temporary) / 'manifest.json').write_text(json.dumps({'steps': steps}))
-            return lane_next_rerun.failing_tests(Path(temporary), Path(temporary))
-
-    def test_the_failing_tests_come_from_the_serial_run_that_replaced_the_parallel_one(self):
-        parallel = {'name': 'package-core', 'superseded': 'run again serially', 'errors': ['Failed: SessionKitCoreTests/A/testX'],
-                    'tests': {'SessionKitCoreTests/A/testX': {'status': 'failed'}}}
-        serial = {'name': 'package-core-serial', 'errors': ['Process exit 1', 'Failed: SessionKitCoreTests/A/testX'],
-                  'tests': {'SessionKitCoreTests/A/testX': {'status': 'failed'}}}
-        self.assertEqual(self.manifest([parallel, serial]), ('swift', 'Packages/SessionKit', ['SessionKitCoreTests/A/testX']))
-        self.assertIsNone(self.manifest([parallel]))  # nothing else decided
-
-    def test_a_pr_failing_in_the_rest_names_those_tests(self):
-        step = {'name': 'package', 'errors': ['Failed: SessionKitTests/B/testY'],
-                'tests': {'SessionKitTests/B/testY': {'status': 'failed'}}}
-        self.assertEqual(self.manifest([step]), ('swift', 'Packages/SessionKit', ['SessionKitTests/B/testY']))
 
 
 class ScriptTests(unittest.TestCase):

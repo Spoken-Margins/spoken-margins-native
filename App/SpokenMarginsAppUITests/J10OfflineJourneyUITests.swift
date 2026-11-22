@@ -86,7 +86,7 @@ final class J10OfflineJourneyUITests: XCTestCase {
             // carries Share (#3211): Export is for taking Margins out for yourself.
             tap("playback.shareMargins.button")
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The sender flow did not open")
-            let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
+            let cleanUpQuestion = app.alerts["Remove ums and long pauses?"]
             if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
             XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5), "Share did not open on the review stage")
             senderElement("build23.sender.preview.build").tap()
@@ -134,7 +134,7 @@ final class J10OfflineJourneyUITests: XCTestCase {
             XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "Library did not open")
             try startArticle()
             // The real host, so the app recognises the link; the packet is fetched from the swapped host.
-            // A link without its #key fails as damaged before asking the server, so it carries one
+            // A link without its #key is called cut off before asking the server, so it carries one
             // (ShareLinkOpeningTests pins this exact link).
             let link = try XCTUnwrap(URL(string:
                 "https://spokenmargins.proximitytoprogress.com/l/0123456789abcdef0123456789abcdef#AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"))
@@ -150,18 +150,21 @@ final class J10OfflineJourneyUITests: XCTestCase {
             // The system may ask "Open in Spoken Margins?" first, sometimes late; wait for it or the message, so a
             // slow prompt isn't missed and a quick message isn't waited past.
             let confirm = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Open"]
-            let banner = element("app.feedback.banner")
+            // The failure sheet (#3801), not a banner.
+            let headline = element("packetOpenFailure.headline")
             let deadline = Date().addingTimeInterval(10)
-            while Date() < deadline, !banner.exists {
+            while Date() < deadline, !headline.exists {
                 if confirm.exists { confirm.tap(); break }
-                _ = banner.waitForExistence(timeout: 0.5)
+                _ = headline.waitForExistence(timeout: 0.5)
             }
-            XCTAssertTrue(banner.waitForExistence(timeout: 20),
+            XCTAssertTrue(headline.waitForExistence(timeout: 20),
                           "The share link showed no message (the app is \(app.state == .runningForeground ? "in front" : "not in front"))")
             screenshot("J10 share link with the server unreachable")
             // "offline" means the fetch went to the swapped host; the real server would answer with a not-found.
-            XCTAssertTrue(banner.label.localizedCaseInsensitiveContains("offline"),
-                          "The share link did not fail as a network error: \(banner.label)")
+            XCTAssertTrue(headline.label.localizedCaseInsensitiveContains("offline"),
+                          "The share link did not fail as a network error: \(headline.label)")
+            XCTAssertTrue(element("packetOpenFailure.tryAgain").exists, "An offline link offers Try Again")
+            element("packetOpenFailure.close").tap()
             XCTAssertEqual(playPause.label, "Pause", "The failed share link stopped playback")
             try waitUntilAdvancing("The article is stuck after the failed share link")
         }

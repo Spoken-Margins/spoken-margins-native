@@ -48,7 +48,7 @@ public enum SpokenMarginsPackageArchiveError: Error, Equatable, LocalizedError {
 /// What a listener is told when a `.spokenmargins` file can't be opened (#1968). The technical wording in
 /// `errorDescription` ("manifest", "capability", paths) stays for diagnostics and bug reports.
 extension SpokenMarginsPackageArchiveError {
-    public enum ListenerOutcome: Equatable, Sendable {
+    public enum ListenerOutcome: Equatable, Sendable, CaseIterable {
         /// The file is fine but uses something this version doesn't know.
         case needsNewerApp
         /// The file is bigger than the app opens.
@@ -1296,3 +1296,15 @@ public typealias InterjectionPackageArchive = SpokenMarginsPackageArchive
 public typealias InterjectionPackageArchiveError = SpokenMarginsPackageArchiveError
 @available(*, deprecated, renamed: "VerifiedSpokenMarginsPackage")
 public typealias VerifiedInterjectionPackage = VerifiedSpokenMarginsPackage
+
+/// The words the failure sheet shows for a `.spokenmargins` file that can't be opened (#3801).
+extension PacketOpenFailureSheetContent {
+    public init(_ outcome: SpokenMarginsPackageArchiveError.ListenerOutcome) {
+        switch outcome {
+        case .needsNewerApp: self.init(row: .fileNeedsNewerApp)
+        case .tooLarge: self.init(row: .fileTooBig)
+        case .damaged: self.init(row: .fileDamaged)
+        case .doesNotMatchLibrary: self.init(row: .fileDoesNotMatchLibrary)
+        }
+    }
+}

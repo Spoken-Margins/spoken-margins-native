@@ -11,11 +11,25 @@ cd research/B4/server && go test ./...                      # unit and end-to-en
 research/B4/scripts/demo.sh                                 # health, one attested request, block one install, kill switch
 CADDY=caddy SMSERVER=smserver research/B4/deploy/test-edit-caddyfile.sh   # Caddyfile edit, validate, local routing
 research/B4/deploy/test-server-rollback.sh   # deploy keeps the old smserver and puts it back on rollback
-research/B4/deploy/deploy.sh --dry-run root@<vps>           # from the Mac: show every change on the box, change nothing
-research/B4/deploy/deploy-web.sh --dry-run root@<vps>       # from the Mac: build Web/ and list what would change, change nothing
+research/B4/deploy/test-remote-root.sh       # the non-root deploy's sudo wrapper and its two on-box scripts
+research/B4/deploy/deploy.sh --dry-run <user>@<vps>         # from the Mac: show every change on the box, change nothing
+research/B4/deploy/deploy-web.sh --dry-run <user>@<vps>     # from the Mac: build Web/ and list what would change, change nothing
 ```
 
 The web app (`Web/`, #3020) is served by the same Caddy from `https://app.spokenmargins.com` (the old `app.spokenmargins.proximitytoprogress.com` answers a 301 to it, `deploy/caddy-legacy-web.caddy`): `deploy.sh` adds that site block (`deploy/caddy-web.caddy`, no access log) and an empty `/srv/www/spokenmargins-web`, and `deploy-web.sh` builds the committed `Web/` with `VITE_RELAY_ORIGIN` set to this server and copies it there. The unit lists both app origins, new and old, in `-relay-origins` and `-link-origins` during the move; the relay still answers 503 until `smserver switch ... relay on`.
+
+## Server access (#2478)
+
+Deploys log in as a normal user (`<user>` above, e.g. `smdeploy`), not as root. The user owns the two web folders (`/srv/www/spokenmargins`, `/srv/www/spokenmargins-web`), so `deploy-web.sh` and `scripts/deploy-spoken-margins-site.sh` need no root. The steps that do (smserver, the Caddy global block, systemd, journald) run through `sudo`, which asks for the user's password at the terminal (`deploy/remote-root.sh`). So a stolen SSH key alone is not root, and a server deploy needs a person at a terminal: an unattended session cannot run `deploy.sh`. `root@<vps>` still works until root login is switched off.
+
+One-time setup, on the box, in this order (about fifteen minutes; keep a second session open the whole time):
+
+1. As root: `bash create-deploy-user.sh --dry-run <user> '<your .pub line>'`, read it, then run it without `--dry-run`. It makes the user, adds it to the sudo group, installs the public key, hands over the two web folders and asks you to choose the sudo password. It does not touch sshd.
+2. From the Mac, in a new window: `ssh <user>@<vps>` and `sudo -v` must both work.
+3. As root: `bash harden-ssh.sh <user>`. It refuses unless step 2 is true right now, writes one sshd drop-in (`PermitRootLogin no`, `PasswordAuthentication no`), checks what sshd would really use, and reloads. If the check fails it removes the file.
+4. From the Mac, in a third window: `ssh <user>@<vps>` works and `ssh root@<vps>` is refused. Then change `User root` to the new user in `~/.ssh/config`.
+
+The host check for kept addresses needs root for some counts: `scp deploy/check-visitor-ips.sh <user>@<vps>:/tmp/ && ssh -t <user>@<vps> 'sudo bash /tmp/check-visitor-ips.sh'`.
 
 `deploy/deploy.sh` without `--dry-run` deploys; the owner approves the dry-run diff first. Admin on the box runs as the service user, e.g. `runuser -u smserver -- smserver switch -public /srv/www/spokenmargins-server attest off`.
 

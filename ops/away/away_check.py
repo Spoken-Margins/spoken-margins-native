@@ -10,7 +10,7 @@ report in four numbered parts:
    issues, against the Dial's thread count (#589) times the hours away.
 2. Holds an agent wrote: lines in AGENTS.md and docs/decisions.md on the trunk (`main`) that make
    work wait, and whether each quotes the owner with a date. A hold with no owner quote is suspect.
-3. Owner-only items: open PRs touching `scripts/lane-runner.py` or `.github/` (his merge
+3. Owner-only items: open PRs touching `scripts/lane_merge_rules.py` or `.github/` (his merge
    tap), `needs-owner` issues, and issues whose latest comment asks him to run a command.
 4. Allowance pace: the latest Mac tick on #337 against the Dial's straight line to the reset.
 
@@ -43,7 +43,7 @@ STATUS_ISSUE = dial_gate.STATUS_ISSUE
 # 5 threads, which is about 0.5 per thread-hour averaged over idle time too.
 ISSUES_PER_THREAD_HOUR = 1.0
 AUDIT_LABELS = ('found-by-audit', 'review-finding')
-OWNER_MERGE_PATHS = ('scripts/lane-runner.py', '.github/')
+OWNER_MERGE_PATHS = ('scripts/lane_merge_rules.py', '.github/')
 HOLDS_LISTED = 5    # holds to check, listed in the report; the rest are counted
 OWNER_LISTED = 2    # items per owner-only list
 TITLE_WIDTH = 60
@@ -203,6 +203,7 @@ def pace(now: dt.datetime, usage_info: dict, dial: dict) -> dict:
     usage = usage_info.get('usage')
     reset = dial_gate.next_reset(now)
     out = {'line': line, 'stop': stop, 'reset': reset, 'halted_by': usage_info.get('halted_by', []),
+           'breaker_ignored': bool(usage_info.get('halted')) and not dial_gate.breaker_holds(dial, usage_info),
            'percent': None, 'age_h': None, 'gap': None}
     if usage:
         out['percent'] = usage['percent']
@@ -295,7 +296,8 @@ def report(now: dt.datetime, hours: float, dial: dict, q: dict, holds: list[dict
             where = f'{-gap:.0f} points behind the line, so allowance is going unused'
         else:
             where = f'{gap:.0f} points ahead of the line'
-        breaker = ('Breaker HALT for ' + ', '.join(p['halted_by'])) if p['halted_by'] else 'Breaker clear'
+        breaker = ('Breaker HALT for ' + ', '.join(p['halted_by']) +
+                   (' (the Claude one is ignored: the Dial is Cloud max)' if p['breaker_ignored'] else '')) if p['halted_by'] else 'Breaker clear'
         stale = f' The tick is {p["age_h"]:.0f} hours old; the Mac may be off.' if p['age_h'] > 3 else ''
         out.append(f'4. Allowance: {p["percent"]}% used, the line says {p["line"]:.0f}% '
                    f'(stop line {p["stop"]}%), {where}. {breaker}. '

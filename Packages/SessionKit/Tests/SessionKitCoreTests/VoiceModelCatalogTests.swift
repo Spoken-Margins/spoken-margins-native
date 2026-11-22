@@ -475,10 +475,16 @@ final class VoiceModelCatalogTests: XCTestCase {
         XCTAssertEqual(weights.sources, ["https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/vector_estimator.int8.onnx"],
                        "the INT8 graphs come from the sherpa-onnx author's pinned Hugging Face revision")
 
-        // Every file comes from its publisher at a pinned revision, never the owner's server (owner, 2026-10-19).
+        // Every file comes from its publisher at a pinned revision, never the owner's server (owner, 2026-10-19), except
+        // the two ONNX Runtime licence files: Microsoft's repository is gone, so they are served from the site (owner,
+        // 2026-11-22, #4853), each with that one mirror URL and no other source.
+        let onSite = voice.files.filter { entry in entry.sources.contains { $0.contains("proximitytoprogress") } }
+        XCTAssertEqual(Set(onSite.map(\.path)), ["licenses/ONNXRUNTIME_MIT.txt", "licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt"])
+        for file in onSite {
+            XCTAssertEqual(file.sources, ["https://spokenmargins.proximitytoprogress.com/voices/files/supertonic-3-int8/onnxruntime-1.24.2/\(file.path)"], file.path)
+        }
         let style = try XCTUnwrap(voice.files.first { $0.path == "voice_styles/F1.json" })
         XCTAssertEqual(style.sources, ["https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/voice_styles/F1.json"])
-        XCTAssertFalse(voice.files.flatMap(\.sources).contains { $0.contains("proximitytoprogress") })
         // Our notice of modification has no publisher copy, so the catalog carries it.
         let notice = try XCTUnwrap(voice.files.first { $0.path == "onnx/MODIFIED.txt" })
         XCTAssertEqual(notice.sources, [])

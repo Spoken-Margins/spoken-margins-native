@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Only that exact shape parses. Another host, another path (`/l/<id>/packet`, `/l/<id>/report`), a bad id, a
 /// user, password or odd port all give nil. The `#` part carries the key that opens the sealed packet
-/// (``ShareLinkSealing``); a link that lost it still parses, and opening it fails as damaged.
+/// (``ShareLinkSealing``); a link that lost it still parses, and opening it fails as cut off.
 public struct ShareLinkURL: Equatable, Sendable {
     /// The server's link ids are 32 lowercase hex characters (`links.ValidID` in `research/B4`).
     public static let idLength = 32
@@ -63,39 +63,26 @@ public struct ShareLinkURL: Equatable, Sendable {
 public struct ShareLinkPacketDownloader: Sendable {
     public typealias Fetch = @Sendable (_ url: URL, _ maximumBytes: Int) async throws -> (status: Int, body: Data)
 
-    public enum Failure: Error, Equatable, Sendable {
-        /// The phone couldn't reach the server (no connection, a timeout, a dropped connection). Worth another tap.
+    public enum Failure: Error, Equatable, Sendable, CaseIterable {
+        /// The phone couldn't reach the server (no connection, a timeout, a dropped connection). Worth a Try Again.
         case offline
         /// The server says the link is gone: expired, removed or switched off.
         case expired
-        /// The server answered with a fault of its own (too many requests, a 5xx). Worth trying again later.
+        /// The server answered with a fault of its own (too many requests, a 5xx other than 503). Worth a Try Again later.
         case serverProblem
+        /// The server answered 503: share links are switched off for now (#3801). Asking again won't help.
+        case switchedOff
         /// Anything else that stopped the download: an odd answer, an oversized body, a failed secure connection.
         case expiredOrUnreachable
-        /// No key, a flipped byte, or a part that isn't a sealed packet.
-        case incompleteOrDamaged
-
-        public var message: String {
-            switch self {
-            case .offline: "You're offline. Reconnect, then tap the link again."
-            case .expired: "This link has expired. Ask your friend to share it again."
-            case .serverProblem: "The server had a problem. Try again in a minute."
-            case .expiredOrUnreachable: "This link has expired or can't be reached."
-            case .incompleteOrDamaged: ShareLinkSealing.Failure.incompleteOrDamaged.message
-            }
-        }
-
-        /// True when the same link may well open on another try, so the app offers a Retry button.
-        public var isRetryable: Bool {
-            switch self {
-            case .offline, .serverProblem: true
-            case .expired, .expiredOrUnreachable, .incompleteOrDamaged: false
-            }
-        }
+        /// The link lost its key (the `#` part), or the key is cut short: nothing can open (#3801). The id is whole.
+        case cutOff
+        /// A key is there, but the header check or unsealing fails: a flipped byte, or a part that isn't a sealed packet.
+        case damaged
 
         static func forStatus(_ status: Int) -> Failure {
             switch status {
             case 404, 410: .expired
+            case 503: .switchedOff
             case 429, 500...599: .serverProblem
             default: .expiredOrUnreachable
             }
@@ -140,7 +127,7 @@ public struct ShareLinkPacketDownloader: Sendable {
     /// Downloads, opens and writes `<id>.spokenmargins` into `directory`, which is created if needed.
     public func download(_ link: ShareLinkURL, into directory: URL) async throws -> URL {
         // Without the key nothing can open, so don't ask the server for bytes.
-        guard let key = link.key else { throw Failure.incompleteOrDamaged }
+        guard let key = link.key else { throw Failure.cutOff }
         let sealed: Data
         do {
             let response = try await fetch(link.packetURL, Self.maximumSealedBytes)
@@ -158,7 +145,7 @@ public struct ShareLinkPacketDownloader: Sendable {
         do {
             packet = try ShareLinkSealing.open(sealed, as: .packet, key: key)
         } catch {
-            throw Failure.incompleteOrDamaged
+            throw Failure.damaged
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let file = directory.appendingPathComponent("\(link.id).spokenmargins")

@@ -8,6 +8,12 @@
 //   vectorvoice01  Contracts/fixtures/web-packets/web-voice.spokenmargins sealed under the vector's key
 //   vectorpost01   a Substack post's Margins: the web-written packet's Margins moved onto the post's words, each with
 //                  only how far through the post it sits (what the iPhone app writes for an article; #4421)
+//   vectorarticle1 an article on an ordinary site (not Substack) with Margins that carry only how far through they sit:
+//                  no audio of its own and no voice to look up, so a browser can't play it (#4454)
+//   vectorapple01  an Apple Podcasts episode with only its page: the owner's 2026-11-20 share, whose packet held the episode
+//                  page and no audio address and no GUID (#4767, #4783). Two timed Margins, as vectorvoice01's
+//   vectorapple02  the same page-only shape as the owner's 2026-11-22 share of a 2019 episode: Apple's lookup of the show does not
+//                  list it, so its audio is found only in the show's feed (#4783)
 //   expired00001   answers 410, as an expired link does
 //   switchedoff1   answers 503 `disabled`, as the server does while links are switched off
 // Run: node e2e/link-stub-server.ts (Node 24 strips the types). Port 4174, or SM_LINK_STUB_PORT.
@@ -65,6 +71,68 @@ const articlePacket = await withLayer(
 links.set('vectorpost01', {
   preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
   packet: await sealPart(articlePacket, PART.packet, vectorKey),
+});
+
+const essayPacket = await withLayer(
+  writtenPacket,
+  (records) => {
+    records.forEach((record, i) => {
+      record.anchor = { anchorType: 'text', startChar: 400 + 1000 * i, endChar: 460 + 1000 * i, exactText: 'A sentence in the essay.', prefix: 'Before.', suffix: 'After.', roughPercent: [20, 60][i], machineEvidenceAssetIds: [] };
+    });
+  },
+  (manifest) => {
+    manifest.item = {
+      canonicalURL: 'https://example.com/essay',
+      itemType: 'text',
+      title: 'An essay on an ordinary site',
+      publisher: 'Example Publisher',
+      source: { sourceType: 'newsletter', canonicalURL: 'https://example.com/essay' },
+    };
+  },
+);
+links.set('vectorarticle1', {
+  preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
+  packet: await sealPart(essayPacket, PART.packet, vectorKey),
+});
+
+const APPLE_EPISODE = 'https://podcasts.apple.com/us/podcast/people-parks-and-policy-with-rffs-margaret-walls/id1445582279?i=1000427709574';
+const applePacket = await withLayer(
+  voicePacket,
+  () => {},
+  (manifest) => {
+    manifest.item = {
+      canonicalURL: APPLE_EPISODE,
+      originalURL: APPLE_EPISODE,
+      itemType: 'podcast',
+      title: 'People, Parks, and Policy with RFF’s Margaret Walls',
+      showTitle: 'Resources Radio',
+      durationMs: 1_800_000,
+    };
+  },
+);
+links.set('vectorapple01', {
+  preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
+  packet: await sealPart(applePacket, PART.packet, vectorKey),
+});
+
+const applePacketOutsideLookup = await withLayer(
+  voicePacket,
+  () => {},
+  (manifest) => {
+    manifest.item = {
+      canonicalURL: APPLE_EPISODE,
+      originalURL: APPLE_EPISODE,
+      itemType: 'podcast',
+      // As the feed words it, with the straight apostrophe and the comma after "Policy" that Apple's own page leaves out.
+      title: "People, Parks, and Policy, with RFF's Margaret Walls",
+      showTitle: 'Resources Radio',
+      durationMs: 1_295_000,
+    };
+  },
+);
+links.set('vectorapple02', {
+  preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
+  packet: await sealPart(applePacketOutsideLookup, PART.packet, vectorKey),
 });
 
 const TYPES: Record<string, string> = {

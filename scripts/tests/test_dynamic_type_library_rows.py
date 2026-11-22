@@ -21,7 +21,8 @@ class LibraryRowDynamicTypeTests(unittest.TestCase):
         text = _text()
         strip = text[text.index("private var onboardingStrip"):text.index("private var controls")]
         self.assertIn("if dynamicTypeSize.isAccessibilitySize", strip)
-        self.assertIn("ViewThatFits(in: .horizontal)", text[text.index("private var onboardingContent"):])
+        # A column whenever the labels don't fit on one line each, never a word split inside a button (#1939).
+        self.assertIn("AdaptiveStack {", text[text.index("private var onboardingContent"):])
         self.assertEqual(text.count("Text(\"Hear overview\")"), 1, "the two buttons are written once")
         # A label wider than the column wraps instead of being cut off (#2056).
         actions = text[text.index("private var onboardingActions"):text.index("private var onboardingDismiss")]
@@ -33,7 +34,8 @@ class LibraryRowDynamicTypeTests(unittest.TestCase):
         self.assertNotIn(".frame(width: 40, height: 40)", text[text.index("struct LibraryRowPlayLabel"):])
         self.assertIn("min(max(iconWidth, 38), 76)", text)
         self.assertIn("min(max(diameter, 40), 80)", text)
-        self.assertEqual(text.count("@ScaledMetric(relativeTo: .body)"), 3)
+        # The tile, the play circle, and the Margins tag and badges that scale with the tile (#4698).
+        self.assertEqual(text.count("@ScaledMetric(relativeTo: .body)"), 5)
 
     def test_the_status_line_may_take_two_lines_only_at_the_largest_normal_size(self):
         text = _text()

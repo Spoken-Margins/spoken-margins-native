@@ -1,6 +1,6 @@
 # Push the owner's phone when a PR into next waits only for his merge tap (#2047).
 #
-# The lane runner never merges a PR touching scripts/lane-runner.py or .github/ (owner rule 2026-10-09). Agents
+# Only the owner merges a PR touching scripts/lane_merge_rules.py or .github/ (owner rule 2026-10-09). Agents
 # post as the owner, and GitHub doesn't notify anyone of their own activity, so nothing told him one was ready:
 # on 2026-10-18 #1964, #1966, #2038 and #1885 sat waiting only for his tap. scripts/owner_tap_alert.py posts one
 # comment as github-actions[bot] that @mentions the owner, once per head, when such a PR is ready (not a draft,
@@ -31,11 +31,17 @@ on:
   pull_request:
     branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
     # Not opened or synchronize: the head's checks have only just started, and their own last job decides.
-    types: [reopened, ready_for_review, labeled]
-    paths: ['.github/**', 'scripts/lane-runner.py']
+    # `owner-tap` labeled or unlabeled: the PR is tapped (or not any more), so the list drops it or takes it back (#4939).
+    types: [reopened, ready_for_review, labeled, unlabeled]
+    paths: ['.github/**', 'scripts/lane_merge_rules.py']
   push:
     branches: [main]
     paths: ['.github/workflows/**', 'scripts/tests/test_workflow_files.py']
+  # A sweep of every open PR, so a PR whose last event came while it was not ready (mergeability still unknown, a check
+  # still running) is labelled `needs-owner-tap` anyway (#4939). GitHub drops many scheduled runs, so this is the last
+  # resort; the events above and claude-audit's dispatch do most of the work.
+  schedule:
+    - cron: '23,53 * * * *'
   # Refused by GitHub until main carries this file (#1492); kept so it works from then on.
   workflow_dispatch:
     inputs:
@@ -46,25 +52,27 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
   issues: write
   actions: read
   checks: read
   statuses: read
 
-concurrency:
-  group: owner-tap-alert-${{ inputs.pr || github.event.pull_request.number || 'sweep' }}
-  cancel-in-progress: false
-
 jobs:
   alert:
+    # On the job, not the workflow (#4937): a run whose job is skipped (another label, an unarmed PR) never joins
+    # the group, where it would replace a pending run that does the work (a group keeps only its newest pending run).
+    concurrency:
+      group: owner-tap-alert-${{ inputs.pr || github.event.pull_request.number || 'sweep' }}
+      cancel-in-progress: false
     # The script ignores its own job by this name (the same in linux-t1.yml and shipped-build-compat.yml).
     name: owner-tap-alert
-    # A label event counts only for owner-tap-check; lane labels come and go on these PRs all day.
+    # A label event counts only for owner-tap-check and owner-tap; lane labels come and go on these PRs all day.
     if: >-
       github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft &&
-       (github.event.action != 'labeled' || github.event.label.name == 'owner-tap-check'))
+       (!contains(fromJSON('["labeled","unlabeled"]'), github.event.action) ||
+        contains(fromJSON('["owner-tap-check","owner-tap"]'), github.event.label.name)))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

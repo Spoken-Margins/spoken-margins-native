@@ -234,7 +234,7 @@ class WebAndServer(unittest.TestCase):
 
     def test_the_web_stamp(self):
         world = FakeWorld(web={f'{live.WEB}/deploy.json': (200, {}, b'{"commit":"abc1234","deployed_at":"T"}')},
-                          git={('rev-list',): b'3\n'})
+                          git={('fetch',): b'', ('rev-list',): b'3\n'})
         part = live.web(world)
         self.assertEqual((part['commit'], part['behind']), ('abc1234', 3))
         self.assertIn('3 commit(s) behind main', live.render_web(part)[0])
@@ -244,7 +244,7 @@ class WebAndServer(unittest.TestCase):
 
     def test_the_server(self):
         part = live.server(self.health({'status': 'ok', 'version': 'v', 'commit': 'abc1234', 'built': 'T',
-                                        'services': {'links': 'on', 'maps': 'off'}}, {('rev-list',): b'0\n'}))
+                                        'services': {'links': 'on', 'maps': 'off'}}, {('fetch',): b'', ('rev-list',): b'0\n'}))
         self.assertEqual((part['commit'], part['services_on'], part['services_off']), ('abc1234', ['links'], ['maps']))
         self.assertIn('same as main', live.render_server(part)[0])
 
@@ -258,6 +258,22 @@ class WebAndServer(unittest.TestCase):
         for commit in ('abc1234-dirty', 'zzz', '', None):
             with self.subTest(commit=commit):
                 self.assertIsNone(live.changes_since(FakeWorld(git={('rev-list',): b'3\n'}), commit, 'Web'))
+
+    def test_the_trunk_is_fetched_before_the_commits_behind_are_counted(self):
+        # A checkout that has not fetched holds an old `origin/main`, so counting first says "same as main" for a surface
+        # that is behind (the web app on 2026-11-22). The fetch must come before the count, and a fetch that fails is unknown.
+        calls = []
+
+        class Recording(FakeWorld):
+            def git(self, *args):
+                calls.append(args[0])
+                return super().git(*args)
+
+        world = Recording(git={('fetch',): b'', ('rev-list',): b'19\n'})
+        self.assertEqual(live.changes_since(world, 'abc1234', 'Web'), 19)
+        self.assertEqual(calls, ['fetch', 'rev-list'])
+        offline = FakeWorld(git={('fetch',): live.ReadError('git fetch failed: offline'), ('rev-list',): b'0\n'})
+        self.assertIsNone(live.changes_since(offline, 'abc1234', 'Web'))
 
     def test_an_unreachable_server_is_unknown(self):
         self.assertIn('unknown', live.server(FakeWorld()))

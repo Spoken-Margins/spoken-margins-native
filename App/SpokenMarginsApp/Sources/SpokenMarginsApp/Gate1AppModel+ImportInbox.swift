@@ -210,9 +210,11 @@ extension Gate1AppModel {
                     case .transcript(let itemId): addedItemIds.append(itemId)
                     case .refused(let message): transcriptRefusals.append(message)
                     case .ordinary:
-                        addedItemIds.append(try hangTelemetry.labels.scoped("pendingBrowserTextImport") {
-                            try importBrowserTextInBackground(handoff)
-                        })
+                        // The item write keeps its label; the Library read after it runs off the main thread (#2256).
+                        let imported = try hangTelemetry.labels.scoped("pendingBrowserTextImport") {
+                            try browserTextImportEngine().importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff))
+                        }
+                        addedItemIds.append(try await finishBackgroundBrowserTextImportOffMain(imported, handoff: handoff))
                     }
                     try await Self.offMain { try handoffStore.deletePayload(payloadID: payloadID) }
                     diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "imported"

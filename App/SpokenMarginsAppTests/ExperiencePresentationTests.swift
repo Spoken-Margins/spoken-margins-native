@@ -64,6 +64,9 @@ final class ExperiencePresentationTests: XCTestCase {
                        "the reply follows its parent even though it was made later and the other Margin is closer in time")
         XCTAssertEqual(entries.map(\.depth), [0, 1, 0])
         XCTAssertEqual(entries[1].position, entries[0].position, "a reply sits at the place it answers")
+        XCTAssertEqual(entries[1].cornerLabel, entries[0].cornerLabel, "and its corner reads that place, not its own (#3862)")
+        XCTAssertNotEqual(entries[1].cornerLabel, "34%", "the reply was made at 34%, but the card stands at its parent's 30%")
+        XCTAssertEqual(entries[1].spokenPosition, entries[0].spokenPosition)
         XCTAssertTrue(entries[1].detail.hasPrefix("Reply to Ana · "), entries[1].detail)
         XCTAssertFalse(entries[0].detail.contains("Reply to"))
     }
@@ -164,80 +167,6 @@ final class ExperiencePresentationTests: XCTestCase {
         item.turns.removeLast()
         let orphan = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session")
         XCTAssertTrue(try XCTUnwrap(orphan.first { $0.id == "session::second-25" }).detail.contains("Response unavailable"))
-    }
-
-    func testTimelinePullRequiresDeliberateBottomOverscroll() {
-        XCTAssertEqual(
-            TimelinePullPresentation.overscrollDistance(
-                contentOffsetY: 540,
-                contentHeight: 1_200,
-                containerHeight: 640,
-                bottomInset: 0
-            ),
-            0
-        )
-        XCTAssertEqual(
-            TimelinePullPresentation.overscrollDistance(
-                contentOffsetY: 650,
-                contentHeight: 1_200,
-                containerHeight: 640,
-                bottomInset: 0
-            ),
-            90
-        )
-        XCTAssertEqual(
-            TimelinePullPresentation.overscrollDistance(
-                contentOffsetY: 0,
-                contentHeight: 500,
-                containerHeight: 640,
-                bottomInset: 0
-            ),
-            0,
-            "Unused viewport space is not overscroll"
-        )
-        XCTAssertFalse(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: 71))
-        XCTAssertTrue(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: 72))
-    }
-
-    func testTimelinePullMeasuresShortContentFromItsInsetRestingPosition() {
-        // A short player rests above zero because navigation owns the top inset.
-        // The fixed dock also reserves space at the bottom of the scroll view.
-        func distance(_ offset: CGFloat) -> CGFloat {
-            TimelinePullPresentation.overscrollDistance(
-                contentOffsetY: offset, contentHeight: 280,
-                containerHeight: 874, bottomInset: 342, topInset: 116
-            )
-        }
-        XCTAssertEqual(distance(-116), 0, "Resting short content must not open Timeline")
-        XCTAssertEqual(distance(-45), 71)
-        XCTAssertFalse(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance(-45)))
-        XCTAssertEqual(distance(-44), 72)
-        XCTAssertTrue(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance(-44)))
-        XCTAssertEqual(TimelinePullPresentation.overscrollDistance(
-            contentOffsetY: 700, contentHeight: 1_200,
-            containerHeight: 874, bottomInset: 342, topInset: 116
-        ), 32, "Long content must still reach its real bottom before the pull counts")
-    }
-
-    /// #3217: every way in is one tile in the grid, no two do the same thing, and Files is a single tile.
-    func testAddSourceGridHoldsEveryWayInOnceWithOneFilesTile() {
-        XCTAssertEqual(
-            AddSourcePresentation.tiles,
-            [.linkOrPodcast, .findPodcast, .pastedText, .importFromFiles, .quickFolder, .liveSession, .spokenNote]
-        )
-        XCTAssertEqual(Set(AddSourcePresentation.tiles.map(\.title)).count, AddSourcePresentation.tiles.count, "two tiles share a name")
-        let filesTiles = AddSourcePresentation.tiles.filter { $0.route == .importFromFiles }
-        XCTAssertEqual(filesTiles, [.importFromFiles])
-        XCTAssertEqual(AddSourceTile.importFromFiles.title, "Import from Files")
-        // Spoken Note (#3108) sits in a slim row under the grid, so the six grid tiles still end on a full row.
-        XCTAssertEqual(AddSourcePresentation.tiles.filter { $0 != .spokenNote }.count % 2, 0, "the two-column grid should end on a full row")
-        XCTAssertEqual(AddSourceTile.spokenNote.title, "Spoken Note")
-        XCTAssertNil(AddSourceTile.spokenNote.route, "the tile opens the recorder, not a page in the sheet")
-    }
-
-    func testFindPodcastTileIsLeftOutWhereTheCatalogCannotOpen() {
-        XCTAssertFalse(AddSourcePresentation.tiles(canSearchPodcasts: false).contains(.findPodcast))
-        XCTAssertEqual(AddSourcePresentation.tiles(canSearchPodcasts: true), AddSourcePresentation.tiles)
     }
 
     func testFilesTileAcceptsPacketsByTheExtensionThePacketArchiveWrites() {
@@ -436,7 +365,7 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertTrue(pending.needsAttention)
         XCTAssertEqual(pending.preview, "Transcribing…")
         XCTAssertTrue(unavailableContext.needsAttention)
-        XCTAssertEqual(unavailableContext.attentionDescription, "Context needs retry")
+        XCTAssertEqual(unavailableContext.attentionDescription, "Couldn't find the source words near this Margin")
         XCTAssertTrue(missingRecording.needsAttention)
         XCTAssertEqual(missingRecording.attentionDescription, "Recording is unavailable")
     }

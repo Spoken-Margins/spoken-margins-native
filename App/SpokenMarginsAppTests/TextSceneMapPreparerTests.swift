@@ -339,7 +339,9 @@ final class TextSceneMapPreparerTests: XCTestCase {
     }
 }
 
-/// Fails any request made while it is registered, and records its URL so a test can say none was made.
+/// Fails any request made while it is registered, and records its URL so a test can say none was made. It only records:
+/// it catches requests from any code in the process, so failing the running test on each one blamed a test for a
+/// request an earlier class had left in flight (#4581). The test that asserts the run made none says so itself.
 private final class NoNetworkURLProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var urls: [String] = []
@@ -352,7 +354,6 @@ private final class NoNetworkURLProtocol: URLProtocol, @unchecked Sendable {
 
     override func startLoading() {
         Self.lock.withLock { Self.urls.append(request.url?.absoluteString ?? "(no URL)") }
-        XCTFail("unexpected network request: \(request.url?.absoluteString ?? "(no URL)")")
         client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
     }
 

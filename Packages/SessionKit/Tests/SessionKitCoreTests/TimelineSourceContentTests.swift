@@ -22,6 +22,74 @@ final class TimelineSourceContentTests: XCTestCase {
         XCTAssertEqual(content.entries.map(\.pageIndex), [0, 1, 2, 3])
     }
 
+    /// A table's printed text names its float, so the row can show the picture cut from the page (#3895). The caption,
+    /// which only labels the float, does not: one picture per table, on the row that is the table.
+    func testOnlyTheSegmentThatHoldsAFloatsTextNamesTheFloat() {
+        let text = "Intro\n\nTable 1. Recall\n\nGroup | Mean\n\nFigure 2 words\n\nAfter"
+        let parts: [(String, StructuredDocument.Role, String?)] = [
+            ("Intro", .body, nil), ("Table 1. Recall", .caption, nil), ("Group | Mean", .table, "float-p1-1"),
+            ("Figure 2 words", .figureText, "float-p2-1"), ("After", .body, nil),
+        ]
+        var start = 0
+        var segments: [StructuredDocument.Segment] = []
+        for (index, part) in parts.enumerated() {
+            segments.append(.init(id: "s\(index)", role: part.1, range: .init(start: start, length: part.0.count),
+                                  pageIndex: index == 3 ? 1 : 0, floatId: part.2))
+            start += part.0.count + 2
+        }
+        var document = document(text, segments: segments)
+        document.floats = [
+            .init(id: "float-p1-1", kind: .table, label: "Table 1", pageIndex: 0,
+                  bounds: .init(x: 0.1, y: 0.1, width: 0.5, height: 0.2), captionSegmentId: "s1", textSegmentId: "s2"),
+            .init(id: "float-p2-1", kind: .figure, label: "Figure 2", pageIndex: 1,
+                  bounds: .init(x: 0.1, y: 0.4, width: 0.5, height: 0.2), captionSegmentId: nil, textSegmentId: "s3"),
+        ]
+
+        let entries = TimelineSourceContent(text: text, document: document).entries
+
+        XCTAssertEqual(entries.map(\.floatId), [nil, nil, "float-p1-1", "float-p2-1", nil])
+        XCTAssertEqual(entries.map(\.floatKind), [nil, nil, .table, .figure, nil])
+        XCTAssertEqual(entries[1].label, "Table 1", "the caption still carries the label, and no picture")
+    }
+
+    func testABodySegmentNamedByAPictureOnlyFiguresCaptionFloatKeepsNoLabel() {
+        // A picture-only figure's caption is a line inside a body segment (#4587). The float names that segment, but
+        // Now draws an entry's label above its fragments, so the body text around the caption must not read "Figure 3".
+        let text = "Intro\n\nFigure 3. Cells.\nMore body text.\n\nFigure 4. A caption segment.\n\nAfter"
+        let parts: [(String, StructuredDocument.Role)] = [
+            ("Intro", .body), ("Figure 3. Cells.\nMore body text.", .body), ("Figure 4. A caption segment.", .caption), ("After", .body),
+        ]
+        var start = 0
+        var segments: [StructuredDocument.Segment] = []
+        for (index, part) in parts.enumerated() {
+            segments.append(.init(id: "s\(index)", role: part.1, range: .init(start: start, length: part.0.count), pageIndex: 0))
+            start += part.0.count + 2
+        }
+        var document = document(text, segments: segments)
+        document.floats = [
+            .init(id: "float-p1-c1", kind: .figure, label: "Figure 3", pageIndex: 0,
+                  bounds: .init(x: 0.1, y: 0.4, width: 0.5, height: 0.2), captionSegmentId: "s1", textSegmentId: nil),
+            .init(id: "float-p1-c2", kind: .figure, label: "Figure 4", pageIndex: 0,
+                  bounds: .init(x: 0.1, y: 0.1, width: 0.5, height: 0.2), captionSegmentId: "s2", textSegmentId: nil),
+        ]
+
+        let entries = TimelineSourceContent(text: text, document: document).entries
+
+        XCTAssertEqual(entries.map(\.label), [nil, nil, "Figure 4", nil], "a .caption segment still gets its float's label")
+        XCTAssertEqual(entries.map(\.floatId), [nil, nil, nil, nil], "neither is the float's own text")
+    }
+
+    func testASegmentNamingAFloatTheDocumentLacksHasNoPicture() {
+        let text = "Cell A | Cell B"
+        let segment = StructuredDocument.Segment(id: "s0", role: .table, range: .init(start: 0, length: text.count), floatId: "gone")
+        let entries = TimelineSourceContent(text: text, document: document(text, segments: [segment])).entries
+        XCTAssertEqual(entries.map(\.floatId), [nil])
+    }
+
+    func testPlainTextHasNoFloats() {
+        XCTAssertEqual(TimelineSourceContent(text: "A\n\nB").entries.map(\.floatId), [nil, nil])
+    }
+
     func testPlainTextKeepsUnicodeAndExactParagraphPositions() {
         for text in ["é🙂\n\nSecond", "e\u{301}🙂\n\nSecond", "First\r\n\r\nSecond", "  First  \n\nSecond", "A\nB\n\nC"] {
             let content = TimelineSourceContent(text: text)

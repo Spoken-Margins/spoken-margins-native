@@ -72,6 +72,28 @@ final class MemoryFootprintRecorderTests: XCTestCase {
         XCTAssertTrue(line.hasSuffix("item_switch text 900MB | 09-21 14:16:26Z launch none 150MB | 09-21 14:16:26Z item_start text 150MB"), line)
     }
 
+    /// The issue's run, read as one line: memory left behind at each switch into the article says so, and a
+    /// relaunch starts the verdict over.
+    func testVerdictLineNamesGrowthPerSwitchAndStartsOverAtLaunch() {
+        let diagnostics = RuntimeDiagnostics()
+        let recorder = makeRecorder(diagnostics: diagnostics)
+        recorder.record(.launch, mediaType: nil)
+        XCTAssertEqual(diagnostics.values["memoryVerdict"], "too few samples to say")
+
+        for (switchIndex, articleMB) in ([300, 340, 380, 420, 460, 500] as [UInt64]).enumerated() {
+            footprintMB = 120
+            clock += 120
+            recorder.observe(snapshot("podcast-\(switchIndex)", .playing), mediaType: { "podcast" })
+            footprintMB = articleMB
+            clock += 120
+            recorder.observe(snapshot("article-\(switchIndex)", .playing), mediaType: { "text" })
+        }
+        XCTAssertEqual(diagnostics.values["memoryVerdict"], "growing 40MB per switch into text")
+
+        recorder.record(.launch, mediaType: nil)
+        XCTAssertEqual(diagnostics.values["memoryVerdict"], "too few samples to say")
+    }
+
     func testQueuedWritesLandInOrderSoTheFileHoldsTheNewestLog() throws {
         let recorder = makeRecorder(diagnostics: RuntimeDiagnostics())
         for mb: UInt64 in [210, 220, 230, 240] {

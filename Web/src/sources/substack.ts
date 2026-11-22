@@ -149,6 +149,15 @@ export interface SubstackPostVoice {
   paidOnly: boolean;
 }
 
+/**
+ * Whether a page is the data of the post at `finalUrl`: it holds a post, and that post's canonical address is this page. A
+ * page that is not (a bot check, an empty answer, a changed layout, another post) can't say the post has no voice.
+ */
+export function pageHoldsThisPost(html: string, finalUrl: string): boolean {
+  const post = preloads(html)?.post;
+  return isObject(post) && typeof post.canonical_url === 'string' && samePage(post.canonical_url, finalUrl);
+}
+
 /** `findSubstackVoice`, and whether a missing voice is because the post is for paid subscribers. */
 export function inspectSubstackPost(html: string, options: FindVoiceOptions = {}): SubstackPostVoice {
   const root = preloads(html);

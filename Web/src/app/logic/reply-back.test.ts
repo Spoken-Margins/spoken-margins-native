@@ -40,7 +40,7 @@ test('replies are picked, other new Margins are offered unpicked unless made sin
   assert.deepEqual(ids(offer.others), ['o']);
   assert.deepEqual(ids(offer.candidates), ['o', 'r']);
   assert.deepEqual([...preselected(offer)], ['r']);
-  assert.equal(offer.title, 'Send replies to Ana');
+  assert.equal(offer.title, 'Share replies with Ana');
 });
 
 test('#4107: with a reply in the list only the replies start ticked; with none, the Margins made since the page opened do', () => {
@@ -70,7 +70,7 @@ test('a reply naming a packet that is not on this episode is only an other-new M
   assert.deepEqual(ids(offer.replies), []);
   assert.deepEqual(ids(offer.others), ['r']);
   // With no replies, every friend on the item is named.
-  assert.equal(offer.title, 'Send replies to Ana');
+  assert.equal(offer.title, 'Share your Margins with Ana');
 });
 
 test('the title names whom the replies answer, in reply order', () => {
@@ -79,9 +79,9 @@ test('the title names whom the replies answer, in reply order', () => {
     own('r1', '2026-11-02T10:00:00Z', { replyToId: friend(2, D2, 'Ben').id }),
     own('r2', '2026-11-02T11:00:00Z', { replyToId: friend(1, D1, 'Ana').id }),
   ];
-  assert.equal(replyBackOffer(margins)?.title, 'Send replies to Ben and Ana');
+  assert.equal(replyBackOffer(margins)?.title, 'Share replies with Ben and Ana');
   // No replies: every friend, oldest first.
-  assert.equal(replyBackOffer([friend(2, D2, 'Ben', '2026-11-01T11:00:00Z'), friend(1, D1, 'Ana'), own('o', '2026-11-03T10:00:00Z')])?.title, 'Send replies to Ana and Ben');
+  assert.equal(replyBackOffer([friend(2, D2, 'Ben', '2026-11-01T11:00:00Z'), friend(1, D1, 'Ana'), own('o', '2026-11-03T10:00:00Z')])?.title, 'Share your Margins with Ana and Ben');
 });
 
 test('friendNames follows the app: none, one, two, three and more', () => {
@@ -94,8 +94,8 @@ test('friendNames follows the app: none, one, two, three and more', () => {
 
 test('a friend with no name is "your friend", not a label', () => {
   const offer = replyBackOffer([friend(1, D1, 'Your friend'), own('o', '2026-11-02T10:00:00Z')]);
-  assert.equal(offer?.title, 'Send replies to your friend');
-  assert.equal(replyBackOffer([friend(1, D1, '  Ana  '), own('o', '2026-11-02T10:00:00Z')])?.title, 'Send replies to Ana');
+  assert.equal(offer?.title, 'Share your Margins with your friend');
+  assert.equal(replyBackOffer([friend(1, D1, '  Ana  '), own('o', '2026-11-02T10:00:00Z')])?.title, 'Share your Margins with Ana');
 });
 
 test('an empty pick writes nothing', () => {
@@ -434,4 +434,20 @@ test('#4172 star two of four, share, and only those two are written: unstarred a
   assert.deepEqual(written.included.length, 2);
   const read = await readPacket(written.bytes);
   assert.deepEqual(read.margins.map((m) => m.text).sort(), ['b', 'd']);
+});
+
+test('the title says Share and follows what the list holds (#3906)', () => {
+  const reply = (id: string, to: Margin) => own(id, '2026-11-02T10:00:00Z', { replyToId: to.id });
+  const ana = friend(1, D1, 'Ana'), ben = friend(2, D2, 'Ben');
+  const other = own('o', '2026-11-03T10:00:00Z');
+  const rows: [string, Margin[], string][] = [
+    ['a linked reply', [ana, reply('r', ana)], 'Share replies with Ana'],
+    ['a reply and another new Margin', [ana, reply('r', ana), other], 'Share replies with Ana'],
+    ['only Margins that are not replies', [ana, other], 'Share your Margins with Ana'],
+    ['replies to two friends', [ana, ben, reply('r1', ben), reply('r2', ana)], 'Share replies with Ben and Ana'],
+    ['no reply, two friends', [ana, ben, other], 'Share your Margins with Ana and Ben'],
+    ['a reply to a friend with no name', [friend(1, D1, 'Your friend'), reply('r', friend(1, D1, 'Your friend'))], 'Share replies with your friend'],
+    ['no reply, a friend with no name', [friend(1, D1, 'Your friend'), other], 'Share your Margins with your friend'],
+  ];
+  for (const [label, margins, expected] of rows) assert.equal(replyBackOffer(margins)?.title, expected, label);
 });

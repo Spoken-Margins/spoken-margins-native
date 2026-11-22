@@ -5,6 +5,7 @@ struct ExperienceTimelineRailScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @EnvironmentObject private var sharingCoordinator: Build23SharingCoordinator
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.openURL) private var openURL
 
     /// A playback pane reuses the rail and sheets, without a second player or navigation stack.
     var onReturnToPlayback: (() -> Void)? = nil
@@ -15,10 +16,15 @@ struct ExperienceTimelineRailScreen: View {
     @State private var followsPlayback = true
     @State private var selectedSource: PlaybackTimelineSourceView.Selection?
     @State private var selectedElement: SourceElement?
+    /// The table or figure picture open at full screen (#3895).
+    @State private var selectedClip: TimelineClipSelection?
+    /// Which rows of this item have a picture saved, from one listing of its clip folder.
+    @State private var clipSource = TimelineClipSource.none
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var entries: [TimelineRailEntry] = []
-    /// Chapters the listener folded (#3895). Kept for this item while the screen is open.
+    /// Which chapters are folded (#3895): all but the playing one when the Timeline opens, then following playback
+    /// unless the listener handled a chapter by hand (#4586). Kept for this item while the screen is open.
     @State private var folding = TimelineChapterFolding()
     @State private var playbackTick = 0 // bumped by each progress tick: the current row follows the playhead (#2074)
     @FocusState private var responseEditorFocused: Bool
@@ -115,9 +121,16 @@ struct ExperienceTimelineRailScreen: View {
                 refreshEntries(from: item)
             }
             .onChange(of: model.selectedItem.id) { _, _ in
+                // A new item starts again: only its playing chapter open, no hand toggles carried over (#4586).
                 folding = TimelineChapterFolding()
+                refreshEntries(from: model.selectedItem)
                 followsPlayback = true
                 focusTimeline(using: proxy)
+            }
+            .onChange(of: currentEntryIDs) { _, _ in
+                // Playback moved into another chapter: fold the one it left and open the one it entered, unless
+                // the listener handled either by hand (#4586). The rail follow below reads the result.
+                withMotion(.snappy) { folding.sync(rows: foldingRows, currentIDs: currentEntryIDs) }
             }
             .onChange(of: currentEntryID) { _, _ in
                 guard onReturnToPlayback != nil && followsPlayback else { return }
@@ -187,6 +200,9 @@ struct ExperienceTimelineRailScreen: View {
         .trackedSheet(item: $selectedElement) { element in
             PlaybackTimelineElementView(element: element)
         }
+        .trackedFullScreenCover(item: $selectedClip) { clip in
+            TimelineClipViewer(selection: clip)
+        }
         .trackedSheet(item: $selectedSharedMargin) { row in
             SharedMarginDetailView(row: row).environmentObject(model)
         }
@@ -199,10 +215,40 @@ struct ExperienceTimelineRailScreen: View {
     private var timelineRail: some View {
         PlaybackTimelineListView(entries: entries, currentIDs: currentEntryIDs,
                                  folding: folding, toggleChapter: toggleChapter,
-                                 perform: perform, details: details)
+                                 currentPosition: currentPosition,
+                                 perform: perform, openClip: openClip, details: details)
+            .environment(\.timelineClips, clipSource)
+    }
+
+    private func openClip(_ entry: TimelineSourceContent.Entry) {
+        guard let selection = TimelineClipSelection(entry: entry, source: clipSource) else { return }
+        selectedClip = selection
     }
 
     private var foldingRows: [TimelineChapterFolding.Row] { entries.map(\.foldingRow) }
+
+    /// The listener's place for the current card's line, while this item is the one playing (#3862).
+    private var currentPosition: TimelineCurrentPosition? {
+        Self.currentPosition(forItem: model.selectedItem, snapshot: model.snapshot)
+    }
+
+    /// Media: the clock and, with a known length, the percent (rounded down, as the Timeline's cards are, so 99.6% is 99%).
+    /// Text: the percent the text scrubber prints, from the same function. Nil when another item is playing.
+    static func currentPosition(forItem item: ItemDetailState, snapshot: SessionSnapshot) -> TimelineCurrentPosition? {
+        guard let itemId = snapshot.itemId, itemId == item.id else { return nil }
+        if item.isNativeAudio {
+            guard let ms = snapshot.currentMediaTimeMs else { return nil }
+            let duration = max(0, snapshot.currentPlaybackDurationMs ?? 0)
+            return TimelineCurrentPosition(
+                isMedia: true, ms: ms, percent: TimelinePositionLabel.mediaPercent(currentMs: ms, durationMs: duration))
+        }
+        // Another target (a spoken reply, a summary) counts characters in its own text, not the item's.
+        guard snapshot.targetType == TargetType.itemTextTTS.rawValue,
+              let offset = snapshot.currentTextStart, !item.text.isEmpty else { return nil }
+        return TimelineCurrentPosition(
+            isMedia: false, ms: nil,
+            percent: TimelinePositionLabel.textScrubberPercent(offset: Double(offset), length: item.text.count))
+    }
 
     private func toggleChapter(_ id: String) {
         // The listener is working the rail by hand: don't pull it back to the playing row under their finger.
@@ -250,6 +296,8 @@ struct ExperienceTimelineRailScreen: View {
     static func makeEntries(from item: ItemDetailState, sessionID: String?, playbackDurationMs: Int? = nil) -> [TimelineRailEntry] {
         var result: [TimelineRailEntry] = []
         let sourceLength = item.timelineSource.characterCount > 0 ? item.timelineSource.characterCount : item.text.count
+        // A podcast or audio file speaks in clock time, like its scrubber; an article or PDF speaks in percent (#3862).
+        let kind: TimelinePositionLabel.ItemKind = item.isNativeAudio ? .media : .text
 
         // Paragraph following belongs to Now. Timeline keeps retained rich source elements
         // alongside actual chapter/scene boundaries, rather than inventing a row for every paragraph (#1624).
@@ -288,12 +336,17 @@ struct ExperienceTimelineRailScreen: View {
                             item.overview,
                             characterLimit: TimelineTextPresentation.supportingCharacterLimit
                         ),
-                    action: .beginning
+                    action: .beginning,
+                    positionLabel: TimelinePositionLabel.label(kind: kind, startMs: 0, percent: 0)
                 )
             )
         }
 
+        // A publisher's chapters are saved twice, with the same id: as a percent copy (`chapters`) and as a copy with the
+        // exact start (`mediaChapters`). The rail draws the percent copy, so look the exact start up by id (#3862).
+        let exactStartByChapterID = Dictionary(item.mediaChapters.map { ($0.id, $0.startMs) }, uniquingKeysWith: { first, _ in first })
         for chapter in item.chapters {
+            let label = TimelinePositionLabel.label(kind: kind, startMs: exactStartByChapterID[chapter.id], percent: chapter.percent)
             result.append(
                 TimelineRailEntry(
                     id: "source.chapter.\(chapter.id)",
@@ -301,9 +354,10 @@ struct ExperienceTimelineRailScreen: View {
                     rank: 0,
                     provenance: .source,
                     title: chapter.title,
-                    detail: "Chapter · \(chapter.percent)%",
+                    detail: label.chapterDetail,
                     action: .chapter(chapter),
-                    precisePosition: TimelineRailSortKey.percent(position: chapter.startChar, length: sourceLength)
+                    precisePosition: TimelineRailSortKey.percent(position: chapter.startChar, length: sourceLength),
+                    positionLabel: label
                 )
             )
         }
@@ -320,8 +374,9 @@ struct ExperienceTimelineRailScreen: View {
                     rank: 0,
                     provenance: .source,
                     title: chapter.title,
-                    detail: "Chapter · \(formatTime(chapter.startMs))",
-                    action: .mediaChapter(chapter), precisePosition: TimelineRailSortKey.percent(position: chapter.startMs, length: knownDuration)
+                    detail: "Chapter · \(PlaybackPositionText.visible(ms: chapter.startMs))",
+                    action: .mediaChapter(chapter), precisePosition: TimelineRailSortKey.percent(position: chapter.startMs, length: knownDuration),
+                    positionLabel: TimelinePositionLabel.label(kind: kind, startMs: chapter.startMs, percent: position)
                 )
             )
         }
@@ -334,8 +389,9 @@ struct ExperienceTimelineRailScreen: View {
             result.append(TimelineRailEntry(
                 id: "source.listeningMapScene.\(scene.id)", position: position, rank: 0,
                 provenance: .listeningMap, title: scene.title,
-                detail: "Generated scene · \(formatTime(scene.startMs))" + (summary.map { " · \($0)" } ?? ""),
-                action: .listeningMapScene(scene), precisePosition: TimelineRailSortKey.percent(position: scene.startMs, length: knownDuration)
+                detail: "Generated scene · \(PlaybackPositionText.visible(ms: scene.startMs))" + (summary.map { " · \($0)" } ?? ""),
+                action: .listeningMapScene(scene), precisePosition: TimelineRailSortKey.percent(position: scene.startMs, length: knownDuration),
+                positionLabel: TimelinePositionLabel.label(kind: kind, startMs: scene.startMs, percent: position)
             ))
         }
 
@@ -354,7 +410,9 @@ struct ExperienceTimelineRailScreen: View {
                     action: .sharedMargin(row),
                     isNew: row.isNew,
                     precisePosition: TimelineRailSortKey.percent(position: margin.resolution.localMediaTimeMs ?? row.placementStatus.previousMediaTimeMs, length: knownDuration),
-                    reference: .imported(margin.id)
+                    reference: .imported(margin.id),
+                    // Only a Margin placed at a time shows one; a rough percent stays a percent (#3862).
+                    positionLabel: TimelinePositionLabel.label(kind: kind, startMs: margin.resolution.localMediaTimeMs, percent: position)
                 ))
             }
         }
@@ -378,7 +436,8 @@ struct ExperienceTimelineRailScreen: View {
                     detail: [row.cutShort?.tag, row.needsAttention ? row.attentionDescription : "Captured at \(position)%"].compactMap { $0 }.joined(separator: " · "),
                     action: .margin(row),
                     precisePosition: preciseSourcePosition(row.interjection, in: item, durationMs: knownDuration),
-                    reference: .local(row.interjection.id)
+                    reference: .local(row.interjection.id),
+                    positionLabel: TimelinePositionLabel.label(kind: kind, startMs: row.interjection.anchor.mediaTimeMs, percent: position)
                 )
             )
         }
@@ -447,7 +506,30 @@ struct ExperienceTimelineRailScreen: View {
 
     private func refreshEntries(from item: ItemDetailState) {
         entries = Self.makeEntries(from: item, sessionID: model.snapshot.sessionId, playbackDurationMs: model.snapshot.currentPlaybackDurationMs)
-        folding.prune(to: foldingRows)
+        // Applies the starting state the first time the rail has chapters, and keeps folds in step with rows.
+        folding.sync(rows: foldingRows, currentIDs: currentEntryIDs)
+        refreshClips(for: item)
+    }
+
+    /// Which of the item's tables and figures have a picture: one listing of its folder, read off the main thread, and
+    /// only for an item whose document located any, so a page or a podcast does no disk work here (#3895). Until the
+    /// listing arrives the rows are their text, as they were before pictures existed.
+    private func refreshClips(for item: ItemDetailState) {
+        guard item.timelineSource.entries.contains(where: { $0.floatId != nil }), let store = model.pdfClipStore() else {
+            if clipSource != .none { clipSource = .none }
+            return
+        }
+        let itemId = item.id
+        // The rows are this item's now. Pictures listed for another item are not theirs: ids like `float-p1-1`
+        // repeat across PDFs, so drop them until this item's own listing arrives.
+        if clipSource.itemId != itemId, clipSource != .none { clipSource = .none }
+        Task {
+            let available = await Task.detached(priority: .utility) { store.available(forItem: itemId) }.value
+            // The listener may have moved to another item while the folder was read.
+            guard model.selectedItem.id == itemId else { return }
+            let next = TimelineClipSource(store: store, itemId: itemId, available: available)
+            if next != clipSource { clipSource = next }
+        }
     }
 
     /// Replies sit directly under the Margin they answer, indented, at that Margin's place on the rail (#473).
@@ -461,19 +543,21 @@ struct ExperienceTimelineRailScreen: View {
             importedMargins: item.importedCommentaryLayers.flatMap { item.importedCommentaryInterjections[$0.id, default: []] }
         )
         let roots = Dictionary(entries.compactMap { entry in entry.reference.map { ($0, entry) } }, uniquingKeysWith: { first, _ in first })
-        struct Place { let order: Int; let depth: Int; let rootPosition: Int?; let rootPrecise: Double?; let parentLabel: String?; let note: String? }
+        struct Place { let order: Int; let depth: Int; let rootPosition: Int?; let rootPrecise: Double?; let rootLabel: TimelinePositionLabel.Label?; let parentLabel: String?; let note: String? }
         var places: [MarginReference: Place] = [:]
         var path: [String] = []
         var rootPosition: Int?
         var rootPrecise: Double?
+        var rootLabel: TimelinePositionLabel.Label?
         for (index, row) in rows.enumerated() {
             if row.depth == 0 {
                 rootPosition = roots[row.reference]?.position
                 rootPrecise = roots[row.reference]?.precisePosition
+                rootLabel = roots[row.reference]?.positionLabel
             }
             path = Array(path.prefix(row.depth))
             places[row.reference] = Place(
-                order: index + 1, depth: row.depth, rootPosition: rootPosition, rootPrecise: rootPrecise,
+                order: index + 1, depth: row.depth, rootPosition: rootPosition, rootPrecise: rootPrecise, rootLabel: rootLabel,
                 parentLabel: row.depth > 0 ? path.last : nil, note: row.note
             )
             path.append(row.senderLabel)
@@ -491,6 +575,8 @@ struct ExperienceTimelineRailScreen: View {
                     threaded.position = rootPosition
                     // The sort key goes by the precise place first, so a reply takes its parent's exactly.
                     threaded.precisePosition = place.rootPrecise
+                    // The corner says what `position` says: a reply reads as its parent's place, in the parent's unit (#3862).
+                    threaded.positionLabel = place.rootLabel
                 }
                 threaded.detail = "Reply to \(place.parentLabel ?? "a Margin") · \(entry.detail)"
             } else if let note = place.note {
@@ -549,7 +635,12 @@ struct ExperienceTimelineRailScreen: View {
         case .sourceText(let entry):
             selectedSource = .init(entry: entry, sourceReference: model.selectedItem.externalReference)
         case .sourceElement(let element):
-            selectedElement = element
+            // A link row is the link: one tap opens it (owner, 2026-11-14). Its details stay on long-press.
+            if let url = element.linkDestination {
+                openURL(url)
+            } else {
+                selectedElement = element
+            }
         case .beginning:
             if let first = model.selectedItem.chapters.first {
                 model.jumpToChapter(first, fromTimeline: true)
@@ -566,8 +657,11 @@ struct ExperienceTimelineRailScreen: View {
             model.jumpToListeningMapScene(scene, fromTimeline: true)
         case .sharedMargin(let row):
             // #158: play the moment directly; details stay on long-press. A written Margin set not to be read aloud, or with
-            // no voice on this phone (#3402), has nothing to play, so the tap opens its details, where its words are (#3427).
-            if row.interjection.isWritten, !SharedMarginAudio.canOffer(row.interjection) {
+            // no voice on this phone (#3402), has nothing to play: when it has a place the tap goes there with no voice (#4934),
+            // and when it has none it opens its details, where its words are (#3427).
+            if row.layer.itemId != nil, SilentMarginWords.friendGoesTo(row.interjection, in: row.layer) {
+                model.goToSharedMargin(row)
+            } else if row.interjection.isWritten, !SharedMarginAudio.canOffer(row.interjection) {
                 selectedSharedMargin = row
             } else {
                 model.playSharedMarginMoment(row)
@@ -586,6 +680,16 @@ struct ExperienceTimelineRailScreen: View {
     private func details(for action: TimelineRailEntry.Action) -> some View {
         if case .sharedMargin(let row) = action {
             Button("Shared Margin details", systemImage: "info.circle") { selectedSharedMargin = row }
+        }
+        // The same on long-press and as a VoiceOver action, where the picture itself can't be tapped (#3895).
+        if case .sourceText(let source) = action, clipSource.has(floatId: source.floatId) {
+            Button(TimelineClipPresentation.viewActionTitle(kind: source.floatKind), systemImage: "photo") {
+                openClip(source)
+            }
+        }
+        if case .sourceElement(let element) = action, let url = element.linkDestination {
+            Button("Link details", systemImage: "info.circle") { selectedElement = element }
+            Button("Copy link", systemImage: "doc.on.doc") { UIPasteboard.general.url = url }
         }
     }
 
@@ -662,11 +766,6 @@ struct ExperienceTimelineRailScreen: View {
         }
     }
 
-    private static func formatTime(_ milliseconds: Int) -> String {
-        let seconds = max(0, milliseconds / 1_000)
-        return String(format: "%d:%02d", seconds / 60, seconds % 60)
-    }
-
     private static func humanize(_ value: String) -> String {
         value.replacingOccurrences(of: "_", with: " ").capitalized
     }
@@ -702,6 +801,14 @@ struct TimelineRailEntry: Identifiable, Equatable {
     var depth = 0
     /// Where the entry falls among the Margins at one place: a conversation in order, parent first.
     var threadOrder = 0
+    /// What the card's corner says about its place, in the item's own unit: a time on media where the entry has an exact one,
+    /// otherwise a percent (#3862). Nil means the percent in `position`. `position` itself stays the sort coordinate.
+    var positionLabel: TimelinePositionLabel.Label? = nil
+
+    /// The card's corner: "1:07:30" or "65%".
+    var cornerLabel: String { positionLabel?.corner ?? PlaybackPositionText.visible(percent: position) }
+    /// The corner as VoiceOver reads it: "1 hour, 7 minutes, 30 seconds" or "65 percent".
+    var spokenPosition: String { positionLabel?.spoken ?? PlaybackPositionText.spoken(percent: position) }
 
     var sortKey: TimelineRailSortKey {
         TimelineRailSortKey(position: position, rank: rank, threadOrder: threadOrder, id: id, precisePosition: precisePosition)

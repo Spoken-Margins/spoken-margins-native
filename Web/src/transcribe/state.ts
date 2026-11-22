@@ -6,19 +6,24 @@
 //    words" after a recording. Until they have answered once, the composer offers it, with the size.
 // 2. Prefill, not replace. The transcript fills the words box only while the listener hasn't typed in it. If they
 //    have, it is offered beside the box instead, and their words stay.
-// 3. Failure changes nothing. If the model can't load or run, the words box works as it always has.
+// 3. Failure changes nothing. If the model can't load or run, the words box works as it always has, and the composer
+//    says so in a plain line (the recording is kept) rather than leaving a spinner or nothing at all (#4169).
+// 4. Nothing spins forever. A load or a run that makes no progress for long enough is called stuck (`watch`).
 
 /** The listener's answer: '' before they have been asked, then 'on' or 'off'. */
 export type TranscriptionSetting = '' | 'on' | 'off';
 
 export type Phase =
-  /** Off, unsupported, or declined: the composer is the plain words box. */
+  /** Off or declined: the composer is the plain words box. */
   | { kind: 'off' }
+  /** Turned on, but this browser can't run the model: the plain words box, with a line saying why. */
+  | { kind: 'unsupported' }
   /** Never asked: the composer offers to write out the words, naming the download size. */
   | { kind: 'offer' }
   /** The model is loading; `total` is 0 until the size is known, and `loaded` is bytes so far. */
   | { kind: 'loading'; loaded: number; total: number }
-  | { kind: 'transcribing' }
+  /** `done` of `total` segments are written out, once the first is. */
+  | { kind: 'transcribing'; done?: number; total?: number }
   /** Done. `text` is '' when no words were heard. */
   | { kind: 'done'; text: string }
   | { kind: 'failed'; message: string };
@@ -28,12 +33,15 @@ export type PhaseEvent =
   | { type: 'decline' }
   | { type: 'progress'; loaded: number; total: number }
   | { type: 'loaded' }
+  | { type: 'segment'; done: number; total: number }
   | { type: 'result'; text: string }
   | { type: 'error'; message: string };
 
 /** What the composer shows the moment a recording stops. */
 export function initialPhase(setting: TranscriptionSetting, supported: boolean): Phase {
-  if (!supported || setting === 'off') return { kind: 'off' };
+  if (setting === 'off') return { kind: 'off' };
+  // Said yes earlier, but this browser can't do it now: say so. Never asked: stay quiet, nothing was promised.
+  if (!supported) return setting === 'on' ? { kind: 'unsupported' } : { kind: 'off' };
   if (setting === 'on') return { kind: 'loading', loaded: 0, total: 0 };
   return { kind: 'offer' };
 }
@@ -53,6 +61,8 @@ export function nextPhase(phase: Phase, event: PhaseEvent): Phase {
       return phase.kind === 'loading' ? { kind: 'loading', loaded: event.loaded, total: event.total } : phase;
     case 'loaded':
       return phase.kind === 'loading' ? { kind: 'transcribing' } : phase;
+    case 'segment':
+      return phase.kind === 'transcribing' ? { kind: 'transcribing', done: event.done, total: event.total } : phase;
     case 'result':
       return mayRun(phase) ? { kind: 'done', text: event.text } : phase;
     case 'error':
@@ -94,3 +104,35 @@ export function loadingLine(phase: Phase, sizeLabel: string): string {
   if (phase.loaded >= phase.total) return 'Getting the speech model ready…';
   return `Downloading the speech model, ${mb(phase.loaded)} of ${mb(phase.total)} MB…`;
 }
+
+/** How long a load or a run may make no progress before the composer says it is taking a while. */
+export const SLOW_AFTER_MS = 20_000;
+/** Then how long before it is called stuck. A load reports download progress, so quiet for two minutes is stuck. */
+export const LOAD_GIVES_UP_MS = 120_000;
+/** A run reports each segment (about 20 s of speech) as it ends, so quiet for two minutes is stuck however long the Margin. */
+export const RUN_GIVES_UP_MS = 120_000;
+
+export const STUCK_MESSAGE = 'It took too long, so it was stopped.';
+
+export type Watch = 'working' | 'slow' | 'stuck';
+
+/** What to tell the listener about a phase that has made no progress for `quietMs`. */
+export function watch(phase: Phase, quietMs: number): Watch {
+  if (!mayRun(phase)) return 'working';
+  const giveUp = phase.kind === 'loading' ? LOAD_GIVES_UP_MS : RUN_GIVES_UP_MS;
+  if (quietMs >= giveUp) return 'stuck';
+  return quietMs >= SLOW_AFTER_MS ? 'slow' : 'working';
+}
+
+/** The line under the words box once a load or a run is slow: still working, and the recording is safe. */
+export function slowLine(phase: Phase): string {
+  if (phase.kind === 'loading') {
+    return 'Still getting the speech model ready. This can take a while on a slow connection. Your recording is kept, and you can type the words instead.';
+  }
+  return 'Still writing out your words. This can take a while on a phone. Your recording is kept, and you can type the words instead.';
+}
+
+/** Why the words weren't written out, in one plain line that says the recording is kept. */
+export const FAILED_LINE = 'Your words couldn’t be written out here. Your recording is kept, so type them if you like.';
+/** For a browser that can't run the speech model at all. */
+export const UNSUPPORTED_LINE = 'This browser can’t write out your words. Your recording is kept, so type them if you like.';
