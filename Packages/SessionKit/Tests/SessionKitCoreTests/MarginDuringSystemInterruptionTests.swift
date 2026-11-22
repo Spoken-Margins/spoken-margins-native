@@ -224,6 +224,77 @@ final class MarginDuringSystemInterruptionTests: XCTestCase {
         XCTAssertFalse(rig.client.playing, "the first Margin's deferred resume is spent")
     }
 
+    // MARK: #4926: a Shortcut dictates, then adds a Margin; the export has to say which of the two paused the item
+
+    private func traceState(_ rig: (engine: SessionEngine, client: Client)) -> AddMarginPlaybackTrace.State {
+        AddMarginPlaybackTrace.state(
+            status: rig.engine.snapshot.status, pausedBySystem: rig.engine.isPausedBySystemInterruption, hasSession: true
+        )
+    }
+
+    /// Dictate Text takes the audio, Add Margin runs while it is up, then dictation lets go: the item is paused by the
+    /// system when Add Margin begins, still waiting for the system when it returns, and plays when the system ends.
+    func testTheTraceNamesTheSystemAsThePauserWhenDictationHadTheAudio() throws {
+        let rig = try rig(item: episode)
+        XCTAssertEqual(traceState(rig), .playing)
+        try siriPausesIt(rig) // Dictate Text begins
+
+        let before = traceState(rig)
+        let capture = try rig.engine.beginWrittenInterjection()
+        _ = try rig.engine.saveWrittenInterjection(captureId: capture.id, text: "Check this claim")
+        let after = traceState(rig)
+
+        XCTAssertEqual(before, .pausedBySystem, "the system paused it before Add Margin ran")
+        XCTAssertEqual(after, .pausedBySystem, "Add Margin left the system's resume waiting")
+        XCTAssertEqual(AddMarginPlaybackTrace(before: before, after: after).fields(saved: true),
+                       ["before": "paused_by_system", "after": "paused_by_system", "saved": "true", "stayedPlaying": "false"])
+        XCTAssertTrue(rig.client.systemInterruptionEnds(), "dictation letting go resumes it")
+    }
+
+    /// Dictation had already let go and the item had resumed: Add Margin finds it playing and leaves it playing.
+    func testTheTraceShowsAnItemThatKeepsPlayingThroughAddMargin() throws {
+        let rig = try rig(item: episode)
+        try siriPausesIt(rig)
+        XCTAssertTrue(rig.client.systemInterruptionEnds())
+        _ = try rig.engine.resumePlaybackAfterInterruption() // the app's resume
+
+        let before = traceState(rig)
+        let capture = try rig.engine.beginWrittenInterjection()
+        _ = try rig.engine.saveWrittenInterjection(captureId: capture.id, text: "Check this claim")
+        let after = traceState(rig)
+
+        XCTAssertEqual(before, .playing)
+        XCTAssertEqual(after, .playing, "Save plays the item as it does for the in-app Margin")
+        XCTAssertEqual(AddMarginPlaybackTrace(before: before, after: after).fields(saved: true)["stayedPlaying"], "true")
+    }
+
+    /// The case the trace exists to tell apart: dictation's interruption ended without iOS saying audio may start, so
+    /// nothing resumes the item and Add Margin finds it paused. That is not Add Margin pausing it.
+    func testTheTraceShowsAnItemPausedByTheListenerAsNotPausedBySystem() throws {
+        let rig = try rig(item: episode)
+        _ = try rig.engine.pause()
+        XCTAssertEqual(traceState(rig), .paused)
+    }
+
+    func testTheTraceStatesForEveryPlayerStatus() {
+        typealias T = AddMarginPlaybackTrace
+        XCTAssertEqual(T.state(status: .playing, pausedBySystem: false, hasSession: true), .playing)
+        XCTAssertEqual(T.state(status: .starting, pausedBySystem: false, hasSession: true), .playing)
+        XCTAssertEqual(T.state(status: .paused, pausedBySystem: true, hasSession: true), .pausedBySystem)
+        XCTAssertEqual(T.state(status: .paused, pausedBySystem: false, hasSession: true), .paused)
+        XCTAssertEqual(T.state(status: .idle, pausedBySystem: false, hasSession: true), .paused)
+        XCTAssertEqual(T.state(status: .failed, pausedBySystem: false, hasSession: true), .failed)
+        XCTAssertEqual(T.state(status: .playing, pausedBySystem: false, hasSession: false), .nothingOpen)
+    }
+
+    func testAnItemTheListenerMovedIsNoLongerPausedBySystem() throws {
+        let rig = try rig(item: episode)
+        try siriPausesIt(rig)
+        XCTAssertTrue(rig.engine.isPausedBySystemInterruption)
+        _ = try rig.engine.resumePlaybackAfterInterruption()
+        XCTAssertFalse(rig.engine.isPausedBySystemInterruption, "a resume clears it")
+    }
+
     // MARK: A resume retry already running when the written Margin opens (#4846)
 
     /// The app's retrier wired as `retryMediaResumeAfterInterruption` wires it: it is paused where it was, and a retry
