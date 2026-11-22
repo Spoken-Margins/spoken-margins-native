@@ -38,8 +38,10 @@ struct FootnoteCardBody: View {
 
     var body: some View {
         // Laid out like the friend's Margin card above the same passage, but with its own symbol and no name, so the two
-        // can't be mistaken for each other: a Margin card always names a person, this one never does. Its greys are the
-        // listening screen's token, not white at an alpha, which `ExperienceColorContrastGuardTests` counts per file.
+        // can't be mistaken for each other: a Margin card always names a person, this one never does. The same white at
+        // 85% (the words) and 10% (the fill) as that card, on the same always-dark `listeningBackground`; the two uses are
+        // listed in `AppColorUsageGuardTests.systemColorBaseline`. `AppColors.watch*` is not an option: only `Playback*`
+        // files may use it, and a new tint needs its own audited pair.
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "text.append")
@@ -57,7 +59,7 @@ struct FootnoteCardBody: View {
             }
             Text(card.body)
                 .font(.footnote)
-                .foregroundStyle(AppColors.watchSecondary)
+                .foregroundStyle(.white.opacity(0.85))
                 .lineLimit(Self.bodyLineLimit)
                 .truncationMode(.tail)
                 .fixedSize(horizontal: false, vertical: true)
@@ -67,7 +69,7 @@ struct FootnoteCardBody: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppColors.watchSecondary.opacity(0.14), in: RoundedRectangle(cornerRadius: 16))
+        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
         // One element that reads "Footnote 3. <the whole note>". It posts no announcement: narration is already reading it.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(card.voiceOverLabel)
