@@ -92,6 +92,42 @@ public enum StoredSessionMargin {
         return Saved(interjection: saved, itemTitle: item.title)
     }
 
+    /// Saves a recording the app already holds (`VoiceMarginImport.prepare`) as a spoken Margin at `itemId`'s saved place,
+    /// the way `addWritten` saves words (#4924). `audioPath` is the stored path of a file that exists under Application
+    /// Support. Throws before writing anything when the item is not in the Library or has no session, and with an empty path
+    /// (`SessionEngine.saveSpokenInterjection` refuses it, and the capture is cancelled). The Margin is `pending` its words: the caller asks for the transcription (`Saved.interjection` is what to
+    /// transcribe), because this engine has no transcriber of its own.
+    public static func addSpoken(
+        audioPath: String,
+        itemId: String,
+        repository: SessionRepository & StructuredDocumentRepository,
+        now: @escaping () -> Date = Date.init
+    ) throws -> Saved {
+        guard let item = try? repository.loadItem(id: itemId), item.deletedAt == nil else { throw Failure.itemNotFound }
+        guard let session = targetSession(in: try repository.loadSessions(itemId: itemId)) else { throw Failure.noSession }
+
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(id: "stored-session-margin", displayName: "Stored session Margin", capabilities: [:]),
+            repository: repository,
+            now: now
+        )
+        try engine.inspectSession(sessionId: session.id)
+        let originalUpdatedAt = session.updatedAt
+        let capture = try engine.beginWrittenInterjection()
+        do {
+            try engine.saveSpokenInterjection(captureId: capture.id, audioRef: audioPath)
+        } catch {
+            _ = try? engine.cancelWrittenInterjection(captureId: capture.id)
+            throw error
+        }
+        // The Margin is durable from here: a failure of the steps after it must not read as "not saved", because the
+        // caller removes a recording that no saved Margin names. Keeping the session's stamp is best effort.
+        try? restoreUpdatedAt(originalUpdatedAt, ofSession: session.id, in: repository)
+        let saved = try repository.loadInterjections(sessionId: session.id).first { $0.id == "ij-voice-\(capture.id)" }
+        guard let saved else { throw SessionKitError.invalidCommandForState("saveSpokenInterjection") }
+        return Saved(interjection: saved, itemTitle: item.title)
+    }
+
     /// Saving the Margin stamps the session as touched now. Sessions are ordered by that stamp, and the app
     /// reopens the newest resumable one at launch, so a Margin written from a shortcut must not pull its item
     /// ahead of the one the listener was last listening to.
