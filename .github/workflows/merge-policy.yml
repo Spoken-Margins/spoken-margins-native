@@ -6,8 +6,10 @@
 # sign-off. Advisory until the "protect main" ruleset lists it as a required check.
 #
 # Safety: the script is checked out from main, never from the PR or the merge group. The PR's commits are fetched as
-# git data and only read with git; nothing from them is built or run. The token is read-only. The PR number and SHAs
-# reach the shell through env, not interpolation. Same-repo PRs only (a fork's PR is skipped, as in every workflow).
+# git data and only read with git; nothing from them is built or run. The token reads contents and pull requests and
+# has `actions: write` for one use: on a pull_request run, `--start` dispatches a required check that never ran on the
+# PR's head (#4867; scripts/required_checks.py lists them). The PR number and SHAs reach the shell through env, not
+# interpolation. Same-repo PRs only (a fork's PR is skipped, as in every workflow).
 # A limit stated plainly: on pull_request and merge_group GitHub runs this file as the PR or group has it, so a PR
 # that edits this file changes its own check. Such a PR touches `.github/`, which this check holds for the owner's
 # tap, but the edited copy is what decides that. The owner's review of `.github/` diffs is the guard.
@@ -38,6 +40,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  actions: write  # --start dispatches a required check that has no run on the PR's head (#4867)
 
 concurrency:
   group: merge-policy-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
@@ -71,6 +74,6 @@ jobs:
           if [ "$EVENT" = merge_group ]; then
             python3 scripts/merge_policy.py --repo "$GH_REPO" --group-head "$GROUP_HEAD" | tee -a "$GITHUB_STEP_SUMMARY"
           else
-            python3 scripts/merge_policy.py --repo "$GH_REPO" --pr "$PR" --head "$HEAD_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+            python3 scripts/merge_policy.py --repo "$GH_REPO" --pr "$PR" --head "$HEAD_SHA" --start | tee -a "$GITHUB_STEP_SUMMARY"
           fi
           exit "${PIPESTATUS[0]}"

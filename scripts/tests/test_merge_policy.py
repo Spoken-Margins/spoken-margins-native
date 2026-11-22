@@ -253,8 +253,10 @@ class WorkflowTests(unittest.TestCase):
             self.assertNotIn('paths-ignore', trigger or {})
         self.assertEqual([job['name'] for job in self.workflow['jobs'].values()], ['merge policy'])
 
-    def test_the_rules_come_from_main_with_a_read_only_token(self):
-        self.assertEqual(self.workflow['permissions'], {'contents': 'read', 'pull-requests': 'read'})
+    def test_the_rules_come_from_main_and_the_token_writes_only_actions(self):
+        # `actions: write` is for `--start` (#4867): dispatching a required check that never ran on the PR's head.
+        self.assertEqual(self.workflow['permissions'],
+                         {'contents': 'read', 'pull-requests': 'read', 'actions': 'write'})
         job = self.workflow['jobs']['policy']
         checkout = job['steps'][0]
         self.assertTrue(checkout['uses'].startswith('actions/checkout@'))
@@ -262,6 +264,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(checkout['with']['persist-credentials'])
         run = job['steps'][1]['run']
         self.assertNotIn('${{', run)  # event data reaches the shell only through env
+        # --start only on the pull_request line, never the queue's (a merge group has no one PR head to start on).
+        lines = [line for line in run.splitlines() if 'merge_policy.py' in line]
+        self.assertEqual([('--start' in line, '--group-head' in line) for line in lines], [(False, True), (True, False)])
         self.assertNotIn('pull_request_target', (ROOT / '.github/workflows/merge-policy.yml').read_text())
 
 
