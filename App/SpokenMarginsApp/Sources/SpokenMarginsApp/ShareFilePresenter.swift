@@ -37,10 +37,24 @@ enum ShareFilePresenter {
 
     /// The view controller a new sheet should go over: the front-most one, following presented sheets.
     static func topViewController() -> UIViewController? {
+        topViewController(from: keyWindowRoot())
+    }
+
+    /// Something UIKit has presented over the root: a sheet, an alert, a dialog, a cover or the play queue, including
+    /// one still being dismissed. SwiftUI doesn't observe these, so the Watch card (#4563) asks UIKit before it opens.
+    static func rootHasPresentation() -> Bool {
+        rootHasPresentation(from: keyWindowRoot())
+    }
+
+    static func rootHasPresentation(from root: UIViewController?) -> Bool {
+        root?.presentedViewController != nil
+    }
+
+    private static func keyWindowRoot() -> UIViewController? {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
         let window = scene?.windows.first { $0.isKeyWindow } ?? scene?.windows.first
-        return topViewController(from: window?.rootViewController)
+        return window?.rootViewController
     }
 
     static func topViewController(from root: UIViewController?) -> UIViewController? {
