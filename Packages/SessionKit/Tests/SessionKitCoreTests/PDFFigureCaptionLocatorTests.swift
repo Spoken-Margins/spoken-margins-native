@@ -234,6 +234,103 @@ final class PDFFigureCaptionLocatorTests: XCTestCase {
         XCTAssertEqual(PDFFigureCaptionLocator.regions(captions: [], textBlocks: paragraph(top: 0.95, lines: 30)), [])
     }
 
+    // MARK: Figures at the top or bottom of a page (the text area)
+
+    private let area = PDFFigureCaptionLocator.TextArea(top: 0.95, bottom: 0.06)
+
+    func testAFigureAtTheTopOfThePageIsMeasuredToTheTextAreasTop() {
+        // The figure fills the page from its caption (0.564 ... 0.60) up to the top of the text; nothing is above it.
+        let below = paragraph(top: 0.55, lines: 6)                              // first line top 0.548, under the minimum gap
+        let regions = PDFFigureCaptionLocator.regions(captions: [caption(top: 0.60)], textBlocks: below, textArea: area)
+        assertRect(regions.first?.bounds, 0.10, 0.60 + inset, 0.80, 0.95 - (0.60 + inset), "top of the page")
+    }
+
+    func testAFigureAtTheTopOfThePageGivesNoClipWithoutATextArea() {
+        // The existing rule stays as it is when the document has no text area: nothing says where the figure starts.
+        let below = paragraph(top: 0.55, lines: 6)
+        XCTAssertEqual(PDFFigureCaptionLocator.regions(captions: [caption(top: 0.60)], textBlocks: below, textArea: nil), [])
+    }
+
+    func testACaptionAboveAFigureAtTheBottomOfThePageIsMeasuredToTheTextAreasBottom() {
+        let above = paragraph(top: 0.95, lines: 4)                              // lowest bottom 0.864; gap to the caption is under the minimum
+        let regions = PDFFigureCaptionLocator.regions(captions: [caption(top: 0.84)], textBlocks: above, textArea: area)
+        assertRect(regions.first?.bounds, 0.10, 0.06, 0.80, (0.804 - inset) - 0.06, "bottom of the page")
+    }
+
+    func testACaptionThatIsTheFirstThingInTheTextAreaGivesNoClip() {
+        // 0.95 ... 0.94 is under the minimum height, so there is no room for a figure above it.
+        let below = paragraph(top: 0.90 - 0.036, lines: 6)
+        XCTAssertEqual(PDFFigureCaptionLocator.regions(captions: [caption(top: 0.94)], textBlocks: below, textArea: area), [])
+    }
+
+    func testATopFigureWhoseCaptionAlsoHasAFigureSizedGapBelowItGivesNoClip() {
+        // Room for a figure above (to the text area) and below (to the next text): which is the caption's is a guess.
+        let below = paragraph(top: 0.35, lines: 6)                              // first line top 0.348; gap 0.216
+        XCTAssertEqual(PDFFigureCaptionLocator.regions(captions: [caption(top: 0.60)], textBlocks: below, textArea: area), [])
+    }
+
+    func testARunningHeadAboveATopFigureStopsTheBandUnderTheHead() {
+        // The text area's top is above the head, so without the clamp the band would swallow it.
+        let head = rect(0.10, 0.96, 0.80, 0.015)
+        let below = paragraph(top: 0.55, lines: 6)
+        let regions = PDFFigureCaptionLocator.regions(
+            captions: [caption(top: 0.60)], textBlocks: below, furniture: [head], textArea: .init(top: 0.985, bottom: 0.06))
+        assertRect(regions.first?.bounds, 0.10, 0.60 + inset, 0.80, (0.96 - inset) - (0.60 + inset), "under the head")
+    }
+
+    func testAPageNumberBelowABottomFigureStopsTheBandAboveIt() {
+        let footer = rect(0.45, 0.04, 0.10, 0.012)
+        let above = paragraph(top: 0.95, lines: 4)
+        let regions = PDFFigureCaptionLocator.regions(
+            captions: [caption(top: 0.84)], textBlocks: above, furniture: [footer], textArea: .init(top: 0.95, bottom: 0.02))
+        assertRect(regions.first?.bounds, 0.10, (0.04 + 0.012) + inset, 0.80, (0.804 - inset) - ((0.04 + 0.012) + inset), "above the page number")
+    }
+
+    func testFurnitureIsNeverANeighbourThatBoundsABand() {
+        // A page number under a caption at the bottom of the page is not text "below" it: the band above still stands
+        // alone, as it did before the locator knew about furniture.
+        let regions = PDFFigureCaptionLocator.regions(
+            captions: [caption(top: 0.20)], textBlocks: paragraph(top: 0.95, lines: 8), furniture: [rect(0.45, 0.05, 0.10, 0.012)])
+        assertRect(regions.first?.bounds, 0.10, 0.20 + inset, 0.80, (0.776 - inset) - (0.20 + inset), "with a page number below")
+    }
+
+    // MARK: Column span
+
+    func testAShortCentredCaptionUnderAWideColumnFigureSpansTheColumn() {
+        // The figure fills the left column; its caption is centred and short. The column's text says how wide it is.
+        let left = paragraph(top: 0.95, lines: 8, x: 0.08, width: 0.40) + paragraph(top: 0.41, lines: 6, x: 0.08, width: 0.40)
+        let regions = PDFFigureCaptionLocator.regions(captions: [caption(top: 0.46, x: 0.20, width: 0.16)], textBlocks: left)
+        assertRect(regions.first?.bounds, 0.08, 0.46 + inset, 0.40, (0.776 - inset) - (0.46 + inset), "the column, not the caption")
+    }
+
+    func testAFullWidthLineNeverWidensAColumnCaptionsSpan() {
+        // A title or a full-width caption on the page overlaps the column but is not part of it.
+        let left = paragraph(top: 0.95, lines: 8, x: 0.08, width: 0.40) + paragraph(top: 0.41, lines: 6, x: 0.08, width: 0.40)
+        let fullWidth = [rect(0.08, 0.97, 0.84, 0.02)]
+        let regions = PDFFigureCaptionLocator.regions(captions: [caption(top: 0.46, x: 0.08, width: 0.40)], textBlocks: left + fullWidth)
+        assertRect(regions.first?.bounds, 0.08, 0.46 + inset, 0.40, (0.776 - inset) - (0.46 + inset), "column only")
+    }
+
+    func testTextBesideTheFigureInsideTheWidenedSpanGivesNoClip() {
+        // The figure is narrower than its column and a side note sits beside it, in the widened span: the band
+        // would run into the note, and with the note above the caption's top there is no figure-sized gap.
+        let left = paragraph(top: 0.95, lines: 8, x: 0.08, width: 0.40) + paragraph(top: 0.41, lines: 6, x: 0.08, width: 0.40)
+        let note = rect(0.40, 0.50, 0.08, 0.20)
+        XCTAssertEqual(PDFFigureCaptionLocator.regions(captions: [caption(top: 0.46, x: 0.20, width: 0.16)], textBlocks: left + [note]), [])
+    }
+
+    // MARK: Text floats win
+
+    func testABandThatMeetsATextFloatsRegionGivesNoClip() {
+        // Figure text 0.09 above the caption's top is not "next to" it, but the band would run through it: that
+        // figure has its clip already, so one figure never shows twice.
+        let above = paragraph(top: 0.95, lines: 8)
+        let below = paragraph(top: 0.41, lines: 6)
+        let other = rect(0.20, 0.55, 0.30, 0.10)
+        let regions = PDFFigureCaptionLocator.regions(captions: [caption(top: 0.46)], textBlocks: above + below, figureRegions: [other])
+        XCTAssertEqual(regions, [])
+    }
+
     // MARK: Which lines are captions
 
     func testWhichLinesOpenAFigureCaption() {
