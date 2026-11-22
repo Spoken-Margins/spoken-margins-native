@@ -51,6 +51,9 @@ final class CatalogDrawerModel: ObservableObject {
     private let libraryHoldsFriendPacket: (@Sendable () async -> Bool)?
     /// Opens a pasted share link as a tapped one is opened. Nil in tests and previews.
     private let openFriendLink: (@MainActor (URL) -> Void)?
+    /// The sheet for a friend's link that failed to open, which this drawer shows while it is up (a sheet from the root
+    /// can't present over it). Nil in tests and previews.
+    let packetOpenFailures: PacketOpenFailurePresenter?
     private var hasLoaded = false
     /// What Done plays on a fresh install (#2851): the first pick's newest episode or latest post, else the
     /// Welcome sample. Gets the picked sources' ids in tap order, and whether the Welcome sample may stand in when
@@ -83,10 +86,12 @@ final class CatalogDrawerModel: ObservableObject {
         searcher: PodcastNameSearch? = nil,
         startFirstListen: (@MainActor ([String], Bool) async -> Void)? = nil,
         libraryHoldsFriendPacket: (@Sendable () async -> Bool)? = nil,
-        openFriendLink: (@MainActor (URL) -> Void)? = nil
+        openFriendLink: (@MainActor (URL) -> Void)? = nil,
+        packetOpenFailures: PacketOpenFailurePresenter? = nil
     ) {
         self.libraryHoldsFriendPacket = libraryHoldsFriendPacket
         self.openFriendLink = openFriendLink
+        self.packetOpenFailures = packetOpenFailures
         self.startFirstListen = startFirstListen
         self.searcher = searcher
         self.store = store
@@ -470,6 +475,19 @@ final class CatalogDrawerModel: ObservableObject {
     }
 }
 
+/// Shows a failed friend's link from inside the drawer, when the drawer has a presenter to show (never in previews).
+private struct DrawerPacketOpenFailureSheet: ViewModifier {
+    let drawer: CatalogDrawerModel
+
+    func body(content: Content) -> some View {
+        if let presenter = drawer.packetOpenFailures {
+            content.packetOpenFailureSheet(presenter: presenter, drawer: drawer)
+        } else {
+            content
+        }
+    }
+}
+
 struct CatalogDrawerView: View {
     @EnvironmentObject private var drawer: CatalogDrawerModel
 
@@ -509,6 +527,7 @@ struct CatalogDrawerView: View {
                 }
             }
         }
+        .modifier(DrawerPacketOpenFailureSheet(drawer: drawer))
         .accessibilityIdentifier("catalog.drawer")
     }
 

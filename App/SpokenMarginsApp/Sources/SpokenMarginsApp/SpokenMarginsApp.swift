@@ -162,7 +162,8 @@ struct SpokenMarginsApp: App {
                 await model?.startFirstListen(pickedSourceIds: sourceIds, allowsWelcomeSample: allowsWelcome)
             },
             libraryHoldsFriendPacket: { [weak model] in await model?.libraryHoldsFriendPacket() ?? true },
-            openFriendLink: { [weak model] url in model?.openShareLink(url) }
+            openFriendLink: { [weak model] url in model?.openShareLink(url) },
+            packetOpenFailures: model.packetOpenFailures
         )
         _catalogDrawer = StateObject(wrappedValue: drawer)
         #if !SPOKEN_MARGINS_LEGACY
