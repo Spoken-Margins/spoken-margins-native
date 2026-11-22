@@ -17,6 +17,19 @@ enum AddVoiceMarginAction {
         files: LiveSessionFileWorker = .shared, supportDirectory: URL? = nil,
         inspect: @escaping @Sendable (URL) -> VoiceMarginImport.Inspection? = VoiceMarginFiles.defaultInspect, now: Date = Date()
     ) async throws -> String {
+        try await perform(
+            audio: source, toItemId: itemId, picture: nil, in: model, files: files, supportDirectory: supportDirectory,
+            inspect: inspect, now: now
+        ).name
+    }
+
+    /// The same with an optional screenshot or photo (#4925): kept with the Margin only when it goes to a live or quick
+    /// session, as for Add Margin; for a Library item the Margin is saved without it and the result says so.
+    static func perform(
+        audio source: URL, toItemId itemId: String?, picture: ShortcutPicture?, in model: Gate1AppModel,
+        files: LiveSessionFileWorker = .shared, supportDirectory: URL? = nil,
+        inspect: @escaping @Sendable (URL) -> VoiceMarginImport.Inspection? = VoiceMarginFiles.defaultInspect, now: Date = Date()
+    ) async throws -> ShortcutMarginFiled {
         let support = try supportDirectory ?? VoiceMarginFiles.supportDirectory()
         let prepared: VoiceMarginImport.Prepared
         do {
@@ -26,7 +39,7 @@ enum AddVoiceMarginAction {
         }
         let path = prepared.audioPath // the listener's own recording, kept by `VoiceMarginImport`
         do {
-            return try await file(prepared, path: path, toItemId: itemId, in: model, files: files, now: now)
+            return try await file(prepared, path: path, toItemId: itemId, picture: picture, in: model, files: files, now: now)
         } catch {
             // Removed only when no saved Margin names it, whatever step failed: a save that stored the Margin and then
             // reported a failure keeps its voice. A doubt keeps the recording. Never the Shortcut's own file.
@@ -40,9 +53,10 @@ enum AddVoiceMarginAction {
 
     /// Where the recording goes, once it is the app's own. Returns what Siri says it went to.
     private static func file(
-        _ prepared: VoiceMarginImport.Prepared, path: String, toItemId itemId: String?, in model: Gate1AppModel,
-        files: LiveSessionFileWorker, now: Date
-    ) async throws -> String {
+        _ prepared: VoiceMarginImport.Prepared, path: String, toItemId itemId: String?, picture: ShortcutPicture?,
+        in model: Gate1AppModel, files: LiveSessionFileWorker, now: Date
+    ) async throws -> ShortcutMarginFiled {
+        let onItemOutcome: SiriMarginRoute.PictureOutcome = picture == nil ? .noneGiven : .notKeptOnItem
         let route = SiriMarginRoute.decide(.init(
             choseItem: itemId != nil, // as Add Margin: a chosen item comes first, even over a running live session
             runningSession: await files.runningSession(),
@@ -70,24 +84,37 @@ enum AddVoiceMarginAction {
             }
             return filed
         }
-        func fileAsQuick() async throws -> String {
+        func fileAsQuick() async throws -> ShortcutMarginFiled {
             let marginId = "phone-\(UUID().uuidString.lowercased())"
-            let filed = await files.fileSpokenMarginAsQuick(
-                marginId: marginId, audioPath: path, markedAt: now, durationMs: prepared.durationMs,
-                spokenOn: "phone", now: now
-            )
-            return SiriMarginRoute.filedName(try await fileInSession(marginId: marginId, filed))
+            let (staged, pictureOutcome) = await ShortcutPictureIntake.prepare(picture)
+            var outcome = pictureOutcome
+            let filed: LiveSession?
+            if let staged {
+                let filing = await files.fileSpokenMarginAsQuick(
+                    marginId: marginId, audioPath: path, markedAt: now, durationMs: prepared.durationMs,
+                    spokenOn: "phone", now: now, staged: staged
+                )
+                filed = filing.session
+                outcome = ShortcutPictureIntake.outcome(of: filing)
+            } else {
+                filed = await files.fileSpokenMarginAsQuick(
+                    marginId: marginId, audioPath: path, markedAt: now, durationMs: prepared.durationMs,
+                    spokenOn: "phone", now: now
+                )
+            }
+            let session = try await fileInSession(marginId: marginId, filed)
+            return ShortcutMarginFiled(name: SiriMarginRoute.filedName(session), picture: outcome)
         }
         switch route {
         case .chosenItem:
             guard let itemId else { throw AddMarginShortcutError.itemNotFound }
             // The item in the player is the player's case, as for Add Margin's words (`addWrittenMargin(text:toItemId:in:)`).
             if model.hasActiveSession, model.snapshot.itemId == itemId {
-                return try model.addVoiceMarginToPlayer(audioPath: path)
+                return ShortcutMarginFiled(name: try model.addVoiceMarginToPlayer(audioPath: path), picture: onItemOutcome)
             }
             guard model.store != nil else { throw AddMarginShortcutError.libraryUnavailable }
             do {
-                return try model.addVoiceMarginToStoredItem(id: itemId, audioPath: path)
+                return ShortcutMarginFiled(name: try model.addVoiceMarginToStoredItem(id: itemId, audioPath: path), picture: onItemOutcome)
             } catch let failure as StoredSessionMargin.Failure {
                 throw AddMarginShortcutError(failure)
             } catch {
@@ -95,7 +122,7 @@ enum AddVoiceMarginAction {
             }
         case .playerItem:
             do {
-                return try model.addVoiceMarginToPlayer(audioPath: path)
+                return ShortcutMarginFiled(name: try model.addVoiceMarginToPlayer(audioPath: path), picture: onItemOutcome)
             } catch AddMarginShortcutError.nothingRunning {
                 // The player's session ended between the decision and the save: the Margin is kept, not refused.
                 return try await fileAsQuick()
@@ -103,12 +130,24 @@ enum AddVoiceMarginAction {
         case let .liveSession(name):
             guard let running = await files.runningSession() else { return try await fileAsQuick() }
             let marginId = "phone-\(UUID().uuidString.lowercased())"
-            let filed = await files.attachSpokenMargin(
-                sessionId: running.id, marginId: marginId, audioPath: path, markedAt: now,
-                durationMs: prepared.durationMs, spokenOn: "phone"
-            )
+            let (staged, pictureOutcome) = await ShortcutPictureIntake.prepare(picture)
+            var outcome = pictureOutcome
+            let filed: LiveSession?
+            if let staged {
+                let filing = await files.attachSpokenMargin(
+                    sessionId: running.id, marginId: marginId, audioPath: path, markedAt: now,
+                    durationMs: prepared.durationMs, spokenOn: "phone", staged: staged
+                )
+                filed = filing.session
+                outcome = ShortcutPictureIntake.outcome(of: filing)
+            } else {
+                filed = await files.attachSpokenMargin(
+                    sessionId: running.id, marginId: marginId, audioPath: path, markedAt: now,
+                    durationMs: prepared.durationMs, spokenOn: "phone"
+                )
+            }
             _ = try await fileInSession(marginId: marginId, filed)
-            return name
+            return ShortcutMarginFiled(name: name, picture: outcome)
         case .quickSession:
             return try await fileAsQuick()
         }
@@ -184,8 +223,17 @@ struct AddVoiceMarginToSpokenMarginsIntent: AppIntent {
     )
     var item: LibraryItemEntity?
 
+    /// Optional, as on Add Margin (#4925): a screenshot or photo kept with the Margin on this phone when it goes to a
+    /// live session or a quick session; the answer says when it was not kept.
+    @Parameter(
+        title: "Screenshot or photo",
+        description: "A picture to keep with the Margin on this phone, such as the page you are reading. Kept only when the Margin goes into a live session or a quick session; for something chosen from your Library it is not kept, and the answer says so.",
+        supportedContentTypes: [.image]
+    )
+    var picture: IntentFile?
+
     static var parameterSummary: some ParameterSummary {
-        Summary("Add Voice Margin \(\.$audio) to what's playing") { \.$item }
+        Summary("Add Voice Margin \(\.$audio) to what's playing") { \.$item; \.$picture }
     }
 
     @MainActor
@@ -197,8 +245,10 @@ struct AddVoiceMarginToSpokenMarginsIntent: AppIntent {
         let itemId = item?.id
         let staged = try await VoiceMarginFiles.stage(audio)
         defer { staged.remove() }
-        let name = try await AddVoiceMarginAction.perform(audio: staged.url, toItemId: itemId, in: model)
-        return .result(dialog: IntentDialog(stringLiteral: SiriMarginRoute.confirmation(named: name)))
+        let filed = try await AddVoiceMarginAction.perform(
+            audio: staged.url, toItemId: itemId, picture: picture.map(ShortcutPicture.init(file:)), in: model
+        )
+        return .result(dialog: IntentDialog(stringLiteral: filed.dialogLine))
     }
 }
 #endif

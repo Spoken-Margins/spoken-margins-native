@@ -2,6 +2,7 @@
 import AppIntents
 import Foundation
 import SessionKit
+import UniformTypeIdentifiers
 
 enum AddMarginShortcutError: Error, Equatable, LocalizedError {
     case emptyText
@@ -74,40 +75,76 @@ enum AddMarginShortcutAction {
         text: String, toItemId itemId: String?, in model: Gate1AppModel,
         files: LiveSessionFileWorker = .shared, now: Date = Date()
     ) async throws -> String {
+        try await perform(text: text, toItemId: itemId, picture: nil, in: model, files: files, now: now).name
+    }
+
+    /// The same with an optional screenshot or photo (#4925). A picture is kept only with a Margin that goes to a live or
+    /// quick session, through the photo store #2708 built; for a Library item the Margin is saved without it and the
+    /// result says so. A picture that can't be read or kept never costs the words.
+    static func perform(
+        text: String, toItemId itemId: String?, picture: ShortcutPicture?, in model: Gate1AppModel,
+        files: LiveSessionFileWorker = .shared, now: Date = Date()
+    ) async throws -> ShortcutMarginFiled {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !words.isEmpty else { throw AddMarginShortcutError.emptyText }
         let route = SiriMarginRoute.decide(.init(
             choseItem: itemId != nil, runningSession: await files.runningSession(), playerHasSession: model.hasActiveSession
         ))
-        // Nothing runs: the Margin is kept in a quick session, where the Library's Live row shows it (#3880).
-        func fileAsQuick() async throws -> String {
-            guard let session = await files.fileWrittenMarginAsQuick(text: words, markedAt: now, now: now) else {
-                throw AddMarginShortcutError.notSaved(nil)
+        func onItem() throws -> ShortcutMarginFiled {
+            ShortcutMarginFiled(
+                name: try addWrittenMargin(text: words, toItemId: itemId, in: model),
+                picture: picture == nil ? .noneGiven : .notKeptOnItem
+            )
+        }
+        // The Margin goes into a session, with the picture if one came: the file is moved into place before the Margin
+        // that names it is saved, and the picture's outcome is told either way.
+        func inSession(
+            plain: () async -> LiveSession?, withPhoto: (LiveSessionPhotoStore.Staged) async -> LiveSessionFileWorker.PhotoFiling
+        ) async throws -> (session: LiveSession, picture: SiriMarginRoute.PictureOutcome) {
+            let (staged, prepared) = await ShortcutPictureIntake.prepare(picture)
+            var outcome = prepared
+            let saved: LiveSession?
+            if let staged {
+                let filing = await withPhoto(staged)
+                saved = filing.session
+                outcome = ShortcutPictureIntake.outcome(of: filing)
+            } else {
+                saved = await plain() // no picture, or one that can't be kept: the words are saved all the same
             }
+            guard let session = saved else { throw AddMarginShortcutError.notSaved(nil) }
+            return (session, outcome)
+        }
+        // Nothing runs: the Margin is kept in a quick session, where the Library's Live row shows it (#3880).
+        func fileAsQuick() async throws -> ShortcutMarginFiled {
+            let filed = try await inSession(
+                plain: { await files.fileWrittenMarginAsQuick(text: words, markedAt: now, now: now) },
+                withPhoto: { await files.fileWrittenMarginAsQuick(text: words, markedAt: now, now: now, staged: $0) }
+            )
             NotificationCenter.default.post(name: LiveSessionSpokenMargins.changedOnDisk, object: nil)
             LiveSessionBoard.shared.refresh()
             WatchMarginReceiver.shared.processInbox()
-            return SiriMarginRoute.filedName(session)
+            return ShortcutMarginFiled(name: SiriMarginRoute.filedName(filed.session), picture: filed.picture)
         }
         switch route {
         case .chosenItem:
-            return try addWrittenMargin(text: words, toItemId: itemId, in: model)
+            return try onItem()
         case .playerItem:
             do {
-                return try addWrittenMargin(text: words, toItemId: itemId, in: model)
+                return try onItem()
             } catch AddMarginShortcutError.nothingRunning {
                 // The player's session ended between the decision and the save: the Margin is kept, not refused.
                 return try await fileAsQuick()
             }
         case let .liveSession(name):
-            guard await files.addWrittenMargin(text: words, markedAt: now) != nil else {
-                throw AddMarginShortcutError.notSaved(nil)
-            }
+            let filed = try await inSession(
+                plain: { await files.addWrittenMargin(text: words, markedAt: now) },
+                withPhoto: { await files.addWrittenMargin(text: words, markedAt: now, staged: $0) }
+            )
             // The open session screen takes it in, the Library's Live row and the Watch's board redraw.
             NotificationCenter.default.post(name: LiveSessionSpokenMargins.changedOnDisk, object: nil)
             LiveSessionBoard.shared.refresh()
             WatchMarginReceiver.shared.processInbox()
-            return name
+            return ShortcutMarginFiled(name: name, picture: filed.picture)
         case .quickSession:
             return try await fileAsQuick()
         }
@@ -176,8 +213,18 @@ struct AddMarginToSpokenMarginsIntent: AppIntent {
     )
     var item: LibraryItemEntity?
 
+    /// Optional, so Siri never asks for it and Add Margin's dictation flow stays one question (#4925). A Shortcut can
+    /// pass a screenshot (Take Screenshot) or a photo. It is kept with the Margin on this phone only when the Margin goes
+    /// to a live session; the answer says when it was not kept.
+    @Parameter(
+        title: "Screenshot or photo",
+        description: "A picture to keep with the Margin on this phone, such as the page you are reading. Kept only when the Margin goes into a live session or a quick session; for something chosen from your Library it is not kept, and the answer says so.",
+        supportedContentTypes: [.image]
+    )
+    var picture: IntentFile?
+
     static var parameterSummary: some ParameterSummary {
-        Summary("Add Margin \(\.$text) to what's playing") { \.$item }
+        Summary("Add Margin \(\.$text) to what's playing") { \.$item; \.$picture }
     }
 
     /// Siri stays open and listening after this answer until the listener dismisses it, so what was playing does not come
@@ -194,8 +241,10 @@ struct AddMarginToSpokenMarginsIntent: AppIntent {
         guard let model = ListeningEditionShortcutBridge.model else {
             throw AddMarginShortcutError.libraryUnavailable
         }
-        let name = try await AddMarginShortcutAction.perform(text: text, toItemId: item?.id, in: model)
-        return .result(dialog: IntentDialog(stringLiteral: SiriMarginRoute.confirmation(named: name)))
+        let filed = try await AddMarginShortcutAction.perform(
+            text: text, toItemId: item?.id, picture: picture.map(ShortcutPicture.init(file:)), in: model
+        )
+        return .result(dialog: IntentDialog(stringLiteral: filed.dialogLine))
     }
 }
 #endif
