@@ -44,13 +44,11 @@ extension Gate1AppModel {
     }
 
     func skimMomentPress(direction: SkimDirection) -> SkimStopRouting.MomentPress {
-        // Every Skim press asks this first, and a press ends the card for a silent Margin the listener went to (#4934). The next
-        // change makes the silent Margin a stop and reads `silentMarginLanding` in `skimStopChoice`, so it moves the clearing after that.
-        silentMarginLanding = nil
-        return SkimStopRouting.press(direction: direction, moment: SkimStopRouting.MomentState(marginMoment, positionMs: marginMomentPositionMs))
+        SkimStopRouting.press(direction: direction, moment: SkimStopRouting.MomentState(marginMoment, positionMs: marginMomentPositionMs))
     }
 
     func skimRunMomentPress(_ press: SkimStopRouting.MomentPress) {
+        if press != .navigate { silentMarginLanding = nil } // a press that acts ends the card for a silent Margin the listener went to (#4934)
         switch press {
         case .navigate: break
         case .playMarginNow: playMarginMomentNow()
@@ -63,6 +61,9 @@ extension Gate1AppModel {
 
     func skimGo(to target: SkimStops.Target) {
         guard let itemId = skimSource?.itemId else { return }
+        // A press that lands on a stop ends the card for a silent Margin the listener went to (#4934). Only a press runs this, never
+        // a view's read, so it may write. The next change reads `silentMarginLanding` in `skimStopChoice` first, so it clears after that.
+        silentMarginLanding = nil
         // A friend's Margin that is sounding or waiting gives way: the stop is where the listener is going now.
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
         dismissPendingImportedCommentary()

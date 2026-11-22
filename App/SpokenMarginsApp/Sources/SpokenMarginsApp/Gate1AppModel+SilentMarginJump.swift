@@ -65,6 +65,6 @@ extension Gate1AppModel {
         let margin = row.interjection
         if margin.isWritten, margin.isNewToListener, !margin.readAloudChoice { markSharedMarginHeard(margin) }
         screen = .playback
-        requestNowPane()
+        showNowRequests += 1 // the playback screen switches to Now, where the card is
     }
 }

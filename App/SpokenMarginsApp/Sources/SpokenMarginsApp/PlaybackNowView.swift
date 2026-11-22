@@ -65,7 +65,8 @@ struct PlaybackNowView: View {
                         countdown: entry.countdown, isShared: true, identifier: "playback.now.margin.\(row.id)",
                         canPlay: row.canPlayFromNearbyList || row.goesToFromList,
                         goesTo: row.goesToFromList, sourceNoun: model.sourceNoun,
-                        showDetails: { selectedSharedMargin = row }, play: { model.goToSharedMargin(row) })
+                        showDetails: { selectedSharedMargin = row },
+                        play: { row.goesToFromList ? model.goToSharedMargin(row) : model.playSharedMarginMoment(row) }) // a voiced Margin keeps its moment
                 }
             }
         }
