@@ -15,6 +15,12 @@ Two payload shapes are understood: REST (`user.login`, `author_association`) and
 (`author.login`, `authorAssociation`). In the second the bot appears as `github-actions` and only counts when the
 author is marked as a bot (`__typename: Bot` or `is_bot: true`).
 
+A GitHub App the agents act as (#4915) is trusted the same way as the workflows' bot, but only once its slug is in
+`TRUSTED_APP_SLUGS`. GitHub reports an App's comments and pull requests as `<slug>[bot]` with association NONE (as it
+does for `github-actions[bot]`), so without that entry the App reads as a stranger. The list is empty until the
+owner creates the App; the change that moves the first job to it adds the slug exactly as the App's settings page
+shows it. A slug in the list trusts only that exact App: no case folding, no prefix match.
+
 `ops/dial/dial_gate.py` is deployed to the VPS as a single file and keeps a copy of these two constants;
 `ops/dial/test_dial_gate.py` fails if they drift.
 """
@@ -23,12 +29,22 @@ from __future__ import annotations
 TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
 TRUSTED_BOTS = ('github-actions[bot]',)
 GRAPHQL_BOT_LOGINS = ('github-actions', 'app/github-actions')
+# GitHub Apps the agents act as (#4915), by slug. Empty until the App exists; see the module note.
+TRUSTED_APP_SLUGS: tuple[str, ...] = ()
+
+
+def _trusted_rest_bot_logins() -> tuple[str, ...]:
+    return TRUSTED_BOTS + tuple(f'{slug}[bot]' for slug in TRUSTED_APP_SLUGS)
+
+
+def _trusted_graphql_bot_logins() -> tuple[str, ...]:
+    return GRAPHQL_BOT_LOGINS + TRUSTED_APP_SLUGS + tuple(f'app/{slug}' for slug in TRUSTED_APP_SLUGS)
 
 
 def trusted_author(association: object, login: object) -> bool:
     """Whether an author with this GitHub author_association and login is one of ours."""
     return (isinstance(association, str) and association in TRUSTED_ASSOCIATIONS) or \
-        (isinstance(login, str) and login in TRUSTED_BOTS)
+        (isinstance(login, str) and login in _trusted_rest_bot_logins())
 
 
 def author_login(item: dict) -> str:
@@ -40,12 +56,13 @@ def author_login(item: dict) -> str:
 def is_project_bot_in_graphql_shape(item: dict) -> bool:
     """GraphQL and `gh --json` call the workflows' bot `github-actions` (or `app/github-actions`), without the
     `[bot]` REST adds, and mark it as a bot (`__typename` Bot, or `is_bot`). The marker is what keeps a person who
-    registers that login from passing; REST payloads never carry it, so they are judged by the exact login."""
+    registers that login from passing; REST payloads never carry it, so they are judged by the exact login. A trusted
+    App (`TRUSTED_APP_SLUGS`) appears the same way, as `<slug>` or `app/<slug>`."""
     person = item.get('author')
     if not isinstance(person, dict):
         return False
     marked = person.get('__typename') == 'Bot' or person.get('is_bot') is True
-    return marked and person.get('login') in GRAPHQL_BOT_LOGINS
+    return marked and person.get('login') in _trusted_graphql_bot_logins()
 
 
 def trusted(item: dict) -> bool:
