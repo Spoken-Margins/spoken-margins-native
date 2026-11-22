@@ -77,6 +77,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Stop if main already has a newer change to deploy
+        env:
+          SHA: ${{ github.sha }}
+        run: python3 scripts/deploy_check.py newest --target site --sha "$SHA"
       - name: Set up the deploy key
         env:
           SSH_KEY: ${{ secrets.SM_DEPLOY_SSH_KEY }}

@@ -199,6 +199,50 @@ class Judge(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
 
 
+class Newest(unittest.TestCase):
+    """#4985 audit: a re-run keeps its old commit, so the deploy job stops when main has a newer change it copies."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Repo(Path(self.tmp.name))
+        self.fetched = []
+
+    def run_git(self, *args):
+        if args[0] == 'fetch':
+            self.fetched.append(args)
+            return ''
+        return self.repo.git(*[a.replace('origin/main', 'main') for a in args])
+
+    def verdict(self, target, sha):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            code = dc.newest(SimpleNamespace(target=target, sha=sha), run=self.run_git)
+        return code, out.getvalue()
+
+    def test_the_newest_change_deploys(self):
+        sha = self.repo.commit('Web/app.js', 'web change')
+        self.repo.commit('Site/index.html', 'site change after it')
+        self.assertEqual(self.verdict('web', sha)[0], 0)
+        self.assertTrue(self.fetched, 'main must be fetched fresh before the comparison')
+
+    def test_an_older_commit_stops_before_the_copy_and_names_the_newer_one(self):
+        old = self.repo.commit('Web/app.js', 'old web change')
+        newer = self.repo.commit('Web/app.js', 'newer web change')
+        code, out = self.verdict('web', old)
+        self.assertEqual(code, 1)
+        self.assertIn(newer[:7], out)
+        self.assertIn('::error::', out)
+
+    def test_each_target_only_counts_what_it_copies(self):
+        site = self.repo.commit('Site/index.html', 'site change')
+        self.repo.commit('research/B4/deploy/deploy-web.sh', 'web script change')
+        self.assertEqual(self.verdict('site', site)[0], 0)
+        web = self.repo.commit('Web/app.js', 'web change')
+        self.repo.commit('scripts/deploy-spoken-margins-site.sh', 'site script change')
+        self.assertEqual(self.verdict('web', web)[0], 0)
+        self.assertEqual(self.verdict('site', site)[0], 1)
+
+
 class Workflows(unittest.TestCase):
     """The deploy key only ever reaches main, behind the owner's tap, with strict host checking."""
 
@@ -234,6 +278,12 @@ class Workflows(unittest.TestCase):
                 runs = ' '.join(step.get('run', '') for step in deploy['steps'])
                 self.assertIn('scripts/deploy-ssh-setup.sh', runs)
                 self.assertIn(f'deploy_check.py verify --target {target}', runs)
+                names = [step.get('name', '') for step in deploy['steps']]
+                stop = next(i for i, step in enumerate(deploy['steps'])
+                            if f'deploy_check.py newest --target {target}' in step.get('run', ''))
+                copy = next(i for i, n in enumerate(names) if 'copy the' in n.lower())
+                self.assertLess(stop, names.index('Set up the deploy key'))
+                self.assertLess(stop, copy)
                 self.assertIn(f'deploy_check.py notice --target {target}', notice['steps'][-1]['run'])
                 self.assertNotIn('cache', ' '.join(step.get('uses', '') for step in deploy['steps']))
 

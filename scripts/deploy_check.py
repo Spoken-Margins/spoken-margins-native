@@ -8,9 +8,13 @@ waits in a GitHub environment (`web-deploy`, `site-deploy`) until the owner appr
            pushed commit (a commit comment when there is none), saying what is shipping and linking the run where he
            taps Approve. Agents act under his own login and GitHub does not notify a person of their own activity
            (the same reason as scripts/owner_tap_alert.py), so without this he would not hear that a deploy waits.
+  newest   In the gated job, before the copy: fail when main already has a newer commit that touches what this deploy
+           copies. A re-run keeps its original commit, so re-running an old red run, or approving an older waiting
+           run after a newer one, would otherwise put older code back live while `verify` passes (#4985 audit).
   verify   After the deploy: read what is live with scripts/sm_live.py and fail unless it is the commit just deployed.
 
   python3 scripts/deploy_check.py notice --target web --sha SHA --run-url URL [--dry-run]
+  python3 scripts/deploy_check.py newest --target web --sha SHA
   python3 scripts/deploy_check.py verify --target site --sha SHA
 
 The "what is shipping" list is the commits between the live deploy stamp (deploy.json, which both deploy scripts write)
@@ -205,10 +209,28 @@ def verify(args, world=None, run=git):
     return 0
 
 
+def newer_changes(target, sha, run=git):
+    """Short hashes of commits on origin/main after SHA that touch what TARGET copies, newest first."""
+    run('fetch', '--quiet', 'origin', 'main')
+    out = run('log', '--format=%h', f'{sha}..origin/main', '--', *TARGETS[target]['paths'])
+    return [line for line in out.split() if line]
+
+
+def newest(args, run=git):
+    info = TARGETS[args.target]
+    newer = newer_changes(args.target, args.sha, run)
+    if newer:
+        print(f'::error::main already has {len(newer)} newer {info["name"]} change(s) ({", ".join(newer[:5])}); '
+              f'deploying {args.sha[:9]} would put older code live. Approve the newest deploy run instead.')
+        return 1
+    print(f'{args.sha[:9]} is the newest {info["name"]} change on main.')
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Notice before and check after a gated web or site deploy.')
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ('notice', 'verify'):
+    for name in ('notice', 'newest', 'verify'):
         part = sub.add_parser(name)
         part.add_argument('--target', choices=sorted(TARGETS), required=True)
         part.add_argument('--sha', required=True)
@@ -219,7 +241,7 @@ def main(argv=None):
     if not re.fullmatch(r'[0-9a-f]{40}', args.sha):
         parser.error('--sha must be a full commit hash')
     try:
-        return notice(args) if args.command == 'notice' else verify(args)
+        return {'notice': notice, 'newest': newest, 'verify': verify}[args.command](args)
     except (Failure, sm_live.ReadError) as error:
         print(f'deploy_check: {error}', file=sys.stderr)
         return 1
