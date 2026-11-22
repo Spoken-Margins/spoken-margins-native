@@ -797,8 +797,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         applyFootnoteSilencing(targetId: targetId)
         let requestedSpokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
         // A skip that left a note while paused marks it (`noteLeftChunk`); this play must not bring the note back, so it
-        // is read before `spokenOffsetBeforeNote` consumes the mark (#3777).
-        let noteWasLeft = lock.withLock { noteLeftChunk != nil && noteLeftChunk == currentChunk }
+        // is read before `spokenOffsetBeforeNote` consumes the mark (#3777). A chunk key holds no item, so the mark
+        // counts only for the item the client holds: another item's mark never turns off this item's restore.
+        let noteWasLeft = lock.withLock {
+            noteLeftChunk != nil && noteLeftChunk == currentChunk && currentTargetId == targetId
+        }
         let spokenOffset = lock.withLock {
             spokenOffsetBeforeNote(requested: requestedSpokenOffset, targetId: targetId, isSeek: isSeek)
         }
@@ -837,7 +840,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         case .none:
             break
         }
-        guard let request = nextRequest(targetId: targetId, fromSpokenOffset: spokenOffset, restoresNote: !isSeek && !noteWasLeft) else {
+        // Only the place the engine asked for is restored: a start `spokenOffsetBeforeNote` already moved to the citing
+        // sentence is not moved again, which could step back over an earlier skipped note (#3777).
+        let restoresNote = !isSeek && !noteWasLeft && spokenOffset == requestedSpokenOffset
+        guard let request = nextRequest(targetId: targetId, fromSpokenOffset: spokenOffset, restoresNote: restoresNote) else {
             throw SessionKitError.invalidCommandForState("supertonic_playback_text_empty")
         }
         enqueueRender(request, shouldPlayWhenReady: false)
