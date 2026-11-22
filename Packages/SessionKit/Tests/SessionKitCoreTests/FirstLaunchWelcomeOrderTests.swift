@@ -247,7 +247,7 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
     func testAFailureAfterTheFriendsItemOpenedChangesNothing() {
         var order = Order(drawerOwed: true)
         XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .none)
-        XCTAssertEqual(order.moved(to: .elsewhere), .none, "the import review covers the Library")
+        order.friendItemOpened()
         XCTAssertEqual(order.moved(to: .item), .none)
         XCTAssertEqual(order.phase, .waitingForLibrary)
 
@@ -263,7 +263,7 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
         var order = Order(drawerOwed: true)
         XCTAssertEqual(order.settle(at: .library), .presentDrawer)
         XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .withdrawDrawer)
-        XCTAssertEqual(order.moved(to: .item), .none, "no review sheet came first: the listener opened this item")
+        XCTAssertEqual(order.moved(to: .item), .none, "the listener opened this item; no import said it was the friend's")
 
         XCTAssertEqual(order.moved(to: .elsewhere), .none, "the failure sheet")
         XCTAssertEqual(order.friendFileFailed(place: .elsewhere), .none)
@@ -272,23 +272,43 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
         XCTAssertTrue(order.playsWelcomeSampleOnClose)
     }
 
-    /// Neighbouring sequences for the same predicate: which item visits count as the friend's.
+    /// Neighbouring sequences for the same predicate: only the import's own signal makes an item the friend's.
     func testWhichItemVisitsCountAsTheFriendsWhenALinkFails() {
-        struct Row { let name: String; let places: [Order.Place]; let heldBackAfterFailure: Bool }
-        let rows = [
-            Row(name: "own item then failure sheet", places: [.item, .elsewhere], heldBackAfterFailure: false),
-            Row(name: "own item then back to library", places: [.item, .library], heldBackAfterFailure: false),
-            Row(name: "review sheet then item", places: [.elsewhere, .item], heldBackAfterFailure: true),
-            Row(name: "own item, then a review, then the friend's item", places: [.item, .elsewhere, .item], heldBackAfterFailure: true),
-            Row(name: "review sheet only", places: [.elsewhere], heldBackAfterFailure: false),
-            Row(name: "no movement", places: [], heldBackAfterFailure: false),
+        enum Event { case item, elsewhere, library, friendItemOpened }
+        let rows: [(String, [Event], Bool)] = [
+            ("own item then failure sheet", [.item, .elsewhere], false),
+            ("own item then back to library", [.item, .library], false),
+            ("review sheet then the friend's item", [.elsewhere, .friendItemOpened, .item], true),
+            ("a friend import with no review sheet", [.friendItemOpened, .item], true),
+            ("a friend import that opened its item before the place changed", [.friendItemOpened], true),
+            ("own item, then the friend's import", [.item, .friendItemOpened], true),
+            ("own item, review, then the friend's item", [.item, .elsewhere, .friendItemOpened, .item], true),
+            ("review sheet only", [.elsewhere], false),
+            ("no movement", [], false),
         ]
-        for row in rows {
+        for (name, events, heldBackAfterFailure) in rows {
             var order = Order(drawerOwed: true)
             _ = order.friendFileArrived(drawerHasPicks: false)
-            for place in row.places { _ = order.moved(to: place) }
+            for event in events {
+                switch event {
+                case .item: _ = order.moved(to: .item)
+                case .elsewhere: _ = order.moved(to: .elsewhere)
+                case .library: _ = order.moved(to: .library)
+                case .friendItemOpened: order.friendItemOpened()
+                }
+            }
             _ = order.friendFileFailed(place: .elsewhere)
-            XCTAssertEqual(!order.playsWelcomeSampleOnClose, row.heldBackAfterFailure, row.name)
+            XCTAssertEqual(!order.playsWelcomeSampleOnClose, heldBackAfterFailure, name)
         }
+    }
+
+    func testAFriendItemOpeningWithNoFileWaitingChangesNothing() {
+        var notOwed = Order(drawerOwed: false)
+        notOwed.friendItemOpened()
+        XCTAssertEqual(notOwed.phase, .notOwed)
+        var showing = Order(drawerOwed: true)
+        _ = showing.settle(at: .library)
+        showing.friendItemOpened()
+        XCTAssertEqual(showing.phase, .drawerShowing)
     }
 }

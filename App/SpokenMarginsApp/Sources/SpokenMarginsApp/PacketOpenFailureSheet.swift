@@ -108,6 +108,11 @@ private struct PacketOpenFailureSheetModifier: ViewModifier {
             },
             content: { presented in PacketOpenFailureSheet(presenter: presenter, presented: presented) }
         )
+        // The old sheet closed while a second link opened, and that link ended with no words: no sheet is left to carry
+        // the notice out, so it is taken here (#4834).
+        .onChange(of: presenter.isCloseNoticeDue) { _, due in
+            if due, hosts, presenter.takeCloseNotice() { drawer.friendFileFailed(at: FirstLaunchWelcomeOrder.Place(model)) }
+        }
     }
 }
 

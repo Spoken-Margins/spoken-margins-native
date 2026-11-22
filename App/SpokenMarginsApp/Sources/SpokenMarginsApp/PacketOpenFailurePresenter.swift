@@ -55,6 +55,13 @@ final class PacketOpenFailurePresenter: ObservableObject {
         state.openEnded(opened: opened, since: generation)
     }
 
+    /// The notice is owed and no sheet is up to take it (see `PacketOpenFailureSheetState.isCloseNoticeDue`).
+    var isCloseNoticeDue: Bool { state.isCloseNoticeDue }
+
+    /// Told by the import when a friend's file opened its item; the first-launch drawer's order listens (#4834).
+    var onFriendItemOpened: (@MainActor () -> Void)?
+    func friendItemOpened() { onFriendItemOpened?() }
+
     /// True once after the listener closed the sheet, so the first-launch drawer comes back once the sheet is gone.
     func takeCloseNotice() -> Bool {
         state.takeCloseNotice()

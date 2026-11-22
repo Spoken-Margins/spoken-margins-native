@@ -99,6 +99,7 @@ final class CatalogDrawerModel: ObservableObject {
         self.subscriptions = subscriptions
         self.follow = follow
         self.makeOPMLImport = makeOPMLImport
+        packetOpenFailures?.onFriendItemOpened = { [weak self] in self?.welcomeOrder.friendItemOpened() }
     }
 
     /// The app's drawer: the bundled snapshot plus a cache in Application Support.

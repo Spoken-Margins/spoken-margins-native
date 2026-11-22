@@ -25,6 +25,13 @@ public struct PacketOpenFailureSheetState: Equatable, Sendable {
     private var owesCloseNotice = false
     /// Counts the failures put up, so an open that began earlier can tell whether the sheet has said anything new since.
     public private(set) var generation = 0
+    /// A failure notice was owed when another link started, and that link has not ended yet: the drawer is told when it
+    /// ends with nothing to show (`openEnded`), never while it downloads (#4834).
+    private var noticeHeldForOpen = false
+
+    /// The notice is owed and no sheet is up to take it on its way out (the old sheet was closed while a second link
+    /// opened, and that link then ended without words). The root view takes it from here.
+    public var isCloseNoticeDue: Bool { owesCloseNotice && presented == nil }
 
     public init() {}
 
@@ -34,6 +41,7 @@ public struct PacketOpenFailureSheetState: Equatable, Sendable {
         generation += 1
         isRetrying = false
         owesCloseNotice = true
+        noticeHeldForOpen = false
     }
 
     /// Try Again was tapped. True when the open that failed should run again.
@@ -52,6 +60,7 @@ public struct PacketOpenFailureSheetState: Equatable, Sendable {
         // The drawer is told only when nothing is opening any more. The new link may still open (then nobody is told) or
         // fail (`present` owes the notice again, `openEnded` too): closing the old sheet meanwhile must not withdraw the
         // drawer a second time under the download (#4834).
+        noticeHeldForOpen = noticeHeldForOpen || owesCloseNotice || presented != nil
         owesCloseNotice = false
         if let presented { self.presented = Presented(id: presented.id, content: presented.content, canRetry: false) }
     }
@@ -70,6 +79,7 @@ public struct PacketOpenFailureSheetState: Equatable, Sendable {
     public mutating func succeeded() {
         guard presented != nil else { return }
         owesCloseNotice = false
+        noticeHeldForOpen = false
         presented = nil
         isRetrying = false
     }
@@ -80,10 +90,12 @@ public struct PacketOpenFailureSheetState: Equatable, Sendable {
     /// had, and the drawer it withdrew comes back.
     public mutating func openEnded(opened: Bool, since generation: Int) {
         if opened {
+            noticeHeldForOpen = false
             succeeded()
-        } else if presented != nil, self.generation == generation {
+        } else if self.generation == generation, presented != nil || noticeHeldForOpen {
             presented = nil
             isRetrying = false
+            noticeHeldForOpen = false
             owesCloseNotice = true // the link that took the notice away (`anotherLinkStarted`) has ended with nothing to show
         }
     }

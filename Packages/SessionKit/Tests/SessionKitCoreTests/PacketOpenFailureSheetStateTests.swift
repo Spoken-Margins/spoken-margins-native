@@ -59,6 +59,49 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
         XCTAssertTrue(state.takeCloseNotice())
     }
 
+    /// B ends as a banner after the old sheet was already closed: the drawer is still told, with no sheet to take it.
+    func testTheSecondLinkEndingAsABannerAfterTheOldSheetClosedStillOwesTheNotice() {
+        var state = PacketOpenFailureSheetState()
+        state.present(Content(row: .offline), canRetry: true)
+        let words = state.generation
+        state.anotherLinkStarted()
+        _ = state.close()
+        XCTAssertFalse(state.isCloseNoticeDue, "B is still opening")
+
+        state.openEnded(opened: false, since: words)
+
+        XCTAssertTrue(state.isCloseNoticeDue)
+        XCTAssertTrue(state.takeCloseNotice())
+        XCTAssertFalse(state.takeCloseNotice(), "once")
+        XCTAssertFalse(state.isCloseNoticeDue)
+    }
+
+    /// With no failure ever owed, a link that ends as a banner owes nothing.
+    func testALinkEndingAsABannerWithNoFailureBeforeItOwesNothing() {
+        var state = PacketOpenFailureSheetState()
+        let words = state.generation
+        state.anotherLinkStarted()
+
+        state.openEnded(opened: false, since: words)
+
+        XCTAssertFalse(state.isCloseNoticeDue)
+        XCTAssertFalse(state.takeCloseNotice())
+    }
+
+    /// B opens after the old sheet closed: nothing is owed, and a later banner from an unrelated link owes nothing.
+    func testTheSecondLinkOpeningAfterTheOldSheetClosedOwesNothing() {
+        var state = PacketOpenFailureSheetState()
+        state.present(Content(row: .offline), canRetry: true)
+        let words = state.generation
+        state.anotherLinkStarted()
+        _ = state.close()
+
+        state.openEnded(opened: true, since: words)
+        state.openEnded(opened: false, since: words)
+
+        XCTAssertFalse(state.isCloseNoticeDue)
+    }
+
     /// B opens: the old failure heals and nobody is told.
     func testTheSecondLinkOpeningOwesNothing() {
         var state = PacketOpenFailureSheetState()

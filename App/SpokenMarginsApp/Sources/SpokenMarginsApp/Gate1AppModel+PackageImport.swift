@@ -369,7 +369,7 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
             reportFailureMessage: { [weak model] in model?.reportFailure($0) },
             presentOpenFailure: { [weak model] in model?.packetOpenFailures.present($0, retry: nil) },
             reportFailure: { [weak model] error, context in model?.reportFailure(error, context: context) },
-            openItem: { [weak model] in model?.openItem(id: $0) },
+            openItem: { [weak model] in model?.openItem(id: $0); model?.packetOpenFailures.friendItemOpened() },
             showImportedItem: { [weak model] itemId, store in
                 guard let model else { return }
                 model.activeItemId = itemId
@@ -379,6 +379,7 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
                 // The Margins and Now tabs read these rows, not selectedItem; without this they stay empty until relaunch (#3263).
                 model.refreshMarginRowsInBackground(forItem: itemId)
                 model.screen = .item
+                model.packetOpenFailures.friendItemOpened() // the first-launch order learns the friend's item is open (#4834)
             },
             recordPacketImport: { [weak model] itemId, packetId, marginCount in
                 model?.listeningSignals.packetImport(itemId: itemId, packetId: packetId, marginCount: marginCount)
