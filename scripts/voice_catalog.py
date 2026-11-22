@@ -802,7 +802,9 @@ def _wrong_bytes(path: Path, file: dict) -> str | None:
 def repository_copy(voice: dict, file: dict) -> Path | None:
     """The file in the repository, at the voice's `mirrorFrom`. Only the mirrored files we wrote or reviewed
     ourselves live there (the licence copies and the modification notice); the model files don't (#1820). Text the
-    catalog carries itself is read from its `contentFile`, beside sources.json (#2055)."""
+    catalog carries itself is read from its `contentFile`, beside sources.json (#2055). A voice may also name a
+    `mirrorFrom` without mirroring anything: `fetch` then takes any file whose bytes match from that folder, so a
+    licence copy the app already bundles doesn't depend on its upstream URL staying up (#4853)."""
     if "contentFile" in file:
         path = ROOT / "Contracts/voice-models" / file["contentFile"]
         return path if path.is_file() else None
