@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import XCTest
 @testable import SessionKit
 @testable import SessionKitPersistence
@@ -102,7 +103,7 @@ final class OwnMarginEchoesTests: XCTestCase {
             Row(why: "the same Margin arrived again in a later packet (alsoSharedAs)", echo: true, layerDigest: "digest-later", scoped: "x-9", also: [mine]),
             Row(why: "the own Margin was shared in two packets and this is the second", echo: true,
                 ownSharedAs: [MarginPacketIdentity(packageDigest: "digest-first", packageScopedId: "f-1"), mine]),
-            Row(why: "the own Margin was deleted after it was shared", echo: true, ownStatus: "deleted"),
+            Row(why: "the own Margin was deleted after it was shared: the reply graph and the review don't know it either", echo: false, ownStatus: "deleted"),
             Row(why: "the same id from another packet", echo: false, layerDigest: "digest-other"),
             Row(why: "the same packet, another id", echo: false, scoped: "m-2"),
             Row(why: "the same words and label, no shared identity: a lookalike", echo: false, ownSharedAs: nil, words: "Listen to this part."),
@@ -151,11 +152,59 @@ final class OwnMarginEchoesTests: XCTestCase {
     // The reads must still find each layer by its primary key, and look up the listener's Margins by the item index.
     func testTheEchoRuleKeepsTheCountsOffAFullScan() throws {
         try withStore(items: ["a"]) { store in
-            for sql in [SQLiteSessionStore.sharedMarginTalliesSQL, SQLiteSessionStore.sharedMarginSendersSQL, SQLiteSessionStore.sharedMarginRepliesSQL] {
+            let all = [SQLiteSessionStore.sharedMarginTalliesSQL, SQLiteSessionStore.sharedMarginSendersSQL, SQLiteSessionStore.sharedMarginRepliesSQL,
+                       SQLiteSessionStore.newNotesSQL, SQLiteSessionStore.friendMarginsArrivalsSQL]
+            for sql in all {
+                XCTAssertTrue(sql.contains("'$.sharedAs'"), "every read carries the rule")
                 let plan = try store.sharedMarginTalliesQueryPlan(of: sql)
                 XCTAssertFalse(plan.contains { $0.hasPrefix("SCAN layer") }, "plan: \(plan)")
                 XCTAssertFalse(plan.contains { $0.hasPrefix("SCAN mine") }, "plan: \(plan)")
             }
+        }
+    }
+
+    // Written Margins have no recording, so the New count runs its narrow read (`newNotesSQL`) and a hidden sender splices
+    // into the same text: neither may throw, and the echo stays out of both.
+    func testWrittenEchoesAndAHiddenSenderLeaveTheNewCountRight() throws {
+        try withStore(items: ["a"]) { store in
+            let identity = MarginPacketIdentity(packageDigest: "digest-mine", packageScopedId: "m-1")
+            try store.saveInterjection(own("mine", item: "a", sharedAs: [identity]))
+            func written(_ id: String, layer: String, scoped: String? = nil) -> ImportedCommentaryInterjection {
+                ImportedCommentaryInterjection(
+                    id: id, layerId: layer, packageScopedId: scoped ?? id, createdAt: when,
+                    anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "Great point.", resolution: placed)
+            }
+            _ = try store.importCommentaryLayer(layer("ben", item: "a", label: "Ben", sender: benId), interjections: [written("b1", layer: "ben"), written("b2", layer: "ben")])
+            _ = try store.importCommentaryLayer(layer("mine", digest: "digest-mine", item: "a", label: "Cole"), interjections: [written("echo", layer: "mine", scoped: "m-1")])
+            let zed = "cccccccccccccccccccccccccccccccc"
+            _ = try store.importCommentaryLayer(layer("zed", item: "a", label: "Zed", sender: zed), interjections: [written("z1", layer: "zed")])
+            XCTAssertEqual(try store.loadSharedMarginTallies()["a"]?.counts, SharedMarginTally(total: 3, new: 3))
+            var hidden = HiddenSenders()
+            hidden.hide(zed)
+            XCTAssertEqual(try store.loadSharedMarginTallies(hiding: hidden)["a"]?.counts, SharedMarginTally(total: 2, new: 2))
+            hidden.hideMargin("b1")
+            XCTAssertEqual(try store.loadSharedMarginTallies(hiding: hidden)["a"]?.counts, SharedMarginTally(total: 1, new: 1))
+        }
+    }
+
+    // A list element that is not an object (a shape a later build might write) must not fail the Library's read.
+    func testAnOddShapeInTheSharedListMatchesNothingInsteadOfFailingTheRead() throws {
+        for (label, patch) in [("a string element", "json_set(payload, '$.sharedAs', json('[\"x\", {\"packageDigest\":\"digest-mine\",\"packageScopedId\":\"m-1\"}]'))"),
+                               ("a string, not a list", "json_set(payload, '$.sharedAs', 'x')"),
+                               ("an object, not a list", "json_set(payload, '$.sharedAs', json('{\"a\":1}'))")] {
+            let path = FileManager.default.temporaryDirectory.appending(path: "own-echo-odd-\(UUID().uuidString).sqlite").path
+            defer { for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) } }
+            let store = try SQLiteSessionStore(path: path)
+            try store.saveItem(Item(id: "a", title: "A", mediaType: "text", text: "Words.", externalReference: nil, status: "ready"))
+            try store.saveInterjection(own("mine", item: "a", sharedAs: [MarginPacketIdentity(packageDigest: "digest-mine", packageScopedId: "m-1")]))
+            var db: OpaquePointer?
+            XCTAssertEqual(sqlite3_open(path, &db), SQLITE_OK)
+            XCTAssertEqual(sqlite3_exec(db, "UPDATE records SET payload = \(patch) WHERE kind = 'interjection';", nil, nil, nil), SQLITE_OK, label)
+            sqlite3_close(db)
+            _ = try store.importCommentaryLayer(layer("mine", digest: "digest-mine", item: "a", label: "Cole"), interjections: [margin("copy", layer: "mine", scoped: "m-1")])
+            // The string element is skipped but the object beside it still matches; the other two shapes match nothing.
+            let expected = label == "a string element" ? 0 : 1
+            XCTAssertEqual(try store.loadSharedMarginTallies()["a"]?.total ?? 0, expected, label)
         }
     }
 }

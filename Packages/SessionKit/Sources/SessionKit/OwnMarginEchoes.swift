@@ -14,10 +14,11 @@ import Foundation
 /// are one rule written twice, and `OwnMarginEchoesTests` runs both over the same table so they cannot drift apart.
 /// Nothing here writes: the copy stays stored exactly as it was, so the previous build opens the database unchanged.
 public enum OwnMarginEchoes {
-    /// Every packet identity the listener's own Margins went out under, whatever each Margin's status: a Margin the
-    /// listener deleted after sharing it still isn't a friend's.
+    /// Every packet identity the listener's active Margins went out under. A deleted Margin is neither a parent nor a
+    /// reply in the reply graph and isn't in the Margins list the review is given, so its copy reads as it always
+    /// did; every screen and the SQL follow the same rule, so the row and the offer cannot disagree.
     public static func identities(of ownMargins: [Interjection]) -> Set<MarginPacketIdentity> {
-        Set(ownMargins.flatMap { $0.sharedAs ?? [] })
+        Set(ownMargins.filter { $0.status == "active" }.flatMap { $0.sharedAs ?? [] })
     }
 
     /// The identities an imported Margin is known by: the packet it arrived in, and any later packet that carried it
