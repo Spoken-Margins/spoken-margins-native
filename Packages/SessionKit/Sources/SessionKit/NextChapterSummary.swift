@@ -80,6 +80,23 @@ public enum NextChapterSummaryRule {
         isSkimSource && (hasSkimAffordance || chapterCount >= chapterCountForChapterRow)
     }
 
+    /// How many chapters the chapter row counts toward `chapterCountForChapterRow` (#4773). It is the chapters the
+    /// listener meets elsewhere on the playback screen: a text item's own chapters, or on a media item the chapters the
+    /// title and the bar use, which are the authored ones, else the Listening Map's scenes (`PlaybackBarContent`).
+    /// Counting `mediaChapters` before leaving the transcript's own sections out made an episode that had only those
+    /// sections count zero chapters while its title and Timeline named scenes, and the arrows vanished.
+    /// - Parameters:
+    ///   - isTextReading: the playing item is a text item read aloud; only its own chapters count then.
+    ///   - textChapterCount: the item's text chapters.
+    ///   - mediaChapters: the item's media chapters, including any transcript sections.
+    ///   - scenes: the item's Listening Map scenes.
+    public static func chapterRowChapterCount(
+        isTextReading: Bool, textChapterCount: Int, mediaChapters: [MediaTimelineChapter], scenes: [MediaTimelineChapter]
+    ) -> Int {
+        if isTextReading { return max(textChapterCount, 0) } // Skim's stops on a text item are its text chapters
+        return PlaybackBarContent.chapterStartsMs(mediaChapters: mediaChapters, scenes: scenes).count
+    }
+
     /// The control on the right of the chapter title. When forward Skim can be pressed it is the one forward control;
     /// otherwise Next chapter if there is a chapter ahead (marked as standing in for Skim when the item has Skim);
     /// otherwise a disabled Skim so the slot never goes empty.

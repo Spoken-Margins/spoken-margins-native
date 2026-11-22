@@ -213,6 +213,24 @@ final class PlaybackDockLayoutTests: XCTestCase {
         XCTAssertEqual(model.chapterRowBackwardControl, .hidden)
     }
 
+    /// #4773: an episode whose only media chapters are the transcript's own sections, with a Listening Map whose scenes
+    /// the title and the Timeline name, counted zero chapters and lost both arrows. The owner's Substack episode
+    /// (chapter "We could be <12 months away from AIs that can overthrow the government", 7%) had that shape.
+    func testScenesCountWhenTheOnlyMediaChaptersAreTranscriptSections() {
+        let model = makePodcastModel(withChapters: true)
+        model.selectedItem.mediaChapters = ["ch-transcript-0", "ch-transcript-1"].enumerated().map { index, id in
+            MediaTimelineChapter(id: id, title: "Section \(index)", startMs: index * 1_800_000, transcriptSegmentId: "segment-\(index)")
+        }
+        model.selectedItem.listeningMapScenes = [
+            MediaTimelineChapter(id: "scene-0", title: "We could be <12 months away from AIs that can overthrow the government",
+                                 startMs: 0, transcriptSegmentId: "segment-0"),
+            MediaTimelineChapter(id: "scene-1", title: "Alignment", startMs: 1_800_000, transcriptSegmentId: "segment-1"),
+        ]
+        XCTAssertTrue(model.showsSkimRow, "two scenes are two chapters, as the Timeline lists them")
+        XCTAssertNotEqual(model.chapterRowBackwardControl, .hidden)
+        XCTAssertNotEqual(model.chapterRowForwardControl, .hidden)
+    }
+
     func testTheLastChapterDimsForwardInsteadOfHidingIt() {
         let model = makePodcastModel(withChapters: true)
         model.snapshot.currentMediaTimeMs = 2_000_000

@@ -51,11 +51,12 @@ extension Gate1AppModel {
     /// media chapters on a media item, or its Listening Map scenes where it has none (`skimStopList`).
     private var playingItemChapterCount: Int {
         guard snapshot.itemId == selectedItem.id else { return 0 }
-        if isTextReadingSnapshot { return selectedItem.chapters.count }
         // The transcript's own sections are not chapters the listener sees (the chapter title, the bar and the locator
-        // all leave them out), so an episode with only those gets no chapter row from this rule.
-        let chapters = selectedItem.mediaChapters.isEmpty ? selectedItem.listeningMapScenes : selectedItem.mediaChapters
-        return chapters.filter { !$0.id.hasPrefix("ch-transcript-") && !$0.id.contains("-ch-transcript-") }.count
+        // all leave them out), and an episode with only those sections still has its Listening Map's scenes, which the
+        // title and the Timeline name (#4773, `chapterRowChapterCount`).
+        return NextChapterSummaryRule.chapterRowChapterCount(
+            isTextReading: isTextReadingSnapshot, textChapterCount: selectedItem.chapters.count,
+            mediaChapters: selectedItem.mediaChapters, scenes: selectedItem.listeningMapScenes)
     }
 
     /// What the chapter row draws right of the title: forward Skim when it can be pressed, else Next chapter, else a
