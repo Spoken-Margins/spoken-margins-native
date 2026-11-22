@@ -2,22 +2,43 @@
 # Run a command with the Spoken Margins agent identity, for agent-started processes only (#4915).
 # Never source this from an interactive shell profile. Usage: sm-agent-env <command> [args...]
 #
-# SM_AGENT_AS_APP=1: act as the GitHub App spoken-margins-agent. sm-app-token (next to this file) mints a 1-hour
-#   installation token from the App key in the Keychain. If that fails the command does not run: an agent asked to
-#   act as the App never falls back to the owner's login without saying so.
+# SM_AGENT_AS_APP=1: act as the GitHub App spoken-margins-agent. sm-app-token (next to this file) writes a fresh
+#   installation token into a private gh config folder, and the command runs with GH_CONFIG_DIR pointing there.
+#   gh reads that file on every call, and git asks gh for it, so a command that outlives one token (they last an
+#   hour) keeps working: every sm-agent-env start renews the shared file when it has 50 minutes or less left, and
+#   the claude-worker and integration-run jobs start one every 10 minutes. No GH_TOKEN is exported:
+#   a fixed token would expire under a long session. If the first write fails the command does not run: an agent
+#   asked to act as the App never falls back to the owner's login without saying so.
 # Otherwise (the default, and the rollback): the narrow token in the Keychain item sm-agent-gh, as before. If that
 #   item is missing, the command runs unchanged and uses the stored gh login.
 here=$(dirname "$0")
 minter=$here/sm-app-token
 [ -f "$minter" ] || minter=$here/sm_app_token.py
 if [ "${SM_AGENT_AS_APP:-}" = 1 ]; then
-  token=$(/usr/bin/python3 "$minter") || {
+  dir=${SM_AGENT_GH_CONFIG:-$HOME/Library/Caches/spoken-margins/gh-app}
+  /usr/bin/python3 "$minter" --gh-config "$dir" --min-life 50 || {
     echo "sm-agent-env: SM_AGENT_AS_APP=1 but no App token; not running $1" >&2
     exit 1
   }
-else
-  token=$(/usr/bin/security find-generic-password -s sm-agent-gh -w 2>/dev/null) || token=""
+  GH_CONFIG_DIR=$dir
+  export GH_CONFIG_DIR
+  unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN
+  gh_bin=$(command -v gh 2>/dev/null || echo /opt/homebrew/bin/gh)
+  n=${GIT_CONFIG_COUNT:-0}
+  case $n in *[!0-9]*) n=0 ;; esac
+  eval "GIT_CONFIG_KEY_$n='credential.https://github.com.helper'"
+  eval "GIT_CONFIG_VALUE_$n=''"
+  eval "export GIT_CONFIG_KEY_$n GIT_CONFIG_VALUE_$n"
+  n=$((n + 1))
+  eval "GIT_CONFIG_KEY_$n='credential.https://github.com.helper'"
+  eval "GIT_CONFIG_VALUE_$n='!$gh_bin auth git-credential'"
+  eval "export GIT_CONFIG_KEY_$n GIT_CONFIG_VALUE_$n"
+  GIT_CONFIG_COUNT=$((n + 1))
+  export GIT_CONFIG_COUNT
+  unset dir gh_bin n here minter
+  exec "$@"
 fi
+token=$(/usr/bin/security find-generic-password -s sm-agent-gh -w 2>/dev/null) || token=""
 if [ -n "$token" ]; then
   GH_TOKEN=$token
   export GH_TOKEN
