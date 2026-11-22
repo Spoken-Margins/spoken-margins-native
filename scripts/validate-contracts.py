@@ -34,6 +34,7 @@ PATH_SCHEMA_RULES = [
     ("fixtures/sharing/commentary-layer.json", "shared-commentary-layer.schema.json"),
     ("fixtures/sharing/listening-map-proposal*.json", "portable-listening-map-proposal.schema.json"),
     ("fixtures/sharing/margin-conversation.json", "margin-conversation.schema.json"),
+    ("fixtures/margins-control-center/cases.json", "margins-control-center-cases.schema.json"),
     ("fixtures/turns/*.json", "conversation-turn.schema.json", "array"),
     ("fixtures/exports/*.json", "session-export.schema.json"),
     ("fixtures/watch/offline-package.json", "watch-audio-package.schema.json"),
