@@ -99,6 +99,62 @@ def pr(**kw):
     return base
 
 
+class OnePrPerCheckFinish(unittest.TestCase):
+    """#4990: a start from one PR's checks reads that PR; every open PR is read once the last sweep is old."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = Path(self.dir.name) / "last-sweep"
+        self.prs = [{"number": 1, "headRefOid": "a" * 40}, {"number": 2, "headRefOid": "b" * 40}]
+
+    def test_no_record_or_an_unreadable_one_means_a_sweep(self):
+        self.assertTrue(A.sweep_due(1000.0, self.path))
+        self.path.write_text("not a number")
+        self.assertTrue(A.sweep_due(1000.0, self.path))
+
+    def test_a_sweep_is_due_only_once_the_last_one_is_old(self):
+        A.record_sweep(1000.0, self.path)
+        self.assertFalse(A.sweep_due(1000.0, self.path))
+        self.assertFalse(A.sweep_due(1000.0 + A.SWEEP_EVERY - 1, self.path))
+        self.assertTrue(A.sweep_due(1000.0 + A.SWEEP_EVERY, self.path))
+
+    def test_a_record_from_the_future_does_not_hold_sweeps_off(self):
+        A.record_sweep(5000.0, self.path)
+        self.assertTrue(A.sweep_due(1000.0, self.path))
+
+    def test_a_head_narrows_the_run_to_its_pr_unless_a_sweep_is_due(self):
+        self.assertEqual(A.scope_to_head(self.prs, "b" * 40, due=False), ([self.prs[1]], False))
+        self.assertEqual(A.scope_to_head(self.prs, "b" * 40, due=True), (self.prs, True))
+
+    def test_no_head_reads_every_pr(self):
+        self.assertEqual(A.scope_to_head(self.prs, None, due=False), (self.prs, True))
+        self.assertEqual(A.scope_to_head(self.prs, "", due=False), (self.prs, True))
+
+    def test_a_head_no_open_pr_has_reads_none(self):
+        self.assertEqual(A.scope_to_head(self.prs, "c" * 40, due=False), ([], False))
+
+    def test_main_reads_one_pr_then_all_and_a_dry_run_records_nothing(self):
+        seen = []
+        with patch.object(A, "SWEEP_PATH", self.path), patch.object(A, "OPS_DIR", Path(self.dir.name)), \
+                patch.object(A, "LOCK_PATH", Path(self.dir.name) / "lock"), patch.object(A, "log", lambda *a, **k: None), \
+                patch.object(A, "fetch_open_prs", lambda only: list(self.prs)), patch.object(A, "rearm_pass", lambda prs, dry: None), \
+                patch.object(A, "audit_prs", lambda prs, dry, tag, t0, force=False: seen.append([p["number"] for p in prs]) or 0), \
+                patch.object(A.usage, "recover", lambda *a, **k: None):
+            A.main(["--dry-run", "--head", "b" * 40])
+            self.assertFalse(self.path.exists())
+            A.main(["--head", "b" * 40])   # nothing recorded yet: every PR, and the sweep is recorded
+            A.main(["--head", "b" * 40])   # a fresh sweep: only the PR at that head
+            A.main([])                     # a schedule or dispatch: every PR
+        self.assertEqual(seen, [[1, 2], [1, 2], [2], [1, 2]])
+
+    def test_the_workflow_passes_the_finished_head_and_keeps_the_sweep_record(self):
+        text = (Path(__file__).resolve().parents[2] / ".github/workflows/claude-audit.yml").read_text()
+        self.assertIn("EVENT_HEAD: ${{ github.event.workflow_run.head_sha }}", text)
+        self.assertIn('${EVENT_HEAD:+--head "$EVENT_HEAD"}', text)
+        self.assertEqual(text.count(".sm-ops/codex-audit/" + A.SWEEP_PATH.name), 4)
+
+
 class ShaInComment(unittest.TestCase):
     def test_audit_on_old_head_does_not_count_for_new_head(self):
         self.assertFalse(A.audited_on(FIXTURE["comments_audited_old_head"], HEAD))
