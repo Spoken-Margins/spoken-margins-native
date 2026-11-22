@@ -18,6 +18,9 @@
 # Cost and catch of the hosted-check starts: a run with no candidate is about a minute of Linux (checkout and the
 # Claude Code install), no tokens; one waiting run at a time, so a burst of PR pushes costs at most two. Waste
 # signal: a week in which every hosted-check start found no candidate while risky PRs still waited for the schedule.
+# API calls (#4990): such a start reads only the PR whose checks finished (about 6 calls); every open PR (about 55
+# calls with 23 open) is read at most once in 15 minutes. Before, each start read them all, about 13 times an hour.
+# One waiting run at a time also means a burst can drop one PR's start; the next full read picks that PR up.
 #
 # A label change made with this job's token starts no workflow run, so the re-arm after a clean audit also dispatches
 # lane.yml, and the tap check dispatches owner-tap-alert.yml.
@@ -81,6 +84,7 @@ jobs:
         with:
           path: |
             .sm-ops/codex-audit/codex-audit-failures.json
+            .sm-ops/codex-audit/codex-audit-last-sweep
             .sm-ops/ledger/usage.jsonl
           key: claude-audit-state-${{ github.run_id }}
           restore-keys: claude-audit-state-
@@ -93,11 +97,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ONLY_PR: ${{ inputs.pr }}
-        run: python3 ops/codex/sm_codex_audit.py ${ONLY_PR:+--pr "$ONLY_PR"}
+          # #4990: the commit whose checks finished. The script then reads only that PR, and every open PR once the
+          # last full read is 15 minutes old; a schedule or dispatch has no head and reads them all.
+          EVENT_HEAD: ${{ github.event.workflow_run.head_sha }}
+        run: python3 ops/codex/sm_codex_audit.py ${ONLY_PR:+--pr "$ONLY_PR"} ${EVENT_HEAD:+--head "$EVENT_HEAD"}
       - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        if: always() && hashFiles('.sm-ops/codex-audit/codex-audit-failures.json', '.sm-ops/ledger/usage.jsonl') != ''
+        if: always() && hashFiles('.sm-ops/codex-audit/codex-audit-failures.json', '.sm-ops/codex-audit/codex-audit-last-sweep', '.sm-ops/ledger/usage.jsonl') != ''
         with:
           path: |
             .sm-ops/codex-audit/codex-audit-failures.json
+            .sm-ops/codex-audit/codex-audit-last-sweep
             .sm-ops/ledger/usage.jsonl
-          key: claude-audit-state-${{ hashFiles('.sm-ops/codex-audit/codex-audit-failures.json', '.sm-ops/ledger/usage.jsonl') }}
+          key: claude-audit-state-${{ hashFiles('.sm-ops/codex-audit/codex-audit-failures.json', '.sm-ops/codex-audit/codex-audit-last-sweep', '.sm-ops/ledger/usage.jsonl') }}
