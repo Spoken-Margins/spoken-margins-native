@@ -2,6 +2,7 @@
 import contextlib
 import datetime
 import io
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -191,6 +192,48 @@ class AlarmClosingTests(unittest.TestCase):
     def test_a_merge_right_after_the_alarm_closes_it(self):
         calls = self.run_watch(merged_hours_ago=0.1, alarm_hours_ago=0.2)
         self.assertEqual(calls[0][:3], ('issue', 'close', '9'))
+
+
+class ReadsTests(unittest.TestCase):
+    """#4990: this runs about 20 times an hour, so a run with a recent merge must not read every armed PR."""
+
+    def paths_read(self, merged_minutes_ago: int) -> list[str]:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        tip = {'commit': {'committer': {'date': (now - datetime.timedelta(minutes=merged_minutes_ago)).strftime('%Y-%m-%dT%H:%M:%SZ')}}}
+        listed = {'number': 5, 'draft': False, 'labels': [{'name': watch.AUTOMERGE}],
+                  'head': {'sha': HEAD, 'repo': {'full_name': 'o/r'}}, 'base': {'repo': {'full_name': 'o/r'}}}
+        paths = []
+
+        def api(path):
+            paths.append(path)
+            if '/commits/main' in path:
+                return tip
+            if '/issues?' in path or '/comments' in path:
+                return [[]]
+            if '/pulls?' in path:
+                return [[listed]]
+            if '/check-runs' in path:
+                return {'check_runs': []}
+            if '/commits/' in path:
+                return {'commit': {'committer': {'date': tip['commit']['committer']['date']}}}
+            return dict(listed, mergeable_state='clean')
+        patches = {'api': api, 'gh': lambda *args, stdin=None: '', 'trunk_branch': lambda: 'main'}
+        for name, replacement in patches.items():
+            self.addCleanup(setattr, watch, name, getattr(watch, name))
+            setattr(watch, name, replacement)
+        os.environ['GH_REPO'] = 'o/r'
+        self.addCleanup(os.environ.pop, 'GH_REPO', None)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(watch.main(['--dry-run']), 0)
+        return paths
+
+    def test_a_merge_within_the_hour_reads_the_trunk_and_the_alarm_and_nothing_else(self):
+        paths = self.paths_read(merged_minutes_ago=20)
+        self.assertEqual(len(paths), 2, paths)
+        self.assertFalse([p for p in paths if '/pulls' in p], paths)
+
+    def test_an_hour_without_a_merge_still_reads_the_armed_prs(self):
+        self.assertTrue([p for p in self.paths_read(merged_minutes_ago=90) if '/pulls/5' in p])
 
 
 if __name__ == '__main__':
