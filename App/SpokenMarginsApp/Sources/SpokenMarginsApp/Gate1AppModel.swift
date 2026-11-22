@@ -1157,6 +1157,7 @@ final class Gate1AppModel: ObservableObject {
         )
         conductor.voiceRate = Float(recordMarginVoiceRate("moment"))
         conductor.prepareAudioSession = { [weak self] in try self?.prepareMarginMomentVoice() }
+        conductor.onVoiceEnded = { [weak self] margin, reachedEnd in self?.marginMomentVoiceEnded(margin, itemId: sequence.itemId, reachedEnd: reachedEnd) }
         conductor.onVoiceUnavailable = { [weak self] (marginId: String, reason: String) in
             self?.diagnostics["marginMoment.voiceUnavailable"] = "\(marginId):\(reason)"
             self?.reportWarning("That Margin's recording couldn't play, so listening continues.")
