@@ -196,6 +196,9 @@ TALLY_BOT = 'github-actions[bot]'
 TALLY_TRUSTED = ('OWNER', 'MEMBER', 'COLLABORATOR')
 
 
+TRUSTED_APP_SLUGS = ('spoken-margins-agent',)  # the agents' GitHub App (#4915); kept equal to comment_trust.py's
+
+
 def retry_passes(evidence: Path) -> list[str]:
     """Every test that failed and then passed on a rerun, from the verify-* manifests under <evidence>
     (a fresh-clone rerun is evidence only)."""
@@ -205,8 +208,10 @@ def retry_passes(evidence: Path) -> list[str]:
 
 def _tally_trusted(item: dict) -> bool:
     """A comment or issue from a collaborator or the workflow's bot (#1822). The bot's author_association is NONE,
-    so it is matched by login; the lane opens its flake issues and posts its tallies as the bot."""
-    return (item.get('user') or {}).get('login') == TALLY_BOT or item.get('author_association') in TALLY_TRUSTED
+    so it is matched by login; the lane opens its flake issues and posts its tallies as the bot. The agents' App
+    (#4915) is matched the same way."""
+    bots = (TALLY_BOT,) + tuple(f'{slug}[bot]' for slug in TRUSTED_APP_SLUGS)
+    return (item.get('user') or {}).get('login') in bots or item.get('author_association') in TALLY_TRUSTED
 
 
 def tally_counts(comments: list[dict], now: datetime.datetime) -> dict[str, list[str]]:
