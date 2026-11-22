@@ -806,7 +806,7 @@ test('after the first reply leaves, the page offers the iPhone app once, and not
   const page = await friendPage(context);
   const openShare = async () => {
     await page.goto(LINK);
-    await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+    await startFromBeginning(page);
     return page.getByRole('dialog', { name: EPISODE });
   };
   const saveFile = async (playing: Page) => {
