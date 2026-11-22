@@ -26,7 +26,7 @@ final class MarginDestinationQuestionTests: XCTestCase {
                          something: Bool = false, recording: Bool = false, speech: Bool = false,
                          friendCard: Bool = false) -> Bool {
         q.shouldPresent(firstMarginHeardColdInstall: heard, appActive: active, somethingPresented: something,
-                        recording: recording, speechAskShowing: speech, friendShareCardShowing: friendCard)
+                        recording: recording, speechAskOutstanding: speech, friendShareCardShowing: friendCard)
     }
 
     // MARK: shouldPresent
@@ -41,12 +41,33 @@ final class MarginDestinationQuestionTests: XCTestCase {
             ("app inactive", { self.present($0, active: false) }),
             ("something presented", { self.present($0, something: true) }),
             ("recording", { self.present($0, recording: true) }),
-            ("speech ask showing", { self.present($0, speech: true) }),
+            ("speech ask outstanding", { self.present($0, speech: true) }),
             ("friend share card showing", { self.present($0, friendCard: true) }),
         ]
         for (name, check) in rows {
             XCTAssertFalse(check(MarginDestinationQuestion(defaults: makeDefaults())), name)
         }
+    }
+
+    func testSpeechAskTable() {
+        // (outstanding, expected): outstanding = due and not yet answered, on screen or not.
+        let rows: [(String, Bool, Bool)] = [
+            ("due, unanswered, on screen", true, false),
+            ("due, unanswered, off screen", true, false),
+            ("due and answered", false, true),
+            ("not due", false, true),
+        ]
+        for (name, outstanding, expected) in rows {
+            XCTAssertEqual(present(MarginDestinationQuestion(defaults: makeDefaults()), speech: outstanding),
+                           expected, name)
+        }
+    }
+
+    func testSpeechAskAnsweredThenRelaunchedPresents() {
+        let defaults = makeDefaults()
+        XCTAssertFalse(present(MarginDestinationQuestion(defaults: defaults), speech: true))
+        XCTAssertFalse(present(MarginDestinationQuestion(defaults: defaults), speech: true), "relaunch, still unanswered")
+        XCTAssertTrue(present(MarginDestinationQuestion(defaults: defaults), speech: false), "answered, relaunched")
     }
 
     func testBackgroundThenForegroundPresentsWhenActive() {

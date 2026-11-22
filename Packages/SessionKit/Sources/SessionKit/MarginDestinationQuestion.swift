@@ -76,19 +76,24 @@ public final class MarginDestinationQuestion {
 
     /// True only when every condition holds. Shown counts as asked (`markPresented`), and an answer or a skip
     /// also means it was asked, so a kill mid-sheet never nags.
+    ///
+    /// `speechAskOutstanding` is true while the in-app Speech Recognition card (#4715, condition 6) is due and
+    /// not yet answered, whether or not it is on screen right now, and it stays true across a relaunch until the
+    /// listener answers: the inline card first, this sheet after. The caller derives it from the card's own
+    /// stored state; this type keeps none of it.
     public func shouldPresent(
         firstMarginHeardColdInstall: Bool,
         appActive: Bool,
         somethingPresented: Bool,
         recording: Bool,
-        speechAskShowing: Bool,
+        speechAskOutstanding: Bool,
         friendShareCardShowing: Bool
     ) -> Bool {
         firstMarginHeardColdInstall
             && appActive
             && !somethingPresented
             && !recording
-            && !speechAskShowing
+            && !speechAskOutstanding
             && !friendShareCardShowing
             && !defaults.bool(forKey: Self.presentedKey)
             && storedAnswer == nil
