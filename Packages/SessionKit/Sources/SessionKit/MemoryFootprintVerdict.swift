@@ -36,6 +36,12 @@ public enum MemoryFootprintVerdict: Equatable, Sendable {
     public static let minimumStretchSeconds: TimeInterval = 300
     /// Playback samples further apart than this have a pause between them (the recorder samples about each minute).
     public static let pauseGapSeconds: TimeInterval = 150
+    /// Switches into each media type in the measured run (`PodcastToArticleMemoryTests`). After its engine loads, a
+    /// voice keeps settling for about two more switches (Supertonic on main-t3 at c9e5697, 2026-11-22: 363 → 410 →
+    /// 428 → 428 MB). Four switches into a type give only those two changes, so the median read the warm-up as
+    /// 18 MB per switch. Six give four changes, and the lower middle one comes after the warm-up. Memory left behind
+    /// at every switch still reads as growth.
+    public static let switchesPerTypeInMeasuredRun = 6
 
     public init(samples: [MemoryFootprintLog.Sample]) {
         let lastLaunch = samples.lastIndex { $0.event == .launch }

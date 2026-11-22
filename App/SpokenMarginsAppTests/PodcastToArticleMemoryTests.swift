@@ -9,8 +9,8 @@ import SessionKitSharing
 /// #122: the owner's phone was killed for memory twice, going from a podcast with shared Margins to an article.
 ///
 /// This is the issue's measured run, sized for a lane test (180 s at most). A podcast the listener downloaded gets a
-/// friend's packet of shared Margins through the real import, then playback moves podcast → article four times and back
-/// three times, each playing for real: the podcast in the app's own AVPlayer, the article in the voice under test. A
+/// friend's packet of shared Margins through the real import, then playback moves podcast → article six times and back
+/// five times, each playing for real: the podcast in the app's own AVPlayer, the article in the voice under test. A
 /// `MemoryFootprintRecorder` watches the model the way the app's own does and reads the real footprint at each switch.
 /// The test prints the samples and the verdict (`MemoryFootprintVerdict`), the numbers #122 asks for, and fails when
 /// memory stays behind at each switch.
@@ -98,8 +98,9 @@ final class PodcastToArticleMemoryTests: XCTestCase {
         super.tearDown()
     }
 
-    /// Podcast first, then article, podcast, article, podcast, article, podcast, article: four switches into the
-    /// article and three back, as in #122 item 3.
+    /// Podcast first, then article and podcast in turn, ending on the article: six plays of each, so six switches
+    /// into the article and five back. #122 item 3 asks for four; the verdict needs six to see past the voice's
+    /// warm-up (`MemoryFootprintVerdict.switchesPerTypeInMeasuredRun`).
     private func runSwitches(
         _ model: Gate1AppModel,
         voice: String,
@@ -108,11 +109,12 @@ final class PodcastToArticleMemoryTests: XCTestCase {
     ) async throws {
         let recorder = MemoryFootprintRecorder(diagnostics: PinnedDiagnostics(diagnostics: RuntimeDiagnostics()), fileURL: nil)
         recorder.start(observing: model)
+        let rounds = MemoryFootprintVerdict.switchesPerTypeInMeasuredRun
         try await play(podcastId, in: model, seconds: secondsEach)
-        for round in 0..<4 {
+        for round in 0..<rounds {
             try await play(articleId, in: model, seconds: secondsEach)
             checkArticle()
-            if round < 3 { try await play(podcastId, in: model, seconds: secondsEach) }
+            if round < rounds - 1 { try await play(podcastId, in: model, seconds: secondsEach) }
         }
         model.pause()
 
@@ -120,7 +122,7 @@ final class PodcastToArticleMemoryTests: XCTestCase {
         let report = "#122 podcast → article, \(voice)\nmemoryFootprint: \(recorder.log.diagnosticsLine)\nmemoryVerdict: \(verdict.diagnosticsLine)"
         print(report)
         XCTContext.runActivity(named: "memory samples, \(voice)") { $0.add(XCTAttachment(string: report)) }
-        XCTAssertEqual(recorder.log.samples.filter { $0.event == .itemSwitch }.count, 7,
+        XCTAssertEqual(recorder.log.samples.filter { $0.event == .itemSwitch }.count, 2 * rounds - 1,
                        "every switch is sampled, or the verdict reads too few: \(report)")
         // Each play is shorter than the recorder's minute, so memory that grows with time also shows up here, between
         // switches: the samples' times tell the two apart.
