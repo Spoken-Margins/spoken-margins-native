@@ -90,6 +90,11 @@ public struct FootnoteCard: Equatable, Sendable {
     /// it into. The card shows up to six lines of it; VoiceOver reads all of it.
     public let body: String
 
+    public init(label: String, body: String) {
+        self.label = label
+        self.body = body
+    }
+
     /// "Footnote 3", using the source's own label.
     public var title: String { "Footnote \(label)" }
 
