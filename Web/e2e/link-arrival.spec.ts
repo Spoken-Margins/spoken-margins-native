@@ -850,8 +850,10 @@ test('a copy 33 seconds shorter than the sender\u2019s says so on the countdown 
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);
   await page.goto(`${STUB}/l/vectorvoice33#${KEY}`);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await page.getByTestId('arrival').getByRole('button', { name: 'Start from the beginning' }).click();
   const playing = page.getByRole('dialog', { name: EPISODE });
+  // A friend's unheard Margins open Now Playing on its Margins tab; the countdown card is on Now.
+  await nowTab(page);
   const cue = playing.getByTestId('margin-cue');
   await expect(cue).toContainText('Web fixture\u2019s first Margin in');
   // The note arrives once the audio reports its length, as the card's last line, under both buttons.
@@ -873,8 +875,10 @@ test('a copy of the sender\u2019s own length shows no note on the countdown or u
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);
   await page.goto(LINK);
-  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  await page.getByTestId('arrival').getByRole('button', { name: 'Start from the beginning' }).click();
   const playing = page.getByRole('dialog', { name: EPISODE });
+  // A friend's unheard Margins open Now Playing on its Margins tab; the countdown card is on Now.
+  await nowTab(page);
   await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
   // Wait for the audio to report its length, so "no note" is not just "no length yet".
   await expect.poll(() => page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.duration)).toBeGreaterThan(100);
