@@ -74,6 +74,9 @@ class FakeGitHub:
     def issue_comments(self, number):
         return []
 
+    def issue_timeline(self, number):
+        return []
+
     def comments(self, number):
         return self._comments
 

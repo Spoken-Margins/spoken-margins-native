@@ -157,6 +157,10 @@ class GitHub:
         """An issue's comments that the lane trusts (the same filter as `comments`, for a PR's issue)."""
         return self.comments(number)
 
+    def issue_timeline(self, number: int) -> list[dict]:
+        """An issue's timeline events: the last `reopened` one ends every proof written before it (#4979)."""
+        return self.api(f'repos/{self.repo}/issues/{number}/timeline?per_page=100', paginate=True)
+
     def comments(self, number: int) -> list[dict]:
         """The PR's comments that the lane trusts (owner, members, collaborators, the project's bot)."""
         found = self.api(f'repos/{self.repo}/issues/{number}/comments?per_page=100', paginate=True)

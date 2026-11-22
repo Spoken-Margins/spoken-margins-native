@@ -225,8 +225,11 @@ class IssueRuleTests(unittest.TestCase):
 class FakeApi:
     repo = 'o/r'
 
-    def __init__(self, issues, comments=None):
-        self._issues, self._comments = issues, comments or {}
+    def __init__(self, issues, comments=None, timelines=None):
+        self._issues, self._comments, self._timelines = issues, comments or {}, timelines or {}
+
+    def issue_timeline(self, number):
+        return self._timelines.get(number, [])
 
     def issue(self, number):
         return self._issues[number]
@@ -442,6 +445,30 @@ class SweepTests(unittest.TestCase):
 
     def xref(self, number):
         return {'event': 'cross-referenced', 'source': {'issue': {'number': number, 'pull_request': {}, 'repository': {'full_name': 'o/r'}}}}
+
+    def test_a_pr_body_edited_after_the_reopening_counts_though_the_pr_was_opened_before_it(self):
+        # The audit's scenario: PR opened T0, issue reopened T1, proof edited into the body, merged T2. Merge policy and
+        # the sweep read it through the same verdict_for, so both accept it.
+        pr = {**self.merged_pr(40, 'Closes #22\n\n' + GOOD), 'created_at': '2026-11-23T08:00:00Z', 'merged_at': '2026-11-25T10:00:00Z'}
+        reopened = {'event': 'reopened', 'created_at': '2026-11-24T08:00:00Z'}
+        gh = self.Gh([self.closed(22, when='2026-11-25T10:01:00Z')], {}, timeline={22: [reopened, {'event': 'closed', 'commit_id': 'deadbee'}]},
+                     pulls={'deadbee': [pr]})
+        self.assertEqual(self.run_sweep(gh)['proved'], 1)
+        api = FakeApi({22: {'labels': [{'name': 'area: pass it on'}]}}, timelines={22: [reopened]})
+        unmerged = {**pr, 'merged_at': None}
+        self.assertEqual(proof.pr_blockers(api, 40, unmerged, [], lambda: ['aaaaaaa0' + 'b' * 32], lambda c: []), [])
+
+    def test_an_issue_side_waiver_or_proof_from_before_a_reopening_does_not_clear_a_new_closing_pr(self):
+        reopened = {'event': 'reopened', 'created_at': '2026-11-24T08:00:00Z'}
+        old_waiver = comment('Real-use proof waived: copy change only, no listener audio', '2026-11-23T08:00:00Z')
+        old_proof = comment(GOOD, '2026-11-23T08:00:00Z')
+        for old in (old_waiver, old_proof):
+            api = FakeApi({4783: {'labels': [{'name': 'area: pass it on'}]}}, {4783: [old]}, timelines={4783: [reopened]})
+            reasons = proof.pr_blockers(api, 9, pull('Closes #4783'), [], lambda: ['aaaaaaa0' + 'b' * 32], lambda c: [])
+            self.assertEqual(len(reasons), 1, old['body'][:30])
+        # Without the reopening the same waiver stands.
+        api = FakeApi({4783: {'labels': [{'name': 'area: pass it on'}]}}, {4783: [old_waiver]})
+        self.assertEqual(proof.pr_blockers(api, 9, pull('Closes #4783'), [], lambda: ['aaaaaaa0' + 'b' * 32], lambda c: []), [])
 
     def test_a_pr_that_only_mentions_the_issue_speaks_for_nothing(self):
         # Scenario A: a Part-of PR's waiver (a fixture harness) must not excuse a hand close.

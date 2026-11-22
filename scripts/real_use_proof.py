@@ -48,6 +48,7 @@ FIELDS = ('real input', 'path', 'steps', 'result', 'commit')
 NOT_LISTENER_AREA = 'area: groundwork'   # the one area that is not a listener's: every other label, or none, is listener-facing
 MARKER = '<!-- real-use-proof-sweep -->'
 REPRO_FIELDS = ('tried', 'result')
+FUTURE = '9999-12-31T23:59:59Z'   # an unmerged PR's body: the newest thing there is
 GRACE = dt.timedelta(minutes=30)   # the sweep leaves an issue alone this long after it closes: the proof may be a minute behind
 SHIPPED_AREAS = ('App/', 'Packages/', 'Contracts/')   # notes under these ship in the app, so they are not just notes
 
@@ -263,14 +264,16 @@ def timed_items(pull: dict, trusted_comments: list, closes: bool = True) -> list
     says whether the PR closes the issue in question (False: it only says `Part of #N`, so its waiver does not count)."""
     items = []
     if comment_trust.trusted_author(pull.get('author_association'), (pull.get('user') or {}).get('login')):
-        items.append((pull.get('created_at') or '', pull.get('body') or '', True, closes))
+        # Ordered by when the PR was opened, but its body is edited until the merge, so for the reopening cutoff it is as
+        # new as the merge (or, unmerged, as new as now): a PR opened before the reopening may carry a newer proof.
+        items.append((pull.get('created_at') or '', pull.get('body') or '', True, closes, pull.get('merged_at') or FUTURE))
     items.extend((c.get('created_at') or '', c.get('body') or '', True, closes) for c in trusted_comments)
     return items
 
 
 def entries_for(items: list[tuple], target: int, several: bool = False, not_before: str = '') -> list[Entry]:
     """The records in <items> in the order they were written, that speak for issue <target>. Items are (time, text,
-    pr_side[, closes]). Records older than <not_before> (the issue's last reopening) are dropped: they proved a build
+    pr_side[, closes[, cutoff time]]). Records older than <not_before> (the issue's last reopening) are dropped: they proved a build
     that has since regressed. On the PR side, a proof that names issues in an `Issue:` line speaks only for those; when
     the PR closes several listener-facing issues (<several>) it must say which; a waiver counts only from a PR that
     closes the issue (not one that says `Part of`); and an `Owner PASS` line never counts, it is the owner's alone."""
@@ -278,7 +281,8 @@ def entries_for(items: list[tuple], target: int, several: bool = False, not_befo
     for item in sorted(items, key=lambda item: item[0]):
         when, text, pr_side = item[:3]
         closes = item[3] if len(item) > 3 else True
-        if not_before and when and when < not_before:
+        written = item[4] if len(item) > 4 else when
+        if not_before and written and written < not_before:
             continue
         for entry in parse(text, pr_side):
             if entry.pr_side:
@@ -324,11 +328,27 @@ def message(number: int, area: str, verdict: Verdict) -> str:
             'the `automerge` label (docs/workstreams/real-use-proof.md)')
 
 
+def verdict_for(number: int, issue_comments: list, pr_sources: list, events: list, several: bool = False,
+                allow_owner_pass: bool = True) -> Verdict:
+    """The one place that decides whether issue <number> has real-use proof; merge policy, the sweep and `--issue` all
+    call it, so they cannot disagree. <issue_comments> are the issue's trusted comments; <pr_sources> are
+    (pull, trusted comments, closes) for each PR that speaks for it; <events> is the issue's timeline, whose last
+    `reopened` event ends every record written before it. A PR in merge policy can't be cleared by an Owner PASS
+    (<allow_owner_pass> False): it proves a build already on main, not the PR's commits."""
+    items = issue_items(issue_comments)
+    for pull, comments, closes in pr_sources:
+        items += timed_items(pull, comments, closes)
+    entries = entries_for(items, number, several, not_before=last_reopened(events))
+    if not allow_owner_pass:
+        entries = [e for e in entries if e.kind != 'owner_pass']
+    return judge(entries)
+
+
 def pr_blockers(api, number: int, pull: dict, comments: list, own_commits: Callable[[], list],
                 paths_after: Callable[[str], list], extra_text: str = '') -> list[str]:
     """Why PR <number> may not merge for want of real-use proof, one reason per closing issue. api needs `repo`,
-    `issue(n)` and `issue_comments(n)` (trusted comments only); own_commits and paths_after read the PR's git history.
-    <extra_text> is more text GitHub reads closing keywords in (the PR's commit messages)."""
+    `issue(n)`, `issue_comments(n)` (trusted comments only) and `issue_timeline(n)`; own_commits and paths_after read
+    the PR's git history. <extra_text> is more text GitHub reads closing keywords in (the PR's commit messages)."""
     targets = []
     for target in closing_issues((pull.get('body') or '') + '\n' + extra_text, number, api.repo):
         issue = api.issue(target)
@@ -336,9 +356,8 @@ def pr_blockers(api, number: int, pull: dict, comments: list, own_commits: Calla
             targets.append((target, issue))
     reasons = []
     for target, issue in targets:
-        items = timed_items(pull, comments) + issue_items(api.issue_comments(target))
-        # An Owner PASS comment proves a build already on main, never this PR's commits, so it can't clear a merge.
-        verdict = judge([e for e in entries_for(items, target, several=len(targets) > 1) if e.kind != 'owner_pass'])
+        verdict = verdict_for(target, api.issue_comments(target), [(pull, comments, True)], api.issue_timeline(target),
+                              several=len(targets) > 1, allow_owner_pass=False)
         if verdict.status == 'proved' and verdict.commit:
             stale = stale_after(verdict.commit, own_commits(), paths_after)
             if stale:
@@ -391,6 +410,9 @@ class Gh:
     def issue_comments(self, number: int) -> list:
         return comment_trust.trusted_only(self.api(f'issues/{number}/comments?per_page=100', paginate=True))
 
+    def issue_timeline(self, number: int) -> list:
+        return self.api(f'issues/{number}/timeline?per_page=100', paginate=True)
+
 
 def issue_items(comments: list) -> list[tuple]:
     return [(c.get('created_at') or '', c.get('body') or '', False, True) for c in comments]
@@ -412,15 +434,15 @@ def how_named(text: Optional[str], number: int, repo: str) -> Optional[str]:
     return None
 
 
-def pr_items(gh, pull: dict, number: int, message: str = '') -> list[tuple]:
-    """The items of one merged PR for issue <number>, or [] when the PR does not name the issue. Its body and the closing
-    commit's <message> are what merge policy reads; a PR that merely mentions the issue speaks for nothing, and one that
-    says `Part of #N` has its proofs counted but not its waiver."""
+def pr_source(gh, pull: dict, number: int, message: str = '') -> Optional[tuple]:
+    """(pull, trusted comments, closes) for one merged PR as a source for issue <number>, or None when the PR does not name
+    the issue. Its body and the closing commit's <message> are what merge policy reads; a PR that merely mentions the
+    issue speaks for nothing, and one that says `Part of #N` has its proofs counted but not its waiver."""
     via = how_named((pull.get('body') or '') + '\n' + message, number, gh.repo)
     if via is None:
-        return []
+        return None
     comments = comment_trust.trusted_only(gh.api(f'issues/{pull["number"]}/comments?per_page=100', paginate=True))
-    return timed_items(pull, comments, closes=via == 'closes')
+    return pull, comments, via == 'closes'
 
 
 def last_reopened(events: list) -> str:
@@ -428,9 +450,8 @@ def last_reopened(events: list) -> str:
     return max([e.get('created_at') or '' for e in events if e.get('event') == 'reopened'] or [''])
 
 
-def closing_items(gh, number: int, events: list) -> list[tuple]:
-    """The PR-side items that speak for issue <number> after it closed. This is the one reader the sweep and
-    `--issue N --pr M` share (pr_items): the merged PR of the closing commit, and each merged PR of this repository the
+def closing_sources(gh, number: int, events: list) -> list[tuple]:
+    """The PRs that speak for issue <number> after it closed, as pr_source tuples (the sweep and `--issue N --pr M`): the merged PR of the closing commit, and each merged PR of this repository the
     issue's timeline shows referencing it, kept only when its body or the closing commit's message says `Closes #N` or
     `Part of #N` (a change that couldn't be run first says `Part of #N` and gets its proof after the merge)."""
     closed = [e for e in events if e.get('event') == 'closed']
@@ -454,10 +475,8 @@ def closing_items(gh, number: int, events: list) -> list[tuple]:
             continue   # not a PR of this repository
         if pull.get('merged_at'):
             pulls[pull['number']] = pull
-    found: list[tuple] = []
-    for pull in pulls.values():
-        found.extend(pr_items(gh, pull, number, message))
-    return found
+    sources = [pr_source(gh, pull, number, message) for pull in pulls.values()]
+    return [source for source in sources if source]
 
 
 def sweep(gh, since: dt.datetime, apply: bool = False, now: Optional[dt.datetime] = None) -> dict:
@@ -478,11 +497,9 @@ def sweep(gh, since: dt.datetime, apply: bool = False, now: Optional[dt.datetime
         try:
             comments = gh.issue_comments(number)
             events = gh.api(f'issues/{number}/timeline?per_page=100', paginate=True)
-            since_reopen = last_reopened(events)
-            items = issue_items(comments)
-            verdict = judge(entries_for(items, number, not_before=since_reopen))
+            verdict = verdict_for(number, comments, [], events)
             if not verdict.ok:   # the proof may sit on the PR that closed it
-                verdict = judge(entries_for(items + closing_items(gh, number, events), number, not_before=since_reopen))
+                verdict = verdict_for(number, comments, closing_sources(gh, number, events), events)
             if verdict.status == 'proved':
                 report['proved'] += 1
             elif verdict.status == 'waived':
@@ -538,12 +555,11 @@ def main(argv=None) -> int:
             if not listener_facing(issue.get('labels')):
                 print(f'#{args.issue} is not listener-facing ({area_of(issue.get("labels"))}): no proof needed.')
                 return 0
-            items = issue_items(gh.issue_comments(args.issue))
-            events = gh.api(f'issues/{args.issue}/timeline?per_page=100', paginate=True)
+            sources = []
             if args.pr:
-                items += pr_items(gh, gh.api(f'pulls/{args.pr}'), args.issue)
-            entries = entries_for(items, args.issue, not_before=last_reopened(events))
-            verdict = judge(entries)
+                source = pr_source(gh, gh.api(f'pulls/{args.pr}'), args.issue)
+                sources = [source] if source else []
+            verdict = verdict_for(args.issue, gh.issue_comments(args.issue), sources, gh.issue_timeline(args.issue))
             print(f'#{args.issue}: {verdict.status}' + (': ' + '; '.join(verdict.problems) if verdict.problems else ''))
             return 0 if verdict.ok else 1
         if args.sweep:
