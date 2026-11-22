@@ -69,6 +69,7 @@ A `where:mac` issue (Mac hardware, signed-in Mac accounts or a physical device),
 3. Never boots a simulator.
 4. After the merge, deletes the worktree's `.build` folder and removes the worktree.
 5. Takes the next Mac-only ready issue after arming. The headless Claude Mac worker (`ops/claude/`, #1599) does the same unattended.
+6. **Ends its own Claude Code session (Cole, 2026-11-22: no idle sessions).** Once its work is merged or handed off, it posts the stop note (section 7) and then exits its session, so it never sits idle holding a session on his computer. The long-lived Mac finisher is the only exception. This is about the session on the Mac; nothing here closes or resolves a thread in the project.
 
 The project instructions' pointer to "Threads on the owner's Mac" means this section.
 
