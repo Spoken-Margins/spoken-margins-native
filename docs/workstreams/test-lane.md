@@ -376,7 +376,7 @@ scripts/desk-batch.py --json     # the whole plan, writes nothing
   - Exit 0 (GO): add one line to this tick: `- Test Desk: GO, <its first output line after "GO:">, work list <the path on its "work list:" line>`.
   - Exit 1 (STOP): add nothing.
   - Exit 2 (error): add `- Test Desk batch check failed: <its ERROR line>`.
-  - During a HALT (usage breaker: Claude) the GO line is information only: start nothing until RESUMED.
+  - During a HALT (usage breaker: Claude) the GO line is information only: start nothing until RESUMED, unless the Dial is Cloud max (it ignores a HALT).
   ```
 
   The tick reports; it doesn't start a desk. The desk drives the simulator with the desktop app's iOS simulator tool, which a scheduled task can't use. The open step is who turns a GO line into a running desk: the coordinator's hourly dispatch (a managed desk, as on 2026-10-13) is the natural fit, and needs a line in the project instructions that only the owner can change. Until then the owner starts a desk from `latest.md` in `~/SpokenMarginsOps/desk-batches/`.

@@ -383,3 +383,36 @@ final class UITestingLaunchSeedTests: XCTestCase {
         XCTAssertTrue(UITestingLaunchSeed.libraryFillerItems(count: -1, fixtureAddedAt: fixtureAddedAt).isEmpty)
     }
 }
+
+/// #4934: the seed for a friend's Margin that is never read aloud.
+final class UITestingLaunchSeedSilentCoopTests: XCTestCase {
+    func testTheSilentCoopMarginIsNotOfferedButHasAPlaceOnTheSeededPodcast() throws {
+        let when = Date(timeIntervalSince1970: 1_700_000_000)
+        let silent = UITestingLaunchSeed.coopSilentInterjection(createdAt: when)
+        let voiced = UITestingLaunchSeed.coopInterjection(audioPath: "SpokenMargins/interjections/ui-test-coop.m4a", createdAt: when)
+        XCTAssertNil(silent.audioPath, "no recording")
+        XCTAssertEqual(silent.senderReadAloud, false)
+        XCTAssertTrue(silent.isWritten)
+        XCTAssertFalse(SharedMarginAudio.canOffer(silent), "Skim's voiced list and the Margins tab's Play must not take it")
+        XCTAssertTrue(SharedMarginAudio.canOffer(voiced))
+        let layer = UITestingLaunchSeed.coopLayer(importedAt: when)
+        XCTAssertEqual(silent.layerId, layer.id)
+        XCTAssertEqual(silent.id, voiced.id, "the same place in the library: a script launches with one or the other")
+        XCTAssertEqual(SharedMarginPlaybackPosition(silent)?.mediaTimeMs, UITestingLaunchSeed.coopMarginMediaTimeMs)
+        XCTAssertEqual(SharedMarginPlaybackPosition(silent)?.isApproximate, false)
+        XCTAssertTrue(SharedMarginListPlay.canGo(silent, in: layer))
+        XCTAssertFalse(SharedMarginListPlay.canPlay(silent, in: layer))
+        XCTAssertEqual(silent.approvedTranscript, "A friend's UI test Margin.")
+    }
+
+    func testTheSilentCoopMarginIsASilentSkimStopAtTheCoopPlace() throws {
+        let when = Date(timeIntervalSince1970: 1_700_000_000)
+        let stops = SkimStopRouting.stops(
+            textChapters: [], mediaChapters: [], ownMargins: [], sharedMargins: [],
+            silentSharedMargins: [UITestingLaunchSeed.coopSilentInterjection(createdAt: when)], unit: .milliseconds)
+        let stop = try XCTUnwrap(stops.stops.first)
+        XCTAssertEqual(stops.stops.count, 1)
+        XCTAssertTrue(stop.isSilent)
+        XCTAssertEqual(stop.position, UITestingLaunchSeed.coopMarginMediaTimeMs)
+    }
+}

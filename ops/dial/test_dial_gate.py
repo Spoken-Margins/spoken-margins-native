@@ -2,6 +2,7 @@
 import contextlib
 import datetime as dt
 import io
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -695,6 +696,35 @@ class CloudMaxIgnoresBreaker(unittest.TestCase):
         self.assertTrue(decision['fire'])
         self.assertIn('Cloud max ignores usage, so this gate is unaffected', text)
         self.assertNotIn('so this gate holds', text)
+
+
+class ParseDialCommand(unittest.TestCase):
+    """The Mac tick reads the Mode with `--parse-dial` (#4865), so it halts Claude only when the gate's own parse says
+    Paced. It runs with no token and no network: the tick pipes in the #589 body."""
+
+    def run_main(self, body):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, 'stdin', io.StringIO(body)), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err), \
+                mock.patch.object(g, 'gh', side_effect=AssertionError('no network')), \
+                mock.patch.dict('os.environ', {'SM_DIAL_GITHUB_TOKEN': ''}):
+            code = g.main(['--parse-dial'])
+        return code, out.getvalue()
+
+    def test_prints_the_gate_parse_of_each_mode(self):
+        cloud = CloudMaxIgnoresBreaker.CLOUD
+        off = BODY.replace('- [x] Paced', '- [ ] Paced').replace('- [ ] Off', '- [x] Off')
+        for body, mode in ((BODY, 'paced'), (cloud, 'cloud max'), (off, 'off'), ('mangled', 'off')):
+            code, out = self.run_main(body)
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out), g.parse_dial(body))
+            self.assertEqual(json.loads(out)['mode'], mode)
+
+    def test_an_empty_body_fails_instead_of_reading_off(self):
+        # `gh issue view` failing in a pipe hands the parser nothing, and zsh has no pipefail. Reading that as Off
+        # would let the tick skip a HALT under a Paced Dial, so it fails and the tick falls back to the gate's line.
+        for body in ('', ' \n'):
+            self.assertEqual(self.run_main(body), (1, ''))
 
 
 class Status(unittest.TestCase):

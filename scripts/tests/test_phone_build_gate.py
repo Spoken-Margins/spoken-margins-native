@@ -76,7 +76,6 @@ class PhoneBuildGateTests(unittest.TestCase):
     def test_spike_conditions_are_reached_only_through_the_switch(self):
         conditions = self.spike_conditions()
         self.assertIn('SM_LOCKED_MARGIN_SPIKE', conditions)
-        self.assertIn('SM_MARGIN_END_PHRASE_SPIKE', conditions)
         for line in self.project.splitlines():
             if 'SWIFT_ACTIVE_COMPILATION_CONDITIONS' in line:
                 self.assertIn('$(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD))', line)

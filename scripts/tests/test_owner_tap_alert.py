@@ -72,6 +72,8 @@ class ReadinessTable(unittest.TestCase):
             ('fork head', {'p': pr(head={'sha': HEAD, 'repo': {'full_name': 'eve/app'}})}, False, 'not in this'),
             ('fork deleted', {'p': pr(head={'sha': HEAD, 'repo': None})}, False, 'not in this'),
             ('mergeability unknown', {'p': pr(mergeable=None)}, False, 'not worked out'),
+            ('owner already tapped', {'p': pr(labels=[{'name': 'owner-tap'}])}, False, 'already tapped'),
+            ('another label', {'p': pr(labels=[{'name': 'needs-mac'}])}, True, 'ready'),
             ('conflict', {'p': pr(mergeable=False, mergeable_state='dirty')}, False, 'conflicts'),
             ('failing check', {'runs': GREEN + [run('host', conclusion='failure')]}, False, 'checks failed: host'),
             ('cancelled check', {'runs': [run('lane', conclusion='cancelled')]}, False, 'checks failed'),
@@ -322,8 +324,27 @@ class PersistentLabel(unittest.TestCase):
         self.assertEqual(api.labels, [])
         api = FakeApi(labels=[self.TAP])
         api.get = lambda path: pr(mergeable=None, labels=[{'name': self.TAP}])
-        alert.check_pr(api, 7, 'uncomposed', dry_run=False)
+        with mock.patch.object(alert, 'MERGEABLE_WAIT', 0):
+            alert.check_pr(api, 7, 'uncomposed', dry_run=False)
         self.assertEqual(api.labels, [])
+
+    def test_a_pr_the_owner_has_tapped_loses_the_label_and_gets_no_alert(self):
+        api = self.check(labels=[self.TAP, 'owner-tap'])
+        self.assertEqual((api.labels, api.tap_ops, api.posted), ([('remove', 7, self.TAP)], [], []))
+        api = self.check(labels=['owner-tap'])
+        self.assertEqual((api.labels, api.tap_ops, api.posted), ([], [], []))
+
+    def test_unknown_mergeability_is_asked_again_before_giving_up(self):
+        answers = [pr(mergeable=None), pr(mergeable=None), pr()]
+        api = FakeApi()
+        api.get = lambda path: answers.pop(0)
+        with mock.patch.object(alert, 'MERGEABLE_WAIT', 0):
+            self.assertTrue(alert.get_pr(api, 7)['mergeable'])
+        self.assertEqual(answers, [])
+        answers[:] = [pr(mergeable=None)] * 9
+        with mock.patch.object(alert, 'MERGEABLE_WAIT', 0):
+            self.assertIsNone(alert.get_pr(api, 7)['mergeable'])
+        self.assertEqual(len(answers), 9 - alert.MERGEABLE_TRIES)
 
     def test_a_failing_label_write_does_not_stop_the_alert(self):
         api = FakeApi()
@@ -546,6 +567,16 @@ class Workflow(unittest.TestCase):
         self.assertIn(f"github.event.label.name == '{alert.LABEL}'", self.text)
         self.assertIn('--clear-label "$CLEAR"', self.text)
 
+    def test_the_token_may_write_labels_and_comments_on_a_pr(self):
+        # With `pull-requests: read` every label and comment write on a PR answered 403 (#4939).
+        self.assertIn('\n  pull-requests: write\n', self.text)
+        self.assertNotIn('pull-requests: read', self.text)
+
+    def test_the_owner_tap_label_and_a_schedule_start_a_check(self):
+        self.assertIn('types: [reopened, ready_for_review, labeled, unlabeled]', self.text)
+        self.assertIn('"owner-tap-check","owner-tap"', self.text)
+        self.assertRegex(self.text, r"(?m)^  schedule:\n    - cron: '\d+(,\d+)* \* \* \* \*'$")
+
     def test_concurrency_is_per_pr(self):
         self.assertIn("group: owner-tap-alert-${{ inputs.pr || github.event.pull_request.number || 'sweep' }}",
                       self.text)
@@ -566,6 +597,8 @@ class Workflow(unittest.TestCase):
                               job)
                 self.assertIn('    runs-on: ubuntu-latest\n', job)
                 self.assertIn('      issues: write\n', job)
+                self.assertIn('      pull-requests: write\n', job)  # a PR's label and comment need it (#4939)
+                self.assertNotIn('pull-requests: read', job)
                 self.assertNotIn('actions: write', job)
                 self.assertIn('      actions: read\n', job)  # the guard run's recorded base (#2714)
                 self.assertIn('ref: ${{ github.event.pull_request.base.sha }}', job)

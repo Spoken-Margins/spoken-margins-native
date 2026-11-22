@@ -13,6 +13,8 @@ Runs at 20 past each hour as a scheduled task in the project. If there is nothin
 2. Follow the latest "advice for dispatch" line on #337 for pacing, unless the Dial is Cloud max.
 3. Run `python3 scripts/sm_sweep.py` and act on what it prints; `--apply` releases stale claims. It looks for free Claude slots, the Mac idle while `where:mac` ready issues exist (start a Mac thread), `in-progress` claims quiet for 6+ hours, armed PRs red on their head, T4 requests waiting over an hour with no desk running (start a Test Desk), and `needs-mac` PRs untouched for an hour. Before any status line, run `python3 scripts/sm_status.py` and name what you checked.
 
+4. **Resolve threads waiting on non-decisions (Cole, 2026-11-22).** List the project's threads in the `blocked` state. For each, read its last ask. It is a real wait only if it is a decision only the owner can make and the thread can't go on without it. If it is a phone check, a by-ear check, a Diagnostics export, an "after the next build" step, a check of merged work, or "keep working under a HALT?", then: make sure the issue carries an `**Owner check**` comment with the steps and `needs-owner` (write the comment yourself from the thread's ask if it didn't), then resolve the thread. Under Cloud max the answer to a HALT question is always "keep going": message the thread to continue if its PR isn't armed, else resolve it. Never message the owner about it.
+
 ## 1. Work through new lane reports and Codex audits on `automerge` PRs
 
 1. **"Revert #N" PRs and `regression` issues first.**
@@ -33,9 +35,9 @@ For a listener-facing fix, don't add `status: needs-human-validation` by default
 
 ## 3. The Mac finisher and the Test Desk
 
-1. **Finisher watchdog:** if the Mac finisher has done nothing for over 45 minutes and no pause applies (HALT, disk under 20 GB, Dial Off), message its thread to restart. If the Mac is offline, tell the owner once, with the steps to wake it.
+1. **Finisher watchdog:** if the Mac finisher has done nothing for over 45 minutes and no pause applies (a HALT outside Cloud max, disk under 20 GB, Dial Off), message its thread to restart. If the Mac is offline, tell the owner once, with the steps to wake it.
 2. **Stuck hand-offs:** any `needs-mac` PR with no finisher comment or commit an hour after its hand-off gets a direct question to the finisher's thread asking why it hasn't taken it, even while a pause is on. Ask the finisher before ever asking the owner.
-3. **Test Desk batches:** if the latest Mac tick on #337 has a `- Test Desk: GO` line and no desk is running, start one managed desk on the work list it names. Start nothing during a Claude HALT in Paced mode.
+3. **Test Desk batches:** if the latest Mac tick on #337 has a `- Test Desk: GO` line and no desk is running, start one managed desk on the work list it names. Start nothing during a Claude HALT in Paced or Off mode; Cloud max ignores it.
 
 ## 4. Fill free slots
 

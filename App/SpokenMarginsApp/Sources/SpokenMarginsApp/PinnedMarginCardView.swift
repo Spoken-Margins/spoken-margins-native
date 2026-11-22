@@ -87,6 +87,8 @@ struct PinnedMarginCardView: View {
         case .keepListening, .stopReview, .stopPlayingMine: model.endMarginMoment()
         case .listen: model.listenToPendingImportedCommentary()
         case .dismiss: model.skipPendingImportedCommentary()
+        // The stage that offers this is not shown yet (#4934); the next change wires the model call.
+        case .dismissSilentMargin: break
         }
     }
 
@@ -208,7 +210,7 @@ struct PinnedMarginCardBody: View {
         switch card.stage {
         case .speaking, .reading, .voicePaused, .loading: "waveform"
         case .failed: "exclamationmark.triangle"
-        case .comingUp, .waitingForTap, .upNext: "text.bubble"
+        case .comingUp, .waitingForTap, .silentHere, .upNext: "text.bubble"
         case .answerSaved: "checkmark.circle"
         case .lastMargin: "text.bubble"
         }
@@ -279,6 +281,7 @@ struct PinnedMarginCardBody: View {
         case .keepListening, .stopReview, .stopPlayingMine: "marginMoment.end"
         case .listen: "importedCommentary.listen"
         case .dismiss: "importedCommentary.dismiss"
+        case .dismissSilentMargin: "marginCard.silent.dismiss"
         }
     }
 
@@ -288,7 +291,7 @@ struct PinnedMarginCardBody: View {
         case .skipThisMargin: "forward.end.fill"
         case .retry: "arrow.clockwise"
         case .playMomentNow, .listen: "play.fill"
-        case .keepListening, .stopReview, .stopPlayingMine, .dismiss: "xmark"
+        case .keepListening, .stopReview, .stopPlayingMine, .dismiss, .dismissSilentMargin: "xmark"
         }
     }
 }

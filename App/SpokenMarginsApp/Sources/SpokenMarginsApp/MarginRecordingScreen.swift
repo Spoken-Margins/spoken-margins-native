@@ -34,6 +34,8 @@ struct MarginRecordingScreenState: Equatable {
     var reply: MarginReplyChoice?
     var error: String?
     var canRetry = false
+    /// What the hint under the timer says about ending by voice (#3940). `.none` leaves the screen as it was.
+    var endPhraseHint: MarginEndPhraseHint = .none
 
     var isPreparing: Bool { phase == .preparing || phase == .primer }
     var showsMicrophonePrimer: Bool { phase == .primer }
@@ -64,6 +66,7 @@ struct MarginRecordingScreen: View {
     var lead: AnyView?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.feedbackDeliveryEffects) private var feedbackEffects
+    @State private var hasAnnouncedEndPhraseHint = false
     @State private var isDiscardConfirmationPresented = false
     /// #1669: Write instead on a recording that holds something worth keeping asks first.
     @State private var isWriteInsteadConfirmationPresented = false
@@ -100,6 +103,13 @@ struct MarginRecordingScreen: View {
         .announcesScreenChange()
         // The screen opens on "Preparing microphone"; a listener who can't see it needs to hear when the microphone is live.
         .onChange(of: statusTitle) { _, title in feedbackEffects.announce(title) }
+        // Listening for the phrase starts after the microphone is live: say so once, so a listener who can't see the screen knows.
+        .onChange(of: state.endPhraseHint) { _, hint in
+            if hint == .listening, !hasAnnouncedEndPhraseHint {
+                hasAnnouncedEndPhraseHint = true // once per recording, not each time "stop margin notes" bounces the hint
+                feedbackEffects.announce("Say stop margin to finish")
+            }
+        }
         .onAppear { saveTapGuard = RecordingSaveTapGuard(appearedAt: Date()) }
         .onDisappear(perform: actions.disappeared) // the screen behind it is drawn now (#148)
         .alert("Discard this recording?", isPresented: $isDiscardConfirmationPresented) {
@@ -179,13 +189,35 @@ struct MarginRecordingScreen: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("recording.notCapturing.label")
         } else {
-            TimelineView(.periodic(from: state.startedAt, by: 1)) { timeline in
-                Text(elapsedDescription(at: timeline.date))
-                    .font(.system(.largeTitle, design: .monospaced).weight(.semibold))
-                    .foregroundStyle(.white)
-                    .accessibilityLabel("Recording duration \(elapsedDescription(at: timeline.date))")
-                    .accessibilityIdentifier("recording.duration.label")
+            VStack(alignment: .leading, spacing: 8) {
+                TimelineView(.periodic(from: state.startedAt, by: 1)) { timeline in
+                    Text(elapsedDescription(at: timeline.date))
+                        .font(.system(.largeTitle, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.white)
+                        .accessibilityLabel("Recording duration \(elapsedDescription(at: timeline.date))")
+                        .accessibilityIdentifier("recording.duration.label")
+                }
+                endPhraseHint
             }
+        }
+    }
+
+    /// Under the timer, only while listening for the phrase is on (#3940). The words carry the state, never colour alone.
+    @ViewBuilder
+    private var endPhraseHint: some View {
+        if let words = endPhraseHintWords {
+            Text(words)
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.75))
+                .accessibilityIdentifier("recording.endPhrase.hint")
+        }
+    }
+
+    private var endPhraseHintWords: String? {
+        switch state.endPhraseHint {
+        case .none: nil
+        case .listening: "Say \u{201C}stop margin\u{201D} to finish"
+        case .finishing: "Finishing\u{2026}"
         }
     }
 

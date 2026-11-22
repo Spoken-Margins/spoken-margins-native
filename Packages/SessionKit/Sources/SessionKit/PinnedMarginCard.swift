@@ -86,6 +86,9 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case comingUp(msRemaining: Int?)
         /// A Margin is here and waits for the listener's tap (tone-only or jumped to).
         case waitingForTap
+        /// The listener went to a friend's Margin that is never spoken (Skim or a Go-to, #4934): the source plays on and the card
+        /// shows its words. `words` is nil when there is nothing to show; `isApproximate` says the place is a guess.
+        case silentHere(words: String?, isApproximate: Bool)
         /// Between Margins of a friend's listen: the next one is `msRemaining` ahead, nil when that is not known.
         case upNext(msRemaining: Int?, arrival: Arrival)
         /// A friend just saved a Margin of their own: it can be sent with Share (`answerSaved`). `atMs` is its place in the
@@ -201,6 +204,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case .failed: return "\(title) could not play"
         case .comingUp(let ms): return ms.map { "\(title) in \(Self.countdown($0))" } ?? "\(title) is coming up"
         case .waitingForTap: return "\(title) is here"
+        case .silentHere(_, let isApproximate): return "\(title) is \(isApproximate ? "about here" : "here")"
         case .upNext(let ms, let arrival): return upNextHeadline(msRemaining: ms, arrival: arrival)
         case .answerSaved(let atMs, _):
             return "Your Margin is saved" + (atMs.map { " at \(SharedMarginReview.ReplyContext.clock($0))" } ?? "")
@@ -247,6 +251,10 @@ public struct PinnedMarginCard: Equatable, Sendable {
             return "Tap Retry, or skip this Margin."
         case .comingUp: return "It plays by itself when the \(self.noun.inSentence) gets there."
         case .waitingForTap: return "Tap Listen to hear it."
+        case .silentHere(let words, _):
+            // The words themselves, cut as a waiting card cuts them. Placeholder words ("Voice Margin at 12:34") say nothing.
+            let shown = words.flatMap { SharedMarginPlaceholderWords.matches($0) ? nil : Self.waitingTranscript($0, playsByItself: false) }
+            return shown ?? "Not read aloud. The \(noun.inSentence) plays on."
         case .answerSaved(_, let sentTo): return "To send it to \(sentTo), tap Share below. You pick which of your Margins go."
         case .lastMargin(let senders):
             return "To answer\(senders > 1 ? " your friends" : subject.name.map { " \($0)" } ?? ""), add a Margin of your own."

@@ -25,10 +25,18 @@ public enum SharedMarginListPlay: Equatable, Sendable {
     /// button follows the layer; a tap there would only fail. A Margin with a time plays its moment whatever the
     /// toggle, as before (`playSharedMarginMoment`). Audit on 1e7362f.
     public static func canPlay(_ interjection: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer) -> Bool {
-        guard SharedMarginAudio.canOffer(interjection), let place = SharedMarginListPlay(interjection) else { return false }
+        SharedMarginAudio.canOffer(interjection) && canGo(interjection, in: layer)
+    }
+
+    /// Whether the listener can go to the Margin's place: the place half of `canPlay`, without asking whether it has
+    /// anything to play. A friend's Margin that is never spoken (`!SharedMarginAudio.canOffer`) is still a place Skim and
+    /// the lists take the listener to, with no voice (#4934). A text passage follows its layer exactly as `canPlay` does:
+    /// `isLayerPlaceEligible` is `isLayerPlaybackEligible` without the voice, which would rule out every silent Margin.
+    public static func canGo(_ interjection: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer) -> Bool {
+        guard let place = SharedMarginListPlay(interjection) else { return false }
         switch place {
         case .moment: return true
-        case .textPassage: return SharedMarginPrompts.isLayerPlaybackEligible(layer, records: [interjection])
+        case .textPassage: return SharedMarginPrompts.isLayerPlaceEligible(layer, records: [interjection])
         }
     }
 }

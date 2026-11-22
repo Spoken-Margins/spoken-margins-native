@@ -275,3 +275,20 @@ test('opening episode B never stores B’s audio on the kept episode A', () => {
   assert.equal(placed.newEpisode, true);
   assert.equal(pageOnlyCopy.audioUrl, undefined);
 });
+
+test('a kept copy is filled only when it is the packet’s episode by identity, never by an address that names its item in a query', () => {
+  const kept = (pageUrl: string, extra: Partial<Episode> = {}): Episode => ({ id: 'shared:Cole#x', showId: 'shared:Cole', title: 'Video', pageUrl, ...extra });
+  const audio = 'https://media.example.com/b.mp3';
+  // An address that names its item in the query: matched by page, but the audio is not copied across.
+  const sibling = placeImport(read({ title: 'Video', pageUrl: 'https://example.com/watch?v=B', audioUrl: audio }), [], [kept('https://example.com/watch?v=A')]);
+  assert.equal(sibling.episode.audioUrl, undefined);
+  assert.equal(sibling.newEpisode, false);
+  // The guid is identity: the same episode, so its audio is filled in.
+  const byGuid = placeImport(read({ title: 'Video', guid: 'g-9', pageUrl: 'https://example.com/other', audioUrl: audio }), [], [kept('https://example.com/watch?v=A', { guid: 'g-9' })]);
+  assert.equal(byGuid.episode.audioUrl, audio);
+  assert.equal(byGuid.newEpisode, true);
+  // The same Apple episode, whatever the padding of its id or the storefront: filled.
+  const apple = placeImport(read({ title: 'Episode', pageUrl: 'https://podcasts.apple.com/gb/podcast/x/id1445582279?i=01000427709574', audioUrl: audio }), [], [pageOnlyCopy]);
+  assert.equal(apple.episode.audioUrl, audio);
+  assert.equal(apple.newEpisode, true);
+});
