@@ -473,11 +473,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn('--report-sha', args[0])
         self.assertEqual(gh, [])
 
-    def test_the_script_failing_fails_the_step_whichever_way_it_reports(self):
-        for knows in (True, False):
-            with self.subTest(knows_report_flag=knows):
-                code, _, _ = self.run_step('pull_request', knows_report_flag=knows, exit_code=1)
-                self.assertEqual(code, 1)
+    def test_with_the_new_script_a_failing_verdict_fails_the_step(self):
+        code, _, _ = self.run_step('pull_request', knows_report_flag=True, exit_code=1)
+        self.assertEqual(code, 1)
 
     def test_before_main_has_the_flag_the_workflow_writes_the_check_run_itself(self):
         # The PR that adds --report-sha runs main's script (checkout ref: main) under its own workflow file, so the
@@ -486,7 +484,9 @@ class WorkflowTests(unittest.TestCase):
             for exit_code, conclusion in ((0, 'success'), (1, 'failure')):
                 with self.subTest(event=event, exit_code=exit_code):
                     code, args, gh = self.run_step(event, knows_report_flag=False, exit_code=exit_code)
-                    self.assertEqual(code, exit_code)
+                    # The step exits 0 either way: main's audit and owner-tap alert ignore a red `merge policy` but
+                    # not a red `merge policy run`, so a red job would stop the PR being audited (#5011).
+                    self.assertEqual(code, 0)
                     self.assertNotIn('--report-sha', args[0])
                     self.assertEqual(len(gh), 1, gh)
                     self.assertIn('repos/o/r/check-runs', gh[0])
