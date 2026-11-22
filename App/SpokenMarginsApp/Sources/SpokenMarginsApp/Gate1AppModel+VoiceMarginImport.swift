@@ -37,9 +37,8 @@ extension Gate1AppModel {
         marginCapture.closeDraft()
         clearWrittenMarginJournal(captureId: draft.capture.id)
         if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
-        // The Margin is saved from here on. A read that can't find it only costs its words and its signal, never the save.
-        if let id = engine.lastScheduledTranscriptionInterjectionId,
-           let saved = (try? store?.loadInterjections(sessionId: draft.capture.sessionId))?.first(where: { $0.id == id }) {
+        // The Margin is saved from here on; the engine says which one, so nothing is read back.
+        if let saved = engine.lastSavedSpokenInterjection {
             voiceMarginSaved(saved)
         } else {
             refreshMarginRowsInBackground(forItem: draft.capture.itemId)
@@ -58,5 +57,12 @@ extension Gate1AppModel {
         )
         refreshMarginRowsInBackground(forItem: interjection.itemId)
         if activeItemId == interjection.itemId { refreshSelectedItemInBackground() }
+    }
+
+    /// Whether a saved Margin names the recording at `audioPath`. True when it can't tell, so a doubt keeps the recording
+    /// (`AddVoiceMarginAction` removes a copy only when this is false).
+    func voiceMarginIsNamed(_ audioPath: String) -> Bool {
+        guard let store, let paths = try? store.allMarginAudioPaths() else { return true }
+        return paths.contains(audioPath)
     }
 }

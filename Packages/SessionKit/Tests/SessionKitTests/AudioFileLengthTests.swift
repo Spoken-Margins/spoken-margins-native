@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import SessionKit
 @testable import SessionKitAudio
 
 /// #4924: Add Voice Margin measures a handed-over file with the system's audio reader, on real files.
@@ -53,6 +54,17 @@ final class AudioFileLengthTests: XCTestCase {
             XCTAssertNil(AudioFileLength.milliseconds(of: try write(data, as: name)), name)
         }
         XCTAssertNil(AudioFileLength.milliseconds(of: directory.appending(path: "missing.m4a")))
+        #else
+        throw XCTSkip("needs AVFoundation")
+        #endif
+    }
+
+    func testAWavIsReadableAudioButNotMPEG4() throws {
+        #if canImport(AVFoundation)
+        let url = try write(wav(frames: 8_000), as: "b.wav")
+        XCTAssertEqual(AudioFileLength.inspect(url), VoiceMarginImport.Inspection(durationMs: 1_000, isMPEG4Audio: false))
+        XCTAssertFalse(AudioFileLength.isMPEG4Audio(try write(Data("not audio".utf8), as: "c.m4a")), "the name is never trusted")
+        XCTAssertNil(AudioFileLength.inspect(try write(Data(), as: "d.m4a")))
         #else
         throw XCTSkip("needs AVFoundation")
         #endif

@@ -120,11 +120,11 @@ public enum StoredSessionMargin {
             _ = try? engine.cancelWrittenInterjection(captureId: capture.id)
             throw error
         }
-        // The Margin is durable from here: a failure of the steps after it must not read as "not saved", because the
-        // caller removes a recording that no saved Margin names. Keeping the session's stamp is best effort.
+        // The Margin is durable from here, so nothing after this may throw: the caller removes a recording that no saved
+        // Margin names. Keeping the session's stamp is best effort, and what was saved comes from the engine, not a re-read.
         try? restoreUpdatedAt(originalUpdatedAt, ofSession: session.id, in: repository)
-        let saved = try repository.loadInterjections(sessionId: session.id).first { $0.id == "ij-voice-\(capture.id)" }
-        guard let saved else { throw SessionKitError.invalidCommandForState("saveSpokenInterjection") }
+        // The engine sets it in the same call that stored the Margin; the throw is only for a state that can't happen.
+        guard let saved = engine.lastSavedSpokenInterjection else { throw SessionKitError.invalidCommandForState("saveSpokenInterjection") }
         return Saved(interjection: saved, itemTitle: item.title)
     }
 

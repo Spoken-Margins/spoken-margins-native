@@ -28,8 +28,11 @@ final class VoiceMarginImportTests: XCTestCase {
         ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []).sorted()
     }
 
-    private func prepare(_ url: URL, ms: Int? = 4_000, id: String = "one") throws -> VoiceMarginImport.Prepared {
-        try VoiceMarginImport.prepare(source: url, supportDirectory: support, durationMs: { _ in ms }, makeId: { id })
+    private func prepare(_ url: URL, ms: Int? = 4_000, m4a: Bool = true, id: String = "one") throws -> VoiceMarginImport.Prepared {
+        try VoiceMarginImport.prepare(
+            source: url, supportDirectory: support,
+            inspect: { _ in ms.map { VoiceMarginImport.Inspection(durationMs: $0, isMPEG4Audio: m4a) } }, makeId: { id }
+        )
     }
 
     func testACopyIsKeptUnderTheRecordingsFolderAndTheSourceIsUntouched() throws {
@@ -60,10 +63,12 @@ final class VoiceMarginImportTests: XCTestCase {
             ("zero length", ok, 0, .unreadable),
             ("negative length", ok, -5, .unreadable),
             ("just over the cap", ok, VoiceMarginImport.maxDurationMs + 1, .tooLong),
+            ("not MPEG-4 audio", ok, 4_000, .notM4A),
             ("far over the cap", ok, 3 * 60 * 60 * 1_000, .tooLong),
         ]
         for (name, url, ms, expected) in table {
-            XCTAssertThrowsError(try prepare(url, ms: ms), name) { XCTAssertEqual($0 as? VoiceMarginImport.Refusal, expected, name) }
+            let isM4A = expected != .notM4A
+            XCTAssertThrowsError(try prepare(url, ms: ms, m4a: isM4A), name) { XCTAssertEqual($0 as? VoiceMarginImport.Refusal, expected, name) }
         }
         XCTAssertEqual(files(in: support), [], "no folder or file is left behind by a refusal")
     }
@@ -79,19 +84,16 @@ final class VoiceMarginImportTests: XCTestCase {
     }
 
     func testEachRefusalHasItsOwnPlainLine() {
-        let lines = [VoiceMarginImport.Refusal.unreadable, .tooLong, .notKept].map(\.line)
-        XCTAssertEqual(Set(lines).count, 3)
+        let lines = [VoiceMarginImport.Refusal.unreadable, .notM4A, .tooLong, .notKept].map(\.line)
+        XCTAssertEqual(Set(lines).count, 4)
         XCTAssertTrue(lines.allSatisfy { $0.contains("nothing was saved") })
     }
 
-    func testExtensionsAreKeptWhenKnownAndOtherwiseBecomeM4a() throws {
-        let table: [(String, String)] = [
-            ("a.M4A", "m4a"), ("a.mp3", "mp3"), ("a.WAV", "wav"), ("a.caf", "caf"), ("a.aiff", "aiff"),
-            ("a", "m4a"), ("a.exe", "m4a"), ("a.m4a.exe", "m4a"), ("a..", "m4a"), (".mp3", "m4a"),
-        ]
-        for (index, (name, ext)) in table.enumerated() {
-            let prepared = try prepare(try source(name.isEmpty ? "x" : name), id: "id\(index)")
-            XCTAssertTrue(prepared.audioPath.hasSuffix(".\(ext)"), "\(name) -> \(prepared.audioPath)")
+    /// Every kept copy is MPEG-4 audio, so it is named `.m4a` whatever the Shortcut's file was called.
+    func testEveryKeptCopyIsNamedM4a() throws {
+        for (index, name) in ["a.M4A", "a.mp4", "a", "a.exe", "a.m4a.exe", "a..", ".m4a", "a.mp3"].enumerated() {
+            let prepared = try prepare(try source(name), id: "id\(index)")
+            XCTAssertTrue(prepared.audioPath.hasSuffix(".m4a"), "\(name) -> \(prepared.audioPath)")
         }
     }
 
@@ -125,5 +127,26 @@ final class VoiceMarginImportTests: XCTestCase {
         XCTAssertTrue(VoiceMarginImport.discard(prepared, supportDirectory: support))
         XCTAssertFalse(FileManager.default.fileExists(atPath: support.appending(path: prepared.audioPath).path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: own.path))
+    }
+
+    /// A save that reported a failure after the Margin was stored keeps its voice; one that stored nothing loses the copy.
+    func testDiscardUnlessNamedKeepsACopyThatAMarginNames() throws {
+        let kept = try prepare(try source("a.m4a"), id: "named")
+        XCTAssertFalse(VoiceMarginImport.discardUnlessNamed(kept, supportDirectory: support, isNamed: { true }))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: support.appending(path: kept.audioPath).path))
+        let unused = try prepare(try source("b.m4a"), id: "unnamed")
+        XCTAssertTrue(VoiceMarginImport.discardUnlessNamed(unused, supportDirectory: support, isNamed: { false }))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: support.appending(path: unused.audioPath).path))
+    }
+
+    func testALiveSessionThatNamesTheCopyIsFound() {
+        let path = "SpokenMargins/interjections/shortcut-voice-x.m4a"
+        var named = LiveSession(id: "named", kind: .audiobook, title: "", startedAt: Date(timeIntervalSince1970: 1))
+        named.attachSpokenMargin(id: "m", audioPath: path, markedAt: Date(timeIntervalSince1970: 2), durationMs: 1_000, spokenOn: "phone")
+        let other = LiveSession(id: "other", kind: .audiobook, title: "", startedAt: Date(timeIntervalSince1970: 1))
+        XCTAssertEqual(VoiceMarginImport.liveSession(naming: path, in: [other, named])?.id, "named")
+        XCTAssertNil(VoiceMarginImport.liveSession(naming: path, in: [other]))
+        XCTAssertNil(VoiceMarginImport.liveSession(naming: path + "x", in: [named]))
+        XCTAssertNil(VoiceMarginImport.liveSession(naming: path, in: []))
     }
 }

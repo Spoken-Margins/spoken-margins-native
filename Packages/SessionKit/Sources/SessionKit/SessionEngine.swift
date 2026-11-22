@@ -34,6 +34,8 @@ public final class SessionEngine {
     public private(set) var lastSummaryCandidates: [Interjection] = []
     public private(set) var lastSpokenText: String?
     public private(set) var lastScheduledTranscriptionInterjectionId: String?
+    /// The Margin the last `saveSpokenInterjection` stored, so a caller needs no read to learn what it saved (#4924).
+    public private(set) var lastSavedSpokenInterjection: Interjection?
     public private(set) var currentWatchPackage: WatchAudioPackage?
     public private(set) var lastResolvedMediaAnchor: MediaResolvedAnchor?
     public private(set) var lastQueuedWatchSyncEvent: WatchSyncEvent?
@@ -2122,6 +2124,7 @@ public final class SessionEngine {
             replyTo: capture.replyTo
         )
         try repository.saveInterjection(interjection)
+        lastSavedSpokenInterjection = interjection
         // Scheduling words is a request, not part of the save: the Margin is already durable, so a failure here must
         // not read as a failed save (a second submit would store a second Margin).
         try? transcriber.scheduleTranscription(interjection: interjection)

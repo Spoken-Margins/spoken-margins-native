@@ -15,30 +15,34 @@ enum AddVoiceMarginAction {
     static func perform(
         audio source: URL, toItemId itemId: String?, in model: Gate1AppModel,
         files: LiveSessionFileWorker = .shared, supportDirectory: URL? = nil,
-        durationMs: @escaping @Sendable (URL) -> Int? = VoiceMarginFiles.defaultDuration, now: Date = Date()
+        inspect: @escaping @Sendable (URL) -> VoiceMarginImport.Inspection? = VoiceMarginFiles.defaultInspect, now: Date = Date()
     ) async throws -> String {
         let support = try supportDirectory ?? VoiceMarginFiles.supportDirectory()
         let prepared: VoiceMarginImport.Prepared
         do {
-            prepared = try await VoiceMarginFiles.prepare(source: source, support: support, durationMs: durationMs)
+            prepared = try await VoiceMarginFiles.prepare(source: source, support: support, inspect: inspect)
         } catch let refusal as VoiceMarginImport.Refusal {
             throw AddMarginShortcutError.voiceRefused(refusal)
         }
+        let path = prepared.audioPath // the listener's own recording, kept by `VoiceMarginImport`
         do {
-            return try await file(prepared, toItemId: itemId, in: model, files: files, now: now)
+            return try await file(prepared, path: path, toItemId: itemId, in: model, files: files, now: now)
         } catch {
-            // No Margin names the copy, so it is removed, never the Shortcut's own file.
-            await VoiceMarginFiles.discard(prepared, support: support)
+            // Removed only when no saved Margin names it, whatever step failed: a save that stored the Margin and then
+            // reported a failure keeps its voice. A doubt keeps the recording. Never the Shortcut's own file.
+            let sessions = await files.allSessions()
+            let named = VoiceMarginImport.liveSession(naming: path, in: sessions) != nil
+                || model.voiceMarginIsNamed(path)
+            await VoiceMarginFiles.discard(prepared, support: support, isNamed: named)
             throw error
         }
     }
 
     /// Where the recording goes, once it is the app's own. Returns what Siri says it went to.
     private static func file(
-        _ prepared: VoiceMarginImport.Prepared, toItemId itemId: String?, in model: Gate1AppModel,
+        _ prepared: VoiceMarginImport.Prepared, path: String, toItemId itemId: String?, in model: Gate1AppModel,
         files: LiveSessionFileWorker, now: Date
     ) async throws -> String {
-        let path = prepared.audioPath // the listener's own recording, kept by `VoiceMarginImport`
         let route = SiriMarginRoute.decide(.init(
             choseItem: itemId != nil, // as Add Margin: a chosen item comes first, even over a running live session
             runningSession: await files.runningSession(),
@@ -51,8 +55,12 @@ enum AddVoiceMarginAction {
             WatchMarginReceiver.shared.processInbox()
         }
         /// A spoken Margin filed into a live or quick session, with its words asked for afterwards.
-        func fileInSession(marginId: String, _ filed: LiveSession?) throws -> LiveSession {
-            guard let filed else { throw AddMarginShortcutError.notSaved(nil) }
+        func fileInSession(marginId: String, _ filed: LiveSession?) async throws -> LiveSession {
+            // A save that reports a failure after the Margin was stored (its second file) still saved it.
+            let stored = await files.allSessions()
+            guard let filed = filed ?? VoiceMarginImport.liveSession(naming: path, in: stored) else {
+                throw AddMarginShortcutError.notSaved(nil)
+            }
             announce()
             // Words come off the main actor and never hold the Shortcut up; one that doesn't finish here is caught up
             // from the saved Margin (`LiveSessionSpokenMargins.transcribeMissing`).
@@ -68,7 +76,7 @@ enum AddVoiceMarginAction {
                 marginId: marginId, audioPath: path, markedAt: now, durationMs: prepared.durationMs,
                 spokenOn: "phone", now: now
             )
-            return SiriMarginRoute.filedName(try fileInSession(marginId: marginId, filed))
+            return SiriMarginRoute.filedName(try await fileInSession(marginId: marginId, filed))
         }
         switch route {
         case .chosenItem:
@@ -99,7 +107,7 @@ enum AddVoiceMarginAction {
                 sessionId: running.id, marginId: marginId, audioPath: path, markedAt: now,
                 durationMs: prepared.durationMs, spokenOn: "phone"
             )
-            _ = try fileInSession(marginId: marginId, filed)
+            _ = try await fileInSession(marginId: marginId, filed)
             return name
         case .quickSession:
             return try await fileAsQuick()
@@ -110,20 +118,20 @@ enum AddVoiceMarginAction {
 /// The file work of Add Voice Margin, off the main actor: measuring and copying a long recording (about 100 MB at ten
 /// minutes, uncompressed), removing a copy no Margin names, and holding a Shortcut's bytes in a temporary file.
 enum VoiceMarginFiles {
-    static let defaultDuration: @Sendable (URL) -> Int? = { AudioFileLength.milliseconds(of: $0) }
+    static let defaultInspect: @Sendable (URL) -> VoiceMarginImport.Inspection? = { AudioFileLength.inspect($0) }
 
     static func supportDirectory() throws -> URL {
         try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
     }
 
     static func prepare(
-        source: URL, support: URL, durationMs: @escaping @Sendable (URL) -> Int?
+        source: URL, support: URL, inspect: @escaping @Sendable (URL) -> VoiceMarginImport.Inspection?
     ) async throws -> VoiceMarginImport.Prepared {
-        try VoiceMarginImport.prepare(source: source, supportDirectory: support, durationMs: durationMs)
+        try VoiceMarginImport.prepare(source: source, supportDirectory: support, inspect: inspect)
     }
 
-    static func discard(_ prepared: VoiceMarginImport.Prepared, support: URL) async {
-        VoiceMarginImport.discard(prepared, supportDirectory: support)
+    static func discard(_ prepared: VoiceMarginImport.Prepared, support: URL, isNamed: Bool) async {
+        VoiceMarginImport.discardUnlessNamed(prepared, supportDirectory: support, isNamed: { isNamed })
     }
 
     /// The file a Shortcut passed, readable at `url` until `remove()`. A file the Shortcut holds by address is read in

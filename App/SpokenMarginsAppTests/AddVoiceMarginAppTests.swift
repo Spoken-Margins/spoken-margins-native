@@ -36,10 +36,11 @@ final class AddVoiceMarginAppTests: XCTestCase {
     }
 
     private func add(
-        _ url: URL, item: String? = nil, model: Gate1AppModel, files: LiveSessionFileWorker, ms: Int? = 5_000
+        _ url: URL, item: String? = nil, model: Gate1AppModel, files: LiveSessionFileWorker, ms: Int? = 5_000, m4a: Bool = true
     ) async throws -> String {
         try await AddVoiceMarginAction.perform(
-            audio: url, toItemId: item, in: model, files: files, supportDirectory: support, durationMs: { _ in ms }, now: t0
+            audio: url, toItemId: item, in: model, files: files, supportDirectory: support,
+            inspect: { _ in ms.map { VoiceMarginImport.Inspection(durationMs: $0, isMPEG4Audio: m4a) } }, now: t0
         )
     }
 
@@ -183,6 +184,7 @@ final class AddVoiceMarginAppTests: XCTestCase {
         let files = LiveSessionFileWorker(root: root)
         try await files.save(LiveSession(id: "live", kind: .audiobook, title: "", startedAt: t0), generation: 1)
         let table: [(String, URL, Int?, VoiceMarginImport.Refusal)] = [
+            ("not an M4A", try recording("song.mp3"), 5_000, .notM4A),
             ("empty file", try recording("empty.m4a", bytes: 0), 5_000, .unreadable),
             ("not audio", try recording("notes.txt"), nil, .unreadable),
             ("missing file", root.appending(path: "gone.m4a"), 5_000, .unreadable),
@@ -190,7 +192,7 @@ final class AddVoiceMarginAppTests: XCTestCase {
         ]
         for (label, url, ms, expected) in table {
             do {
-                _ = try await add(url, model: model, files: files, ms: ms)
+                _ = try await add(url, model: model, files: files, ms: ms, m4a: expected != .notM4A)
                 XCTFail("\(label) must be refused")
             } catch let error as AddMarginShortcutError {
                 XCTAssertEqual(error, .voiceRefused(expected), label)
