@@ -112,6 +112,19 @@ class Queue(unittest.TestCase):
         self.assertEqual(numbers(q['merge_taps']), [99])
         self.assertEqual(oq.count(q), 4)
 
+    def test_owner_check_is_listed_apart_and_is_not_a_missing_card(self):
+        check = '**Owner check**\nPhone: export Diagnostics after the next build.'
+        q = self.build([issue(20, ['needs-owner'], [comment(check)]),
+                        issue(21, ['needs-owner'], [comment(check, association='NONE', login='mallory')]),
+                        issue(22, ['needs-owner'], [comment(check), comment(oq.ANSWERED, '2026-11-09T10:00:00Z')]),
+                        issue(23, ['needs-owner'], [comment('> **Owner check**\nquoted')])])
+        self.assertEqual(numbers(q['owner_checks']), [20])
+        self.assertIn('Diagnostics', q['owner_checks'][0]['card'])
+        self.assertEqual(numbers(q['needs_card']), [21, 23])
+        self.assertEqual(numbers(q['answered_label_on']), [22])
+        self.assertEqual(oq.count(q), 1)
+        self.assertIn('A check only you can do: Issue 20.', oq.speak(q))
+
     def test_design_pass_issue_is_not_a_missing_card(self):
         q = self.build([issue(14, ['needs-owner', 'needs-design'])])
         self.assertEqual(numbers(q['on_design']), [14])
@@ -174,6 +187,15 @@ class Guard(unittest.TestCase):
             issue(6, ['ready'], [comment("This is the owner's call.")])])
         self.assertEqual((report['card_missing'], report['labelled']), ([], []))
         self.assertEqual(writes, [])
+
+    def test_owner_check_needs_no_card_and_no_reminder(self):
+        check = comment('**Owner check**\nListen to the Margin on the phone speaker.')
+        report, writes = self.run_guard([issue(30, ['needs-owner'], [check])])
+        self.assertEqual((report['card_missing'], report['labelled'], report['answered_label_on']), ([], [], []))
+        self.assertEqual(writes, [])
+        stranger = comment('**Owner check**\nx', association='NONE', login='mallory')
+        report, _ = self.run_guard([issue(31, ['needs-owner'], [stranger])])
+        self.assertEqual(report['card_missing'], [31])
 
     def test_answered_card_with_label_still_on_is_flagged_not_relabelled(self):
         done = comment(oq.ANSWERED, '2026-11-09T10:00:00Z')
