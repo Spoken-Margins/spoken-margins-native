@@ -22,6 +22,8 @@ public struct SilentMarginLanding: Equatable, Sendable {
     /// The stop's place, in `unit`.
     public let position: Int
     public let unit: SkimStops.PositionUnit
+    /// The listener tapped Dismiss: the card is gone, but the landing stays so a Skim press still never meets this stop again.
+    public private(set) var isDismissed = false
 
     public init(
         itemId: String, marginId: String, subject: PinnedMarginCard.Subject, words: String?, isApproximate: Bool,
@@ -77,6 +79,13 @@ public struct SilentMarginLanding: Equatable, Sendable {
             itemId: itemId, marginId: margin.id,
             subject: .friend(SharedPacketArrival.senderName(layer.displayLabel)),
             words: words.isEmpty ? nil : words, isApproximate: approximate, position: position, unit: unit)
+    }
+
+    /// This landing after Dismiss: no card, same place for `skimTarget`.
+    public func dismissed() -> SilentMarginLanding {
+        var copy = self
+        copy.isDismissed = true
+        return copy
     }
 
     /// The card, when `isShowing` says it should be.

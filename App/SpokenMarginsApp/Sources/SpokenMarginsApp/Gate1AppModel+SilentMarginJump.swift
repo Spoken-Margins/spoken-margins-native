@@ -19,7 +19,7 @@ extension Gate1AppModel {
     /// landing's window (`SilentMarginLanding.isShowing`). A read of the playhead and nothing else, so it needs no timer and is
     /// right at any playback speed, for a listener who pauses, and after a scrub away.
     var shownSilentMarginLanding: SilentMarginLanding? {
-        guard let landing = silentMarginLanding, landing.itemId == snapshot.itemId else { return nil }
+        guard let landing = silentMarginLanding, !landing.isDismissed, landing.itemId == snapshot.itemId else { return nil }
         let playhead: Int?
         switch landing.unit {
         case .milliseconds: playhead = snapshot.currentMediaTimeMs
@@ -29,9 +29,10 @@ extension Gate1AppModel {
         return landing
     }
 
-    /// "Dismiss" on the card: the card goes, the source keeps playing.
+    /// "Dismiss" on the card: the card goes, the source keeps playing. The landing stays, marked dismissed, so a Skim press a moment
+    /// later still never lands on the stop the listener is at (`SilentMarginLanding.skimTarget`).
     func dismissSilentMarginLanding() {
-        silentMarginLanding = nil
+        silentMarginLanding = silentMarginLanding?.dismissed()
     }
 
     private func goToSilentSharedMargin(_ row: SharedMarginRow) {

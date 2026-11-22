@@ -276,17 +276,7 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
             try waitUntilPlaying("The episode did not play on after Skim went to the silent Margin")
         }
 
-        try XCTContext.runActivity(named: "J9 silent Skim, step 5: A second press does not land on the same stop again") { _ in
-            let backward = app.buttons["playback.skim.backward.button"].firstMatch
-            let landed = try position()
-            if backward.isEnabled { backward.tap() }
-            // Nothing is behind the Margin, so the episode stays at it (it may have played a little on); it never goes back to 4:30.
-            Thread.sleep(forTimeInterval: 2)
-            let after = try position()
-            XCTAssertTrue(after >= self.friendMarginAt - 5, "A second Skim backward went to \(after) s from \(landed) s: it met the silent stop again or left the item")
-        }
-
-        try XCTContext.runActivity(named: "J9 silent Skim, step 6: Forward from before the Margin lands on it") { _ in
+        try XCTContext.runActivity(named: "J9 silent Skim, step 5: Forward from before the Margin lands on it") { _ in
             try scrub(to: 0.1)
             waitUntil("Scrub did not land near 2:30; clock shows \(element("playback.progress.label").label)", timeout: 10) {
                 self.currentPosition().map { $0 < self.friendMarginAt - 60 } ?? false

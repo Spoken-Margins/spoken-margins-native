@@ -129,4 +129,15 @@ final class SilentMarginLandingTests: XCTestCase {
         XCTAssertTrue(made.isApproximate)
         XCTAssertEqual(made.card(noun: .episode).headline, "Margin from Sam is about here")
     }
+
+    // A dismissed card must not open the door to a repeat: Skim still passes the stop the listener is at.
+    func testDismissingTheCardKeepsTheLandingForSkim() {
+        let stops = SkimStops(chapters: [chapter("c0", 0)], margins: [silent("s", 300_000)])
+        let dismissed = landing(at: 300_000).dismissed()
+        XCTAssertTrue(dismissed.isDismissed)
+        XCTAssertFalse(landing(at: 300_000).isDismissed)
+        XCTAssertEqual(dismissed.skimTarget(direction: .backward, playhead: 300_500, in: stops)?.stop.id, "c0",
+                       "a plain search from 300,500 would find the stop again")
+        XCTAssertEqual(dismissed.position, 300_000)
+    }
 }

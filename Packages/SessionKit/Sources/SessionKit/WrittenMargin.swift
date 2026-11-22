@@ -146,9 +146,9 @@ extension SharedMarginReview.Entry {
 /// What the listener's "Read aloud" control says under a friend's written Margin (owner, 2026-11-05, #3427): which of the
 /// two people decided, and what it means for Skim. Plain words, decided on the host so a test holds them.
 public enum ReadAloudWords {
-    /// The line under the control. `senderName` is the sender's name, or nil when the file names nobody. `hasPlace` is whether the
-    /// listener can go to the Margin's place (`SharedMarginListPlay.canGo`): Skim and the Margins tab then still take them there
-    /// when it is not read aloud (#4934). With no place it is not a stop, so the lines say nothing of it.
+    /// The line under the control. `senderName` is the sender's name, or nil when the file names nobody. `hasPlace` is whether Skim
+    /// stops at the Margin and the Margins tab goes to it with nothing read (`SharedMarginListPlay.isSilentSkimStop`: a place, and
+    /// its friend's Margins on): the lines then say so (#4934). Otherwise it is no stop, so they say nothing of it.
     public static func footer(for margin: ImportedCommentaryInterjection, senderName: String?, hasPlace: Bool) -> String {
         let goesThere = " Skim and the Margins tab still take you here, with nothing read."
         // No voice on this phone can read it, whatever either of them chose (#3402): the same line a tap on it gets.
