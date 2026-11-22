@@ -37,7 +37,7 @@ final class WatchReturnToAppTipPolicyTests: XCTestCase {
 
     func testOnceSeenItIsDoneWhateverElseHolds() {
         XCTAssertEqual(decide(seen: true), .done)
-        XCTAssertEqual(decide(pairing: .none, seen: true), .done)
+        XCTAssertEqual(decide(pairing: WatchPairingState.none, seen: true), .done)
         XCTAssertEqual(decide(seen: true, hadMargin: false, calm: false), .done)
     }
 
