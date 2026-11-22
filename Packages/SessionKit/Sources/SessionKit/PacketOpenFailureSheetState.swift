@@ -49,6 +49,10 @@ public struct PacketOpenFailureSheetState: Equatable, Sendable {
     /// link's own failure, if it fails, replaces these words.
     public mutating func anotherLinkStarted() {
         isRetrying = false
+        // The drawer is told only when nothing is opening any more. The new link may still open (then nobody is told) or
+        // fail (`present` owes the notice again, `openEnded` too): closing the old sheet meanwhile must not withdraw the
+        // drawer a second time under the download (#4834).
+        owesCloseNotice = false
         if let presented { self.presented = Presented(id: presented.id, content: presented.content, canRetry: false) }
     }
 
@@ -80,6 +84,7 @@ public struct PacketOpenFailureSheetState: Equatable, Sendable {
         } else if presented != nil, self.generation == generation {
             presented = nil
             isRetrying = false
+            owesCloseNotice = true // the link that took the notice away (`anotherLinkStarted`) has ended with nothing to show
         }
     }
 

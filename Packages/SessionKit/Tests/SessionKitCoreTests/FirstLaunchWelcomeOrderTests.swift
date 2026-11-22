@@ -247,6 +247,7 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
     func testAFailureAfterTheFriendsItemOpenedChangesNothing() {
         var order = Order(drawerOwed: true)
         XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .none)
+        XCTAssertEqual(order.moved(to: .elsewhere), .none, "the import review covers the Library")
         XCTAssertEqual(order.moved(to: .item), .none)
         XCTAssertEqual(order.phase, .waitingForLibrary)
 
@@ -254,5 +255,40 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
 
         XCTAssertEqual(order.phase, .waitingForLibrary, "the first file's item is the friend's, and the drawer still waits for the Library")
         XCTAssertFalse(order.playsWelcomeSampleOnClose)
+    }
+
+    /// #4834 finding 2: an item the listener opened themselves while a friend's link waited is not the friend's item,
+    /// so that link failing still brings the drawer back and lets Done play the Welcome sample.
+    func testAFailureAfterAnItemTheListenerOpenedThemselvesBringsTheDrawerBack() {
+        var order = Order(drawerOwed: true)
+        XCTAssertEqual(order.settle(at: .library), .presentDrawer)
+        XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .withdrawDrawer)
+        XCTAssertEqual(order.moved(to: .item), .none, "no review sheet came first: the listener opened this item")
+
+        XCTAssertEqual(order.moved(to: .elsewhere), .none, "the failure sheet")
+        XCTAssertEqual(order.friendFileFailed(place: .elsewhere), .none)
+        XCTAssertEqual(order.moved(to: .item), .none)
+        XCTAssertEqual(order.moved(to: .library), .presentDrawer)
+        XCTAssertTrue(order.playsWelcomeSampleOnClose)
+    }
+
+    /// Neighbouring sequences for the same predicate: which item visits count as the friend's.
+    func testWhichItemVisitsCountAsTheFriendsWhenALinkFails() {
+        struct Row { let name: String; let places: [Order.Place]; let heldBackAfterFailure: Bool }
+        let rows = [
+            Row(name: "own item then failure sheet", places: [.item, .elsewhere], heldBackAfterFailure: false),
+            Row(name: "own item then back to library", places: [.item, .library], heldBackAfterFailure: false),
+            Row(name: "review sheet then item", places: [.elsewhere, .item], heldBackAfterFailure: true),
+            Row(name: "own item, then a review, then the friend's item", places: [.item, .elsewhere, .item], heldBackAfterFailure: true),
+            Row(name: "review sheet only", places: [.elsewhere], heldBackAfterFailure: false),
+            Row(name: "no movement", places: [], heldBackAfterFailure: false),
+        ]
+        for row in rows {
+            var order = Order(drawerOwed: true)
+            _ = order.friendFileArrived(drawerHasPicks: false)
+            for place in row.places { _ = order.moved(to: place) }
+            _ = order.friendFileFailed(place: .elsewhere)
+            XCTAssertEqual(!order.playsWelcomeSampleOnClose, row.heldBackAfterFailure, row.name)
+        }
     }
 }

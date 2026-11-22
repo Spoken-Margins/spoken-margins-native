@@ -55,6 +55,11 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     /// The drawer is owed although the Library will not be empty at the next launch: a friend's file failed, and the
     /// drawer it withdrew has not shown since.
     private var isOwedAfterFailure: Bool
+    /// Since the friend's file arrived, the listener's place has been covered by a sheet (the import review, which comes
+    /// before the friend's item). An item reached without one was opened by the listener, not by the file (#4834).
+    private var sawCoverSinceArrival = false
+    /// The item visit that moved the order to `waitingForLibrary` came with no cover, so it was not the friend's item.
+    private var itemVisitWasNotTheFriends = false
 
     /// What the app keeps for the next launch, in case this one ends now.
     public enum Carry: Equatable, Sendable {
@@ -129,9 +134,13 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
         case .owed:
             phase = .waitingForFriendItem
             wasHeldBack = true
+            sawCoverSinceArrival = false
+            itemVisitWasNotTheFriends = false
             return .none
         case .drawerShowing:
             guard !drawerHasPicks else { return .none }
+            sawCoverSinceArrival = false
+            itemVisitWasNotTheFriends = false
             phase = .waitingForFriendItem
             wasHeldBack = true
             return .withdrawDrawer
@@ -147,7 +156,8 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     /// an earlier launch's friend's file held it back (that friend's item is in the Library). A failure with the drawer
     /// never withdrawn (it had picks, or nothing was owed) changes nothing.
     public mutating func friendFileFailed(place: Place) -> Action {
-        guard phase == .waitingForFriendItem else { return .none }
+        // Waiting for the Library counts too when the item the listener went to was their own, not the file's (#4834).
+        guard phase == .waitingForFriendItem || (phase == .waitingForLibrary && itemVisitWasNotTheFriends) else { return .none }
         wasHeldBack = wasHeldBackBeforeThisLaunch
         isOwedAfterFailure = true
         phase = .owed
@@ -158,11 +168,19 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     public mutating func moved(to place: Place) -> Action {
         switch phase {
         case .owed, .waitingForLibrary:
+            if phase == .waitingForLibrary {
+                if place == .elsewhere { sawCoverSinceArrival = true }
+                if place == .item { itemVisitWasNotTheFriends = !sawCoverSinceArrival }
+            }
             guard isSettled, place == .library else { return .none }
             phase = .drawerShowing
             return .presentDrawer
         case .waitingForFriendItem:
-            if place == .item { phase = .waitingForLibrary }
+            if place == .elsewhere { sawCoverSinceArrival = true }
+            if place == .item {
+                itemVisitWasNotTheFriends = !sawCoverSinceArrival
+                phase = .waitingForLibrary
+            }
             return .none
         case .notOwed, .drawerShowing:
             return .none

@@ -490,6 +490,27 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertFalse(drawer.isPresented)
     }
 
+    /// #4834: an item the listener opened themselves while a friend's link waited is not the friend's item, so that link
+    /// failing still brings the drawer back and Done plays the Welcome sample.
+    func testAFailedFriendLinkAfterTheListenerOpenedTheirOwnItemBringsTheDrawerBackAndDonePlays() async throws {
+        var started: [(ids: [String], allowsWelcome: Bool)] = []
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog()) { ids, allowsWelcome in started.append((ids, allowsWelcome)) }
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.didDismiss()
+        drawer.listenerMoved(to: .item)
+        drawer.listenerMoved(to: .elsewhere)
+
+        drawer.friendFileFailed(at: .elsewhere)
+        drawer.listenerMoved(to: .library)
+
+        XCTAssertTrue(drawer.isPresented)
+        drawer.finish()
+        drawer.didDismiss()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started.map(\.allowsWelcome), [true])
+    }
+
     // MARK: The first-launch "Got a link from a friend?" card (#3782)
 
     private var friendLink: String { "https://\(ShareLinkURL.shareHosts[0])/l/\(String(repeating: "ab12", count: 8))#\(ShareLinkSealing.Key.random().fragment)" }
