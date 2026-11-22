@@ -126,6 +126,30 @@ class Queue(unittest.TestCase):
         self.assertIn('Nothing is waiting', oq.speak(self.build([])))
 
 
+class TapList(unittest.TestCase):
+    """The merge-tap list is the open PRs labelled needs-owner-tap that do not carry his owner-tap yet (#4939)."""
+
+    class Api:
+        repo = 'o/r'
+
+        def pages(self, path):
+            self.path = path
+            item = lambda n, labels, pr=True: {'number': n, 'title': f'PR {n}', 'html_url': f'u{n}', 'created_at': 'c',
+                                               'labels': [{'name': x} for x in labels], **({'pull_request': {}} if pr else {})}
+            return [item(1, ['needs-owner-tap']), item(2, ['needs-owner-tap', 'owner-tap']),
+                    item(3, ['needs-owner-tap'], pr=False)]
+
+    def test_a_tapped_pr_and_an_issue_are_not_listed(self):
+        api = self.Api()
+        self.assertEqual(numbers(oq.fetch_taps(api)), [1])
+        self.assertIn('labels=needs-owner-tap', api.path)
+
+    def test_the_text_carries_the_github_list(self):
+        q = oq.build_queue([], [{'number': 1, 'title': 't', 'url': 'u', 'createdAt': '2026-11-08T00:00:00Z'}], NOW)
+        self.assertIn(oq.TAP_LIST_URL, oq.render(q))
+        self.assertIn('label%3Aneeds-owner-tap', oq.TAP_LIST_URL)
+
+
 class FakeApi:
     def __init__(self):
         self.writes = []
