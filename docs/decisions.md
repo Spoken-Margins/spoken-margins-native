@@ -697,3 +697,8 @@ These came in the project chat, so most have no comment of his to link. Each cit
   - `scripts/verify-tests.py` records an isolated simulator crash as a warning and stops only on a flood.
   - Scripted journeys don't cover audible content, the Lock Screen, Bluetooth, or anything that only looks wrong; those stay on the owner's phone pass.
   - A priority issue is an order of work, never a hold, which is also why the backlog behind it is never held.
+
+## Idle Mac sessions and worktrees (2026-11-22)
+- **Evidence.** The Mac held 1,175 unarchived sessions (3 running), 1,133 of them idle runs of the "SM Mac tick" and "SM integration run" scheduled tasks (about 24 a day since 2026-09-30), and 90 git worktrees. Scheduled sessions only rename themselves "done · archive later"; archiving in a scheduled session waits for a click nobody gives. 41 clean, merged or closed worktrees were removed by hand (about 10 GB freed).
+- **Cole chose: archive local sessions after 2 idle days** (account setting `auto_archive_inactive_days` = 2, was 0 = never). Running sessions are never archived, and a worktree with uncommitted changes stays on disk. Archiving is reversible with unarchive. Status when recorded: chosen; the app setting could not be changed from a remote thread, because the auto-mode check blocked `set_setting`.
+- **Worktree rules (technical calls).** A thread removes its own worktree after its PR merges and makes worktrees only under `.claude/worktrees/`. The Mac tick also removes merged, clean, pushed sibling worktrees. The integration run restores `project.pbxproj` before removing its worktree. Text: [docs/scheduled-jobs.md](scheduled-jobs.md), "Worktree clean-up".
