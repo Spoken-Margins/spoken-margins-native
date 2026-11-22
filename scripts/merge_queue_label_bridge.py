@@ -45,7 +45,7 @@ NOT_QUEUED = re.compile(r'not (in|on) the merge queue|not queued', re.I)
 AUTO_OFF = re.compile(r"(not|n't) (been )?(enabled|set|configured|turned on)|(not|n't) have auto-?merge|"
                       r"no auto-?merge|already (disabled|off)|"
                       r'auto-?merge (is )?(disabled|off)', re.I)
-CHECK_ACTIONS = ('edited', 'converted_to_draft')
+CHECK_ACTIONS = ('edited', 'converted_to_draft', 'opened', 'reopened', 'synchronize', 'ready_for_review')
 
 PR_FIELDS = 'id number isDraft title state labels(first: 50) { nodes { name } } autoMergeRequest { enabledAt } ' \
             'mergeQueueEntry { id }'

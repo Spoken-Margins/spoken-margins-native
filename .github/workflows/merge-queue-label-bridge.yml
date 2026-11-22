@@ -25,6 +25,13 @@
 #
 # `pull_request_target`, not `pull_request`: the script comes from main and nothing from the PR is checked out or run.
 #
+# Start (#4866): the sweep that queues PRs armed by a token-made label change used to wait for a 15-minute cron GitHub ran
+# 4 times of 96 in the 24 hours to 2026-11-21. Now a PR's own `opened`, `reopened`, `synchronize` and `ready_for_review`
+# run the one-PR check (armed PRs only), and the VPS (ops/dispatch-backstop/) fires `workflow_dispatch` for the sweep when
+# no run began in the last 15 minutes; the one daily tick is the last resort. There is no `workflow_run` start: a sweep
+# when any PR's check finishes would queue a PR whose merge group just failed, or one taken out by hand, before
+# merge_queue_dequeued.py has taken `automerge` off it (ci_model scenario d showed the second failing group).
+#
 # Cost and catch: one Linux job of seconds per `automerge` label change, title edit or draft, plus a seconds-long
 # sweep every 15 minutes (only with MERGE_QUEUE on; otherwise each run is a skipped job). Its real cost is the merge
 # group runs each queueing starts (Linux, plus a Mac for a Swift diff). The `needs-fix` guard bounds that to one group
@@ -37,9 +44,9 @@ name: merge-queue-label-bridge
 
 on:
   pull_request_target:
-    types: [labeled, unlabeled, edited, converted_to_draft]
+    types: [labeled, unlabeled, edited, converted_to_draft, opened, reopened, synchronize, ready_for_review]
   schedule:
-    - cron: '7,22,37,52 * * * *'
+    - cron: '7 6 * * *'  # last resort only
   workflow_dispatch:
     inputs:
       pr:
@@ -59,7 +66,10 @@ jobs:
       vars.MERGE_QUEUE == 'on' &&
       (github.event_name != 'pull_request_target' || github.event.label.name == 'automerge' ||
        (github.event.action == 'edited' && github.event.changes.title) ||
-       github.event.action == 'converted_to_draft')
+       github.event.action == 'converted_to_draft' ||
+       ((github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize' ||
+         github.event.action == 'ready_for_review') &&
+        contains(github.event.pull_request.labels.*.name, 'automerge')))
     # On the job, not the workflow: a run for another label skips this job and so never joins the group, where it
     # would replace a pending `automerge` run (a concurrency group keeps only its newest pending run).
     concurrency:
