@@ -31,6 +31,8 @@ struct ExperienceItemDetailScreen: View {
     @State private var episodeLinkText = ""
     @State private var showsReactions = false
     @State private var collectionItem: LibraryItemRow?
+    /// The arrival preview (#3216): Play on an item a friend's unheard Margins arrived on, before the listener has a place.
+    @State private var showsArrivalPreview = false
     /// A Margin with no place, opened from Recent Margins (#4233): it has no moment to show in the Timeline.
     @State private var unplacedMargin: MarginRow?
     /// The kept copy of this item's PDF, when it is a PDF and this iPhone holds its file: the only case the menu offers
@@ -224,6 +226,9 @@ struct ExperienceItemDetailScreen: View {
                 }
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
+            .trackedFullScreenCover(isPresented: $showsArrivalPreview) {
+                MarginsArrivalPreviewView().environmentObject(model)
+            }
             // Runs again when the item's Library row arrives, so the entry is not missed on a screen opened before the row.
             .task(id: "\(model.selectedItem.id)|\(model.libraryItems.contains { $0.id == model.selectedItem.id })") {
                 await refreshKeptOriginal()
@@ -560,6 +565,15 @@ struct ExperienceItemDetailScreen: View {
                 .accessibilityIdentifier("item.arrival.waitingLine")
         }
         Button {
+            // The arrival preview comes first on a fresh item with friends' unheard Margins (#3216); otherwise Play runs
+            // as before, through the early-tap keeper (#3788).
+            if MarginsArrivalPreview.shows(
+                MarginsTabSource(model: model).rows,
+                resumePlace: model.selectedItemPreferredContinuationSession?.position,
+                hasFinishedSession: hasFinishedSession) {
+                showsArrivalPreview = true
+                return
+            }
             tapped(.play, holdsEarlyTap: holdsEarlyTap)
         } label: {
             Label(choices.primaryTitle, systemImage: "play.fill")

@@ -126,11 +126,15 @@ public struct PinnedMarginCard: Equatable, Sendable {
 
         /// What happens when the source reaches `prompt`, from that Margin's own layer and the offer queue's memory, the
         /// same facts the offer uses. Announced is not heard: the tone sounded or the card was dismissed, and the voice may
-        /// never have played. Only `firstHeardAt` says the listener heard it (#4310).
-        public static func forMargin(_ prompt: ImportedCommentaryPrompt, offers: SharedMarginOfferQueue) -> Arrival {
+        /// never have played. Only `firstHeardAt` says the listener heard it (#4310). `revealMode` replaces the layer's own
+        /// when the listener's Autoplay setting changes how this Margin arrives (`MarginsAutoplaySetting`, #3216).
+        public static func forMargin(
+            _ prompt: ImportedCommentaryPrompt, offers: SharedMarginOfferQueue,
+            revealMode: ImportedCommentaryRevealMode?? = nil
+        ) -> Arrival {
             forMargin(
                 announced: offers.announcedIDs.contains(prompt.id), heard: !prompt.interjection.isNewToListener,
-                revealMode: prompt.layer.revealMode)
+                revealMode: revealMode ?? prompt.layer.revealMode)
         }
     }
 

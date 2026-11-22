@@ -25,6 +25,7 @@ NO_PILL = {
     ("ExperienceAddSourceFlow.swift", "*"): "the add-source sheet",
     ("ExperienceReactionsScreen.swift", "*"): "a sheet from the item screen",
     ("LiveSessionMarginDetailView.swift", "*"): "a sheet from the live session",
+    ("MarginsArrivalPreviewView.swift", "*"): "a full-screen cover over the item screen (#3216)",
     ("ExperienceMarginsScreen.swift", "SharedMarginDetailView"): "a sheet from Margins",
     ("ExperienceTimelineRailScreen.swift", "*"): "the Timeline places its own mini player",
     ("HelpScreen.swift", "*"): "a sheet",

@@ -293,7 +293,7 @@ extension Gate1AppModel {
         arrival: SharedMarginPromptStyle.Arrival = .crossed
     ) {
         let style = SharedMarginPromptStyle.style(
-            revealMode: prompt.layer.revealMode, arrival: arrival, assistiveTechnologyRunning: AssistiveTechnology.isRunning)
+            revealMode: effectiveRevealMode(prompt), arrival: arrival, assistiveTechnologyRunning: AssistiveTechnology.isRunning)
         FeedbackBannerHold.marginCard.setTouched(false) // a touch on the card before can't carry over; focus stays where it is
         sharedMarginOffers.toneOnlyCardID = style.isToneOnly && style.expiresAfterMs == nil ? prompt.id : nil
         let pausesSource = sourceWasPlaying && style.pausesSource

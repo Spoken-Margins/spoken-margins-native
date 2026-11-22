@@ -92,6 +92,15 @@ public enum MarginsControlCenter {
         public var startHereMs: Int? { timeMs.map { max(0, $0 - MarginsControlCenter.leadInMs) } }
     }
 
+    /// The rows for an open item, from the item's own state (its Margins, its friends' layers and their Margins): what the
+    /// item screen holds before the Margins list has read the item (#3216).
+    public static func rows(item: ItemDetailState) -> [Row] {
+        let layers = item.importedCommentaryLayers.filter { $0.deletedAt == nil }
+        return rows(
+            itemId: item.id, localMargins: item.interjections.filter { $0.status == "active" }, layers: layers,
+            importedMargins: layers.flatMap { item.importedCommentaryInterjections[$0.id] ?? [] })
+    }
+
     /// Every active Margin of the item, own and friends', in thread order (see `MarginThreadPresentation.rows`).
     public static func rows(
         itemId: String,

@@ -118,7 +118,7 @@ extension Gate1AppModel {
     /// What happens when the episode reaches `prompt`, from the same facts the offer uses, so the card and Next Margin
     /// never promise what the offer will not do.
     private func sharedMarginArrival(_ prompt: ImportedCommentaryPrompt) -> PinnedMarginCard.Arrival {
-        .forMargin(prompt, offers: sharedMarginOffers)
+        .forMargin(prompt, offers: sharedMarginOffers, revealMode: effectiveRevealMode(prompt))
     }
 
     private var nextMarginContext: NextMarginPress.Context? {

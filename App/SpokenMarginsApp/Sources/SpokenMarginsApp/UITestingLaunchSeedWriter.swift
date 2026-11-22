@@ -37,7 +37,7 @@ enum UITestingLaunchSeedWriter {
             let folder = support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let url = folder.appending(path: UITestingLaunchSeed.podcastFileName)
-            let bytes = try writeEpisodeAudio(to: url, seconds: durationSeconds)
+            let bytes = try writeEpisodeAudio(to: url, seconds: durationSeconds, silent: UITestingHooks.seedsMarginsTab)
             if let download = seed.podcastDownload(bytesWritten: bytes) {
                 try store.savePodcastDownload(download)
             }
@@ -45,10 +45,39 @@ enum UITestingLaunchSeedWriter {
         // J14 (#4100): a listener with history on the episode. Marked complete by hand, and/or a saved place.
         if UITestingHooks.podcastStartsCompleted { item.sourceCompletedAt = Date() }
         try store.seed(item: item)
-        if case let .offlinePodcast(_, durationSeconds) = seed, let place = UITestingHooks.podcastPlaceSeconds {
+        if case let .offlinePodcast(_, durationSeconds) = seed, let place = UITestingHooks.podcastPlaceSeconds,
+           !UITestingHooks.seedsMarginsTab {
             try store.saveSession(UITestingLaunchSeed.podcastSession(placeSeconds: place, durationSeconds: durationSeconds, now: Date()))
         }
+        if case let .offlinePodcast(_, durationSeconds) = seed, UITestingHooks.seedsMarginsTab {
+            try writeMarginsTabFixture(into: store, durationSeconds: durationSeconds)
+        }
         return item
+    }
+
+    /// The Margins tab fixture (#3216): the listener's own Margins in a session at 0:00 (so the arrival preview shows;
+    /// `SPOKEN_MARGINS_UI_TEST_PODCAST_PLACE` moves it), and Sam's and Rae's Margins, every voice a silent recording so
+    /// nothing reaches a live speaker.
+    private static func writeMarginsTabFixture(into store: SQLiteSessionStore, durationSeconds: Int) throws {
+        let support = try FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let folder = support.appending(path: "UITestMarginsTab", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let voiceSeconds = max(1, MarginsTabUITestSeed.voiceDurationMs / 1_000)
+        for id in MarginsTabUITestSeed.allMarginIds {
+            _ = try writeEpisodeAudio(to: folder.appending(path: "\(id).caf"), seconds: voiceSeconds, silent: true)
+        }
+        let audioPath: (String) -> String = { "UITestMarginsTab/\($0).caf" }
+        let now = Date()
+        var session = UITestingLaunchSeed.podcastSession(
+            placeSeconds: UITestingHooks.podcastPlaceSeconds ?? 0, durationSeconds: durationSeconds, now: now)
+        session.id = MarginsTabUITestSeed.sessionId
+        try store.saveSession(session)
+        for margin in MarginsTabUITestSeed.ownMargins(createdAt: now, audioPath: audioPath) { try store.saveInterjection(margin) }
+        for layer in MarginsTabUITestSeed.layers(importedAt: now) {
+            _ = try store.importCommentaryLayer(
+                layer, interjections: MarginsTabUITestSeed.friendMargins(layerId: layer.id, createdAt: now, audioPath: audioPath))
+        }
     }
 
     /// A co-op relaunch (#474): adds one friend's layer, with a voice, to the podcast the first launch seeded, as
@@ -100,7 +129,7 @@ enum UITestingLaunchSeedWriter {
     }
 
     /// A quiet tone as small 8 kHz PCM, so writing a 25-minute episode takes well under a second.
-    private static func writeEpisodeAudio(to url: URL, seconds: Int) throws -> Int64 {
+    private static func writeEpisodeAudio(to url: URL, seconds: Int, silent: Bool = false) throws -> Int64 {
         try? FileManager.default.removeItem(at: url)
         let sampleRate = 8_000.0
         guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: 1, interleaved: true) else {
@@ -112,7 +141,7 @@ enum UITestingLaunchSeedWriter {
             guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames),
                   let samples = buffer.int16ChannelData?[0] else { throw CocoaError(.fileWriteUnknown) }
             for frame in 0..<Int(chunkFrames) {
-                samples[frame] = Int16(1_200 * sin(2 * Double.pi * 220 * Double(frame) / sampleRate))
+                samples[frame] = silent ? 0 : Int16(1_200 * sin(2 * Double.pi * 220 * Double(frame) / sampleRate))
             }
             buffer.frameLength = chunkFrames
             for _ in 0..<Int((Double(seconds) / 10).rounded(.up)) {

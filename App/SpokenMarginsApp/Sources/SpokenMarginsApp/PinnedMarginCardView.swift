@@ -29,7 +29,7 @@ struct PinnedMarginCardView: View {
         // decides; the stages that play aloud, and a guided Margin's 420 ms beat, stay silent. The key carries the Margin's
         // id because two single-Margin packets from one sender make equal cards, and `onChange` ignores equal values.
         .onChange(of: announcementKey) { previous, key in
-            let guided = model.pendingImportedCommentary?.layer.revealMode == .guided
+            let guided = model.pendingImportedCommentary.map(model.effectiveRevealMode) == .guided
             if let text = VoiceOverAnnouncements.marginCard(from: previous, to: key, playsByItself: guided) {
                 AccessibilityNotification.Announcement(text).post()
             }
@@ -56,7 +56,7 @@ struct PinnedMarginCardView: View {
         // keeps the card's own line: it would change the card's height for 420 ms.
         if card.stage == .waitingForTap, let pending = model.pendingImportedCommentary,
            let said = PinnedMarginCard.waitingTranscript(
-               pending.interjection.approvedTranscript, playsByItself: pending.layer.revealMode == .guided) {
+               pending.interjection.approvedTranscript, playsByItself: model.effectiveRevealMode(pending) == .guided) {
             return said
         }
         guard let moment, model.playingImportedCommentary == nil, model.pendingImportedCommentary == nil else { return card.detail }

@@ -245,6 +245,10 @@ public enum AppSemanticColorRGB {
     /// A destructive label on the always-dark playback cards (Stop on-device generation): the dark-mode danger
     /// text in both appearances, since the card does not change with the system appearance (#1925).
     public static let watchDanger = fixed(1, 0.55, 0.48)
+    /// The unheard mark on the Margins tab's rows (bar and dot, #3216): Okabe-Ito sky blue, fixed because the list is
+    /// always on the dark playback surface. Blue, never red or green, so it reads for a red-green colourblind listener;
+    /// the row's "Unheard" label in its spoken description carries the state as well.
+    public static let unheard = fixed(0.337, 0.706, 0.914)
 
     /// The tints of the swipe buttons (#4045). iOS draws a swipe button's icon and words in white in both appearances, but every
     /// token above turns light in dark mode, which left white on a light tint at about 2:1. These are the light-mode values of
@@ -267,7 +271,7 @@ public enum AppSemanticColorRGB {
         ("border", border), ("borderIncreased", borderIncreased), ("green", green), ("accent", accent), ("accentSoft", accentSoft),
         ("watchBackground", watchBackground), ("watchControl", watchControl), ("ochre", ochre), ("ochreText", ochreText),
         ("warningText", warningText), ("coral", coral),
-        ("star", star), ("watchStar", watchStar), ("watchDanger", watchDanger),
+        ("star", star), ("watchStar", watchStar), ("watchDanger", watchDanger), ("unheard", unheard),
         ("swipeEvergreen", swipeEvergreen), ("swipeOchre", swipeOchre), ("swipePlum", swipePlum), ("swipeSlate", swipeSlate)
     ]
 }
@@ -347,6 +351,8 @@ public enum AppColorContrastAudit {
 
     /// Icons, borders, fills and state marks need 3:1 against what they sit on (WCAG 1.4.11).
     public static let nonTextPairs: [Pair] = [
+        .init(name: "unheard mark on listening background", foreground: AppSemanticColorRGB.unheard, background: AppSemanticColorRGB.listeningBackground, minimumRatio: 3),
+        .init(name: "unheard mark on watch control", foreground: AppSemanticColorRGB.unheard, background: AppSemanticColorRGB.watchControl, minimumRatio: 3),
         .init(name: "evergreen icon on panel", foreground: AppSemanticColorRGB.evergreen, background: AppSemanticColorRGB.panel, minimumRatio: 3),
         .init(name: "evergreen icon on app background", foreground: AppSemanticColorRGB.evergreen, background: AppSemanticColorRGB.background, minimumRatio: 3),
         .init(name: "plum icon on panel", foreground: AppSemanticColorRGB.plum, background: AppSemanticColorRGB.panel, minimumRatio: 3),
