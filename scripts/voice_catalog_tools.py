@@ -28,13 +28,15 @@ TEST_KEY_ID = "sm-test-1"
 OTHER_KEY_ID = "sm-unknown-key"
 
 # Every file comes from its publisher at a pinned revision, never from the owner's server (owner, 2026-10-19;
-# #2055 audit 2). The four INT8 graphs are in the sherpa-onnx author's Hugging Face repo, named *.int8.onnx;
+# #2055 audit 2), except the two ONNX Runtime licence files below. The four INT8 graphs are in the sherpa-onnx author's Hugging Face repo, named *.int8.onnx;
 # Contracts/voice-models/sources.json is the source of truth for the same URLs.
 SHERPA_INT8_BASE = "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/"
-ONNXRUNTIME_BASE = "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.2/"
+# The one exception (owner, 2026-11-22, #4853): Microsoft's repository is gone, so the two ONNX Runtime licence
+# files, byte for byte as in the PyPI wheel onnxruntime 1.24.2, are served from the owner's site, 338 KB in all.
+ONNXRUNTIME_MIRROR = "https://spokenmargins.proximitytoprogress.com/voices/files/supertonic-3-int8/onnxruntime-1.24.2/"
 LICENSE_FILE_SOURCES = {
-    "licenses/ONNXRUNTIME_MIT.txt": ONNXRUNTIME_BASE + "LICENSE",
-    "licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt": ONNXRUNTIME_BASE + "ThirdPartyNotices.txt",
+    "licenses/ONNXRUNTIME_MIT.txt": ONNXRUNTIME_MIRROR + "licenses/ONNXRUNTIME_MIT.txt",
+    "licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt": ONNXRUNTIME_MIRROR + "licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt",
     "licenses/SHERPA_ONNX_APACHE-2.0.txt": "https://www.apache.org/licenses/LICENSE-2.0.txt",
     "licenses/SUPERTONIC_CODE_MIT.txt": SHERPA_INT8_BASE + "LICENSE",
 }
@@ -92,7 +94,7 @@ def build_supertonic_draft() -> dict:
             "id": "onnxruntime-mit",
             "name": "MIT License (ONNX Runtime)",
             "spdxId": "MIT",
-            "textURL": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.2/LICENSE",
+            "textURL": ONNXRUNTIME_MIRROR + "licenses/ONNXRUNTIME_MIT.txt",
             "textSHA256": _license_file_hash("ONNXRUNTIME_MIT.txt"),
             "requiresAcceptance": False,
         },

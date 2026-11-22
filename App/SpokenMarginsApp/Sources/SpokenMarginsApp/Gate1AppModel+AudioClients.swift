@@ -144,6 +144,7 @@ extension Gate1AppModel {
                 onPreparationPlan: { await hooks.planned(itemId: $0, articleIdentity: $1, plan: $2) },
                 onPreparedChunk: { await hooks.rendered(itemId: $0, articleIdentity: $1, plan: $2, audioURL: $3, durationMs: $4, engine: $5) },
                 articleText: { hooks.articleText(itemId: $0) },
+                footnoteAsides: { hooks.footnoteAsides(itemId: $0) },
                 preparedChunkLookup: savedSupertonicLookup,
                 bundledVoiceChunkLookup: { await hooks.lookup(itemId: $0, articleIdentity: $1, plan: $2, engine: KittenNarrationRenderer.engine) },
                 onPreparedAudio: { [weak self] itemId, prepared in

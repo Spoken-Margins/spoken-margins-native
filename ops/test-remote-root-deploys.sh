@@ -91,7 +91,7 @@ for script in dial/deploy.sh bandwidth/deploy.sh; do
 
   # A failed install still removes the scratch folder (the EXIT trap).
   cp "${work}/shims/ssh" "${work}/ssh.orig"
-  sed -i "s|^esac|  'sudo '*install*) exit 1 ;;\nesac|" "${work}/shims/ssh"
+  perl -pi -e "s|^esac|  'sudo '*install*) exit 1 ;;\nesac|" "${work}/shims/ssh"
   if run_deploy "${script}" --enable; then fail "${script} went on after the install failed"; fi
   grep -q 'rm -rf /tmp/sm-stage.TEST' "${SM_TEST_LOG}" || fail "${script}: a failed install left the scratch folder behind"
   cp "${work}/ssh.orig" "${work}/shims/ssh"

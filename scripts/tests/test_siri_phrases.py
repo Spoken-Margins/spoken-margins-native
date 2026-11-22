@@ -6,7 +6,9 @@ source instead and guards the things that make Siri answer "there's not an app f
 - exactly one `AppShortcutsProvider` in the app (iOS registers one per app; a second one drops the registration);
 - the provider is compiled into every build (nothing defines `SPOKEN_MARGINS_LEGACY`, which compiles it out);
 - every phrase holds the application-name token once, so Siri can route it to this app;
-- no phrase is the "Add a Margin to/with/for <app>" shape that Siri gave to Reminders (#3893);
+- the "Add a Margin to/with <app>" forms are registered, because listeners say them (#4814), but Help never teaches
+  them: Siri gave "to" to Reminders on 2026-11-09 even while it was registered (#3893), and "with" is untried;
+- no other "<verb> a Margin to/with/for/on <app>" shape is registered (those have not been tried either);
 - no phrase is listed twice;
 - the phrases Help teaches are registered, and the name Siri hears is the app's display name.
 
@@ -21,8 +23,11 @@ APP = ROOT / "App"
 PROVIDER = APP / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp" / "SpokenMarginsAppShortcuts.swift"
 HELP = APP / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp" / "HelpScreen.swift"
 TOKEN = r"\(.applicationName)"
-# Phrases Siri gave to Reminders or another built-in (#3893): "<verb> a Margin to/with/for/on <app>".
+# The "<verb> a Margin to/with/for/on <app>" shape is the one Siri gave to Reminders (#3893). The "Add a Margin to/with
+# <app>" forms are registered anyway (#4814); every other verb, and "for"/"on", stay out until a phone check clears them.
 HANDED_ELSEWHERE = re.compile(r"\b(?:a )?margin (to|with|for|on)\b", re.I)
+REGISTERED_DESPITE_CLASH_RISK = {"add a margin to {app}", "add a margin with {app}"}
+UNPROVEN_ON_PHONE = re.compile(r"\bmargin (to|with)\b", re.I)
 
 
 def _phrases() -> list[str]:
@@ -57,9 +62,22 @@ class SiriPhraseTests(unittest.TestCase):
         for phrase in _phrases():
             self.assertEqual(phrase.count(TOKEN), 1, f"{phrase!r} must hold the application-name token once")
 
-    def test_no_phrase_is_the_shape_siri_gave_to_reminders(self):
+    def test_only_the_add_to_and_with_forms_have_the_shape_siri_gave_to_reminders(self):
         for phrase in _phrases():
-            self.assertIsNone(HANDED_ELSEWHERE.search(phrase.replace(TOKEN, "App")), phrase)
+            folded = " ".join(phrase.replace(TOKEN, "{app}").lower().split())
+            if HANDED_ELSEWHERE.search(folded):
+                self.assertIn(folded, REGISTERED_DESPITE_CLASH_RISK, phrase)
+
+    def test_the_to_and_with_forms_are_registered(self):
+        """Cole says "add a margin to spoken margins" (#4814); build 37 did not register it."""
+        folded = {" ".join(p.replace(TOKEN, "{app}").lower().split()) for p in _phrases()}
+        self.assertTrue(REGISTERED_DESPITE_CLASH_RISK <= folded, REGISTERED_DESPITE_CLASH_RISK - folded)
+
+    def test_the_phrases_that_worked_on_the_phone_stay_registered(self):
+        """"in" worked on the owner's phone (#3880); a change must not drop it or the name-first fallback."""
+        folded = {" ".join(p.replace(TOKEN, "{app}").lower().split()) for p in _phrases()}
+        self.assertIn("add a margin in {app}", folded)
+        self.assertIn("{app} add a margin", folded)
 
     def test_no_phrase_is_listed_twice(self):
         folded = [" ".join(p.lower().split()) for p in _phrases()]
@@ -73,6 +91,8 @@ class SiriPhraseTests(unittest.TestCase):
         registered = {p.replace(TOKEN, "Spoken Margins").lower() for p in _phrases()}
         for phrase in taught:
             self.assertIn(phrase.lower(), registered, f"Help teaches {phrase!r}, which no AppShortcut phrase says")
+            self.assertIsNone(UNPROVEN_ON_PHONE.search(phrase),
+                              f"Help teaches {phrase!r}, a to/with form no phone check has cleared (#3893, #4814)")
 
     def test_help_says_siri_stays_open_after_the_margin_is_added(self):
         """The owner's phone showed Siri stays open after "Margin added" and nothing playing comes back by itself

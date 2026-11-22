@@ -7,8 +7,9 @@ import Foundation
 /// - Per switch: the change in footprint from one switch into a media type to the next switch into the same type.
 ///   The first switch into a type is left out, because it is when that type's engine loads (for example the text
 ///   voice), and so is the first one after a memory warning, since the app unloads its voices on a warning. It needs
-///   at least two changes: four switches into one type. It takes the median, and with an even count the lower of the
-///   middle two, so one reload doesn't decide it, not even among the two changes of four switches.
+///   at least four changes: six switches into one type, because a voice keeps settling for about two switches after it
+///   loads (`minimumChangesPerType`). It takes the median, and with an even count the lower of the middle two,
+///   so that settling, or one reload, doesn't decide it.
 ///   A switch is sampled as the new item starts, so its footprint is mostly what the items before it left behind.
 ///   When listening alternates between two types, memory left behind by either one shows up in both types' changes,
 ///   and the verdict names every type that grew: the samples can't say which of the two leaves it.
@@ -24,7 +25,7 @@ public enum MemoryFootprintVerdict: Equatable, Sendable {
     /// `mediaTypes`: every type whose switches grew, the worst first; `megabytesPerSwitch` is the worst.
     case growingPerSwitch(mediaTypes: [String], megabytesPerSwitch: Int)
     case growingPerMinute(mediaType: String, megabytesPerMinute: Int)
-    /// Not enough samples to say: fewer than four switches into one media type and no five-minute stretch of
+    /// Not enough samples to say: fewer than six switches into one media type and no five-minute stretch of
     /// playback samples.
     case tooFewSamples
 
@@ -36,6 +37,15 @@ public enum MemoryFootprintVerdict: Equatable, Sendable {
     public static let minimumStretchSeconds: TimeInterval = 300
     /// Playback samples further apart than this have a pause between them (the recorder samples about each minute).
     public static let pauseGapSeconds: TimeInterval = 150
+    /// The fewest changes per switch into one media type that are read for growth. After its engine loads, a voice
+    /// keeps settling for about two more switches (Supertonic on main-t3 at c9e5697, 2026-11-22: 363 → 410 → 428 →
+    /// 428 MB). With two changes both were that settling, and the verdict read it as 18 MB per switch. With four,
+    /// three must reach the threshold, and the settling supplies only two. Memory left behind at every switch still
+    /// reads as growth.
+    public static let minimumChangesPerType = 4
+    /// Switches into each media type in the measured run (`PodcastToArticleMemoryTests`): the first loads the engine,
+    /// the second is where measuring starts, and each one after it is a change.
+    public static let switchesPerTypeInMeasuredRun = minimumChangesPerType + 2
 
     public init(samples: [MemoryFootprintLog.Sample]) {
         let lastLaunch = samples.lastIndex { $0.event == .launch }
@@ -84,7 +94,7 @@ public enum MemoryFootprintVerdict: Equatable, Sendable {
         var grownSwitches: [(type: String, perSwitch: Double)] = []
         for type in typeOrder {
             let changes = changesByType[type, default: []].sorted()
-            guard changes.count >= 2 else { continue }
+            guard changes.count >= Self.minimumChangesPerType else { continue }
             measured = true
             let perSwitch = changes[(changes.count - 1) / 2]
             if perSwitch >= Self.switchThresholdBytes { grownSwitches.append((type, perSwitch)) }

@@ -52,7 +52,7 @@ public enum NarrationChunkPlanner {
     /// article without such a note plans the same chunks either way and keeps its one identity, so turning the setting
     /// on does not invalidate its prepared audio.
     public static func identity(ofArticle articleText: String, asides: Bool) -> String {
-        identityHash(articleText, asides: asides && !FootnoteAnchors.find(in: articleText).isEmpty)
+        identityHash(articleText, asides: asides && !matchedFootnotes(in: articleText).isEmpty)
     }
 
     private static func identityHash(_ articleText: String, asides: Bool) -> String {
@@ -73,7 +73,7 @@ public enum NarrationChunkPlanner {
     /// `SpeechTextNormalizer.normalizeWithSourceOffsets(_:silencingSourceRanges:)`, so its spoken text is the one
     /// `articlePlan(_:asides: true)` plans.
     public static func silencedCitationRanges(inArticle articleText: String) -> [Range<Int>] {
-        FootnoteAnchors.find(in: articleText).flatMap(\.citationRanges)
+        matchedFootnotes(in: articleText).flatMap(\.citationRanges)
     }
 
     /// The article's own chunks: what background preparation renders and saves.
@@ -86,7 +86,7 @@ public enum NarrationChunkPlanner {
         _ articleText: String, budget: Int = RenderedSpeechChunker.spokenCostBudget, asides: Bool = false
     ) -> ArticlePlan {
         if asides {
-            let anchors = FootnoteAnchors.find(in: articleText)
+            let anchors = matchedFootnotes(in: articleText)
             if !anchors.isEmpty { return asidePlan(articleText, anchors: anchors, budget: budget) }
         }
         let normalized = SpeechTextNormalizer.normalize(articleText)

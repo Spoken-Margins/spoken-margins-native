@@ -267,7 +267,8 @@ final class PlaybackNowClipsTests: XCTestCase {
         XCTAssertEqual(height([fragment("one\ntwo\nthree")]), 3 * 22 + 20 + 10, "each line break starts a line")
         XCTAssertEqual(height([fragment(String(repeating: "x", count: 30), role: .table)]), 2 * 22 + 20 + 10)
         XCTAssertEqual(height([fragment(String(repeating: "x", count: 30), role: .body)]), 44 + 10)
-        XCTAssertEqual(height([fragment("a\nb", label: "Table 2"), fragment("c")]), 4 * 22 + 20 + 10, "a label is one more line")
+        XCTAssertEqual(height([fragment("a\nb", label: "Table 2"), fragment("c")]), 4 * 22 + 20 + 4 + 10,
+                       "a label is one more line, and a second fragment adds the 4 point gap between fragments")
     }
 
     func testAtTheLargestTextSizeNoHoldFits() {
@@ -278,5 +279,59 @@ final class PlaybackNowClipsTests: XCTestCase {
         let scene = holdScene(count: 6)
         XCTAssertEqual(target(scene, lit: 2, clips: [(-1, 2, 150)], visible: big.visibleHeight, row: { _ in row }), .sentence)
         XCTAssertEqual(PlaybackLivePassage.ClipHold.rowHeight(fragments: [sentence], metrics: .init(columnWidth: 0, visibleHeight: 1, bodyPointSize: 17, lineHeight: 22)), .infinity)
+    }
+
+    // MARK: Card size
+
+    func testACardIsTheListWidthLessTheGutterAndItsHeightFollowsTheAspect() {
+        typealias Layout = PlaybackLivePassage.ClipCardLayout
+        XCTAssertEqual(Layout.width(listWidth: 350), 322)
+        XCTAssertEqual(Layout.width(listWidth: 10), 0, "never negative")
+        // Aspect is width over height: 322 wide at 2.0 is 161 tall.
+        XCTAssertEqual(Layout.height(width: 322, aspect: 2, visibleHeight: 800), 161)
+        // A tall picture is held at 220 points, or at 45% of a short text area when that is less.
+        XCTAssertEqual(Layout.height(width: 322, aspect: 0.5, visibleHeight: 800), 220)
+        XCTAssertEqual(Layout.height(width: 322, aspect: 0.5, visibleHeight: 400), 180, accuracy: 0.001)
+        // A wide strip is held at the 44 point minimum, so it is still a target a finger can hit.
+        XCTAssertEqual(Layout.height(width: 322, aspect: 20, visibleHeight: 800), 44)
+        // A text area so short that 45% is under the minimum still gives the minimum, never less.
+        XCTAssertEqual(Layout.height(width: 322, aspect: 1, visibleHeight: 50), 44)
+        XCTAssertEqual(Layout.tallest(visibleHeight: 0), 44)
+    }
+
+    func testACardWithNoUsableAspectOrWidthGetsTheMinimum() {
+        typealias Layout = PlaybackLivePassage.ClipCardLayout
+        for aspect in [0.0, -1.0, .nan, .infinity] {
+            XCTAssertEqual(Layout.height(width: 322, aspect: aspect, visibleHeight: 800), 44, "aspect \(aspect)")
+        }
+        XCTAssertEqual(Layout.height(width: 0, aspect: 1.5, visibleHeight: 800), 44)
+        XCTAssertEqual(Layout.height(width: -5, aspect: 1.5, visibleHeight: 800), 44)
+    }
+
+    // MARK: A hold that failed is not tried again
+
+    func testACardWhoseHoldWasDroppedDoesNotHoldAtTheNextSentenceEither() {
+        let scene = holdScene(count: 12)
+        let clips = [(id: -1, holdStart: scene.sentences[3].start, height: 150.0)]
+        let hold = { (lit: Int, dropped: Set<Int>) in
+            PlaybackLivePassage.ClipHold.target(
+                scene: scene, lit: lit, clips: clips, visibleHeight: 450, dropped: dropped, sentenceHeight: { _ in 60 })
+        }
+        XCTAssertEqual(hold(4, []), .clip(id: -1), "the estimate says it fits")
+        // The view found sentence 4 off screen and dropped the card: sentences 4, 5 and 6 follow the usual way, so the text
+        // does not move up and down once per sentence.
+        for lit in 4...6 { XCTAssertEqual(hold(lit, [-1]), .sentence, "sentence \(lit)") }
+    }
+
+    func testADroppedCardHoldsAgainOnlyOnceTheListenerIsBeforeIt() {
+        let scene = holdScene(count: 12)
+        let starts = [-1: scene.sentences[3].start, -2: scene.sentences[8].start]
+        typealias Hold = PlaybackLivePassage.ClipHold
+        XCTAssertEqual(Hold.stillDropped([-1, -2], holdStarts: starts, litStart: scene.sentences[5].start), [-1],
+                       "the card not reached yet was never dropped for this reading; the reached one stays dropped")
+        XCTAssertEqual(Hold.stillDropped([-1], holdStarts: starts, litStart: scene.sentences[3].start), [-1], "at its own sentence")
+        XCTAssertEqual(Hold.stillDropped([-1], holdStarts: starts, litStart: scene.sentences[1].start), [],
+                       "a rewind to before the card gives it its hold again")
+        XCTAssertEqual(Hold.stillDropped([-9], holdStarts: starts, litStart: 0), [], "a card that is gone")
     }
 }

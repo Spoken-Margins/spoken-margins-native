@@ -693,7 +693,7 @@ class FinishEligibleTests(unittest.TestCase):
         self.assertFalse(self.ok(comments=[clean])[0])
 
     def test_lane_machinery_only_with_audit_findings(self):
-        files = ['scripts/lane-runner.py']
+        files = ['scripts/lane_t3.py']
         self.assertFalse(self.ok(labels=('needs-mac',), handing_at=ago(hours=2), files=files)[0])
         findings = c('**Claude audit on `aaaaaaa`**\nbad', ago(hours=2))
         self.assertTrue(self.ok(comments=[findings], files=files)[0])

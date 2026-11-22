@@ -185,8 +185,11 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 _ = try await preparationWrite(store) { try AudioPreparationPassWrites.retireManifest(retired, discardingJobId: jobId, in: $0) }
                 return try await hasMoreMatchingJobs()
             }
+            // The manifest was created as one plan kind and every step of its preparation follows it (#3777): the plan, the
+            // chunks counted as done, each commit and the assembly. They cannot disagree about the kind.
+            let asides = NarrationChunkPlanner.usesAsides(identity: manifest.articleIdentity, ofArticle: sourceText)
             let plan = await Task.detached(priority: .utility) {
-                Self.preparedChunkPlan(for: sourceText)
+                Self.preparedChunkPlan(for: sourceText, asides: asides)
             }.value
             let eligiblePlan = Self.preparationHorizon(
                 plan: plan,
@@ -215,7 +218,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             // After the heat gate, so a hot phone pauses the manifest as it always did (#2857).
             guard preparationVoice.allowedNow() else { diagnostics["backgroundAudioPreparation"] = "voice_not_allowed_now"; return false }
             manifest = try await coordinator.droppingMissingChunks(manifestId: manifest.id) ?? manifest // a lost chunk is rendered again, not assembled (#645)
-            let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, plan: plan, sourceText: sourceText, retryingStandInsFor: job)
+            let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, plan: plan, sourceText: sourceText, retryingStandInsFor: job, asides: asides)
             guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {
                 // All chunks are intact but nothing is assembled (#278): assemble now, because it
                 // otherwise happens only right after the last chunk is committed.
@@ -257,7 +260,8 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                         plan: next,
                         sourceText: sourceText,
                         audioURL: rendered.audioURL,
-                        durationMs: Int((rendered.duration * 1_000).rounded()), engine: rendered.engine
+                        durationMs: Int((rendered.duration * 1_000).rounded()), engine: rendered.engine,
+                        asides: asides
                     )
                 }
             } catch {
@@ -277,17 +281,17 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             // listener set while this chunk rendered is kept (#2509).
             let automaticPolicy = automaticAudioPreparationPolicy
             let jobBeforeRender = job
-            let decision = try await preparationWrite(store) { [plan, sourceText] store in
+            let decision = try await preparationWrite(store) { [plan, sourceText, asides] store in
                 try AudioPreparationPassWrites.recordChunk(
                     in: updated, jobId: jobBeforeRender.id, fallback: jobBeforeRender, decide: { fresh in
                         var job = fresh
                         job.nextChunkIndex = updated.chunks.count
                         job.lastFailureCode = PreparedAudioCoordinator.hasStandIns(updated) ? PreparedAudioCoordinator.standInRetried : nil
-                        if PreparedAudioCoordinator.matchingChunks(in: updated, plan: plan, sourceText: sourceText).count == plan.count {
+                        if PreparedAudioCoordinator.matchingChunks(in: updated, plan: plan, sourceText: sourceText, asides: asides).count == plan.count {
                             return .init(change: .save(job), needsAssembly: true)
                         } else if let maximumChunkCount = job.maximumChunkCount {
                             let horizon = plan.prefix(min(maximumChunkCount, plan.count))
-                            guard PreparedAudioCoordinator.isPrepared(Array(horizon), in: updated, sourceText: sourceText) else {
+                            guard PreparedAudioCoordinator.isPrepared(Array(horizon), in: updated, sourceText: sourceText, asides: asides) else {
                                 return .init(change: .save(job), needsAssembly: false)
                             }
                             let note = "ready_\(horizon.count)_of_\(plan.count)"

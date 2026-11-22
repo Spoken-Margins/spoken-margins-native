@@ -53,4 +53,60 @@ final class ReadablePageNavigationRulesTests: XCTestCase {
         )
         XCTAssertEqual(rules.contactedHosts, ["paulgraham.com", "a.example"])
     }
+
+    /// #4776: an X post link failed with "the page moved to an address that isn't secure". Recorded 2026-11-22:
+    /// `GET https://x.com/jack/status/20` with an iPhone user agent answers `302` with
+    /// `location: x-safari-https://redirect.x.com/jack/status/20?ct=rw-null` (X handing an in-app browser over to
+    /// Safari). That address is no web address and isn't insecure either, so it gets its own refusal; a real `http`
+    /// downgrade is still the insecure one.
+    func testAnotherAppsAddressIsNotCalledInsecure() {
+        let post = URL(string: "https://x.com/jack/status/20")!
+        var rules = ReadablePageNavigationRules(requestedURL: post)
+        XCTAssertEqual(rules.decide(url: post, targetIsMainFrame: true, isRedirect: false), .load)
+        XCTAssertEqual(
+            rules.decide(url: URL(string: "x-safari-https://redirect.x.com/jack/status/20?ct=rw-null"), targetIsMainFrame: true, isRedirect: true),
+            .refuse(.handedToAnotherApp)
+        )
+    }
+
+    func testTableOfNeighbouringAddressesForThePageItself() {
+        let table: [(String, ReadablePageNavigationRules.Decision)] = [
+            ("x-safari-https://redirect.x.com/jack/status/20", .refuse(.handedToAnotherApp)),
+            ("X-Safari-HTTPS://redirect.x.com/jack/status/20", .refuse(.handedToAnotherApp)),
+            ("x-safari-http://redirect.x.com/a", .refuse(.handedToAnotherApp)),
+            ("twitter://status?id=20", .refuse(.handedToAnotherApp)),
+            ("itms-apps://apps.apple.com/app/id333903271", .refuse(.handedToAnotherApp)),
+            ("mailto:someone@example.com", .refuse(.handedToAnotherApp)),
+            ("https://x.com/i/flow/login", .load),
+            ("HTTPS://X.COM/jack/status/20", .load),
+            // A real downgrade stays the insecure refusal, and so does everything that isn't an app hand-off.
+            ("http://x.com/jack/status/20", .refuse(.pageLeftHTTPS)),
+            ("HTTP://x.com/jack/status/20", .refuse(.pageLeftHTTPS)),
+            ("about:blank", .refuse(.pageLeftHTTPS)),
+            ("data:text/html,hi", .refuse(.pageLeftHTTPS)),
+            ("blob:https://x.com/1234", .refuse(.pageLeftHTTPS)),
+            ("file:///etc/hosts", .refuse(.pageLeftHTTPS)),
+            ("ftp://x.com/a", .refuse(.pageLeftHTTPS)),
+            ("wss://x.com/socket", .refuse(.pageLeftHTTPS)),
+            ("https:///no-host", .refuse(.pageLeftHTTPS)),
+        ]
+        for (address, expected) in table {
+            var rules = ReadablePageNavigationRules(requestedURL: URL(string: "https://x.com/jack/status/20")!)
+            XCTAssertEqual(rules.decide(url: URL(string: address), targetIsMainFrame: true, isRedirect: true), expected, address)
+        }
+        var rules = ReadablePageNavigationRules(requestedURL: URL(string: "https://x.com/jack/status/20")!)
+        XCTAssertEqual(rules.decide(url: nil, targetIsMainFrame: true, isRedirect: true), .refuse(.pageLeftHTTPS))
+    }
+
+    func testAnotherAppsAddressInsideAFrameIsStillOnlySkipped() {
+        var rules = ReadablePageNavigationRules(requestedURL: article)
+        XCTAssertEqual(
+            rules.decide(url: URL(string: "twitter://status?id=20"), targetIsMainFrame: false, isRedirect: true),
+            .skipFrame
+        )
+        XCTAssertEqual(
+            rules.decide(url: URL(string: "x-safari-https://redirect.x.com/a"), targetIsMainFrame: nil, isRedirect: false),
+            .skipFrame
+        )
+    }
 }
