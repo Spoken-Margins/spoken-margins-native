@@ -436,6 +436,54 @@ class SweepTests(unittest.TestCase):
         report = self.run_sweep(gh)
         self.assertEqual((len(report['flagged']), report['unknown']), (1, []))
 
+    def merged_pr(self, number, body, comments=()):
+        return {'number': number, 'merged_at': '2026-11-22T10:00:00Z', 'body': body, 'created_at': '2026-11-22T09:00:00Z',
+                'author_association': 'OWNER', 'user': {'login': 'x'}}
+
+    def xref(self, number):
+        return {'event': 'cross-referenced', 'source': {'issue': {'number': number, 'pull_request': {}, 'repository': {'full_name': 'o/r'}}}}
+
+    def test_a_pr_that_only_mentions_the_issue_speaks_for_nothing(self):
+        # Scenario A: a Part-of PR's waiver (a fixture harness) must not excuse a hand close.
+        waiver = 'Real-use proof waived: fixture harness only, no listener surface'
+        for body in ('Part of #19\n\n' + waiver, 'See #19 for context.\n\n' + waiver, 'Follow-up to #19\n\n' + GOOD):
+            with self.subTest(body=body[:30]):
+                gh = self.Gh([self.closed(19)], {}, timeline={19: [{'event': 'closed', 'commit_id': None}, self.xref(35)]})
+                gh.pull_by_number = {35: self.merged_pr(35, body)}
+                self.assertEqual(len(self.run_sweep(gh)['flagged']), 1, body)
+        # Scenario B: a proof for another issue, in a PR that closes that other issue and mentions this one.
+        gh = self.Gh([self.closed(19)], {}, timeline={19: [{'event': 'closed', 'commit_id': None}, self.xref(36)]})
+        gh.pull_by_number = {36: self.merged_pr(36, 'Closes #4790, follow-up to #19\n\n' + GOOD + 'Issue: #4790\n')}
+        self.assertEqual(len(self.run_sweep(gh)['flagged']), 1)
+        # A Part-of PR's proof does count; its waiver does not; a closing PR's waiver does.
+        gh = self.Gh([self.closed(19)], {}, timeline={19: [{'event': 'closed', 'commit_id': None}, self.xref(37)]})
+        gh.pull_by_number = {37: self.merged_pr(37, 'Part of #19\n\n' + GOOD)}
+        self.assertEqual(self.run_sweep(gh)['proved'], 1)
+        gh = self.Gh([self.closed(19)], {}, timeline={19: [{'event': 'closed', 'commit_id': None}, self.xref(38)]})
+        gh.pull_by_number = {38: self.merged_pr(38, 'Closes #19\n\nReal-use proof waived: tooling only, no listener surface')}
+        self.assertEqual(self.run_sweep(gh)['waived'], 1)
+
+    def test_an_owner_pass_before_the_issue_was_reopened_proves_nothing_now(self):
+        old_pass = comment('Owner PASS on phone pass 2026-11-23, build abc1234.', '2026-11-23T08:00:00Z')
+        reopened = {'event': 'reopened', 'created_at': '2026-11-24T08:00:00Z'}
+        gh = self.Gh([self.closed(20, when='2026-11-25T12:00:00Z')], {20: [old_pass]}, timeline={20: [reopened, {'event': 'closed', 'commit_id': None}]})
+        self.assertEqual(len(self.run_sweep(gh)['flagged']), 1)
+        fresh = comment('Owner PASS on phone pass 2026-11-25, build def5678.', '2026-11-25T09:00:00Z')
+        gh = self.Gh([self.closed(20, when='2026-11-25T12:00:00Z')], {20: [old_pass, fresh]}, timeline={20: [reopened]})
+        self.assertEqual(self.run_sweep(gh)['proved'], 1)
+        # Never reopened: the pass stands.
+        gh = self.Gh([self.closed(21)], {21: [old_pass]})
+        self.assertEqual(self.run_sweep(gh)['proved'], 1)
+
+    def test_a_pr_closing_a_listener_issue_is_not_cleared_by_an_owner_pass(self):
+        api = FakeApi({4783: {'labels': [{'name': 'area: pass it on'}]}},
+                      {4783: [comment('Owner PASS on phone pass 2026-11-24, build abc1234.')]})
+        reasons = proof.pr_blockers(api, 9, pull('Closes #4783'), [], lambda: ['aaaaaaa0' + 'b' * 32], lambda c: [])
+        self.assertEqual(len(reasons), 1)
+        pass_in_pr = proof.pr_blockers(api, 9, pull('Closes #4783\n\nOwner PASS on phone pass x, build y'), [],
+                                       lambda: ['aaaaaaa0' + 'b' * 32], lambda c: [])
+        self.assertEqual(len(pass_in_pr), 1)
+
     def test_a_pr_whose_body_says_part_of_but_whose_commit_says_closes_still_counts(self):
         # merge policy reads body plus commit messages; the sweep reads the same text, or it would reopen what merge policy passed.
         gh = self.Gh([self.closed(14)], {}, timeline={14: [{'event': 'closed', 'commit_id': 'deadbee'}]},

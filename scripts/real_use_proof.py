@@ -258,26 +258,36 @@ def closing_issues(body: Optional[str], own_number: int, repo: str) -> list[int]
     return list(dict.fromkeys(found))
 
 
-def timed_items(pull: dict, trusted_comments: list) -> list[tuple]:
-    """(time, text, pr_side) for a PR: its body when its author is trusted, and its trusted comments."""
+def timed_items(pull: dict, trusted_comments: list, closes: bool = True) -> list[tuple]:
+    """(time, text, pr_side, closes) for a PR: its body when its author is trusted, and its trusted comments. <closes>
+    says whether the PR closes the issue in question (False: it only says `Part of #N`, so its waiver does not count)."""
     items = []
     if comment_trust.trusted_author(pull.get('author_association'), (pull.get('user') or {}).get('login')):
-        items.append((pull.get('created_at') or '', pull.get('body') or '', True))
-    items.extend((c.get('created_at') or '', c.get('body') or '', True) for c in trusted_comments)
+        items.append((pull.get('created_at') or '', pull.get('body') or '', True, closes))
+    items.extend((c.get('created_at') or '', c.get('body') or '', True, closes) for c in trusted_comments)
     return items
 
 
-def entries_for(items: list[tuple], target: int, several: bool = False) -> list[Entry]:
-    """The records in <items> in the order they were written, that speak for issue <target>. A PR-side proof that names
-    issues in an `Issue:` line speaks only for those; when the PR closes several listener-facing issues (<several>)
-    a PR-side proof must say which, so one run can't stand in for all of them. Waivers speak for the PR."""
+def entries_for(items: list[tuple], target: int, several: bool = False, not_before: str = '') -> list[Entry]:
+    """The records in <items> in the order they were written, that speak for issue <target>. Items are (time, text,
+    pr_side[, closes]). Records older than <not_before> (the issue's last reopening) are dropped: they proved a build
+    that has since regressed. On the PR side, a proof that names issues in an `Issue:` line speaks only for those; when
+    the PR closes several listener-facing issues (<several>) it must say which; a waiver counts only from a PR that
+    closes the issue (not one that says `Part of`); and an `Owner PASS` line never counts, it is the owner's alone."""
     entries: list[Entry] = []
-    for _, text, pr_side in sorted(items, key=lambda item: item[0]):
+    for item in sorted(items, key=lambda item: item[0]):
+        when, text, pr_side = item[:3]
+        closes = item[3] if len(item) > 3 else True
+        if not_before and when and when < not_before:
+            continue
         for entry in parse(text, pr_side):
-            if entry.kind == 'proof' and entry.pr_side:
-                named = {int(n) for n in re.findall(r'\d+', entry.fields.get('issue', ''))}
-                if (named and target not in named) or (not named and several):
+            if entry.pr_side:
+                if entry.kind == 'owner_pass' or (entry.kind == 'waiver' and not closes):
                     continue
+                if entry.kind == 'proof':
+                    named = {int(n) for n in re.findall(r'\d+', entry.fields.get('issue', ''))}
+                    if (named and target not in named) or (not named and several):
+                        continue
             entries.append(entry)
     return entries
 
@@ -326,8 +336,9 @@ def pr_blockers(api, number: int, pull: dict, comments: list, own_commits: Calla
             targets.append((target, issue))
     reasons = []
     for target, issue in targets:
-        items = timed_items(pull, comments) + [(c.get('created_at') or '', c.get('body') or '', False) for c in api.issue_comments(target)]
-        verdict = judge(entries_for(items, target, several=len(targets) > 1))
+        items = timed_items(pull, comments) + issue_items(api.issue_comments(target))
+        # An Owner PASS comment proves a build already on main, never this PR's commits, so it can't clear a merge.
+        verdict = judge([e for e in entries_for(items, target, several=len(targets) > 1) if e.kind != 'owner_pass'])
         if verdict.status == 'proved' and verdict.commit:
             stale = stale_after(verdict.commit, own_commits(), paths_after)
             if stale:
@@ -382,20 +393,52 @@ class Gh:
 
 
 def issue_items(comments: list) -> list[tuple]:
-    return [(c.get('created_at') or '', c.get('body') or '', False) for c in comments]
+    return [(c.get('created_at') or '', c.get('body') or '', False, True) for c in comments]
 
 
-def closing_items(gh, number: int) -> list[tuple]:
-    """The PR-side records that speak for issue <number> after it closed, as (time, text, pr_side) items. This is the
-    one reader the sweep and `--issue N --pr M` share: every merged PR of this repository that the issue's timeline ties
-    to it (the PR of the closing commit, and each merged PR the timeline shows referencing it), whatever keyword it used,
-    because a change that couldn't be run first says `Part of #N` and gets its proof after the merge. Their bodies count
-    when the author is trusted, their comments when trusted; an `Issue:` line in a record limits which issues it covers."""
-    events = gh.api(f'issues/{number}/timeline?per_page=100', paginate=True)
+PART_OF = re.compile(
+    r'\bpart[ \t]+of[ \t]*:?[ \t]+(?:#(?P<n>\d+)|(?P<slug>[\w.-]+/[\w.-]+)#(?P<sn>\d+)|https://github\.com/(?P<url>[\w.-]+/[\w.-]+)/issues/(?P<un>\d+))', re.I)
+
+
+def how_named(text: Optional[str], number: int, repo: str) -> Optional[str]:
+    """`closes` when the text carries a closing keyword for issue <number> of <repo>, `part` when it says `Part of #N`,
+    else None. Code, quotes and HTML comments are ignored, as GitHub ignores them."""
+    if number in closing_issues(text, -1, repo):
+        return 'closes'
+    for match in PART_OF.finditer(CODE_SPAN.sub('', visible(text))):
+        slug = match.group('slug') or match.group('url') or ''
+        if (not slug or slug.lower() == repo.lower()) and int(match.group('n') or match.group('sn') or match.group('un')) == number:
+            return 'part'
+    return None
+
+
+def pr_items(gh, pull: dict, number: int, message: str = '') -> list[tuple]:
+    """The items of one merged PR for issue <number>, or [] when the PR does not name the issue. Its body and the closing
+    commit's <message> are what merge policy reads; a PR that merely mentions the issue speaks for nothing, and one that
+    says `Part of #N` has its proofs counted but not its waiver."""
+    via = how_named((pull.get('body') or '') + '\n' + message, number, gh.repo)
+    if via is None:
+        return []
+    comments = comment_trust.trusted_only(gh.api(f'issues/{pull["number"]}/comments?per_page=100', paginate=True))
+    return timed_items(pull, comments, closes=via == 'closes')
+
+
+def last_reopened(events: list) -> str:
+    """When the issue was last reopened ('' if never): earlier proofs belong to a build that has since regressed."""
+    return max([e.get('created_at') or '' for e in events if e.get('event') == 'reopened'] or [''])
+
+
+def closing_items(gh, number: int, events: list) -> list[tuple]:
+    """The PR-side items that speak for issue <number> after it closed. This is the one reader the sweep and
+    `--issue N --pr M` share (pr_items): the merged PR of the closing commit, and each merged PR of this repository the
+    issue's timeline shows referencing it, kept only when its body or the closing commit's message says `Closes #N` or
+    `Part of #N` (a change that couldn't be run first says `Part of #N` and gets its proof after the merge)."""
     closed = [e for e in events if e.get('event') == 'closed']
     sha = (closed[-1].get('commit_id') if closed else None) or ''
     pulls: dict[int, dict] = {}
+    message = ''
     if sha:
+        message = ((gh.api(f'commits/{sha}') or {}).get('commit') or {}).get('message') or ''
         for pull in gh.api(f'commits/{sha}/pulls?per_page=20', paginate=True):
             pulls[pull['number']] = pull
     for event in events:
@@ -413,8 +456,7 @@ def closing_items(gh, number: int) -> list[tuple]:
             pulls[pull['number']] = pull
     found: list[tuple] = []
     for pull in pulls.values():
-        comments = comment_trust.trusted_only(gh.api(f'issues/{pull["number"]}/comments?per_page=100', paginate=True))
-        found.extend(timed_items(pull, comments))
+        found.extend(pr_items(gh, pull, number, message))
     return found
 
 
@@ -435,10 +477,12 @@ def sweep(gh, since: dt.datetime, apply: bool = False, now: Optional[dt.datetime
             continue
         try:
             comments = gh.issue_comments(number)
+            events = gh.api(f'issues/{number}/timeline?per_page=100', paginate=True)
+            since_reopen = last_reopened(events)
             items = issue_items(comments)
-            verdict = judge(entries_for(items, number))
+            verdict = judge(entries_for(items, number, not_before=since_reopen))
             if not verdict.ok:   # the proof may sit on the PR that closed it
-                verdict = judge(entries_for(items + closing_items(gh, number), number))
+                verdict = judge(entries_for(items + closing_items(gh, number, events), number, not_before=since_reopen))
             if verdict.status == 'proved':
                 report['proved'] += 1
             elif verdict.status == 'waived':
@@ -495,10 +539,10 @@ def main(argv=None) -> int:
                 print(f'#{args.issue} is not listener-facing ({area_of(issue.get("labels"))}): no proof needed.')
                 return 0
             items = issue_items(gh.issue_comments(args.issue))
+            events = gh.api(f'issues/{args.issue}/timeline?per_page=100', paginate=True)
             if args.pr:
-                pull = gh.api(f'pulls/{args.pr}')
-                items += timed_items(pull, comment_trust.trusted_only(gh.api(f'issues/{args.pr}/comments?per_page=100', paginate=True)))
-            entries = entries_for(items, args.issue)
+                items += pr_items(gh, gh.api(f'pulls/{args.pr}'), args.issue)
+            entries = entries_for(items, args.issue, not_before=last_reopened(events))
             verdict = judge(entries)
             print(f'#{args.issue}: {verdict.status}' + (': ' + '; '.join(verdict.problems) if verdict.problems else ''))
             return 0 if verdict.ok else 1
