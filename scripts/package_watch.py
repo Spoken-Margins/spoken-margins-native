@@ -35,6 +35,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -243,16 +244,24 @@ def gh_repo_name(slug):
         return None
 
 
-def url_problem(url):
-    """None when the first byte of `url` downloads over verified TLS, else what went wrong."""
-    req = urllib.request.Request(url, headers={'Range': 'bytes=0-0', 'User-Agent': 'spoken-margins-package-watch'})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            return None if response.status in (200, 206) else f'HTTP {response.status}'
-    except urllib.error.HTTPError as err:
-        return f'HTTP {err.code}'
-    except OSError as err:  # URLError (TLS, DNS, refused) and timeouts
-        return str(getattr(err, 'reason', err))
+def url_problem(url, tries=2, pause=10):
+    """None when the first byte of `url` downloads over verified TLS, else what went wrong. A failure is retried
+    once after `pause` seconds, so one dropped connection doesn't flag the week."""
+    problem = None
+    for attempt in range(tries):
+        if attempt:
+            time.sleep(pause)
+        try:
+            req = urllib.request.Request(url, headers={'Range': 'bytes=0-0', 'User-Agent': 'spoken-margins-package-watch'})
+            with urllib.request.urlopen(req, timeout=30) as response:
+                problem = None if response.status in (200, 206) else f'HTTP {response.status}'
+        except urllib.error.HTTPError as err:
+            problem = f'HTTP {err.code}'
+        except Exception as err:  # URLError (TLS, DNS, refused), timeouts, a malformed url: report, never crash
+            problem = str(getattr(err, 'reason', err)) or type(err).__name__
+        if problem is None:
+            return None
+    return problem
 
 
 def pinned_binaries(pin):
@@ -265,7 +274,7 @@ def pinned_binaries(pin):
         with urllib.request.urlopen(f"https://raw.githubusercontent.com/{slug}/{pin['revision']}/Package.swift",
                                     timeout=30) as response:
             manifest = response.read().decode('utf-8', 'replace')
-    except OSError:
+    except Exception:  # unreadable manifest: the `gone` check covers a source that doesn't answer
         return []
     return [(url, url_problem(url)) for url in binary_urls(manifest)]
 

@@ -145,6 +145,9 @@ class BinaryTests(unittest.TestCase):
         found = pw.findings_for(pin(), ONNX, remote_of({}), NONE, SAME, must_not_run)
         self.assertEqual([k for k, _ in found], ['gone'])
 
+    def test_a_url_that_cannot_be_asked_is_a_problem_not_a_crash(self):
+        self.assertIn('unknown url type', pw.url_problem('not a url', pause=0))
+
 
 class AcceptedTests(unittest.TestCase):
     """#4579: a known state is accepted with a reason, so the weekly report stops re-opening it; a change re-flags."""
