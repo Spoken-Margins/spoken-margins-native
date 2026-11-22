@@ -7,7 +7,7 @@ import { useData, type DataApi } from './data.tsx';
 import { friendMargins, readingIntro, readsAloud } from './logic/arrival.ts';
 import { clipRejection, EPISODE_FAILED, failureNoticeShown, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
 import { CrossingClock } from './logic/margin-autoplay.ts';
-import { MarginTurns } from './logic/margin-turns.ts';
+import { MarginTurns, endTurnWhenPlaying as endWhenPlaying, pauseUnderReading } from './logic/margin-turns.ts';
 import { arrival, hearingOf, pendingStart, startSurvivesSeek } from './logic/margins-control-center.ts';
 import { MESSAGES, plainError } from './logic/messages.ts';
 import { attemptToast, attemptWithoutAudio } from './logic/episode-voice-words.ts';
@@ -283,17 +283,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     turnDone.current = undefined;
   }, []);
 
-  /**
-   * Ends a written Margin's turn, but only while the episode plays: Pause holds the Margins waiting their turn, as it
-   * holds a clip. Stops waiting once the turn is over by other means (cleared, skipped).
-   */
+  /** Ends a written Margin's turn, but only while the episode plays: Pause holds the Margins waiting their turn. */
   const endTurnWhenPlaying = useCallback((done: () => void) => {
-    const check = () => {
-      if (turnDone.current !== done) return;
-      if (audioRef.current?.paused) setTimeout(check, 500);
-      else done();
-    };
-    check();
+    endWhenPlaying(
+      { current: () => turnDone.current === done, paused: () => audioRef.current?.paused ?? false, done },
+      (check) => setTimeout(check, 500),
+    );
   }, []);
 
   const stopClip = useCallback(() => {
@@ -721,9 +716,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       current.element.pause();
       return;
     }
-    reading.current?.pause();
+    pauseUnderReading({ episode: () => audioRef.current?.pause(), reading: () => reading.current?.pause() });
     if (failedRef.current) setMarginPlaying(false);
-    audioRef.current?.pause();
   }, []);
 
   /** Play: carries on what was paused: the friend's clip, the voice reading a written Margin, then the episode. */

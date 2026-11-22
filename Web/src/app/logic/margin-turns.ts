@@ -45,3 +45,29 @@ export class MarginTurns<T> {
     });
   }
 }
+
+/** Asks again later whether a turn may end: `setTimeout` in the player, run by hand in tests. */
+export type Later = (check: () => void) => void;
+
+/**
+ * Ends a written Margin's turn, but only while the episode plays: Pause holds the Margins waiting their turn, as it
+ * holds a clip. Stops waiting once the turn is over by other means (`current` false: cleared, skipped).
+ */
+export function endTurnWhenPlaying(turn: { current: () => boolean; paused: () => boolean; done: () => void }, later: Later): void {
+  const check = () => {
+    if (!turn.current()) return;
+    if (turn.paused()) later(check);
+    else turn.done();
+  };
+  check();
+}
+
+/**
+ * Pause with a Margin being read over the episode: the episode stops first (audit 1 on #4505, `53fc52e`). A browser
+ * that can't hold speech stops the reading as it pauses, which ends that Margin's turn at once; the turn must already
+ * see the episode paused, so it waits for Play instead of beginning the next Margin during the Pause tap.
+ */
+export function pauseUnderReading(stop: { episode: () => void; reading: () => void }): void {
+  stop.episode();
+  stop.reading();
+}
