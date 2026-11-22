@@ -31,8 +31,11 @@ struct FootnoteCardBody: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// The note's words, up to this many lines; the full note is in the text reader's notes chapter, so there is no
-    /// "More" sheet (Design, Screens).
-    static let bodyLineLimit = 6
+    /// "More" sheet (Design, Screens). The Design says six. At the accessibility sizes the card gets four instead: the
+    /// header wraps there, and six lines of body plus a wrapped header ran 1.7 pt past the 430 pt budget (half the screen,
+    /// what is left for the title, the transport and the Auto-play row) at accessibility3 on iPhone 17 (#4991). The budget
+    /// is the rule, so the cap moves, not the number; two lines of slack keep a font-metric change from tipping it again.
+    static func bodyLineLimit(for size: DynamicTypeSize) -> Int { size.isAccessibilitySize ? 4 : 6 }
 
     private var isLargeText: Bool { dynamicTypeSize >= .xLarge }
 
@@ -60,7 +63,7 @@ struct FootnoteCardBody: View {
             Text(card.body)
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(Self.bodyLineLimit)
+                .lineLimit(Self.bodyLineLimit(for: dynamicTypeSize))
                 .truncationMode(.tail)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .topLeading)

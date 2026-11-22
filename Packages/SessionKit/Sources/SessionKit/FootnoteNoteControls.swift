@@ -87,7 +87,7 @@ public struct FootnoteCard: Equatable, Sendable {
     /// The source's own label (`[^a]` is "a").
     public let label: String
     /// The note's text as the narrator reads it, without the "Note 3." lead, whole across every chunk the planner split
-    /// it into. The card shows up to six lines of it; VoiceOver reads all of it.
+    /// it into. The card shows up to six lines of it (four at the accessibility text sizes); VoiceOver reads all of it.
     public let body: String
 
     public init(label: String, body: String) {
