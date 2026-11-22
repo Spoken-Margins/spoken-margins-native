@@ -78,6 +78,8 @@ extension Gate1AppModel {
             return "the page redirected too many times."
         case ReadablePageExtractionError.pageLeftHTTPS:
             return "the page moved to an address that isn't secure."
+        case ReadablePageExtractionError.handedToAnotherApp:
+            return "the site tried to open the page in another app instead of showing it here."
         case ReadablePageExtractionError.invalidResult:
             return "no article text was found. It may need JavaScript or a sign-in."
         case ReadablePageExtractionError.invalidURL, ReadablePageExtractionError.missingExtractor:

@@ -11,8 +11,12 @@ public struct ReadablePageNavigationRules: Sendable {
     public static let maximumRedirects = 5
 
     public enum Refusal: Equatable, Sendable {
-        /// The page itself went to an address that isn't HTTPS.
+        /// The page itself went to an `http` address, or to one with no usable scheme or host (a downgrade).
         case pageLeftHTTPS
+        /// The page itself was sent to another app's address (`x-safari-https://`, `twitter://`, `itms-apps://`):
+        /// the site wants its own app or Safari, not this reader. The address isn't insecure, so it isn't
+        /// called that (#4776).
+        case handedToAnotherApp
         case tooManyRedirects
     }
 
@@ -23,6 +27,11 @@ public struct ReadablePageNavigationRules: Sendable {
         /// Stop reading: the extraction fails.
         case refuse(Refusal)
     }
+
+    /// Schemes that are a web address or a page's own local content. Any other scheme in the page's own
+    /// navigation is a hand-off to an app. `http` stays a downgrade, and `about:`, `blob:`, `data:`,
+    /// `javascript:`, `file:`, `ftp:`, `ws:` and `wss:` keep their refusal as before.
+    private static let webOrLocalSchemes: Set<String> = ["http", "https", "about", "blob", "data", "javascript", "file", "ftp", "ws", "wss"]
 
     /// Every host the read has contacted, the requested page's first.
     public private(set) var contactedHosts: [String]
@@ -39,9 +48,12 @@ public struct ReadablePageNavigationRules: Sendable {
     ///   - isRedirect: WebKit reports the navigation as type `.other` (a redirect or a script-driven load).
     public mutating func decide(url: URL?, targetIsMainFrame: Bool?, isRedirect: Bool) -> Decision {
         guard targetIsMainFrame == true else { return .skipFrame }
-        guard let url,
-              url.scheme?.lowercased() == "https",
-              let host = url.host?.lowercased() else {
+        guard let url else { return .refuse(.pageLeftHTTPS) }
+        let scheme = url.scheme?.lowercased()
+        if let scheme, !Self.webOrLocalSchemes.contains(scheme) {
+            return .refuse(.handedToAnotherApp)
+        }
+        guard scheme == "https", let host = url.host?.lowercased() else {
             return .refuse(.pageLeftHTTPS)
         }
         if !contactedHosts.contains(host) { contactedHosts.append(host) }

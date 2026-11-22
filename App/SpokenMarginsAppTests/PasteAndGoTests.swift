@@ -199,6 +199,17 @@ final class PasteAndGoTests: XCTestCase {
         XCTAssertNotNil(Gate1AppModel.safariOfferReason(for: ReadablePageExtractionError.invalidResult))
     }
 
+    /// #4776: a site that hands the page to another app (X's `x-safari-https://`) is named as that, never as an insecure address.
+    func testAHandOffToAnotherAppIsNotCalledInsecure() throws {
+        let reason = try XCTUnwrap(Gate1AppModel.safariOfferReason(for: ReadablePageExtractionError.handedToAnotherApp))
+        XCTAssertTrue(reason.contains("another app"))
+        XCTAssertFalse(reason.contains("secure"))
+        XCTAssertEqual(
+            Gate1AppModel.safariOfferReason(for: ReadablePageExtractionError.pageLeftHTTPS),
+            "the page moved to an address that isn't secure."
+        )
+    }
+
     func testTheExtractorTreatsAnErrorStatusAsAFailureInsteadOfAnArticle() throws {
         let url = try XCTUnwrap(URL(string: "https://paste-and-go.example/a"))
         let forbidden = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 403, httpVersion: "HTTP/1.1", headerFields: nil))
