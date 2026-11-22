@@ -40,8 +40,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
         XCTAssertNil(h.coordinator.review)
         XCTAssertTrue(h.diagnostics["lastSpokenMarginsPackageImport"]?.hasPrefix("rejected:") == true)
-        XCTAssertEqual(h.failures, [], "a refused file gets the failure sheet, not a banner (#3801)")
-        XCTAssertEqual(h.openFailures.map(\.row), [.fileDamaged])
+        XCTAssertEqual(h.failures.count, 1)
         XCTAssertEqual(h.incomingFolderNames(), [], "a failed stage removes the folder it made")
         XCTAssertTrue(h.events.isEmpty, "nothing was published")
     }
@@ -1030,8 +1029,6 @@ private final class ImportHarness {
     var successes: [String] = []
     var confirmations: [String] = []
     var failures: [String] = []
-    /// The failure sheet's rows, in the order they were put up (#3801).
-    var openFailures: [PacketOpenFailureSheetContent] = []
     var failureContexts: [String] = []
     var openedItems: [String] = []
     var shownItems: [String] = []
@@ -1210,7 +1207,6 @@ private final class ImportHarness {
             reportSuccess: { [unowned self] in self.successes.append($0) },
             reportConfirmation: { [unowned self] in self.confirmations.append($0) },
             reportFailureMessage: { [unowned self] in self.failures.append($0) },
-            presentOpenFailure: { [unowned self] in self.openFailures.append($0) },
             reportFailure: { [unowned self] error, context in
                 self.failures.append(error.localizedDescription)
                 self.failureContexts.append(context)

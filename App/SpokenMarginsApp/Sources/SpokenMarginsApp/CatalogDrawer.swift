@@ -14,9 +14,6 @@ final class CatalogDrawerModel: ObservableObject {
     /// Set while a friend's file holds the first-run opening back (#3291), so a launch whose friend's item never opened
     /// leaves the drawer to the next one. Cleared when the drawer is seen.
     static let deferredByFriendFileKey = "catalogDrawerDeferredByFriendFileV1"
-    /// Set when a friend's file failed and the drawer it withdrew has not come back yet (#3801), so the next launch
-    /// still owes the drawer, with nothing held back. Cleared when the drawer is seen.
-    static let owedAfterFriendFileFailedKey = "catalogDrawerOwedAfterFriendFileFailedV1"
 
     @Published var isPresented = false
     @Published var selectedSubject: String? { didSet { refreshEntries() } }
@@ -143,14 +140,12 @@ final class CatalogDrawerModel: ObservableObject {
     /// The root view appeared: whether this launch owes the first-run opening. It waits for `settleFirstRun`, so a
     /// friend's file the app was opened with comes first (#3291).
     func noteLaunch(libraryWasEmptyAtLaunch: Bool, followedSourceCount: Int) {
-        let heldBack = defaults.bool(forKey: Self.deferredByFriendFileKey)
-        let owedAfterFailure = defaults.bool(forKey: Self.owedAfterFriendFileFailedKey)
         welcomeOrder = FirstLaunchWelcomeOrder(drawerOwed: FirstLaunchWelcomeOrder.drawerOwed(
             libraryWasEmptyAtLaunch: libraryWasEmptyAtLaunch,
-            deferredFromEarlierLaunch: heldBack || owedAfterFailure,
+            deferredFromEarlierLaunch: defaults.bool(forKey: Self.deferredByFriendFileKey),
             hasSeenDrawer: defaults.bool(forKey: Self.seenKey),
             followedSourceCount: followedSourceCount
-        ), owedFromEarlierLaunch: heldBack, owedAfterEarlierFailure: owedAfterFailure)
+        ), owedFromEarlierLaunch: defaults.bool(forKey: Self.deferredByFriendFileKey))
         // The system can hand the file over before the root view appears.
         if hasFriendFileArrived { recordFriendFileArrival() }
     }
@@ -171,21 +166,6 @@ final class CatalogDrawerModel: ObservableObject {
         recordFriendFileArrival()
     }
 
-    /// The sheet that said a friend's link or file could not be opened has closed. The drawer that file withdrew comes
-    /// back: at once on the Library, otherwise at the next visit. Nothing is held back by that file any more, so Done
-    /// with nothing picked plays the Welcome sample as on any first launch (#3801).
-    func friendFileFailed(at place: FirstLaunchWelcomeOrder.Place) {
-        // A failure that lands before the root view notes the launch must not be replayed as an arrival by `noteLaunch`.
-        hasFriendFileArrived = false
-        apply(welcomeOrder.friendFileFailed(place: place))
-        // Still owed (not on the Library yet) but no longer held back by this file: a kill now must not leave the next
-        // launch thinking a friend's item is in the Library (the audit on PR #4597).
-        if welcomeOrder.carry == .drawerOwed {
-            defaults.removeObject(forKey: Self.deferredByFriendFileKey)
-            defaults.set(true, forKey: Self.owedAfterFriendFileFailedKey)
-        }
-    }
-
     private func recordFriendFileArrival() {
         apply(welcomeOrder.friendFileArrived(drawerHasPicks: isFirstRunOpening && !picks.isEmpty))
         if welcomeOrder.defersDrawer { defaults.set(true, forKey: Self.deferredByFriendFileKey) }
@@ -203,7 +183,6 @@ final class CatalogDrawerModel: ObservableObject {
             // A held-back drawer is owed once: spent as it opens, so a kill with it up doesn't bring it back (#3795).
             // A friend's file arriving while it is up sets the key again (`recordFriendFileArrival`).
             defaults.removeObject(forKey: Self.deferredByFriendFileKey)
-            defaults.removeObject(forKey: Self.owedAfterFriendFileFailedKey)
         case .withdrawDrawer:
             isWithdrawing = true
             isPresented = false
@@ -268,7 +247,6 @@ final class CatalogDrawerModel: ObservableObject {
     func markSeen() {
         defaults.set(true, forKey: Self.seenKey)
         defaults.removeObject(forKey: Self.deferredByFriendFileKey)
-        defaults.removeObject(forKey: Self.owedAfterFriendFileFailedKey)
     }
 
     func load() async {
@@ -749,7 +727,6 @@ extension FirstLaunchWelcomeOrder.Place {
     init(_ model: Gate1AppModel) {
         let covered = model.spokenMarginsPackageImportReview != nil || model.isTermsOfUsePresented || model.isHelpPresented
             || model.isSharingInterjectionsPresented || model.writtenMarginDraft != nil || model.snapshot.isRecording
-            || model.packetOpenFailures.presented != nil
         if covered {
             self = .elsewhere
         } else if model.screen == .home {
@@ -784,9 +761,7 @@ private struct FirstLaunchWelcomeOrderModifier: ViewModifier {
 }
 
 extension View {
-    /// Also hosts the sheet for a friend's link or file that failed to open, because closing it brings the drawer back (#3801).
     func firstLaunchWelcomeOrder(model: Gate1AppModel, drawer: CatalogDrawerModel) -> some View {
         modifier(FirstLaunchWelcomeOrderModifier(model: model, drawer: drawer))
-            .packetOpenFailureSheet(model: model, drawer: drawer)
     }
 }

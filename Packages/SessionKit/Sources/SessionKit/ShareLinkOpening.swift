@@ -64,13 +64,14 @@ public struct ShareLinkPacketDownloader: Sendable {
     public typealias Fetch = @Sendable (_ url: URL, _ maximumBytes: Int) async throws -> (status: Int, body: Data)
 
     public enum Failure: Error, Equatable, Sendable, CaseIterable {
-        /// The phone couldn't reach the server (no connection, a timeout, a dropped connection). Worth a Try Again.
+        /// The phone couldn't reach the server (no connection, a timeout, a dropped connection). Worth another tap.
         case offline
         /// The server says the link is gone: expired, removed or switched off.
         case expired
-        /// The server answered with a fault of its own (too many requests, a 5xx other than 503). Worth a Try Again later.
+        /// The server answered with a fault of its own (too many requests, a 5xx). Worth trying again later.
         case serverProblem
-        /// The server answered 503: share links are switched off for now (#3801). Asking again won't help.
+        /// The server answered 503: share links are switched off for now (#3801). Until the failure sheet replaces the
+        /// banner, the banner words and Retry stay those of `serverProblem`.
         case switchedOff
         /// Anything else that stopped the download: an odd answer, an oversized body, a failed secure connection.
         case expiredOrUnreachable
@@ -78,6 +79,24 @@ public struct ShareLinkPacketDownloader: Sendable {
         case cutOff
         /// A key is there, but the header check or unsealing fails: a flipped byte, or a part that isn't a sealed packet.
         case damaged
+
+        public var message: String {
+            switch self {
+            case .offline: "You're offline. Reconnect, then tap the link again."
+            case .expired: "This link has expired. Ask your friend to share it again."
+            case .serverProblem, .switchedOff: "The server had a problem. Try again in a minute."
+            case .expiredOrUnreachable: "This link has expired or can't be reached."
+            case .cutOff, .damaged: ShareLinkSealing.Failure.incompleteOrDamaged.message
+            }
+        }
+
+        /// True when the same link may well open on another try, so the app offers a Retry button.
+        public var isRetryable: Bool {
+            switch self {
+            case .offline, .serverProblem, .switchedOff: true
+            case .expired, .expiredOrUnreachable, .cutOff, .damaged: false
+            }
+        }
 
         static func forStatus(_ status: Int) -> Failure {
             switch status {

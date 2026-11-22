@@ -134,7 +134,7 @@ final class J10OfflineJourneyUITests: XCTestCase {
             XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "Library did not open")
             try startArticle()
             // The real host, so the app recognises the link; the packet is fetched from the swapped host.
-            // A link without its #key is called cut off before asking the server, so it carries one
+            // A link without its #key fails as damaged before asking the server, so it carries one
             // (ShareLinkOpeningTests pins this exact link).
             let link = try XCTUnwrap(URL(string:
                 "https://spokenmargins.proximitytoprogress.com/l/0123456789abcdef0123456789abcdef#AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"))
@@ -150,21 +150,18 @@ final class J10OfflineJourneyUITests: XCTestCase {
             // The system may ask "Open in Spoken Margins?" first, sometimes late; wait for it or the message, so a
             // slow prompt isn't missed and a quick message isn't waited past.
             let confirm = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Open"]
-            // The failure sheet (#3801), not a banner.
-            let headline = element("packetOpenFailure.headline")
+            let banner = element("app.feedback.banner")
             let deadline = Date().addingTimeInterval(10)
-            while Date() < deadline, !headline.exists {
+            while Date() < deadline, !banner.exists {
                 if confirm.exists { confirm.tap(); break }
-                _ = headline.waitForExistence(timeout: 0.5)
+                _ = banner.waitForExistence(timeout: 0.5)
             }
-            XCTAssertTrue(headline.waitForExistence(timeout: 20),
+            XCTAssertTrue(banner.waitForExistence(timeout: 20),
                           "The share link showed no message (the app is \(app.state == .runningForeground ? "in front" : "not in front"))")
             screenshot("J10 share link with the server unreachable")
             // "offline" means the fetch went to the swapped host; the real server would answer with a not-found.
-            XCTAssertTrue(headline.label.localizedCaseInsensitiveContains("offline"),
-                          "The share link did not fail as a network error: \(headline.label)")
-            XCTAssertTrue(element("packetOpenFailure.tryAgain").exists, "An offline link offers Try Again")
-            element("packetOpenFailure.close").tap()
+            XCTAssertTrue(banner.label.localizedCaseInsensitiveContains("offline"),
+                          "The share link did not fail as a network error: \(banner.label)")
             XCTAssertEqual(playPause.label, "Pause", "The failed share link stopped playback")
             try waitUntilAdvancing("The article is stuck after the failed share link")
         }

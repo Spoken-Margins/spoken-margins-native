@@ -7,7 +7,8 @@ import Foundation
 /// new friend has never seen, and each row names exactly one next step: in its line, or as its Try Again button.
 /// Colour never carries the meaning; the sheet's warning icon sits above these words.
 ///
-/// This is only the words and the buttons; the sheet that shows them is `PacketOpenFailureSheet` in the app.
+/// This is only the words and the buttons. The sheet that shows them is the visible half of #3801; until it lands, the
+/// banner keeps showing `ShareLinkPacketDownloader.Failure.message`.
 public struct PacketOpenFailureSheetContent: Equatable, Sendable {
     public enum Row: CaseIterable, Sendable {
         /// 404 or 410: the link ran out.

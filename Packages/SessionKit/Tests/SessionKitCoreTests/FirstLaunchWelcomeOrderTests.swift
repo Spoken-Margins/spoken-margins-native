@@ -171,42 +171,6 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
         XCTAssertEqual(order.phase, .drawerShowing)
     }
 
-    /// The audit on PR #4597: a failure closed away from the Library, then the app killed before the Library, must not
-    /// make the next launch's drawer a held-back one. No friend's item came of it, so Done with nothing picked plays the
-    /// Welcome sample there too.
-    func testAFailedLinkClosedAwayFromTheLibraryCarriesTheDrawerOwedButNotHeldBack() {
-        var order = Order(drawerOwed: true)
-        XCTAssertEqual(order.settle(at: .elsewhere), .none)
-        XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .none)
-        XCTAssertEqual(order.carry, .drawerHeldBack, "while the friend's file is on its way")
-
-        XCTAssertEqual(order.friendFileFailed(place: .elsewhere), .none)
-        XCTAssertEqual(order.carry, .drawerOwed)
-
-        // The next launch: the Library is no longer empty (the Welcome sample is in it), so only the carry owes the drawer.
-        let carried = order.carry
-        var next = Order(
-            drawerOwed: Order.drawerOwed(libraryWasEmptyAtLaunch: false, deferredFromEarlierLaunch: carried != .nothing,
-                                         hasSeenDrawer: false, followedSourceCount: 0),
-            owedFromEarlierLaunch: carried == .drawerHeldBack,
-            owedAfterEarlierFailure: carried == .drawerOwed
-        )
-        XCTAssertEqual(next.phase, .owed)
-        XCTAssertTrue(next.playsWelcomeSampleOnClose)
-        XCTAssertEqual(next.carry, .drawerOwed, "a second kill before the Library still owes it")
-        XCTAssertEqual(next.settle(at: .library), .presentDrawer)
-        XCTAssertEqual(next.carry, .nothing, "spent as it opens")
-    }
-
-    func testAnEarlierLaunchsHoldIsCarriedUntilTheDrawerShows() {
-        var order = Order(drawerOwed: true, owedFromEarlierLaunch: true)
-        XCTAssertEqual(order.carry, .drawerHeldBack)
-        XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .none)
-        XCTAssertEqual(order.friendFileFailed(place: .elsewhere), .none)
-        XCTAssertEqual(order.carry, .drawerHeldBack, "the earlier friend's item is still in the Library")
-        XCTAssertEqual(Order(drawerOwed: true).carry, .nothing, "a fresh install's own drawer is not carried")
-    }
-
     func testAFailedLinkDoesNotUndoAnEarlierLaunchsHold() {
         var order = Order(drawerOwed: true, owedFromEarlierLaunch: true)
         XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .none)
