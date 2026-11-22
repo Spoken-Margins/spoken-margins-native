@@ -52,6 +52,20 @@ final class LaunchRecorderTests: XCTestCase {
         XCTAssertEqual(recorder.history.launches.last?.usableMs, 400)
     }
 
+    /// #3752: a stall that ends in the launch's first minute is timed from App.init and published with the launch.
+    func testAMainThreadStallInTheFirstMinuteIsKeptWithTheLaunchAndALaterOneIsNot() {
+        let start = clock
+        let recorder = makeRecorder()
+        clock = start.addingTimeInterval(4.0)
+        recorder.noteHang(MainThreadHangProbe.Hang(durationMs: 2400, operation: "start.offlineAssets"))
+        XCTAssertEqual(recorder.history.launches.last?.hangs?.first?.atMs, 1600)
+        XCTAssertTrue(lines[LaunchRecorder.launchesKey]?.contains("hangs 1 total 2400ms [2400ms@1600 start.offlineAssets]") == true, lines[LaunchRecorder.launchesKey] ?? "")
+
+        clock = start.addingTimeInterval(120)
+        recorder.noteHang(MainThreadHangProbe.Hang(durationMs: 900, operation: "run"))
+        XCTAssertEqual(recorder.history.launches.last?.hangCount, 1, "after the first minute it is the session's, in the event log")
+    }
+
     func testAProcessStartedLongBeforeAppInitIsAPrewarmAndItsIdleGapIsNotATime() {
         let start = clock
         let recorder = makeRecorder(processStart: start.addingTimeInterval(-2400)) // started 40 minutes earlier
