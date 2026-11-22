@@ -74,7 +74,7 @@ class SiriPhraseTests(unittest.TestCase):
         self.assertTrue(REGISTERED_DESPITE_CLASH_RISK <= folded, REGISTERED_DESPITE_CLASH_RISK - folded)
 
     def test_the_phrases_that_worked_on_the_phone_stay_registered(self):
-        """"in" worked on 2026-11-10 (#3880); a change must not drop it or the name-first fallback."""
+        """"in" worked on the owner's phone (#3880); a change must not drop it or the name-first fallback."""
         folded = {" ".join(p.replace(TOKEN, "{app}").lower().split()) for p in _phrases()}
         self.assertIn("add a margin in {app}", folded)
         self.assertIn("{app} add a margin", folded)
