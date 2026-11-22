@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import SessionKit
+import SessionKitAudio
 import SessionKitSupertonic
 import XCTest
 @testable import SpokenMarginsApp
@@ -62,7 +63,9 @@ final class SupertonicClientHarness {
         applicationIsInBackground: (@Sendable () -> Bool)? = nil,
         notificationCenter: NotificationCenter = .default,
         pressureRenderer: (any BundledVoiceRendering)? = nil,
-        queuedPlayerReader: SupertonicSpeechPlaybackClient.QueuedPlayerReader? = nil
+        queuedPlayerReader: SupertonicSpeechPlaybackClient.QueuedPlayerReader? = nil,
+        postFirstAudio: @escaping FirstAudioPoster = { _ in }, // never the shared hub: other tests' cues listen to it
+        startsPlayers: Bool = true // false: the starter only records players, so none reaches `.playing` by itself
     ) throws {
         root = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-harness-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -84,6 +87,7 @@ final class SupertonicClientHarness {
             audioSessionActivator: { sessionActivations.add("activate") },
             audioPlayerStarter: { player, rate in
                 players.started(player)
+                guard startsPlayers else { return }
                 player.volume = 0
                 player.playImmediately(atRate: rate)
             },
@@ -91,6 +95,7 @@ final class SupertonicClientHarness {
             observesPlayerLifecycle: true,
             pressureRenderer: pressureRenderer,
             fallbackClient: systemVoice,
+            postFirstAudio: postFirstAudio,
             onFallback: { reason, _, _ in fallbackReasons.add(reason) },
             // The activation timing is a diagnostic, not a stall; a slow simulator must not add it to the lists tests compare.
             onStall: { kind, _ in if kind != "supertonic.session_activate" { stallEvents.add(kind) } },
@@ -114,6 +119,9 @@ final class SupertonicClientHarness {
     }
 
     func play(from offset: Int) throws { try client.play(targetId: targetId, from: offset) }
+
+    /// The player of the newest chunk the client started.
+    var newestPlayer: AVPlayer? { players.newest }
 
     /// How many players the client has started, one per chunk heard (or re-seated).
     var playerStarts: Int { players.count }

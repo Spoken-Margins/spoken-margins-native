@@ -1,6 +1,7 @@
 import AVFoundation
 import Combine
 import SessionKit
+import SessionKitAudio
 
 /// Watches playback starts for #357. Silence while a voice warms up reads as failure when listening eyes-free, so
 /// a start that is still silent after 0.8 s gets a short soft chime. Each start's time to first audio goes into
@@ -18,6 +19,12 @@ import SessionKit
 /// The chime stops as soon as its start resolves, so it never runs over the first words. Since the regular check can
 /// be 500 ms late, the cue asks for one more check part-way through the chime (audit of #580).
 ///
+/// The check part-way through the chime still leaves the second note open to speech that begins after it, so each
+/// audio client also reports its first sound (`FirstAudioSignals`, #842). A signal for the open start's own target
+/// cancels the pending cue and fades a chime or waiting sound that is already sounding out over 20 ms, so neither
+/// runs over the first word. It changes no playback state: the engine's snapshot still closes the start and times
+/// `firstAudioMs`.
+///
 /// One chime and then silence still reads as a stall when the wait is long, so a start that is still silent
 /// `PlaybackWaitingCue.delay` after the chime also gets a quiet repeating waiting sound (three soft pops, every
 /// `PlaybackWaitingCue.period`). It is scheduled on the audio clock at the moment the chime plays and loops in the
@@ -30,6 +37,8 @@ final class PlaybackStartCue: ObservableObject {
     private(set) var cueTask: Task<Void, Never>?
     private var player: AVAudioPlayer?
     private var waitingPlayer: AVAudioPlayer?
+    /// A stand-in chime (`playChime`) is sounding. Only tests set it; the real chime is known by its players.
+    private var chimeSounding = false
     private let now: () -> Date
     private let waitingCueDelay: TimeInterval
     private let waitingCuePeriod: TimeInterval
@@ -46,6 +55,7 @@ final class PlaybackStartCue: ObservableObject {
     private let record: @MainActor (String, String) -> Void
 
     private var subscription: AnyCancellable?
+    private var firstAudioSubscription: AnyCancellable?
 
     /// `snapshots` is the model's `playbackClock.snapshots`. Subscribing here rather than from a view keeps the cue working when
     /// playback starts with no window attached (a Live Activity or an intent after a background launch).
@@ -59,6 +69,7 @@ final class PlaybackStartCue: ObservableObject {
         waitingCueLimit: TimeInterval = PlaybackWaitingCue.limit,
         stopChime: (@MainActor () -> Void)? = nil,
         checkNow: (@MainActor () -> Void)? = nil,
+        firstAudio: AnyPublisher<String, Never>? = nil,
         record: @escaping @MainActor (String, String) -> Void
     ) {
         self.now = now
@@ -74,6 +85,10 @@ final class PlaybackStartCue: ObservableObject {
         subscription = snapshots?.sink { [weak self] snapshot in
             MainActor.assumeIsolated { self?.observe(snapshot) }
         }
+        // The hub's receive(on: main) delivers on the main thread, as the snapshots are.
+        firstAudioSubscription = firstAudio?.sink { [weak self] targetId in
+            MainActor.assumeIsolated { self?.firstAudioHeard(targetId: targetId) }
+        }
     }
 
     /// The app's cue: it follows the model, checks the player before chiming, and writes through `pinned`, so
@@ -81,6 +96,7 @@ final class PlaybackStartCue: ObservableObject {
     convenience init(model: Gate1AppModel, pinned: PinnedDiagnostics) {
         self.init(snapshots: model.playbackClock.snapshots.eraseToAnyPublisher(),
                   checkNow: { [weak model] in model?.tickPlaybackProgress() },
+                  firstAudio: FirstAudioSignals.shared.heard.receive(on: DispatchQueue.main).eraseToAnyPublisher(),
                   record: { key, value in pinned.set(key, value) })
     }
 
@@ -118,6 +134,7 @@ final class PlaybackStartCue: ObservableObject {
             let result = MainThreadOperationLabels.shared.scoped("playbackStartChime") { self.playChime?() ?? self.playSoftChime() }
             self.record("lastPlaybackStartCue", "\(waiting):" + result)
             guard result == "played" else { return }
+            self.chimeSounding = self.playChime != nil
             // The waiting sound is placed on the audio clock now, so it still sounds if the app is in the background.
             let chimedAt = ContinuousClock.now
             let waitingResult = MainThreadOperationLabels.shared.scoped("playbackWaitingCue") {
@@ -132,6 +149,43 @@ final class PlaybackStartCue: ObservableObject {
             await self.keepWaitingCueHonest(for: waiting, chimedAt: chimedAt)
         }
     }
+
+    /// An audio client says sound began for `targetId` (#842). Only a start that is open for that target is
+    /// affected: its pending cue is cancelled, and a chime or waiting sound already sounding fades out over 20 ms,
+    /// before the first word. A late signal from an earlier start, or one with no open start, changes nothing.
+    func firstAudioHeard(targetId: String) {
+        guard let itemId = watch.waitingItemId, watch.firstAudioHeard(targetId: targetId) else { return }
+        cueTask?.cancel()
+        cueTask = nil
+        guard let stopped = stopForFirstAudio() else { return }
+        if stopped { record("lastPlaybackStartCue", "\(itemId):stopped_by_first_audio") }
+    }
+
+    /// Stops what is sounding for a first-audio signal. Returns nil when nothing was sounding, so a start whose cue
+    /// never played keeps its diagnostic as it was.
+    private func stopForFirstAudio() -> Bool? {
+        if let stopChimeOverride {
+            guard chimeSounding else { return nil }
+            stopChimeOverride()
+            chimeSounding = false
+            return true
+        }
+        // Local copies and nil fields at once, so a later start's chime, or the next snapshot's `stopChime`, can't
+        // touch these players.
+        let sounding = [player, waitingPlayer].compactMap { $0 }
+        player = nil
+        waitingPlayer = nil
+        guard !sounding.isEmpty else { return nil }
+        for sound in sounding { sound.setVolume(0, fadeDuration: Self.firstAudioFade) }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Self.firstAudioFade + 0.01))
+            for sound in sounding { sound.stop() }
+        }
+        return true
+    }
+
+    /// Long enough that cutting a sine mid-wave doesn't click, far shorter than a word's onset.
+    static let firstAudioFade: TimeInterval = 0.02
 
     /// Checks the player just before and just into each repetition, so a repetition doesn't start or run on after
     /// the first words (the regular check can be 500 ms late), and ends the sound when the start has hung too long.
@@ -158,6 +212,7 @@ final class PlaybackStartCue: ObservableObject {
     static let checkDuringChime = PlaybackStartChime.notes[0].seconds
 
     private func stopChime() {
+        chimeSounding = false
         if let stopChimeOverride { stopChimeOverride(); return }
         player?.stop()
         player = nil
