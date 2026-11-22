@@ -1156,12 +1156,7 @@ final class Gate1AppModel: ObservableObject {
             voiceURL: leveledVoiceURL(voiceURLs, itemId: sequence.itemId, margins: [sequence.target] + sequence.unplayed)
         )
         conductor.voiceRate = Float(recordMarginVoiceRate("moment"))
-        conductor.prepareAudioSession = { [weak self] in try self?.prepareMarginMomentVoice() }
-        conductor.onVoiceEnded = { [weak self] margin, reachedEnd in self?.marginMomentVoiceEnded(margin, itemId: sequence.itemId, reachedEnd: reachedEnd) }
-        conductor.onVoiceUnavailable = { [weak self] (marginId: String, reason: String) in
-            self?.diagnostics["marginMoment.voiceUnavailable"] = "\(marginId):\(reason)"
-            self?.reportWarning("That Margin's recording couldn't play, so listening continues.")
-        }
+        configureMarginMomentCallbacks(conductor, itemId: sequence.itemId)
         conductor.onChange = { [weak self, weak conductor] in
             guard let self, let conductor, self.marginMomentConductor === conductor else { return }
             self.marginMoment = conductor.sequence
