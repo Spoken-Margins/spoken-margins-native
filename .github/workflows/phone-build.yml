@@ -192,9 +192,9 @@ jobs:
           echo "::endgroup::"
           echo "::group::Binary downloads"
           { grep -ho 'https://[^"]*\.zip' "$SPM"/checkouts/*/Package.swift 2>/dev/null || true; } | sort -u | while read -r url; do
-            code=$(curl -sSIL -o /dev/null -m 60 -w '%{http_code}' "$url" 2>&1 || true)
+            code=$(curl -sL -r 0-0 -o /dev/null -m 60 -w '%{http_code}' "$url" 2>/dev/null || true)
             echo "$code $url"
-            [ "$code" = "200" ] || echo "::warning::Binary download answered $code: $url"
+            case "$code" in 200|206) ;; *) echo "::warning::Binary download answered $code: $url" ;; esac
           done
           echo "::endgroup::"
 
@@ -216,13 +216,13 @@ jobs:
             SWIFT_ENABLE_PREFIX_MAPPING=YES SWIFT_ENABLE_PROJECT_PREFIX_MAPPING=YES \
             CLANG_ENABLE_PREFIX_MAPPING=YES CLANG_ENABLE_PROJECT_PREFIX_MAPPING=YES \
             SWIFT_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" CLANG_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" \
-            "SM_BUILD_COMMIT=$GITHUB_SHA" archive 2>&1 | tee "$OUT/build.log" | grep -E 'error:|ARCHIVE|cacheable tasks' || true
+            "SM_BUILD_COMMIT=$GITHUB_SHA" archive 2>&1 | tee "$OUT/archive.log" | grep -aE 'error:|ARCHIVE|cacheable tasks' || true
           # The grep above hides the lines after `error:`, which name what failed (#4913). On failure, show them.
-          if ! grep -q 'ARCHIVE SUCCEEDED' "$OUT/build.log"; then
-            echo "::group::Full error block from build.log"
-            grep -E -B2 -A40 'error:' "$OUT/build.log" | head -400 || true
+          if ! grep -q 'ARCHIVE SUCCEEDED' "$OUT/archive.log"; then
+            echo "::group::Full error block from archive.log"
+            grep -aE -B2 -A40 'error:' "$OUT/archive.log" | head -400 || true
             echo "::endgroup::"
-            echo "::error::The archive failed; build.log is attached to this run as phone-build-log-$GITHUB_RUN_ID."
+            echo "::error::The archive failed; archive.log is attached to this run as phone-build-log-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT."
             exit 1
           fi
           echo "BUILD_SECONDS=$(( $(date +%s) - started ))" >> "$GITHUB_ENV"
@@ -322,7 +322,7 @@ jobs:
           dsym="$OUT/SpokenMargins.xcarchive/dSYMs/$APP_NAME.dSYM"
           if [ -d "$dsym" ]; then ditto -c -k --keepParent "$dsym" "$OUT/$APP_NAME.dSYM.zip"
           else echo "::warning::The archive has no $APP_NAME.dSYM; this build's crash frames cannot be symbolicated."; fi
-          cat "$OUT/export.log" >> "$OUT/build.log"
+          cat "$OUT/archive.log" "$OUT/export.log" > "$OUT/build.log"
           python3 - <<'PY'
           import datetime, json, os, plistlib, subprocess
           sha = os.environ['GITHUB_SHA']
@@ -355,14 +355,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # The archive and package logs, kept 7 days, when the build fails (#4913). Not the export log: it names the
-      # signing key's ID, and its errors already show in the step above.
+      # The archive and package logs, kept 7 days, when the build fails (#4913). Never build.log: the Package step
+      # appends the export log to it, and that log names the signing key's ID. archive.log stays separate for this.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
-          name: phone-build-log-${{ github.run_id }}
+          name: phone-build-log-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            .build/phone-out/build.log
+            .build/phone-out/archive.log
             .build/phone-out/resolve.log
           if-no-files-found: ignore
           retention-days: 7
