@@ -449,6 +449,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let rateChangeLock = NSLock()
     private var lastRateChange: (reason: String, rate: Float, at: ContinuousClock.Instant)?
     private var rateChangeObserver: NSObjectProtocol?
+    /// Watches the current chunk's player for its first `.playing`, which is the first sound of a play (#842).
+    private var playerSoundObservation: NSKeyValueObservation?
+    /// Reports the first sound of each `play` to the start cue (#842). Guarded by `lock`: KVO fires on any thread.
+    private var firstAudioLatch = FirstAudioLatch()
+    private let postFirstAudio: FirstAudioPoster
     private let stallThreshold: Duration
     private let stallSampleInterval: Duration
     private let stallRecoveryCooldown: Duration
@@ -553,6 +558,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onDeviceRenderingAllowed: @escaping @Sendable () -> Bool = { OnDeviceVoiceGovernor.app.supertonicRenderingBlock() == nil },
         pressureRenderer: (any BundledVoiceRendering)? = nil,
         fallbackClient: AudioPlaybackClient? = nil,
+        postFirstAudio: @escaping FirstAudioPoster = { FirstAudioSignals.shared.post($0) },
         interruptionHandler: InterruptionHandler? = nil,
         onGenerationStateChange: GenerationStateHandler? = nil,
         onGenerationProgress: GenerationProgressHandler? = nil,
@@ -588,6 +594,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     ) {
         self.renderer = renderer
         self.voice = voice
+        self.postFirstAudio = postFirstAudio
         self.playbackRate = max(0.25, min(2.0, speed))
         if let fallbackClient {
             self.fallback = fallbackClient
@@ -595,7 +602,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                   !identifier.isEmpty {
             self.fallback = SystemSpeechPlaybackClient(
                 voiceIdentifier: identifier,
-                speechRate: fallbackRate
+                speechRate: fallbackRate,
+                postFirstAudio: postFirstAudio
             )
         } else {
             // The default client follows the user's Spoken Content setting.
@@ -655,6 +663,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     deinit {
         playerItemStatusObservation?.invalidate()
+        playerSoundObservation?.invalidate()
         if let playbackEndObserver {
             NotificationCenter.default.removeObserver(playbackEndObserver)
         }
@@ -751,6 +760,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         // A play is the listener's own act, and other audio (a spoken Margin) may have released the session since the
         // last one; the seams that follow reuse this activation.
         forgetActivatedSession()
+        // The first sound of this play, from the chunk's player or the iOS voice, is what stops the start cue (#842).
+        lock.withLock { firstAudioLatch.arm(targetId: targetId) }
         try activateAudioSession(forPlayback: false)
         // Only another item, or this one having played to its end, lets a stand-in go at a play (#1786).
         let systemVoiceFinished = lock.withLock { voiceHold.voice(for: targetId) == .system }
@@ -785,6 +796,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         applyFootnoteSilencing(targetId: targetId)
         let requestedSpokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
+        // A skip that left a note while paused marks it (`noteLeftChunk`); this play must not bring the note back, so it
+        // is read before `spokenOffsetBeforeNote` consumes the mark (#3777). A chunk key holds no item, so the mark
+        // counts only for the item the client holds: another item's mark never turns off this item's restore.
+        let noteWasLeft = lock.withLock {
+            noteLeftChunk != nil && noteLeftChunk == currentChunk && currentTargetId == targetId
+        }
         let spokenOffset = lock.withLock {
             spokenOffsetBeforeNote(requested: requestedSpokenOffset, targetId: targetId, isSeek: isSeek)
         }
@@ -795,6 +812,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         switch action {
         case .resumePlayer(let player):
             try activateAudioSession()
+            // A player that is already sounding makes no new `.playing` change, so the latch armed above would wait for
+            // a later rebuffer or chunk and post late. Its sound is audible now (as in AVPlayerStreamPlaybackClient).
+            if player.timeControlStatus == .playing { lock.withLock { firstAudioLatch = FirstAudioLatch() } }
             player.playImmediately(atRate: lock.withLock { playbackRate })
             startStallMonitorIfNeeded()
             return
@@ -820,7 +840,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         case .none:
             break
         }
-        guard let request = nextRequest(targetId: targetId, fromSpokenOffset: spokenOffset) else {
+        // Only the place the engine asked for is restored: a start `spokenOffsetBeforeNote` already moved to the citing
+        // sentence is not moved again, which could step back over an earlier skipped note (#3777).
+        let restoresNote = !isSeek && !noteWasLeft && spokenOffset == requestedSpokenOffset
+        guard let request = nextRequest(targetId: targetId, fromSpokenOffset: spokenOffset, restoresNote: restoresNote) else {
             throw SessionKitError.invalidCommandForState("supertonic_playback_text_empty")
         }
         enqueueRender(request, shouldPlayWhenReady: false)
@@ -1447,7 +1470,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             resourceFallbackTargetIds.remove(target)
             fallbackIsActive = false
         }
-        guard let request = nextRequest(targetId: target, fromSpokenOffset: spokenOffset(forSourceOffset: offset)) else { return false }
+        // A retry is not the listener's move: a place where a note is cited gets its note again (#3777).
+        guard let request = nextRequest(
+            targetId: target, fromSpokenOffset: spokenOffset(forSourceOffset: offset), restoresNote: true) else { return false }
         enqueueRender(request, shouldPlayWhenReady: false)
         if wasPaused { try pause() }
         return true
@@ -1587,7 +1612,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    private func nextRequest(targetId: String, fromSpokenOffset spokenOffset: Int) -> RenderRequest? {
+    /// `restoresNote`: the play is not the listener's own move (a relaunch, or a resume of an item this client does not
+    /// hold), so a place where a note is cited starts at the citing sentence and the note then plays (#3777). A seek,
+    /// skip or restart passes false: landing on that offset means the text after the note.
+    private func nextRequest(
+        targetId: String,
+        fromSpokenOffset requestedOffset: Int,
+        restoresNote: Bool = false
+    ) -> RenderRequest? {
         removePlaybackEndObserver()
         let snapshot = lock.withLock { () -> (
             source: String,
@@ -1627,7 +1659,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
             currentTargetId = targetId
             activeSourceText = preparedSourceText
-            currentStartOffset = max(0, min(spokenOffset, source.count))
+            currentStartOffset = max(0, min(requestedOffset, source.count))
             currentChunkLength = 0
             transportIntent = .playing
             generationPlan.removeAll()
@@ -1663,6 +1695,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
         }
         let canonicalPlan = requests(spokenPlan.chunks)
+        let spokenOffset = restoresNote ? restoredOffsetBeforeNote(requestedOffset, plan: canonicalPlan) : requestedOffset
         // Starting on the bundled voice (Supertonic isn't allowed): a short first chunk, so audio starts in about
         // a second. The article's own plan is unchanged (#849). The split is used only when the playhead is in its
         // first half, and the whole chunk is kept: when it has saved Supertonic audio, that plays instead (#849 audit).
@@ -3561,6 +3594,19 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         return held
     }
 
+    /// Where a fresh generation that is not the listener's own move starts, given the offset asked for and the plan it
+    /// will play: the citing sentence's last chunk when a note is cited there and was not heard in this session. The
+    /// engine saved the citing sentence's end while the note read, and a start at it would play the next body chunk and
+    /// drop the note without a word (#3777, Design `relaunch`). The rule is `FootnoteNoteControls.restoredStartOffset`.
+    private func restoredOffsetBeforeNote(_ requested: Int, plan: [RenderRequest]) -> Int {
+        guard plan.contains(where: \.isAside) else { return requested }
+        let identity = lock.withLock { articleIdentity }
+        let heard = lock.withLock { heardNotes }
+        return FootnoteNoteControls.restoredStartOffset(
+            atOffset: requested, tags: plan.map(\.footnote), startOffsets: plan.map(\.startOffset),
+            isHeard: { label in identity.map { heard.hasHeardNote(label, itemId: $0) } ?? false })
+    }
+
     /// Where playback goes when the chunk now playing ends. The plan's own order when an aside is on either side of
     /// the step: an aside has no source characters, so stepping by offset would skip the aside or play the sentence
     /// before it again. Anywhere else, the old rule: the offset where this chunk's source ends (#3777).
@@ -3664,11 +3710,31 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 self?.playbackItemFailed(observedItem, request: request)
             }
         }
+        // Each chunk has its own player; the latch lets only the first `.playing` after a play count (#842).
+        playerSoundObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] observed, _ in
+            self?.noteTimeControlStatus(observed.timeControlStatus, of: observed)
+        }
+    }
+
+    /// A chunk player's `.playing` is the first sound of the play when that player is the current one and playback
+    /// is intended; it posts the current target once per play. Not from `startPlayer`, which only schedules (#842).
+    func noteTimeControlStatus(_ status: AVPlayer.TimeControlStatus, of observed: AVPlayer) {
+        // Before `lock` on purpose: `pause()` and `Self.empty` run under it and their `.paused` may be delivered on
+        // this thread, so only `.playing` may go on to take it.
+        guard status == .playing else { return }
+        let targetId = lock.withLock { () -> String? in
+            guard player === observed, transportIntent == .playing, let target = currentTargetId,
+                  firstAudioLatch.take(targetId: target) else { return nil }
+            return target
+        }
+        if let targetId { postFirstAudio(targetId) }
     }
 
     private func removePlaybackEndObserver() {
         playerItemStatusObservation?.invalidate()
         playerItemStatusObservation = nil
+        playerSoundObservation?.invalidate()
+        playerSoundObservation = nil
         if let rateChangeObserver {
             NotificationCenter.default.removeObserver(rateChangeObserver)
             self.rateChangeObserver = nil
@@ -4093,8 +4159,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         #if os(iOS)
         let options = PlaybackAudioSessionPolicy.options(mixes: key.mixes, lowersBackground: key.lowersBackground)
-        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: options)
-        try AVAudioSession.sharedInstance().setActive(true)
+        try AudioSessionOperationLabel.scoped(AudioSessionOperationLabel.supertonicActivate) {
+            try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: options)
+            try AVAudioSession.sharedInstance().setActive(true)
+        }
         #endif
         lock.withLock { activatedSessionKey = key }
     }

@@ -1,0 +1,34 @@
+#!/bin/sh
+# Run a command with the Spoken Margins agent identity, for agent-started processes only (#4915).
+# Never source this from an interactive shell profile. Usage: sm-agent-env <command> [args...]
+#
+# SM_AGENT_AS_APP=1: act as the GitHub App spoken-margins-agent. sm-app-token (next to this file) mints a 1-hour
+#   installation token from the App key in the Keychain. If that fails the command does not run: an agent asked to
+#   act as the App never falls back to the owner's login without saying so.
+# Otherwise (the default, and the rollback): the narrow token in the Keychain item sm-agent-gh, as before. If that
+#   item is missing, the command runs unchanged and uses the stored gh login.
+here=$(dirname "$0")
+minter=$here/sm-app-token
+[ -f "$minter" ] || minter=$here/sm_app_token.py
+if [ "${SM_AGENT_AS_APP:-}" = 1 ]; then
+  token=$(/usr/bin/python3 "$minter") || {
+    echo "sm-agent-env: SM_AGENT_AS_APP=1 but no App token; not running $1" >&2
+    exit 1
+  }
+else
+  token=$(/usr/bin/security find-generic-password -s sm-agent-gh -w 2>/dev/null) || token=""
+fi
+if [ -n "$token" ]; then
+  GH_TOKEN=$token
+  export GH_TOKEN
+  header=$(printf 'x-access-token:%s' "$token" | /usr/bin/base64)
+  n=${GIT_CONFIG_COUNT:-0}
+  case $n in *[!0-9]*) n=0 ;; esac
+  eval "GIT_CONFIG_KEY_$n='http.https://github.com/.extraheader'"
+  eval "GIT_CONFIG_VALUE_$n='AUTHORIZATION: basic $header'"
+  eval "export GIT_CONFIG_KEY_$n GIT_CONFIG_VALUE_$n"
+  GIT_CONFIG_COUNT=$((n + 1))
+  export GIT_CONFIG_COUNT
+fi
+unset token header n here minter
+exec "$@"

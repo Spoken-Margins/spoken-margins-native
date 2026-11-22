@@ -7,7 +7,7 @@ import { downloadFile } from '../download.ts';
 import { useRestoreFocus } from '../focus.ts';
 import { BackIcon, CloseIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenIcon, PlayIcon, ShareIcon, SkipIcon, StopIcon } from '../icons.tsx';
 import { withCopyLength } from '../logic/copy-length.ts';
-import { cueFor, friendMargins, leading, possessive, readingNote, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
+import { arrivedLengthNote, cueFor, friendMargins, leading, possessive, readingNote, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { marginRows, nextMargin, opensOnMarginsTab, playQueue, startFor, unheardCount, type NextMargin, type Row } from '../logic/margins-control-center.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
@@ -88,29 +88,39 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
   const words = margin.text ?? (margin.voice ? 'A spoken Margin' : '');
   const line = speakingLine(margin, margins, friendMargins(margins)[0]?.author);
   const voiced = readsAloud(margin) && typeof window !== 'undefined' && 'speechSynthesis' in window;
+  // A friend's Margin only (the listener's own carry no author): the listener's copy may differ from the sender's (#4614).
+  // Outside the status region, so a screen reader doesn't repeat it with every Margin.
+  const lengthNote = arrivedLengthNote(margin, margins, player.measuredLengthSeconds);
   return (
-    <div className="arrived-margin" role="status" data-testid="arrived-margin">
-      <p className="arrived-margin-head">
-        <strong>{line.title}</strong>
-        {line.position && <span> · {line.position}</span>}
-      </p>
-      {/* Above the words, so a long Margin never pushes it off the screen (owner, 2026-11-18). */}
-      {blocked ? (
-        <button type="button" className="button button-primary" onClick={player.playArrived}>
-          <PlayIcon size={18} />
-          Play {margin.author ? `${leading(possessive(senderName(margin.author)))}` : 'this'} Margin
-        </button>
-      ) : (
-        // Pause only holds a Margin; this is how to be done with it and carry on with the episode (#4473).
-        <button type="button" className="button" data-testid="skip-margin" onClick={player.skipMargin}>
-          Skip this Margin
-        </button>
+    <>
+      <div className="arrived-margin" role="status" data-testid="arrived-margin">
+        <p className="arrived-margin-head">
+          <strong>{line.title}</strong>
+          {line.position && <span> · {line.position}</span>}
+        </p>
+        {/* Above the words, so a long Margin never pushes it off the screen (owner, 2026-11-18). */}
+        {blocked ? (
+          <button type="button" className="button button-primary" onClick={player.playArrived}>
+            <PlayIcon size={18} />
+            Play {margin.author ? `${leading(possessive(senderName(margin.author)))}` : 'this'} Margin
+          </button>
+        ) : (
+          // Pause only holds a Margin; this is how to be done with it and carry on with the episode (#4473).
+          <button type="button" className="button" data-testid="skip-margin" onClick={player.skipMargin}>
+            Skip this Margin
+          </button>
+        )}
+        <p className="arrived-margin-text">
+          {margin.author ? <strong>{margin.author}</strong> : null} {formatClock(margin.atSeconds)}: {words}
+        </p>
+        {voiced && <p className="arrived-margin-note">{readingNote(margin)}</p>}
+      </div>
+      {lengthNote && (
+        <p className="arrived-margin-note" data-testid="arrived-margin-length-note">
+          {lengthNote}
+        </p>
       )}
-      <p className="arrived-margin-text">
-        {margin.author ? <strong>{margin.author}</strong> : null} {formatClock(margin.atSeconds)}: {words}
-      </p>
-      {voiced && <p className="arrived-margin-note">{readingNote(margin)}</p>}
-    </div>
+    </>
   );
 }
 
@@ -123,7 +133,11 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
 function MarginCue({ margins, saved }: { margins: readonly Margin[]; /** The listener just saved a Margin (2026-11-06 card). */ saved: boolean }) {
   const player = usePlayer();
   const sender = friendMargins(margins)[0]?.author;
-  const cue = cueFor(margins, player.time, sender, { failed: player.failed, heardWithoutEpisode: player.withoutEpisode === 'done' });
+  const cue = cueFor(margins, player.time, sender, {
+    failed: player.failed,
+    heardWithoutEpisode: player.withoutEpisode === 'done',
+    measuredLengthSeconds: player.measuredLengthSeconds,
+  });
   // While this card says the episode can't play, the player shows no toast of its own for it (#3356).
   // A Margin card on top of it hides the sentence, unless the Margins are playing without the episode (it was said first).
   const sayingFailure = (cue?.kind === 'unplayable' || cue?.kind === 'unplayable-done') && (!player.arrived || player.withoutEpisode !== 'idle');
@@ -212,6 +226,12 @@ function MarginCue({ margins, saved }: { margins: readonly Margin[]; /** The lis
         >
           Start a minute earlier
         </button>
+      )}
+      {/* Last, so its arrival never moves a button (#4614). */}
+      {cue.lengthNote && (
+        <p className="margin-cue-note" data-testid="margin-cue-length-note">
+          {cue.lengthNote}
+        </p>
       )}
     </section>
   );

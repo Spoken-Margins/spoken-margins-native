@@ -47,6 +47,28 @@ public enum SharedMarginPlacementWording {
         if case .roughly = plan { approximatePositionNote } else { nil }
     }
 
+    /// The pinned card's line for a Margin that is counting down (#4175): for a best-guess place at the sender's own
+    /// clock, how far apart the two copies' lengths are, when both are known and differ; otherwise the generic caution;
+    /// nil for any other plan. A Margin shifted by its matched neighbours (`atSenderClock` false) has the ad difference
+    /// taken out already, so it never gets the length note.
+    public static func pinnedCardLine(
+        for plan: SharedMarginPlacementPlan, atSenderClock: Bool, senderCopyMs: Int?, listenerCopyMs: Int?,
+        subject: PinnedMarginCard.Subject
+    ) -> String? {
+        guard case .roughly = plan else { return nil }
+        guard atSenderClock, let difference = CopyLengthDifference(senderMs: senderCopyMs, listenerMs: listenerCopyMs) else {
+            return approximatePositionNote
+        }
+        return copyLengthNote(difference, whose: subject.buttonName.map { "\($0)'s" } ?? "your friend's")
+    }
+
+    /// "Your copy is about 35 seconds shorter than Cole's, so Margins may be that far off." The web says the same with a
+    /// curly apostrophe (#4614). The words name the size of the length difference; a given Margin can be off by less.
+    static func copyLengthNote(_ difference: CopyLengthDifference, whose: String) -> String {
+        let ending = difference.farApart ? "so Margins may not line up." : "so Margins may be that far off."
+        return "Your copy is \(difference.amount) \(difference.direction.rawValue) than \(whose), \(ending)"
+    }
+
     /// - Parameter paragraph: the 1-based paragraph the resolution's text offset falls in, when the caller
     ///   can compute it (`MarginPlaceIndex.paragraph(atChar:)`). A text offset with no paragraph is described
     ///   by how well it was placed, never by the offset.

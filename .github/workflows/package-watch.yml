@@ -10,6 +10,14 @@
 # Cost and catch: about a minute of free hosted Linux time a week (git ls-remote and a few API reads), no tokens,
 # no owner clicks unless something changed. It would have flagged #4512 the day it happened. Waste signal: six
 # months of comments that led to no package change and no investigation.
+#
+# Identity (#4915 step 3, 2026-11-22): this is the first job that acts as the GitHub App `spoken-margins-agent`
+# instead of the workflows' `github-actions[bot]`. It mints a token for this repository only, from the App ID
+# (variable SM_APP_ID) and private key (secret SM_APP_PRIVATE_KEY) of the `agent-identity` environment, which runs
+# on main only. scripts/package_watch.py finds its open issue under either login, and scripts/comment_trust.py
+# trusts the App's issue and comments as ours.
+# Rollback is one line: set ACT_AS_APP below to 'false'. The token step is then skipped and the job writes with the
+# workflow token again, which keeps `issues: write` for exactly this until the 3-day watch on #4915 ends.
 name: package-watch
 
 on:
@@ -27,7 +35,7 @@ on:
 
 permissions:
   contents: read
-  issues: write
+  issues: write  # used only on rollback (ACT_AS_APP 'false'); drop it when #4915's watch ends
 
 concurrency:
   group: package-watch
@@ -37,11 +45,24 @@ jobs:
   watch:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    environment: agent-identity
+    env:
+      ACT_AS_APP: 'true'  # rollback (#4915): 'false' writes as github-actions[bot] again
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Act as the spoken-margins-agent App
+        id: app-token
+        if: env.ACT_AS_APP == 'true'
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.SM_APP_ID }}
+          private-key: ${{ secrets.SM_APP_PRIVATE_KEY }}
+          # No owner or repositories: the action then scopes the token to this repository alone.
+          permission-contents: read
+          permission-issues: write
       - name: Check packages against their upstreams
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
         run: |
           python3 scripts/package_watch.py --issue \
             --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || [ $? -eq 1 ]

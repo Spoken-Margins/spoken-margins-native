@@ -7,11 +7,13 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import yaml
 
@@ -60,13 +62,22 @@ class Repo:
 class FakeGitHub:
     repo = 'o/r'
 
-    def __init__(self, labels=(), comments=(), association='OWNER', login='owner'):
+    def __init__(self, labels=(), comments=(), association='OWNER', login='owner', body='', issues=None):
         self.labels, self._comments = labels, list(comments)
-        self.association, self.login = association, login
+        self.association, self.login, self.body, self.issues = association, login, body, issues or {}
 
     def pull(self, number):
         return {'labels': [{'name': name} for name in self.labels], 'author_association': self.association,
-                'user': {'login': self.login}}
+                'user': {'login': self.login}, 'body': self.body, 'created_at': '2026-11-22T09:00:00Z'}
+
+    def issue(self, number):
+        return self.issues[number]
+
+    def issue_comments(self, number):
+        return []
+
+    def issue_timeline(self, number):
+        return []
 
     def comments(self, number):
         return self._comments
@@ -175,6 +186,62 @@ class BlockerTests(unittest.TestCase):
                 reasons, _ = self.check({path: 'x\n'}, FakeGitHub())
                 self.assertEqual(reasons, [])
 
+    def test_closing_a_listener_issue_needs_real_use_proof_and_part_of_does_not(self):
+        # #4979 (#4783): two fixture-tested web fixes closed a listener issue the owner's real link still failed.
+        issues = {4783: {'labels': [{'name': 'area: pass it on'}]}, 4979: {'labels': [{'name': 'area: groundwork'}]}}
+        files = {'web/share.js': 'x\n'}
+        reasons, _ = self.check(files, FakeGitHub(body='Closes #4783', issues=issues))
+        self.assertEqual(len(reasons), 1, reasons)
+        self.assertIn('real-use proof', reasons[0])
+        self.assertIn('`Part of #4783`', reasons[0])
+        for body in ('Part of #4783', 'Closes #4979', 'No issue'):
+            with self.subTest(body=body):
+                reasons, _ = self.check(files, FakeGitHub(body=body, issues=issues))
+                self.assertEqual(reasons, [])
+
+    def test_a_closing_keyword_in_a_commit_message_counts_like_one_in_the_body(self):
+        issues = {4783: {'labels': [{'name': 'area: pass it on'}]}}
+        reasons, _ = self.check({'web/share.js': 'x\n'}, FakeGitHub(body='Part of #4783', issues=issues),
+                                message=f'Fix share links\n\nCloses #4783\n\n{SIGNED}')
+        self.assertEqual(len(reasons), 1, reasons)
+        self.assertIn('`Closes #4783`', reasons[0])
+
+    def test_a_proof_must_name_one_of_the_prs_own_commits_and_cover_its_code(self):
+        issues = {4783: {'labels': [{'name': 'area: pass it on'}]}}
+        record = ('Closes #4783\n\n**Real-use proof**\nReal input: a real Apple Podcasts link\nPath: link to playback\n'
+                  'Steps: opened it\nResult: PASS - played\nCommit: {sha}\n')
+        repo = Repo({'web/share.js': 'x\n'})
+        self.addCleanup(repo.close)
+        def run(sha):
+            return policy.blockers(FakeGitHub(body=record.format(sha=sha), issues=issues), repo.tree, 'main', 7, repo.head,
+                                   classify=scope_of, inherited=lambda c: [])
+        self.assertEqual(run(repo.head), [])
+        self.assertEqual(run(repo.head[:7]), [])
+        self.assertIn('not one of this PR', run('1234567')[0])
+        # A later code change makes the proof stale; a later note or test does not.
+        git(repo.tree, 'checkout', '-q', 'pr')
+        (repo.tree / 'web/share.js').write_text('y\n')
+        git(repo.tree, 'commit', '-qam', f'Fix\n\n{SIGNED}')
+        later = git(repo.tree, 'rev-parse', 'HEAD')
+        git(repo.tree, 'checkout', '-q', 'main')
+        stale = policy.blockers(FakeGitHub(body=record.format(sha=repo.head), issues=issues), repo.tree, 'main', 7, later,
+                                classify=scope_of, inherited=lambda c: [])
+        self.assertTrue(stale and 'run it again on the head' in stale[0], stale)
+
+    def test_a_failure_inside_the_proof_check_holds_that_pr_and_a_read_failure_holds_the_merge(self):
+        repo = Repo({'web/share.js': 'x\n'})
+        self.addCleanup(repo.close)
+        broken = FakeGitHub(body='Closes #4783')   # no such issue: the fake raises KeyError
+        reasons = policy.blockers(broken, repo.tree, 'main', 7, repo.head, classify=scope_of, inherited=lambda c: [])
+        self.assertTrue(reasons and 'real-use proof check failed' in reasons[0], reasons)
+        def unreadable(number):
+            raise policy.ReadFailed('gh api issues failed 3 times')
+        broken.issue = unreadable
+        out = io.StringIO()
+        code = policy.judge(broken, repo.tree, 'main', [(7, repo.head)], out=out, classify=scope_of, inherited=lambda c: [])
+        self.assertEqual(code, 1)
+        self.assertIn('could not read what it needs', out.getvalue())
+
     def test_a_head_that_is_not_in_the_tree_and_cannot_be_fetched_holds(self):
         repo = Repo({'scripts/tool.py': 'x\n'})
         self.addCleanup(repo.close)
@@ -237,6 +304,74 @@ class GroupTests(unittest.TestCase):
                                sleep=lambda s: None)
         with self.assertRaises(policy.ReadFailed):
             github.queue_entries('main')
+
+
+class RateLimitTests(unittest.TestCase):
+    """#4990: a read refused because the API budget is spent waits for the reset instead of holding the PR."""
+    LIMITED = 'gh: API rate limit exceeded for installation. If you reach out to GitHub Support for help'
+
+    def github(self, answers, rate_wait=3700, now=1000.0):
+        calls, sleeps = [], []
+
+        def run(cmd, **kwargs):
+            calls.append(cmd)
+            code, out, err = answers.pop(0)
+            return subprocess.CompletedProcess(cmd, code, out, err)
+        return policy.GitHub('o/r', run=run, sleep=sleeps.append, clock=lambda: now, rate_wait=rate_wait,
+                             out=io.StringIO()), calls, sleeps
+
+    def test_a_spent_budget_is_waited_out_and_the_read_then_succeeds(self):
+        github, calls, sleeps = self.github([(1, '', self.LIMITED), (0, '2500\n', ''), (0, '{"number": 7}', '')])
+        self.assertEqual(github.pull(7), {'number': 7})
+        self.assertEqual(sleeps, [1500 + policy.RATE_WAIT_SLACK])
+        self.assertEqual(calls[1][:3], ['gh', 'api', 'rate_limit'])
+        self.assertIn('.resources.core.reset', calls[1])
+
+    def test_the_budget_asked_about_is_the_one_the_read_spends(self):
+        for args, resource in ((['api', 'graphql', '-f', 'query=x'], 'graphql'), (['api', 'search/issues?q=x'], 'search'),
+                               (['api', 'repos/o/r/pulls/7'], 'core')):
+            github, calls, _ = self.github([(1, '', self.LIMITED), (0, '1001', ''), (0, '{}', '')])
+            github._gh(args)
+            self.assertIn(f'.resources.{resource}.reset', calls[1])
+
+    def test_a_reset_further_off_than_the_job_may_wait_fails_as_before(self):
+        answers = [(1, '', self.LIMITED), (0, '4600', '')] + [(1, '', self.LIMITED)] * 2
+        github, calls, sleeps = self.github(answers, rate_wait=policy.DEFAULT_RATE_WAIT)
+        with self.assertRaises(policy.ReadFailed) as raised:
+            github.pull(7)
+        self.assertIn('rate limit', str(raised.exception))
+        self.assertEqual(sleeps, [policy.RETRY_WAIT, policy.RETRY_WAIT * 2])  # the ordinary retries only
+
+    def test_the_reset_is_waited_for_once_per_read(self):
+        answers = [(1, '', self.LIMITED), (0, '1010', ''), (1, '', self.LIMITED), (1, '', self.LIMITED), (1, '', self.LIMITED)]
+        github, calls, sleeps = self.github(answers)
+        with self.assertRaises(policy.ReadFailed):
+            github.pull(7)
+        self.assertEqual(len([c for c in calls if 'rate_limit' in c]), 1)
+
+    def test_an_unreadable_reset_and_a_secondary_limit_are_ordinary_failures(self):
+        github, _, sleeps = self.github([(1, '', self.LIMITED), (1, '', 'HTTP 500'), (0, '{"number": 7}', '')])
+        self.assertEqual(github.pull(7), {'number': 7})
+        self.assertEqual(sleeps, [policy.RETRY_WAIT])
+        secondary = 'gh: You have exceeded a secondary rate limit. Please wait a few minutes'
+        github, calls, _ = self.github([(1, '', secondary), (0, '{"number": 7}', '')])
+        self.assertEqual(github.pull(7), {'number': 7})
+        self.assertFalse([c for c in calls if 'rate_limit' in c])
+
+    def test_a_single_try_dispatch_never_waits(self):
+        github, calls, sleeps = self.github([(1, '', self.LIMITED)])
+        with self.assertRaises(policy.ReadFailed):
+            github.dispatch('hosted-web.yml', 'branch', {})
+        self.assertEqual((len(calls), sleeps), (1, []))
+
+    def test_the_wait_comes_from_the_workflow_and_defaults_to_what_an_old_copy_of_it_allows(self):
+        with mock.patch.dict(os.environ, {'RATE_LIMIT_WAIT': '3700'}):
+            self.assertEqual(policy.rate_wait_from_env(), 3700)
+        with mock.patch.dict(os.environ, {'RATE_LIMIT_WAIT': ''}):
+            self.assertEqual(policy.rate_wait_from_env(), policy.DEFAULT_RATE_WAIT)
+        text = (Path(policy.__file__).resolve().parents[1] / '.github/workflows/merge-policy.yml').read_text()
+        self.assertIn("RATE_LIMIT_WAIT: '3700'", text)
+        self.assertIn('timeout-minutes: 75', text)  # longer than the wait
 
 
 class RetryTests(unittest.TestCase):

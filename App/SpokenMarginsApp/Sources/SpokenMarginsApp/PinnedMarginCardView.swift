@@ -64,8 +64,14 @@ struct PinnedMarginCardView: View {
         // A podcast Margin that isn't playing yet says where it will play, in the same words as its row (#3789).
         if let row = model.sharedMarginRows.first(where: { $0.id == current.marginId }) {
             if row.layer.itemIdentity.itemType == .podcast {
-                if let note = SharedMarginPlacementWording.pinnedCardLine(for: row.placementPlan), current.caption == nil,
-                   !moment.isPlayingMargin {
+                // At the sender's own clock, an ad difference between the two copies is the likely cause: say how big it is (#4175).
+                if let note = SharedMarginPlacementWording.pinnedCardLine(
+                       for: row.placementPlan,
+                       atSenderClock: row.interjection.resolution.evidenceClass != .mapInterpolated,
+                       senderCopyMs: row.layer.itemIdentity.durationMs,
+                       listenerCopyMs: model.snapshot.itemId == model.selectedItem.id ? model.snapshot.currentPlaybackDurationMs : nil,
+                       subject: card.subject),
+                   current.caption == nil, !moment.isPlayingMargin {
                     return note
                 }
             } else if let placing = row.placementStatus.positionDescription {

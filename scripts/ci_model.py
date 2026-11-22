@@ -1070,15 +1070,16 @@ def b_merge_policy(world, run, job, ctx, cause):
     """The tree's merge_policy.blockers(), with its git reads replaced by the world's paths (a member's PR, so the
     sign-off rule has nothing to check) and no inherited holds."""
     policy = world.tree.module('merge_policy', 'scripts/merge_policy.py')
-    saved = policy.fetch_head, policy.changes, policy.unsigned_commits
+    saved = policy.fetch_head, policy.changes, policy.unsigned_commits, policy.commit_messages
     policy.fetch_head = lambda *a, **k: None
     policy.changes = lambda *a, **k: (sorted(world.paths), {})
     policy.unsigned_commits = lambda *a, **k: []
+    policy.commit_messages = lambda *a, **k: ''
     try:
         reasons = policy.blockers(FakePolicyGitHub(world), world.tree.root, 'main', 1, world.head,
                                   classify=lambda paths, diffs: world.tree.classify(paths), inherited=lambda c: [])
     finally:
-        policy.fetch_head, policy.changes, policy.unsigned_commits = saved
+        policy.fetch_head, policy.changes, policy.unsigned_commits, policy.commit_messages = saved
     return ('failure' if reasons else 'success'), {'reasons': '; '.join(reasons) or 'may merge'}
 
 

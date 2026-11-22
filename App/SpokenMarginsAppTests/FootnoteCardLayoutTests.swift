@@ -6,7 +6,8 @@ import XCTest
 
 /// The Footnote card on Now (#3777, Design PR 5) keeps its height inside a budget that leaves room for the title, the
 /// transport and the Auto-play row below it, whatever the note's length and the text size. A note of any length shows
-/// at most six lines of its words, so the card's height is bounded by that cap, not by the note.
+/// at most six lines of its words (four at the accessibility sizes), so the card's height is bounded by that cap, not by
+/// the note.
 ///
 /// The card is drawn with no model at the phone's 393 pt width, as `PinnedMarginCardLayoutTests` draws the Margin card,
 /// and gets the same budgets: it sits in the same slot. The test runs in a simulator only.
@@ -36,6 +37,13 @@ final class FootnoteCardLayoutTests: XCTestCase {
                 XCTAssertGreaterThan(small, 0, "a short note at \(label) drew nothing")
             }
         }
+    }
+
+    func testTheAccessibilitySizesCapTheNoteAtFourLines() {
+        XCTAssertEqual(FootnoteCardBody.bodyLineLimit(for: .large), 6)
+        XCTAssertEqual(FootnoteCardBody.bodyLineLimit(for: .xxxLarge), 6)
+        XCTAssertEqual(FootnoteCardBody.bodyLineLimit(for: .accessibility1), 4)
+        XCTAssertEqual(FootnoteCardBody.bodyLineLimit(for: .accessibility5), 4)
     }
 
     func testNotesPastSixLinesDrawTheSameCard() {

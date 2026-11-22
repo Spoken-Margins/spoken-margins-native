@@ -17,6 +17,8 @@ public struct PlaybackStartWatch: Sendable {
         var requestedAt: Date?
         var startedAt: Date
         var cued = false
+        /// The client reported its first sound for this target, so no cue is wanted (#842).
+        var heard = false
     }
 
     public let cueDelay: TimeInterval
@@ -56,6 +58,13 @@ public struct PlaybackStartWatch: Sendable {
             let sameStart = itemId == start.itemId
                 && Self.sameRequest(requestedAt, targetId, as: start.requestedAt, start.targetId)
             if status == .starting, sameStart {
+                // A start that falls back to another target (narration to live speech) hasn't been heard on that
+                // target yet, so it gets its cue back instead of a silent wait, even if the first target's chime had
+                // already played before its sound was heard (#842).
+                if self.start?.targetId != targetId, self.start?.heard == true {
+                    self.start?.heard = false
+                    self.start?.cued = false
+                }
                 self.start?.targetId = targetId
                 return []
             }
@@ -103,9 +112,21 @@ public struct PlaybackStartWatch: Sendable {
         start.map { max(0, cueDelay - now.timeIntervalSince($0.startedAt)) }
     }
 
+    /// An audio client reports that sound began for `targetId` (#842). True only when a start is open for that
+    /// target: the start is then marked heard, so `takeCue` gives no cue for it while it keeps that target. It
+    /// closes nothing and produces no outcome: `observe` still does that on `.playing`, so `firstAudioMs` keeps
+    /// its meaning. A signal with no open start, a start with no target, or another target (a late signal from an
+    /// earlier start) returns false and changes nothing.
+    public mutating func firstAudioHeard(targetId: String) -> Bool {
+        guard var start, let waitingTarget = start.targetId, waitingTarget == targetId else { return false }
+        start.heard = true
+        self.start = start
+        return true
+    }
+
     /// True once per start, when it has been silent for `cueDelay`.
     public mutating func takeCue(at now: Date) -> Bool {
-        guard var start, !start.cued, now.timeIntervalSince(start.startedAt) >= cueDelay else { return false }
+        guard var start, !start.cued, !start.heard, now.timeIntervalSince(start.startedAt) >= cueDelay else { return false }
         start.cued = true
         self.start = start
         return true

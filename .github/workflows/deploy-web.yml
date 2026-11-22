@@ -1,0 +1,106 @@
+# Deploy the web player (Web/, https://app.spokenmargins.com) after the owner approves (#4982).
+#
+# Until now research/B4/deploy/deploy-web.sh ran only when someone remembered to run it on the Mac, and the web player
+# sat 19 commits behind main from 2026-11-18 to 2026-11-22. Now a push to main that changes what the deploy copies
+# starts this run:
+#   1. `notice` (no environment, no secrets) posts one comment as github-actions[bot] that @mentions the owner on the
+#      PR behind the commit, listing what is shipping and linking this run (scripts/deploy_check.py notice). Agents
+#      act under his own login and GitHub doesn't notify a person of their own activity (owner-tap-alert.yml).
+#   2. `deploy` waits in the `web-deploy` environment until he taps Approve (required reviewer, main only), then runs
+#      the same script the Mac runs, with the environment's key, and checks with scripts/sm_live.py that the live
+#      deploy stamp is this commit (scripts/deploy_check.py verify).
+# The Mac script stays as the fallback (research/B4/README.md).
+#
+# Trust: only main deploys. Triggers are push to main and workflow_dispatch, both jobs refuse any other ref, and the
+# environment admits main only. There is no pull_request, pull_request_target, issue_comment or workflow_run trigger,
+# and there must never be: that would hand the deploy key to code nobody reviewed. The npm cache is not restored here,
+# so this job runs nothing another branch's run could have left behind.
+#
+# Secrets (environment `web-deploy`): SM_DEPLOY_SSH_KEY, SM_DEPLOY_KNOWN_HOSTS, SM_DEPLOY_HOST (user@host). The login
+# owns /srv/www/spokenmargins-web and has no root; its key is `restrict`ed on the server.
+#
+# One deploy at a time: a running deploy finishes, and a newer run queued behind it replaces an older queued one. A run
+# already waiting for approval can hold its place, so when a newer notice arrives, reject the older run.
+#
+# Cost and catch: about 2 to 4 minutes of free hosted Linux per merge that changes Web/ (npm ci and a Vite build),
+# plus one owner tap. It catches merged web fixes that never go live (19 commits, four days, 2026-11-18 to 11-22).
+# Waste signal: runs left unapproved or rejected for weeks, or web deploys that keep going out by hand anyway.
+name: deploy-web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Web/**'
+      - 'research/B4/server/internal/links/**'  # deploy-web.sh builds the share-link opener from here
+      - 'research/B4/deploy/deploy-web.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notice:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write       # the commit comment, when no PR is behind the commit
+      pull-requests: write  # the PR comment
+      issues: write         # PR comments go through the issues API
+    steps:
+      - name: Check the ref
+        run: '[ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+      - name: Tell the owner what is shipping and where to approve it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/deploy_check.py notice --target web --sha "$SHA" --run-url "$RUN_URL"
+
+  deploy:
+    needs: notice
+    # A failed notice still leaves the run for the owner to find; it never blocks the deploy.
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: web-deploy
+    timeout-minutes: 20
+    concurrency:
+      group: web-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Check the ref
+        run: '[ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Stop if main already has a newer change to deploy
+        env:
+          SHA: ${{ github.sha }}
+        run: python3 scripts/deploy_check.py newest --target web --sha "$SHA"
+      - name: Set up the deploy key
+        env:
+          SSH_KEY: ${{ secrets.SM_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.SM_DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.SM_DEPLOY_HOST }}
+        run: scripts/deploy-ssh-setup.sh
+      - name: Build and copy the web player
+        env:
+          HOST: ${{ secrets.SM_DEPLOY_HOST }}
+        run: SM_SSH_KEY="$HOME/.ssh/sm_deploy" research/B4/deploy/deploy-web.sh "$HOST"
+      - name: Check that the live web player is this commit
+        env:
+          SHA: ${{ github.sha }}
+        run: python3 scripts/deploy_check.py verify --target web --sha "$SHA"
+      - name: Remove the deploy key
+        if: always()
+        run: rm -f "$HOME/.ssh/sm_deploy"

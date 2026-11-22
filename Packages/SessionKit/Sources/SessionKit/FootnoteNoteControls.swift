@@ -69,6 +69,36 @@ public enum FootnoteNoteControls {
         return startOffsets[resume]
     }
 
+    /// Where a play that starts a new generation (a relaunch, a play of an item the player does not hold) begins when
+    /// it asks for `requested`, the place the engine saved: the citing sentence's last chunk when `requested` is where
+    /// a note is cited, so the sentence and then the note play (Design, `relaunch`). While a note is read the engine's
+    /// place is the citing sentence's end, which is the offset the next body chunk starts at, so a fresh start at it
+    /// would play that chunk and the note would be dropped without a word. A note whose label `isHeard` is not read
+    /// again: the place is the same offset right after the note ended, and the listener who heard it goes on. When
+    /// several notes are cited at that place, one unheard note is enough to replay the sentence. Any other offset, and a
+    /// `startOffsets` that does not line up with `tags`, is returned unchanged.
+    ///
+    /// The caller applies this only to a play that is not the listener's own move: a seek, skip or restart that lands
+    /// on this offset means the text after the note, and `SessionEngine.playCurrentTarget(seeking:)` says which it is.
+    public static func restoredStartOffset(
+        atOffset requested: Int,
+        tags: [Tag?],
+        startOffsets: [Int],
+        isHeard: (String) -> Bool = { _ in false }
+    ) -> Int {
+        guard tags.count == startOffsets.count else { return requested }
+        var first: Int?
+        var unheard = false
+        for index in tags.indices where startOffsets[index] == requested {
+            guard case .aside(let label)? = tags[index] else { continue }
+            if first == nil { first = index }
+            if !isHeard(label) { unheard = true }
+        }
+        guard unheard, let first,
+              let held = heldStartOffset(forChunkAt: first, tags: tags, startOffsets: startOffsets) else { return requested }
+        return held
+    }
+
     /// The index range of the one note whose aside chunks include `index`: every neighbouring aside chunk with the
     /// same label (a note longer than the chunk budget is split into several). Nil when `index` is not an aside.
     public static func noteRange(containing index: Int, tags: [Tag?]) -> Range<Int>? {
@@ -87,7 +117,7 @@ public struct FootnoteCard: Equatable, Sendable {
     /// The source's own label (`[^a]` is "a").
     public let label: String
     /// The note's text as the narrator reads it, without the "Note 3." lead, whole across every chunk the planner split
-    /// it into. The card shows up to six lines of it; VoiceOver reads all of it.
+    /// it into. The card shows up to six lines of it (four at the accessibility text sizes); VoiceOver reads all of it.
     public let body: String
 
     public init(label: String, body: String) {

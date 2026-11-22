@@ -57,8 +57,13 @@ the head (a machine-readable `audit-resolution` naming the source audit comment 
 posted after the head's newest audit counts as a new reason to audit that head again, and the re-arm waits for
 a clean audit posted after the resolution.
 
+How much it reads (#4990): a run started by a PR's checks finishing passes that commit as `--head` and looks only at
+the PR with that head. Every open PR is read when the last full read is SWEEP_EVERY (15 minutes) old, and on a
+schedule or a dispatch without `--head`. So an audit request in a comment, a resolution comment, an edited
+description or a failed audit's retry on another PR waits at most that long.
+
 Usage:
-  /usr/bin/python3 ops/codex/sm_codex_audit.py [--dry-run] [--pr N]
+  /usr/bin/python3 ops/codex/sm_codex_audit.py [--dry-run] [--pr N] [--head SHA]
 
 Install and switch-over steps are in ops/codex/README.md.
 
@@ -123,6 +128,11 @@ MAX_FAILED_AUDITS = 2  # a head whose audit call or post failed this many times 
 AUDIT_FAILED_TWICE = "audit failed twice on this head"
 MAX_DESCRIPTION_REAUDITS = 2  # audits of one head triggered by a changed title or description, beyond the first
 FAILURES_PATH = OPS_DIR / "codex-audit-failures.json"
+# #4990: when every open PR was last looked at. A run started by one PR's checks finishing (--head) looks only at that
+# PR while this is younger than SWEEP_EVERY; reading every open PR on each such start cost about 55 API calls a run,
+# about 13 times an hour, most of the workflow token's 1,000 an hour.
+SWEEP_PATH = OPS_DIR / "codex-audit-last-sweep"
+SWEEP_EVERY = 15 * 60  # seconds; the cadence the audit had as a cron, and the dispatch backstop's interval
 
 HEAD_FILE_CAP = 2_000_000  # bytes of one changed file copied out at the PR head
 HEAD_TOTAL_CAP = 10_000_000  # bytes copied out per PR
@@ -1500,8 +1510,35 @@ def describe(cands: list[dict], batches: list[list[int]]) -> tuple[str, str]:
     return cand_s, batch_s
 
 
+def sweep_due(now: float, path: Path | None = None) -> bool:
+    """True when every open PR should be read: no sweep is recorded, the record can't be read, it is SWEEP_EVERY old or
+    older, or it is in the future (a wrong clock must not hold sweeps off)."""
+    try:
+        last = float((path or SWEEP_PATH).read_text().strip())
+    except (OSError, ValueError):
+        return True
+    return not 0 <= now - last < SWEEP_EVERY
+
+
+def record_sweep(now: float, path: Path | None = None) -> None:
+    try:
+        (path or SWEEP_PATH).write_text(f"{int(now)}\n")  # rounded down: rounded up, it reads as the future for half a second
+    except OSError as exc:
+        log(f"could not record the sweep ({exc}); the next run sweeps again")
+
+
+def scope_to_head(prs: list[dict], head: str | None, due: bool) -> tuple[list[dict], bool]:
+    """(the PRs this run looks at, whether that is every open PR). With --head and no sweep due, only the PRs whose
+    head is that commit; a PR whose event was missed is seen by the next sweep."""
+    if not head or due:
+        return prs, True
+    return [pr for pr in prs if pr.get("headRefOid") == head], False
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--head", help="the commit whose checks just finished: look only at the PR with that head, unless "
+                                   "every open PR was last read SWEEP_EVERY ago or longer (#4990)")
     ap.add_argument("--dry-run", action="store_true", help="print candidates and batches; no model call, no posting")
     ap.add_argument("--pr", type=int, help="consider only this PR; audits it again if its head was already audited (#1643)")
     args = ap.parse_args(argv)
@@ -1527,6 +1564,14 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         log(f"{tag}error listing PRs: {exc}")
         return 1
+    if args.pr is None:
+        everyone = len(prs)
+        prs, swept = scope_to_head(prs, args.head, sweep_due(t0))
+        if swept and not args.dry_run:
+            record_sweep(t0)
+        elif not swept:
+            log(f"{tag}only the PR at {args.head[:7]} ({len(prs)} of {everyone} open); every open PR is read again "
+                f"once the last sweep is {SWEEP_EVERY // 60} minutes old")
     try:
         return audit_prs(prs, args.dry_run, tag, t0, force=args.pr is not None)
     finally:

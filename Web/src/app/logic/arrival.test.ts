@@ -8,6 +8,7 @@ import {
   START_EARLIER_SECONDS,
   arrivalFacts,
   arrivalResumeAt,
+  arrivedLengthNote,
   countdownClock,
   countdownSpoken,
   friendMargins,
@@ -26,7 +27,7 @@ import {
 } from './arrival.ts';
 
 const voice = (seconds: number) => ({ blob: new Blob(['x']), mimeType: 'audio/mp4', durationSeconds: seconds });
-const margin = (id: string, atSeconds: number, opts: { spoken?: boolean; author?: string | null } = {}): Margin => ({
+const margin = (id: string, atSeconds: number, opts: { spoken?: boolean; author?: string | null; copyLengthSeconds?: number } = {}): Margin => ({
   id,
   episodeId: 'e',
   atSeconds,
@@ -34,6 +35,7 @@ const margin = (id: string, atSeconds: number, opts: { spoken?: boolean; author?
   text: `words ${id}`,
   ...(opts.spoken && { voice: voice(40) }),
   ...(opts.author !== null && { author: opts.author ?? 'Cole' }),
+  ...(opts.copyLengthSeconds !== undefined && { copyLengthSeconds: opts.copyLengthSeconds }),
 });
 
 test('the sender leads; no name reads "your friend"; the initial is a letter, never the markup of a hostile name', () => {
@@ -334,4 +336,76 @@ test('Start a minute earlier follows the Margin\u2019s own run-up (#4171)', () =
   if (inside?.kind !== 'countdown') return assert.fail('no countdown');
   assert.equal(inside.leadIn, true, '110 seconds out is inside a 2-minute run-up');
   assert.equal(inside.startEarlier?.to, 590);
+});
+
+// The copy-length note on the countdown card (#4614, Design PR 3). #4614's own pair: the sender's copy 1,946.018 s, the
+// web copy 1,913 s.
+const notEpisodeFailed = { failed: false, heardWithoutEpisode: false };
+const countdownNote = (cue: ReturnType<typeof cueFor>): string | undefined => (cue?.kind === 'countdown' ? cue.lengthNote : undefined);
+
+test('a copy 33 seconds shorter than the sender’s gets the note with the sender’s name (#4614)', () => {
+  const m = [margin('a', 300, { copyLengthSeconds: 1946.018 })];
+  assert.equal(
+    countdownNote(cueFor(m, 0, 'Cole', { ...notEpisodeFailed, measuredLengthSeconds: 1913 })),
+    'Your copy is about 35 seconds shorter than Cole’s, so Margins may be that far off.',
+  );
+});
+
+test('no note while the player has no length yet, and none for equal or near-equal copies', () => {
+  const m = [margin('a', 300, { copyLengthSeconds: 1946.018 })];
+  assert.equal(countdownNote(cueFor(m, 0, 'Cole', notEpisodeFailed)), undefined, 'no length yet');
+  assert.equal(countdownNote(cueFor(m, 0, 'Cole')), undefined, 'no episode state at all');
+  assert.equal(countdownNote(cueFor(m, 0, 'Cole', { ...notEpisodeFailed, measuredLengthSeconds: 1946.018 })), undefined, 'equal');
+  assert.equal(countdownNote(cueFor(m, 0, 'Cole', { ...notEpisodeFailed, measuredLengthSeconds: 1940 })), undefined, 'within 10 seconds');
+  assert.equal(countdownNote(cueFor(m, 0, 'Cole', { ...notEpisodeFailed, measuredLengthSeconds: Infinity })), undefined, 'a stream that reports Infinity');
+});
+
+test('a Margin with no sender length (imported before the note, or a packet without durationMs) gets no note', () => {
+  assert.equal(countdownNote(cueFor([margin('a', 300)], 0, 'Cole', { ...notEpisodeFailed, measuredLengthSeconds: 1913 })), undefined);
+});
+
+test('two senders on one episode: each countdown carries the note for the Margin that is next', () => {
+  const m = [
+    margin('a', 100, { author: 'Cole', copyLengthSeconds: 1946.018 }),
+    margin('b', 400, { author: 'Dana', copyLengthSeconds: 1800 }),
+  ];
+  const episode = { ...notEpisodeFailed, measuredLengthSeconds: 1913 };
+  assert.equal(countdownNote(cueFor(m, 0, 'Cole', episode)), 'Your copy is about 35 seconds shorter than Cole’s, so Margins may be that far off.');
+  assert.equal(countdownNote(cueFor(m, 200, 'Cole', episode)), 'Your copy is about 115 seconds longer than Dana’s, so Margins may be that far off.');
+  assert.equal(arrivedLengthNote(m[0], m, 1913), 'Your copy is about 35 seconds shorter than Cole’s, so Margins may be that far off.');
+  assert.equal(arrivedLengthNote(m[1], m, 1913), 'Your copy is about 115 seconds longer than Dana’s, so Margins may be that far off.');
+});
+
+test('the note under a playing Margin: never for the listener’s own, none without lengths, the card’s own name for a stand-in author', () => {
+  const friend = margin('a', 300, { copyLengthSeconds: 1946.018 });
+  assert.equal(arrivedLengthNote(margin('mine', 300, { author: null, copyLengthSeconds: 1946.018 }), [friend], 1913), undefined, 'own Margin');
+  assert.equal(arrivedLengthNote(friend, [friend], undefined), undefined, 'no length yet');
+  assert.equal(arrivedLengthNote(margin('b', 300), [margin('b', 300)], 1913), undefined, 'no sender length');
+  const standIn = margin('c', 300, { author: 'Someone', copyLengthSeconds: 1946.018 });
+  assert.equal(arrivedLengthNote(standIn, [standIn], 1913), 'Your copy is about 35 seconds shorter than your friend’s, so Margins may be that far off.');
+});
+
+test('far apart copies say they may not line up; a longer copy says longer', () => {
+  const far = countdownNote(cueFor([margin('a', 300, { copyLengthSeconds: 1800 })], 0, 'Cole', { ...notEpisodeFailed, measuredLengthSeconds: 600 }));
+  assert.equal(far, 'Your copy is about 20 minutes shorter than Cole’s, so Margins may not line up.');
+  const longer = countdownNote(cueFor([margin('a', 300, { copyLengthSeconds: 1946.018 })], 0, 'Cole', { ...notEpisodeFailed, measuredLengthSeconds: 1976.118 }));
+  assert.equal(longer, 'Your copy is about 30 seconds longer than Cole’s, so Margins may be that far off.');
+});
+
+test('a name that stands in for a missing one reads "your friend’s" in the note', () => {
+  const m = [margin('a', 300, { author: 'Someone', copyLengthSeconds: 1946.018 })];
+  assert.equal(
+    countdownNote(cueFor(m, 0, undefined, { ...notEpisodeFailed, measuredLengthSeconds: 1913 })),
+    'Your copy is about 35 seconds shorter than your friend’s, so Margins may be that far off.',
+  );
+});
+
+test('the after-last and unplayable cards carry no note', () => {
+  const m = [margin('a', 300, { copyLengthSeconds: 1946.018 })];
+  const episode = { ...notEpisodeFailed, measuredLengthSeconds: 1913 };
+  assert.equal(cueFor(m, 400, 'Cole', episode)?.kind, 'after-last');
+  assert.equal('lengthNote' in (cueFor(m, 400, 'Cole', episode) ?? {}), false);
+  const failed = cueFor(m, 0, 'Cole', { failed: true, heardWithoutEpisode: false, measuredLengthSeconds: 1913 });
+  assert.equal(failed?.kind, 'unplayable');
+  assert.equal('lengthNote' in (failed ?? {}), false);
 });

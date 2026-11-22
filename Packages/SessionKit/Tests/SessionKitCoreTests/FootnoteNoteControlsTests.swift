@@ -93,7 +93,88 @@ final class FootnoteNoteControlsTests: XCTestCase {
         XCTAssertEqual(Controls.heldStartOffset(forChunkAt: 1, tags: [.aside("1"), .aside("2"), nil], startOffsets: [5, 5, 5]), 5)
     }
 
+    // MARK: - A fresh start where a note is cited (relaunch)
+
+    func testAFreshStartAtAPlaceWhereANoteIsCitedStartsAtTheCitingSentence() {
+        let offsets = [0, 40, 40, 90, 90, 130, 160, 160, 200, 260, 300]
+        let restored = { Controls.restoredStartOffset(atOffset: $0, tags: self.tags, startOffsets: offsets) }
+        XCTAssertEqual(restored(40), 0, "the note after the first sentence")
+        XCTAssertEqual(restored(90), 40, "a note the planner split into two chunks")
+        XCTAssertEqual(restored(160), 130, "two notes cited in one sentence")
+    }
+
+    func testAFreshStartAnywhereElseKeepsItsOffset() {
+        let offsets = [0, 40, 40, 90, 90, 130, 160, 160, 200, 260, 300]
+        // Every offset that is not a citation's place, including one a character either side of it and the plan's ends.
+        for requested in [0, 1, 39, 41, 89, 91, 129, 130, 131, 159, 161, 199, 200, 260, 300, 301, -5] {
+            XCTAssertEqual(Controls.restoredStartOffset(atOffset: requested, tags: tags, startOffsets: offsets), requested,
+                           "\(requested)")
+        }
+        XCTAssertEqual(Controls.restoredStartOffset(atOffset: 40, tags: tags, startOffsets: [0, 40]), 40,
+                       "offsets that do not line up with the plan")
+        XCTAssertEqual(Controls.restoredStartOffset(atOffset: 40, tags: [], startOffsets: []), 40)
+        XCTAssertEqual(Controls.restoredStartOffset(atOffset: 40, tags: [nil, nil], startOffsets: [0, 40]), 40, "no note")
+    }
+
+    func testAFreshStartDoesNotReplayANoteTheListenerAlreadyHeard() {
+        let offsets = [0, 40, 40, 90, 90, 130, 160, 160, 200, 260, 300]
+        XCTAssertEqual(Controls.restoredStartOffset(atOffset: 40, tags: tags, startOffsets: offsets, isHeard: { $0 == "1" }), 40,
+                       "the same offset is where the text goes on once the note has ended")
+        XCTAssertEqual(Controls.restoredStartOffset(atOffset: 40, tags: tags, startOffsets: offsets, isHeard: { $0 == "2" }), 0,
+                       "another note's label does not count")
+        XCTAssertEqual(Controls.restoredStartOffset(atOffset: 160, tags: tags, startOffsets: offsets, isHeard: { $0 == "3" }), 130,
+                       "one unheard note of the two at that citation is enough")
+        XCTAssertEqual(Controls.restoredStartOffset(atOffset: 160, tags: tags, startOffsets: offsets, isHeard: { $0 == "3" || $0 == "a" }), 160)
+    }
+
+    func testAFreshStartAtANoteBeforeAnyBodyChunkKeepsItsOffset() {
+        XCTAssertEqual(Controls.restoredStartOffset(atOffset: 5, tags: [.aside("1"), nil], startOffsets: [5, 5]), 5)
+    }
+
     // MARK: - Against the real planner
+
+    func testARelaunchOnTheRealPlansNotesPlaysTheCitingSentenceThenTheNote() throws {
+        let plan = NarrationChunkPlanner.articlePlan(article, asides: true).chunks
+        let tags = plan.map(\.footnote), offsets = plan.map(\.startOffset)
+        let asides = tags.indices.filter { Controls.isAside(at: $0, tags: tags) }
+        XCTAssertEqual(asides.count, 3)
+        for index in asides {
+            // The place the engine saves while this note reads is the aside's own offset (`SessionEngine` stores the
+            // player's reported place). A relaunch plays from it.
+            let saved = offsets[index]
+            let start = Controls.restoredStartOffset(atOffset: saved, tags: tags, startOffsets: offsets)
+            XCTAssertLessThan(start, saved, "\(index): the note would be dropped if the start stayed at the sentence's end")
+            // The player starts the body chunk covering the offset and then follows the plan in order.
+            let covering = try XCTUnwrap(plan.indices.first {
+                tags[$0] == nil && start >= offsets[$0] && start < offsets[$0] + max(1, plan[$0].sourceLength)
+            }, "\(index)")
+            XCTAssertTrue(((covering + 1)..<index).allSatisfy { Controls.isAside(at: $0, tags: tags) },
+                          "\(index): only notes sit between the chunk the start plays and this note")
+            XCTAssertEqual(start, Controls.heldStartOffset(forChunkAt: index, tags: tags, startOffsets: offsets),
+                           "a relaunch and a resume after a pause start in the same place")
+        }
+    }
+
+    func testARelaunchAtEveryOtherChunkStartOfTheRealPlanKeepsItsOffset() {
+        let plan = NarrationChunkPlanner.articlePlan(article, asides: true).chunks
+        let tags = plan.map(\.footnote), offsets = plan.map(\.startOffset)
+        let noteOffsets = Set(tags.indices.filter { Controls.isAside(at: $0, tags: tags) }.map { offsets[$0] })
+        for (index, offset) in offsets.enumerated() where !noteOffsets.contains(offset) {
+            XCTAssertEqual(Controls.restoredStartOffset(atOffset: offset, tags: tags, startOffsets: offsets), offset, "\(index)")
+        }
+        let length = plan.last.map { $0.startOffset + $0.sourceLength } ?? 0
+        for offset in 0...length where !noteOffsets.contains(offset) {
+            XCTAssertEqual(Controls.restoredStartOffset(atOffset: offset, tags: tags, startOffsets: offsets), offset, "\(offset)")
+        }
+    }
+
+    func testAPlanWithoutNotesNeverMovesAStart() {
+        let plan = NarrationChunkPlanner.articlePlan("One sentence. Two sentence. Three.", asides: true).chunks
+        let tags = plan.map(\.footnote), offsets = plan.map(\.startOffset)
+        for offset in 0...40 {
+            XCTAssertEqual(Controls.restoredStartOffset(atOffset: offset, tags: tags, startOffsets: offsets), offset)
+        }
+    }
 
     func testResumingDuringTheRealPlansNotesPlaysTheCitingSentenceThenTheNote() throws {
         let plan = NarrationChunkPlanner.articlePlan(article, asides: true).chunks

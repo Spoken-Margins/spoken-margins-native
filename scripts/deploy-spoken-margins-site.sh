@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# Deploys Site/ to the VPS. The normal route is .github/workflows/deploy-site.yml, which runs this after the owner
+# approves (#4982); running it from the Mac is the fallback, and the only way to upload the voice mirror.
+
 set -euo pipefail
 IFS=$'\n\t'
 

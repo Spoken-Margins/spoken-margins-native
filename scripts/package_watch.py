@@ -41,6 +41,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import comment_trust  # noqa: E402  (#4915: the GitHub App the workflow acts as)
+
 ROOT = Path(__file__).resolve().parents[1]
 RESOLVED = (
     'Packages/SessionKit/Package.resolved',
@@ -279,10 +282,19 @@ def pinned_binaries(pin):
     return [(url, url_problem(url)) for url in binary_urls(manifest)]
 
 
+def issue_creators():
+    """The logins whose "Package watch" issue is ours: the workflows' bot, which filed every one before #4915, and the
+    GitHub App the workflow now acts as. Without the App, its first issue would be missed and a second one opened."""
+    return comment_trust.TRUSTED_BOTS + tuple(f'{slug}[bot]' for slug in comment_trust.TRUSTED_APP_SLUGS)
+
+
 def file_issue(text, sig, flagged, run_url):
     repo = os.environ['GITHUB_REPOSITORY']
-    query = urllib.parse.urlencode({'state': 'open', 'per_page': 100, 'creator': 'github-actions[bot]'})
-    issues = [i for i in api('GET', f'/repos/{repo}/issues?{query}') if i.get('title') == TITLE]
+    issues = []
+    for creator in issue_creators():
+        query = urllib.parse.urlencode({'state': 'open', 'per_page': 100, 'creator': creator})
+        issues += [i for i in api('GET', f'/repos/{repo}/issues?{query}') or [] if i.get('title') == TITLE]
+    issues.sort(key=lambda issue: issue['number'], reverse=True)  # the newest, as the single list returned it
     body = f'{text}\n\nRun: {run_url}\n\n<!-- package-watch: {sig} -->'
     if not issues:
         if flagged:
