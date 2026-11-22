@@ -74,54 +74,33 @@ final class ReadAloudChoiceTests: XCTestCase {
     }
 
     func testTheControlSaysWhoDecidedAndWhatSkimDoes() {
-        func words(_ sender: Bool?, _ listener: Bool?, name: String? = "Ana", hasPlace: Bool = true) -> String {
-            ReadAloudWords.footer(for: written(sender: sender, listener: listener), senderName: name, hasPlace: hasPlace)
+        func words(_ sender: Bool?, _ listener: Bool?, name: String? = "Ana") -> String {
+            ReadAloudWords.footer(for: written(sender: sender, listener: listener), senderName: name)
         }
         XCTAssertEqual(words(nil, nil), "Your phone reads this Margin aloud where it comes up, and Skim stops at it.")
         XCTAssertEqual(words(nil, true), words(nil, nil), "the listener turning on what was already on says nothing new")
         XCTAssertEqual(words(false, true), "Ana asked that this one not be read aloud. You turned reading on, so Skim stops at it.")
-        XCTAssertEqual(words(false, nil), "Ana asked that this one not be read aloud. Skim and the Margins tab still take you here, with nothing read. Turn this on to hear it.")
-        XCTAssertEqual(words(nil, false), "You turned reading off for this one. Skim and the Margins tab still take you here, with nothing read.")
+        XCTAssertEqual(words(false, nil), "Ana asked that this one not be read aloud. Skim passes it. Turn this on to hear it. You can always read it here and on the Timeline.")
+        XCTAssertEqual(words(nil, false), "You turned reading off for this one. Skim passes it. You can always read it here and on the Timeline.")
         XCTAssertEqual(words(false, false), words(nil, false), "once the listener has chosen, it is their choice that is spoken of")
         XCTAssertTrue(words(false, nil, name: nil).hasPrefix("Your friend asked"), "a file that names nobody is not given a stand-in name")
     }
 
-    // A Margin with no place is no stop and no row to go to, so its lines say nothing of either (#4934).
-    func testAMarginWithNoPlaceDoesNotPromiseSkimWillTakeYouThere() {
-        func words(_ sender: Bool?, _ listener: Bool?) -> String {
-            ReadAloudWords.footer(for: written(sender: sender, listener: listener), senderName: "Ana", hasPlace: false)
-        }
-        XCTAssertEqual(words(false, nil), "Ana asked that this one not be read aloud. Turn this on to hear it.")
-        XCTAssertEqual(words(nil, false), "You turned reading off for this one.")
-        XCTAssertEqual(words(nil, nil), "Your phone reads this Margin aloud where it comes up, and Skim stops at it.", "read aloud: unchanged")
-        XCTAssertEqual(words(false, true), "Ana asked that this one not be read aloud. You turned reading on, so Skim stops at it.", "unchanged")
-        for margin in [written(sender: false, listener: nil), written(sender: nil, listener: false)] {
-            XCTAssertFalse(ReadAloudWords.footer(for: margin, senderName: "Ana", hasPlace: false).contains("Skim"), "no place, no promise")
-        }
-    }
-
     // MARK: Skim
 
-    func testSkimStopsAtAWrittenMarginThatWillBeReadAndStopsSilentlyAtOneThatWillNot() {
-        func stops(_ margins: [ImportedCommentaryInterjection]) -> [SkimStop] {
-            let spoken = margins.filter(SharedMarginAudio.canOffer)
-            let silent = margins.filter { SharedMarginListPlay.isSilentSkimStop($0, in: layer) }
-            return SkimStopRouting.stops(
-                textChapters: [], mediaChapters: [], ownMargins: [], sharedMargins: spoken, silentSharedMargins: silent,
-                unit: .milliseconds).stops
+    func testSkimStopsAtAWrittenMarginThatWillBeReadAndPassesOneThatWillNot() {
+        func stops(_ margins: [ImportedCommentaryInterjection]) -> [String] {
+            SkimStopRouting.stops(textChapters: [], mediaChapters: [], ownMargins: [], sharedMargins: margins, unit: .milliseconds).stops.map(\.id)
         }
-        func ids(_ margins: [ImportedCommentaryInterjection]) -> [String] { stops(margins).map(\.id) }
-        XCTAssertEqual(ids([written(id: "read", sender: nil, listener: nil, at: 10_000)]), ["read"], "a written Margin that will be read is a stop")
-        XCTAssertEqual(stops([written(id: "read", sender: nil, listener: nil, at: 10_000)]).map(\.isSilent), [false])
-        XCTAssertEqual(ids([written(id: "sender-no", sender: false, listener: nil, at: 10_000)]), ["sender-no"], "the sender said no: still a place")
-        XCTAssertEqual(stops([written(id: "sender-no", sender: false, listener: nil, at: 10_000)]).map(\.isSilent), [true], "but a silent one")
-        XCTAssertEqual(stops([written(id: "listener-no", sender: nil, listener: false, at: 10_000)]).map(\.isSilent), [true])
+        XCTAssertEqual(stops([written(id: "read", sender: nil, listener: nil, at: 10_000)]), ["read"], "a written Margin that will be read is a stop")
+        XCTAssertEqual(stops([written(id: "sender-no", sender: false, listener: nil, at: 10_000)]), [], "the sender said no: Skim passes it")
+        XCTAssertEqual(stops([written(id: "listener-no", sender: nil, listener: false, at: 10_000)]), [], "the listener said no: Skim passes it")
         XCTAssertEqual(
             stops([written(id: "a", sender: false, listener: nil, at: 10_000), written(id: "b", sender: false, listener: true, at: 20_000),
-                   written(id: "c", sender: nil, listener: nil, at: 30_000)]).map { "\($0.id):\($0.isSilent)" },
-            ["a:true", "b:false", "c:false"], "the listener turning reading back on makes it a voiced stop again")
-        XCTAssertEqual(stops([written(id: "voice", sender: false, listener: nil, audioPath: "a.m4a", at: 10_000)]).map(\.isSilent), [false],
-                       "a recording is a voiced stop whatever was chosen")
+                   written(id: "c", sender: nil, listener: nil, at: 30_000)]),
+            ["b", "c"], "the listener turning reading back on makes it a stop again")
+        XCTAssertEqual(stops([written(id: "voice", sender: false, listener: nil, audioPath: "a.m4a", at: 10_000)]), ["voice"],
+                       "a recording is a stop whatever was chosen")
     }
 
     // MARK: Stored records

@@ -663,7 +663,7 @@ struct Build23MarginEditor: View {
                         .accessibilityIdentifier("build23.sender.readAloud.\(margin.id)")
                         Text(margin.readAloud
                             ? "Their phone reads it out as your words, and Skim stops at it. They can turn that off."
-                            : "They read it on the screen instead. Skim still stops at it, with nothing read. They can turn reading on.")
+                            : "They read it on the screen instead. Skim passes it. They can turn reading on.")
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
                     }
