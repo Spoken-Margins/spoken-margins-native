@@ -13,7 +13,9 @@ import Foundation
 ///
 /// A launch holds the build number, times in milliseconds since `App.init` (the kernel's process start can be
 /// hours earlier when iOS prewarmed the app, so the time before `App.init` is kept apart), and the Library's item
-/// count. An exit holds the `app.previous_exit` fields (counts and system codes only, see `PreviousRunExit`).
+/// count. A launch also keeps the main-thread stalls the hang probe saw in its first minute (`hangs`, #3752): how many,
+/// how long in all, and when, how long and in what work the longest ones were, so a launch that took 19 s says where
+/// the main thread was. An exit holds the `app.previous_exit` fields (counts and system codes only, see `PreviousRunExit`).
 /// Nothing in it names the listener, an item or a title.
 public struct LaunchHistory: Codable, Sendable, Equatable {
     public struct Launch: Codable, Sendable, Equatable {
@@ -37,6 +39,21 @@ public struct LaunchHistory: Codable, Sendable, Equatable {
         public var libraryItems: Int?
         /// Set when the Library could not be opened, in place of `libraryReadyMs`.
         public var libraryFailed: Bool?
+        /// Main-thread stalls of 250 ms or more that ended in the launch's first `hangWindowMs`: how many, their total
+        /// milliseconds, and the longest `maxHangsPerLaunch` of them in time order. Nil when there were none, and in a
+        /// history saved before this field; older builds ignore the keys.
+        public var hangCount: Int?
+        public var hangTotalMs: Int?
+        public var hangs: [Hang]?
+    }
+
+    /// One main-thread stall: when it began (milliseconds since `App.init`), how long it lasted, the innermost work
+    /// label it ended in, and where its samples fell (`label=count` pairs). Labels are fixed names written in code.
+    public struct Hang: Codable, Sendable, Equatable {
+        public var atMs: Int
+        public var durationMs: Int
+        public var operation: String
+        public var samples: String?
     }
 
     public struct Exit: Codable, Sendable, Equatable {
@@ -52,6 +69,11 @@ public struct LaunchHistory: Codable, Sendable, Equatable {
         case rootAppear, libraryReady, usable, followingFresh
     }
 
+    /// Only stalls that end this long after `App.init` belong to the launch; later ones are the session's, and the
+    /// event log has them.
+    public static let hangWindowMs = 60_000
+    public static let maxHangsPerLaunch = 5
+    public static let maxHangLabelLength = 120
     public static let launchCapacity = 10
     public static let exitCapacity = 8
     public static let maxDetailLength = 480
@@ -103,6 +125,34 @@ public struct LaunchHistory: Codable, Sendable, Equatable {
         launches[launches.count - 1] = launch
     }
 
+    /// Keeps a main-thread stall that just ended, as part of the newest launch (#3752). `elapsedMs` is the time since
+    /// `App.init` at the moment the stall ended, so it began `durationMs` earlier. A stall that began after
+    /// `hangWindowMs` (a long one that began inside it still counts, and may end after it), one with a negative time or
+    /// no length, or one with no launch to belong to is dropped. Every stall in the window is counted; only the longest
+    /// `maxHangsPerLaunch` keep their details, shown in time order. Returns whether the stall was taken, so a caller
+    /// need not save or publish for one that was not.
+    @discardableResult
+    public mutating func noteHang(elapsedMs: Int, durationMs: Int, operation: String, samples: String? = nil) -> Bool {
+        guard var launch = launches.last, elapsedMs >= 0, durationMs > 0,
+              elapsedMs - durationMs <= Self.hangWindowMs else { return false }
+        let label = operation.isEmpty ? "none" : operation
+        let samplesText = (samples ?? "").isEmpty ? nil : Self.plainSamples(samples ?? "")
+        launch.hangCount = (launch.hangCount ?? 0) + 1
+        launch.hangTotalMs = (launch.hangTotalMs ?? 0) + durationMs
+        var kept = launch.hangs ?? []
+        kept.append(Hang(atMs: max(0, elapsedMs - durationMs), durationMs: durationMs,
+                         operation: Self.plainOperation(label), samples: samplesText))
+        if kept.count > Self.maxHangsPerLaunch {
+            // The shortest goes; of equal lengths, the one that began later.
+            if let shortest = kept.indices.min(by: { (kept[$0].durationMs, -$0) < (kept[$1].durationMs, -$1) }) {
+                kept.remove(at: shortest)
+            }
+        }
+        launch.hangs = kept.sorted { $0.atMs < $1.atMs }
+        launches[launches.count - 1] = launch
+        return true
+    }
+
     /// Keeps one `app.previous_exit` event's fields. When the list is full, a `none_reported` entry goes before
     /// any entry that names a crash, a kill or a hang, so the reports that matter outlast the empty ones.
     public mutating func recordExit(fields: [String: String], at time: Date) {
@@ -147,6 +197,15 @@ public struct LaunchHistory: Codable, Sendable, Equatable {
             if let value = launch.followingFreshMs {
                 parts.append("following_fresh \(value)ms" + (launch.followingFirstScreenOnly == true ? " first_screen_only" : ""))
             }
+            if let count = launch.hangCount, count > 0 {
+                parts.append("hangs \(count) total \(launch.hangTotalMs ?? 0)ms")
+                let details = (launch.hangs ?? []).map { hang -> String in
+                    var text = "\(hang.durationMs)ms@\(hang.atMs) \(hang.operation)"
+                    if let samples = hang.samples { text += " (\(samples))" }
+                    return text
+                }
+                if !details.isEmpty { parts.append("[" + details.joined(separator: "; ") + "]") }
+            }
             return parts.joined(separator: " ")
         }
         .joined(separator: " | ")
@@ -176,6 +235,34 @@ public struct LaunchHistory: Codable, Sendable, Equatable {
         let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _.:,-=")
         let cleaned = String(text.map { allowed.contains($0) ? $0 : "?" })
         return cleaned.count > limit ? String(cleaned.prefix(limit)) : cleaned
+    }
+
+    private static let labelCharacters = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _.:,-=>;")
+
+    private static func labelText(_ text: String) -> String {
+        String(text.map { labelCharacters.contains($0) ? $0 : "?" })
+    }
+
+    /// For an operation label (`a>b` is a stack, outermost first, innermost last): fixed names written in code. When it
+    /// is too long the outer end goes, because the innermost label is the one that names the work.
+    static func plainOperation(_ text: String) -> String {
+        let cleaned = labelText(text)
+        return cleaned.count > maxHangLabelLength ? ">" + String(cleaned.suffix(maxHangLabelLength - 1)) : cleaned
+    }
+
+    /// For a `label=count;label=count` list: whole pairs only, so a cut never leaves a `label=` with no count.
+    static func plainSamples(_ text: String) -> String {
+        let cleaned = labelText(text)
+        guard cleaned.count > maxHangLabelLength else { return cleaned }
+        var kept: [Substring] = []
+        var length = 0
+        for pair in cleaned.split(separator: ";") {
+            let added = pair.count + (kept.isEmpty ? 0 : 1)
+            if length + added > maxHangLabelLength { break }
+            kept.append(pair)
+            length += added
+        }
+        return kept.joined(separator: ";")
     }
 
     static func timeLabel(_ time: Date) -> String {

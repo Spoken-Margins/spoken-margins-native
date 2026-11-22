@@ -20,6 +20,10 @@ public final class HangTelemetry {
     public static let maxHangRecordsPerWindow = 20
     public static let hangWindowSeconds: TimeInterval = 600
 
+    /// Told of every hang the probe reports, including the ones the event log's allowance leaves out. The launch
+    /// history keeps the stalls of a launch's first minute this way (#3752).
+    public var hangObserver: (@MainActor (MainThreadHangProbe.Hang) -> Void)?
+
     private var probe: MainThreadHangProbe?
     private var hangRecords = 0
     private var hangWindowStart: TimeInterval = 0
@@ -62,6 +66,7 @@ public final class HangTelemetry {
         record: @MainActor (_ kind: String, _ fields: [String: String]) -> Void,
         context: @MainActor () -> [String: String]
     ) {
+        hangObserver?(hang)
         let now = uptime()
         if now - hangWindowStart > Self.hangWindowSeconds {
             hangWindowStart = now
