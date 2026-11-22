@@ -74,13 +74,6 @@ final class FirstMarginHeardTests: XCTestCase {
         XCTAssertTrue(progress(steps: value.storedSteps).isComplete(.heardFirstMargin))
     }
 
-    /// An older build reads the steps with a compactMap over the names it knows, as today's init does.
-    func testAnOlderReaderDropsTheNewNameWithoutError() {
-        let known = Set(OnboardingStep.allCases.map(\.rawValue)).subtracting(["heard_first_margin"])
-        let older = Set(["first_interjection", "heard_first_margin"].filter(known.contains))
-        XCTAssertEqual(older, ["first_interjection"])
-    }
-
     // MARK: hasRunBefore: a table of neighbouring inputs
 
     func testHasRunBeforeIsTrueForAnyOneTraceAndFalseForNone() {

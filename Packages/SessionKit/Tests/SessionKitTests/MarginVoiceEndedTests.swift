@@ -20,23 +20,28 @@ final class MarginVoiceEndedTests: XCTestCase {
         let conductor: MarginMomentConductor
         var ended: [Ended] = []
         var resumed = 0
+        var paused = 0
         var onEnded: (() -> Void)?
 
-        init(recordingExists: Bool = true, seconds: Double = 0.5) throws {
+        init(recordingExists: Bool = true, seconds: Double = 0.5, review: Bool = false) throws {
             directory = FileManager.default.temporaryDirectory
                 .appending(path: "voice-ended-\(UUID().uuidString)", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let url = directory.appending(path: "ij-001.caf")
             if recordingExists { _ = try RealPlayerMarginMomentTests.writeTone(to: url, seconds: seconds, hz: 440) }
             var resume: () -> Void = {}
+            var pause: () -> Void = {}
+            let anchor = MarginMomentAnchor(marginId: "ij-001", mediaTimeMs: 2_500)
+            let sequence = review
+                ? try XCTUnwrap(MarginMomentSequence(itemId: "episode", reviewing: [anchor]))
+                : MarginMomentSequence(itemId: "episode", target: anchor, otherMargins: [])
             conductor = MarginMomentConductor(
-                sequence: MarginMomentSequence(
-                    itemId: "episode", target: MarginMomentAnchor(marginId: "ij-001", mediaTimeMs: 2_500), otherMargins: []
-                ),
-                source: .init(pause: {}, resume: { resume() }, seek: { _ in }),
+                sequence: sequence,
+                source: .init(pause: { pause() }, resume: { resume() }, seek: { _ in }),
                 voiceURL: { _ in url }
             )
             resume = { [unowned self] in resumed += 1 }
+            pause = { [unowned self] in paused += 1 }
             conductor.voiceVolume = 0
             conductor.onVoiceEnded = { [unowned self] margin, reachedEnd in
                 ended.append(Ended(marginId: margin.marginId, reachedEnd: reachedEnd))
@@ -111,13 +116,20 @@ final class MarginVoiceEndedTests: XCTestCase {
         XCTAssertFalse(fixture.conductor.isPlayingVoice)
     }
 
+    /// `stopReview()` takes its own branch when the sequence is a review: it pauses the source again after stopping the
+    /// voice. A plain moment would fall through to `cancel()`, which doesn't, so the second pause shows which ran.
     func testStoppingAReviewReportsNothing() throws {
-        let fixture = try Fixture(seconds: 5)
+        let fixture = try Fixture(seconds: 5, review: true)
         defer { fixture.cleanUp() }
+        XCTAssertTrue(fixture.conductor.sequence.isReview)
         fixture.conductor.start()
         fixture.conductor.playTargetNow()
+        XCTAssertTrue(fixture.conductor.isPlayingVoice)
+        XCTAssertEqual(fixture.paused, 1)
         fixture.conductor.stopReview()
+        XCTAssertEqual(fixture.paused, 2, "the review branch of stopReview ran")
         XCTAssertEqual(fixture.ended, [])
+        XCTAssertFalse(fixture.conductor.isPlayingVoice)
     }
 }
 #endif
