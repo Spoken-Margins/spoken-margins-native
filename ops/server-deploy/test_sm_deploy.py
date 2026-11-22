@@ -259,6 +259,18 @@ class RepoDriftTests(unittest.TestCase):
             result = subprocess.run([visudo, '-cf', str(HERE / 'sm-deploy.sudoers')], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_bootstrap_accepts_one_commented_key_line_and_refuses_more(self):
+        check = (HERE / 'bootstrap-root.sh').read_text().splitlines()[7]
+        self.assertIn('exactly one public key line', check)
+        for text, ok in (('ssh-ed25519 AAAAC3Nza sm-deploy github-actions\n', True), ('ssh-ed25519 AAAAC3Nza\n', True),
+                         ('ssh-ed25519 AAAA x\nssh-ed25519 BBBB y\n', False), ('command="x" ssh-ed25519 AAAA x\n', False),
+                         ('', False)):
+            with tempfile.TemporaryDirectory() as folder:
+                Path(folder, 'deploy_key.pub').write_text(text)
+                result = subprocess.run(['sh', '-c', check], env={'stage': folder, 'PATH': os.environ['PATH']},
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, ok, text)
+
     def test_forced_command_script_passes_args_unglobbed(self):
         text = (HERE / 'sm-deploy-ssh').read_text()
         self.assertIn('set -f', text)

@@ -15,6 +15,6 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cp "$here/sm_deploy.py" "$here/sm-deploy-ssh" "$here/sm-deploy.sudoers" "$here/bootstrap-root.sh" "$work/"
 cp "$pub" "$work/deploy_key.pub"
-payload=$(COPYFILE_DISABLE=1 tar -C "$work" -cf - sm_deploy.py sm-deploy-ssh sm-deploy.sudoers bootstrap-root.sh deploy_key.pub | base64 | tr -d '\n')
+payload=$(COPYFILE_DISABLE=1 tar --no-xattrs -C "$work" -cf - sm_deploy.py sm-deploy-ssh sm-deploy.sudoers bootstrap-root.sh deploy_key.pub | base64 | tr -d '\n')
 remote="d=\$(mktemp -d /tmp/sm-deploy-install.XXXXXX) && echo $payload | base64 -d | tar -xf - -C \$d && sh \$d/bootstrap-root.sh \$d $sha; rc=\$?; rm -rf \$d; exit \$rc"
 exec ssh -t "$host" "sudo -p 'sudo password for %p: ' sh -c '$remote'"

@@ -5,7 +5,7 @@
 set -eu
 stage=${1:?stage dir}
 sha=${2:?main sha}
-[ "$(wc -l < "$stage/deploy_key.pub" | tr -d ' ')" = 1 ] && grep -Eq '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-[a-z0-9]+|sk-[a-z0-9@.-]+) [A-Za-z0-9+/=]+( [^ ]*)?$' "$stage/deploy_key.pub" || { echo "deploy_key.pub must be exactly one public key line" >&2; exit 1; }
+[ "$(wc -l < "$stage/deploy_key.pub" | tr -d ' ')" = 1 ] && grep -Eq '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-[a-z0-9]+|sk-[a-z0-9@.-]+) [A-Za-z0-9+/=]+( .*)?$' "$stage/deploy_key.pub" || { echo "deploy_key.pub must be exactly one public key line" >&2; exit 1; }
 install -d -m 755 -o root -g root /usr/local/sbin
 install -m 755 -o root -g root "$stage/sm_deploy.py" /usr/local/sbin/sm-deploy
 install -m 755 -o root -g root "$stage/sm-deploy-ssh" /usr/local/sbin/sm-deploy-ssh
