@@ -248,6 +248,8 @@ public enum StructuredDocumentBuilder {
         // Every line that has a place on its page, and the pages with a line that has none (#4587).
         var locatedLines: [PDFCaptionFloatBuilder.Line] = []
         var unplacedPages: Set<Int> = []
+        // How many lines open a caption with each label, by segment (#4587): every line, placed or not.
+        var captionLabelCounts: [String: Int] = [:]
 
         for line in lines {
             pendingOutline += line.outlineEntries
@@ -284,6 +286,10 @@ public enum StructuredDocumentBuilder {
                     level: line.role == .heading || line.role == .title ? line.level : nil,
                     pageIndex: line.pageIndex
                 ))
+            }
+            let segmentId = segments[segments.count - 1].id
+            if let label = PDFCaptionFloatBuilder.openingLabel(role: line.role, text: cleaned.text) {
+                captionLabelCounts[PDFCaptionFloatBuilder.openingLabelKey(segmentId: segmentId, label: label), default: 0] += 1
             }
             if let bounds = line.bounds, let pageIndex = line.pageIndex {
                 if let kind = PDFClipLocator.kind(of: line.role) {
@@ -338,7 +344,8 @@ public enum StructuredDocumentBuilder {
             segments[index].floatId = float.id
         }
         let floats = textFloats + PDFCaptionFloatBuilder.floats(
-            from: locatedLines, unplacedPages: unplacedPages, textFloats: textFloats, useTextArea: captionTextArea)
+            from: locatedLines, unplacedPages: unplacedPages, textFloats: textFloats, useTextArea: captionTextArea,
+            labelCounts: captionLabelCounts)
         return StructuredDocument(
             extraction: StructuredDocument.Extraction(
                 engine: engine,

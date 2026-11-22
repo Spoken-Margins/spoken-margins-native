@@ -138,6 +138,16 @@ final class StructuredDocumentCaptionFloatTests: XCTestCase {
         assertBounds(float.bounds, 0.10, 0.60 + inset, 0.80, 0.93 - (0.60 + inset), "top of the page")
     }
 
+    func testACaptionAboveAFigureAtTheBottomOfThePageIsMeasuredToTheTextAreasBottom() throws {
+        // Text, a caption a paragraph gap under it, and then the figure down to the bottom of the text: nothing is below.
+        let lines = paragraph("Above", top: 0.40, lines: 3) + caption("7", top: 0.30)    // lowest bottom 0.336; caption 0.26 ... 0.30
+        let document = build(lines + filler(page: 1) + filler(page: 2) + filler(page: 3), pages: 4)
+        let float = try XCTUnwrap(document.floats.first)
+        assertBounds(float.bounds, 0.10, 0.06, 0.80, (0.26 - inset) - 0.06, "caption above, figure at the bottom")
+        let withoutArea = build(lines + filler(page: 1) + filler(page: 2) + filler(page: 3), pages: 4, captionTextArea: false)
+        XCTAssertEqual(withoutArea.floats, [], "nothing says where the figure ends without the text area")
+    }
+
     func testAFigureAtTheBottomOfThePageClipsTheBandAboveItsCaption() throws {
         // The caption sits at the bottom of the text area, so nothing is below it to be a second candidate.
         let lines = paragraph("Above", top: 0.95, lines: 4) + caption("7", top: 0.10)
@@ -224,6 +234,28 @@ final class StructuredDocumentCaptionFloatTests: XCTestCase {
             + caption("3", top: 0.20)
             + paragraph("End", top: 0.140, lines: 3)
         XCTAssertEqual(build(lines).floats, [])
+    }
+
+    func testTwoCaptionsWithTheSameLabelOnDifferentPagesOfOneSegmentGiveNoFloat() {
+        // One body segment holds every page's body lines, and `PDFClipAnchors` finds a caption by its label in the
+        // segment, so both "Figure 3" cards would land on the first caption.
+        let lines = standardPage(page: 0, number: "3") + standardPage(page: 5, number: "3")
+        XCTAssertEqual(build(lines, pages: 6).floats, [])
+    }
+
+    func testACaptionWhoseLabelIsRepeatedOnAPageTheBuilderSkipsGivesNoFloat() {
+        // The other "Figure 3" is on a page with an unplaced line, so it never becomes a block; it still counts.
+        let skipped = standardPage(page: 1, number: "3") + [line("A line the extractor could not place.", nil, page: 1)]
+        let lines = standardPage(page: 0, number: "3") + skipped
+        XCTAssertEqual(build(lines, pages: 2).floats, [])
+    }
+
+    func testTheSameLabelInDifferentSegmentsIsNotAmbiguous() {
+        // A heading-role caption has a segment of its own, so its label is found there and nowhere else.
+        let first = paragraph("Above", top: 0.95, lines: 8) + caption("3", top: 0.46, role: .heading) + paragraph("Below", top: 0.392, lines: 6)
+        let second = paragraph("Above", top: 0.95, lines: 8, page: 1) + caption("3", top: 0.46, page: 1, role: .heading)
+            + paragraph("Below", top: 0.392, lines: 6, page: 1)
+        XCTAssertEqual(build(first + second, pages: 2).floats.map(\.id), ["float-p1-c1", "float-p2-c1"])
     }
 
     func testAPageWithAnUnboundedBodyLineGetsNoCaptionFloatButATitleLineDoesNot() {

@@ -15,6 +15,11 @@ final class PDFClipBlankCheckTests: XCTestCase {
         XCTAssertTrue(PDFClipBlankCheck.isBlank(luminance: field(245)))
     }
 
+    func testTheLightestToneThatIsBlankIs232() {
+        XCTAssertTrue(PDFClipBlankCheck.isBlank(luminance: field(232)))
+        XCTAssertFalse(PDFClipBlankCheck.isBlank(luminance: field(231)), "a flat light-grey panel is a picture")
+    }
+
     func testWhiteWithATenthOfAPercentOfDarkSpecksIsBlank() {
         var pixels = field(255)
         for index in 0..<4 { pixels[index * 1000] = 0 }                  // 4 of 4096 pixels, about 0.1%

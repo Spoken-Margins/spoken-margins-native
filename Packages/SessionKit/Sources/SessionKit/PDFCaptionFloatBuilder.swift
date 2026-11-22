@@ -24,6 +24,16 @@ enum PDFCaptionFloatBuilder {
     /// PDFKit's line boxes often overlap a little; an overlap up to this much of the opening line's height still joins.
     static let largestLineOverlap = 0.3
 
+    /// The key `labelCounts` is counted under.
+    static func openingLabelKey(segmentId: String, label: String) -> String { "\(segmentId)|\(label)" }
+
+    /// The label of the caption a line opens, or nil. A cheap prefix test comes first, so the regular expressions run
+    /// only on lines that could be captions.
+    static func openingLabel(role: StructuredDocument.Role, text: String) -> String? {
+        guard canHoldCaption(role), text.hasPrefix("Fig") || text.hasPrefix("FIG") else { return nil }
+        return PDFFigureCaption.label(of: text)
+    }
+
     /// Roles whose lines can open or continue a caption: extractors read a caption as body text, and sometimes as a
     /// heading.
     private static func canHoldCaption(_ role: StructuredDocument.Role) -> Bool {
@@ -39,8 +49,13 @@ enum PDFCaptionFloatBuilder {
     ///   - textFloats: the floats `PDFClipLocator` made from printed table and figure text. They come first under the
     ///     cap, and a band that meets one of them is dropped.
     ///   - useTextArea: whether a figure at the top or bottom of a page is measured to the document's text area.
+    ///   - labelCounts: how many lines of the whole document open a caption with each label, by segment and label
+    ///     (`openingLabelKey`), counted over every line, placed or not, on every page. `PDFClipAnchors` finds a
+    ///     caption by its label in its segment, and a segment usually holds every page's body lines, so a label that
+    ///     opens two lines of one segment gives no float to either.
     static func floats(
-        from lines: [Line], unplacedPages: Set<Int>, textFloats: [StructuredDocument.Float], useTextArea: Bool = true
+        from lines: [Line], unplacedPages: Set<Int>, textFloats: [StructuredDocument.Float], useTextArea: Bool = true,
+        labelCounts: [String: Int]
     ) -> [StructuredDocument.Float] {
         let room = PDFClipLocator.maximumFloatsPerDocument - textFloats.count
         guard room > 0, !lines.isEmpty else { return [] }
@@ -50,7 +65,7 @@ enum PDFCaptionFloatBuilder {
 
         let furnitureRoles: Set<StructuredDocument.Role> = [.pageHeader, .pageFooter]
         let textArea: PDFFigureCaptionLocator.TextArea? = useTextArea
-            ? PDFFigureCaptionLocator.textArea(pages: order.map { pages[$0, default: []].filter { !furnitureRoles.contains($0.role) }.map(\.bounds) })
+            ? PDFFigureCaptionLocator.textArea(pages: order.filter { !unplacedPages.contains($0) }.map { pages[$0, default: []].filter { !furnitureRoles.contains($0.role) }.map(\.bounds) })
             : nil
 
         var result: [StructuredDocument.Float] = []
@@ -59,11 +74,9 @@ enum PDFCaptionFloatBuilder {
             let (blocks, consumed) = captionBlocks(in: pageLines)
             guard !blocks.isEmpty else { continue }
 
-            // Two captions with one label in one segment: `PDFClipAnchors` finds a caption by its label in the
-            // segment and could not tell them apart. They still bound each other's bands.
-            var seen: [String: Int] = [:]
-            for block in blocks { seen["\(block.segmentId)|\(block.label)", default: 0] += 1 }
-            let ambiguous = Set(blocks.filter { seen["\($0.segmentId)|\($0.label)", default: 0] > 1 }.map(\.id))
+            // Two captions with one label in one segment, on this page or another: `PDFClipAnchors` could not tell
+            // them apart. They still bound each other's bands.
+            let ambiguous = Set(blocks.filter { labelCounts[openingLabelKey(segmentId: $0.segmentId, label: $0.label), default: 0] > 1 }.map(\.id))
 
             let textBlocks = pageLines.indices.filter { !consumed.contains($0) }.map { pageLines[$0] }
                 .filter { $0.role != .pageHeader && $0.role != .pageFooter && $0.role != .figureText }.map(\.bounds)
@@ -112,13 +125,13 @@ enum PDFCaptionFloatBuilder {
         var index = 0
         while index < lines.count {
             let opening = lines[index]
-            guard canHoldCaption(opening.role), let label = PDFFigureCaption.label(of: opening.text) else { index += 1; continue }
+            guard let label = openingLabel(role: opening.role, text: opening.text) else { index += 1; continue }
             var union = opening.bounds
             var last = opening.bounds
             var end = index + 1
             while end < lines.count, end - index < maximumCaptionLines {
                 let next = lines[end]
-                guard canHoldCaption(next.role), PDFFigureCaption.label(of: next.text) == nil,
+                guard canHoldCaption(next.role), openingLabel(role: next.role, text: next.text) == nil,
                       !PDFFigureCaption.isCaptionStart(next.text) else { break }
                 let gap = last.y - (next.bounds.y + next.bounds.height)
                 let overlap = min(next.bounds.x + next.bounds.width, union.x + union.width) - max(next.bounds.x, union.x)
