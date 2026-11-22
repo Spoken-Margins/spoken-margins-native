@@ -21,12 +21,16 @@ public struct CopyLengthDifference: Equatable, Sendable {
 
     /// A length difference under this is not worth a word: it leaves room for how two players measure one file.
     static let minimumDifferenceMs = 10_000
+    /// A length above this (about 31 years) is no episode: a packet carries any integer, and the arithmetic below
+    /// would trap on one near `Int.max`. No note is better than a crash on opening a Margin.
+    static let ceilingMs = 1_000_000_000_000
     /// Below this many seconds the amount is said in seconds, rounded to 5; from here, in whole minutes.
     static let minutesFromSeconds = 120
 
-    /// Nil for no note: either length missing or not above zero, or the copies within 10 s of each other.
+    /// Nil for no note: either length missing, not above zero or absurdly long, or the copies within 10 s of each other.
     public init?(senderMs: Int?, listenerMs: Int?) {
-        guard let sender = senderMs, sender > 0, let listener = listenerMs, listener > 0 else { return nil }
+        guard let sender = senderMs, sender > 0, sender <= Self.ceilingMs,
+              let listener = listenerMs, listener > 0, listener <= Self.ceilingMs else { return nil }
         let apart = abs(listener - sender)
         guard apart >= Self.minimumDifferenceMs else { return nil }
         direction = listener < sender ? .shorter : .longer

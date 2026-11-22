@@ -122,6 +122,19 @@ final class SharedMarginPlacementWordingTests: XCTestCase {
         }
     }
 
+    /// A packet's `durationMs` is any integer. A value near `Int.max` made `5 * apart` trap, and the pinned card asks
+    /// twice a second, so opening that Margin would crash the app (review of #4175). The shared table has no such row
+    /// because the web uses doubles; this is SessionKit's own.
+    func testAnAbsurdLengthInAPacketGivesNoNoteAndNeverTraps() {
+        for huge in [Int.max, Int.max - 1, Int.max / 5, Int.max / 5 + 1, 1_000_000_000_001, Int.min] {
+            XCTAssertNil(CopyLengthDifference(senderMs: huge, listenerMs: 1_800_000), "\(huge) as the sender's length")
+            XCTAssertNil(CopyLengthDifference(senderMs: 1_800_000, listenerMs: huge), "\(huge) as the listener's length")
+            XCTAssertNil(CopyLengthDifference(senderMs: huge, listenerMs: huge), "\(huge) for both")
+        }
+        XCTAssertEqual(CopyLengthDifference(senderMs: 1_000_000_000_000, listenerMs: 1_000_000)?.farApart, true,
+                       "the ceiling itself still works")
+    }
+
     func testTheNoteNamesTheSizeOfTheDifferenceInThreeSentences() {
         func line(_ sender: Int?, _ listener: Int?, _ subject: PinnedMarginCard.Subject, atSenderClock: Bool = true,
                   plan: SharedMarginPlacementPlan = .roughly(mediaTimeMs: 300_000)) -> String? {

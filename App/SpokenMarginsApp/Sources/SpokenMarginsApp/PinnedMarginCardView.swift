@@ -69,7 +69,8 @@ struct PinnedMarginCardView: View {
                        for: row.placementPlan,
                        atSenderClock: row.interjection.resolution.evidenceClass != .mapInterpolated,
                        senderCopyMs: row.layer.itemIdentity.durationMs,
-                       listenerCopyMs: model.snapshot.currentPlaybackDurationMs, subject: card.subject),
+                       listenerCopyMs: model.snapshot.itemId == model.selectedItem.id ? model.snapshot.currentPlaybackDurationMs : nil,
+                       subject: card.subject),
                    current.caption == nil, !moment.isPlayingMargin {
                     return note
                 }
