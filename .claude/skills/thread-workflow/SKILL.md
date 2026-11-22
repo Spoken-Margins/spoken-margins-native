@@ -5,7 +5,7 @@ description: The life of one Spoken Margins project thread, from claiming a read
 
 # One thread, one issue
 
-A project thread works one issue and ends. When its PR is armed, or the issue is handed back, it posts the stop note and stops; the coordinator starts a fresh thread for the next issue. A cloud session may push only the branch it was given, so never start a second issue in the same thread.
+A project thread works one issue and ends. When its PR is armed, or the issue is handed back, it posts the stop note and stops (section 8); the coordinator starts a fresh thread for the next issue. A cloud session may push only the branch it was given, so never start a second issue in the same thread.
 
 **A thread ends "stopped", never "waiting on Cole" (Cole, 2026-11-22).** It holds a real decision only when only he can make it and the work can't go on without it (the [ask-cole skill](../ask-cole/SKILL.md) has the test). A phone check, a by-ear check, a Diagnostics export, an "after the next build" step, a check of merged work, and "should I keep working?" are not decisions: record them on the issue (section 4) and stop.
 
@@ -92,6 +92,18 @@ The Mac tick also removes merged, clean worktrees outside `.claude/worktrees/` (
 
 On stopping for any reason, comment on your issue exactly:
 
-`Thread "<your thread title>" stopping: <PRs you armed> · <reason>`
+`Thread "<your thread title>" stopping: <PRs you armed> · <reason>. Nothing needed from Cole.`
 
-Then end the thread. A thread listed as waiting must hold a real decision; the coordinator resolves one that is only waiting on an owner check, a phone step or "keep going?" (dispatch skill, section 0).
+Post the same line as the last thing in your final chat message (it is the whole message when you have nothing else to report). Then end the thread. If a PR event wakes it later, section 8 says how that turn ends. A thread listed as waiting must hold a real decision; the coordinator resolves one that is only waiting on an owner check, a phone step or "keep going?" (dispatch skill, section 0). The `ops/` wrappers that post a Mac worker's own stop notes keep their format; they match only the `Thread "<title>" stopping:` prefix.
+
+## 8. What your last turn says (Cole, 2026-11-22, #4986)
+
+The owner's sidebar files a thread under "Waiting on you" when the system's summary of the thread's latest turn says it needs input. The summary is rewritten after every turn, including a short turn woken by a PR event, and it follows what that turn ends on. A stop note that was right was overwritten by a later wake turn that ended "I will not re-label again until the limit clears". The findings and what is still only inferred are in the [record](../../../docs/decisions.md) (2026-11-22, "A thread's last turn decides"). So:
+
+1. **End on the stop line or on a real ask, nothing after it.** The last thing the thread says is either a `**Decision for Cole**` or `**Step for Cole**` (and then it is a real wait), or the stop line ending "Nothing needed from Cole."
+2. **You may keep watching your PR.** A session that opens a PR is subscribed automatically, and you may stay subscribed after the stop line to act on a queue drop or a failure on the PR's own code, as the lane-request skill (section 4) says. Whatever such a wake turn does, it ends on exactly this last line: `Nothing needed from Cole.` Don't end it on a comment about the check, a status, or what you will do next.
+3. **A turn never ends on a sentence that promises or defers your own action**: "until the limit clears", "then I will re-label", "waiting on the audit", "events will wake me", "I'll re-check".
+4. **Leave no checklist step open that reads "Waiting on...".** Before the stop line, bring every line to its true end state; a step that waits on a runner, an audit or a merge is not yours and is not listed.
+5. **Owner checks stay on the issue (section 4), out of the final chat text.** The coordinator carries them to him from the owner queue. A closing line such as "Owner check recorded on #N" or "waits for your phone check" read as needing input on slot MS, Finish Margins and slot MY.
+
+That a later turn overwrites an earlier stop line is confirmed from the transcripts. Rules 1 to 5 are the working explanation and are still being tested; in particular, slot MY stayed subscribed and read "completed" after a wake turn ending "nothing new to act on", but the exact closing line in rule 2 has not been tried yet. A thread that shows the wrong state under them goes in `/mnt/project-files/notes/waiting-state-findings-2026-11-22.md`, so the rules are corrected from evidence and not from a guess.

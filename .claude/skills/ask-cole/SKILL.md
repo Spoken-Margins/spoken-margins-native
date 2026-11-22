@@ -22,6 +22,8 @@ Ask only when it touches his data, packet or database compatibility, money, his 
 
 **Real decision test.** A thread may end waiting on him only when both are true: the choice is one only he can make (the list above), and the thread's own work cannot go on without it. If you can finish your PR, do; put the question on the issue as a **Decision for Cole** card and end stopped. A thread that has nothing left to do except wait for his phone or his export is stopped, not waiting.
 
+**How a thread ends decides how the sidebar shows it (#4986).** A real ask is the last thing the thread says, with nothing after it. A thread with no ask ends every turn, including a later turn woken by a PR event, on exactly `Nothing needed from Cole.`; it never ends on a question, a deferred action of its own, or a closing line that names an owner check ([thread-workflow skill](../thread-workflow/SKILL.md), section 8).
+
 ## 2. How to ask
 
 Write it in full in the chat (a project thread in its own thread; the coordinator in the project chat), under a heading:
