@@ -64,9 +64,21 @@ struct NowClipCard: View {
     let anchor: PDFClipAnchor
     let cards: NowClipCards
     let open: (TimelineClipSelection) -> Void
-    @State private var phase: Phase = .loading
+    @State private var phase: Phase
 
     private enum Phase { case loading, shown(UIImage), failed }
+
+    init(anchor: PDFClipAnchor, cards: NowClipCards, open: @escaping (TimelineClipSelection) -> Void) {
+        self.anchor = anchor
+        self.cards = cards
+        self.open = open
+        // A picture seen a moment ago is there on the first frame, with no blank one first.
+        if let cached = NowClipImageCache.image(forKey: cards.source.pictureKey(forFloat: anchor.floatId)) {
+            _phase = State(initialValue: .shown(cached))
+        } else {
+            _phase = State(initialValue: .loading)
+        }
+    }
 
     private var key: String { cards.source.pictureKey(forFloat: anchor.floatId) }
 
@@ -100,8 +112,9 @@ struct NowClipCard: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(PDFClipLabel.accessibilityLabel(anchor))
         .accessibilityValue(isFailed ? "Couldn't show this picture" : "")
-        .accessibilityHint(PDFClipLabel.hint(for: anchor.kind))
-        .accessibilityAddTraits(isFailed ? .isImage : [.isImage, .isButton])
+        // A picture that is still loading or could not be shown opens nothing, so it says nothing about opening.
+        .accessibilityHint(isShown ? PDFClipLabel.hint(for: anchor.kind) : "")
+        .accessibilityAddTraits(isShown ? [.isImage, .isButton] : .isImage)
         .accessibilityIdentifier("playback.now.clip.\(anchor.floatId)")
         // Keyed by item, folder version and float, so a card that now belongs to another item, or whose file was
         // replaced by a re-import, drops what it had and reads again. The decode is off the main actor and is

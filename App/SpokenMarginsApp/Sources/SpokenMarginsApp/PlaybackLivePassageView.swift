@@ -33,17 +33,13 @@ final class NowSceneController: ObservableObject {
     private(set) var listWidth: Double = 0
     /// Bumped when a hold that did not keep the lit sentence on screen is dropped, so the view scrolls the usual way.
     @Published private(set) var holdDroppedRequest = 0
-    /// The lit sentence a hold scroll was made for, until the next report of what is on screen says whether it held.
-    private var holdAwaiting: Int?
     /// The lit sentence whose hold did not keep it on screen: no hold again until the lit sentence changes.
     private var holdDropped: Int?
-    private var scrollIsIdle = true
 
     func reset(text: String, chapters: [Chapter]) {
         state = PlaybackNowSceneState(text: text, chapters: chapters)
         // The cards belong to the text that is gone; the view finds them again for the new one.
         cards = NowClipCards(source: .none, anchors: [], listWidth: listWidth, visibleHeight: visibleHeight)
-        holdAwaiting = nil
         holdDropped = nil
         clipsVersion &+= 1
     }
@@ -51,9 +47,12 @@ final class NowSceneController: ObservableObject {
     /// The cards the scene shows, found off the main actor. An empty list clears them.
     func setClips(anchors: [PDFClipAnchor], saved: Set<String>, source: TimelineClipSource) {
         guard var next = state else { return }
+        let source = saved.isEmpty ? TimelineClipSource.none : source
+        // The same cards from the same folder: nothing to redraw.
+        guard anchors != cards.anchors || source != cards.source else { return }
         next.setClips(anchors: anchors, saved: saved)
         state = next
-        cards = NowClipCards(source: saved.isEmpty ? .none : source, anchors: anchors, listWidth: listWidth, visibleHeight: visibleHeight)
+        cards = NowClipCards(source: source, anchors: anchors, listWidth: listWidth, visibleHeight: visibleHeight)
         clipsVersion &+= 1
     }
 
@@ -74,7 +73,9 @@ final class NowSceneController: ObservableObject {
     /// read fits under it, or the sentence itself (#4588).
     func scrollTarget(sentences: (PlaybackLivePassage.Sentence) -> [PlaybackLivePassage.Fragment]) -> PlaybackLivePassage.ScrollTarget {
         guard let state, let lit = state.litSentence, let litID = state.litSentenceID, !state.clipHoldStarts.isEmpty,
-              visibleHeight > 0, listWidth > 0, holdDropped != litID else { return .sentence }
+              visibleHeight > 0, listWidth > 0 else { return .sentence }
+        // The sentence that was lost has gone; a different one may hold again.
+        if holdDropped != litID { holdDropped = nil } else { return .sentence }
         let scene = state.shownScene
         let body = UIFont.preferredFont(forTextStyle: .body)
         let metrics = PlaybackLivePassage.ClipHold.Metrics(
@@ -91,12 +92,22 @@ final class NowSceneController: ObservableObject {
             sentenceHeight: { index in
                 PlaybackLivePassage.ClipHold.rowHeight(fragments: sentences(scene.sentences[index]), metrics: metrics)
             })
-        if case .clip = target { holdAwaiting = litID }
+        if case .clip = target { checkHoldKeptLitSentence(litID) }
         return target
     }
 
-    func scrollPhaseChanged(isIdle: Bool) {
-        scrollIsIdle = isIdle
+    /// A held card must never leave the sentence being read out of sight (the height estimate can be wrong). Once the
+    /// scroll has settled, a hold that left the lit sentence off screen is dropped and the view scrolls the usual way.
+    /// Judged after a pause, not on the first report of what is on screen: that one can come mid-scroll, and a scroll
+    /// that moves nothing (the card already at the top) reports nothing at all.
+    private func checkHoldKeptLitSentence(_ litID: Int) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(700))
+            guard let self, !Task.isCancelled, let state = self.state, state.follow.isFollowing,
+                  state.litSentenceID == litID, !self.visibleSentenceIDs.contains(litID) else { return }
+            self.holdDropped = litID
+            self.holdDroppedRequest &+= 1
+        }
     }
 
     func move(offset: Int, margins: [PlaybackLivePassage.Margin], byListenerControl: Bool = false) {
@@ -113,7 +124,6 @@ final class NowSceneController: ObservableObject {
 
     /// A scroll came to rest: following starts again when the lit sentence is on screen.
     func scrollCameToRest() {
-        checkHold()
         guard var next = state, !next.follow.isFollowing else { return }
         let lit = next.litSentenceID.map { visibleSentenceIDs.contains($0) } ?? false
         next.scrollCameToRest(litSentenceIsVisible: lit)
@@ -127,20 +137,9 @@ final class NowSceneController: ObservableObject {
         scrollToLitRequest &+= 1
     }
 
-    /// A hold that left the lit sentence off screen is dropped, so the sentence being read is never out of sight because
-    /// a card was held. Judged when the scroll is at rest, never mid-animation, when the sentence is still on its way.
-    private func checkHold() {
-        guard scrollIsIdle, let litID = state?.litSentenceID, holdAwaiting == litID else { return }
-        holdAwaiting = nil
-        guard state?.follow.isFollowing == true, !visibleSentenceIDs.contains(litID) else { return }
-        holdDropped = litID
-        holdDroppedRequest &+= 1
-    }
-
     func sentencesOnScreen(_ ids: [Int]) {
         // Cards have negative ids and are not sentences: one on screen never counts as the lit sentence being visible.
         visibleSentenceIDs = Set(ids.filter { $0 >= 0 })
-        checkHold()
         guard let state, let playing = state.playingSentenceID, !state.isReadingAnotherScene,
               let first = visibleSentenceIDs.min() else {
             if playingIsAbove { playingIsAbove = false }
