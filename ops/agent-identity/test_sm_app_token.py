@@ -65,7 +65,7 @@ class Jwt(Keys):
 
     def test_a_bad_key_is_a_token_error_not_a_crash(self):
         with self.assertRaises(mint.TokenError):
-            mint.sign_rs256(b'x', b'-----BEGIN RSA PRIVATE KEY-----\nnot a key\n-----END RSA PRIVATE KEY-----\n')
+            mint.sign_rs256(b'x', b'not a key')  # no PEM markers: scripts/check-public-tree.py flags them
 
 
 class Cache(Keys):
