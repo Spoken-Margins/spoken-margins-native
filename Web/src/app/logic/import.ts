@@ -86,6 +86,13 @@ export function findEpisode(read: PacketRead, episodes: readonly Episode[]): Epi
   return undefined;
 }
 
+/** Whether the listener's copy is the packet's episode by the guid or by an Apple episode's show and episode ids. */
+function sameEpisodeIdentity(own: Episode, packet: PacketRead['episode']): boolean {
+  const guid = packet.guid?.trim();
+  if (guid && own.guid?.trim() === guid) return true;
+  return own.pageUrl !== undefined && packet.pageUrl !== undefined && appleEpisodeRef(own.pageUrl) !== undefined && sameEpisodePage(own.pageUrl, packet.pageUrl);
+}
+
 /**
  * Two pages of one episode. An Apple episode page names its episode only in `?i=`, which `samePage` ignores, so two episodes
  * of one show would match. When either page is an Apple episode page, both must be, with the same show and episode ids.
@@ -110,7 +117,10 @@ export function placeImport(
   let show: Show | undefined;
   // The listener's copy was kept before its audio was known (a page-only Apple episode, saved when Apple wasn't answering or
   // before the lookup existed). The packet now carries the audio, so the copy takes it instead of asking again on the tap (#4783).
-  const filled = own !== undefined && !own.audioUrl && read.episode.audioUrl !== undefined;
+  // Only when the match is by identity (the guid, or an Apple episode's own ids). A page matched by address alone is not
+  // proof of the same episode where the address names its item in a query (a YouTube `watch?v=`, a `/?p=7`), and audio
+  // saved on the wrong item stays there.
+  const filled = own !== undefined && !own.audioUrl && read.episode.audioUrl !== undefined && sameEpisodeIdentity(own, read.episode);
   if (own) {
     episode = filled
       ? {
