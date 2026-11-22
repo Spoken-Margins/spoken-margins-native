@@ -24,6 +24,8 @@ extension PinnedMarginCard {
             case stopPlayingMine
             case listen
             case dismiss
+            /// Hides the card for a Margin the listener went to that is never spoken; the source keeps playing (#4934).
+            case dismissSilentMargin
 
             /// Held while a Margin is being recorded (`recordingNavigationIsLocked`): drawn dimmed, not hidden.
             public var followsNavigationLock: Bool { self == .goToNextMargin }
@@ -70,6 +72,9 @@ extension PinnedMarginCard {
                 return [Action(job: .stopPlayingMine, title: "Stop playing my Margins", hint: "Your other Margins stop playing by themselves.", prominence: .secondary)]
             }
             return upNextAction(arrival: arrival, ahead: ahead).map { [$0] } ?? []
+        case .silentHere:
+            // No Next Margin: the Skim arrows sit right under the card.
+            return [Action(job: .dismissSilentMargin, title: "Dismiss", hint: "Hides this card. The \(ahead) keeps playing.", prominence: .quiet)]
         case .answerSaved, .lastMargin:
             return []
         }
