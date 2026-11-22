@@ -13,6 +13,8 @@
 //   runs on after the Margin has played never does, since the previous time is already past it.
 // - The web model keeps no "approximate" flag on a Margin (a percent-placed one is stored at its estimated second),
 //   so every Margin fires at its stored moment.
+// - A Margin made since the last time update, unless a seek came between, is not crossed: Record saves its Margin at
+//   the playhead and pauses there, so the first update after Play would otherwise fire the listener's own new Margin.
 import type { Margin } from '../../shared/model.ts';
 
 /** The most media time one time update may cover and still count as playing (browsers send about four a second). */
@@ -45,15 +47,19 @@ export function dueMargins(
 /** Where playback last was, from the audio element's events, so each time update can tell which Margins it crossed. */
 export class CrossingClock {
   private last: number | undefined;
+  // The Margins there at the last time update; undefined after a load or a seek, when every Margin counts.
+  private known: Set<string> | undefined;
 
   /** A new episode is loading: nothing to compare with until it plays. */
   reset(): void {
     this.last = undefined;
+    this.known = undefined;
   }
 
   /** A seek began, landing at `at` (the audio element's currentTime while seeking). */
   seeking(at: number): void {
     this.last = at;
+    this.known = undefined;
   }
 
   /**
@@ -66,8 +72,10 @@ export class CrossingClock {
 
   /** A time update while playing: the Margins crossed since the last one. */
   update(margins: readonly Margin[], now: number, counts?: (margin: Margin) => boolean): Margin[] {
-    const due = dueMargins(margins, this.last, now, counts);
+    const known = this.known;
+    const due = dueMargins(known ? margins.filter((m) => known.has(m.id)) : margins, this.last, now, counts);
     this.last = now;
+    this.known = new Set(margins.map((m) => m.id));
     return due;
   }
 }
