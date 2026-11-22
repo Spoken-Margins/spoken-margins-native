@@ -150,6 +150,31 @@ class BlockerTests(unittest.TestCase):
         reasons, _ = self.check({'scripts/tool.py': 'x\n'}, FakeGitHub(association='COLLABORATOR'), message='Change')
         self.assertEqual(reasons, [])
 
+    def test_package_resolved_alone_is_the_linux_rewrite_and_is_held(self):
+        # #4972: #4965 and #4970 carried SwiftPM's Linux rewrite of the pins file; only the audit caught it.
+        resolved = {'Packages/SessionKit/Package.resolved': '{}\n'}
+        reasons, _ = self.check(resolved, FakeGitHub())
+        self.assertEqual(len(reasons), 1, reasons)
+        self.assertIn('`Packages/SessionKit/Package.resolved`', reasons[0])
+        self.assertIn('git checkout origin/main -- Packages/SessionKit/Package.resolved', reasons[0])
+        # With other files beside it, and for an outsider's PR too: still held.
+        reasons, _ = self.check({**resolved, 'scripts/tool.py': 'x\n'}, FakeGitHub(association='COLLABORATOR'))
+        self.assertEqual(len(reasons), 1, reasons)
+
+    def test_package_resolved_with_package_swift_is_a_deliberate_bump_and_may_merge(self):
+        both = {'Packages/SessionKit/Package.resolved': '{}\n', 'Packages/SessionKit/Package.swift': '// bump\n'}
+        reasons, _ = self.check(both, FakeGitHub())
+        self.assertEqual(reasons, [])
+
+    def test_a_pr_touching_neither_may_merge_and_other_pin_files_are_not_this_rule(self):
+        reasons, _ = self.check({'scripts/tool.py': 'x\n'}, FakeGitHub())
+        self.assertEqual(reasons, [])
+        for path in ('Packages/SessionKit/Package.swift', 'Packages/SessionKitTools/Package.resolved',
+                     'SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'):
+            with self.subTest(path=path):
+                reasons, _ = self.check({path: 'x\n'}, FakeGitHub())
+                self.assertEqual(reasons, [])
+
     def test_a_head_that_is_not_in_the_tree_and_cannot_be_fetched_holds(self):
         repo = Repo({'scripts/tool.py': 'x\n'})
         self.addCleanup(repo.close)

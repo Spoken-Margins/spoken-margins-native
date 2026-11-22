@@ -11,6 +11,8 @@ one check carries them, on the PR and again in the queue:
 3. A PR touching `.github/` or `scripts/lane_merge_rules.py` merges only with the owner's tap:
    the `owner-tap` label, which only the owner adds (lane_merge_rules.py owner_tap_paths; owner rule 2026-10-09, #1203).
 4. An outside contributor's commits carry `Signed-off-by:` (scripts/signoff_check.py, #2114).
+5. A PR that changes `Packages/SessionKit/Package.resolved` without `Packages/SessionKit/Package.swift` is held: SwiftPM
+   on Linux rewrites that file and drops the Mac's pins (#4972; the rewrite reached #4965 and #4970).
 
 The rules themselves are not copied here: they are imported from lane_merge_rules.py, test-scope.py and signoff_check.py
 in the same checkout, which the workflow takes from main, never from the PR. The PR's commits are fetched as git data
@@ -44,6 +46,8 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 OWNER_TAP_LABEL = 'owner-tap'
+SESSIONKIT_RESOLVED = 'Packages/SessionKit/Package.resolved'
+SESSIONKIT_MANIFEST = 'Packages/SessionKit/Package.swift'
 ATTEMPTS = 3
 RETRY_WAIT = 10  # seconds, doubled after each failed try
 START_RECHECK_WAIT = 60  # seconds: the PR's own checks start with this one, so a run not yet listed gets this long to appear
@@ -213,6 +217,17 @@ def unsigned_commits(tree: Path, base_ref: str, head: str, association: str, log
     return signoff_check.check(signoff_check.parse_log(raw), association, login)
 
 
+def resolved_rewrite(paths: list[str]) -> str | None:
+    """#4972: why the pins file may not change on its own, or None. A deliberate dependency bump edits Package.swift in
+    the same PR; a Package.resolved that moves alone is SwiftPM on Linux rewriting it, which drops the pins the Mac
+    needs and passes every fast check (it fails only on `main-t3` or the phone build after the merge)."""
+    if SESSIONKIT_RESOLVED in paths and SESSIONKIT_MANIFEST not in paths:
+        return (f'it changes `{SESSIONKIT_RESOLVED}` but not `{SESSIONKIT_MANIFEST}`; SwiftPM on Linux rewrites that '
+                f'file and drops the Mac\'s pins. Put it back with `git checkout origin/main -- {SESSIONKIT_RESOLVED}` '
+                '(merge `main` first if the branch is behind and main changed it) and push; on Linux run scripts/run-sessionkit-linux-tests.sh and stage files by path, not `git add -A`')
+    return None
+
+
 def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, classify=None, inherited=None) -> list[str]:
     """Why PR <number> at <head> may not merge into <base>, or [] when it may. classify and inherited are injected in
     tests; by default they are test-scope.py's classify and lane_merge_rules.py's inherited_check."""
@@ -231,6 +246,9 @@ def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, clas
         shown = ', '.join(f'`{p}`' for p in tap)
         reasons.append(f'it touches {shown}, which only the owner merges (owner rule 2026-10-09, #1203); '
                        f'it needs the `{OWNER_TAP_LABEL}` label, which only the owner adds')
+    rewrite = resolved_rewrite(paths)
+    if rewrite:
+        reasons.append(rewrite)
     bad = unsigned_commits(tree, base_ref, head, pull.get('author_association') or '',
                            (pull.get('user') or {}).get('login') or '')
     if bad:
