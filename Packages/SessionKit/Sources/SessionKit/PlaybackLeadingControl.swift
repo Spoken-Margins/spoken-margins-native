@@ -24,4 +24,24 @@ public enum PlaybackLeadingControl: Equatable, Sendable {
         case .margins: .libraryExit
         }
     }
+
+    /// What the toolbar's leading item is, apart from whether it shows.
+    public enum SlotKind: Equatable, Sendable { case libraryExit, returnToNow }
+
+    /// The toolbar's leading item. `kind` is what the bar lays out; `isShown` is only whether it is drawn and takes taps.
+    public struct Slot: Equatable, Sendable {
+        public let kind: SlotKind
+        public let isShown: Bool
+    }
+
+    /// The bar's content must never depend on scroll state: the item came and went as the Now header scrolled in and out,
+    /// which changed the bar's size at large text, which moved the header across its threshold, without end (#4739).
+    /// So `kind` is the same for either value of `nowHeaderIsVisible`; only `isShown` follows it.
+    public static func slot(pane: Pane, timelineEditorHasFocus: Bool, nowHeaderIsVisible: Bool = true) -> Slot {
+        switch control(pane: pane, timelineEditorHasFocus: timelineEditorHasFocus, nowHeaderIsVisible: nowHeaderIsVisible) {
+        case .none: Slot(kind: .libraryExit, isShown: false)
+        case .libraryExit: Slot(kind: .libraryExit, isShown: true)
+        case .returnToNow: Slot(kind: .returnToNow, isShown: true)
+        }
+    }
 }

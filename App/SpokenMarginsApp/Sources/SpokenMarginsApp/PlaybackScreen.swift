@@ -246,12 +246,22 @@ struct PlaybackScreen: View {
             .toolbar {
                 // One meaning for the top-left arrow on every tab: leave the screen. The exception is the Timeline editor
                 // with the keyboard up, where the tab switch is hidden and this is the way back to Now (#4027).
-                let leading = PlaybackLeadingControl.control(
+                let slot = PlaybackLeadingControl.slot(
                     pane: leadingControlPane, timelineEditorHasFocus: timelineDock.hidesDock,
                     nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio)
-                if leading == .libraryExit {
-                    ToolbarItem(placement: .topBarLeading) { libraryExitButton }
-                } else if leading == .returnToNow {
+                // The Library arrow is in the bar in every state of the Now header, hidden while the header shows it. Adding
+                // and removing the item as the header scrolled in and out changed the bar's size at large text, which moved
+                // the header across its visibility threshold and flipped the item again, without end (#4739). Nothing in
+                // the bar may depend on scroll state.
+                switch slot.kind {
+                case .libraryExit:
+                    ToolbarItem(placement: .topBarLeading) {
+                        libraryExitButton
+                            .opacity(slot.isShown ? 1 : 0)
+                            .allowsHitTesting(slot.isShown)
+                            .accessibilityHidden(!slot.isShown)
+                    }
+                case .returnToNow:
                     ToolbarItem(placement: .topBarLeading) {
                         Button { selectedPane = .now } label: {
                             Label("Now Playing", systemImage: "arrow.left")
