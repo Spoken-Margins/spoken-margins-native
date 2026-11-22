@@ -21,6 +21,24 @@ public struct LiveInputWord: Sendable, Equatable {
     }
 }
 
+/// One result from the recogniser: its words (none when a guess was revised to nothing), where the result starts in
+/// the recogniser's audio clock, and whether it is final. The start is what lets a later result take back an earlier
+/// guess for the same stretch of audio, so a "stop margin" the recogniser withdrew can't be confirmed (#3940).
+public struct LiveInputResult: Sendable, Equatable {
+    public var words: [LiveInputWord]
+    public var startMs: Int?
+    /// Where the result's audio ends. A final settles everything from `startMs` to here.
+    public var endMs: Int?
+    public var isFinal: Bool
+
+    public init(words: [LiveInputWord], startMs: Int? = nil, endMs: Int? = nil, isFinal: Bool = false) {
+        self.words = words
+        self.startMs = startMs
+        self.endMs = endMs
+        self.isFinal = isFinal
+    }
+}
+
 extension LiveInputWord {
     /// The words as lowercase tokens: letters, digits and apostrophes (a curly one counts as a straight one, so
     /// "margin's" reads the same however the recogniser wrote it). Everything else separates tokens.
@@ -65,7 +83,7 @@ public struct LiveInputUnavailable: Error, Sendable, Equatable {
 /// `stop()` is called only after a `start()` that returned. `stop()` is safe to call once and must leave nothing
 /// running. `words` is the one stream of what was heard; it finishes when the session stops.
 public protocol LiveInputSession: Sendable {
-    var words: AsyncStream<[LiveInputWord]> { get }
+    var words: AsyncStream<LiveInputResult> { get }
     func start() async throws
     func stop() async
 }
@@ -120,7 +138,9 @@ public actor LiveInputTap {
 
     private let makeSession: @Sendable () -> any LiveInputSession
     private let onWords: @Sendable ([LiveInputWord]) -> Void
+    private let onResult: @Sendable (LiveInputResult) -> Void
     private let onEvent: Event
+    private let onStreamEnded: @Sendable () -> Void
     private let wallClockMs: @Sendable () -> Int
     private let cpuClockMs: @Sendable () -> Int
 
@@ -141,13 +161,17 @@ public actor LiveInputTap {
     public init(
         makeSession: @escaping @Sendable () -> any LiveInputSession,
         onWords: @escaping @Sendable ([LiveInputWord]) -> Void = { _ in },
+        onResult: @escaping @Sendable (LiveInputResult) -> Void = { _ in },
         onEvent: @escaping Event,
+        onStreamEnded: @escaping @Sendable () -> Void = {},
         wallClockMs: @escaping @Sendable () -> Int = { LiveInputTap.monotonicMs() },
         cpuClockMs: @escaping @Sendable () -> Int = { LiveInputTap.processCpuMs() }
     ) {
         self.makeSession = makeSession
         self.onWords = onWords
+        self.onResult = onResult
         self.onEvent = onEvent
+        self.onStreamEnded = onStreamEnded
         self.wallClockMs = wallClockMs
         self.cpuClockMs = cpuClockMs
     }
@@ -180,12 +204,15 @@ public actor LiveInputTap {
         startedCpuMs = cpuClockMs()
         let words = session.words
         let onWords = self.onWords
+        let onResult = self.onResult
         consumer = Task { [weak self] in
-            for await batch in words {
+            for await result in words {
                 guard !Task.isCancelled else { break }
-                await self?.heard(batch)
-                onWords(batch)
+                await self?.heard(result.words)
+                if !result.words.isEmpty { onWords(result.words) }
+                onResult(result)
             }
+            await self?.sessionWordsEnded()
         }
         onEvent("margin.endPhrase.spike.started", [:])
         return true
@@ -220,6 +247,14 @@ public actor LiveInputTap {
         case .stopped:
             break
         }
+    }
+
+    /// The session's words ended while the tap was still running: the recogniser stopped on its own (an error, or the
+    /// system took it). A stop the tap itself asked for sets `.stopped` first, so it never lands here.
+    private func sessionWordsEnded() {
+        guard state == .running else { return }
+        onEvent("margin.endPhrase.spike.streamEnded", [:])
+        onStreamEnded()
     }
 
     private func heard(_ batch: [LiveInputWord]) {

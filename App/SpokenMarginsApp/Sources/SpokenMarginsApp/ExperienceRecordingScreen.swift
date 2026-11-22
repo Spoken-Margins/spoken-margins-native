@@ -4,6 +4,8 @@ import SwiftUI
 /// Playback's recording screen: reads the app model and hands the shared screen plain values and closures (#3491).
 struct ExperienceRecordingView: View {
     @EnvironmentObject private var model: Gate1AppModel
+    /// Whether the phrase is being listened for, for the hint under the timer (#3940).
+    @ObservedObject private var endPhrase = MarginEndPhraseStatus.shared
 
     private var isPreparing: Bool {
         model.isRequestingRecordingPermission && !model.snapshot.isRecording
@@ -45,7 +47,8 @@ struct ExperienceRecordingView: View {
             justHeard: model.justHeardCue,
             reply: model.pendingMarginReplyChoice,
             error: model.lastError,
-            canRetry: model.canRetryMicrophone
+            canRetry: model.canRetryMicrophone,
+            endPhraseHint: endPhrase.hint
         )
     }
 

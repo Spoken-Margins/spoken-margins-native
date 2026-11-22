@@ -19,8 +19,8 @@ final class LiveInputTapTests: XCTestCase {
     }
 
     private final class FakeSession: LiveInputSession, @unchecked Sendable {
-        let words: AsyncStream<[LiveInputWord]>
-        private let continuation: AsyncStream<[LiveInputWord]>.Continuation
+        let words: AsyncStream<LiveInputResult>
+        private let continuation: AsyncStream<LiveInputResult>.Continuation
         private let lock = NSLock()
         private var started = 0
         private var stopped = 0
@@ -29,7 +29,7 @@ final class LiveInputTapTests: XCTestCase {
 
         /// `startGate`: the start waits for a value on it, so a test can send Cancel while the start is in flight.
         init(startError: LiveInputUnavailable? = nil, startGate: AsyncStream<Void>? = nil) {
-            let (stream, continuation) = AsyncStream<[LiveInputWord]>.makeStream()
+            let (stream, continuation) = AsyncStream<LiveInputResult>.makeStream()
             self.words = stream
             self.continuation = continuation
             self.startError = startError
@@ -50,7 +50,9 @@ final class LiveInputTapTests: XCTestCase {
             continuation.finish()
         }
 
-        func say(_ batch: [LiveInputWord]) { continuation.yield(batch) }
+        func say(_ batch: [LiveInputWord]) {
+            continuation.yield(LiveInputResult(words: batch, startMs: batch.first?.startMs, isFinal: batch.first?.isFinal ?? false))
+        }
     }
 
     private func makeTap(
