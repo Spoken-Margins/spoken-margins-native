@@ -23,12 +23,16 @@ Each tick logs one line per workflow (`journalctl -u sm-dispatch-backstop`):
 ## Deploy
 
 `ops/dispatch-backstop/deploy.sh <ssh-host> --dry-run`, then `--install-only`, then `--enable` (same flow as
-`ops/dial/deploy.sh`). The token is read from `/etc/sm-dispatch/github-token`, or from the Dial's
-`/etc/sm-dial/github-token` when that file is absent. It must be able to dispatch workflows: fine-grained `actions: write`
-on this repository, or a classic token with `workflow` scope. If the Dial's token lacks it, the one step that is not
-scriptable is the owner placing a token that has it in `/etc/sm-dispatch/github-token`. Check with
-`sudo python3 /opt/sm-dispatch/sm_dispatch_backstop.py --dry-run` (reads only) and then one real tick: a 403 shows as
-`FAILED` on the workflow's line.
+`ops/dial/deploy.sh`). The tokens are read from `/etc/sm-dispatch/github-token` and the Dial's
+`/etc/sm-dial/github-token`, and when GitHub refuses one (401 or 403) the next is tried (#4937). One of them must be able
+to dispatch workflows: fine-grained `actions: write` on this repository, or a classic token with `workflow` scope. If
+neither can, the one step that is not scriptable is the owner placing a token that can in `/etc/sm-dispatch/github-token`.
+Check with `sudo python3 /opt/sm-dispatch/sm_dispatch_backstop.py --dry-run` (reads only) and then one real tick: a refusal
+shows as `FAILED: HTTP 403 <GitHub's message>: the token needs ...` on the workflow's line.
+
+Nobody reads journald. The coordinator's wake sweep (`scripts/sm_sweep.py`, rule 15) reports any of these workflows with
+no run for twice its interval, so a backstop that has stopped, lost its token or never been enabled shows up within an
+hour (#4937). A run still queued or running is not dispatched over.
 
 ## Cost and catch
 
