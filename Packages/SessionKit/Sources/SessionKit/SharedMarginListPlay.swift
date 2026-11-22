@@ -39,4 +39,13 @@ public enum SharedMarginListPlay: Equatable, Sendable {
         case .textPassage: return SharedMarginPrompts.isLayerPlaceEligible(layer, records: [interjection])
         }
     }
+
+    /// Whether Skim stops at a friend's Margin that is never read aloud, goes to its place and plays on with no voice
+    /// (#4934): never spoken (`!SharedMarginAudio.canOffer`), its layer is on, and it has a place. A Margin that can be offered
+    /// is a stop of the other kind (a lead-in and its voice), so this is false for it.
+    public static func isSilentSkimStop(_ interjection: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer) -> Bool {
+        !SharedMarginAudio.canOffer(interjection)
+            && SharedMarginPrompts.isLayerPlaceEligible(layer, records: [interjection])
+            && canGo(interjection, in: layer)
+    }
 }

@@ -94,6 +94,9 @@ public enum SkimPressOutcome: String, Equatable, Sendable {
     case playedMarginNow = "played_margin_now"
     /// A forward press during a Margin's voice ended the voice (#460).
     case skippedMarginVoice = "skipped_margin_voice"
+    /// The press went to a friend's Margin that is never read aloud: the source moved to its place and plays on, with nothing
+    /// spoken (#4934).
+    case wentToSilentMargin = "went_to_silent_margin"
 
     /// The fields of the `skim.press` Diagnostics event.
     public func diagnosticFields(direction: SkimDirection, reason: String? = nil) -> [String: String] {
