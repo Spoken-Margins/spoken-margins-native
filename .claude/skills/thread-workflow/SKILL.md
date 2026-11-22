@@ -68,11 +68,21 @@ A `where:mac` issue (Mac hardware, signed-in Mac accounts or a physical device),
 1. Works in its own worktree: `cd ~/Documents/GitHub/spoken-margins-native && git fetch origin && git worktree add .claude/worktrees/<slug> -b ws/<issue>-<slug> origin/main`, then `scripts/setup-worktree.sh`.
 2. Builds only through `scripts/xcodebuild-lane`, with memory pressure normal and at least 10 GB free plus 4 GB per running build.
 3. Never boots a simulator.
-4. After the merge, deletes the worktree's `.build` folder and removes the worktree.
+4. After the merge, deletes the worktree's `.build` folder and removes the worktree (see "Your own worktree" below).
 5. Takes the next Mac-only ready issue after arming. The headless Claude Mac worker (`ops/claude/`, #1599) does the same unattended.
 6. **Ends its own Claude Code session (Cole, 2026-11-22: no idle sessions).** Once its work is merged or handed off, it posts the stop note (section 7) and then exits its session, so it never sits idle holding a session on his computer. The long-lived Mac finisher is the only exception. This is about the session on the Mac; nothing here closes or resolves a thread in the project.
 
 The project instructions' pointer to "Threads on the owner's Mac" means this section.
+
+## Your own worktree
+
+Any thread that makes a git worktree removes it. Make it under `.claude/worktrees/<slug>` of the main checkout and nowhere else: never `../sm-*`, `../smn-*` or `../spoken-margins-native-*` beside the repo (Cole, 2026-11-22; 39 of those piled up and were never cleaned). Remove it once its PR has merged, or when you hand the work off or stop, whichever comes first:
+
+1. `git status --porcelain` is empty and the branch is pushed. If not, commit and push, or leave the worktree and say so in the stop note.
+2. Delete its `.build` folder, then `git worktree remove <path>`. Never `--force`.
+3. Don't touch a worktree you didn't make: the Test Desk's, the finisher's, `.codex/` ones.
+
+The Mac tick also removes merged, clean worktrees outside `.claude/worktrees/` (docs/scheduled-jobs.md), but that is the backstop, not the plan.
 
 ## 7. Stop note
 
