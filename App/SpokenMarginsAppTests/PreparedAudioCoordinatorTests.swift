@@ -915,6 +915,10 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         _ = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plans())
         try await commit(plans()[0], data: Data([1, 2, 3]), coordinator: coordinator, fixture: fixture)
         let edited = "First chunk. Other chunk.."
+        // The app saves the edited words to the item before it prepares again. `begin` refuses source text the item doesn't
+        // hold (`PreparedAudioEnqueue.withValidatedSource`, `staleSource`), so the test does the same; without this the
+        // call threw before the coordinator's restart logic ran (integration-dd0dd0d, #4890).
+        try fixture.store.saveItem(Item(id: "item", title: "Paper", mediaType: "pdf", text: edited, externalReference: nil, status: "ready"))
         let plan = [
             PreparedChunkPlan(index: 0, startOffset: 0, sourceLength: 12, text: "First chunk."),
             PreparedChunkPlan(index: 1, startOffset: 13, sourceLength: 12, text: "Other chunk."),
