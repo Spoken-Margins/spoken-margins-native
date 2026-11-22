@@ -117,3 +117,25 @@ test('after either Skip, playback reaching the next friend Margin fires it once,
     assert.equal(fired.filter((id) => id === 't').length, 1, row.name);
   }
 });
+
+test('a Margin made at the playhead while paused does not fire when playback resumes (audit 3 on #4505)', () => {
+  const clock = new CrossingClock();
+  const everything = () => true;
+  const before = [margin('old', 300)];
+  clock.playing(10);
+  assert.deepEqual(ids(clock.update(before, 10.25, everything)), []);
+  // Record pauses at 10.25 and saves the listener's own Margin there; then playback resumes.
+  const after = [...before, margin('recorded', 10.25, null)];
+  clock.playing(10.25);
+  assert.deepEqual(ids(clock.update(after, 10.5, everything)), []);
+  // Rewinding over it later is the listener asking to hear it again: it fires.
+  clock.seeking(10);
+  assert.deepEqual(ids(clock.update(after, 10.3, everything)), ['recorded']);
+});
+
+test('a friend’s Margin that appears mid-play still fires on its moment', () => {
+  const clock = new CrossingClock();
+  clock.playing(10);
+  assert.deepEqual(ids(clock.update([], 10.25, () => true)), []);
+  assert.deepEqual(ids(clock.update([margin('placed', 10.3)], 10.5, () => true)), ['placed']);
+});
