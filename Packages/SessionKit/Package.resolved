@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Spoken-Margins/onnxruntime-swift-package-manager.git",
       "state" : {
-        "revision" : "b7fb7f7dea8a2469e6335d95a61b8f36d0dc83b2",
-        "version" : "1.24.2"
+        "revision" : "c3ec41ce3767f9c492bf9c74a781fd296e52f063",
+        "version" : "1.24.3"
       }
     },
     {
