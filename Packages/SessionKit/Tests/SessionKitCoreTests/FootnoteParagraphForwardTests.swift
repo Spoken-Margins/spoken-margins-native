@@ -162,4 +162,46 @@ final class FootnoteParagraphForwardTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(engine.currentSession?.position.charOffset), citingEnd)
         XCTAssertEqual(audio.plays.last, preface + citingEnd)
     }
+
+    /// The audit's scenario on b268cd2: leave a note with ¶›, go back to hear it again, press ¶› during it again.
+    func testANoteVisitedAgainAfterGoingBackIsAFirstPressNotARepeat() throws {
+        let (engine, audio) = try engine(holding: citingEnd, continuation: citingEnd)
+        _ = try engine.skipForward(unit: "paragraph")
+        XCTAssertEqual(audio.plays.last, citingEnd)
+
+        _ = try engine.skipBack(unit: "sentence")
+        audio.continuation = nil
+        XCTAssertLessThan(try XCTUnwrap(audio.plays.last), citingEnd, "back goes to hear the citing sentence again")
+
+        // The citing sentence plays, then the note, which holds the position at the citing sentence's end.
+        audio.charOffset = citingEnd
+        audio.continuation = citingEnd
+        _ = try engine.skipForward(unit: "paragraph")
+
+        XCTAssertEqual(audio.plays.last, citingEnd, "the sentence after the note, not the next paragraph")
+    }
+
+    func testASeekAfterLeavingANoteAlsoStartsAfresh() throws {
+        let (engine, audio) = try engine(holding: citingEnd, continuation: citingEnd)
+        _ = try engine.skipForward(unit: "paragraph")
+
+        _ = try engine.skipForward(unit: "chapter")
+        audio.charOffset = citingEnd
+        audio.continuation = citingEnd
+        _ = try engine.skipForward(unit: "sentence")
+
+        XCTAssertEqual(audio.plays.last, citingEnd)
+    }
+
+    func testATimelineStyleSeekAfterLeavingANoteAlsoStartsAfresh() throws {
+        let (engine, audio) = try engine(holding: citingEnd, continuation: citingEnd)
+        _ = try engine.skipForward(unit: "paragraph")
+
+        _ = try engine.seekText(toCharOffset: 0)
+        audio.charOffset = citingEnd
+        audio.continuation = citingEnd
+        _ = try engine.skipForward(unit: "paragraph")
+
+        XCTAssertEqual(audio.plays.last, citingEnd)
+    }
 }

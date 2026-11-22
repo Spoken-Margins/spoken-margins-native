@@ -122,7 +122,12 @@ public final class SessionEngine {
     private var lastBackTapLanding: (targetKey: String, charOffset: Int)?
     /// Where the last forward skip left a footnote read where it is cited (#3777), so a second press from there, with
     /// the player still on the note (paused, or the next sentence still rendering), moves on instead of staying put.
-    private var lastFootnoteExit: (sessionId: String, charOffset: Int)?
+    /// It holds only while no other move has been counted (`positionMoves`): a Back, a seek, a chapter jump or a
+    /// Timeline tap makes a note visited again a first press.
+    private var lastFootnoteExit: (sessionId: String, charOffset: Int, moves: Int)?
+    /// How many times the engine has moved the position (every move goes through `protectPlaybackPosition`), so a
+    /// footnote exit's repeat press can tell that nothing else has moved it since.
+    private var positionMoves = 0
     private var protectedPosition = ProtectedResumePosition()
     /// A start of text speech that found nothing left to read (#4067). It stands in for the speech client's own
     /// completion, which a start that never began cannot set.
@@ -6124,6 +6129,7 @@ public final class SessionEngine {
         mediaSeekRequest: MediaSeekRequest? = nil
     ) {
         emptyTextStart = nil // a move: the refused start is no longer where the listener is (#4067)
+        positionMoves += 1
         protectedPosition.protect(session, mediaSeekRequest: mediaSeekRequest)
     }
 
@@ -6370,12 +6376,13 @@ public final class SessionEngine {
         let exit = max(session.position.charOffset, min(text.count, itemSourceOffset(forAudioOffset: continuation)))
         // The press that left the note already put the position here, and the player has not moved off it yet: this
         // is another press, and it moves on by the unit as usual.
-        if let last = lastFootnoteExit, last.sessionId == session.id, last.charOffset == exit,
+        if let last = lastFootnoteExit, last.sessionId == session.id, last.charOffset == exit, last.moves == positionMoves,
            session.position.charOffset == exit {
             lastFootnoteExit = nil
             return nil
         }
-        lastFootnoteExit = (session.id, exit)
+        // The protect call that ends this skip is the next move to be counted.
+        lastFootnoteExit = (session.id, exit, positionMoves + 1)
         return exit
     }
 
