@@ -144,6 +144,10 @@ struct PlaybackScreen: View {
                                 default: break
                                 }
                             }
+                            // The text area's height: the most a card may take and what a held card has room for (#4588).
+                            .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.height } action: { _, height in
+                                nowScene.setVisibleHeight(Double(height))
+                            }
                             .overlay(alignment: .bottom) {
                                 // Only over this item's own scene: not over a podcast, nor while another item plays.
                                 if !model.selectedItem.isNativeAudio, model.snapshot.itemId == model.selectedItem.id {

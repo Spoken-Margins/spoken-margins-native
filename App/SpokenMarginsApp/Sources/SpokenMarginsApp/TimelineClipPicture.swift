@@ -84,6 +84,15 @@ struct TimelineClipSelection: Identifiable, Equatable {
     let spokenLabel: String
     var id: String { source.pictureKey(forFloat: floatId) }
 
+    /// A card on the Now tab opens the same viewer, with the words `PDFClipLabel` gives it (#4588).
+    init?(source: TimelineClipSource, floatId: String, title: String, spokenLabel: String) {
+        guard source.has(floatId: floatId) else { return nil }
+        self.source = source
+        self.floatId = floatId
+        self.title = title
+        self.spokenLabel = spokenLabel
+    }
+
     init?(entry: TimelineSourceContent.Entry, source: TimelineClipSource) {
         guard let floatId = entry.floatId, source.has(floatId: floatId) else { return nil }
         self.source = source
