@@ -14,6 +14,7 @@ extension Gate1AppModel {
         guard let interjection = latestInterjectionNeedingTranscription() else { return }
         if endedByPhrase { MarginEndPhraseEndLedger.shared.markEndedByPhrase(interjectionId: interjection.id) }
         scheduleTranscription(for: interjection)
+        SpeechAskController.shared.spokenMarginSaved(isWritten: interjection.isWritten) // the app's one line before iOS's prompt (#5016)
         recordSpokenMarginSignal(interjection)
     }
 

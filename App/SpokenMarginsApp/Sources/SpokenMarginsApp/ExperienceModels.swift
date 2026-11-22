@@ -44,9 +44,13 @@ struct MarginRow: Identifiable, Equatable, Sendable {
             transcriptionStatus: interjection.transcriptionStatus,
             speechRecognitionOff: SpeechRecognitionAccess.isOff,
             contextUnavailable: interjection.anchorContextStatus == .unavailable,
-            recordingMissing: interjection.audioStatus == "missing"
+            recordingMissing: interjection.audioStatus == "missing",
+            speechRecognitionNotYetAsked: transcriptWaitsForAnswer
         )
     }
+
+    /// #4715: a spoken Margin held until the listener answers the Speech Recognition card. It reads "No transcript yet.".
+    var transcriptWaitsForAnswer: Bool { !isWritten && SpeechAskController.marginIsWaitingForAnswer(id) }
 
     /// The row's second line: where the Margin was made, then the day (#777). Responses and summaries keep their label.
     func placeDescription(now: Date = Date()) -> String {

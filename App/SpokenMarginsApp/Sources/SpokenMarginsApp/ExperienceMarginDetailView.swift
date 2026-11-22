@@ -136,6 +136,10 @@ struct ExperienceMarginDetailView: View {
     var body: some View {
         NavigationStack {
             List {
+                SpeechAskCardInList(surface: .detail)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 Section {
                     Text(current.fullText)
                         .font(.system(.title3, design: .serif))
@@ -200,7 +204,12 @@ struct ExperienceMarginDetailView: View {
                                 .textSelection(.enabled)
                         }
                     }
-                    if current.canRetryTranscription {
+                    if current.transcriptWaitsForAnswer {
+                        Button("Get Transcript", systemImage: "text.bubble") {
+                            SpeechAskController.shared.reachedForText(on: .detail)
+                        }
+                        .accessibilityIdentifier("marginDetail.getTranscript.button")
+                    } else if current.canRetryTranscription {
                         Button(model.isRetryingInterjectionTranscription(current.interjection) ? "Transcribing…" : "Retry Transcription", systemImage: "arrow.clockwise") {
                             model.retryInterjectionTranscription(current.interjection)
                         }
