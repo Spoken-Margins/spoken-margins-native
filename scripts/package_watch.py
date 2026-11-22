@@ -11,6 +11,8 @@ original changes. For every package pinned in a Package.resolved, this reports:
   newer      the upstream has a release tag newer than the pinned version, or a branch pin's branch moved on
   advisory   GitHub's advisory database lists a Swift advisory whose affected range covers the pinned version
   advisory-other  an advisory exists for the package but not for the pinned version (listed, not flagged)
+  binary-gone  a binaryTarget URL in the pinned revision's Package.swift does not download its first byte over
+             verified TLS, so a resolve with a cold cache fails (#4913: download.onnxruntime.ai's certificate broke)
 
     scripts/package_watch.py                      print the report; exit 1 if anything is flagged
     scripts/package_watch.py --json FILE          also write the findings as JSON
@@ -23,7 +25,8 @@ upstream. The same file's "accepted" table records a known state with a reason, 
 re-opening it (#4579): `"upstream-gone": "<why>"` for a copy whose upstream is gone, and
 `"newer": {"through": "<tag>", "why": "<why>"}` for a pin kept on purpose, which flags again when a tag newer than
 `through` appears. A source that is gone, a moved repository and an advisory can never be accepted. An accepted
-finding is still listed, as `accepted-<kind>`, with its reason. Standard library only, plus `git` on PATH.
+finding is still listed, as `accepted-<kind>`, with its reason. A binary target that does not download can't be
+accepted either. Standard library only, plus `git` on PATH.
 """
 import argparse
 import hashlib
@@ -47,9 +50,12 @@ UPSTREAMS = 'docs/legal/package-upstreams.json'
 API = 'https://api.github.com'
 TITLE = 'Package watch: an upstream Swift package changed'
 MARKER = re.compile(r'<!-- package-watch: (\S+) -->')
-FLAGGED = ('gone', 'upstream-gone', 'moved', 'newer', 'advisory')
+FLAGGED = ('gone', 'upstream-gone', 'moved', 'newer', 'advisory', 'binary-gone')
 NEWER_TAG = re.compile(r'^upstream tag (\S+) is newer than the pinned ')  # the text findings_for writes for a tag pin
 SEMVER = re.compile(r'^v?(\d+)\.(\d+)(?:\.(\d+))?$')
+# The url: argument of one binaryTarget(...) call; the body may hold parenthesised text but never crosses the call's
+# closing parenthesis, so a path-based binaryTarget doesn't borrow the next target's url.
+BINARY_URL = re.compile(r'\bbinaryTarget\s*\((?:[^()]|\([^()]*\))*?\burl:\s*"([^"]+)"')
 
 
 # ---------- pure helpers (tested) ----------
@@ -98,19 +104,29 @@ def collect_pins(root=ROOT, files=RESOLVED):
     return pins
 
 
+def binary_urls(manifest):
+    """The url of every remote binaryTarget in a Package.swift's text, in order."""
+    return BINARY_URL.findall(manifest)
+
+
 def newest_tag(tags):
     keyed = [(version_key(tag), tag) for tag in tags if version_key(tag)]
     return max(keyed)[1] if keyed else None
 
 
-def findings_for(pin, upstream, remote, advisories, repo_info):
+def findings_for(pin, upstream, remote, advisories, repo_info, binaries=lambda pin: []):
     """The findings for one pin. `remote(url)` returns {'tags': [...], 'heads': {name: sha}} or None when the
     repository doesn't answer; `advisories(slug)` returns GitHub advisory dicts; `repo_info(slug)` returns
-    GitHub's full_name for that slug, or None."""
+    GitHub's full_name for that slug, or None; `binaries(pin)` returns [(url, problem)] for the pinned revision's
+    binary targets, problem None when the URL downloads."""
     out = []
     source = remote(pin['location'])
     if source is None:
         out.append(('gone', f"we build from {pin['location']}, which does not answer"))
+    else:
+        for url, problem in binaries(pin):
+            if problem:
+                out.append(('binary-gone', f'binary target {url} does not download ({problem}); a cold resolve fails'))
     up = source if upstream == pin['location'] else remote(upstream)
     if up is None and upstream != pin['location']:
         out.append(('upstream-gone', f'the upstream {upstream} does not answer; our copy is now the only source'))
@@ -227,6 +243,33 @@ def gh_repo_name(slug):
         return None
 
 
+def url_problem(url):
+    """None when the first byte of `url` downloads over verified TLS, else what went wrong."""
+    req = urllib.request.Request(url, headers={'Range': 'bytes=0-0', 'User-Agent': 'spoken-margins-package-watch'})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return None if response.status in (200, 206) else f'HTTP {response.status}'
+    except urllib.error.HTTPError as err:
+        return f'HTTP {err.code}'
+    except OSError as err:  # URLError (TLS, DNS, refused) and timeouts
+        return str(getattr(err, 'reason', err))
+
+
+def pinned_binaries(pin):
+    """[(url, problem)] for the binary targets in the pinned revision's Package.swift; [] when it isn't on GitHub
+    or can't be read (a source that doesn't answer is already `gone`)."""
+    slug = github_slug(pin['location'])
+    if not slug or not pin['revision']:
+        return []
+    try:
+        with urllib.request.urlopen(f"https://raw.githubusercontent.com/{slug}/{pin['revision']}/Package.swift",
+                                    timeout=30) as response:
+            manifest = response.read().decode('utf-8', 'replace')
+    except OSError:
+        return []
+    return [(url, url_problem(url)) for url in binary_urls(manifest)]
+
+
 def file_issue(text, sig, flagged, run_url):
     repo = os.environ['GITHUB_REPOSITORY']
     query = urllib.parse.urlencode({'state': 'open', 'per_page': 100, 'creator': 'github-actions[bot]'})
@@ -257,7 +300,7 @@ def main(argv=None):
     results = {}
     for identity, pin in collect_pins().items():
         upstream = upstreams.get(identity, {}).get('upstream', pin['location'])
-        found = findings_for(pin, upstream, git_remote, gh_advisories, gh_repo_name)
+        found = findings_for(pin, upstream, git_remote, gh_advisories, gh_repo_name, pinned_binaries)
         results[identity] = (pin, upstream, apply_accepted(found, (accepted or {}).get(identity, {})))
     text, sig, flagged = report(results)
     print(text)
