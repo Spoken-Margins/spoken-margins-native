@@ -53,7 +53,9 @@ final class MarginsListPlayAppTests: XCTestCase {
         XCTAssertNil(model.lastError, "the tap says nothing is wrong")
         XCTAssertEqual(model.pendingImportedCommentary?.id, row.interjection.id, "it went to the passage and offered the Margin")
         XCTAssertEqual(model.diagnostics["lastSharedMarginNavigation"], "opened:received-margin-7")
-        XCTAssertEqual(tapLines(model), ["shared/started"], "one line for the tap")
+        // A written Margin whose reading is not made yet: the card's wait plays it later, so the tap has not started (audit on b149832).
+        XCTAssertNil(model.playingImportedCommentary, "no voice is playing yet")
+        XCTAssertEqual(tapLines(model), ["shared/waiting/reading_not_ready"], "one line for the tap, and it does not say started")
     }
 
     func testATapOnAMarginOfAnotherItemSaysSoAndMovesNothing() {
