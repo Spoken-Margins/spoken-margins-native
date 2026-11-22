@@ -2739,6 +2739,30 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         }
     }
 
+    /// A copy of the listener's own Margin that an imported packet carried back (#4697) is not "from a friend": the same
+    /// rows every shared-Margin read below uses leave it out, so the Library row, its New count, the names and the Shared
+    /// Margins filter count only what other people made. It is the rule of `OwnMarginEchoes`, written for SQL: an own
+    /// Margin on the same item went out under the packet identity this Margin arrived as (its layer's digest and its
+    /// `packageScopedId`), or under one it also arrived as (`alsoSharedAs`, #858). Words and labels play no part. Only
+    /// Margins that were shared at all are parsed, a broken payload matches nothing (`json_each` throws on malformed
+    /// text), and the own-Margin lookup is the `(kind, item_id)` index. There is no `;` in it: `newNotesSQL` adds the
+    /// hidden-list conditions by replacing its trailing one. Read-only: the stored copy is not touched.
+    static let notAnEchoOfOwnMarginSQL = """
+          AND NOT EXISTS (
+              SELECT 1 FROM records AS mine
+              JOIN json_each(CASE WHEN json_valid(mine.payload) THEN mine.payload ELSE '{}' END, '$.sharedAs') AS identity
+              WHERE mine.kind = 'interjection' AND mine.item_id = layer.item_id
+                AND json_type(identity.value) = 'object'
+                AND (
+                    (json_extract(identity.value, '$.packageDigest') = CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.packageDigest') END
+                     AND json_extract(identity.value, '$.packageScopedId') = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.packageScopedId') END)
+                    OR EXISTS (
+                        SELECT 1 FROM json_each(CASE WHEN json_valid(note.payload) THEN note.payload ELSE '{}' END, '$.alsoSharedAs') AS also
+                        WHERE json_type(also.value) = 'object'
+                          AND json_extract(also.value, '$.packageDigest') = json_extract(identity.value, '$.packageDigest')
+                          AND json_extract(also.value, '$.packageScopedId') = json_extract(identity.value, '$.packageScopedId'))))
+"""
+
     /// Margins other people shared, counted per item for the Library rows (#1792). One query in SQL:
     /// opening the Library must not decode every imported recording, transcript and anchor. Only a
     /// layer the listener hasn't deleted counts, as on the Margins screens (which ignore the on/off switch).
@@ -2761,6 +2785,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
          AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
         WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
           AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
         GROUP BY layer.item_id;
         """
 
@@ -2777,6 +2802,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
          AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
         WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
           AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
         GROUP BY layer.item_id, layer.id;
         """
 
@@ -2811,6 +2837,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
                   ELSE 0 END
         WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
           AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
         GROUP BY layer.item_id;
         """
 
@@ -2825,7 +2852,9 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
          AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
         WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
           AND CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.firstHeardAt') IS NULL AND json_extract(note.payload, '$.audioPath') IS NULL ELSE 0 END
-          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END;
+          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
+        ;
         """
 
     /// The same SQL with the listener's hidden senders and hidden Margins left out (#3469): the layers of a hidden
@@ -2939,6 +2968,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
          AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
         WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
           AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
         GROUP BY layer.item_id;
         """
 
