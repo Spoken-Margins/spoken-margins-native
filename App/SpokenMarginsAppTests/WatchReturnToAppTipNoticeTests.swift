@@ -140,7 +140,7 @@ final class WatchReturnToAppTipNoticeTests: XCTestCase {
         let notice = notice(defaults(), pairing: .none)
         offer(notice)
         XCTAssertFalse(notice.isPresented)
-        notice.updatePairing(pairedWithApp)
+        notice.updatePairing(Self.pairedWithApp)
         offer(notice)
         XCTAssertTrue(notice.isPresented)
     }

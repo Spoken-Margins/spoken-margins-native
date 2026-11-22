@@ -501,6 +501,35 @@ final class WrittenMarginReaderTests: XCTestCase {
         XCTAssertEqual(ranOnMain.value, false)
     }
 
+    /// #4664: an app-hosted test swaps the app-wide reader for one whose renderer it controls, so a Margin played in a
+    /// test never reaches the system voice. Everything that asks `shared` gets the swapped reader, and a render that has
+    /// not been released shows as busy until it is.
+    func testASwappedSharedReaderGetsTheAppsRendersAndCanBeHeldAndReleased() async throws {
+        let release = DispatchSemaphore(value: 0)
+        let started = DispatchSemaphore(value: 0)
+        let held = WrittenMarginReader(directory: directory, renderAudio: { text, scratch in
+            started.signal()
+            release.wait()
+            let file = scratch.appending(path: "x.caf")
+            try Data(text.utf8).write(to: file)
+            return file
+        })
+        let original = WrittenMarginReader.replaceShared(with: held)
+        defer { WrittenMarginReader.replaceShared(with: original) }
+        XCTAssertTrue(WrittenMarginReader.shared === held, "later callers get the swapped reader")
+
+        let reading = WrittenMarginReading(intro: "Cole wrote:", text: "Held until released.")
+        _ = WrittenMarginReader.shared.start(["held": reading])
+        XCTAssertEqual(started.wait(timeout: .now() + 10), .success, "the render started on the swapped reader")
+        XCTAssertFalse(WrittenMarginReader.shared.activity.isIdle, "a render that has not returned is busy")
+
+        release.signal()
+        await WrittenMarginReader.shared.waitUntilSettled([reading], upTo: 10)
+        XCTAssertTrue(WrittenMarginReader.shared.isReady(reading))
+        let activity = await WrittenMarginReader.shared.settle(upTo: 5)
+        XCTAssertTrue(activity.isIdle, "\(activity)")
+    }
+
     private final class OnMain: @unchecked Sendable {
         private let lock = NSLock()
         private var stored: Bool?
