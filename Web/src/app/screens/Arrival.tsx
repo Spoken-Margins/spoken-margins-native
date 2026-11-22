@@ -4,12 +4,11 @@
 // the sender's first Margin and a Skip. Every failure says what happened and one thing to do.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PlayIcon } from '../icons.tsx';
-import type { Margin } from '../../shared/model.ts';
 import { LABELS, marginRows, playQueue, startFor, startWithUnheardMs, threads, firstToPlay, type Row } from '../logic/margins-control-center.ts';
 import type { MarginStart } from '../player.tsx';
 import { MarginsControlList } from './MarginsTab.tsx';
 import { arrivalResumeAt, playHint, playableArticleMargins, ARRIVAL_WORDS, GET_APP_LINK, arrivalFacts, possessive, type ArrivalFacts } from '../logic/arrival.ts';
-import { placeImport, unnamedAuthorFor } from '../logic/import.ts';
+import { placeImport, previewMargins, unnamedAuthorFor } from '../logic/import.ts';
 import { settleAppleEpisode } from '../logic/apple-arrival.ts';
 import { playability, type VoiceLookup } from '../logic/playability.ts';
 import { messageForFailure, messageForOpenedSettled, playCheckHandler, reportPlayCheck, type PlayCheckMessage } from '../play-check.ts';
@@ -266,7 +265,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
   // two starts pinned at the bottom. A packet with only an article's rough places keeps its one Play.
   const preview = !article && !unplayable && read.margins.length > 0;
   const autoplay = data.settings.marginAutoplay;
-  const rows = preview ? previewRows(read.margins, data.margins) : [];
+  const rows = preview ? marginRows(previewMargins(read, data.shows, data.episodes, data.margins, unnamedAuthorFor('link'))) : [];
   const unheardAt = preview ? startWithUnheardMs(rows) : null;
   const startRow = (row: Row) => {
     const start = startFor(row, rows, autoplay, 0);
@@ -416,18 +415,3 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
   );
 }
 
-/**
- * The preview's rows: the packet's Margins as they will be stored (a blank sender gets the link's name, as `placeImport`
- * gives it), heard where this browser has already heard that Margin.
- */
-function previewRows(margins: readonly Margin[], stored: readonly Margin[]): Row[] {
-  const unnamed = unnamedAuthorFor('link');
-  const heard = new Set(stored.filter((m) => m.heard).map((m) => m.id));
-  return marginRows(
-    margins.map((m) => ({
-      ...m,
-      ...(unnamed && !m.author?.trim() && { author: unnamed }),
-      ...(heard.has(m.id) && { heard: true as const }),
-    })),
-  );
-}

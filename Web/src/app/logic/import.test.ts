@@ -5,7 +5,7 @@ import type { PacketRead } from '../ports.ts';
 import { episode as fixtureEpisode, voiceMargins } from '../../packet/fixtures.ts';
 import { readPacket } from '../../packet/read.ts';
 import { writePacket } from '../../packet/write.ts';
-import { UNNAMED_SENDER, findEpisode, importSummary, landingOffer, placeByPercent, placeImport, sharedShowFor, unnamedAuthorFor } from './import.ts';
+import { UNNAMED_SENDER, findEpisode, importSummary, landingOffer, placeByPercent, placeImport, previewMargins, sharedShowFor, unnamedAuthorFor } from './import.ts';
 
 const show: Show = { id: 'feed:https://feeds.test/show.rss', kind: 'podcast', title: 'Show', feedUrl: 'https://feeds.test/show.rss', followedAt: 'T0' };
 const mine: Episode = {
@@ -167,6 +167,29 @@ test('opening your own earlier "Save as a file" again adds no friend copies (#42
 });
 
 // #4421: a friend's Margins on an article's words are placed on the voice that plays it, by how far through they sit.
+test('a second packet’s preview shows a Margin already here as the stored copy: its id, heard and author (audit 2 on #4505)', () => {
+  // Sam's packet A brought X at 3:10, and the listener heard it; the listener's own reply Y is stored unsigned.
+  const storedX: Margin = { id: 'packet:A:x', episodeId: mine.id, atSeconds: 190, createdAt: '2026-10-30T00:00:00Z', text: 'X', author: 'Sam', heard: true };
+  const storedY: Margin = { id: 'mine-y', episodeId: mine.id, atSeconds: 200, createdAt: '2026-10-30T00:01:00Z', text: 'Y', replyToId: storedX.id };
+  // Packet B carries X again, the listener's Y back in Sam's packet, and Sam's new reply Z to X, all under B's ids.
+  const packetB = read({ title: 'T', guid: 'g-1' }, {
+    sender: 'Sam',
+    margins: [
+      { id: 'packet:B:x', episodeId: 'packet:B', atSeconds: 190, createdAt: '2026-10-30T00:00:00Z', text: 'X', author: 'Sam' },
+      { id: 'packet:B:y', episodeId: 'packet:B', atSeconds: 200, createdAt: '2026-10-30T00:01:00Z', text: 'Y', author: 'Sam', replyToId: 'packet:B:x' },
+      { id: 'packet:B:z', episodeId: 'packet:B', atSeconds: 230, createdAt: '2026-10-30T00:02:00Z', text: 'Z', author: 'Sam', replyToId: 'packet:B:x' },
+    ],
+  });
+  const shown = previewMargins(packetB, [show], [mine], [storedX, storedY], unnamedAuthorFor('link'));
+  // The ids are the ones the player will find in the store, so a start's queue plays them.
+  assert.deepEqual(shown.map((m) => m.id), ['packet:A:x', 'mine-y', 'packet:B:z']);
+  assert.equal(shown[0].heard, true, 'X was heard from packet A');
+  assert.equal(shown[1].author, undefined, 'Y is the listener’s own, not Sam’s');
+  // The new reply still hangs under X in the preview.
+  assert.equal(shown[2].replyToId, 'packet:A:x');
+  assert.equal(shown[2].heard, undefined);
+});
+
 const pct = (id: string, percent: number, extra: Partial<Margin> = {}): PercentMargin => ({
   percent,
   margin: { id: `packet:d:${id}`, episodeId: 'packet:d', atSeconds: 0, createdAt: '2026-11-16T00:00:00Z', text: id, ...extra },
