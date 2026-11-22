@@ -20,7 +20,9 @@ and only read.
 
 pull_request: the PR's head. merge_group: every PR in the group, i.e. the queue entries up to and including the one
 whose head commit is the group's head (GraphQL mergeQueue.entries). A GitHub read is tried ATTEMPTS times; one that
-still fails blocks (fail closed), so a blip removes a PR from the queue rather than waving it through.
+still fails blocks (fail closed), so a blip removes a PR from the queue rather than waving it through. A read refused
+because the hour's API budget is spent waits for the budget to reset and reads again (#4990), so that hold clears
+itself; the check shows as running meanwhile.
 
 Prints one line per PR: "may merge" or the reasons it can't. Exit 1 if any PR is blocked or anything couldn't be read.
 
@@ -51,6 +53,14 @@ SESSIONKIT_MANIFEST = 'Packages/SessionKit/Package.swift'
 ATTEMPTS = 3
 RETRY_WAIT = 10  # seconds, doubled after each failed try
 START_RECHECK_WAIT = 60  # seconds: the PR's own checks start with this one, so a run not yet listed gets this long to appear
+# #4990: a read refused because the hour's API budget is spent is waited out, not failed. On 2026-11-22 the check held
+# two owner-tapped PRs (#4985, #4983) with "API rate limit exceeded for installation", and a re-run 19 minutes later
+# hit the same limit; nothing but a person re-running it after the reset would have cleared the hold.
+RATE_LIMITED = 'api rate limit exceeded'  # the primary limit; a secondary ("abuse") limit is retried as any failure
+RATE_WAIT_SLACK = 20  # seconds past the reset, so the first call lands inside the new window
+# The longest wait for a reset, in seconds. The workflow file sets RATE_LIMIT_WAIT with a job time limit that fits it;
+# a PR whose branch has an older copy of the workflow (15-minute limit) gets this default.
+DEFAULT_RATE_WAIT = 600
 QUEUE_QUERY = '''query($owner: String!, $name: String!, $branch: String!) {
   repository(owner: $owner, name: $name) {
     mergeQueue(branch: $branch) {
@@ -90,24 +100,47 @@ def scope_policy():
 class GitHub:
     """`gh api` reads with retries. run and sleep are injected in tests."""
 
-    def __init__(self, repo: str, run=subprocess.run, sleep=time.sleep, attempts: int = ATTEMPTS):
-        self.repo, self.run, self.sleep, self.attempts = repo, run, sleep, attempts
+    def __init__(self, repo: str, run=subprocess.run, sleep=time.sleep, attempts: int = ATTEMPTS, clock=time.time,
+                 rate_wait: float | None = None, out=sys.stderr):
+        self.repo, self.run, self.sleep, self.attempts, self.clock, self.out = repo, run, sleep, attempts, clock, out
+        self.rate_wait = rate_wait_from_env() if rate_wait is None else rate_wait
+
+    def _try(self, args: list[str]) -> tuple[bool, str]:
+        try:
+            done = self.run(['gh', *args], capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.SubprocessError) as error:
+            return False, str(error)[:200]
+        return (True, done.stdout) if done.returncode == 0 else (False, (done.stderr or '').strip()[:200])
+
+    def _reset_wait(self, args: list[str]) -> float | None:
+        """Seconds until the spent budget's window resets, or None when that can't be read. `rate_limit` is the one
+        read GitHub does not count against the budget."""
+        resource = 'graphql' if 'graphql' in args else 'search' if any(a.startswith('search/') for a in args) else 'core'
+        ok, text = self._try(['api', 'rate_limit', '--jq', f'.resources.{resource}.reset'])
+        try:
+            return max(0.0, float(text.strip()) - self.clock()) + RATE_WAIT_SLACK if ok else None
+        except ValueError:
+            return None
 
     def _gh(self, args: list[str], attempts: int | None = None) -> str:
         attempts = attempts or self.attempts
-        problem, wait = '', RETRY_WAIT
+        problem, wait, waited_for_reset = '', RETRY_WAIT, False
         for attempt in range(attempts):
             if attempt:
                 self.sleep(wait)
                 wait *= 2
-            try:
-                done = self.run(['gh', *args], capture_output=True, text=True, timeout=120)
-            except (OSError, subprocess.SubprocessError) as error:
-                problem = str(error)[:200]
-                continue
-            if done.returncode == 0:
-                return done.stdout
-            problem = (done.stderr or '').strip()[:200]
+            ok, text = self._try(args)
+            if not ok and RATE_LIMITED in text.lower() and not waited_for_reset and attempts > 1:
+                # Once per read, and not for a single-try POST. Too long a wait, or an unreadable reset, fails as before.
+                waited_for_reset, reset_in = True, self._reset_wait(args)
+                if reset_in is not None and reset_in <= self.rate_wait:
+                    print(f'GitHub API budget spent; waiting {int(reset_in)} seconds for it to reset, then reading again.',
+                          file=self.out, flush=True)
+                    self.sleep(reset_in)
+                    ok, text = self._try(args)
+            if ok:
+                return text
+            problem = text
         raise ReadFailed(f'gh {" ".join(args[:2])} failed {attempts} times: {problem}')
 
     def api(self, path: str, paginate: bool = False):
@@ -159,6 +192,13 @@ class GitHub:
         if queue is None:
             raise ReadFailed(f'{self.repo} has no merge queue on {branch}' + (f': {data["errors"]}' if data.get('errors') else ''))
         return queue['entries']['nodes']
+
+
+def rate_wait_from_env() -> float:
+    try:
+        return max(0.0, float(os.environ.get('RATE_LIMIT_WAIT', '')))
+    except ValueError:
+        return DEFAULT_RATE_WAIT
 
 
 def group_prs(entries: list[dict], group_head: str) -> list[tuple[int, str]]:

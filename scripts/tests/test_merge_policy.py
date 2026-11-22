@@ -7,11 +7,13 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import yaml
 
@@ -237,6 +239,74 @@ class GroupTests(unittest.TestCase):
                                sleep=lambda s: None)
         with self.assertRaises(policy.ReadFailed):
             github.queue_entries('main')
+
+
+class RateLimitTests(unittest.TestCase):
+    """#4990: a read refused because the API budget is spent waits for the reset instead of holding the PR."""
+    LIMITED = 'gh: API rate limit exceeded for installation. If you reach out to GitHub Support for help'
+
+    def github(self, answers, rate_wait=3700, now=1000.0):
+        calls, sleeps = [], []
+
+        def run(cmd, **kwargs):
+            calls.append(cmd)
+            code, out, err = answers.pop(0)
+            return subprocess.CompletedProcess(cmd, code, out, err)
+        return policy.GitHub('o/r', run=run, sleep=sleeps.append, clock=lambda: now, rate_wait=rate_wait,
+                             out=io.StringIO()), calls, sleeps
+
+    def test_a_spent_budget_is_waited_out_and_the_read_then_succeeds(self):
+        github, calls, sleeps = self.github([(1, '', self.LIMITED), (0, '2500\n', ''), (0, '{"number": 7}', '')])
+        self.assertEqual(github.pull(7), {'number': 7})
+        self.assertEqual(sleeps, [1500 + policy.RATE_WAIT_SLACK])
+        self.assertEqual(calls[1][:3], ['gh', 'api', 'rate_limit'])
+        self.assertIn('.resources.core.reset', calls[1])
+
+    def test_the_budget_asked_about_is_the_one_the_read_spends(self):
+        for args, resource in ((['api', 'graphql', '-f', 'query=x'], 'graphql'), (['api', 'search/issues?q=x'], 'search'),
+                               (['api', 'repos/o/r/pulls/7'], 'core')):
+            github, calls, _ = self.github([(1, '', self.LIMITED), (0, '1001', ''), (0, '{}', '')])
+            github._gh(args)
+            self.assertIn(f'.resources.{resource}.reset', calls[1])
+
+    def test_a_reset_further_off_than_the_job_may_wait_fails_as_before(self):
+        answers = [(1, '', self.LIMITED), (0, '4600', '')] + [(1, '', self.LIMITED)] * 2
+        github, calls, sleeps = self.github(answers, rate_wait=policy.DEFAULT_RATE_WAIT)
+        with self.assertRaises(policy.ReadFailed) as raised:
+            github.pull(7)
+        self.assertIn('rate limit', str(raised.exception))
+        self.assertEqual(sleeps, [policy.RETRY_WAIT, policy.RETRY_WAIT * 2])  # the ordinary retries only
+
+    def test_the_reset_is_waited_for_once_per_read(self):
+        answers = [(1, '', self.LIMITED), (0, '1010', ''), (1, '', self.LIMITED), (1, '', self.LIMITED), (1, '', self.LIMITED)]
+        github, calls, sleeps = self.github(answers)
+        with self.assertRaises(policy.ReadFailed):
+            github.pull(7)
+        self.assertEqual(len([c for c in calls if 'rate_limit' in c]), 1)
+
+    def test_an_unreadable_reset_and_a_secondary_limit_are_ordinary_failures(self):
+        github, _, sleeps = self.github([(1, '', self.LIMITED), (1, '', 'HTTP 500'), (0, '{"number": 7}', '')])
+        self.assertEqual(github.pull(7), {'number': 7})
+        self.assertEqual(sleeps, [policy.RETRY_WAIT])
+        secondary = 'gh: You have exceeded a secondary rate limit. Please wait a few minutes'
+        github, calls, _ = self.github([(1, '', secondary), (0, '{"number": 7}', '')])
+        self.assertEqual(github.pull(7), {'number': 7})
+        self.assertFalse([c for c in calls if 'rate_limit' in c])
+
+    def test_a_single_try_dispatch_never_waits(self):
+        github, calls, sleeps = self.github([(1, '', self.LIMITED)])
+        with self.assertRaises(policy.ReadFailed):
+            github.dispatch('hosted-web.yml', 'branch', {})
+        self.assertEqual((len(calls), sleeps), (1, []))
+
+    def test_the_wait_comes_from_the_workflow_and_defaults_to_what_an_old_copy_of_it_allows(self):
+        with mock.patch.dict(os.environ, {'RATE_LIMIT_WAIT': '3700'}):
+            self.assertEqual(policy.rate_wait_from_env(), 3700)
+        with mock.patch.dict(os.environ, {'RATE_LIMIT_WAIT': ''}):
+            self.assertEqual(policy.rate_wait_from_env(), policy.DEFAULT_RATE_WAIT)
+        text = (Path(policy.__file__).resolve().parents[1] / '.github/workflows/merge-policy.yml').read_text()
+        self.assertIn("RATE_LIMIT_WAIT: '3700'", text)
+        self.assertIn('timeout-minutes: 75', text)  # longer than the wait
 
 
 class RetryTests(unittest.TestCase):

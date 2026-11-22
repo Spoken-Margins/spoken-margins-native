@@ -50,7 +50,9 @@ jobs:
     name: merge policy
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 75, not 15 (#4990): a read refused because the hour's API budget is spent waits for the reset, up to an hour away
+    # (RATE_LIMIT_WAIT below), instead of failing and holding the PR until someone re-runs the check.
+    timeout-minutes: 75
     steps:
       # main's copy of the rules, with history so merge bases and the PR's commits can be read.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -68,6 +70,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GROUP_HEAD: ${{ github.event.merge_group.head_sha }}
           SM_LANE_INHERITED_CACHE: ${{ runner.temp }}/inherited-holds.json
+          RATE_LIMIT_WAIT: '3700'  # seconds; the budget's window is an hour
         run: |
           # The PR heads are fetched with a token-less remote: the repository is public.
           if [ "$EVENT" = merge_group ]; then
