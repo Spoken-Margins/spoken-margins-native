@@ -25,6 +25,11 @@ extension Gate1AppModel {
             reportFailure("This shared Margin isn't ready to play here yet.")
             return .refused(.marginUnavailable)
         }
-        return playSharedMarginNow(prompt) ? .started : .refused(.noPosition) // the jump reported why
+        // Asked before the jump, from the prompt the listen step will resolve (not the row, which may be older): what the
+        // Margin sounds like decides what the tap came to.
+        let audio = WrittenMarginReadings.audio(for: prompt.interjection, in: prompt.layer, voiceFile: resolvedApplicationSupportAssetURL(for:))
+        guard playSharedMarginNow(prompt) else { return .refused(.noPosition) } // the jump reported why
+        // The jump only moved the text and showed the card. Whether the voice started is a separate answer (audit on b149832).
+        return MarginTapPassageStart.outcome(audio: audio, sharedVoiceIsPlayingThisMargin: playingImportedCommentary?.id == prompt.id)
     }
 }

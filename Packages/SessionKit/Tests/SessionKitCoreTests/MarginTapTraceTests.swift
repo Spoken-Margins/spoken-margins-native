@@ -63,4 +63,24 @@ final class MarginTapTraceTests: XCTestCase {
         XCTAssertEqual(drop(sameScreen: false, sameLanding: false, recording: true), .leftScreen)
         XCTAssertEqual(drop(sameLanding: false, recording: true), .playbackMoved)
     }
+
+    /// The audit on b149832: the Margins tab's Play at an article or PDF passage logged `started` as soon as the jump to
+    /// the passage worked, though the voice may not have started (no audio, or a reading still being made).
+    func testATapAtAPassageSaysWhatTheVoiceDidNotThatTheJumpWorked() {
+        let url = URL(fileURLWithPath: "/tmp/margin.m4a")
+        let reading = WrittenMarginReading(intro: "Cole wrote:", text: "Words", itemId: "item")
+        let table: [(String, SharedMarginAudio, Bool, MarginTapOutcome)] = [
+            ("a recording the player has", .voiceFile(url), true, .started),
+            ("a reading that is made and playing", .readingReady(reading, file: url), true, .started),
+            ("a recording the player did not start", .voiceFile(url), false, .refused(.playFailed)),
+            ("a made reading the player did not start", .readingReady(reading, file: url), false, .refused(.playFailed)),
+            ("a reading still being made", .readingRendering(reading, file: url), false, .waiting(.readingNotReady)),
+            ("a reading still being made, another voice playing", .readingRendering(reading, file: url), true, .waiting(.readingNotReady)),
+            ("nothing that can play", .cannotBeRead, false, .refused(.noAudio)),
+            ("nothing that can play, another voice playing", .cannotBeRead, true, .refused(.noAudio)),
+        ]
+        for (name, audio, playing, expected) in table {
+            XCTAssertEqual(MarginTapPassageStart.outcome(audio: audio, sharedVoiceIsPlayingThisMargin: playing), expected, name)
+        }
+    }
 }

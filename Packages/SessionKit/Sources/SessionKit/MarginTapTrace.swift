@@ -104,3 +104,23 @@ public enum MarginTapLateResult {
         return nil
     }
 }
+
+/// What a tap at a friend's Margin on an article or PDF passage came to, once the jump to the passage has succeeded
+/// (#4447, audit on b149832). That jump only moves the text and shows the Margin's card; it says nothing about whether the
+/// voice started. What the voice does follows from what the Margin sounds like (`SharedMarginAudio`, resolved when the tap
+/// is taken) and, for a Margin that can play at once, whether the shared player has it now. The card's listen step
+/// always waits for a reading that is not made yet, so `readingRendering` is `waiting/reading_not_ready` here; the Timeline's
+/// `playSharedMarginMoment` waits only for the on-device voice and starts at once with the iPhone voice.
+public enum MarginTapPassageStart {
+    public static func outcome(audio: SharedMarginAudio, sharedVoiceIsPlayingThisMargin: Bool) -> MarginTapOutcome {
+        switch audio {
+        case .voiceFile, .readingReady:
+            // The player takes the file on this call; it is not playing only when it refused to start (`listenToImportedCommentary`'s catch).
+            return sharedVoiceIsPlayingThisMargin ? .started : .refused(.playFailed)
+        case .readingRendering:
+            return .waiting(.readingNotReady) // the card's wait plays it when the reading is made
+        case .cannotBeRead:
+            return .refused(.noAudio) // the listener was told why, and the card was skipped
+        }
+    }
+}
