@@ -178,14 +178,6 @@ class HostedRestChecksTests(unittest.TestCase):
         self.assertEqual(dispatched, [0.0])
         self.assertEqual(lane.hosted_checks_missing(why)[0], 'FAIL')
 
-    def test_a_run_started_for_a_re_add_that_fails_with_a_lane_fault_annotation_is_a_fail(self):
-        # Review finding: the second failing run on one head is a FAIL even when only the second one has the annotation.
-        (found, why), _, dispatched = self.wait([(None, REARMED), (None, RUNNING), (None, FAULT_AGAIN)], run_again=True)
-        self.assertIsNone(found)
-        self.assertEqual(dispatched, [0.0])
-        self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
-        self.assertEqual(lane.hosted_checks_missing(why)[0], 'FAIL')
-
     def test_a_re_add_that_cannot_start_the_check_again_reports_inconclusive_with_the_reason(self):
         (found, why), _, dispatched = self.wait([(None, REARMED)], run_again=False, dispatch_result='not from here')
         self.assertIsNone(found)

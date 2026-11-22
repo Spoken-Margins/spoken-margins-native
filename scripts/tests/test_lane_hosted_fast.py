@@ -36,15 +36,17 @@ class FakeChecks:
     """The GitHub API reads hosted_fast_records makes: check runs on a head, one run's annotations and, for a failed
     check, when automerge was added to the PR."""
 
-    def __init__(self, runs, annotations, pr=None, armed=()):
+    def __init__(self, runs, annotations, pr=None, armed=(), removed=()):
         self.repo, self.runs, self.annotations, self.calls = 'o/r', runs, annotations, []
-        self.pr, self.armed = pr, list(armed)  # armed: when `automerge` was added to the PR (#4584)
+        # When `automerge` was added to the PR and when it was removed (#4584).
+        self.pr, self.armed, self.removed = pr, list(armed), list(removed)
 
     def api(self, *args):
         path = args[-1]
         self.calls.append(path)
         if '/events' in path:  # `--paginate --jq` prints one line per matching event
-            return ''.join(f'{when}\n' for when in self.armed)
+            return ''.join([f'{when} labeled\n' for when in self.armed]
+                           + [f'{when} unlabeled\n' for when in self.removed])
         if '/annotations' in path:
             return json.dumps(self.annotations[int(path.split('/')[-2])])
         name = next(name for name in lane.HOSTED_FAST_CHECKS
@@ -226,10 +228,12 @@ class HostedRecordsTests(unittest.TestCase):
         self.assertNotIn('@', why)
         self.assertLessEqual(len(why), 400)
 
-    def rearmed(self, armed, earlier=(), completed='2026-10-18T10:30:00Z', conclusion='failure', annotations=()):
-        """A failed "hosted fast: portable" (run 1, finished at <completed>) on PR 7, with `automerge` added at <armed>."""
+    def rearmed(self, armed, earlier=(), completed='2026-10-18T10:30:00Z', conclusion='failure', annotations=(),
+                removed=('2026-10-18T10:45:00Z',)):
+        """A failed "hosted fast: portable" (run 1, finished at <completed>) on PR 7, with `automerge` added at <armed>
+        and removed at <removed>."""
         checks = self.failed(conclusion, list(annotations), earlier)
-        checks.pr, checks.armed = 7, list(armed)
+        checks.pr, checks.armed, checks.removed = 7, list(armed), list(removed)
         checks.runs['hosted fast: portable'][0]['completed_at'] = completed
         return checks
 
@@ -266,24 +270,81 @@ class HostedRecordsTests(unittest.TestCase):
                 self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
                 self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
 
+    def test_a_first_arming_after_a_failure_is_not_a_re_add(self):
+        # #4584 audit, finding 3: a PR whose checks failed before anyone armed it is answered with that failure; only a
+        # removal and a re-add after the lane has answered asks for another try.
+        for name, removed in (('never removed', ()),
+                              ('removed only before the failure', ('2026-10-18T10:00:00Z',)),
+                              ('removed after the newest arming', ('2026-10-18T11:30:00Z',))):
+            with self.subTest(name):
+                found, why = lane.hosted_fast_records(self.rearmed(['2026-10-18T11:00:00Z'], removed=removed), self.HEAD)
+                self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+                self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
+
+    def test_a_re_added_runs_lane_fault_is_a_fail_in_a_later_job_too(self):
+        # #4584 audit, finding 2: the rerun outlives the job that started it (an 8-minute wait against mac-rest's 75), so
+        # the job that reads its failure starts with nothing remembered. The cap has to come from the head's own runs:
+        # run 10 failed with no annotation, automerge was removed and re-added after it, and the rerun (run 1) failed with
+        # a lane-fault annotation. Without this, it was started a third time.
+        checks = self.rearmed(['2026-10-18T09:00:00Z', '2026-10-18T09:20:00Z'], [('failure', [])],
+                              completed='2026-10-18T09:40:00Z', annotations=[self.lane_fault()],
+                              removed=('2026-10-18T09:10:00Z',))
+        checks.runs['hosted fast: portable'][0]['started_at'] = '2026-10-18T09:25:00Z'
+        checks.runs['hosted fast: portable'][1]['completed_at'] = '2026-10-18T09:05:00Z'
+        found, why = lane.hosted_fast_records(checks, self.HEAD)
+        self.assertIsNone(found)
+        self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+        self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
+        # The same runs with no re-add between them: the earlier failure was never started again, so the fault is one.
+        checks.removed = []
+        found, why = lane.hosted_fast_records(checks, self.HEAD)
+        self.assertIn('with a lane-fault annotation', why)
+
+    def test_a_lane_fault_with_unreadable_events_for_an_earlier_failure_is_a_fail(self):
+        checks = self.rearmed(['2026-10-18T09:20:00Z'], [('failure', [])], annotations=[self.lane_fault()])
+        real = checks.api
+
+        def broken(*args):
+            if '/events' in args[-1]:
+                raise OSError('rate limited')
+            return real(*args)
+        checks.api = broken
+        found, why = lane.hosted_fast_records(checks, self.HEAD)
+        self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+
     def test_a_second_failure_on_one_head_is_a_fail_however_often_automerge_is_added(self):
-        again = ['2026-10-18T11:00:00Z']
+        # Run 10 failed at 09:00 and automerge was removed and re-added at 09:10/09:20, before run 1 started at 10:00: run
+        # 1 was the lane's one more try, so its failure is final whatever happens to the label after it.
+        again, retried = ['2026-10-18T09:20:00Z', '2026-10-18T11:00:00Z'], ('2026-10-18T09:10:00Z', '2026-10-18T10:45:00Z')
         for name, earlier in (('an ordinary failure before it', [('failure', [])]),
                               ('a timeout before it', [('timed_out', [])])):
             with self.subTest(name):
-                found, why = lane.hosted_fast_records(self.rearmed(again, earlier), self.HEAD)
+                found, why = lane.hosted_fast_records(self.rearmed(again, earlier, removed=retried), self.HEAD)
                 self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
                 self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
-        # A cancelled or passing earlier run, or another app's failed one, is not an earlier failure of this check.
+        # An earlier failure the lane started again for its lane-fault annotation used the try too.
+        found, why = lane.hosted_fast_records(self.rearmed(again[-1:], [('failure', [self.lane_fault()])]), self.HEAD)
+        self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+        # A cancelled or passing earlier run, or another app's failed one, is not an earlier try of this check.
         for name, earlier in (('a cancelled run before it', [('cancelled', [])]),
                               ('a passing run before it', [('success', [])])):
             with self.subTest(name):
-                found, why = lane.hosted_fast_records(self.rearmed(again, earlier), self.HEAD)
+                found, why = lane.hosted_fast_records(self.rearmed(again, earlier, removed=retried), self.HEAD)
                 self.assertTrue(lane.HOSTED_REARMED.search(why), why)
-        checks = self.rearmed(again, [('failure', [])])
+        checks = self.rearmed(again, [('failure', [])], removed=retried)
         checks.runs['hosted fast: portable'][1]['app'] = {'slug': 'someone-else'}
         found, why = lane.hosted_fast_records(checks, self.HEAD)
         self.assertTrue(lane.HOSTED_REARMED.search(why), why)
+
+    def test_failures_someone_re_ran_by_hand_do_not_use_up_the_try(self):
+        # #4560 on 2026-11-18: "hosted fast: Mac rest" failed at 13:46, 14:11 and 14:21 on 800b6e8 (a rerun of the failed
+        # jobs and a dispatch, no label change between), all on the package-clone fault. automerge was removed and re-added
+        # at 17:10 and the lane re-reported the 14:21 failure in 3 s. Counting every earlier failure would leave it so.
+        checks = self.rearmed(['2026-10-18T08:00:00Z', '2026-10-18T11:00:00Z'], [('failure', []), ('failure', [])],
+                              removed=('2026-10-18T10:45:00Z',))
+        found, why = lane.hosted_fast_records(checks, self.HEAD)
+        self.assertTrue(lane.HOSTED_REARMED.search(why), why)
+        self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'INCONCLUSIVE')
 
     def test_the_failed_run_that_was_started_again_is_a_fail_when_it_fails_too(self):
         # The run the lane starts after the re-add finishes after the label was added: no marker, a FAIL.
