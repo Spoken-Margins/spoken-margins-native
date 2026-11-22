@@ -132,3 +132,10 @@ test('a Margin made at the playhead while paused does not fire when playback res
   clock.seeking(10);
   assert.deepEqual(ids(clock.update(after, 10.3, everything)), ['recorded']);
 });
+
+test('a friend’s Margin that appears mid-play still fires on its moment', () => {
+  const clock = new CrossingClock();
+  clock.playing(10);
+  assert.deepEqual(ids(clock.update([], 10.25, () => true)), []);
+  assert.deepEqual(ids(clock.update([margin('placed', 10.3)], 10.5, () => true)), ['placed']);
+});

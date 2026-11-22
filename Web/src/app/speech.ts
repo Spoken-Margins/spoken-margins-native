@@ -54,7 +54,7 @@ export interface Reading {
   cancel(): void;
   /**
    * Holds the voice where it is, for the player's Pause (#4473). A browser that can't hold speech (Chrome on Android
-   * keeps talking) has the reading stopped instead, so Pause always silences it; `onEnd` then fires as for `cancel`.
+   * keeps talking) has the reading stopped instead, so Pause always silences it; `onEnd` then fires, even before the voice began.
    */
   pause(): void;
   /** Carries on a held voice from where it stopped. Does nothing once the reading has ended. */
@@ -137,7 +137,11 @@ export function readWrittenMargin(intro: string, words: string, hooks: { onStart
       } catch {
         // Handled below: a voice that is still talking is stopped.
       }
-      if (!synth.paused) cancel();
+      if (synth.paused) return;
+      // Stopped before the voice began, `cancel` says nothing; the player's turn for this Margin must still end.
+      const begun = started;
+      cancel();
+      if (!begun) hooks.onEnd();
     },
     resume() {
       if (!live || !paused) return;
