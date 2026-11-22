@@ -240,13 +240,20 @@ final class LinkListFileTests: XCTestCase {
     }
 
     func testTheSameKeyTwiceCantHideAFollowFromTheCap() {
-        // Two "entries" lists: one JSON reader takes the first and the other the last. The list is refused, not guessed.
+        // Two "entries" lists. Foundation's two JSON readers pick the same one on Apple platforms and different ones on
+        // Linux, so the list is either read consistently or refused; an item that was meant as a follow never slips by.
         let text = #"{"schemaVersion": "\#(version)", "entries": [{"url": "https://example.com/a"}], "entries": [{"url": "https://example.com/b", "follow": true}]}"#
-        XCTAssertEqual(recognize(text), .rejected(LinkListFile.unreadableMessage))
+        switch recognize(text) {
+        case .linkList(let value):
+            let pairs = value.entries.map { "\($0.url) \($0.follow)" }
+            XCTAssertTrue(pairs == ["https://example.com/a false"] || pairs == ["https://example.com/b true"], "\(pairs)")
+        case .rejected(let message): XCTAssertEqual(message, LinkListFile.unreadableMessage)
+        case .notALinkList: XCTFail("A list that names its schema is read or refused")
+        }
         let twiceFollow = #"{"schemaVersion": "\#(version)", "entries": [{"url": "https://example.com/a", "follow": true, "follow": false}]}"#
         switch recognize(twiceFollow) {
         case .linkList(let value): XCTAssertEqual(value.entries.count, 1)
-        case .rejected, .notALinkList: break // either is fine; what matters is that nothing crashes or goes unflagged
+        case .rejected, .notALinkList: break // either is fine; what matters is that nothing crashes
         }
     }
 
