@@ -4,32 +4,40 @@ import XCTest
 
 /// #3777: the iOS voice takes the article over while a note is being read (a memory warning, a stalled player, a
 /// background seam). The client starts the iOS voice at the source offset of the place it reports, which while a note
-/// reads is the note's own offset, the citing sentence's end (`SupertonicSpeechPlaybackClient.currentCharOffset`), and
-/// the iOS voice reads the plain text, with the markers spoken and the notes in their chapter at the end.
+/// reads is the note's own offset, the citing sentence's end (`SupertonicSpeechPlaybackClient.currentCharOffset`: an
+/// aside has no source characters, so its place is its start), mapped through the player's projection, the one with the
+/// citations silent. The iOS voice then reads the plain text from that source offset, with the markers spoken and the
+/// notes in their chapter at the end (`SpeechTextNormalizer.projectForSystemSpeech(_:fromSourceOffset:)`, what
+/// `SystemSpeechPlaybackClient.play(targetId:from:)` plans from).
 ///
-/// What the listener hears then is pinned here from the real planner and the real normalizer, not from a fake: the iOS
-/// voice goes on with the sentence after the citing one (it does not replay the citing sentence), and the note it
-/// cannot read in place is still in what it reads, in the notes chapter at the end. The iOS voice has no aside chunks
-/// (`hasFootnoteAsides` is false under it), so this is the "Read at the end" behaviour of the Design, Flow 7.
+/// What the listener hears then is pinned here from the real planner and both normalizers, with and without a preface
+/// before the article: the iOS voice goes on with the sentence after the citing one (it does not replay the citing
+/// sentence), and the note it cannot read in place is still in what it reads, in the notes chapter at the end. The iOS
+/// voice has no aside chunks (`hasFootnoteAsides` is false under it), so this is the "Read at the end" behaviour of the
+/// Design, Flow 7. Not covered: the client's own wiring, which needs the app target.
 final class FootnoteSystemVoiceHandOverTests: XCTestCase {
     private typealias Planner = NarrationChunkPlanner
 
-    /// What the iOS voice reads, from where the client would start it for a hand-over while `noteChunk` of the plan is
-    /// the chunk playing: the plain projection of the same text, from the source offset the plan's projection gives.
-    private func iosVoiceRemainder(article: String, noteChunk index: Int) throws -> String {
-        let plan = Planner.articlePlan(article, asides: true)
-        let silenced = try XCTUnwrap(Planner.silencedSpeech(source: article, endingWith: article))
-        let note = try XCTUnwrap(plan.chunks.indices.contains(index) ? plan.chunks[index] : nil)
-        guard case .aside = note.footnote else { throw XCTSkip("chunk \(index) is not an aside") }
-        let source = silenced.sourceOffset(atSpokenCharacterOffset: note.startOffset)
-        let plain = SpeechTextNormalizer.normalizeWithSourceOffsets(article)
-        return String(plain.text.dropFirst(plain.spokenCharacterOffset(atOrAfterSourceOffset: source)))
+    private static let preface = "Overview. A short piece about the tide and the boats that wait for it.\n\n"
+
+    /// What the iOS voice reads, from where the client would start it for a hand-over while the note at `noteIndex`
+    /// (counted among the plan's asides) is the chunk playing. The plan is the player's own (`spokenPlan`), so a preface
+    /// shifts every offset as it does in the app.
+    private func iosVoiceRemainder(article: String, noteIndex: Int, preface: String) throws -> String {
+        let source = preface + article
+        let ranges = Planner.silencedCitationRanges(inArticle: article)
+            .map { ($0.lowerBound + preface.count)..<($0.upperBound + preface.count) }
+        let silenced = SpeechTextNormalizer.normalizeWithSourceOffsets(source, silencingSourceRanges: ranges)
+        let start = silenced.spokenCharacterOffset(atOrAfterSourceOffset: preface.count)
+        let plan = Planner.spokenPlan(spokenText: silenced.text, articleText: article, articleSpokenStart: start, asides: true)
+        let asides = plan.chunks.filter { if case .aside = $0.footnote { true } else { false } }
+        let note = try XCTUnwrap(asides.indices.contains(noteIndex) ? asides[noteIndex] : nil)
+        let reported = silenced.sourceOffset(atSpokenCharacterOffset: note.startOffset)
+        return SpeechTextNormalizer.projectForSystemSpeech(source, fromSourceOffset: reported).text
     }
 
-    private func asideIndices(_ article: String) -> [Int] {
-        Planner.articlePlan(article, asides: true).chunks.enumerated().compactMap {
-            if case .aside = $0.element.footnote { $0.offset } else { nil }
-        }
+    private func asideCount(_ article: String) -> Int {
+        Planner.articlePlan(article, asides: true).chunks.filter { if case .aside = $0.footnote { true } else { false } }.count
     }
 
     private struct Row {
@@ -60,9 +68,11 @@ final class FootnoteSystemVoiceHandOverTests: XCTestCase {
             article: "Tides[^1] turn twice a day. They rest between turns.\n\n[^1]: A note.",
             continuesWith: ["They rest between turns."],
             stillRead: ["A note"]),
+        // The cut falls after the marker, so the only thing left to read is the notes chapter, which holds the note
+        // under its own label.
         Row(name: "a note in the last sentence",
             article: "Tides turn twice a day. They rest between turns.[^1]\n\n[^1]: A closing note.",
-            continuesWith: ["footnote 1"],
+            continuesWith: ["footnote 1 : A closing note"],
             stillRead: ["A closing note"]),
         Row(name: "a note followed by a new paragraph",
             article: "Tides turn twice a day.[^1]\n\nThey rest between turns.\n\n[^1]: A note.",
@@ -72,18 +82,19 @@ final class FootnoteSystemVoiceHandOverTests: XCTestCase {
 
     func testAHandOverDuringANoteGoesOnAfterTheCitingSentenceAndTheNoteStaysInWhatItReads() throws {
         for row in rows {
-            let asides = asideIndices(row.article)
-            XCTAssertEqual(asides.count, row.continuesWith.count, "\(row.name): one aside per note")
-            for (n, index) in asides.enumerated() where n < row.continuesWith.count {
-                let remainder = try iosVoiceRemainder(article: row.article, noteChunk: index)
-                XCTAssertTrue(
-                    remainder.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(row.continuesWith[n]),
-                    "\(row.name), note \(n + 1): the iOS voice goes on with \(row.continuesWith[n]), not \(remainder.prefix(40))")
-                XCTAssertFalse(
-                    remainder.hasPrefix("Tide"), "\(row.name), note \(n + 1): the citing sentence is not replayed")
-                XCTAssertTrue(
-                    remainder.contains(row.stillRead[n]),
-                    "\(row.name), note \(n + 1): the note is still read, in the notes chapter at the end")
+            XCTAssertEqual(asideCount(row.article), row.continuesWith.count, "\(row.name): one aside per note")
+            for preface in ["", Self.preface] {
+                let label = "\(row.name)\(preface.isEmpty ? "" : " after a preface")"
+                for n in row.continuesWith.indices {
+                    let remainder = try iosVoiceRemainder(article: row.article, noteIndex: n, preface: preface)
+                    XCTAssertTrue(
+                        remainder.hasPrefix(row.continuesWith[n]),
+                        "\(label), note \(n + 1): the iOS voice goes on with \(row.continuesWith[n]), not \(remainder.prefix(40))")
+                    XCTAssertFalse(remainder.hasPrefix("Tide"), "\(label), note \(n + 1): the citing sentence is not replayed")
+                    XCTAssertTrue(
+                        remainder.contains(row.stillRead[n]),
+                        "\(label), note \(n + 1): the note is still read, in the notes chapter at the end")
+                }
             }
         }
     }
