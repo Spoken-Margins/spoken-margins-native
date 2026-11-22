@@ -570,7 +570,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         setLoading(true);
         try {
           const pageUrl = target.pageUrl;
-          const found = await services.sources.findAppleEpisodeAudio(pageUrl);
+          const title = target.title;
+          // The show's feed is read only when Apple's lookup doesn't list the episode, and through the server only with the listener's OK.
+          const found = await relay((relayAllowed) => services.sources.findAppleEpisodeAudio(pageUrl, { relayAllowed, title }));
           if (found) {
             // The packet's own length is the edition its Margins were made on; Apple's only fills a length it lacks.
             target = { ...target, audioUrl: found.audioUrl, audioOrigin: found.audioOrigin, durationSeconds: target.durationSeconds ?? found.durationSeconds };
