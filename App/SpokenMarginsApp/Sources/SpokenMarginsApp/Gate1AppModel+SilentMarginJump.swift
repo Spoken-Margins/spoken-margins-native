@@ -39,7 +39,7 @@ extension Gate1AppModel {
         guard let itemID = row.layer.itemId else {
             return reportFailure("The source for this shared Margin isn't in your Library.")
         }
-        guard SharedMarginListPlay.canGo(row.interjection, in: row.layer), let place = SharedMarginReplyPlace(row.interjection) else {
+        guard SharedMarginListPlay.canGo(row.interjection, in: row.layer), SharedMarginReplyPlace(row.interjection) != nil else {
             return reportFailure("This shared Margin has no position in the episode.")
         }
         // Whatever of a friend's is sounding, waiting or running gives way: this is where the listener is going now (`skimGo`).
@@ -52,19 +52,39 @@ extension Gate1AppModel {
         guard let landing = SilentMarginLanding(
             going: row.interjection, in: row.layer, itemId: itemID,
             textUnit: .characters(perSecond: ListeningTimeEstimator.defaultCharactersPerSecond)) else { return }
-        let moved: Bool
-        switch place {
-        case .media(let timeMs): moved = seekMedia(toMediaTimeMs: timeMs)
-        case .text(let charOffset): moved = seekText(toCharOffset: charOffset)
-        }
-        guard moved else { return } // the seek reported why; no card for a place the source didn't reach
-        if !snapshot.status.isPlaybackActive { resumePlayback() }
-        silentMarginLanding = landing
-        // Landing is how a note reading was turned off for is met (the details sheet's own rule, #3427). One with no voice on
-        // this phone stays unmarked (#3402): a voice downloaded later still has it to read.
-        let margin = row.interjection
-        if margin.isWritten, margin.isNewToListener, !margin.readAloudChoice { markSharedMarginHeard(margin) }
+        guard land(on: landing, row: row) else { return } // the seek reported why; no card for a place the source didn't reach
         screen = .playback
         showNowRequests += 1 // the playback screen switches to Now, where the card is
+    }
+
+    /// A Skim press that went to a silent Margin stop (#4934): the source moves to the stop's place and plays on, nothing is
+    /// spoken, and the card on Now says what is there. The same landing steps as a list's go-to, on the open item, with no
+    /// switch of screen: the press came from where Skim is. It ends no voice of its own: `skimGo` already gave way to a friend's.
+    func goToSilentSkimStop(_ stop: SkimStop, itemId: String) {
+        guard let source = skimSource, let row = sharedMarginRows.first(where: { $0.interjection.id == stop.id && $0.layer.itemId == itemId })
+        else { return }
+        let unit: SkimStops.PositionUnit = source.usesTextPositions
+            ? .characters(perSecond: ListeningTimeEstimator.defaultCharactersPerSecond) : .milliseconds
+        guard let landing = SilentMarginLanding(skipping: stop, margin: row.interjection, in: row.layer, itemId: itemId, unit: unit)
+        else { return }
+        land(on: landing, row: row)
+    }
+
+    /// Seek to the landing's place, play on, show its card and, when the details sheet's own rule says so, mark the Margin heard
+    /// (a note reading was turned off for is met by landing, #3427; one with no voice on this phone stays unmarked, #3402: a voice
+    /// downloaded later still has it to read). False when the seek did not move the source, which reported why.
+    @discardableResult
+    private func land(on landing: SilentMarginLanding, row: SharedMarginRow) -> Bool {
+        let moved: Bool
+        switch landing.unit {
+        case .milliseconds: moved = seekMedia(toMediaTimeMs: landing.position)
+        case .characters: moved = seekText(toCharOffset: landing.position)
+        }
+        guard moved else { return false }
+        if !snapshot.status.isPlaybackActive { resumePlayback() }
+        silentMarginLanding = landing
+        let margin = row.interjection
+        if margin.isWritten, margin.isNewToListener, !margin.readAloudChoice { markSharedMarginHeard(margin) }
+        return true
     }
 }

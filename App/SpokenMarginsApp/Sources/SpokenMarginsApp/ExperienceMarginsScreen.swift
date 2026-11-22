@@ -919,7 +919,9 @@ struct SharedMarginDetailView: View {
                         ))
                         .accessibilityIdentifier("sharedMargin.readAloud.toggle")
                     } footer: {
-                        Text(ReadAloudWords.footer(for: current.interjection, senderName: SharedPacketArrival.senderName(current.layer.displayLabel)))
+                        Text(ReadAloudWords.footer(
+                            for: current.interjection, senderName: SharedPacketArrival.senderName(current.layer.displayLabel),
+                            hasPlace: SharedMarginListPlay.canGo(current.interjection, in: current.layer)))
                             .accessibilityIdentifier("sharedMargin.readAloud.footer")
                     }
                 }

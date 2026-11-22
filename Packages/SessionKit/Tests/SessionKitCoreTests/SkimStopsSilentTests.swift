@@ -117,6 +117,17 @@ final class SkimStopsSilentTests: XCTestCase {
         XCTAssertEqual(place.skimTarget(direction: .forward, playhead: 299_000, in: forward)?.stop.id, "c2")
     }
 
+    // The listener turned reading back on for the Margin they were just taken to: its stop is voiced now, with a lead-in, so a
+    // press meets it instead of treating it as the stop they are already at.
+    func testAMarginThatBecameVoicedAfterTheLandingIsMetAgain() throws {
+        let place = landing(at: silent("s", 300_000))
+        let stops = SkimStops(chapters: [chapter("c0", 0)], margins: [voiced("s", 300_000)])
+        let target = try XCTUnwrap(place.skimTarget(direction: .backward, playhead: 301_000, in: stops))
+        XCTAssertEqual(target.stop.id, "s")
+        XCTAssertFalse(target.stop.isSilent)
+        XCTAssertEqual(target.leadInStart, 270_000, "the voiced stop has its lead-in again")
+    }
+
     // MARK: Ties (Default taken 12)
 
     func testASilentStopTiedWithAnotherStopIsDropped() {

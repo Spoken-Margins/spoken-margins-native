@@ -157,4 +157,38 @@ final class SharedMarginListPlayTests: XCTestCase {
         // A timed Margin goes whatever the toggle, as it plays.
         XCTAssertTrue(SharedMarginListPlay.canGo(written(senderReadAloud: false), in: layer(enabled: false)))
     }
+
+    // Skim stops silently at a friend's Margin only when it is never read aloud and the listener can go to it (#4934).
+    func testWhichFriendMarginsAreSilentSkimStops() {
+        defer { WrittenMarginSpeech.useVoiceCheck(nil) }
+        WrittenMarginSpeech.useVoiceCheck(nil)
+        let passage = ImportedAnchorResolution(evidenceClass: .articleTextVerified, localStartChar: 300)
+        let rows: [(String, ImportedCommentaryInterjection, ImportedCommentaryLayer, Bool)] = [
+            ("read aloud: a voiced stop, not a silent one", written(), layer(), false),
+            ("reading off by the sender", written(senderReadAloud: false), layer(), true),
+            ("reading off by the listener", written(listenerReadAloud: false), layer(), true),
+            ("sender off, listener back on: voiced again", written(senderReadAloud: false, listenerReadAloud: true), layer(), false),
+            ("emoji only", written("😀🎉"), layer(), true),
+            ("placeholder words", written("Voice Margin at 12:34"), layer(), true),
+            ("a recording", written(audioPath: "margin.m4a"), layer(), false),
+            ("silent and no place", written(senderReadAloud: false, senderMs: nil, .init(evidenceClass: .unresolved)), layer(), false),
+            ("silent, layer turned off", written(senderReadAloud: false), layer(enabled: false), false),
+            ("silent, layer deleted", written(senderReadAloud: false), layer(deleted: true), false),
+            ("silent, matched to the wrong source", written(senderReadAloud: false), layer(status: .wrongSource), false),
+            ("silent passage of text", written(senderReadAloud: false, senderMs: nil, passage), layer(), true),
+            ("silent passage, layer turned off", written(senderReadAloud: false, senderMs: nil, passage), layer(enabled: false), false),
+        ]
+        for (name, margin, layer, expected) in rows {
+            XCTAssertEqual(SharedMarginListPlay.isSilentSkimStop(margin, in: layer), expected, name)
+        }
+    }
+
+    func testANoteWithNoVoiceOnThisPhoneIsASilentSkimStopAndComesBackWhenAVoiceArrives() {
+        defer { WrittenMarginSpeech.useVoiceCheck(nil) }
+        let note = written("Une pensée.")
+        WrittenMarginSpeech.useVoiceCheck { _ in false }
+        XCTAssertTrue(SharedMarginListPlay.isSilentSkimStop(note, in: layer()))
+        WrittenMarginSpeech.useVoiceCheck(nil)
+        XCTAssertFalse(SharedMarginListPlay.isSilentSkimStop(note, in: layer()), "a voice downloaded later makes it a voiced stop")
+    }
 }

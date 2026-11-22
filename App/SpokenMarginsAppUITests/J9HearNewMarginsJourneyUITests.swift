@@ -253,6 +253,56 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
         }
     }
 
+    /// #4934: Skim stops at a friend's Margin that is never read aloud, in both directions. From the owner's position (saved near
+    /// 20:00, the friend's written Margin at 5:00 with reading off) Skim backward lands at 5:00 itself, with no lead-in, plays on
+    /// and shows the card; a second backward press does not land there again. From well before it, Skim forward lands at 5:00 too.
+    /// That nothing is spoken is the owner's by ear.
+    func testSkimGoesToASilentFriendMarginBothWays() throws {
+        try openTheEpisodeFarPastAFriendsMargin(step: "J9 silent Skim", silentFriend: true)
+
+        try XCTContext.runActivity(named: "J9 silent Skim, step 4: Backward lands on the Margin's own place and plays on") { _ in
+            let backward = app.buttons["playback.skim.backward.button"].firstMatch
+            XCTAssertTrue(backward.waitForExistence(timeout: 8), "No Skim backward arrow, with a friend's silent Margin behind the listener")
+            XCTAssertTrue(backward.isEnabled, "Skim backward is dimmed: the silent Margin is not a stop")
+            let before = try position()
+            backward.tap()
+            waitUntil("Skim backward did not go to the silent Margin at \(friendMarginAt) s from \(before) s; clock shows \(element("playback.progress.label").label)", timeout: 15) {
+                self.currentPosition().map { ($0 >= self.friendMarginAt - 5) && $0 <= self.friendMarginAt + 20 } ?? false
+            }
+            XCTAssertTrue(element("marginCard").waitForExistence(timeout: 8), "The pinned card did not appear on Now")
+            XCTAssertTrue(app.buttons["marginCard.silent.dismiss"].firstMatch.exists, "The card has no Dismiss")
+            XCTAssertFalse(element("review.playing").exists, "A voice started for a Margin that is never read aloud")
+            XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+            try waitUntilPlaying("The episode did not play on after Skim went to the silent Margin")
+        }
+
+        try XCTContext.runActivity(named: "J9 silent Skim, step 5: A second press does not land on the same stop again") { _ in
+            let backward = app.buttons["playback.skim.backward.button"].firstMatch
+            let landed = try position()
+            if backward.isEnabled { backward.tap() }
+            // Nothing is behind the Margin, so the episode stays at it (it may have played a little on); it never goes back to 4:30.
+            Thread.sleep(forTimeInterval: 2)
+            let after = try position()
+            XCTAssertTrue(after >= self.friendMarginAt - 5, "A second Skim backward went to \(after) s from \(landed) s: it met the silent stop again or left the item")
+        }
+
+        try XCTContext.runActivity(named: "J9 silent Skim, step 6: Forward from before the Margin lands on it") { _ in
+            try scrub(to: 0.1)
+            waitUntil("Scrub did not land near 2:30; clock shows \(element("playback.progress.label").label)", timeout: 10) {
+                self.currentPosition().map { $0 < self.friendMarginAt - 60 } ?? false
+            }
+            let forward = app.buttons["playback.skim.forward.button"].firstMatch
+            XCTAssertTrue(forward.waitForExistence(timeout: 8), "No Skim forward arrow")
+            XCTAssertTrue(forward.isEnabled, "Skim forward is dimmed: the silent Margin ahead is not a stop")
+            forward.tap()
+            waitUntil("Skim forward did not go to the silent Margin at \(friendMarginAt) s; clock shows \(element("playback.progress.label").label)", timeout: 15) {
+                self.currentPosition().map { ($0 >= self.friendMarginAt - 5) && $0 <= self.friendMarginAt + 20 } ?? false
+            }
+            XCTAssertTrue(element("marginCard").waitForExistence(timeout: 8), "The pinned card did not appear on Now")
+            XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+        }
+    }
+
     /// The owner's position for #4447: saved near 20:00 and paused, then a friend's Margin from 5:00 arrives and he
     /// chooses "Listen without them", so the Margin is behind him and the Now screen is where he is.
     private func openTheEpisodeFarPastAFriendsMargin(step: String, silentFriend: Bool = false) throws {

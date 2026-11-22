@@ -146,10 +146,15 @@ extension SharedMarginReview.Entry {
 /// What the listener's "Read aloud" control says under a friend's written Margin (owner, 2026-11-05, #3427): which of the
 /// two people decided, and what it means for Skim. Plain words, decided on the host so a test holds them.
 public enum ReadAloudWords {
-    /// The line under the control. `senderName` is the sender's name, or nil when the file names nobody.
-    public static func footer(for margin: ImportedCommentaryInterjection, senderName: String?) -> String {
+    /// The line under the control. `senderName` is the sender's name, or nil when the file names nobody. `hasPlace` is whether the
+    /// listener can go to the Margin's place (`SharedMarginListPlay.canGo`): Skim and the Margins tab then still take them there
+    /// when it is not read aloud (#4934). With no place it is not a stop, so the lines say nothing of it.
+    public static func footer(for margin: ImportedCommentaryInterjection, senderName: String?, hasPlace: Bool) -> String {
+        let goesThere = " Skim and the Margins tab still take you here, with nothing read."
         // No voice on this phone can read it, whatever either of them chose (#3402): the same line a tap on it gets.
-        if !WrittenMarginSpeech.hasVoice(for: margin.approvedTranscript) { return SharedMarginAudio.noVoiceWords }
+        if !WrittenMarginSpeech.hasVoice(for: margin.approvedTranscript) {
+            return hasPlace ? SharedMarginAudio.noVoiceWords + " Skim and the Margins tab still take you here." : SharedMarginAudio.noVoiceWords
+        }
         let who = senderName ?? "Your friend"
         switch (margin.readAloudChoice, margin.senderReadAloud == false, margin.listenerReadAloud != nil) {
         case (true, false, _):
@@ -157,9 +162,9 @@ public enum ReadAloudWords {
         case (true, true, _):
             return "\(who) asked that this one not be read aloud. You turned reading on, so Skim stops at it."
         case (false, true, false):
-            return "\(who) asked that this one not be read aloud. Skim passes it. Turn this on to hear it. You can always read it here and on the Timeline."
+            return "\(who) asked that this one not be read aloud." + (hasPlace ? goesThere : "") + " Turn this on to hear it."
         case (false, _, _):
-            return "You turned reading off for this one. Skim passes it. You can always read it here and on the Timeline."
+            return "You turned reading off for this one." + (hasPlace ? goesThere : "")
         }
     }
 }
