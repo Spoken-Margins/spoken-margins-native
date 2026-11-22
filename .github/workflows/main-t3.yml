@@ -8,6 +8,11 @@
 # runtime check, Git LFS from a cache, the Xcode compilation cache, Python 3.12 and XcodeGen. It runs main's own
 # scripts/lane-runner.py T3 machinery (simulator clone, boot rules, crash-flood stop) through scripts/main_t3.py.
 #
+# A push to main starts it through main-t3-push.yml (#4839), which dispatches this workflow unless a main-t3 run did
+# simulator work in the last 3 hours. Every Mac run stays in the one concurrency group below, so runs are still one at a
+# time, in order, and a dispatched run decides like a tick (the head's own status), so it never loses a tick or a release
+# cut that it replaces in the queue.
+#
 # workflow_dispatch: `force` runs even when the SHA already has a status (a release cut asking for a fresh run, or a
 # retry after a runner fault); `sha` tests an older commit on main instead of its head.
 name: main-t3

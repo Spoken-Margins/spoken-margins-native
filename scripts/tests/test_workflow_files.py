@@ -71,7 +71,8 @@ class AlwaysOnCheck(unittest.TestCase):
 TEST_COMMAND = re.compile(r'\b(xcodebuild|swift test|verify-tests\.py|sm_integration_run\.py|hosted_t3_check\.py)\b')
 IGNORES_FAILURE = re.compile(r'\|\|\s*(true|:)\s*$')
 # check-build29-database.sh runs `swift test` for its fixture writer, so a job that calls it runs a test (shipped-build-compat).
-TEST_RUNNING = re.compile(r'test-without-building|verify-tests|swift test|unittest|sm_integration_run|hosted_t3_check|check-build29-database')
+TEST_RUNNING = re.compile(r'test-without-building|verify-tests|swift test|unittest|sm_integration_run|hosted_t3_check|check-build29-database|(?:main|branch)_t3\.py run')
+# main_t3.py and branch_t3.py `run` drive lane-runner.py's T3 on a simulator clone (#4839), so a job that calls them runs tests.
 
 # Jobs allowed to carry continue-on-error: true, by (workflow file, job id). Each one must be a ping or a
 # report-of-a-report that is not a test result; lane.yml's three went with it (#4769). A new entry here needs the same
