@@ -25,11 +25,13 @@ A project thread works one issue and ends. When its PR is armed, or the issue is
 4. Run the host tests: `.venv/bin/python scripts/verify-tests.py --plan fast`, or the suites your change touches (Python, Node, SessionKit on Linux). Run a new regression test once without the fix and confirm it fails.
    On Linux run `scripts/run-sessionkit-linux-tests.sh`, never raw `swift test` (it rewrites `Packages/SessionKit/Package.resolved`), and stage files by path, not `git add -A`; the merge policy holds a PR that changes that file without `Package.swift` (#4972).
 5. A fix for an owner-found bug names the test layer that should have caught it and adds a test there.
+5a. **A listener-facing issue (any area but groundwork) is proved by a real run, not by fixture tests (Cole, 2026-11-22).** Before you call it done, run it the way the listener would: the real link, file or screen, covering every hop from where they start to where they see or hear the result (the sending side and the receiving side of a share link, not one of them). Use what the session has: a host test on the real artifact, a real URL in Playwright's Chromium, the lane or Test Desk for the simulator. Record it as a `**Real-use proof**` (Real input, Path, Steps, Result: PASS, Commit) in the PR body or on the issue. A run that fails is recorded as `Result: FAIL` and fixed, never skipped. [docs/workstreams/real-use-proof.md](../../../docs/workstreams/real-use-proof.md) has the record and `scripts/real_use_proof.py`.
 6. Before arming, have a fresh-context sub-agent review your diff against the issue's **Done when** and **Must not break**. Fix the real findings.
 
 ## 3. Open and arm the PR
 
 1. One PR into `main`. The body names the issue as `Closes #N` (finishes it) or `Part of #N` (doesn't). A recurring cost needs a **Cost and catch** heading.
+   - **`Closes #N` on a listener-facing issue needs its real-use proof on the PR or the issue, or the `merge policy` check holds the PR** (the reason says what is missing). If you could not run it before the merge (an app change with no simulator in your session), write `Part of #N`, say "Merged, not yet shown working" in the PR, and put an `**Owner check**` or a `ready` follow-up on the issue for the run; the issue closes when the proof is recorded. `Real-use proof waived: <reason>` is only for work with no listener surface.
 2. Arm it with the [lane-request skill](../lane-request/SKILL.md): add `automerge`. A `/lane T3` request is optional and never holds the merge.
 3. The runner merges on PASS of the fast checks, signoff and, for audio, persistence or packet diffs, a clean "Codex audit (Astra) on <sha>" of the head. Don't wait for the audit, the lane or the merge; don't ask anyone to merge; set no timers on your own PRs.
 4. PRs touching `.github/` or `scripts/lane-runner.py` are the owner's merge tap. Arm nothing there; the coordinator brings it to him.
@@ -59,6 +61,8 @@ The finisher pauses on a Claude HALT in Paced or Off mode (never in Cloud max), 
 
 **Back to the queue** (you can't finish it): remove `in-progress`, add `ready`, and say why on the issue. The only valid reasons are the owner's phone or data, a named defect in the code or the Design (cite `file:line`), or the label `where:mac`. "Needs a Mac build" is never one.
 
+**"The owner's phone or data" needs a repro attempt first (Cole, 2026-11-22).** Before you hand an issue back, skip it or label it `needs-owner` for his phone or data, try to reproduce it yourself with what you have: the real link or file in a browser, a host test on the real artifact, the simulator through the lane. Then comment on the issue: `**Repro attempt**`, `Tried:` (what you ran, on which real input), `Result:` (reproduced or not, and what you saw), and `Needs from owner:` (only the exact thing only his phone or account has). Without that comment the issue goes back to the queue (`scripts/real_use_proof.py --parked` lists them). A reproduced bug is yours to fix.
+
 **To another session**: never ask the owner to pass a message, paste text, or check on another thread. Message the coordinator instead.
 
 ## 6. Threads on the owner's Mac
@@ -68,11 +72,21 @@ A `where:mac` issue (Mac hardware, signed-in Mac accounts or a physical device),
 1. Works in its own worktree: `cd ~/Documents/GitHub/spoken-margins-native && git fetch origin && git worktree add .claude/worktrees/<slug> -b ws/<issue>-<slug> origin/main`, then `scripts/setup-worktree.sh`.
 2. Builds only through `scripts/xcodebuild-lane`, with memory pressure normal and at least 10 GB free plus 4 GB per running build.
 3. Never boots a simulator.
-4. After the merge, deletes the worktree's `.build` folder and removes the worktree.
+4. After the merge, deletes the worktree's `.build` folder and removes the worktree (see "Your own worktree" below).
 5. Takes the next Mac-only ready issue after arming. The headless Claude Mac worker (`ops/claude/`, #1599) does the same unattended.
 6. **Ends its own Claude Code session (Cole, 2026-11-22: no idle sessions).** Once its work is merged or handed off, it posts the stop note (section 7) and then exits its session, so it never sits idle holding a session on his computer. The long-lived Mac finisher is the only exception. This is about the session on the Mac; nothing here closes or resolves a thread in the project.
 
 The project instructions' pointer to "Threads on the owner's Mac" means this section.
+
+## Your own worktree
+
+Any thread that makes a git worktree removes it. Make it under `.claude/worktrees/<slug>` of the main checkout and nowhere else: never `../sm-*`, `../smn-*` or `../spoken-margins-native-*` beside the repo (Cole, 2026-11-22; 39 of those piled up and were never cleaned). Remove it once its PR has merged, or when you hand the work off or stop, whichever comes first:
+
+1. `git status --porcelain` is empty and the branch is pushed. If not, commit and push, or leave the worktree and say so in the stop note.
+2. Delete its `.build` folder, then `git worktree remove <path>`. Never `--force`.
+3. Don't touch a worktree you didn't make: the Test Desk's, the finisher's, `.codex/` ones.
+
+The Mac tick also removes merged, clean worktrees outside `.claude/worktrees/` (docs/scheduled-jobs.md), but that is the backstop, not the plan.
 
 ## 7. Stop note
 

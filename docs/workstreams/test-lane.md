@@ -214,7 +214,7 @@ integration report for a tip, start that tip at step 2.
 
 Taking turns: the scheduled "SM integration run" is the understudy. It runs only when this
 desk has posted nothing on #184 for three hours, works in its own intrun-<sha7> worktree,
-and stays off the simulator while a desk pool device is booted.
+and stays off the simulator while a desk pool device is booted. Its clean-up runs `git restore SpokenMarginsNative.xcodeproj/project.pbxproj` before it removes that worktree (the build regenerates the file, and a dirty tree can't be removed without `--force`).
 
 The integration script (ops/testdesk/README.md, launchd every 10 minutes) replaces the
 scheduled understudy once installed; it is installed on the Mac (2026-11-13). It runs --plan app on any tip with no integration

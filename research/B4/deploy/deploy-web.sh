@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Deploys the web app (Web/, a static Vite PWA, #3020) to the VPS. Run from the Mac:
+# Deploys the web app (Web/, a static Vite PWA, #3020) to the VPS. The normal route is .github/workflows/deploy-web.yml,
+# which runs this after the owner approves (#4982). By hand, from the Mac, as the fallback:
 #
 #   research/B4/deploy/deploy-web.sh --dry-run <user>@<vps>   # build, then list what would change; change nothing
 #   research/B4/deploy/deploy-web.sh <user>@<vps>             # copy it (after the owner approves the dry run)

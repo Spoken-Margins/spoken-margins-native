@@ -221,10 +221,10 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
  */
 export async function readFeed(
   url: string,
-  options: ReadOptions & Pick<ParseFeedOptions, 'maxItems' | 'followedAt'> = {},
+  options: ReadOptions & Pick<ParseFeedOptions, 'maxItems' | 'followedAt' | 'keepWithoutAudio'> = {},
 ): Promise<ParsedFeed> {
   const { body, finalUrl } = await readUrl(url, options);
-  const parse = { maxItems: options.maxItems, followedAt: options.followedAt };
+  const parse = { maxItems: options.maxItems, followedAt: options.followedAt, keepWithoutAudio: options.keepWithoutAudio };
   try {
     return parseFeed(body, { feedUrl: url, baseUrl: finalUrl, ...parse });
   } catch (error) {

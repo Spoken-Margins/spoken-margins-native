@@ -31,8 +31,8 @@ const sources: SourcesPort = {
       ...(voice.durationSeconds !== undefined && { durationSeconds: voice.durationSeconds }),
     };
   },
-  async findAppleEpisodeAudio(pageUrl) {
-    const found = await findAppleEpisodeAudio(pageUrl);
+  async findAppleEpisodeAudio(pageUrl, { relayAllowed, title }) {
+    const found = await findAppleEpisodeAudio(pageUrl, { feed: { title, consent: relayAllowed, ...relayBase() } });
     if (!found) return null;
     return {
       audioUrl: found.audioUrl,

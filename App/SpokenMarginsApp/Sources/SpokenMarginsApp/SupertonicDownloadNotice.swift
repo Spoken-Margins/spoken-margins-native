@@ -9,6 +9,10 @@ final class SupertonicDownloadNotice: ObservableObject {
     @Published var isPresented = false
     /// Set by the card's button. Settings opens Voices when it appears and clears it.
     @Published var opensVoices = false
+    /// This launch's `presentIfNeeded` has run, so the Watch card (#4563) knows this notice has had its say.
+    @Published private(set) var decidedThisLaunch = false
+    /// The card opened this launch. At most one one-time notice opens per launch, this one first.
+    private(set) var shownThisLaunch = false
 
     private let defaults: UserDefaults
     private let modelInstalled: () -> Bool
@@ -20,6 +24,7 @@ final class SupertonicDownloadNotice: ObservableObject {
 
     /// Called when the app's root appears. Showing the card records it as seen, so it never comes back.
     func presentIfNeeded(savedVoiceIsSupertonic: Bool, anotherSheetShowing: Bool) {
+        decidedThisLaunch = true
         switch SupertonicDownloadNoticePolicy.decide(
             savedVoiceIsSupertonic: savedVoiceIsSupertonic,
             modelInstalled: modelInstalled(),
@@ -28,6 +33,7 @@ final class SupertonicDownloadNotice: ObservableObject {
         ) {
         case .show:
             defaults.set(true, forKey: SupertonicDownloadNoticePolicy.seenKey)
+            shownThisLaunch = true
             isPresented = true
         case .settle:
             defaults.set(true, forKey: SupertonicDownloadNoticePolicy.seenKey)

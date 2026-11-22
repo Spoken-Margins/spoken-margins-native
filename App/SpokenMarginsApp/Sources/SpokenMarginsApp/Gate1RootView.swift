@@ -82,7 +82,7 @@ struct Gate1RootView: View {
             CatalogDrawerView()
                 .environmentObject(catalogDrawer)
         }
-        .modifier(SupertonicDownloadNoticePresentation(notice: supertonicNotice))
+        .modifier(SupertonicDownloadNoticePresentation(notice: supertonicNotice)).modifier(WatchReturnToAppTipPresentation(supertonicNotice: supertonicNotice, keyboardIsPresented: keyboardIsPresented))
         .trackedSheet(isPresented: $model.isHelpPresented) {
             HelpScreen()
                 .environmentObject(model)

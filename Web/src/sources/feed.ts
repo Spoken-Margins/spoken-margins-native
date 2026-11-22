@@ -17,6 +17,11 @@ export interface ParseFeedOptions {
   feedUrl: string;
   /** Where the read ended after redirects, when that differs: relative links resolve against it instead. */
   baseUrl?: string;
+  /**
+   * Keep a podcast item that has no audio address (by default it is left out, as it is nothing to play). Only a reader
+   * that must see every item to know a title is unique asks for them (apple-feed.ts).
+   */
+  keepWithoutAudio?: boolean;
   /** Stop after this many items. Default 500: a feed's newest items come first, and the rest is rarely wanted. */
   maxItems?: number;
   /** Stamped on `Show.followedAt`. Default is the current time. */
@@ -169,7 +174,7 @@ export function parseFeed(xml: string, options: ParseFeedOptions): ParsedFeed {
   const episodes: Episode[] = [];
   for (const item of itemElements.slice(0, maxItems)) {
     const audioUrl = audioEnclosure(item, base);
-    if (kind === 'podcast' && !audioUrl) continue;
+    if (kind === 'podcast' && !audioUrl && !options.keepWithoutAudio) continue;
     const pageUrl = resolveWebUrl(childText(item, 'link'), base);
     const guid = childText(item, 'guid');
     const title = childText(item, 'title') ?? pageUrl ?? audioUrl ?? 'Untitled';

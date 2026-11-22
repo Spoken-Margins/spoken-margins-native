@@ -24,6 +24,7 @@ permissions:
   pull-requests: read
   issues: write
   checks: read
+  actions: read  # the budget warning lists the last hour's runs (#4990)
 
 concurrency:
   group: merge-stall
@@ -39,9 +40,20 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             scripts/merge_stall_watch.py
+            scripts/api_budget_watch.py
             scripts/comment_trust.py
             scripts/trunk.py
           sparse-checkout-cone-mode: false
+      # #4990: warn the owner at 70% of the workflow token's hourly API budget, before checks fail on it. A step here,
+      # not a workflow of its own: this job already runs when PRs' checks finish and from the VPS every 15 minutes, so it
+      # adds no run. Cost and catch: one uncounted `rate_limit` read a run below 70%; at most 4 calls on the one run
+      # an hour window that warns, 2 on later runs in that window. It would have caught the holds of #4985 and #4983
+      # on 2026-11-22. Waste signal: no warning in 30 days and no rate-limit line in any `merge policy` log.
+      - name: Read the API budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/api_budget_watch.py  # exits 0 whatever GitHub answers, so the stall look always runs
       - name: Look for a stall
         env:
           GH_TOKEN: ${{ github.token }}

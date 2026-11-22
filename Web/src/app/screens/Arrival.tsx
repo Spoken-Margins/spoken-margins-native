@@ -108,7 +108,9 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
         // Not inside the sender's hidden check, which reads only through the app (`messageForOpenedSettled`).
         const { read, lookup } = playCheckHandler()
           ? { read: packet, lookup: undefined }
-          : await settleAppleEpisode(packet, (pageUrl) => services.sources.findAppleEpisodeAudio(pageUrl));
+          : await settleAppleEpisode(packet, (pageUrl) =>
+              services.sources.findAppleEpisodeAudio(pageUrl, { relayAllowed: data.settings.relayAllowed, title: packet.episode.title }),
+            );
         setState({
           status: 'ready',
           read,

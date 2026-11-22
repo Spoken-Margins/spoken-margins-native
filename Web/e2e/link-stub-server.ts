@@ -12,6 +12,8 @@
 //                  no audio of its own and no voice to look up, so a browser can't play it (#4454)
 //   vectorapple01  an Apple Podcasts episode with only its page: the owner's 2026-11-20 share, whose packet held the episode
 //                  page and no audio address and no GUID (#4767, #4783). Two timed Margins, as vectorvoice01's
+//   vectorapple02  the same page-only shape as the owner's 2026-11-22 share of a 2019 episode: Apple's lookup of the show does not
+//                  list it, so its audio is found only in the show's feed (#4783)
 //   expired00001   answers 410, as an expired link does
 //   switchedoff1   answers 503 `disabled`, as the server does while links are switched off
 // Run: node e2e/link-stub-server.ts (Node 24 strips the types). Port 4174, or SM_LINK_STUB_PORT.
@@ -111,6 +113,26 @@ const applePacket = await withLayer(
 links.set('vectorapple01', {
   preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
   packet: await sealPart(applePacket, PART.packet, vectorKey),
+});
+
+const applePacketOutsideLookup = await withLayer(
+  voicePacket,
+  () => {},
+  (manifest) => {
+    manifest.item = {
+      canonicalURL: APPLE_EPISODE,
+      originalURL: APPLE_EPISODE,
+      itemType: 'podcast',
+      // As the feed words it, with the straight apostrophe and the comma after "Policy" that Apple's own page leaves out.
+      title: "People, Parks, and Policy, with RFF's Margaret Walls",
+      showTitle: 'Resources Radio',
+      durationMs: 1_295_000,
+    };
+  },
+);
+links.set('vectorapple02', {
+  preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
+  packet: await sealPart(applePacketOutsideLookup, PART.packet, vectorKey),
 });
 
 const TYPES: Record<string, string> = {

@@ -84,11 +84,16 @@ STATUS_REFRESH = dt.timedelta(minutes=60)
 # "HALT" on #337 must not stop the project, and a stranger's claim note must not fill the Dial's slots.
 TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
 TRUSTED_BOTS = ('github-actions[bot]',)
+TRUSTED_APP_SLUGS = ('spoken-margins-agent',)  # the GitHub App the agents act as (#4915)
+
+
+def _rest_bot_logins() -> tuple:
+    return TRUSTED_BOTS + tuple(f'{slug}[bot]' for slug in TRUSTED_APP_SLUGS)
 
 
 def trusted(comment: dict) -> bool:
     return (comment.get('author_association') in TRUSTED_ASSOCIATIONS
-            or (comment.get('user') or {}).get('login') in TRUSTED_BOTS)
+            or (comment.get('user') or {}).get('login') in _rest_bot_logins())
 
 
 STATUS_MARK = '<!-- dial-gate-status -->'

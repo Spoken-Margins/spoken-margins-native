@@ -43,6 +43,9 @@ struct SettingsScreen: View, Equatable {
     @ObservedObject private var supertonicNotice: SupertonicDownloadNotice
     @State private var showsVoices = false
     @State private var showsControls = false
+    /// The Watch card's row in Help & Privacy shows only with a paired Watch that has the app (#4563). Not passed
+    /// through `init` and out of `==`: a view's own observed object still redraws it.
+    @ObservedObject private var watchTip = WatchReturnToAppTipNotice.shared
 
     init(model: Gate1AppModel, supertonicNotice: SupertonicDownloadNotice) {
         self.model = model
@@ -462,6 +465,12 @@ struct SettingsScreen: View, Equatable {
                     }
                 }
                 Section("Help & Privacy") {
+                    if watchTip.pairing.hasWatchApp {
+                        Button(action: watchTip.openFromSettings) {
+                            Label("Keep Spoken Margins on Your Watch", systemImage: "applewatch")
+                        }
+                        .accessibilityIdentifier("settings.watchTip.button")
+                    }
                     Button(action: model.openHelp) {
                         Label("How Spoken Margins Works", systemImage: "questionmark.circle")
                     }
