@@ -190,6 +190,8 @@ struct PlaybackScreen: View {
                             // A friend's Margin or a review has one fixed place above the title, never in the
                             // scrolling stack, so it can't scroll away or shove the header down (#3220, #1577).
                             if selectedPane == .now { PinnedMarginCardView() }
+                            // A note read where it is cited: the same slot, never beside a friend's card (#3777).
+                            if selectedPane == .now { FootnoteCardPinnedView() }
                             if !model.recordingNavigationIsLocked, let feedback = model.playbackFeedbackTag {
                                 PlaybackFeedbackTagView(event: feedback.event, tag: feedback.tag)
                                     .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
