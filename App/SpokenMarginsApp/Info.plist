@@ -93,6 +93,10 @@
 	<string>Spoken Margins turns your spoken Margins into text so you can search and copy them.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>SMAppAttestAppID</key>
+	<string>$(DEVELOPMENT_TEAM).$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>SMAppAttestEnvironment</key>
+	<string>$(SM_APP_ATTEST_ENVIRONMENT)</string>
 	<key>SMBuildCommit</key>
 	<string>$(SM_BUILD_COMMIT)</string>
 	<key>SMPhoneBuild</key>

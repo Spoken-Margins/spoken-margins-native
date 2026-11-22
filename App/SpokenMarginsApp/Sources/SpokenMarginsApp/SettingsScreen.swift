@@ -525,6 +525,9 @@ struct SettingsScreen: View, Equatable {
                     Text("A private log of listening time, Margins, shares and finishes for followed sources: titles, times and counts, never Margin text or audio. It stays on this device unless you export it.")
                         .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
+                    #if SM_APP_ATTEST_CAPTURE && SM_SHARE_LINK_CREATION
+                    AppAttestCaptureRow()
+                    #endif
                     #endif
                 }
                 Section {
