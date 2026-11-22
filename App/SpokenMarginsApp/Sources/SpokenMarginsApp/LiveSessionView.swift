@@ -122,6 +122,8 @@ struct LiveSessionView: View, Equatable {
             .navigationTitle("Live session")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(isRunningScreen ? AppColors.listeningBackground : AppColors.bone, for: .navigationBar)
+            // As on the player (#4607): the dark scheme reaches the status bar only while the bar's background is shown.
+            .toolbarBackground(isRunningScreen ? .visible : .automatic, for: .navigationBar)
             .toolbarColorScheme(isRunningScreen ? .dark : nil, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

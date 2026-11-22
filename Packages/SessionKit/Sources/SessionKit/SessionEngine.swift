@@ -127,6 +127,12 @@ public final class SessionEngine {
     private var pendingWrittenInterjection: WrittenInterjectionCapture?
     /// A system interruption ended while a written Margin was open, so the item resumes when the capture closes (#4831).
     private var resumeWhenWrittenCaptureCloses = false
+    /// Counts the listener's transport commands (Play, Pause, a seek, a skip, a jump), so a retry of a refused resume
+    /// can tell the listener has acted without reading it from the place, which a step-back or a skip to the same place
+    /// can fake (#4846). Not counted: the system's own pause, a rate or voice change, and the resume after an
+    /// interruption, whose internal `resumePlayback()` is not the listener's.
+    public private(set) var listenerTransportEpoch = 0
+    private var isResumingAfterInterruption = false
 
     private struct PlaybackPlan {
         var text: String
@@ -408,7 +414,8 @@ public final class SessionEngine {
     /// stepped-back place (#1975).
     @discardableResult
     public func resumePlaybackAfterInterruption() throws -> SessionSnapshot {
-        defer { interruptionResumePoint.forget() }
+        isResumingAfterInterruption = true
+        defer { isResumingAfterInterruption = false; interruptionResumePoint.forget() }
         guard var session = currentSession, snapshot.status == .paused,
               let pause = interruptionResumePoint.rewindMs(sessionId: session.id, mediaTimeMs: session.position.mediaTimeMs, now: now) else {
             return try resumePlayback()
@@ -4939,11 +4946,18 @@ public final class SessionEngine {
     }
 
     private func requirePlayback(_ command: String) throws {
+        if !isResumingAfterInterruption, !Self.commandsNotTheListenersTransport.contains(command) {
+            listenerTransportEpoch &+= 1
+        }
         guard profile.hasAny("playback", ["realtime_tts", "prerendered_audio", "native_media", "assistant_turn_tts", "summary_turn_tts"])
             || profile.has("remoteControl", "send_transport_commands") else {
             throw SessionKitError.invalidCommandForCapability(command)
         }
     }
+
+    private static let commandsNotTheListenersTransport: Set<String> = [
+        "reconcileSystemInitiatedPause", "updateSpeechPlaybackSettings", "setPlaybackRate"
+    ]
 
     private func requireNavigationAllowed(_ command: String) throws {
         guard snapshot.status != .recording, pendingWrittenInterjection == nil else {

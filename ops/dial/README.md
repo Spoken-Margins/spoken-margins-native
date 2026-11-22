@@ -74,7 +74,7 @@ The Mac finisher's pause rule (`artifacts/finisher-prompt.md` on the Mac) and th
 ## Apply it
 
 1. Paste the tick text into `sm-mac-tick/SKILL.md` and the instruction text into the project instructions and the finisher and integration prompts.
-2. Redeploy the Dial gate: `ops/dial/deploy.sh <ssh-host> --dry-run`, then `--enable`.
+2. Redeploy the Dial gate: `ops/dial/deploy.sh <ssh-host> --dry-run`, then `--enable`. With a normal (non-root) login the root steps run through `sudo` and ask for its password at the terminal, once per root step (#4848), so an unattended session can't deploy it.
 3. The next tick on #337 should name the halted provider. Until the tick is updated, its old unscoped HALT still reads as every provider to anything that reads it.
 
 ## Tests

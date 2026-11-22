@@ -123,4 +123,68 @@ final class ItemShareEntryTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.id, secondID)
         XCTAssertEqual(model.sharingState.drafts.map(\.interjection.itemId), [secondID], "the sheet holds the open item's Margin")
     }
+
+    // MARK: A friend's item
+
+    /// A friend's packet imported onto `itemId` with one Margin of theirs, stored for real, then the rows re-read.
+    private func giveFriendMargin(_ model: Gate1AppModel, itemId: String, importedAt: Date, from name: String = "Ana") throws {
+        let store = try model.requireStore()
+        var layer = ImportedCommentaryLayer(
+            id: "friend-layer-\(itemId)", itemId: itemId, packageDigest: String(repeating: "c", count: 64), packageId: "package-\(itemId)",
+            itemIdentity: SharedItemIdentity(itemType: .text, title: "Seeded"), displayLabel: name, importedAt: importedAt)
+        layer.isEnabled = true
+        try store.saveImportedCommentaryLayer(layer)
+        try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(
+            id: "friend-margin-\(itemId)", layerId: layer.id, packageScopedId: "friend-margin-001", createdAt: importedAt,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "\(name)'s note",
+            resolution: ImportedAnchorResolution(evidenceClass: .exactEdition)))
+        model.refreshMarginRows()
+    }
+
+    /// Share sends the listener's own Margins, so a friend's alone give the alert that says so (Design message 2).
+    func testAFriendsMarginsAloneSayShareSendsYourOwn() async throws {
+        let model = modelWithMargins(0)
+        try giveFriendMargin(model, itemId: "item-pill", importedAt: Date().addingTimeInterval(-3600))
+
+        let start = await model.itemShareStart()
+
+        XCTAssertEqual(start, .nothingYet(.init(title: ItemShareStart.nothingYetTitle, message: ItemShareStart.onlyFriendMarginsMessage)))
+        XCTAssertFalse(model.isSharingInterjectionsPresented)
+        XCTAssertNil(model.feedbackEvent)
+    }
+
+    /// The listener has answered since the packet came: the sheet opens as the reply sheet, with the answer picked.
+    func testAnAnsweredFriendsItemOpensTheReplySheet() async throws {
+        let model = modelWithMargins(0)
+        try giveFriendMargin(model, itemId: "item-pill", importedAt: Date().addingTimeInterval(-3600))
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "My answer")
+        model.refreshMarginRows()
+        model.openItem(id: "item-pill")
+
+        let start = await model.itemShareStart()
+        XCTAssertEqual(start, .share)
+        model.openItemShareSheet()
+
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.sharingState.entry, .reviewDefaults)
+        XCTAssertEqual(model.sharingState.replyBackTitle, "Share your Margins with Ana")
+        XCTAssertEqual(model.sharingState.drafts.count, 1, "only the listener's own Margin is in the sheet, never the friend's")
+    }
+
+    /// Margins made before the friend's packet came are not answers: the ordinary sheet opens, with no reply heading.
+    func testMarginsFromBeforeTheFriendsPacketOpenTheOrdinarySheet() async throws {
+        let model = modelWithMargins(1)
+        try giveFriendMargin(model, itemId: "item-pill", importedAt: Date().addingTimeInterval(3600))
+
+        let start = await model.itemShareStart()
+        XCTAssertEqual(start, .share)
+        model.openItemShareSheet()
+
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.sharingState.entry, .reviewDefaults)
+        XCTAssertNil(model.sharingState.replyBackTitle, "nothing here answers the friend")
+        XCTAssertEqual(model.sharingState.drafts.count, 1)
+    }
 }

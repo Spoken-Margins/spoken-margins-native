@@ -141,6 +141,26 @@ class LaneGuardTests(unittest.TestCase):
                 self.assertIsNone(self.decide(bash(command), self.desk))
         self.assertIsNone(self.decide(bash('xcrun simctl install booted App.app'), self.desk))
 
+    def test_a_one_letter_unsafe_key_blocks_nothing_and_a_whole_udid_still_does(self):
+        # 2026-11-20: a stray `U` key matched every command with a capital U in it, and blocked every integration run.
+        real = '942055FF-57EF-48BC-BE5F-D3E014763E2B'
+        with open(os.path.join(self.temporary.name, 'unsafe-simulators.json'), 'w') as handle:
+            json.dump({'U': {'reason': 'simctl boot failed: Invalid device or device pair: U'}}, handle)
+        for command in (f'xcrun simctl boot {real}', 'scripts/lane-sim-boot --fresh "SM Lane Desk U"',
+                        f'.venv/bin/python scripts/verify-tests.py --plan app --device {real}'):
+            with self.subTest(command=command):
+                self.assertNotIn('marked unsafe', self.decide(bash(command), self.desk) or '')
+        for key in ('', 'u', ' ', real[:8], real[:13], real.lower() + ' '):
+            with open(os.path.join(self.temporary.name, 'unsafe-simulators.json'), 'w') as handle:
+                json.dump({key: {'reason': 'x'}}, handle)
+            with self.subTest(key=key):
+                self.assertNotIn('marked unsafe', self.decide(bash(f'xcrun simctl boot {real}'), self.desk) or '')
+        with open(os.path.join(self.temporary.name, 'unsafe-simulators.json'), 'w') as handle:
+            json.dump({real: {'reason': 'x'}}, handle)
+        self.assertIn('is marked unsafe', self.decide(bash(f'xcrun simctl boot {real}'), self.desk))
+        # The mark names the whole device: a longer id that merely starts with it is another device.
+        self.assertNotIn('marked unsafe', self.decide(bash(f'xcrun simctl boot {real}0'), self.desk) or '')
+
     def test_raw_xcodebuild_builds_go_through_the_wrapper_even_for_the_desk(self):
         for environ in (self.stream, self.desk):
             for command in ('xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp build',

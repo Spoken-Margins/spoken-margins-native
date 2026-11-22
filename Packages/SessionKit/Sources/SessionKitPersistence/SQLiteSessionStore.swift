@@ -24,6 +24,10 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job", MovedMarginOrigin.recordKind]
     var db: OpaquePointer?
     let connectionLock = NSRecursiveLock()
+    /// How long a save waits for another connection or process (an extension, say) that holds SQLite's write lock before
+    /// it gives up. A cache write for a read turns it off (`writeCacheForRead`) and puts this back. A test sets it high to
+    /// tell a read that waits from one that does not, on state and not on a clock (#4761).
+    var writeBusyTimeoutMs: Int32 = 1_000
     /// Test hook (#4308): called on a thread that finds `connectionLock` held, just before it waits, so a test that forces
     /// two writers to overlap can wait for the second to be blocked instead of sleeping. nil, and so a no-op, outside tests.
     var onWaitingForWriteLock: (@Sendable () -> Void)?
@@ -79,7 +83,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         }
         // WAL permits concurrent readers, but only one connection may write.
         // Allow brief independent transactions to finish instead of dropping a save.
-        sqlite3_busy_timeout(db, 1_000)
+        sqlite3_busy_timeout(db, writeBusyTimeoutMs)
         try migrate()
         // WAL lets readers run beside the writer. Without it (a file system that can't, or an in-memory database) a
         // second connection would see a different database or lock the writer out, so reads stay on the one connection.

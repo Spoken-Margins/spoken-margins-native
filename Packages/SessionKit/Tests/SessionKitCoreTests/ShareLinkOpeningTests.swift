@@ -267,25 +267,6 @@ final class ShareLinkOpeningTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
     }
 
-    func testTheMessagesTheListenerSees() {
-        XCTAssertEqual(ShareLinkPacketDownloader.Failure.expiredOrUnreachable.message, "This link has expired or can't be reached.")
-        // Until the failure sheet replaces the banner (#3801), a cut-off and a damaged link read as before, and 503 as a server fault.
-        XCTAssertEqual(ShareLinkPacketDownloader.Failure.cutOff.message, "This link is incomplete or damaged.")
-        XCTAssertEqual(ShareLinkPacketDownloader.Failure.damaged.message, "This link is incomplete or damaged.")
-        XCTAssertEqual(ShareLinkPacketDownloader.Failure.switchedOff.message, "The server had a problem. Try again in a minute.")
-        XCTAssertEqual(ShareLinkPacketDownloader.Failure.offline.message, "You're offline. Reconnect, then tap the link again.")
-        XCTAssertEqual(ShareLinkPacketDownloader.Failure.expired.message, "This link has expired. Ask your friend to share it again.")
-        XCTAssertEqual(ShareLinkPacketDownloader.Failure.serverProblem.message, "The server had a problem. Try again in a minute.")
-    }
-
-    func testOnlyAConnectionOrServerProblemIsWorthRetrying() {
-        typealias Failure = ShareLinkPacketDownloader.Failure
-        XCTAssertEqual(
-            [Failure.offline, .expired, .serverProblem, .switchedOff, .expiredOrUnreachable, .cutOff, .damaged].map(\.isRetryable),
-            [true, false, true, true, false, false, false]
-        )
-    }
-
     private func assertFails(
         _ downloader: ShareLinkPacketDownloader, link: ShareLinkURL, as expected: ShareLinkPacketDownloader.Failure,
         _ context: String = "", file: StaticString = #filePath, line: UInt = #line

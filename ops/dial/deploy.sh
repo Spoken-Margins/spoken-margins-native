@@ -21,9 +21,10 @@ done
 root 'for f in github-token relay-token relay-url; do test -s /etc/sm-dial/$f && echo "secret present: /etc/sm-dial/$f" || echo "MISSING: /etc/sm-dial/$f"; done'
 [ "$mode" = --dry-run ] && { echo "(dry run: nothing changed)"; exit 0; }
 stage=$(ssh "$host" 'mktemp -d /tmp/sm-dial-deploy.XXXXXX')
+case $stage in /tmp/*) ;; *) echo "could not make a scratch folder on $host" >&2; exit 1 ;; esac
+trap 'ssh "$host" "rm -rf $stage" >/dev/null 2>&1 || true' EXIT
 scp -q "$here/dial_gate.py" "$here/sm-dial-gate.service" "$here/sm-dial-gate.timer" "$host:$stage/"
 root "install -d -m 755 /opt/sm-dial && install -m 755 $stage/dial_gate.py /opt/sm-dial/dial_gate.py && install -m 644 $stage/sm-dial-gate.service $stage/sm-dial-gate.timer /etc/systemd/system/ && systemctl daemon-reload"
-ssh "$host" "rm -rf $stage"
 if [ "$mode" = --enable ]; then
   root 'systemctl enable --now sm-dial-gate.timer && systemctl list-timers sm-dial-gate.timer --no-pager'
 else

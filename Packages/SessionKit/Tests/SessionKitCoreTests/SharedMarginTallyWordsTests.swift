@@ -110,6 +110,36 @@ final class SharedMarginTallyWordsTests: XCTestCase {
         XCTAssertEqual(tally(2, new: 0, [("Sam", 1), (nil, 1)]).senderLine, "2 Margins from a friend and Sam")
     }
 
+    /// #4649: a row found by a friend's name said "3 friends" with no sign of why it matched.
+    func testARowFoundBySenderNamesTheMatchedFriendEvenWithThreeOrMoreSenders() {
+        let three = tally(5, new: 2, [("Cole", 2), ("Sam", 2), ("Ana", 1)])
+        XCTAssertEqual(three.senderLine, "5 Margins from 3 friends · 2 new", "the count words are unchanged")
+        XCTAssertTrue(three.senderMatchLine("Sam")?.contains("Sam") ?? false)
+        XCTAssertEqual(three.senderMatchLine("Sam"), "From Sam and 2 friends")
+        XCTAssertEqual(three.senderMatchLine("  SAM "), "From Sam and 2 friends", "case and whitespace, as the search folds them")
+        XCTAssertEqual(tally(4, new: 0, [("Zoë", 1), ("Cole", 1), ("Ana", 1), ("Ben", 1)]).senderMatchLine("zoe"), "From Zoë and 3 friends", "accents")
+        XCTAssertEqual(three.senderMatchLine("Cole"), "From Cole and 2 friends", "the matched friend leads, not the first by count")
+        XCTAssertEqual(three.senderMatchLine("An"), "From Ana and 2 friends", "a part of a name")
+        XCTAssertNil(three.senderMatchLine("Zed"), "no sender matches")
+        XCTAssertNil(three.senderMatchLine(""), "no search")
+        XCTAssertNil(three.senderMatchLine("   "), "a blank search")
+        XCTAssertNil(three.senderMatchLine("friend"), "an unnamed or counted-only sender is never matched")
+        // Fewer than three senders: the same words the row's line uses for who.
+        XCTAssertEqual(tally(3, new: 0, [("Sam", 3)]).senderMatchLine("sam"), "From Sam")
+        XCTAssertEqual(tally(5, new: 0, [("Cole", 3), ("Sam", 2)]).senderMatchLine("Sam"), "From Cole and Sam")
+        XCTAssertEqual(tally(2, new: 0, [("Sam", 1), (nil, 1)]).senderMatchLine("Sam"), "From a friend and Sam")
+        // Three who share a name: the match still names Sam, and never reads as one friend.
+        XCTAssertEqual(tally(3, new: 0, [("Sam", 1), ("Sam", 1), ("Sam", 1)]).senderMatchLine("Sam"), "From Sam and 2 friends")
+        // Over 24 characters: cut on screen, whole for VoiceOver (#4648).
+        let long = String(repeating: "a", count: 40)
+        let cut = String(repeating: "a", count: 23) + "…"
+        let longThree = tally(3, new: 0, [(long, 1), ("Cole", 1), ("Ana", 1)])
+        XCTAssertEqual(longThree.senderMatchLine("aaa"), "From \(cut) and 2 friends")
+        XCTAssertEqual(longThree.senderMatchLine("aaa", spoken: true), "From \(long) and 2 friends")
+        XCTAssertNil(SharedMarginTally.none.senderMatchLine("Sam"))
+        XCTAssertNil(SharedMarginTally(total: 3, new: 3).senderMatchLine("Sam"), "a tally with no senders read")
+    }
+
     func testNamesAreCheckedAgainstTheNameTable() {
         func line(_ name: String?) -> String { tally(1, new: 1, [(name, 1)]).senderLine ?? "" }
         XCTAssertEqual(line("O'Brien"), "1 new Margin from O'Brien", "an apostrophe")

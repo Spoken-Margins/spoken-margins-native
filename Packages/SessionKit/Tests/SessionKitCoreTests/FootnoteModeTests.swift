@@ -24,6 +24,17 @@ final class FootnoteModeTests: XCTestCase {
         XCTAssertTrue(FootnoteMode.pickerChoices.contains(.default), "the default is a choice the picker can show selected")
     }
 
+    func testThePickerShowsAChoiceForEveryStoredValue() {
+        XCTAssertEqual(FootnoteMode.pickerChoices.map(\.pickerTitle), ["Read where cited", "Read at the end"])
+        XCTAssertEqual(FootnoteMode.chime.pickerTitle, "Chime where cited")
+        for stored in [nil, "", "garbage", "whereCited"] as [String?] {
+            XCTAssertEqual(FootnoteMode.pickerSelection(storedValue: stored), .whereCited, "\(String(describing: stored))")
+        }
+        XCTAssertEqual(FootnoteMode.pickerSelection(storedValue: "atEnd"), .atEnd)
+        XCTAssertEqual(FootnoteMode.pickerSelection(storedValue: "chime"), .whereCited,
+                       "a later build's value is shown as the default; this build plans it like where cited")
+    }
+
     func testOnlyReadingAtTheEndLeavesNoNoteChunksInThePlan() {
         XCTAssertTrue(FootnoteMode.whereCited.plansAsides)
         XCTAssertTrue(FootnoteMode.chime.plansAsides, "chime carries the same chunks and skips them at play time")

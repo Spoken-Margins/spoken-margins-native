@@ -580,6 +580,21 @@ class LaneSimTests(unittest.TestCase):
         self.assertEqual([r.get('boot') for r in self.records() if 'boot' in r], [UDID])
         self.assertEqual(lane_sim.unsafe_devices(), {})
 
+    def test_only_a_whole_udid_can_be_marked_unsafe_and_a_malformed_entry_holds_nothing(self):
+        # 2026-11-20: a one-letter `U` entry blocked every integration run through the guard's substring match (#4868).
+        for key in ('', 'U', 'u', ' ', UDID[:8], UDID[:13], UDID + ' ', UDID + '0', 'bad-0001'):
+            with self.subTest(mark=key), self.assertRaises(ValueError):
+                lane_sim.mark_unsafe(key, 'crashed during boot')
+            self.assertEqual(lane_sim.unsafe_devices(), {})
+        for key in (UDID, UDID.upper(), 'BAD-0001'):
+            with self.subTest(mark=key):
+                lane_sim.mark_unsafe(key, 'crashed during boot')
+                self.assertIn(key, lane_sim.unsafe_devices())
+        lane_sim.unsafe_path().write_text(json.dumps({'U': {'reason': 'x'}, UDID: {'reason': 'real'}, 'T': 'x'}))
+        self.assertEqual(set(lane_sim.unsafe_devices()), {UDID})  # `U` and `T` are read as nothing
+        lane_sim.unsafe_path().write_text('["U"]')
+        self.assertEqual(lane_sim.unsafe_devices(), {})
+
     def test_a_finished_boot_marks_the_simulator_quiet_from_that_moment(self):
         # #705: the host app stalled when launched within about 16 s of the boot finishing.
         self.assertIsNone(lane_sim.seconds_quiet(UDID))

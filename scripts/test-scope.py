@@ -52,6 +52,7 @@ LANE_PREFIXES = ('.github/workflows/', 'scripts/lane')
 LANE_FILES = {'scripts/xcodebuild-lane', 'scripts/host-test-lane', 'scripts/install-lane-guard.py',
               'scripts/test-scope.py', 'scripts/hot_file_ratchet.py', 'scripts/merge_audit.py',
               'scripts/merge_policy.py', 'scripts/signoff_check.py',  # the merge queue's rules (#4693)
+              'scripts/required_checks.py', 'scripts/dispatch_required_check.py',  # merge_policy.py loads the first (#4867)
               'scripts/parallel_unittest.py', 'scripts/runner_test_seconds.json',  # runner-tests' driver (#4769)
               'scripts/verify-tests.py', 'scripts/ci_step_budgets.json', 'scripts/trunk.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan'}
 LANE_NOTE = ('Lane change: the runner merges it only after a Codex or Claude audit of the head that says "No blocking '

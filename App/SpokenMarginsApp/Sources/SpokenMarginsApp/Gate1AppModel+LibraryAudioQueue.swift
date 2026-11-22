@@ -147,22 +147,24 @@ extension Gate1AppModel {
             let store = try requireStore()
             // The item is read whole because its text is what gets planned, but off the main actor and in one read
             // with its sessions (#2506): a book is megabytes, and launch queues one of these per unfinished item.
-            let source: (item: Item, text: String)? = try await StoreReader(store).read { store in
+            // The plan kind is decided here, where the preparation is created; later steps follow the manifest (#3777).
+            // It reads the item's manifests, so it runs in this off-main read with the text.
+            let source: (item: Item, text: String, asides: Bool)? = try await StoreReader(store).read { store in
                 let item = try store.loadItem(id: itemId)
                 guard !ItemFinishedRule.isFinished(item, sessions: try store.loadSessions(itemId: itemId)),
                       let text = PreparedSpeechHooks.preparedText(of: item, in: store),
                       LibraryRowBuilder.shouldPrewarmTextAudio(for: item) else { return nil }
-                return (item, text)
+                return (item, text, PreparedSpeechHooks.footnoteAsides(item: item, articleText: text, store: store))
             }
             try Task.checkCancellation()
-            guard let (item, sourceText) = source,
+            guard let (item, sourceText, asides) = source,
                   let voice = ttsVoiceSelection.supertonicVoice,
                   let assets = SupertonicAssetResolver.location() else {
                 updateLibraryStartupAudioState(itemId: itemId, state: .notRequired)
                 return
             }
             let plan = await Task.detached(priority: .utility) {
-                Self.preparedChunkPlan(for: sourceText)
+                Self.preparedChunkPlan(for: sourceText, asides: asides)
             }.value
             guard !plan.isEmpty else {
                 updateLibraryStartupAudioState(itemId: itemId, state: .notRequired)
@@ -179,7 +181,8 @@ extension Gate1AppModel {
                 itemId: item.id,
                 sourceText: sourceText,
                 signature: signature,
-                plan: plan
+                plan: plan,
+                asides: asides
             )
             let targetChunkCount = min(Self.startupAudioChunkCount, plan.count)
             try await configurePreparationJob(
@@ -495,15 +498,20 @@ extension Gate1AppModel {
             }.value
             let coordinator = requirePreparedAudioCoordinator(store: store, supportDirectory: support)
             currentSupertonicRenderSignature = signature
+            // The plan kind is decided here, where the preparation is created (#3777); it reads the item's manifests, off main.
+            let asides = try await StoreReader(store).read { store in
+                PreparedSpeechHooks.footnoteAsides(item: item, articleText: sourceText, store: store)
+            }
             let plan = await Task.detached(priority: .utility) {
-                Self.preparedChunkPlan(for: sourceText)
+                Self.preparedChunkPlan(for: sourceText, asides: asides)
             }.value
             guard !plan.isEmpty else { return }
             let manifest = try await coordinator.begin(
                 itemId: item.id,
                 sourceText: sourceText,
                 signature: signature,
-                plan: plan
+                plan: plan,
+                asides: asides
             )
             guard manifest.state != .readyOffline else {
                 refreshLibraryRowsInBackground()
@@ -557,13 +565,17 @@ extension Gate1AppModel {
                     diagnostics["automaticAudioPreparation:\(item.id)"] = "skipped_existing_progress"
                     continue
                 }
+                // The plan kind is decided here, where the preparation is created (#3777), off main like the read above.
+                let asides = (try? await StoreReader(store).read { store in
+                    PreparedSpeechHooks.footnoteAsides(item: item, articleText: text, store: store)
+                }) ?? false
                 let plan = await Task.detached(priority: .utility) {
-                    Self.preparedChunkPlan(for: text)
+                    Self.preparedChunkPlan(for: text, asides: asides)
                 }.value
                 guard !plan.isEmpty else { continue }
                 let manifest: PreparedAudioManifest
                 do {
-                    manifest = try await coordinator.begin(itemId: item.id, sourceText: text, signature: signature, plan: plan)
+                    manifest = try await coordinator.begin(itemId: item.id, sourceText: text, signature: signature, plan: plan, asides: asides)
                 } catch PreparedAudioEnqueue.Rejection.staleSource { continue }
                 guard manifest.state != .readyOffline else { continue }
                 do {
@@ -595,8 +607,9 @@ extension Gate1AppModel {
 
     nonisolated static let preparationPlanCache = PreparedChunkPlanCache()
 
-    nonisolated static func preparedChunkPlan(for sourceText: String) -> [PreparedChunkPlan] {
-        preparationPlanCache.value(for: sourceText) { PreparedChunkPlan.articlePlan(sourceText) }
+    /// `asides` is the plan kind the preparation was created with (#3777): the cache holds one kind of one text at a time.
+    nonisolated static func preparedChunkPlan(for sourceText: String, asides: Bool = false) -> [PreparedChunkPlan] {
+        preparationPlanCache.value(for: sourceText, asides: asides) { PreparedChunkPlan.articlePlan(sourceText, asides: asides) }
     }
 
     nonisolated static func preparationHorizon(

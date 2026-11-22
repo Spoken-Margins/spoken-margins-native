@@ -100,12 +100,14 @@ public enum LibraryRowWording {
 public struct LibraryRowDetail: Equatable, Sendable {
     /// "about 25 min" for a text item; nil when there's no length to show (podcasts).
     public let length: String?
-    /// The byline, kind, listening progress and status, joined with " · ".
+    /// The match note, byline, kind, listening progress and status, joined with " · ".
     public let rest: String
 
-    public init(byline: String?, kind: String, length: String?, listening: String?, status: String?) {
+    /// - Parameter matched: why a search listed the row when its title, source and author do not match, "From Sam and
+    ///   2 friends" (#4649). It leads `rest`, so a long byline cuts itself, not the reason.
+    public init(byline: String?, kind: String, length: String?, listening: String?, status: String?, matched: String? = nil) {
         self.length = Self.nonEmpty(length)
-        rest = [byline, kind, listening, status].compactMap(Self.nonEmpty).joined(separator: Self.separator)
+        rest = [matched, byline, kind, listening, status].compactMap(Self.nonEmpty).joined(separator: Self.separator)
     }
 
     /// The whole line as one string, for sizes where the row wraps instead of truncating.
