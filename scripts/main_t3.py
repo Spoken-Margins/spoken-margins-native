@@ -475,20 +475,43 @@ def write_summary(text: str) -> None:
             out.write(text + '\n')
 
 
+def claim_wins(listing: list, own_url: str, now: datetime.datetime) -> bool:
+    """True when this run's `pending` claim is the earliest of the live claims on the commit, so two runs that read
+    "no status" at the same moment cannot both go on. A run's claim is live while its newest status is `pending` and
+    is younger than STALE_PENDING; ties on the second break by run URL, so both runs reach the same answer."""
+    newest = {}
+    for entry in listing:
+        if entry.get('context') != CONTEXT:
+            continue
+        url = entry.get('target_url') or ''
+        if url not in newest or (entry.get('created_at') or '') > (newest[url].get('created_at') or ''):
+            newest[url] = entry
+    live = sorted(((e.get('created_at') or '', url) for url, e in newest.items()
+                   if e.get('state') == 'pending' and e.get('created_at')
+                   and now - parse_time(e['created_at']) <= STALE_PENDING))
+    return not live or live[0][1] == own_url
+
+
 def command_decide(args) -> int:
     now = datetime.datetime.now(datetime.timezone.utc)
-    run, why = should_run(statuses(args.sha), now, args.force)
-    if run and args.floor_minutes and not args.force:
+    # The slow check first (up to about 40 API calls), so the status read and the claim below sit one round trip apart.
+    started = None
+    if args.floor_minutes and not args.force:
         floor = datetime.timedelta(minutes=args.floor_minutes)
         started = recent_work_start(recent_runs(now, floor), now, floor, os.environ.get('GITHUB_RUN_ID', ''))
-        if started:
-            run, why = False, f'a {CONTEXT} run started at {started:%H:%M}Z, inside the {args.floor_minutes}-minute floor'
-    print(f'{CONTEXT} on {args.sha[:7]}: {"run" if run else "skip"} ({why})')
+    run, why = should_run(statuses(args.sha), now, args.force)
+    if run and started:
+        run, why = False, f'a {CONTEXT} run started at {started:%H:%M}Z, inside the {args.floor_minutes}-minute floor'
     if run and args.run_url:
         # #4839: claim the commit now. Push runs have their own concurrency group, so a tick can decide beside a push
         # run still doing minutes of Mac setup; without a status on the commit it would start a second whole-suite run
         # and the two would race to write the result. `pending` is what should_run reads as "in progress".
         set_status(args.sha, status_payload('pending', args.run_url, CLAIM_TEXT))
+        # Two decisions can read "no status" in the same second and both claim. Read back: the earlier claim goes on,
+        # the other steps back. A forced dispatch runs beside anything, so it does not step back.
+        if not args.force and not claim_wins(statuses(args.sha), args.run_url, now):
+            run, why = False, f'another {CONTEXT} run claimed this commit first'
+    print(f'{CONTEXT} on {args.sha[:7]}: {"run" if run else "skip"} ({why})')
     write_outputs(run=str(run).lower())
     write_summary(f'{CONTEXT} on `{args.sha[:7]}`: {"run" if run else "skip"}, {why}.')
     return 0
@@ -527,7 +550,9 @@ def command_run(args) -> int:
 def command_lost(args) -> int:
     ours = [s for s in statuses(args.sha) if s.get('context') == CONTEXT]
     newest = max(ours, key=lambda s: s.get('created_at') or '', default=None)
-    if newest and newest.get('state') == 'pending':
+    # Only this run's own pending: another run's claim on the commit (a forced dispatch right after this run finished)
+    # is not ours to turn into a fault, and an error written over it would count against the commit's one retry.
+    if newest and newest.get('state') == 'pending' and newest.get('target_url') == args.run_url:
         set_status(args.sha, status_payload('error', args.run_url, 'runner fault: the job stopped before it reported'))
     return 0
 

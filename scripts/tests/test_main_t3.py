@@ -284,7 +284,9 @@ class DecideClaimTests(unittest.TestCase):
     is still in Mac setup. Without a status on the commit it started a second whole-suite run, and the two raced to
     write the result. decide now leaves `pending` the moment it says run."""
 
-    def decide(self, store, calls, run_id, **over):
+    def decide(self, store, calls, run_id, during=None, **over):
+        """One `decide` against an in-memory commit. `during` runs inside recent_runs (the slow call before the claim)
+        and `before_claim` is how a test lets another decision write in the gap after this one read the statuses."""
         import argparse
         import os
         from unittest import mock
@@ -299,12 +301,22 @@ class DecideClaimTests(unittest.TestCase):
         clock = type('clock', (), {'datetime': FixedNow, 'timezone': datetime.timezone, 'timedelta': datetime.timedelta})
 
         def set_status(sha, payload):
+            if self.before_claim and payload['state'] == 'pending':
+                hook, self.before_claim = self.before_claim, None
+                hook()
+            self.tick += 1  # each write is a second later than the last
+            when = NOW + datetime.timedelta(seconds=self.tick)
             store.insert(0, {'context': payload['context'], 'state': payload['state'],
-                             'created_at': NOW.strftime('%Y-%m-%dT%H:%M:%SZ')})
+                             'target_url': payload['target_url'], 'created_at': when.strftime('%Y-%m-%dT%H:%M:%SZ')})
             calls.append(payload)
+
+        def recent_runs(now, floor):
+            if during:
+                during()
+            return []
         with mock.patch.object(M, 'statuses', lambda sha: list(store)), \
                 mock.patch.object(M, 'set_status', set_status), \
-                mock.patch.object(M, 'recent_runs', lambda now, floor: []), \
+                mock.patch.object(M, 'recent_runs', recent_runs), \
                 mock.patch.object(M, 'write_outputs', lambda **kw: outputs.update(kw)), \
                 mock.patch.object(M, 'write_summary', lambda text: None), \
                 mock.patch.object(M, 'datetime', clock), \
@@ -312,11 +324,54 @@ class DecideClaimTests(unittest.TestCase):
             M.command_decide(args)
         return outputs['run']
 
+    def setUp(self):
+        self.tick = 0
+        self.before_claim = None
+
     def test_a_tick_deciding_beside_a_push_run_still_in_setup_skips(self):
         store, calls = [], []
         self.assertEqual(self.decide(store, calls, 1, floor_minutes=M.FLOOR_MINUTES), 'true')   # the push run
         self.assertEqual(self.decide(store, calls, 2), 'false')                               # the 12:17 tick
         self.assertEqual(len(calls), 1)
+
+    def test_a_decision_made_while_the_other_is_in_its_slow_check_still_leaves_one_run(self):
+        # Audit of e086b40: the push run read the statuses, then spent tens of seconds listing runs, then claimed. The
+        # tick decided in that gap. The slow check now comes first, so the push run reads and claims one call apart.
+        store, calls = [], []
+        ticks = []
+        first = self.decide(store, calls, 1, floor_minutes=M.FLOOR_MINUTES,
+                            during=lambda: ticks.append(self.decide(store, calls, 2)))
+        self.assertEqual(ticks, ['true'])    # the tick ran its whole decision inside the push run's slow check
+        self.assertEqual(first, 'false')     # and the push run then read its claim and skipped
+        self.assertEqual(len(calls), 1)
+
+    def test_two_decisions_that_both_read_no_status_leave_one_run(self):
+        # The one-round-trip gap left: both read "no status", both claim. The earlier claim goes on.
+        store, calls = [], []
+        results = {}
+
+        def other():
+            results['b'] = self.decide(store, calls, 'b')  # B reads (nothing yet), claims and finishes first
+        self.before_claim = other
+        results['a'] = self.decide(store, calls, 'a')      # A had already read "no status"
+        self.assertEqual(results['b'], 'true')
+        self.assertEqual(results['a'], 'false')
+        self.assertEqual(len([c for c in calls if c['state'] == 'pending']), 2)
+
+    def test_the_run_that_claimed_first_wins_whichever_it_is(self):
+        store, calls = [], []
+        results = {}
+
+        def other():
+            results['a'] = self.decide(store, calls, 'a')
+        self.before_claim = other
+        results['z'] = self.decide(store, calls, 'z')
+        self.assertEqual((results['a'], results['z']), ('true', 'false'))
+
+    def test_a_forced_dispatch_does_not_step_back(self):
+        store, calls = [], []
+        self.before_claim = lambda: self.decide(store, calls, 'b')
+        self.assertEqual(self.decide(store, calls, 'a', force=True), 'true')
 
     def test_the_claim_is_a_pending_main_t3_status_with_the_run_url(self):
         store, calls = [], []
@@ -333,6 +388,65 @@ class DecideClaimTests(unittest.TestCase):
         store, calls = [status('pending', 0.1)], []
         self.assertEqual(self.decide(store, calls, 4, force=True), 'true')
         self.assertEqual(len(calls), 1)
+
+
+class ClaimWinsTests(unittest.TestCase):
+    def claim(self, state, url, hours_ago=0.0, seconds=0):
+        when = NOW - datetime.timedelta(hours=hours_ago) + datetime.timedelta(seconds=seconds)
+        return {'context': M.CONTEXT, 'state': state, 'target_url': url, 'created_at': when.strftime('%Y-%m-%dT%H:%M:%SZ')}
+
+    def test_the_only_claim_wins(self):
+        self.assertTrue(M.claim_wins([self.claim('pending', 'u1')], 'u1', NOW))
+
+    def test_the_earlier_claim_wins_and_the_later_steps_back(self):
+        listing = [self.claim('pending', 'u2', seconds=3), self.claim('pending', 'u1', seconds=1)]
+        self.assertTrue(M.claim_wins(listing, 'u1', NOW))
+        self.assertFalse(M.claim_wins(listing, 'u2', NOW))
+
+    def test_a_tie_on_the_second_breaks_by_url_the_same_way_for_both(self):
+        listing = [self.claim('pending', 'u2'), self.claim('pending', 'u1')]
+        self.assertEqual([M.claim_wins(listing, 'u1', NOW), M.claim_wins(listing, 'u2', NOW)], [True, False])
+
+    def test_a_run_that_has_reported_no_longer_holds_a_claim(self):
+        listing = [self.claim('success', 'u1', seconds=5), self.claim('pending', 'u1', seconds=1),
+                   self.claim('pending', 'u2', seconds=9)]
+        self.assertTrue(M.claim_wins(listing, 'u2', NOW))
+
+    def test_a_lost_claim_older_than_the_stale_limit_does_not_hold_the_commit(self):
+        listing = [self.claim('pending', 'old', hours_ago=6), self.claim('pending', 'u2')]
+        self.assertTrue(M.claim_wins(listing, 'u2', NOW))
+
+    def test_other_contexts_are_ignored(self):
+        other = {**self.claim('pending', 'u1'), 'context': 'merge policy'}
+        self.assertTrue(M.claim_wins([other, self.claim('pending', 'u2', seconds=4)], 'u2', NOW))
+
+
+class LostScopeTests(unittest.TestCase):
+    """Audit of e086b40: `settle` runs after every run that said run, so `lost` must not turn another run's claim, made
+    in the seconds after this run finished, into a runner fault that eats the commit's one retry."""
+
+    def lost(self, listing, url):
+        import argparse
+        from unittest import mock
+        written = []
+        with mock.patch.object(M, 'statuses', lambda sha: list(listing)), \
+                mock.patch.object(M, 'set_status', lambda sha, payload: written.append(payload)):
+            M.command_lost(argparse.Namespace(sha=SHA, run_url=url))
+        return written
+
+    def entry(self, state, url, seconds):
+        when = NOW + datetime.timedelta(seconds=seconds)
+        return {'context': M.CONTEXT, 'state': state, 'target_url': url, 'created_at': when.strftime('%Y-%m-%dT%H:%M:%SZ')}
+
+    def test_its_own_stranded_pending_becomes_an_error(self):
+        written = self.lost([self.entry('pending', 'u1', 1)], 'u1')
+        self.assertEqual([(w['state'], w['target_url']) for w in written], [('error', 'u1')])
+
+    def test_another_runs_pending_is_left_alone(self):
+        self.assertEqual(self.lost([self.entry('pending', 'u2', 9), self.entry('success', 'u1', 5)], 'u1'), [])
+
+    def test_a_finished_run_is_left_alone(self):
+        self.assertEqual(self.lost([self.entry('success', 'u1', 5), self.entry('pending', 'u1', 1)], 'u1'), [])
 
 
 class WorkflowTests(unittest.TestCase):
