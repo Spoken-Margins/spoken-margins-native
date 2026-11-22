@@ -556,6 +556,11 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
     if (record.readAloud === false && !margin.voice) margin.readAloud = false;
     // The sender's run-up, clamped as the app and the reference reader do (#4171). Absent means each run-up's own length.
     if (record.leadInMs != null) margin.leadInSeconds = Math.min(Math.max(record.leadInMs, 0), LIMITS.leadInMs) / 1000;
+    // The length of the sender's copy, so the player can say when the listener's copy differs (#4614). Not on a percent
+    // Margin: it is placed by a percent of the listener's own length, so a different length doesn't move it.
+    if (!textAnchored && item.itemType === 'podcast' && typeof item.durationMs === 'number' && item.durationMs > 0) {
+      margin.copyLengthSeconds = item.durationMs / 1000;
+    }
     if (textAnchored) percentMargins.push({ margin, percent: anchor.roughPercent as number });
     else margins.push(margin);
   }

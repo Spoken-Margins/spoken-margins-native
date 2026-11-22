@@ -251,3 +251,29 @@ test('the corpus packet with leadInMs 60000 imports with a minute of run-up (#41
   const result = await readPacket(bytes);
   assert.ok(result.margins.some((m) => m.leadInSeconds === 60) || result.percentMargins.some((m) => m.margin.leadInSeconds === 60));
 });
+
+test('a podcast packet puts the sender\u2019s copy length on each timed Margin, and only a usable one (#4614)', async () => {
+  const bytes = await writeVoice().then((w) => w.bytes);
+  const edited = await withLayer(bytes, () => {}, (manifest) => { (manifest.item as { durationMs: number }).durationMs = 1_946_018; });
+  const result = await readPacket(edited);
+  assert.ok(result.margins.length > 0);
+  for (const margin of result.margins) assert.equal(margin.copyLengthSeconds, 1946.018);
+  for (const bad of [undefined, 0]) {
+    const other = await withLayer(bytes, () => {}, (manifest) => {
+      const item = manifest.item as { durationMs?: number };
+      if (bad === undefined) delete item.durationMs; else item.durationMs = bad;
+    });
+    const read = await readPacket(other);
+    for (const margin of read.margins) assert.equal(margin.copyLengthSeconds, undefined, `durationMs ${bad}`);
+  }
+});
+
+test('a percent Margin never carries a copy length, even when the packet has one (#4614)', async () => {
+  const bytes = await writeVoice().then((w) => w.bytes);
+  const percent = await withLayer(bytes, (records) => {
+    for (const record of records) record.anchor = { anchorType: 'text', exactText: 'x', roughPercent: 50, machineEvidenceAssetIds: [] };
+  }, (manifest) => { (manifest.item as { durationMs: number }).durationMs = 1_946_018; });
+  const result = await readPacket(percent);
+  assert.ok(result.percentMargins.length > 0);
+  for (const { margin } of result.percentMargins) assert.equal(margin.copyLengthSeconds, undefined);
+});
