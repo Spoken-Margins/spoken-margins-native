@@ -169,6 +169,35 @@ jobs:
           printf 'DEVELOPMENT_TEAM = %s\n' "$team" > Config/Local.xcconfig
           echo "TEAM=$team" >> "$GITHUB_ENV"
 
+      # Package resolution on its own, with its full output (#4913). From 2026-11-21 the archive step failed with
+      # "Could not resolve package dependencies:" and the grep below threw away the lines that name the package.
+      # A separate step prints everything, and on failure checks each pinned repository and each binary download
+      # from the runner, so the run itself says which one it could not reach. No secret is in scope here.
+      - name: Resolve the Swift packages
+        id: resolve
+        run: |
+          mkdir -p "$OUT"
+          set -o pipefail
+          xcodebuild -resolvePackageDependencies -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp \
+            -derivedDataPath "$DERIVED" -clonedSourcePackagesDirPath "$SPM" 2>&1 | tee "$OUT/resolve.log"
+      - name: Which package could the runner not reach
+        if: failure() && steps.resolve.outcome == 'failure'
+        run: |
+          echo "::group::Pinned repositories"
+          for f in SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved Packages/SessionKit/Package.resolved; do
+            grep -ho '"location" : "[^"]*"' "$f" | cut -d'"' -f4
+          done | sort -u | while read -r url; do
+            if git ls-remote --exit-code "$url" HEAD >/dev/null 2>&1; then echo "reachable: $url"; else echo "::warning::NOT reachable: $url"; fi
+          done
+          echo "::endgroup::"
+          echo "::group::Binary downloads"
+          { grep -ho 'https://[^"]*\.zip' "$SPM"/checkouts/*/Package.swift 2>/dev/null || true; } | sort -u | while read -r url; do
+            code=$(curl -sSIL -o /dev/null -m 60 -w '%{http_code}' "$url" 2>&1 || true)
+            echo "$code $url"
+            [ "$code" = "200" ] || echo "::warning::Binary download answered $code: $url"
+          done
+          echo "::endgroup::"
+
       # Signed with `-` (no certificate, no profile), which still embeds each target's entitlements, so the
       # ad hoc export below keeps the app group and associated domains. Config/PhoneBuild.xcconfig is the list of
       # phone-only settings scripts/phone-build passes too (#3354); this build left them out until then.
@@ -188,7 +217,14 @@ jobs:
             CLANG_ENABLE_PREFIX_MAPPING=YES CLANG_ENABLE_PROJECT_PREFIX_MAPPING=YES \
             SWIFT_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" CLANG_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" \
             "SM_BUILD_COMMIT=$GITHUB_SHA" archive 2>&1 | tee "$OUT/build.log" | grep -E 'error:|ARCHIVE|cacheable tasks' || true
-          grep -q 'ARCHIVE SUCCEEDED' "$OUT/build.log"
+          # The grep above hides the lines after `error:`, which name what failed (#4913). On failure, show them.
+          if ! grep -q 'ARCHIVE SUCCEEDED' "$OUT/build.log"; then
+            echo "::group::Full error block from build.log"
+            grep -E -B2 -A40 'error:' "$OUT/build.log" | head -400 || true
+            echo "::endgroup::"
+            echo "::error::The archive failed; build.log is attached to this run as phone-build-log-$GITHUB_RUN_ID."
+            exit 1
+          fi
           echo "BUILD_SECONDS=$(( $(date +%s) - started ))" >> "$GITHUB_ENV"
 
       # Saved only after a successful archive: a failed build's store is what the next run restored in #2617.
@@ -219,6 +255,7 @@ jobs:
           P8: ${{ secrets.ASC_KEY_P8 }}
           KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+          EVENT: ${{ github.event_name }}
         run: |
           umask 077
           printf '%s\n' "$P8" > "$RUNNER_TEMP/AuthKey.p8"
@@ -241,14 +278,26 @@ jobs:
             -archivePath "$OUT/SpokenMargins.xcarchive" -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
             -exportPath "$OUT/export" -allowProvisioningUpdates -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" \
             -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER" 2>&1 | tee "$OUT/export.log" | grep -E 'error:|EXPORT' || true
-          grep -q 'EXPORT SUCCEEDED' "$OUT/export.log"
           rm -f "$RUNNER_TEMP/AuthKey.p8"
+          if ! grep -q 'EXPORT SUCCEEDED' "$OUT/export.log"; then
+            # Apple shows the team to no App Store Connect key while the account moves to the LLC (#1593, #4913),
+            # so every export fails the same way. A scheduled run says so and ends green, with no artifact, like
+            # the missing-secrets skip in `check`; a hand-started run, and any other export error, still fail.
+            if [ "$EVENT" = "schedule" ] && grep -q 'Unable to find a team with the given Team ID' "$OUT/export.log"; then
+              echo "::notice::Waiting on Apple migration: the App Store Connect key cannot see team $TEAM, so no phone build was exported (#1593)."
+              echo "No phone build: waiting on the Apple account migration (#1593). The archive built; the export could not sign." | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "SIGNING_PAUSED=true" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            exit 1
+          fi
           ipa=$(ls "$OUT"/export/*.ipa | head -1)
           ditto -x -k "$ipa" "$OUT/ipa"
           echo "APP=$OUT/ipa/Payload/$APP_NAME" >> "$GITHUB_ENV"
 
       # The same checks scripts/phone-build makes before a build reaches the installer.
       - name: Check the app
+        if: env.SIGNING_PAUSED != 'true'
         run: |
           [ -f "$APP/embedded.mobileprovision" ] || { echo "::error::$APP_NAME has no provisioning profile; a phone would refuse it."; exit 1; }
           codesign --verify --strict "$APP"
@@ -265,6 +314,7 @@ jobs:
           echo "COMMIT_IN_APP=$commit" >> "$GITHUB_ENV"
 
       - name: Package
+        if: env.SIGNING_PAUSED != 'true'
         run: |
           ditto -c -k --keepParent "$APP" "$OUT/$APP_NAME.zip"
           # The dSYM the archive wrote, so MetricKit and crash frames from this build can be symbolicated (#2718).
@@ -294,6 +344,7 @@ jobs:
           PY
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: env.SIGNING_PAUSED != 'true'
         with:
           name: phone-build-${{ github.sha }}
           path: |
@@ -302,6 +353,18 @@ jobs:
             .build/phone-out/build.json
             .build/phone-out/build.log
           if-no-files-found: error
+          retention-days: 7
+
+      # The archive and package logs, kept 7 days, when the build fails (#4913). Not the export log: it names the
+      # signing key's ID, and its errors already show in the step above.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: phone-build-log-${{ github.run_id }}
+          path: |
+            .build/phone-out/build.log
+            .build/phone-out/resolve.log
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Remove the signing key
