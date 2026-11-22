@@ -83,15 +83,11 @@ extension Gate1AppModel {
         labels.scoped("snapshot.captureWatch") {
             if oldValue.isRecording, !snapshot.isRecording {
                 endCaptureWatch()
-                #if SM_MARGIN_END_PHRASE_SPIKE
-                endMarginEndPhraseSpike() // every way a recording ends, not only the ones that clear its screen (#3940)
-                #endif
+                endMarginEndPhraseListening() // every way a recording ends, not only the ones that clear its screen (#3940)
             }
             if !oldValue.isRecording, snapshot.isRecording {
                 startCaptureWatch()
-                #if SM_MARGIN_END_PHRASE_SPIKE
-                beginMarginEndPhraseSpike() // every way a recording starts (in-app, Lock Screen, headset, Live Activity), as the end below (#3940)
-                #endif
+                beginMarginEndPhraseListening() // every way a recording starts (in-app, Lock Screen, headset, Live Activity), as the end above (#3940)
             }
         }
         labels.scoped("snapshot.speechResume") { settleSpeechInterruptionResume() }
