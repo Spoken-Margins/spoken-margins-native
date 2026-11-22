@@ -6,7 +6,7 @@ red) or `probation` (reported only). The rule in docs/workstreams/test-lane.md: 
 gating after the Test Desk has seen it pass twice, and a gating script goes back after two bad runs.
 Nothing counted those passes, so nothing ever moved. The integration script now keeps a streak per script in
 its state file (`journeys` in state.json) and names the scripts that are due in its report. The move itself is
-a PR into next, made with this file:
+a PR into main, made with this file:
 
     python3 ops/testdesk/journey_promotion.py --state ~/SpokenMarginsOps/integration-run/state.json          # list
     python3 ops/testdesk/journey_promotion.py --state ... --apply    # rewrite TestPlans/scripted-journeys.json
@@ -117,7 +117,7 @@ def report_line(moves: dict) -> str | None:
     if not parts:
         return None
     return ('journeys due to move: ' + '; '.join(parts)
-            + ' (python3 ops/testdesk/journey_promotion.py --apply, then a PR into next)')
+            + ' (python3 ops/testdesk/journey_promotion.py --apply, then a PR into main)')
 
 
 def red_report(listing: dict, prior_bodies: list, results: dict) -> dict:

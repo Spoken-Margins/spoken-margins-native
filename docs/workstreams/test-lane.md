@@ -163,8 +163,7 @@ comments on #184, starting with the newest "Test Desk hand-off".
 
 Setup: this folder is a worktree. Run git fetch origin && git switch --detach origin/main,
 then scripts/setup-worktree.sh. Never create branches here. Build each job in a worktree of
-its own: .claude/worktrees/lane-integration-<sha7> for main's tip, and lane-build29 (kept)
-for Build 29. The understudy's worktrees are intrun-<sha7>; never touch them, and it never
+its own: .claude/worktrees/lane-integration-<sha7> for main's tip. The understudy's worktrees are intrun-<sha7>; never touch them, and it never
 touches yours. Build through scripts/xcodebuild-lane. A test run there, or a verify-tests
 test step, that prints its final summary and then goes quiet for 2 minutes is stopped and
 reports its tests' result with a "(forced, #2053)" note; don't kill it by hand.
@@ -199,8 +198,9 @@ When main's tip has no integration report on #184, run one job on that tip, in t
    with scripts/verify-tests.py --plan journeys --device <udid>; its manifest's gating and
    probation maps give each script's result.
 3. Then the journeys in docs/journeys.md. Finish the app tests' device with --done and take one
-   again first (it comes back erased, because the app tests wrote to its app data), and build a library shaped like the owner's and upgraded
-   from Build 29 (lane-build29) before installing the candidate over it. Post
+   again first (it comes back erased, because the app tests wrote to its app data), and install the candidate.
+   The Library starts empty: journeys build the history they need (journey skill, step 4), and J4
+   installs the previous shipped build first. Post
    "Lane report journeys-<sha7> — …" on #184.
 How to run journeys: you are the lead. Build or reuse the app once, take the pool device and
 install once, then give each journey to one helper agent (Agent tool, one at a time) with its
