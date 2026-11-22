@@ -31,6 +31,20 @@ struct SpokenMarginsAppShortcuts: AppShortcutsProvider {
             shortTitle: "Add Margin",
             systemImageName: "text.bubble"
         )
+        // The other route (#4923): opens the app and records, for when the screen is fine. "Add a Margin" stays the
+        // dictated-text route for hands-free use (2026-11-09), so no phrase here fits it. Help teaches only the
+        // Shortcut until a phone check shows Siri takes these phrases (#4814).
+        AppShortcut(
+            intent: RecordMarginShortcutIntent(),
+            phrases: [
+                "Record a Margin in \(.applicationName)",
+                "\(.applicationName) record a Margin",
+                "Record a voice Margin in \(.applicationName)",
+                "Start recording a Margin in \(.applicationName)",
+            ],
+            shortTitle: "Record a Margin",
+            systemImageName: "mic.fill"
+        )
     }
 }
 #endif

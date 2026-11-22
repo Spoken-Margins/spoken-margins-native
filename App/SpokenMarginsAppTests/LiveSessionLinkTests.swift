@@ -40,6 +40,17 @@ final class LiveSessionLinkTests: XCTestCase {
         XCTAssertNil(router.takeAction())
     }
 
+    /// #4923: Record a Margin with nothing running shows the start card with no action waiting on it, and no grace
+    /// task that closes it (`open` starts one, because a start card never registers as a running screen).
+    func testTheStartCardOpensWithNoActionWaitingOnIt() {
+        let router = LiveSessionLinkRouter()
+        router.openStartCard()
+        XCTAssertNotNil(router.cover)
+        XCTAssertNil(router.cover?.sessionId)
+        XCTAssertNil(router.cover?.window)
+        XCTAssertNil(router.takeAction())
+    }
+
     func testALinkWithAScreenAlreadyOpenPresentsNothingElse() {
         let router = LiveSessionLinkRouter()
         router.runningScreenAppeared()
