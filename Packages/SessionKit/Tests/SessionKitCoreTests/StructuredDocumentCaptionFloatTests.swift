@@ -289,7 +289,8 @@ final class StructuredDocumentCaptionFloatTests: XCTestCase {
         XCTAssertEqual(document.floats.count, PDFClipLocator.maximumFloatsPerDocument)
         XCTAssertNotNil(document.floats.first?.textSegmentId, "the text float is first")
         XCTAssertEqual(document.floats.dropFirst().filter { $0.textSegmentId == nil }.count, 39)
-        // A ceiling, not a target: if a run goes over it, profile before raising it.
+        // A budget, not a wait: a build that works out caption blocks or the text area per line instead of per page
+        // would take minutes here. It is a ceiling, not a target: if a run goes over it, profile before raising it.
         XCTAssertLessThan(elapsed, 2.0, "building a 60-page document with a caption figure on every page")
     }
 
