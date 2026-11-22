@@ -193,9 +193,13 @@ def main(argv: list[str] | None = None) -> int:
     if alarm:
         print(f'Still stalled; #{alarm["number"]} already says so.')
         return 0
-    lines = stall(now, last_merge, read_armed(repo, base))
+    # #4990: a stall needs an hour with nothing on the trunk, so until then the armed PRs are not read at all. Reading
+    # them costs four API calls a PR, and this runs each time a PR's hosted checks finish (about 20 times an hour).
+    quiet = now - last_merge >= STALL_AFTER
+    lines = stall(now, last_merge, read_armed(repo, base)) if quiet else []
     if not lines:
-        print(f'No stall: last merge {minutes(now - last_merge)} minutes ago, and no armed PR is stuck.')
+        print(f'No stall: last merge {minutes(now - last_merge)} minutes ago'
+              + (', and no armed PR is stuck.' if quiet else '; armed PRs are read only after an hour without one.'))
         return 0
     body = alarm_body(now, last_merge, lines)
     print(body)
