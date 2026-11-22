@@ -120,6 +120,30 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
         }
     }
 
+    /// #4175: the countdown card's detail can now be the copy-length note, about 85 characters against the generic
+    /// caution's 53. The longest note (a 14-character name, the biggest difference said in seconds) must keep every
+    /// countdown stage under the same height budgets. If this breaks the `.large` budget, the fix is the short wording
+    /// the Design on #4175 names: "Your copy is about 35 seconds shorter than Cole's." and, far apart, "Your copy is about
+    /// 20 minutes shorter than Cole's; Margins may not line up.", not a taller budget.
+    func testTheLongestCopyLengthNoteKeepsTheCountdownCardUnderItsBudgets() throws {
+        let note = try XCTUnwrap(SharedMarginPlacementWording.pinnedCardLine(
+            for: .roughly(mediaTimeMs: 300_000), atSenderClock: true, senderCopyMs: 1_800_000, listenerCopyMs: 1_915_000,
+            subject: .friend("Fourteen chars")))
+        XCTAssertTrue(note.contains("about 115 seconds longer than Fourteen chars's"), note)
+        let cards = Self.cards().filter {
+            !$0.name.hasPrefix("own") && ($0.name.hasSuffix("upNext playsByItself") || $0.name.hasSuffix("upNext toneThenTap"))
+        }
+        XCTAssertEqual(cards.count, 4, "the countdown stages the note can appear on")
+        for (size, sizeLabel, maxHeight) in Self.budgets {
+            for (name, card, isReview) in cards {
+                let body = PinnedMarginCardBody(
+                    card: card, detail: note, isReview: isReview, navigationLocked: false, perform: { _ in })
+                let height = Self.height(of: body, size: size)
+                XCTAssertLessThanOrEqual(height, maxHeight, "\(name) at \(sizeLabel) with the longest note: \(height) pt; the budget is \(maxHeight) pt")
+            }
+        }
+    }
+
     /// #3984: iOS 26.5 measured a 44 pt button as 43.999999999999986. The check forgives that rounding and nothing more.
     func testTheTapSizeCheckForgivesRoundingAndStillFailsAShortButton() {
         XCTAssertTrue(PointSizeCheck.meets(44, atLeast: 44))
