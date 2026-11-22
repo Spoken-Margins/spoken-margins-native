@@ -53,12 +53,13 @@ REPO = 'Spoken-Margins/spoken-margins-native'
 # --- what the files don't say ---------------------------------------------------------------------------------------
 
 SNAPSHOT = {
-    'taken': '2026-11-20',
-    # gh api repos/Spoken-Margins/spoken-margins-native/rulesets/19241264
+    'taken': '2026-11-20; ruleset re-read 2026-11-22',
+    # gh api repos/Spoken-Margins/spoken-margins-native/rulesets/19241264 (readable without a token: the repo is public;
+    # ci_harness.py --check-snapshot compares this with the live ruleset)
     'ruleset': {
         'id': 19241264,
         'required_checks': ['hosted fast: scope', 'hosted fast: portable', 'hosted fast: Mac rest',
-                            'hosted web: build and Playwright', 'merge policy'],
+                            'hosted web: build and Playwright', 'merge policy', 'hosted app: build (no tests)'],
         'merge_queue': {'grouping_strategy': 'HEADGREEN', 'max_entries_to_build': 3, 'max_entries_to_merge': 5,
                         'check_response_timeout_minutes': 120, 'merge_method': 'MERGE'},
         'bypass_actors': [],
@@ -557,6 +558,7 @@ DEFECT_CATCHERS = {  # (workflow, job) -> defects that make it fail (A15)
     ('hosted-portable.yml', 'portable'): {'portable_test_failure'},
     ('hosted-portable.yml', 'mac-rest'): {'sessionkit_compile_error', 'sessionkit_test_failure'},
     ('hosted-portable.yml', 'sessionkit'): {'sessionkit_compile_error', 'sessionkit_test_failure'},
+    ('hosted-portable.yml', 'app-compile'): {'app_compile_error'},
     ('hosted-web.yml', 'web'): {'web_failure'},
     ('hosted-app-macos.yml', 'app'): {'app_compile_error', 'sessionkit_compile_error'},
     ('main-t3.yml', 't3'): {'app_compile_error', 'sessionkit_compile_error', 'app_test_failure'},
@@ -719,6 +721,15 @@ class World:
                                  'base': {'ref': 'main', 'sha': 'base'},
                                  'labels': [{'name': n} for n in sorted(self.labels)]},
                 'repository': {'full_name': REPO}}
+
+    def run_status(self, run) -> str:
+        """A run's status as the Actions API reports it. Runs take no time here, so every run is finished unless a
+        scenario says the PR's merge policy run is still going (b3); ci_harness.TimedWorld reads the real status."""
+        return 'in_progress' if self.flags.get('policy_run_in_progress') else 'completed'
+
+    def bridge_github(self, job, cause):
+        """The fake GitHub the label bridge runs against; ci_harness.TimedWorld swaps in one whose token can fail."""
+        return FakeBridgeGitHub(self, job['token'], cause)
 
     def change_label(self, at, label, add, token, cause):
         before = label in self.labels
@@ -1120,7 +1131,7 @@ def b_bridge(world, run, job, ctx, cause):
     else:
         args += ['--sweep']
     out = io.StringIO()
-    code = bridge.main(args, github=FakeBridgeGitHub(world, job['token'], cause), out=out)
+    code = bridge.main(args, github=world.bridge_github(job, cause), out=out)
     world.note(cause, 'bridge: ' + ' | '.join(line for line in out.getvalue().splitlines() if line.strip()))
     return ('success' if code == 0 else 'failure'), {}
 
@@ -1156,6 +1167,17 @@ class FakeDequeueGitHub:
     def delete(self, path):
         if '/labels/' in path:
             self.w.change_label(self.w.now, path.rsplit('/', 1)[1], False, self.token, self.cause['id'])
+
+    def requeue(self, number):
+        """`gh pr merge` with QUEUE_TOKEN (MERGE_QUEUE_TOKEN) when the workflow passes it."""
+        token = 'secret:MERGE_QUEUE_TOKEN' if 'MERGE_QUEUE_TOKEN' in SNAPSHOT['secrets'] else self.token
+        if token[len('secret:'):] in getattr(self.w.s, 'token_403', ()):
+            self.w.note(self.cause, 'dequeued notifier: `gh pr merge` refused, HTTP 403')
+            return False
+        self.w.auto_merge = True
+        self.w.enqueued_by = token
+        self.w.note(self.cause, f'dequeued notifier: set to merge again (as {token})')
+        return True
 
 
 def b_dequeued(world, run, job, ctx, cause):
@@ -1204,8 +1226,7 @@ def b_claude_audit(world, run, job, ctx, cause):
 
     def fake_run(cmd, **kwargs):
         if cmd[:2] == ['gh', 'api']:
-            body = {'workflow_runs': [{'id': r['id'], 'created_at': f'{r["id"]:06d}', 'status': 'in_progress'
-                                       if world.flags.get('policy_run_in_progress') else 'completed'}
+            body = {'workflow_runs': [{'id': r['id'], 'created_at': f'{r["id"]:06d}', 'status': world.run_status(r)}
                                       for r in policy_runs]}
             return subprocess.CompletedProcess(cmd, 0, json.dumps(body), '')
         if cmd[:3] == ['gh', 'run', 'rerun']:
