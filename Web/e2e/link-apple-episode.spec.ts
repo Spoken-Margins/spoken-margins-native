@@ -124,7 +124,7 @@ test('when Apple does not answer, Play asks again and says so plainly, never tha
 const OUTSIDE_LINK = `${STUB}/l/vectorapple02#${KEY}`;
 const SHOW_FEED = 'https://feeds.soundcloud.com/users/**';
 const ENCLOSURE = 'https://feeds.soundcloud.com/stream/559432260-resourcesradio-people-parks-and-policy-with-rffs-margaret-walls.mp3';
-const REAL_LOOKUP = feedFixture('apple-lookup-resources-radio.json').toString('utf8');
+const REAL_LOOKUP = feedFixture('apple-lookup-resources-radio.txt').toString('utf8');
 const REAL_FEED = feedFixture('resources-radio-apple-gap.rss').toString('utf8');
 const OUTSIDE_TITLE = "People, Parks, and Policy, with RFF's Margaret Walls";
 
