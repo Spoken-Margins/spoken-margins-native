@@ -6,7 +6,7 @@ Targets: `backstop`, `dial`, `bandwidth`, `voice-catalog`. The table of files an
 
 ## How it works
 
-1. `.github/workflows/server-deploy.yml` runs in the `server-deploy` environment and connects as `smci` with a deploy key kept as three environment secrets: `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_KNOWN_HOSTS` (the pinned host key). The environment has no required reviewer.
+1. `.github/workflows/server-deploy.yml` runs in the `server-deploy` environment and connects as `smci` with a deploy key kept as three environment secrets: `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_KNOWN_HOSTS` (the pinned host key). The environment has no required reviewer, and only the `main` branch may use it, so a workflow on another branch cannot read the key.
 2. That key's `authorized_keys` line forces one command, `/usr/local/sbin/sm-deploy-ssh`, with `restrict` (no shell, no forwarding). The key can run nothing else.
 3. `sm-deploy-ssh` runs `sudo -n /usr/local/sbin/sm-deploy <target> <sha>`. The sudoers drop-in lets `smci` run that one file and no other command.
 4. `sm-deploy` (root-owned, installed by hand) accepts exactly a target name and a 40-hex sha. It checks the sha is already on `main` through GitHub's compare API, fetches only the table's files from that commit, and writes them atomically. It reloads systemd and restarts a timer only when that timer is already enabled and its unit changed. It never enables a timer, never reads or writes `/etc/sm-*` secrets, and logs to `/var/log/sm-deploy.log`.

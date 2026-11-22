@@ -5,10 +5,11 @@
 set -eu
 stage=${1:?stage dir}
 sha=${2:?main sha}
+[ "$(wc -l < "$stage/deploy_key.pub" | tr -d ' ')" = 1 ] && grep -Eq '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-[a-z0-9]+|sk-[a-z0-9@.-]+) [A-Za-z0-9+/=]+( [^ ]*)?$' "$stage/deploy_key.pub" || { echo "deploy_key.pub must be exactly one public key line" >&2; exit 1; }
 install -d -m 755 -o root -g root /usr/local/sbin
 install -m 755 -o root -g root "$stage/sm_deploy.py" /usr/local/sbin/sm-deploy
 install -m 755 -o root -g root "$stage/sm-deploy-ssh" /usr/local/sbin/sm-deploy-ssh
-id smci >/dev/null 2>&1 || useradd --system --create-home --home-dir /home/smci --shell /bin/sh -p '*' smci
+if id smci >/dev/null 2>&1; then usermod -s /bin/sh -d /home/smci -p '*' smci; else useradd --system --create-home --home-dir /home/smci --shell /bin/sh -p '*' smci; fi
 chown root:root /home/smci
 chmod 755 /home/smci
 install -d -m 755 -o root -g root /home/smci/.ssh

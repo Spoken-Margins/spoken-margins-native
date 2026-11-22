@@ -59,20 +59,15 @@ jobs:
       - name: Work out which targets changed
         id: targets
         env:
-          GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           CHOICE: ${{ inputs.target }}
-          BEFORE: ${{ github.event.before }}
         run: |
+          # A push deploys every target: sm-deploy leaves unchanged files alone, and a diff-based list would miss
+          # the targets of a run that GitHub cancelled in the queue or that failed. The `paths` filter gates the trigger.
           all="backstop dial bandwidth voice-catalog"
-          if [ "$EVENT" = workflow_dispatch ]; then
-            if [ "$CHOICE" = all ] || [ -z "$CHOICE" ]; then list=$all; else list=$CHOICE; fi
-          else
-            files=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BEFORE}...${GITHUB_SHA}" --paginate --jq '.files[].filename' 2>/dev/null || true)
-            if [ -z "$files" ]; then list=$all; else list=$(printf '%s\n' "$files" | python3 ops/server-deploy/sm_deploy.py --targets-for); fi
-          fi
-          echo "targets: ${list:-none}"
-          echo "list=$(echo $list)" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = workflow_dispatch ] && [ -n "$CHOICE" ] && [ "$CHOICE" != all ]; then list=$CHOICE; else list=$all; fi
+          echo "targets: $list"
+          echo "list=$list" >> "$GITHUB_OUTPUT"
       - name: Deploy each target
         if: steps.targets.outputs.list != ''
         env:
@@ -85,10 +80,17 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          trap 'rm -f ~/.ssh/deploy_key' EXIT
+          rc=0
           for target in $LIST; do
             echo "::group::deploy $target at $GITHUB_SHA"
-            ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes \
-              "smci@${DEPLOY_HOST}" "$target $GITHUB_SHA"
+            ok=0
+            for attempt in 1 2 3; do
+              if ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes \
+                  "smci@${DEPLOY_HOST}" "$target $GITHUB_SHA"; then ok=1; break; fi
+              echo "attempt $attempt failed"; sleep 5
+            done
             echo "::endgroup::"
+            [ "$ok" = 1 ] || { echo "::error::deploy of $target failed"; rc=1; }
           done
-          rm -f ~/.ssh/deploy_key
+          exit $rc

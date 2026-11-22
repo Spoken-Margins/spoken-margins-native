@@ -143,6 +143,27 @@ class DeployTests(Base):
         self.assertNotIn(['daemon-reload'], sc.calls)
         self.assertEqual(Path(self.root, 'opt/sm-dial/dial_gate.py').read_bytes(), b'new')
 
+    def test_a_failed_systemctl_fails_the_deploy(self):
+        def failing(cmd, **_):
+            return subprocess.CompletedProcess(cmd, 1 if cmd[1] == 'daemon-reload' else 0, stdout='', stderr='boom')
+        with self.assertRaises(RuntimeError):
+            self.deployer(table_files('dial'), systemctl=failing).deploy('dial', SHA)
+
+    def test_a_failed_tree_swap_puts_the_old_tree_back(self):
+        tree = Path(self.root, 'opt/sm-voice-catalog/Contracts/voice-models')
+        tree.mkdir(parents=True)
+        (tree / 'keep.txt').write_text('old')
+        real = os.rename
+        def flaky(src, dst):
+            if str(src).endswith('.sm-deploy-new'):
+                raise OSError('boom')
+            return real(src, dst)
+        os.rename = flaky
+        self.addCleanup(setattr, os, 'rename', real)
+        with self.assertRaises(OSError):
+            self.deployer(table_files('voice-catalog')).deploy('voice-catalog', SHA)
+        self.assertEqual((tree / 'keep.txt').read_text(), 'old')
+
     def test_a_failed_fetch_leaves_the_old_file(self):
         files = table_files('dial')
         self.deployer(files).deploy('dial', SHA)
@@ -218,7 +239,8 @@ class RepoDriftTests(unittest.TestCase):
         self.assertEqual(sorted(paths), sorted(covered), 'a trigger path names no deploy source')
         options = re.search(r'options: \[all, ([^\]]+)\]', workflow).group(1).split(', ')
         self.assertEqual(options, list(d.TARGETS))
-        self.assertIn('backstop dial bandwidth voice-catalog', workflow)
+        self.assertIn('all="backstop dial bandwidth voice-catalog"', workflow)
+        self.assertNotIn('compare/', workflow)
 
     def test_workflow_never_prints_the_key_and_uses_the_environment(self):
         workflow = (REPO / '.github/workflows/server-deploy.yml').read_text()

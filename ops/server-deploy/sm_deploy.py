@@ -26,7 +26,7 @@ import urllib.request
 
 REPO = 'Spoken-Margins/spoken-margins-native'
 BRANCH = 'main'
-LOCK = '/run/lock/sm-deploy.lock'
+LOCK = '/run/sm-deploy.lock'
 LOG = '/var/log/sm-deploy.log'
 MAX_FILE = 5 * 1024 * 1024
 MAX_TREE_FILES = 500
@@ -179,7 +179,10 @@ class Deployer:
             return False
         new, old = dest + '.sm-deploy-new', dest + '.sm-deploy-old'
         for leftover in (new, old):
-            shutil.rmtree(leftover, ignore_errors=True)
+            if os.path.islink(leftover):
+                os.unlink(leftover)
+            else:
+                shutil.rmtree(leftover, ignore_errors=True)
         for rel, data in files.items():
             target = os.path.join(new, rel)
             os.makedirs(os.path.dirname(target), mode=0o755, exist_ok=True)
@@ -188,12 +191,20 @@ class Deployer:
             os.chmod(target, 0o644)
         if os.path.isdir(dest):
             os.rename(dest, old)
-        os.rename(new, dest)
+        try:
+            os.rename(new, dest)
+        except OSError:
+            if os.path.isdir(old):
+                os.rename(old, dest)
+            raise
         shutil.rmtree(old, ignore_errors=True)
         return True
 
-    def systemctl(self, *args):
-        return self.run(['systemctl', *args], capture_output=True, text=True)
+    def systemctl(self, *args, check=False):
+        result = self.run(['/usr/bin/systemctl', *args], capture_output=True, text=True)
+        if check and result.returncode != 0:
+            raise RuntimeError(f'systemctl {" ".join(args)} failed: {(result.stderr or result.stdout).strip()}')
+        return result
 
     def deploy(self, target, sha):
         spec = TARGETS[target]
@@ -212,11 +223,11 @@ class Deployer:
             did = self.replace_tree(files, dest)
             log(f'{"changed  " if did else "unchanged"} {dest} ({len(files)} files)')
         if changed_units:
-            self.systemctl('daemon-reload')
+            self.systemctl('daemon-reload', check=True)
         for timer in spec['timers']:
             state = self.systemctl('is-enabled', timer).stdout.strip()
             if state == 'enabled' and timer in changed_units:
-                self.systemctl('restart', timer)
+                self.systemctl('restart', timer, check=True)
                 log(f'restarted {timer}')
             else:
                 log(f'{timer}: {state or "not installed"}, left as it was')
@@ -229,10 +240,12 @@ def main(argv):
         return 0
     try:
         target, sha = parse_args(argv)
-        os.makedirs(os.path.dirname(LOCK), exist_ok=True)
-        with open(LOCK, 'w') as lock:
+        lock = os.open(LOCK, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
             fcntl.flock(lock, fcntl.LOCK_EX)
             Deployer().deploy(target, sha)
+        finally:
+            os.close(lock)
     except Refused as error:
         print(f'sm-deploy: {error}', file=sys.stderr)
         return 2
