@@ -211,12 +211,12 @@ struct MarginRecordingScreen: View {
         case .listening:
             Text("Say \u{201C}stop margin\u{201D} to finish")
                 .font(.footnote)
-                .foregroundStyle(.white.opacity(0.75))
+                .foregroundStyle(AppColors.watchSecondary)
                 .accessibilityIdentifier("recording.endPhrase.hint")
         case .finishing:
             Text("Finishing\u{2026}")
                 .font(.footnote)
-                .foregroundStyle(.white.opacity(0.75))
+                .foregroundStyle(AppColors.watchSecondary)
                 .accessibilityIdentifier("recording.endPhrase.hint")
         }
     }
