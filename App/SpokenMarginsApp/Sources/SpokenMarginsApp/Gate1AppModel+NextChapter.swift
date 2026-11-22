@@ -26,10 +26,37 @@ extension Gate1AppModel {
     /// row draws them either side of the title and keeps both in place, dimmed when there is nowhere to go (#1666).
     /// A mapped item keeps them even where neither direction can be pressed, so Next chapter is never mistaken for
     /// Skim there (#2185).
+    ///
+    /// An item with two or more chapters always shows the row, whatever Skim's inputs say, so an article, a PDF or a
+    /// podcast gets the same arrows and a missing store or map can't hide them (#3865, `showsChapterRow`).
     var showsSkimRow: Bool {
-        (isMediaPlaybackSnapshot || isTextReadingSnapshot)
-            && (snapshot.canSkimBackward || snapshot.canSkimForward || snapshot.skimBridgeState != nil
-                || skimBridge.itemHasMap)
+        NextChapterSummaryRule.showsChapterRow(
+            isSkimSource: isMediaPlaybackSnapshot || isTextReadingSnapshot,
+            hasSkimAffordance: itemHasSkim,
+            chapterCount: playingItemChapterCount)
+    }
+
+    /// Skim can go somewhere, a summary is playing, or the item has a map. Where it is false but the chapter row shows
+    /// anyway (two or more chapters, #3865), Next chapter in Skim's slot is a plain chapter jump on an item with no Skim,
+    /// so it never speaks or logs a Skim reason (`skimBridge.forwardUnavailableReason`) for a control that works.
+    private var itemHasSkim: Bool {
+        snapshot.canSkimBackward || snapshot.canSkimForward || snapshot.skimBridgeState != nil || skimBridge.itemHasMap
+    }
+
+    /// Why forward Skim can't be pressed, for the item that has Skim; nil on an item with none, where Next chapter in
+    /// the slot has nothing to explain.
+    var chapterRowSkimReason: SkimUnavailableReason? { itemHasSkim ? skimBridge.forwardUnavailableReason : nil }
+
+    /// The playing item's chapters, counted the way Skim's stops are built: text chapters on a text item read aloud, the
+    /// media chapters on a media item, or its Listening Map scenes where it has none (`skimStopList`).
+    private var playingItemChapterCount: Int {
+        guard snapshot.itemId == selectedItem.id else { return 0 }
+        // The transcript's own sections are not chapters the listener sees (the chapter title, the bar and the locator
+        // all leave them out), and an episode with only those sections still has its Listening Map's scenes, which the
+        // title and the Timeline name (#4773, `chapterRowChapterCount`).
+        return NextChapterSummaryRule.chapterRowChapterCount(
+            isTextReading: isTextReadingSnapshot, textChapterCount: selectedItem.chapters.count,
+            mediaChapters: selectedItem.mediaChapters, scenes: selectedItem.listeningMapScenes)
     }
 
     /// What the chapter row draws right of the title: forward Skim when it can be pressed, else Next chapter, else a
@@ -37,7 +64,9 @@ extension Gate1AppModel {
     /// and the second press of #569 still works through Skim, which ends the playing summary the same way (#1666).
     var chapterRowForwardControl: NextChapterSummaryRule.ChapterRowControl {
         NextChapterSummaryRule.forwardControl(
-            isAvailable: canJumpToNextChapter, skimRowShown: showsSkimRow, canSkimForward: snapshot.canSkimForward)
+            isAvailable: canJumpToNextChapter, skimRowShown: showsSkimRow, canSkimForward: snapshot.canSkimForward,
+            hasQueuedNext: chapterRowQueuedNextId != nil, stopsLoading: skimBridge.forwardUnavailableReason == .loading,
+            navigationLocked: recordingNavigationIsLocked || playingImportedCommentary != nil)
     }
 
     /// What the chapter row draws left of the title: Skim back, dimmed when there is nowhere to go.
@@ -52,13 +81,15 @@ extension Gate1AppModel {
     /// The chapter row's Next chapter button. Where it stands in for a Skim that can't be pressed, the press is logged
     /// as Skim's fallback with the reason, and the listener is told why it was a plain jump (#2185).
     func nextChapterFromChapterRow() {
-        let standsInForSkim = chapterRowForwardControl == .nextChapterInSkimSlot
+        let standsInForSkim = chapterRowForwardControl == .nextChapterInSkimSlot && itemHasSkim
         let reason = skimBridge.forwardUnavailableReason ?? .noSceneSummary
+        let title = nextChapterAnnouncementTitle
         jumpToNextChapter()
         guard standsInForSkim else { return }
         recordDeveloperDiagnostic(
             "skim.press", SkimPressOutcome.fellBackToChapter.diagnosticFields(direction: .forward, reason: reason.rawValue))
-        reportSuccess("Next chapter. \(reason.message)")
+        // The reason is for Diagnostics: the listener hears where the jump went, not a stale reason (#3986).
+        reportSuccess(["Next chapter", title].compactMap { $0 }.joined(separator: ", "))
     }
 
     /// Reads the summary of the chapter being left, when it has one, then lands at the next

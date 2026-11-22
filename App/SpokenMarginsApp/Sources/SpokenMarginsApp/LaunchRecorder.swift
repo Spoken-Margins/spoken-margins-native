@@ -10,8 +10,8 @@ import SwiftUI
 /// and saves it at each stage, so a launch that was killed before the Library showed is still there for the
 /// next run to report. The lines are pinned, so Refresh Diagnostics doesn't drop them.
 ///
-/// Marks: the root view appearing, the Library loaded, and the root view showing it (`usable`), in milliseconds
-/// since `App.init`. The time from the kernel's process start to `App.init` is kept apart: iOS can prewarm an app
+/// Marks: the root view appearing, the Library loaded, the root view showing it (`usable`), and the launch's feed refresh
+/// finishing (`followingFresh`, #4388), in milliseconds since `App.init`. The time from the kernel's process start to `App.init` is kept apart: iOS can prewarm an app
 /// (start its process hours before the listener opens it), and then that gap is idle time, so it is dropped and
 /// the launch is marked `prewarmed`. A launch iOS makes with no screen (a background refresh) never shows the
 /// root view and reads `no_ui`. A unit test has no recorder (`shared` stays nil) and every call is a no-op.
@@ -77,6 +77,10 @@ final class LaunchRecorder {
     /// The root view updated for the loaded Library. Ignored until the Library is ready.
     func markLibraryShown() { mark(.usable) }
 
+    /// The launch's feed refresh finished, so Following is up to date (#4388); `firstScreenOnly` when Low Power Mode kept it
+    /// to the shows on the first screen.
+    func markFollowingFresh(firstScreenOnly: Bool) { mark(.followingFresh, firstScreenOnly: firstScreenOnly) }
+
     func markLibraryFailed() { mark(.libraryReady, libraryFailed: true) }
 
     /// One `app.previous_exit` event's fields, kept past the event log's 300.
@@ -86,9 +90,9 @@ final class LaunchRecorder {
         publishLines()
     }
 
-    private func mark(_ stage: LaunchHistory.Stage, libraryItems: Int? = nil, libraryFailed: Bool = false) {
+    private func mark(_ stage: LaunchHistory.Stage, libraryItems: Int? = nil, libraryFailed: Bool = false, firstScreenOnly: Bool = false) {
         guard let elapsed = LaunchHistory.elapsedMs(from: launchStart, to: now()) else { return }
-        history.mark(stage, elapsedMs: elapsed, libraryItems: libraryItems, libraryFailed: libraryFailed)
+        history.mark(stage, elapsedMs: elapsed, libraryItems: libraryItems, libraryFailed: libraryFailed, firstScreenOnly: firstScreenOnly)
         save()
         publishLines()
     }

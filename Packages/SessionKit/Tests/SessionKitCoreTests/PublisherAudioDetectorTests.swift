@@ -32,7 +32,11 @@ final class PublisherAudioDetectorTests: XCTestCase {
         XCTAssertFalse(body.contains("<p>"), "tags are stripped")
         XCTAssertFalse(body.contains("A short subtitle"), "the description isn't mixed in")
         XCTAssertGreaterThanOrEqual(PublisherAudioDetector.bodyWordCount(of: voiceover) ?? 0, 700)
-        XCTAssertEqual(voiceover.summary, body, "summary still takes the last of description and body, as before")
+        // The body keeps the post's headings as Markdown lines (#4461); the summary is the same words, flat, as before.
+        XCTAssertTrue(body.contains("##### "), "headings stay as Markdown heading lines")
+        let flat = body.replacingOccurrences(of: #"(?m)^#{1,6} "#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        XCTAssertEqual(voiceover.summary, flat, "summary still takes the last of description and body, as before")
     }
 
     func testFeedsWithoutABodyGiveNone() throws {

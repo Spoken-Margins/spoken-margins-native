@@ -39,7 +39,7 @@ final class MarginThreadPresentationTests: XCTestCase {
         )
         XCTAssertEqual(rows.count, 1)
         XCTAssertEqual(rows[0].depth, 0)
-        XCTAssertEqual(rows[0].note, "reply to a Margin you don't have")
+        XCTAssertEqual(rows[0].note, "Reply to a Margin that isn't on this phone")
     }
 
     func testRepliesToRepliesNestAndSiblingsGoOldestFirst() {
@@ -86,7 +86,7 @@ final class MarginThreadPresentationTests: XCTestCase {
         )
         XCTAssertEqual(Set(rows.map(\.reference)), [.imported("a1"), .imported("b1")])
         XCTAssertEqual(rows.count, 2)
-        XCTAssertEqual(rows.map(\.note), [nil, nil], "each parent is here, so neither is a reply to a Margin you don't have")
+        XCTAssertEqual(rows.map(\.note), [nil, nil], "each parent is here, so neither is a Reply to a Margin that isn't on this phone")
     }
 
     func testDeletedMarginsAndLayersAndOtherItemsStayOut() {

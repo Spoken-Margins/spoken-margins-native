@@ -169,3 +169,111 @@ test('readAloud false on a voice Margin is ignored: the sender\'s own voice stil
   assert.ok(voices.length > 0 && voiceMargins().length > 0);
   assert.ok(voices.every((m) => m.readAloud === undefined));
 });
+
+// #4421: the app anchors a Margin on an article to the article's words, with how far through it the sender was. The
+// web has no map from the words to a voice, so it keeps that percent to place the Margin on the voice that plays it.
+test('a Margin on an article’s words, with its rough place, comes through whole and waits to be placed (#4421)', async () => {
+  const bytes = await writeVoice().then((w) => w.bytes);
+  const edited = await withLayer(bytes, (records) => {
+    records.forEach((record, i) => {
+      record.anchor = { anchorType: 'text', startChar: 10 * i, endChar: 10 * i + 5, exactText: 'a sentence', prefix: 'Before.', suffix: 'After.', roughPercent: 20 + i, machineEvidenceAssetIds: [] };
+    });
+  });
+  const result = await readPacket(edited);
+  assert.equal(result.margins.length, 0, 'none has a time of its own');
+  assert.equal(result.textMargins.length, result.percentMargins.length, 'every one of them can be placed');
+  assert.ok(result.percentMargins.length > 0);
+  result.percentMargins.forEach(({ margin, percent }, i) => {
+    assert.equal(percent, 20 + i);
+    assert.equal(margin.atSeconds, 0);
+    assert.match(margin.id, /^packet:[0-9a-f]{64}:/);
+  });
+  const voiced = result.percentMargins.filter((p) => p.margin.voice);
+  assert.ok(voiced.length > 0, 'the sender’s voice clip is kept');
+  for (const { margin } of voiced) {
+    assert.equal(margin.voice?.mimeType, 'audio/mp4');
+    assert.ok((margin.voice?.durationSeconds ?? 0) > 0);
+  }
+});
+
+test('a Margin on an article’s words with no rough place stays a text Margin only (#4421)', async () => {
+  const bytes = await writeVoice().then((w) => w.bytes);
+  const edited = await withLayer(bytes, (records) => {
+    for (const record of records) record.anchor = { anchorType: 'text', exactText: 'a sentence', machineEvidenceAssetIds: [] };
+  });
+  const result = await readPacket(edited);
+  assert.equal(result.margins.length, 0);
+  assert.ok(result.textMargins.length > 0);
+  assert.equal(result.percentMargins.length, 0);
+});
+
+test('a timed Margin is never a percent Margin, and a text anchor’s own percent beats the item length (#4421)', async () => {
+  const timed = await readPacket(podcast());
+  assert.equal(timed.percentMargins.length, 0);
+  const bytes = await writeVoice().then((w) => w.bytes);
+  const edited = await withLayer(bytes, (records) => {
+    for (const record of records) record.anchor = { anchorType: 'text', exactText: 'x', roughPercent: 50, machineEvidenceAssetIds: [] };
+  });
+  const result = await readPacket(edited);
+  assert.ok(result.percentMargins.every((p) => p.percent === 50 && p.margin.atSeconds === 0));
+});
+
+test('a Margin\u2019s leadInMs comes through in seconds; absent or null means the usual run-up (#4171)', async () => {
+  const bytes = await writeVoice().then((w) => w.bytes);
+  const edited = await withLayer(bytes, (records) => { records[0].leadInMs = 60_000; if (records[1]) records[1].leadInMs = null; });
+  const result = await readPacket(edited);
+  assert.equal(result.margins[0].leadInSeconds, 60);
+  if (result.margins[1]) assert.equal(result.margins[1].leadInSeconds, undefined, 'null is no length');
+  const plain = await readPacket(bytes);
+  assert.equal(plain.margins[0].leadInSeconds, undefined, 'a Margin without the key keeps each run-up\u2019s own length');
+});
+
+test('leadInMs is clamped to 0-300000 ms, and 0 stays 0 (#4171)', async () => {
+  const bytes = await writeVoice().then((w) => w.bytes);
+  const rows: Array<[number, number]> = [[0, 0], [5_000, 5], [300_000, 300], [300_001, 300], [9_000_000, 300], [-1, 0], [-9_000, 0]];
+  for (const [ms, seconds] of rows) {
+    const edited = await withLayer(bytes, (records) => { records[0].leadInMs = ms; });
+    const result = await readPacket(edited);
+    assert.equal(result.margins[0].leadInSeconds, seconds, `leadInMs ${ms}`);
+  }
+});
+
+test('leadInMs of another type is refused, as the app does (#4171)', async () => {
+  const bytes = await writeVoice().then((w) => w.bytes);
+  for (const value of ['60000', true, false, 1.5, {}, [60000]]) {
+    const edited = await withLayer(bytes, (records) => { records[0].leadInMs = value; });
+    await refusedAs(readPacket(edited), 'doesNotMatch');
+  }
+});
+
+test('the corpus packet with leadInMs 60000 imports with a minute of run-up (#4171)', async () => {
+  const bytes = new Uint8Array(readFileSync(new URL('../../../Contracts/examples/packets/lead-in-per-margin.spokenmargins', import.meta.url)));
+  const result = await readPacket(bytes);
+  assert.ok(result.margins.some((m) => m.leadInSeconds === 60) || result.percentMargins.some((m) => m.margin.leadInSeconds === 60));
+});
+
+test('a podcast packet puts the sender\u2019s copy length on each timed Margin, and only a usable one (#4614)', async () => {
+  const bytes = await writeVoice().then((w) => w.bytes);
+  const edited = await withLayer(bytes, () => {}, (manifest) => { (manifest.item as { durationMs: number }).durationMs = 1_946_018; });
+  const result = await readPacket(edited);
+  assert.ok(result.margins.length > 0);
+  for (const margin of result.margins) assert.equal(margin.copyLengthSeconds, 1946.018);
+  for (const bad of [undefined, 0]) {
+    const other = await withLayer(bytes, () => {}, (manifest) => {
+      const item = manifest.item as { durationMs?: number };
+      if (bad === undefined) delete item.durationMs; else item.durationMs = bad;
+    });
+    const read = await readPacket(other);
+    for (const margin of read.margins) assert.equal(margin.copyLengthSeconds, undefined, `durationMs ${bad}`);
+  }
+});
+
+test('a percent Margin never carries a copy length, even when the packet has one (#4614)', async () => {
+  const bytes = await writeVoice().then((w) => w.bytes);
+  const percent = await withLayer(bytes, (records) => {
+    for (const record of records) record.anchor = { anchorType: 'text', exactText: 'x', roughPercent: 50, machineEvidenceAssetIds: [] };
+  }, (manifest) => { (manifest.item as { durationMs: number }).durationMs = 1_946_018; });
+  const result = await readPacket(percent);
+  assert.ok(result.percentMargins.length > 0);
+  for (const { margin } of result.percentMargins) assert.equal(margin.copyLengthSeconds, undefined);
+});

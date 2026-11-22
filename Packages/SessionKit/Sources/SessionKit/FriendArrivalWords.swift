@@ -77,31 +77,51 @@ public enum FriendArrivalWords {
     /// The name of the control that picks the play mode.
     public static let playModeTitle = "When Margins play"
 
-    /// A plain sentence about where Margins were placed, only when something is not as it should be; nil when all is
-    /// well, so a passing check says nothing.
+    /// The Now screen's switch for a friend's Margins (#3790): the owner-reviewed words, the same name the item screen's
+    /// layer control uses for its modes, in place of "Auto-play shared Margins".
+    public static let autoPlayLabel = "Play Margins from friends as you reach them"
+
+    /// The one line under the switch. It follows the global switch only; a layer's own mode is shown on the item screen.
+    public static func autoPlayCaption(isOn: Bool) -> String {
+        isOn ? "The episode pauses for each one, then goes on." : "A tone marks each one."
+    }
+
+    /// A plain sentence for the one placement problem a listener can act on: the file isn't this episode or article.
+    /// Every other state says nothing here; each Margin's own row says where it plays (#3789).
     public static func placementProblem(_ status: ImportedSourceResolutionStatus) -> String? {
         switch status {
-        case .resolved: nil
-        case .pending: "Matching positions in your episode"
-        case .contextOnly: "These Margins can't be tied to exact places in your copy."
-        case .ambiguous: "Some of these Margins could fit more than one place in your copy."
         case .wrongSource: "This may not be the same episode or article these Margins were made on."
-        case .unavailable: "These Margins can't be placed in your copy right now."
+        case .resolved, .pending, .contextOnly, .ambiguous, .unavailable: nil
         }
     }
 
+    /// Whether the imported-layer card drops its own "From Sam" line (#3855). While the friend's intro shows, its sender
+    /// line already says who sent the Margins, so with exactly one layer the card's line would be the same fact again.
+    /// With two or more layers each card keeps its name, because the name tells the cards apart; with the intro gone
+    /// (every friend Margin heard) the card says "From Sam" again, as it always did.
+    public static func hidesLayerSenderLine(introShowing: Bool, layerCount: Int) -> Bool {
+        introShowing && layerCount == 1
+    }
+
     /// What VoiceOver says for one friend's layer, in the friend's words and without a passing integrity check.
+    /// `includesSender: false` drops the leading "From Sam." sentence for a card that hides its sender line (#3855);
+    /// `leadingTitle` then starts the label with the card's title, which the element now sits on.
     public static func layerAccessibilityLabel(
         senderLabel: String, isEnabled: Bool, isMuted: Bool, mode: ImportedCommentaryRevealMode,
-        placementProblem: String?
+        placementProblem: String?, includesSender: Bool = true, leadingTitle: String? = nil
     ) -> String {
-        var parts = [
-            fromLine(senderLabel: senderLabel),
+        var parts = includesSender ? [fromLine(senderLabel: senderLabel)] : []
+        if let title = leadingTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty { parts.append(title) }
+        parts += [
             isEnabled ? "\(possessiveMargins(senderLabel: senderLabel)) are on" : "\(possessiveMargins(senderLabel: senderLabel)) are off",
             isMuted ? "Muted" : "Not muted",
             "\(playModeTitle): \(playModeLabel(mode))"
         ]
         if let placementProblem { parts.append(placementProblem) }
-        return parts.joined(separator: ". ")
+        // A sentence that already ends in punctuation ("Why?") is not given a second full stop.
+        return parts.reduce("") { text, part in
+            if text.isEmpty { return part }
+            return text + (".!?…".contains(text.last!) ? " " : ". ") + part
+        }
     }
 }

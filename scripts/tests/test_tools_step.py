@@ -16,7 +16,11 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_lane_runner import verification  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import importlib.util  # noqa: E402
+_verify_spec = importlib.util.spec_from_file_location('verification_for_steps', Path(__file__).resolve().parents[1] / 'verify-tests.py')
+verification = importlib.util.module_from_spec(_verify_spec)
+_verify_spec.loader.exec_module(verification)
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ROOT / 'Packages/SessionKitTools'

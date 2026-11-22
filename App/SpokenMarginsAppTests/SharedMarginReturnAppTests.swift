@@ -68,9 +68,79 @@ final class SharedMarginReturnAppTests: XCTestCase {
         XCTAssertEqual(model.sharedMarginReturn, .none, "nothing was paused, so nothing is owed back")
 
         model.dismissPendingImportedCommentary()
-        try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(model.snapshot.status, .playing)
-        XCTAssertNil(model.pendingImportedCommentary)
+        // A re-offer would come from a playback tick, which runs the offer check in the job that moves the clock, so a
+        // clock past the dismiss is the signal; a fixed 300 ms passed for a tick slower than that (#4313).
+        let dismissedAtMs = model.snapshot.currentMediaTimeMs ?? 0
+        try await fixture.waitUntil("a playback tick after the dismiss has run the offer check") {
+            (model.snapshot.currentMediaTimeMs ?? 0) > dismissedAtMs
+        }
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertNil(model.pendingImportedCommentary, "the dismissed Margin is not offered again")
+    }
+
+    // #4444 (#3059): the tone over a playing episode neither ducks nor interrupts it. `snapshot.status` can stay `.playing`
+    // while the audio session changes, so this reads the session and the episode player's rate, before and after.
+    private struct SessionFacts: Equatable {
+        let category: AVAudioSession.Category
+        let mode: AVAudioSession.Mode
+        let options: AVAudioSession.CategoryOptions
+        let otherAudioPlaying: Bool
+
+        static func now() -> SessionFacts {
+            let session = AVAudioSession.sharedInstance()
+            return SessionFacts(category: session.category, mode: session.mode, options: session.categoryOptions,
+                                otherAudioPlaying: session.isOtherAudioPlaying)
+        }
+    }
+
+    /// With auto-play off and the tone sounding (a muted layer makes none), runs the episode to the Margin and checks what
+    /// the tone did to the session. Every claim is an assertion.
+    private func assertToneLeavesTheSessionAndTheEpisodeAlone(
+        mixingWithOtherAudio: Bool, file: StaticString = #filePath, line: UInt = #line
+    ) async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, isMuted: false)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        if mixingWithOtherAudio {
+            // The episode plays over another app's audio: the `.mixWithOthers` session `MixedPlaybackAudioSessionTests` sets up.
+            try fixture.sourcePlayer.setMixesWithOtherAudio(true)
+            XCTAssertTrue(AVAudioSession.sharedInstance().categoryOptions.contains(.mixWithOthers), file: file, line: line)
+        }
+        let before = SessionFacts.now()
+        let rateBefore = try XCTUnwrap(fixture.sourcePlayer.currentPlayerRate(), file: file, line: line)
+        // Taken first, so a runner slow enough to cross the Margin before here fails loudly instead of comparing the session with itself.
+        XCTAssertNil(model.pendingImportedCommentary, "the Margin was crossed before the session was read: nothing to compare", file: file, line: line)
+
+        try await fixture.waitUntil("playback reaches the shared Margin at 1 s and sounds its tone", timeout: 8) {
+            model.pendingImportedCommentary != nil
+        }
+        let tone = try XCTUnwrap(model.marginVoicePlayer.cuePlayer, "the tone started (the player exists once play() returned)", file: file, line: line)
+        // `play()`'s result is not kept, and the chime is 0.27 s against a 20 ms poll, so "sounding" is not asserted: the
+        // player exists once `play()` returned, and the session facts below are read at the prompt, not over its length.
+        XCTAssertGreaterThan(tone.duration, 0.2, "it is the chime, not an empty player", file: file, line: line)
+        let after = SessionFacts.now()
+        XCTAssertEqual(after, before, "the tone changed the audio session: category, mode, options or other audio", file: file, line: line)
+        XCTAssertFalse(after.options.contains(.duckOthers), "the tone ducked other audio", file: file, line: line)
+        XCTAssertEqual(after.options.contains(.mixWithOthers), mixingWithOtherAudio, file: file, line: line)
+        XCTAssertEqual(model.snapshot.status, .playing, "a tone, not a stop", file: file, line: line)
+        let rateAfter = try XCTUnwrap(fixture.sourcePlayer.currentPlayerRate(), file: file, line: line)
+        XCTAssertEqual(rateAfter, rateBefore, "the tone changed the episode's player rate", file: file, line: line)
+        // `currentPlayerRate()` falls back to the asked-for rate when the player is stopped, and the status can stay
+        // `.playing` while the audio changes, so the proof that the tone did not stop the episode is its clock moving on.
+        let clockAtTone = fixture.sourcePlayer.currentMediaTimeMs() ?? 0
+        try await fixture.waitUntil("the episode's own clock moves on after the tone") {
+            (fixture.sourcePlayer.currentMediaTimeMs() ?? 0) > clockAtTone + 100
+        }
+        XCTAssertEqual(model.sharedMarginReturn, .none, "nothing was paused, so nothing is owed back", file: file, line: line)
+    }
+
+    func testToneOverAPlayingEpisodeDoesNotTouchTheAudioSession() async throws {
+        try await assertToneLeavesTheSessionAndTheEpisodeAlone(mixingWithOtherAudio: false)
+    }
+
+    func testToneOverAnEpisodeMixingWithAnotherAppLeavesThatSessionAsItWas() async throws {
+        try await assertToneLeavesTheSessionAndTheEpisodeAlone(mixingWithOtherAudio: true)
     }
 
     // R02, R04: the source was already paused when the offer arrived, so dismissing leaves it paused.
@@ -84,7 +154,8 @@ final class SharedMarginReturnAppTests: XCTestCase {
         XCTAssertNotNil(model.pendingImportedCommentary)
 
         model.dismissPendingImportedCommentary()
-        try await Task.sleep(for: .milliseconds(300))
+        // The dismiss decides at once; its one deferred path is the card's auto-play task, which it drops (#4313).
+        XCTAssertNil(model.importedCommentaryAutoPlayTask, "no deferred card task is left to resume it")
         XCTAssertEqual(model.snapshot.status, .paused, "nothing paused it for the offer, so nothing owes it back")
     }
 
@@ -128,7 +199,9 @@ final class SharedMarginReturnAppTests: XCTestCase {
         model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
         XCTAssertNotNil(model.playingImportedCommentary)
         model.returnToSourceFromImportedCommentary()
-        try await Task.sleep(for: .milliseconds(300))
+        // Return decides at once (its first resume attempt is synchronous), and the stop drops the voice's end-of-play
+        // poll, so nothing is left to resume it later; a fixed 300 ms only gave a poll that survived time to fire (#4313).
+        XCTAssertNil(model.marginVoicePlayer.completionTask, "the voice's end-of-play poll is gone")
         XCTAssertEqual(model.snapshot.status, .paused)
     }
 
@@ -174,7 +247,9 @@ final class SharedMarginReturnAppTests: XCTestCase {
         model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
         model.stopInterjectionAudioPlayback()
         model.returnToSourceFromImportedCommentary()
-        try await Task.sleep(for: .milliseconds(300))
+        // Return decides at once (its first resume attempt is synchronous), and the stop drops the voice's end-of-play
+        // poll, so nothing is left to resume it later; a fixed 300 ms only gave a poll that survived time to fire (#4313).
+        XCTAssertNil(model.marginVoicePlayer.completionTask, "the voice's end-of-play poll is gone")
         XCTAssertEqual(model.snapshot.status, .paused)
     }
 
@@ -267,7 +342,8 @@ final class SharedMarginReturnAppTests: XCTestCase {
 
         model.toggleInterjectionAudioPlayback(heard)
         try await fixture.waitUntil("the Margin ends", timeout: 10) { !model.isPlayingInterjectionAudio(heard) }
-        try await Task.sleep(for: .milliseconds(400))
+        // The end handler stops the voice and decides the resume in one main-actor job, so the wait above is the signal;
+        // a fixed 400 ms after it added nothing (#4313).
         XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertNil(model.marginMoment)
     }
@@ -281,9 +357,12 @@ final class SharedMarginReturnAppTests: XCTestCase {
 
         model.toggleInterjectionAudioPlayback(heard)
         XCTAssertEqual(model.snapshot.status, .paused)
+        let poll = try XCTUnwrap(model.marginVoicePlayer.completionTask, "the end-of-voice poll is running")
         model.toggleInterjectionAudioPlayback(heard)
         XCTAssertFalse(model.isPlayingInterjectionAudio(heard))
-        try await Task.sleep(for: .milliseconds(600))
+        // Only the poll could call the Margin ended and resume the source, and a cancelled poll returns without doing so;
+        // the stop cancels it at once. A fixed 600 ms could never have caught a live poll with a 5 s voice (#4313).
+        XCTAssertTrue(poll.isCancelled, "the stop cancelled the poll, so no end can resume the source later")
         XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertNil(model.marginMoment)
     }
@@ -304,7 +383,8 @@ final class SharedMarginReturnAppTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .paused)
 
         try await fixture.waitUntil("the Margin ends", timeout: 10) { !model.isPlayingInterjectionAudio(heard) }
-        try await Task.sleep(for: .milliseconds(400))
+        // The end handler stops the voice and decides the resume in one main-actor job, so the wait above is the signal;
+        // a fixed 400 ms after it added nothing (#4313).
         XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertNil(model.marginMoment)
     }
@@ -328,7 +408,8 @@ final class SharedMarginReturnAppTests: XCTestCase {
         XCTAssertEqual(model.sleepTimerState, .inactive)
 
         try await fixture.waitUntil("the Margin ends", timeout: 10) { !model.isPlayingInterjectionAudio(heard) }
-        try await Task.sleep(for: .milliseconds(400))
+        // The end handler stops the voice and decides the resume in one main-actor job, so the wait above is the signal;
+        // a fixed 400 ms after it added nothing (#4313).
         XCTAssertEqual(model.snapshot.status, .paused)
     }
 
@@ -378,7 +459,9 @@ struct ReturnFixture {
 
     /// `writtenWords` makes the friend's Margin a written one (no recording, #3365); `unplaced` makes its layer a podcast
     /// still waiting for its placement pass, so the Margin has only the sender's time (#3059).
-    static func make(sourcePlaying: Bool, voiceIsReadable: Bool = true, writtenWords: String? = nil, unplaced: Bool = false) async throws -> ReturnFixture {
+    /// `isMuted: false` lets the friend's Margin sound its tone; the default keeps it silent, as these tests always had it (#4444).
+    /// `senderReadAloud: false` is a written Margin its sender asked not to be read aloud (#3427).
+    static func make(sourcePlaying: Bool, voiceIsReadable: Bool = true, writtenWords: String? = nil, unplaced: Bool = false, isMuted: Bool = true, senderReadAloud: Bool? = nil) async throws -> ReturnFixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-return-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let sourceURL = try makeWAV(duration: 30)
@@ -405,14 +488,15 @@ struct ReturnFixture {
         let layer = ImportedCommentaryLayer(id: "received", itemId: itemID, packageDigest: "digest", packageId: "package",
             itemIdentity: SharedItemIdentity(itemType: unplaced ? .podcast : .other, title: "Source"),
             displayLabel: "Reviewer", importedAt: Date(), sourceResolutionStatus: .resolved,
-            isEnabled: true, isMuted: true, revealMode: .companion)
+            isEnabled: true, isMuted: isMuted, revealMode: .companion)
         let record = ImportedCommentaryInterjection(id: "note", layerId: layer.id, packageScopedId: "note", createdAt: Date(),
             anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: unplaced ? 1_000 : nil),
             approvedTranscript: writtenWords ?? "Reviewed words",
             audioPath: writtenWords == nil ? voiceURL.path : nil, audioDurationMs: writtenWords == nil ? 30_000 : nil,
             resolution: unplaced
                 ? ImportedAnchorResolution(evidenceClass: .unresolved, localMediaTimeMs: nil, confidence: 0)
-                : ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 1_000, confidence: 1))
+                : ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 1_000, confidence: 1),
+            senderReadAloud: senderReadAloud) // the sender's choice, when a test is about a Margin the sender asked not to be read (#4934)
         // In the store, not only on the model: pause, seek and every transport call refresh the selected item
         // from the store, which would otherwise empty its Margins and make Listen and jump find nothing.
         _ = try store.importCommentaryLayer(layer, interjections: [record])

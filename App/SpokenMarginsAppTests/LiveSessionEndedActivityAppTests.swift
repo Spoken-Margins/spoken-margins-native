@@ -72,7 +72,11 @@ final class LiveSessionEndedActivityAppTests: XCTestCase {
     func testFinishOnTheCardStopsARecordingWithNoScreenOpen() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let capture = LiveSessionSpokenCapture(files: LiveSessionFileWorker(root: root))
+        let files = LiveSessionFileWorker(root: root)
+        try await files.save(LiveSession(id: "s", startedAt: Date().addingTimeInterval(-60)), generation: 1)
+        // A stand-in recorder, so the recording can be filed and Finish told apart from a discard (#4311).
+        let recorder = StandInMarginRecorder()
+        let capture = LiveSessionSpokenCapture(files: files, recorder: recorder, transcribe: { _ in nil })
         capture.start(sessionId: "s")
         XCTAssertTrue(capture.isRecording(for: "s"))
 
@@ -80,5 +84,10 @@ final class LiveSessionEndedActivityAppTests: XCTestCase {
 
         try await pollUntil { !capture.isRecording(for: "s") }
         XCTAssertFalse(capture.isRecording(for: "s"))
+        try await pollUntil(timeout: .seconds(10)) { await files.session(id: "s")?.margins.isEmpty == false }
+        let margins = await files.session(id: "s")?.margins
+        XCTAssertEqual(margins?.count, 1, "Finish files the recording, not throws it away")
+        let cancels = await recorder.cancels
+        XCTAssertEqual(cancels, 0)
     }
 }

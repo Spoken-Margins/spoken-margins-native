@@ -55,6 +55,7 @@ extension Gate1AppModel {
     func clearRecordingPresentation() {
         marginCapture.clearPresentationContext()
         justHeardPeek.end()
+        endMarginEndPhraseListening() // the listener ends with the recording, however it ended (#3940)
     }
 
     nonisolated private static func transcribeJustHeard(

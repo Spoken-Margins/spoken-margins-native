@@ -56,13 +56,17 @@ struct PlaybackNowView: View {
                         transcriptionStatus: row.interjection.transcriptionStatus, captureKind: row.interjection.captureKind),
                         detail: row.placeDescription(), countdown: entry.countdown,
                         isShared: false, identifier: "playback.now.margin.\(row.id)",
+                        goesTo: SilentMarginWords.ownWrittenGoesTo(row.interjection), sourceNoun: model.sourceNoun,
+                        star: .ownMargin(row.interjection, place: .now, model: model),
                         showDetails: { selectedMargin = row }, play: { MarginMomentTap.start(row, model: model) })
                 } else if let row = shared.first(where: { $0.id == entry.id }), entry.origin == .shared {
                     PlaybackMarginRowView(title: row.interjection.approvedTranscript,
-                        detail: "\(row.collectionLabel) · \(entry.isApproximate ? SharedMarginPlacementWording.approximate : row.positionDescription)",
+                        detail: SilentMarginWords.detail("\(row.collectionLabel) · \(entry.isApproximate && row.layer.itemIdentity.itemType != .podcast ? SharedMarginPlacementWording.approximate : row.positionDescription)", goesTo: row.goesToFromList),
                         countdown: entry.countdown, isShared: true, identifier: "playback.now.margin.\(row.id)",
-                        canPlay: row.canPlayFromNearbyList,
-                        showDetails: { selectedSharedMargin = row }, play: { model.playSharedMarginMoment(row) })
+                        canPlay: row.canPlayFromNearbyList || row.goesToFromList,
+                        goesTo: row.goesToFromList, sourceNoun: model.sourceNoun,
+                        showDetails: { selectedSharedMargin = row },
+                        play: { row.goesToFromList ? model.goToSharedMargin(row) : model.playSharedMarginMoment(row) }) // a voiced Margin keeps its moment
                 }
             }
         }
@@ -71,10 +75,10 @@ struct PlaybackNowView: View {
         .foregroundStyle(.white)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("playback.now.margins")
-        .sheet(item: $selectedMargin) { row in
+        .trackedSheet(item: $selectedMargin) { row in
             ExperienceMarginDetailView(row: row).environmentObject(model)
         }
-        .sheet(item: $selectedSharedMargin) { row in
+        .trackedSheet(item: $selectedSharedMargin) { row in
             SharedMarginDetailView(row: row).environmentObject(model)
         }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)

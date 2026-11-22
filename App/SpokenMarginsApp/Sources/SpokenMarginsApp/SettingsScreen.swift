@@ -19,6 +19,10 @@ struct SettingsScreen: View, Equatable {
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @AppStorage(HeadphoneDoublePressAction.storageKey) private var headphoneDoublePress = HeadphoneDoublePressAction.default.rawValue
+    /// End a Margin by saying "stop margin" (#3940). On until the listener turns it off.
+    @AppStorage(MarginEndPhraseAvailability.storageKey) private var endsMarginByPhrase = true
+    /// Where footnotes are heard (#3777). Read at the next play, never mid-listen.
+    @AppStorage(FootnoteMode.storageKey) private var footnoteMode = FootnoteMode.default.rawValue
     @State private var showsDeveloperTools = false
     #if DEBUG
     @FocusState private var editingMapJSON: Bool
@@ -156,17 +160,22 @@ struct SettingsScreen: View, Equatable {
                             .accessibilityLabel("Refresh iOS Voices")
                             .accessibilityIdentifier("settings.refreshSpeechVoices.button")
                         }
-                        Picker("Speech Voice", selection: model.screenBinding(\.speechVoiceIdentifier)) {
-                            Text("System Spoken Content Voice (Siri falls back)").tag("")
-                            ForEach(inputs.speechVoiceOptions) { voice in
-                                Text("\(voice.name) · \(voice.language) · \(voice.quality)")
-                                    .tag(voice.id)
-                            }
+                        NavigationLink {
+                            SpeechVoiceListScreen(
+                                voices: inputs.speechVoiceOptions,
+                                chosenIdentifier: inputs.speechVoiceIdentifier,
+                                select: { identifier in
+                                    model.speechVoiceIdentifier = identifier
+                                    model.ttsVoiceSelectionChanged()
+                                })
+                            .miniPlayerKeepOut()
+                        } label: {
+                            LabeledContent(
+                                "Speech Voice",
+                                value: SpeechVoiceListScreen.menu(
+                                    voices: inputs.speechVoiceOptions, chosenIdentifier: inputs.speechVoiceIdentifier).valueText)
                         }
                         .accessibilityIdentifier("settings.speechVoice.picker")
-                        .onCompatibleChange(of: inputs.speechVoiceIdentifier) { _ in
-                            model.ttsVoiceSelectionChanged()
-                        }
                     }
                     VStack(alignment: .leading) {
                         HStack {
@@ -252,6 +261,18 @@ struct SettingsScreen: View, Equatable {
                         .onCompatibleChange(of: inputs.skipUnit) { _ in
                             model.skipUnitChanged()
                         }
+                        Picker("Footnotes", selection: Binding(
+                            get: { FootnoteMode.pickerSelection(storedValue: footnoteMode).rawValue },
+                            set: { footnoteMode = $0 }
+                        )) {
+                            ForEach(FootnoteMode.pickerChoices, id: \.self) { mode in
+                                Text(mode.pickerTitle).tag(mode.rawValue)
+                            }
+                        }
+                        .accessibilityIdentifier("settings.footnotes.picker")
+                        Text(FootnoteMode.pickerCaption)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
                         Picker("Podcast Skip Back", selection: model.screenBinding(\.mediaSkipBackSeconds)) {
                             ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
                                 Text("\(seconds) seconds").tag(seconds)
@@ -266,9 +287,19 @@ struct SettingsScreen: View, Equatable {
                             Text("Add a Margin").tag(HeadphoneDoublePressAction.addMargin.rawValue)
                         }
                         .accessibilityIdentifier("settings.headphoneDoublePress.picker")
-                        Text("Add a Margin starts one. End it with the button on screen, or by pressing your headphones (not every headset reports a press).")
+                        Text("Add a Margin starts one. End it by saying \u{201C}stop margin\u{201D}, with the button on screen, or by pressing your headphones (not every headset reports a press).")
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
+                        Toggle("End a Margin by saying \u{201C}stop margin\u{201D}", isOn: $endsMarginByPhrase)
+                            .accessibilityIdentifier("settings.marginEndPhrase.toggle")
+                        Text("Say \u{201C}stop margin\u{201D} or \u{201C}end margin\u{201D} when you\u{2019}re done. It\u{2019}s heard on this iPhone only. Silence never ends a Margin.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                        if SpeechRecognitionAccess.isOff {
+                            Text("Needs Speech Recognition, which is off for Spoken Margins in iOS Settings.")
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
                         Picker("Podcast Skip Forward", selection: model.screenBinding(\.mediaSkipForwardSeconds)) {
                             ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
                                 Text("\(seconds) seconds").tag(seconds)
@@ -609,6 +640,7 @@ struct SettingsScreen: View, Equatable {
             .background(AppColors.bone)
             .tint(AppColors.evergreen)
             .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline) // the same header as Library, Following and Margins (#4019)
             .onAppear {
                 guard !isEdgeSwipePreview else { return }  // a swipe's preview starts no refresh (#106)
                 model.refreshSpeechVoiceOptions()

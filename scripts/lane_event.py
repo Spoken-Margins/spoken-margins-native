@@ -82,7 +82,8 @@ def test_records(evidence: Path) -> dict:
 def build(verdict: str, tier: str, head: str, trunk: str, seconds, queue_seconds, runs, records,
           hold: bool = False) -> dict:
     """The event for one lane report. runs: the job's step runs (lane-runner STEP_RUNS), records: test_records().
-    hold: the report is held for T3 (lane-runner's held_for_t3_report), which is not a runner fault.
+    hold: the report was held for T3 (lane-runner's held_for_t3_report, removed in #4572), which is not a runner fault;
+    kept so the reports from before #4572 still read as holds.
     Anything that doesn't fit the patterns is dropped."""
     import lane_ledger
     verdict = verdict if verdict in VERDICTS else 'INCONCLUSIVE'

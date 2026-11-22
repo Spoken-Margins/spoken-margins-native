@@ -4,7 +4,7 @@ import SessionKitPersistence
 
 @MainActor
 final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked Sendable {
-    static let backgroundSessionIdentifier = "com.spokenmargins.podcast-downloads"
+    nonisolated static let backgroundSessionIdentifier = "com.spokenmargins.podcast-downloads"
     @Published private(set) var recordsByItemId: [String: PodcastDownloadRecord] = [:]
     @Published private(set) var networkTransport: PodcastNetworkTransport = .other
 
@@ -40,7 +40,15 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     /// while the app runs; the row only has to catch up before the next launch. Deletes go through the same
     /// queue so a queued save can't bring back a row that was just removed.
     private let rowWriter = DispatchQueue(label: "spoken-margins.podcast-download-rows", qos: .utility)
-    private var session: URLSession!
+    private var session: URLSession?
+    /// Set when the session could not be made at init because an older session still held the identifier.
+    private var sessionTask: Task<URLSession?, Never>?
+    private let usesBackgroundSession: Bool
+    private let sessionIdentifier: String
+    private let foregroundSessionConfiguration: URLSessionConfiguration?
+    private let monitorsNetwork: Bool
+    /// How long a new coordinator waits for the old session to finish invalidating.
+    private let sessionHandoffTimeout: Duration
 
     init(
         store: SQLiteSessionStore,
@@ -53,8 +61,19 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         contentLength: (@Sendable (URL, Bool) async throws -> Int64)? = nil,
         startDownload: ((URLRequest, String) -> Void)? = nil,
         preflightSession: URLSession = .shared,
-        foregroundSessionConfiguration: URLSessionConfiguration? = nil
+        foregroundSessionConfiguration: URLSessionConfiguration? = nil,
+        sessionIdentifier: String = PodcastDownloadCoordinator.backgroundSessionIdentifier,
+        sessionHandoffTimeout: Duration = .seconds(20)
     ) throws {
+        #if os(iOS)
+        self.usesBackgroundSession = usesBackgroundSession
+        #else
+        self.usesBackgroundSession = false
+        #endif
+        self.sessionIdentifier = sessionIdentifier
+        self.foregroundSessionConfiguration = foregroundSessionConfiguration
+        self.monitorsNetwork = monitorsNetwork
+        self.sessionHandoffTimeout = sessionHandoffTimeout
         self.store = store
         self.connectivity = connectivity ?? ConnectivityMonitor()
         self.contentLength = contentLength
@@ -73,12 +92,23 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         try mutableDirectory.setResourceValues(values)
         super.init()
 
+        try restoreRecords()
+        // A background session whose identifier an older session still holds is made as soon as that one has
+        // invalidated (#4392); everything else is made now.
+        if !self.usesBackgroundSession || BackgroundSessionGate.shared.claim(sessionIdentifier) {
+            makeSession()
+        } else {
+            Task { @MainActor [weak self] in _ = await self?.ensureSession() }
+        }
+    }
+
+    /// Makes the session. A background session's identifier must already be claimed from `BackgroundSessionGate`.
+    @discardableResult
+    private func makeSession() -> URLSession {
         #if os(iOS)
         let configuration: URLSessionConfiguration
         if usesBackgroundSession {
-            configuration = URLSessionConfiguration.background(
-                withIdentifier: Self.backgroundSessionIdentifier
-            )
+            configuration = URLSessionConfiguration.background(withIdentifier: sessionIdentifier)
             configuration.sessionSendsLaunchEvents = true
             configuration.isDiscretionary = false
         } else {
@@ -88,10 +118,10 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         let configuration = foregroundSessionConfiguration ?? URLSessionConfiguration.default
         #endif
         configuration.waitsForConnectivity = true
-        session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-        try restoreRecords()
+        let made = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+        session = made
         if monitorsNetwork {
-            session.getAllTasks { [weak self] tasks in
+            made.getAllTasks { [weak self] tasks in
                 Task { @MainActor in
                     guard let self else { return }
                     for task in tasks {
@@ -114,6 +144,32 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                 }
             }
         }
+        return made
+    }
+
+    /// The session, once it exists: now, or after the older session on the same background identifier has
+    /// invalidated. Nil when this coordinator was shut down, or the older session never let go within
+    /// `sessionHandoffTimeout`; the caller then fails the download so the row shows a retry.
+    private func ensureSession() async -> URLSession? {
+        // A shut-down coordinator's session is invalidated; a task made on it raises too.
+        if isShutDown { return nil }
+        if let session { return session }
+        if let sessionTask { return await sessionTask.value }
+        let task = Task { @MainActor [weak self] () -> URLSession? in
+            guard let self else { return nil }
+            defer { self.sessionTask = nil }
+            if self.isShutDown { return nil }
+            guard await BackgroundSessionGate.shared.claim(
+                self.sessionIdentifier, waitingUpTo: self.sessionHandoffTimeout
+            ) else { return nil }
+            if self.isShutDown {
+                BackgroundSessionGate.shared.release(self.sessionIdentifier)
+                return nil
+            }
+            return self.makeSession()
+        }
+        sessionTask = task
+        return await task.value
     }
 
     deinit {
@@ -126,7 +182,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         isShutDown = true
         if let connectivityObserver { connectivity.removeObserver(connectivityObserver) }
         connectivityObserver = nil
-        session.invalidateAndCancel()
+        session?.invalidateAndCancel()
         for itemId in Array(generations.keys) { invalidateAttempt(itemId: itemId) }
         // A coordinator made next restores from the store, so queued row writes land first.
         rowWriter.sync {}
@@ -145,7 +201,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             // `shutdown` waits for it, so the reservation is gone before anything reads the budget again.
             rowWriter.async { [store] in try? store.deleteOfflineStorageReservation(id: attempt.reservationId) }
         }
-        session.getAllTasks { tasks in
+        session?.getAllTasks { tasks in
             for task in tasks {
                 let attempt = PodcastDownloadAttempt.decode(task.taskDescription)
                 if (attempt?.itemId == itemId && attempt?.generation == generation)
@@ -179,7 +235,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     func status(itemId: String) -> PodcastDownloadState? { recordsByItemId[itemId]?.state }
 
     func validatedLocalURL(for itemId: String) -> URL? {
-        guard var record = recordsByItemId[itemId] else { return nil }
+        guard let record = recordsByItemId[itemId] else { return nil }
         if record.state == .downloading {
             // A replacement download keeps the previously saved episode playable until it
             // completes. A first download has no saved file yet and must not be marked failed.
@@ -188,11 +244,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         guard record.state == .availableOffline else { return nil }
         if let url = localURL(for: record),
            let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-           size > 0, record.bytesWritten == 0 || Int64(size) == record.bytesWritten { return url }
-        record.state = .failed
-        record.localRelativePath = nil
-        record.failureReason = "Downloaded file is missing or incomplete. Download it again."
-        persist(record)
+           record.acceptsSavedFile(ofSize: size) { return url }
+        persist(record.foundMissingFile())
         return nil
     }
 
@@ -328,6 +381,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         rowWriter.sync {}
     }
 
+    var hasSessionForTesting: Bool { session != nil }
+
     func setNetworkTransportForTesting(_ transport: PodcastNetworkTransport) {
         networkChanged(to: transport)
     }
@@ -336,29 +391,16 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     /// are written behind on the row queue, in the order made (#2509): a launch does not wait on a write per row, and
     /// a repair that never lands is made again on the next launch, because the stored row still says the old thing.
     private func restoreRecords() throws {
-        for var record in try store.loadPodcastDownloads() {
-            if record.state == .failed, let retained = retainedLocalFile(for: record) {
-                record.state = .availableOffline
-                record.bytesWritten = retained.size
-                record.expectedBytes = retained.size
-                record.failureReason = "Replacement download failed; saved audio is still available."
-                writeBehind(record)
+        for stored in try store.loadPodcastDownloads() {
+            let restoration = stored.restoredAtLaunch(
+                retainedFileSize: { retainedLocalFile(for: stored)?.size },
+                fileExists: { localURL(for: stored).map { FileManager.default.fileExists(atPath: $0.path) } ?? false }
+            )
+            for row in restoration.writes { writeBehind(row) }
+            if restoration.localAssetReady, let url = localURL(for: restoration.record) {
+                onLocalAssetReady?(restoration.record.itemId, url)
             }
-            if record.state == .availableOffline {
-                guard let url = localURL(for: record), FileManager.default.fileExists(atPath: url.path) else {
-                    record.state = .failed
-                    record.localRelativePath = nil
-                    record.failureReason = "Downloaded file is missing. Retry to download it again."
-                    writeBehind(record)
-                    recordsByItemId[record.itemId] = record
-                    continue
-                }
-                onLocalAssetReady?(record.itemId, url)
-            } else if record.state == .downloading {
-                record.state = .waitingForWiFi
-                writeBehind(record)
-            }
-            recordsByItemId[record.itemId] = record
+            recordsByItemId[restoration.record.itemId] = restoration.record
         }
     }
 
@@ -369,20 +411,21 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
 
     private func networkChanged(to transport: PodcastNetworkTransport) {
         networkTransport = transport
-        if transport == .wifi {
-            let waiting = recordsByItemId.values.filter {
-                $0.state == .waitingForWiFi || $0.state == .streamingOnly
-            }
-            for record in waiting { beginDownload(record: record, userInitiated: false) }
-        } else {
-            // Invalidate preparation as well as URLSession work. A delayed HEAD
-            // response must not start an automatic download after leaving Wi-Fi.
-            for var record in Array(recordsByItemId.values)
-            where record.state == .downloading || record.state == .waitingForWiFi {
-                guard userInitiatedByItemId[record.itemId] != true else { continue }
+        for record in Array(recordsByItemId.values) {
+            switch record.reaction(
+                toTransport: transport, userInitiated: userInitiatedByItemId[record.itemId] == true
+            ) {
+            case .startAutomaticDownload:
+                beginDownload(record: record, userInitiated: false)
+            case .pause(let state):
+                // Invalidate preparation as well as URLSession work. A delayed HEAD
+                // response must not start an automatic download after leaving Wi-Fi.
                 invalidateAttempt(itemId: record.itemId)
-                record.state = transport == .cellular ? .streamingOnly : .waitingForWiFi
-                persist(record)
+                var paused = record
+                paused.state = state
+                persist(paused)
+            case nil:
+                break
             }
         }
     }
@@ -406,12 +449,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         let generation = UUID().uuidString
         generations[record.itemId] = generation
         userInitiatedByItemId[record.itemId] = userInitiated
-        var updated = record
-        updated.remoteURL = url.absoluteString
-        updated.state = .downloading
-        updated.bytesWritten = 0
-        updated.expectedBytes = nil
-        updated.failureReason = nil
+        let updated = record.startingDownload(remoteURL: url.absoluteString)
         persist(updated)
         preparationTasks[record.itemId] = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -421,6 +459,18 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             do {
                 let announced = try await self.announcedContentLength(at: url, userInitiated: userInitiated)
                 guard self.generations[record.itemId] == generation else { return }
+                // Waits out an older session on the same background identifier; making a task on a second one
+                // aborts the app (#4392).
+                var taskSession: URLSession?
+                if self.startDownload == nil {
+                    taskSession = await self.ensureSession()
+                    guard self.generations[record.itemId] == generation else { return }
+                    guard taskSession != nil else {
+                        self.invalidateAttempt(itemId: record.itemId)
+                        self.fail(updated, reason: "Downloads are restarting. Try again in a moment.")
+                        return
+                    }
+                }
                 // A delete queued by `removeItem` or `evict` must land before the ledger counts bytes, or it would
                 // count a file that is already gone and evict another episode to make room.
                 await self.drainRowWrites()
@@ -454,8 +504,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                 self.persist(reserved)
                 if let startDownload = self.startDownload {
                     startDownload(request, attempt.taskDescription)
-                } else {
-                    let task = self.session.downloadTask(with: request)
+                } else if let taskSession {
+                    let task = taskSession.downloadTask(with: request)
                     task.taskDescription = attempt.taskDescription
                     if userInitiated { self.userInitiatedTaskIds.insert(task.taskIdentifier) }
                     task.resume()
@@ -548,17 +598,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     }
 
     private func fail(_ record: PodcastDownloadRecord, reason: String) {
-        var updated = record
-        if let retained = retainedLocalFile(for: record) {
-            updated.state = .availableOffline
-            updated.bytesWritten = retained.size
-            updated.expectedBytes = retained.size
-            updated.failureReason = "Replacement download failed; saved audio is still available. \(reason)"
-        } else {
-            updated.state = .failed
-            updated.failureReason = reason
-        }
-        persist(updated)
+        persist(record.failing(reason: reason, retainedFileSize: retainedLocalFile(for: record)?.size))
     }
 
     private func retainedLocalFile(for record: PodcastDownloadRecord) -> (url: URL, size: Int64)? {
@@ -582,13 +622,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             try? store.deleteAudioAsset(id: "podcast-local-\(itemId)")
             try? store.deleteOwnedOfflineAsset(id: "podcast-offline-\(itemId)")
         }
-        var updated = record
-        updated.state = .evicted
-        updated.localRelativePath = nil
-        updated.bytesWritten = 0
-        updated.expectedBytes = nil
-        updated.failureReason = nil
-        persist(updated)
+        persist(record.evicted())
     }
 
     /// Adopts only the current attempt. Staging filenames are unique, so a late
@@ -640,13 +674,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                 }
                 // The memory record as it is now, not as it was before the waits: playback may have touched it.
                 let before = recordsByItemId[attempt.itemId] ?? record
-                var published = before
                 let previousFile = localURL(for: before)
-                published.state = .availableOffline
-                published.localRelativePath = destination.lastPathComponent
-                published.bytesWritten = size
-                published.expectedBytes = size
-                published.failureReason = nil
+                var published = before.adoptingFile(named: destination.lastPathComponent, size: size)
                 published.updatedAt = Date()
                 let asset = AudioAsset(id: "podcast-local-\(attempt.itemId)", itemId: attempt.itemId,
                     audioSourceType: .nativeMediaFile, availability: .localPhone, filePath: destination.lastPathComponent)
@@ -664,15 +693,10 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                 if recordsByItemId[attempt.itemId] == before {
                     recordsByItemId[attempt.itemId] = published
                     onRecordChanged?(published)
-                } else if var current = recordsByItemId[attempt.itemId] {
+                } else if let current = recordsByItemId[attempt.itemId] {
                     // Something saved a newer row while ours was queued (the listener started the episode): it
                     // may have landed after ours, so state the finished download on top of it.
-                    current.state = published.state
-                    current.localRelativePath = published.localRelativePath
-                    current.bytesWritten = size
-                    current.expectedBytes = size
-                    current.failureReason = nil
-                    persist(current)
+                    persist(current.adoptingFile(named: destination.lastPathComponent, size: size))
                 }
                 invalidateAttempt(itemId: attempt.itemId)
                 // The old file goes only after the new row is saved.
@@ -723,21 +747,25 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
               let record = recordsByItemId[attempt.itemId] else { return }
         let exceededUnannouncedLimit = unannouncedLimitExceeded.contains(attempt.generation)
         invalidateAttempt(itemId: attempt.itemId)
-        if exceededUnannouncedLimit {
-            // Not a dropped connection: retrying on Wi-Fi would only write the same bytes again.
-            fail(record, reason: PodcastDownloadSizeProbe.unannouncedLimitMessage)
-        } else if !attempt.userInitiated && networkTransport != .wifi {
-            var waiting = record
-            waiting.state = networkTransport == .cellular ? .streamingOnly : .waitingForWiFi
-            waiting.failureReason = nil
-            persist(waiting)
-        } else {
-            fail(record, reason: error.localizedDescription)
+        // An unannounced episode past its size bound is not a dropped connection: retrying on Wi-Fi would only
+        // write the same bytes again.
+        switch record.interrupted(
+            userInitiated: attempt.userInitiated, exceededUnannouncedLimit: exceededUnannouncedLimit,
+            transport: networkTransport, reason: error.localizedDescription
+        ) {
+        case .waiting(let waiting): persist(waiting)
+        case .failed(let reason): fail(record, reason: reason)
         }
     }
 }
 
 extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
+    /// Gives a background identifier back once its session is gone, so the next coordinator can take it (#4392).
+    nonisolated func urlSession(_ session: URLSession, didBecomeInvalidWithError error: Error?) {
+        guard let identifier = session.configuration.identifier else { return }
+        Task { @MainActor in BackgroundSessionGate.shared.release(identifier) }
+    }
+
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
                                totalBytesExpectedToWrite: Int64) {
@@ -772,6 +800,8 @@ extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                didFinishDownloadingTo location: URL) {
         guard let attempt = PodcastDownloadAttempt.decode(downloadTask.taskDescription) else { return }
+        // The bytes are on disk whether or not the episode is adopted, so they count first (#4389).
+        DiskWriteLedgerStore.shared.record(fileAt: location, source: .download)
         let responseOK = (downloadTask.response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
         // The URLSession temporary file is only valid until this delegate returns.
         let ext = URL(fileURLWithPath: downloadTask.response?.suggestedFilename ?? "episode.audio").pathExtension

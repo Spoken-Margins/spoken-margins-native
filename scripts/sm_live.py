@@ -358,6 +358,9 @@ def changes_since(world, commit, path):
     if not commit or not re.fullmatch(r'[0-9a-f]{7,40}', commit):
         return None
     try:
+        # Fetch first: `origin/<trunk>` in a checkout that has not fetched lately is old, and a stale trunk makes a surface
+        # that is behind read "same as main" (2026-11-22: the web app, 19 commits behind, printed as current).
+        world.git('fetch', '-q', 'origin', TRUNK)
         return int(world.git('rev-list', '--count', f'{commit}..origin/{TRUNK}', '--', path).strip())
     except (ReadError, ValueError):
         return None

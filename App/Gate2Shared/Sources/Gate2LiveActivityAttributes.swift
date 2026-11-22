@@ -19,7 +19,7 @@ public enum SkimDestinationLabel {
     /// What VoiceOver reads for a Lock Screen Skim button.
     public static func accessibilityLabel(destinationMs: Int?, backward: Bool) -> String {
         guard let destinationMs else {
-            return backward ? "Skim backward by scene summary" : "Skim forward by scene summary"
+            return backward ? "Skim back" : "Skim forward"
         }
         return (backward ? "Skim back to " : "Skim forward to ") + time(destinationMs)
     }

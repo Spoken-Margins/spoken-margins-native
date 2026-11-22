@@ -89,6 +89,19 @@ class TestInputsReadOutsideAssertionsTest(unittest.TestCase):
                 problems.append(f'{path.relative_to(ROOT)}:{line}: {snippet}')
         self.assertEqual(problems, [], 'read the input into a `let` first (see TestInputs.swift):\n' + '\n'.join(problems))
 
+    def test_every_file_that_names_testinputs_imports_its_module(self):
+        """`TestInputs` lives in the `SessionKitTestInputs` module. A file that uses it without the import compiles on no
+        host, and the Apple-only targets (SessionKitTests) can't be compiled in a Linux cloud session to show it (#1387)."""
+        missing = []
+        for path in sorted(TESTS.rglob('*.swift')):
+            if path.parent.name == 'TestInputs':
+                continue
+            text = path.read_text(encoding='utf-8')
+            code = '\n'.join(line.partition('//')[0] for line in text.splitlines())
+            if re.search(r'\bTestInputs\b', code) and not re.search(r'^\s*import SessionKitTestInputs\b', text, re.M):
+                missing.append(str(path.relative_to(ROOT)))
+        self.assertEqual(missing, [], 'add `import SessionKitTestInputs` to these test files')
+
     def test_the_scan_catches_each_shape(self):
         text = '''
     private func spacer(context: [String] = []) throws -> Spacer {

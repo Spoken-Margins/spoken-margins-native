@@ -17,7 +17,6 @@ public enum RecoveredEpisodeMatch {
             media: ItemMedia(sourceType: .remoteStream, url: entry.audioURL, durationMs: entry.audioDurationMs)
         )
         entry.fillEpisodeIdentity(of: &item, showTitle: showTitle)
-        if item.media != nil, item.media?.durationMs == nil { item.media?.durationMs = entry.audioDurationMs }
         return SharedItemIdentityBuilder.localIdentity(for: item)
     }
 

@@ -112,12 +112,14 @@ public enum SkimStopRouting {
     // MARK: Building the list
 
     /// The stops of one item: its chapters (text by character, media by millisecond) and the Margins that can play
-    /// inline. The caller passes only Margins with a voice to play.
+    /// inline. `sharedMargins` is only Margins with a voice to play; `silentSharedMargins` is a friend's Margins that
+    /// are never spoken (`!SharedMarginAudio.canOffer`), which Skim goes to and plays on from (#4934).
     public static func stops(
         textChapters: [Chapter],
         mediaChapters: [MediaTimelineChapter],
         ownMargins: [Interjection],
         sharedMargins: [ImportedCommentaryInterjection],
+        silentSharedMargins: [ImportedCommentaryInterjection] = [],
         unit: SkimStops.PositionUnit
     ) -> SkimStops {
         let chapters: [SkimStop]
@@ -127,8 +129,35 @@ public enum SkimStopRouting {
         }
         let margins = ownMargins.compactMap { SkimStop.margin($0, unit: unit) }
             // Skim stops where the phone will sound: a recording, or a written Margin that will be read aloud. A written
-            // Margin the sender or the listener turned reading off for is passed (2026-11-05, #3427).
+            // Margin the sender or the listener turned reading off for is a silent stop (#4934; it was passed, 2026-11-05, #3427).
             + sharedMargins.filter(SharedMarginAudio.canOffer).compactMap { SkimStop.margin($0, unit: unit) }
-        return SkimStops(chapters: chapters, margins: margins, unit: unit)
+        let silent = silentStops(silentSharedMargins, besides: chapters + margins, unit: unit)
+        return SkimStops(chapters: chapters, margins: margins + silent, unit: unit)
+    }
+
+    /// How close a silent stop may sit to another stop (a millisecond item) before it is dropped: no press should land
+    /// where the listener already is. In characters only the same character counts (#4934, Default taken 12).
+    public static let silentStopTieMs = 1_000
+
+    /// The silent stops that survive the ties: one within `silentStopTieMs` (or at the same character) of any other stop is
+    /// dropped, and of two silent stops that close, the first in order stays. A silent Margin that
+    /// `SharedMarginAudio.canOffer` would offer is never one: it has a voice, so it belongs in `sharedMargins`.
+    private static func silentStops(
+        _ margins: [ImportedCommentaryInterjection], besides others: [SkimStop], unit: SkimStops.PositionUnit
+    ) -> [SkimStop] {
+        let tolerance: Int
+        switch unit {
+        case .milliseconds: tolerance = silentStopTieMs
+        case .characters: tolerance = 0
+        }
+        var kept: [SkimStop] = []
+        let candidates = margins.filter { !SharedMarginAudio.canOffer($0) }
+            .compactMap { SkimStop.silentMargin($0, unit: unit) }
+            .sorted { lhs, rhs in lhs.position != rhs.position ? lhs.position < rhs.position : lhs.id < rhs.id }
+        for candidate in candidates {
+            let tied = (others + kept).contains { $0.id != candidate.id && abs($0.position - candidate.position) <= tolerance }
+            if !tied { kept.append(candidate) }
+        }
+        return kept
     }
 }

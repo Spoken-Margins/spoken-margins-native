@@ -172,6 +172,15 @@ test('the source link is left out when it could disclose a private URL', () => {
     ['https://example.org/episode#PRIVATE', false], ['javascript:alert(1)', false], ['//example.org/a', false],
     ['', false], [' https://example.org/a', false], ['https://example.org/\nPRIVATE', false], ['https://', false],
     ['https://example.org/%zz', false], ['data:text/html,hi', false], [undefined, false],
+    // A known episode page keeps its one episode key, in the form the phone rebuilds it to (owner, 2026-11-17).
+    ['https://podcasts.apple.com/us/podcast/imaginary-worlds/id916273527?i=1000543006547', true],
+    ['https://podcasts.apple.com/us/podcast/x/id1', true], ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', true],
+    ['https://podcasts.apple.com/us/podcast/x/id1?i=42&uo=4', false], ['https://podcasts.apple.com/us/podcast/x/id1?i=abc', false],
+    ['https://podcasts.apple.com/us/podcast/x/id1?i=', false], ['https://podcasts.apple.com/us/podcast/x/id1?i=42#t', false],
+    ['https://podcasts.apple.com/us/podcast/x/id1?token=PRIVATE', false], ['http://podcasts.apple.com/us/podcast/x/id1?i=42', false],
+    ['https://podcasts.apple.com.example.net/x/id1?i=42', false], ['https://evilpodcasts.apple.com/x/id1?i=42', false],
+    ['https://example.org/episode?i=42', false], ['https://www.youtube.com/results?v=dQw4w9WgXcQ', false],
+    ['https://www.youtube.com/watch?v=short', false], ['https://PRIVATE@podcasts.apple.com/x/id1?i=42', false],
   ]) {
     assert.equal(safeSourceURL(url) !== '', safe, String(url));
   }

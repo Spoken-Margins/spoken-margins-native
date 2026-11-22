@@ -144,8 +144,9 @@ final class EpisodeMapPreparerTests: XCTestCase {
         model.prepareEpisodeMap(itemId: "another-item")
         XCTAssertEqual(model.statusMessage, "An episode map is already being prepared.")
 
+        // `cancel(itemId:)` calls `task?.cancel()` on the main actor before it returns, so the run's flag has already
+        // flipped, or been left alone, by the next line. There is no later moment to wait for.
         model.episodeMapPreparer.cancel(itemId: "another-item")
-        try await Task.sleep(for: .milliseconds(50))
         XCTAssertFalse(task.isCancelled, "cancelling a different item must not cancel this run")
         XCTAssertEqual(model.episodeMapPreparationStatus, "Transcribing on device")
 

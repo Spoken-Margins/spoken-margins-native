@@ -60,6 +60,8 @@ export interface WrittenPacket {
 const REPLY_ID = /^packet:([0-9a-f]{64}):(.+)$/;
 
 const pad = (n: number): string => String(n).padStart(4, '0');
+/** The name the writer gives the Margin at this position (0-based) in `included`: `margin-0001`, `margin-0002`, ... */
+export const scopedMarginId = (index: number): string => `margin-${pad(index + 1)}`;
 
 const httpsShareable = (value: string | undefined): string | undefined => {
   const link = shareableLink(value);
@@ -112,8 +114,21 @@ export async function writePacket(episode: Episode, margins: readonly Margin[], 
     throw new PacketError('cannotShare', 'episode title is empty or too long');
   }
 
-  const durationMs = episode.durationSeconds !== undefined && episode.durationSeconds > 0
-    ? Math.round(episode.durationSeconds * 1000) : undefined;
+  // The length of the copy the listener's own Margins were made on, not the feed's stated length: a podcast with dynamic
+  // ads is a different file on each request, and the friend compares this with their own copy (#4175, #4614). The newest
+  // own Margin going into the packet that has one wins; a friend's Margin never stands in. Only the value of the
+  // existing `item.durationMs` changes, never the key.
+  const copyMs = (m: Margin): number | undefined => {
+    const s = m.author === undefined ? m.copyLengthSeconds : undefined;
+    return s !== undefined && Number.isFinite(s) && s > 0 ? Math.round(s * 1000) : undefined;
+  };
+  // Newest first by `createdAt`; an unreadable date counts as oldest, and a tie goes to the later id, so the choice never
+  // depends on the order the Margins arrive in.
+  const made = (m: Margin): number => { const t = Date.parse(m.createdAt); return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t; };
+  const newestFirst = (a: Margin, b: Margin): number => (made(a) === made(b) ? (a.id < b.id ? 1 : a.id > b.id ? -1 : 0) : made(b) > made(a) ? 1 : -1);
+  const newestCopy = [...withText].filter((m) => copyMs(m) !== undefined).sort(newestFirst)[0];
+  const durationMs = (newestCopy && copyMs(newestCopy))
+    ?? (episode.durationSeconds !== undefined && episode.durationSeconds > 0 ? Math.round(episode.durationSeconds * 1000) : undefined);
   const show = options.show;
   const canonicalURL = httpsShareable(episode.pageUrl) ?? httpsShareable(episode.audioUrl);
   const enclosureURL = httpsShareable(episode.audioUrl);
@@ -144,10 +159,12 @@ export async function writePacket(episode: Episode, margins: readonly Margin[], 
   const replies: ConversationReply[] = [];
   for (const [index, margin] of withText.entries()) {
     const n = pad(index + 1);
-    const scopedId = `margin-${n}`;
+    const scopedId = scopedMarginId(index);
     const text = words.get(margin) as string;
     if (characterCount(text) > LIMITS.transcriptCharacters) throw new PacketError('cannotShare', `${margin.id} text is too long`);
     const mediaTimeMs = Math.max(0, Math.round(margin.atSeconds * 1000));
+    // Each Margin's share of the way through is of the copy it was made on, when it says which.
+    const ownLengthMs = copyMs(margin) ?? durationMs;
     let representation;
     if (margin.voice) {
       let audio: { bytes: Uint8Array; durationMs: number };
@@ -182,7 +199,7 @@ export async function writePacket(episode: Episode, margins: readonly Margin[], 
       anchor: {
         anchorType: 'media',
         mediaTimeMs,
-        ...(durationMs !== undefined && { roughPercent: Math.min(100, Math.floor((mediaTimeMs * 100) / durationMs)) }),
+        ...(ownLengthMs !== undefined && { roughPercent: Math.min(100, Math.floor((mediaTimeMs * 100) / ownLengthMs)) }),
         machineEvidenceAssetIds: [],
       },
       defaultRepresentationId: representation.id,

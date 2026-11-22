@@ -7,130 +7,65 @@ final class ReadLaterSessionDelegate: NSObject, URLSessionTaskDelegate, Sendable
         completionHandler(nil)
     }
 }
-/// Where the Read Later tokens live. Tests pass an in-memory one so they never touch the Keychain.
-struct ReadLaterCredentials: Sendable {
-    var load: @Sendable (ReadLaterService) -> String?
-    var save: @Sendable (String, ReadLaterService) -> OSStatus
-
+extension ReadLaterCredentials {
+    /// The Keychain. Tests pass an in-memory store instead so they never touch it.
     static let keychain = ReadLaterCredentials(
         load: { KeychainStore.load(service: ReadLaterModel.credentialService, account: $0.rawValue) },
         save: { KeychainStore.save($0, service: ReadLaterModel.credentialService, account: $1.rawValue) }
     )
 }
 
+/// The Read Later screen's `ObservableObject`. The state machine is `ReadLaterPickerCore` in SessionKit, where it is
+/// tested on the host (#318); this shell forwards to it, redraws SwiftUI before each change as `@Published` did, and
+/// owns what only the app has: the Keychain default and the `URLSession` that never follows a redirect.
 @MainActor
 final class ReadLaterModel: ObservableObject {
-    @Published var service: ReadLaterService = .reader
-    @Published var token = ""
-    @Published private(set) var documents: [ReadLaterDocument] = []
-    @Published private(set) var status = "Connect a service to choose articles. Nothing is imported automatically." {
-        didSet { statusIsFailure = false; statusSymbol = nil }
-    }
-    /// A failure is drawn with the failure icon, not as ordinary status (#308).
-    @Published private(set) var statusIsFailure = false
-    /// The icon for the stored-token line (#944): a key for saved, a check for verified.
-    @Published private(set) var statusSymbol: ReadLaterConnectionPresentation.Symbol?
-    @Published private(set) var isLoading = false
-    @Published private(set) var nextCursor: String?
-    @Published private(set) var loaded = false
-    @Published private(set) var failure: String?
-    private var generation = UUID()
-    /// What this session knows about each service's stored token. It survives picker navigation.
-    private var tracker = ReadLaterConnectionTracker()
-    private var task: Task<Void, Never>?
-    private let transport: ReadLaterClient.Transport
-    private let credentials: ReadLaterCredentials
     nonisolated static let credentialService = "com.spokenmargins.read-later"
+    private let core: ReadLaterPickerCore
 
     init(transport: ReadLaterClient.Transport? = nil, credentials: ReadLaterCredentials = .keychain) {
-        self.credentials = credentials
+        let resolved: ReadLaterClient.Transport
         if let transport {
-            self.transport = transport
+            resolved = transport
         } else {
             let session = URLSession(configuration: .ephemeral, delegate: ReadLaterSessionDelegate(), delegateQueue: nil)
-            self.transport = { request in
+            resolved = { request in
                 let (data, response) = try await session.data(for: request)
                 guard let http = response as? HTTPURLResponse else { throw EditionError.invalid("Invalid service response.") }
                 return (data, http)
             }
         }
-        // A token left from an earlier launch is "saved", not "connected", the moment the screen opens.
-        if connected { showStoredTokenStatus() }
+        core = ReadLaterPickerCore(transport: resolved, credentials: credentials)
+        core.onWillChange = { [weak self] in self?.objectWillChange.send() }
     }
+
+    var service: ReadLaterService {
+        get { core.service }
+        set { core.service = newValue }
+    }
+    var token: String {
+        get { core.token }
+        set { core.token = newValue }
+    }
+    var documents: [ReadLaterDocument] { core.documents }
+    var status: String { core.status }
+    /// A failure is drawn with the failure icon, not as ordinary status (#308).
+    var statusIsFailure: Bool { core.statusIsFailure }
+    /// The icon for the stored-token line (#944): a key for saved, a check for verified.
+    var statusSymbol: ReadLaterConnectionPresentation.Symbol? { core.statusSymbol }
+    var isLoading: Bool { core.isLoading }
+    var nextCursor: String? { core.nextCursor }
+    var loaded: Bool { core.loaded }
+    var failure: String? { core.failure }
     /// A token is stored. That alone is not "connected" (#944); see `ReadLaterConnectionTracker`.
-    var connected: Bool { credentials.load(service) != nil }
+    var connected: Bool { core.connected }
     /// Why Choose Articles is empty, so it never shows a bare heading (#621).
-    var emptyArticlesLine: String? {
-        ReadLaterClient.emptyArticlesLine(service: service, connected: connected, isLoading: isLoading, loaded: loaded, failure: failure, documentCount: documents.count)
-    }
+    var emptyArticlesLine: String? { core.emptyArticlesLine }
 
-    private func fail(_ message: String) {
-        status = message
-        statusIsFailure = true
-    }
-
-    /// The line for a stored token: saved, connected or rejected, never "connected" on storage alone.
-    private func showStoredTokenStatus() {
-        guard let line = tracker.presentation(for: service, hasToken: connected) else {
-            status = "Enter an access token to connect."; return
-        }
-        status = line.text
-        statusIsFailure = line.isFailure
-        statusSymbol = line.isFailure ? nil : line.symbol
-    }
-
-    func selectService() {
-        generation = UUID(); task?.cancel(); task = nil
-        token = ""; documents = []; nextCursor = nil; isLoading = false; loaded = false; failure = nil
-        showStoredTokenStatus()
-    }
-    func connect() {
-        let value = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { status = "Enter an access token."; return }
-        guard credentials.save(value, service) == 0 else {
-            fail("The token could not be saved securely."); return
-        }
-        tracker.credentialChanged(for: service)
-        token = ""; refresh()
-    }
+    func selectService() { core.selectService() }
+    func connect() { core.connect() }
     /// Returns whether the token was removed.
     @discardableResult
-    func disconnect() -> Bool {
-        guard credentials.save("", service) == 0 else {
-            fail("The token could not be removed. Try again while the device is unlocked."); return false
-        }
-        tracker.credentialChanged(for: service)
-        selectService(); status = "Disconnected. What you imported and your Margins remain in your Library."
-        return true
-    }
-    func refresh(more: Bool = false) {
-        guard !isLoading, let secret = credentials.load(service) else { return }
-        let requestedService = service; let requestGeneration = generation
-        let credentialGeneration = tracker.generation(for: requestedService)
-        let cursor = more ? nextCursor : nil
-        guard !more || cursor != nil else { return }
-        isLoading = true; status = "Fetching articles…"
-        task = Task {
-            do {
-                let client = ReadLaterClient(transport: transport)
-                let page = try await client.page(service: requestedService, token: secret, cursor: cursor)
-                // The service accepted this token, even if the listener has since left this service.
-                tracker.record(.succeeded, for: requestedService, generation: credentialGeneration)
-                guard generation == requestGeneration else { return }
-                if !more { documents = [] }
-                var known = Set(documents.map(\.id))
-                documents += page.documents.filter { known.insert($0.id).inserted }
-                nextCursor = page.nextCursor == cursor ? nil : page.nextCursor
-                loaded = true; failure = nil
-                status = "\(documents.count) articles. Choose Add to import a copy; the service is not changed."
-            } catch {
-                let message = (error as? EditionError)?.localizedDescription
-                tracker.record(ReadLaterConnectionTracker.outcome(forFailureMessage: message), for: requestedService, generation: credentialGeneration)
-                guard generation == requestGeneration else { return }
-                fail(message ?? "Could not load articles. Check the connection and try again.")
-                failure = status
-            }
-            if generation == requestGeneration { isLoading = false }
-        }
-    }
+    func disconnect() -> Bool { core.disconnect() }
+    func refresh(more: Bool = false) { core.refresh(more: more) }
 }

@@ -13,4 +13,10 @@ public enum MarginCountText {
     public static func itemLine(_ margins: Int, isNewest: Bool) -> String {
         isNewest ? "Newest · \(count(margins))" : count(margins)
     }
+
+    /// The Shared list's line (#4105): the item line with " · N new" while some of its Margins are unheard.
+    public static func itemLine(_ margins: Int, newCount: Int, isNewest: Bool) -> String {
+        let line = itemLine(margins, isNewest: isNewest)
+        return newCount > 0 ? "\(line) · \(newCount) new" : line
+    }
 }

@@ -48,6 +48,35 @@ public enum SpeechTextNormalizer {
         projectionMemo.projection(of: source, kind: .speech) { computeNormalizedWithSourceOffsets(source) }
     }
 
+    /// `normalizeWithSourceOffsets` with the characters in `ranges` (Character offsets in `source`) left out before
+    /// anything else reads them, so a footnote's `[^3]` citation is silent instead of being spoken as "footnote 3"
+    /// (#3777). Every kept character still maps to its own offset in `source`. When the characters on both sides of a
+    /// removed range are not whitespace, one space takes its place so two words are never joined. Not memoised: it is
+    /// the planner's call, and an empty `ranges` is `normalizeWithSourceOffsets`.
+    public static func normalizeWithSourceOffsets(_ source: String, silencingSourceRanges ranges: [Range<Int>]) -> NormalizedSpeechText {
+        let silenced = ranges.filter { !$0.isEmpty }.sorted { $0.lowerBound < $1.lowerBound }
+        guard !silenced.isEmpty else { return normalizeWithSourceOffsets(source) }
+        var rendered: [MappedCharacter] = []
+        rendered.reserveCapacity(source.utf8.count)
+        var next = 0
+        var skippedAt: Int?
+        for (offset, character) in source.enumerated() {
+            while next < silenced.count, offset >= silenced[next].upperBound { next += 1 }
+            if next < silenced.count, silenced[next].contains(offset) {
+                if skippedAt == nil { skippedAt = offset }
+                continue
+            }
+            if let skipped = skippedAt {
+                if let last = rendered.last, !last.character.isWhitespace, !character.isWhitespace {
+                    rendered.append(MappedCharacter(character: " ", sourceOffset: skipped))
+                }
+                skippedAt = nil
+            }
+            rendered.append(MappedCharacter(character: character, sourceOffset: offset))
+        }
+        return finish(projectAudibleContent(rendered), sourceLength: source.count)
+    }
+
     private static func computeNormalizedWithSourceOffsets(_ source: String) -> NormalizedSpeechText {
         var rendered = source.enumerated().map { MappedCharacter(character: $0.element, sourceOffset: $0.offset) }
 

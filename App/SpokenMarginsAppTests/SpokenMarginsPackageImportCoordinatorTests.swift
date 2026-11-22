@@ -40,7 +40,8 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
         XCTAssertNil(h.coordinator.review)
         XCTAssertTrue(h.diagnostics["lastSpokenMarginsPackageImport"]?.hasPrefix("rejected:") == true)
-        XCTAssertEqual(h.failures.count, 1)
+        XCTAssertEqual(h.failures, [], "a refused file gets the failure sheet, not a banner (#3801)")
+        XCTAssertEqual(h.openFailures.map(\.row), [.fileDamaged])
         XCTAssertEqual(h.incomingFolderNames(), [], "a failed stage removes the folder it made")
         XCTAssertTrue(h.events.isEmpty, "nothing was published")
     }
@@ -301,6 +302,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertNotNil(try h.store.loadImportedCommentaryLayer(packageDigest: packet.digest))
         XCTAssertEqual(try h.store.loadItem(id: itemId).text, Self.alphaText)
         XCTAssertEqual(h.shownItems, [itemId])
+        XCTAssertEqual(h.refreshesBeforeEachShow, [1], "the Library rows load off the main thread before the item opens (#2256)")
         XCTAssertEqual(h.packetImports, [PacketImport(itemId: itemId, packetId: "package-alpha", marginCount: 1)])
         XCTAssertTrue(h.diagnostics["lastSpokenMarginsPackageImport"]?.hasPrefix("imported:") == true)
         XCTAssertTrue(began.opensDirectly)
@@ -502,6 +504,44 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertNil(h.coordinator.deferredItemId)
         h.coordinator.openDeferredItemIfReady()
         XCTAssertEqual(h.shownItems, [itemId], "and only once")
+    }
+
+    /// #2256: the Library rows load before the item opens. A failed load stops an open import with the error, as a failed
+    /// opening always did, and nothing opens.
+    func testAFailedLibraryLoadStopsAnOpeningImportAndSaysSo() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        assertStaged(await h.coordinator.stage(from: packet.url))
+        h.refreshFailuresLeft = 1
+
+        await h.confirmCurrentReview()
+
+        XCTAssertEqual(h.shownItems, [], "the item does not open without its row")
+        XCTAssertFalse(h.failures.isEmpty, "the listener is told")
+    }
+
+    /// #2256: under a Margin the same failure is not shown over it; the opening loads the rows again once the Margin is closed.
+    func testAFailedLibraryLoadUnderAMarginIsRetriedWhenTheItemOpens() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        assertStaged(await h.coordinator.stage(from: packet.url))
+        h.onPacketImport = { h.navigationLocked = true }
+        h.refreshFailuresLeft = 1
+
+        await h.confirmCurrentReview()
+
+        let itemId = "item-shared-\(packet.digest.prefix(20))"
+        XCTAssertEqual(h.failures, [], "no error sheet over the Margin")
+        XCTAssertEqual(h.coordinator.deferredItemId, itemId)
+        XCTAssertEqual(h.refreshedLibraries, 0, "the one refresh failed")
+
+        h.navigationLocked = false
+        h.coordinator.openDeferredItemIfReady()
+        let deadline = ContinuousClock.now + .seconds(5)
+        while h.shownItems.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+
+        XCTAssertEqual(h.refreshedLibraries, 1, "the rows were loaded again")
+        XCTAssertEqual(h.shownItems, [itemId], "and then the item opened")
     }
 
     /// The same gate holds for a Listening Map and for the sheet's own Import: every import ends in one place.
@@ -990,6 +1030,8 @@ private final class ImportHarness {
     var successes: [String] = []
     var confirmations: [String] = []
     var failures: [String] = []
+    /// The failure sheet's rows, in the order they were put up (#3801).
+    var openFailures: [PacketOpenFailureSheetContent] = []
     var failureContexts: [String] = []
     var openedItems: [String] = []
     var shownItems: [String] = []
@@ -1005,6 +1047,10 @@ private final class ImportHarness {
     var navigationLocked = false
     var onPacketImport: (() -> Void)?
     var refreshedLibraries = 0
+    /// How many of the next Library refreshes throw (#2256).
+    var refreshFailuresLeft = 0
+    /// How many Library refreshes had run each time an item was shown: the rows come before the opening (#2256).
+    var refreshesBeforeEachShow: [Int] = []
 
     var incomingDirectory: URL {
         supportDirectory.appending(path: "SpokenMargins/IncomingPackages", directoryHint: .isDirectory)
@@ -1164,6 +1210,7 @@ private final class ImportHarness {
             reportSuccess: { [unowned self] in self.successes.append($0) },
             reportConfirmation: { [unowned self] in self.confirmations.append($0) },
             reportFailureMessage: { [unowned self] in self.failures.append($0) },
+            presentOpenFailure: { [unowned self] in self.openFailures.append($0) },
             reportFailure: { [unowned self] error, context in
                 self.failures.append(error.localizedDescription)
                 self.failureContexts.append(context)
@@ -1171,6 +1218,7 @@ private final class ImportHarness {
             openItem: { [unowned self] in self.openedItems.append($0) },
             showImportedItem: { [unowned self] itemId, _ in
                 if let failure = self.showImportedItemFailure { throw failure }
+                self.refreshesBeforeEachShow.append(self.refreshedLibraries)
                 self.shownItems.append(itemId)
             },
             recordPacketImport: { [unowned self] itemId, packetId, marginCount in
@@ -1207,7 +1255,10 @@ private final class ImportHarness {
                 try self.store.saveListeningMap(map)
             },
             navigationIsLocked: { [unowned self] in self.navigationLocked },
-            refreshImportedLibrary: { [unowned self] _ in self.refreshedLibraries += 1 }
+            refreshImportedLibrary: { [unowned self] _ in
+                if self.refreshFailuresLeft > 0 { self.refreshFailuresLeft -= 1; throw StubFailure() }
+                self.refreshedLibraries += 1
+            }
         )
     }
 }

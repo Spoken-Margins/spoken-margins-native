@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Margin } from '../../shared/model.ts';
 import { CrossingClock, dueMargins, firesByItself, MAX_PLAYING_STEP_SECONDS } from './margin-autoplay.ts';
+import { cueFor } from './arrival.ts';
 
 const margin = (id: string, atSeconds: number, author: string | null = 'Sam'): Margin => ({
   id,
@@ -81,4 +82,38 @@ test('a seek forward past a Margin, then playing on, does not fire it; a seek ba
   assert.deepEqual(clock.update(m, 50.25), []);
   clock.seeking(41);
   assert.deepEqual(ids(clock.update(m, 42.1)), ['a']);
+});
+
+// #4472: the countdown's Skip, then playback, as the player feeds the clock: the seek's landing, then a time update
+// every quarter second. Every row's Margin fires once, at its moment. The crossing logic was not why a Margin waited
+// after "Skip to just before" (the browser refused the clip, player.tsx), and these rows keep it that way.
+test('after either Skip, playback reaching the next friend Margin fires it once, for every kind and spacing (#4472)', () => {
+  const voice = { blob: new Blob([]), mimeType: 'audio/mp4', durationSeconds: 3 };
+  const spoken = (id: string, at: number, extra: Partial<Margin> = {}): Margin => ({ ...margin(id, at), voice, ...extra });
+  const written = (id: string, at: number, extra: Partial<Margin> = {}): Margin => ({ ...margin(id, at), text: `Words ${id}.`, ...extra });
+  const rows: Array<{ name: string; margins: Margin[]; from: number; skip: RegExp }> = [
+    { name: 'spoken, far ahead', margins: [spoken('t', 300)], from: 100, skip: /^Skip to just before/ },
+    { name: 'written, read aloud', margins: [written('t', 300)], from: 100, skip: /^Skip to just before/ },
+    { name: 'spoken with placeholder words', margins: [spoken('t', 300, { text: 'Voice Margin at 5:00 in Episode, 31 Oct 2026' })], from: 100, skip: /^Skip to just before/ },
+    { name: 'landing exactly 20 s before', margins: [spoken('t', 300)], from: 278.9, skip: /^Skip to just before/ },
+    { name: 'inside the lead-in', margins: [spoken('t', 300)], from: 285, skip: /^Skip to Sam now/ },
+    { name: 'the first of several', margins: [spoken('t', 60), spoken('b', 200), spoken('c', 400)], from: 0, skip: /^Skip to just before/ },
+    { name: 'the last of several', margins: [spoken('a', 60), spoken('b', 200), spoken('t', 400)], from: 250, skip: /^Skip to just before/ },
+    { name: 'one second after another', margins: [spoken('a', 299), spoken('t', 300)], from: 100, skip: /^Skip to just before/ },
+    { name: 'past a silent written one', margins: [written('s', 290, { readAloud: false }), spoken('t', 300)], from: 100, skip: /^Skip to just before/ },
+    { name: 'at a fraction of a second', margins: [spoken('t', 300.987)], from: 100, skip: /^Skip to just before/ },
+  ];
+  for (const row of rows) {
+    const cue = cueFor(row.margins, row.from, 'Sam');
+    assert.equal(cue?.kind, 'countdown', row.name);
+    if (cue?.kind !== 'countdown') continue;
+    assert.match(cue.skip.label, row.skip, row.name);
+    const clock = new CrossingClock();
+    clock.playing(row.from);
+    clock.seeking(cue.skip.to);
+    const target = row.margins.find((m) => m.id === 't')!;
+    const fired: string[] = [];
+    for (let now = cue.skip.to; now < target.atSeconds + 2; now += 0.25) fired.push(...ids(clock.update(row.margins, now)));
+    assert.equal(fired.filter((id) => id === 't').length, 1, row.name);
+  }
 });

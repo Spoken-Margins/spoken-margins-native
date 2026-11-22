@@ -124,14 +124,27 @@ def unsafe_path() -> Path:
     return state_dir() / 'unsafe-simulators.json'
 
 
+# A simulator udid is a UUID; the tests' fixture ids look like `BAD-0001`. Anything else, such as the one-letter `U`
+# that blocked every integration run from 2026-11-18 through the guard's old substring match, names no device.
+UDID_SHAPE = re.compile(r'[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|[A-Z]+-[0-9]+')
+
+
+def is_udid(key) -> bool:
+    return isinstance(key, str) and UDID_SHAPE.fullmatch(key) is not None
+
+
 def unsafe_devices() -> dict:
+    """The marked devices; keys that aren't udid-shaped are left out, so a malformed entry can't hold anything."""
     try:
-        return json.loads(unsafe_path().read_text())
+        marked = json.loads(unsafe_path().read_text())
     except (OSError, ValueError):
         return {}
+    return {key: info for key, info in marked.items() if is_udid(key)} if isinstance(marked, dict) else {}
 
 
 def mark_unsafe(udid: str, reason: str) -> None:
+    if not is_udid(udid):
+        raise ValueError(f'not a simulator udid: {udid!r}')
     devices = unsafe_devices()
     devices[udid] = {'reason': reason, 'marked': datetime.datetime.now().isoformat(timespec='seconds')}
     unsafe_path().parent.mkdir(parents=True, exist_ok=True)
@@ -226,15 +239,17 @@ def device_type(runtime: str | None = None) -> str:
                             survey=runtime_survey(runtimes))
 
 
-def pick_runtime(listing: dict, major: int = IOS_MAJOR, preferred: str = DEVICE_TYPE) -> str | None:
+def pick_runtime(listing: dict, major: int | None = None, preferred: str = DEVICE_TYPE) -> str | None:
     """The runtime to test on, chosen together with its phone (the hosted xcode-27 image has iOS 27.0 and 27.1, and
     27.1 accepted only iPhone-Duo, which the first hosted T3 after #2571 died on).
 
     Of the available iOS runtimes of `major`: the newest that accepts `preferred`; else the newest that accepts any
     plain iPhone (`iPhone-N`, so not Duo, Fold, Air or Pro, whose screens the tests don't assume); else the newest, so
     the clone step fails with `runtime_survey` naming every runtime. A runtime that lists no types is not limited.
-    None when no runtime of that major is available.
+    None when no runtime of that major is available. `major` is IOS_MAJOR unless given, read when called, not when
+    this module loads, so a test can pin it.
     """
+    major = IOS_MAJOR if major is None else major
     usable = [r for r in listing.get('runtimes', [])
               if r.get('isAvailable') and r.get('platform') == 'iOS' and r.get('version', '').split('.')[0] == str(major)]
     usable.sort(key=lambda r: [int(x) for x in r['version'].split('.')], reverse=True)
@@ -250,7 +265,7 @@ def pick_runtime(listing: dict, major: int = IOS_MAJOR, preferred: str = DEVICE_
     return usable[0]['identifier'] if usable else None
 
 
-def newest_runtime(major: int = IOS_MAJOR) -> str | None:
+def newest_runtime(major: int | None = None) -> str | None:
     return pick_runtime(json.loads(simctl_output(['list', 'runtimes', '--json'])), major)
 
 

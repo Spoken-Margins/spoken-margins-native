@@ -290,6 +290,21 @@ final class LibraryRowBuilderTests: XCTestCase {
         XCTAssertEqual(PlaybackCompletionOffer.presence(positionOffered: true, row: rows["missing"]), .noLibraryRow)
     }
 
+    /// #4186: a row's length is recorded audio's own length only. Prepared narration of an article has a media length
+    /// too, but it is text and keeps its "about" estimate; a stored 0 means unknown.
+    func testRowMediaDurationIsRecordedAudioOfKnownLengthOnly() throws {
+        func row(_ id: String, _ media: ItemMedia?, text: String? = "Some words to read aloud.") throws -> LibraryItemRow {
+            let snapshot = LibraryReadSnapshot(items: [article(id, text: text, media: media)], sessions: [], manifests: [], jobs: [], downloads: [])
+            return try XCTUnwrap(LibraryRowBuilder.rows(from: snapshot, context: context()).first)
+        }
+        XCTAssertEqual(try row("p", ItemMedia(sourceType: .nativeMediaFile, url: "u", durationMs: 3_725_000), text: nil).mediaDurationMs, 3_725_000)
+        XCTAssertEqual(try row("s", ItemMedia(sourceType: .remoteStream, url: "u", durationMs: 60_000), text: nil).mediaDurationMs, 60_000)
+        XCTAssertNil(try row("z", ItemMedia(sourceType: .nativeMediaFile, url: "u", durationMs: 0), text: nil).mediaDurationMs)
+        let narrated = try row("n", ItemMedia(sourceType: .generatedTTSPrerendered, durationMs: 900_000))
+        XCTAssertNil(narrated.mediaDurationMs, "prepared narration is text: it shows the estimate, not the narration's length")
+        XCTAssertNotNil(narrated.textCharacterCount)
+    }
+
     func testRowsSkipTrashedItemsKeepStorageOrderAndCarryTheItemsFields() throws {
         var item = article("a", text: "Hello there", status: "in_progress")
         item.createdAt = date(100)

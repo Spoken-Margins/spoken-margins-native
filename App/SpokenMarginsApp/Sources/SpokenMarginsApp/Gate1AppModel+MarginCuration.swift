@@ -127,38 +127,45 @@ extension Gate1AppModel {
         refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
     }
 
-    func setInterjectionStarredForSharing(_ interjectionID: String, sessionId: String? = nil, starred: Bool) {
-        do {
-            let store = try requireStore()
-            guard let owningSessionId = sessionId ?? selectedItem.interjections.first(where: { $0.id == interjectionID })?.sessionId,
-                  let interjection = try store.updateInterjection(id: interjectionID, sessionId: owningSessionId, { $0.isStarredForSharing = starred ? true : nil }) else {
-                throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
-            }
-            refreshSelectedItemInBackground()
-            refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
-            diagnostics["shareCuration:\(interjectionID)"] = starred ? "starred" : "unstarred"
-        } catch {
-            reportFailure(error, context: "Margin sharing star could not be saved")
-        }
+    /// Puts the sharing star on or off for a Margin of any session of any item (#4173). One setter for every place a Margin
+    /// can be starred, so they all write the same way and the Share sheet, which starts from the stars, reads the same thing.
+    func setStarredForSharing(_ interjection: Interjection, starred: Bool, place: ShareStarPlace) {
+        writeStar(interjection, place: place) { $0.isStarredForSharing = starred ? true : nil }
     }
 
-    func setMarginStarred(_ row: MarginRow, starred: Bool) {
-        guard !rejectNavigationOrSessionMutationWhileRecording("star_margin") else { return }
+    /// Flips the star. The flip happens inside the store's own write, on the saved Margin, so two quick taps leave it off
+    /// and three leave it on whatever the screen last showed.
+    func toggleStarredForSharing(_ interjection: Interjection, place: ShareStarPlace) {
+        writeStar(interjection, place: place) { $0.isStarredForSharing = $0.isStarredForSharing == true ? nil : true }
+    }
+
+    private func writeStar(_ interjection: Interjection, place: ShareStarPlace, _ edit: (inout Interjection) -> Void) {
         do {
             let store = try requireStore()
-            guard let interjection = try store.updateInterjection(
-                id: row.interjection.id,
-                sessionId: row.interjection.sessionId,
-                itemId: row.interjection.itemId,
-                { $0.isStarredForSharing = starred ? true : nil }
+            var wasStarred = false
+            guard let updated = try store.updateInterjection(
+                id: interjection.id, sessionId: interjection.sessionId, itemId: interjection.itemId, { margin in
+                    wasStarred = margin.isStarredForSharing == true
+                    edit(&margin)
+                }
             ) else {
-                throw SessionKitError.persistenceFailed("margin_curation_interjection_missing")
+                throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
             }
-            refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
-            if snapshot.sessionId == row.interjection.sessionId { refreshSelectedItemInBackground() }
-            diagnostics["marginCuration:\(row.id)"] = starred ? "starred" : "unstarred"
+            // Share reads the selected item's Margins, so the star shows there at once. Only the star is copied from the
+            // Margin the write returned: the item loader resolves other fields of a podcast Margin's anchor, and the
+            // background read below brings the rest. No item is read from the store here (#2505).
+            if updated.itemId == selectedItem.id,
+               let index = selectedItem.interjections.firstIndex(where: { $0.id == updated.id && $0.sessionId == updated.sessionId }) {
+                selectedItem.interjections[index].isStarredForSharing = updated.isStarredForSharing
+            }
+            refreshMarginRow(sessionId: updated.sessionId, interjectionId: updated.id)
+            refreshSelectedItemInBackground()
+            diagnostics["shareCuration:\(updated.id)"] = updated.isStarredForSharing == true ? "starred" : "unstarred"
+            // Counted on a change only, so a menu item that sets what is already set adds nothing (#4173).
+            let isStarred = updated.isStarredForSharing == true
+            if isStarred != wasStarred { shareStarTally.record(place, turnedOn: isStarred) }
         } catch {
-            reportFailure(error, context: "Margin star could not be saved")
+            reportFailure(error, context: "Margin sharing star could not be saved")
         }
     }
 

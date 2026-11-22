@@ -39,10 +39,17 @@ protocol LocalFoundationModelClient: Sendable {
     func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String
     /// "Where people reacted" (#476): the reply to `MarginLayerSynthesis.prompt`, one cited sentence per line.
     func summarizeReactions(prompt: String) async throws -> String
+    /// A spoken Margin's words rewritten as clear written sentences (#4339), given the passage before and after it. The
+    /// reply has not passed `MarginTidyGuard` yet: `MarginTidyProposer` checks it.
+    func tidyMargin(transcript: String, before: String, after: String) async throws -> String
 }
 
 extension LocalFoundationModelClient {
     func summarizeReactions(prompt: String) async throws -> String {
+        throw LocalFoundationModelError.unavailable(availability().description)
+    }
+
+    func tidyMargin(transcript: String, before: String, after: String) async throws -> String {
         throw LocalFoundationModelError.unavailable(availability().description)
     }
 }
@@ -89,6 +96,15 @@ final class UITestingLocalFoundationModelClient: LocalFoundationModelClient, @un
     func summarizeReactions(prompt: String) async throws -> String {
         if mode == .fail { throw LocalFoundationModelError.emptyResponse }
         return "People reacted near the start. [m1]"
+    }
+
+    /// The filler-only tidy with a full stop, so a UI test can tell the model's proposal from the filler-only one, and so
+    /// the reply passes `MarginTidyGuard` for whatever Margin the test seeds. `fail` makes it throw, as a model that can't.
+    func tidyMargin(transcript: String, before: String, after: String) async throws -> String {
+        if mode == .fail { throw LocalFoundationModelError.emptyResponse }
+        let tidy = MarginTidy.fillerOnly(transcript).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = tidy.last, !".!?".contains(last) else { return tidy }
+        return tidy + "."
     }
 }
 #endif
@@ -151,6 +167,16 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
     func summarizeReactions(prompt: String) async throws -> String {
         try requireAvailability()
         return try await respond(to: prompt, maximumResponseTokens: 400)
+    }
+
+    /// One request per tidy (#4339): the Margin's words and up to 500 characters of passage on each side, in the words the
+    /// Design fixed (`MarginTidyPrompt`). Greedy sampling, and a reply cap that fits a five-minute Margin.
+    func tidyMargin(transcript: String, before: String, after: String) async throws -> String {
+        try requireAvailability()
+        return try await respond(
+            to: MarginTidyPrompt.text(transcript: transcript, before: before, after: after),
+            maximumResponseTokens: 1_500
+        )
     }
 
     private func requireAvailability() throws {
@@ -714,176 +740,4 @@ extension ListeningMapSummaryValidator {
 struct AppleFoundationAIProvider: AIProviderClient {
     let providerType = "apple_foundation_on_device"
     let model = "system_language_model"
-}
-
-struct LocalListeningMapChapterDraft: Equatable, Sendable {
-    let id: String
-    let startChar: Int
-    let endChar: Int
-    let percent: Int
-    let startMs: Int?
-    let transcriptSegmentId: String?
-    let text: String
-}
-
-struct LocalListeningMapDraft: Equatable, Sendable {
-    let chapters: [LocalListeningMapChapterDraft]
-}
-
-struct LocalListeningMapPlanner {
-    typealias VectorProvider = @Sendable (String) -> [Double]?
-
-    private struct Unit {
-        let startChar: Int
-        let endChar: Int
-        let startMs: Int?
-        let endMs: Int?
-        let transcriptSegmentId: String?
-        let text: String
-    }
-
-    private let vectorProvider: VectorProvider
-
-    init(vectorProvider: @escaping VectorProvider = LocalListeningMapPlanner.sentenceVector) {
-        self.vectorProvider = vectorProvider
-    }
-
-    func makeDraft(text: String, timeline: TranscriptTimeline?) throws -> LocalListeningMapDraft {
-        let source = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !source.isEmpty else { throw LocalFoundationModelError.sourceTextUnavailable }
-        let units = timeline.flatMap { mediaUnits(text: source, timeline: $0) } ?? textUnits(text: source)
-        guard !units.isEmpty else { throw LocalFoundationModelError.sourceTextUnavailable }
-
-        let boundaryScores = (0..<units.count).map { boundary in
-            boundary == 0 ? 0 : semanticDissimilarity(units: units, boundary: boundary)
-        }
-        var starts = [0]
-        var chapterStart = 0
-        for boundary in 1..<units.count {
-            let current = units[chapterStart..<boundary]
-            let characterCount = max(0, units[boundary - 1].endChar - units[chapterStart].startChar)
-            let duration = boundedDuration(current)
-            let reachedMinimum = characterCount >= 2_500 || duration >= 240_000
-            let reachedHardLimit = characterCount >= 6_000 || duration >= 720_000
-            let topicShift = boundaryScores[boundary]
-            let previousScore = boundary > 1 ? boundaryScores[boundary - 1] : 0
-            let nextScore = boundary + 1 < boundaryScores.count ? boundaryScores[boundary + 1] : 0
-            let isLocalPeak = topicShift >= previousScore && topicShift >= nextScore
-            if reachedHardLimit || (reachedMinimum && isLocalPeak && topicShift >= 0.42) {
-                starts.append(boundary)
-                chapterStart = boundary
-            }
-        }
-
-        // Avoid a tiny tail that creates a noisy chapter label.
-        if starts.count > 1,
-           let tailStart = starts.last,
-           units.last!.endChar - units[tailStart].startChar < 500,
-           boundedDuration(units[tailStart..<units.count]) < 90_000 {
-            starts.removeLast()
-        }
-
-        let chapters = starts.enumerated().map { index, unitIndex in
-            let endUnitIndex = index + 1 < starts.count ? starts[index + 1] : units.count
-            let first = units[unitIndex]
-            let last = units[endUnitIndex - 1]
-            let chapterText = units[unitIndex..<endUnitIndex].map(\.text).joined(separator: " ")
-            return LocalListeningMapChapterDraft(
-                id: "ch-local-\(String(format: "%02d", index + 1))",
-                startChar: first.startChar,
-                endChar: last.endChar,
-                percent: source.isEmpty ? 0 : max(0, min(100, Int((Double(first.startChar) / Double(source.count) * 100).rounded()))),
-                startMs: first.startMs,
-                transcriptSegmentId: first.transcriptSegmentId,
-                text: chapterText
-            )
-        }
-        return LocalListeningMapDraft(chapters: chapters)
-    }
-
-    private func textUnits(text: String) -> [Unit] {
-        let tokenizer = NLTokenizer(unit: .sentence)
-        tokenizer.string = text
-        var units: [Unit] = []
-        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
-            let value = text[range].trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !value.isEmpty else { return true }
-            units.append(Unit(
-                startChar: text.distance(from: text.startIndex, to: range.lowerBound),
-                endChar: text.distance(from: text.startIndex, to: range.upperBound),
-                startMs: nil,
-                endMs: nil,
-                transcriptSegmentId: nil,
-                text: value
-            ))
-            return true
-        }
-        if units.isEmpty {
-            units.append(Unit(startChar: 0, endChar: text.count, startMs: nil, endMs: nil, transcriptSegmentId: nil, text: text))
-        }
-        return units
-    }
-
-    private func mediaUnits(text: String, timeline: TranscriptTimeline) -> [Unit]? {
-        let sorted = timeline.segments.sorted { $0.startMs < $1.startMs }
-        guard !sorted.isEmpty else { return nil }
-        var cursor = 0
-        return sorted.compactMap { segment in
-            let value = segment.text
-                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !value.isEmpty else { return nil }
-            let start = segment.startChar ?? cursor
-            let end = segment.endChar ?? min(text.count, start + value.count)
-            cursor = min(text.count, end + 1)
-            return Unit(
-                startChar: max(0, min(start, text.count)),
-                endChar: max(0, min(end, text.count)),
-                startMs: segment.startMs,
-                endMs: segment.endMs,
-                transcriptSegmentId: segment.id,
-                text: value
-            )
-        }
-    }
-
-    private func boundedDuration(_ units: ArraySlice<Unit>) -> Int {
-        guard let first = units.first?.startMs, let last = units.last?.endMs else { return 0 }
-        return max(0, last - first)
-    }
-
-    private func semanticDissimilarity(units: [Unit], boundary: Int) -> Double {
-        let leftStart = max(0, boundary - 3)
-        let rightEnd = min(units.count, boundary + 3)
-        let left = units[leftStart..<boundary].map(\.text).joined(separator: " ")
-        let right = units[boundary..<rightEnd].map(\.text).joined(separator: " ")
-        guard let a = vectorProvider(left), let b = vectorProvider(right), a.count == b.count, !a.isEmpty else {
-            return lexicalDissimilarity(left, right)
-        }
-        let dot = zip(a, b).reduce(0.0) { $0 + $1.0 * $1.1 }
-        let normA = sqrt(a.reduce(0.0) { $0 + $1 * $1 })
-        let normB = sqrt(b.reduce(0.0) { $0 + $1 * $1 })
-        guard normA > 0, normB > 0 else { return lexicalDissimilarity(left, right) }
-        return max(0, min(1, 1 - (dot / (normA * normB))))
-    }
-
-    private func lexicalDissimilarity(_ lhs: String, _ rhs: String) -> Double {
-        let left = Set(words(in: lhs))
-        let right = Set(words(in: rhs))
-        let union = left.union(right)
-        guard !union.isEmpty else { return 0 }
-        return 1 - (Double(left.intersection(right).count) / Double(union.count))
-    }
-
-    private func words(in text: String) -> [String] {
-        text.lowercased()
-            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-            .map(String.init)
-            .filter { $0.count > 2 }
-    }
-
-    private static func sentenceVector(_ text: String) -> [Double]? {
-        guard let embedding = NLEmbedding.sentenceEmbedding(for: .english) else { return nil }
-        return embedding.vector(for: text)
-    }
 }

@@ -42,27 +42,19 @@ final class AppColorContrastAuditFindingsTests: XCTestCase {
         return try XCTUnwrap(measurement).ratio
     }
 
-    /// #3734: the audit's hand-computed numbers for the Timeline rows in light mode.
-    func testTheTimelineRowFindingsAreMeasured() throws {
-        XCTAssertEqual(try ratio("row detail on evergreen at 0.12 over bone", "light"), 3.97, accuracy: 0.01)
-        XCTAssertEqual(try ratio("row detail on evergreen at 0.07 over bone", "light"), 4.32, accuracy: 0.01)
-        XCTAssertEqual(try ratio("row detail on coral at 0.08 over bone", "light"), 4.34, accuracy: 0.01)
-        XCTAssertEqual(try ratio("row detail on plum at 0.07 over bone", "light"), 4.35, accuracy: 0.01)
-        XCTAssertEqual(try ratio("my Margin row label on coral at 0.08 over bone", "light"), 4.44, accuracy: 0.01)
-    }
-
-    /// #3731: white on the system orange and blue, from Apple's published values.
-    func testTheWatchPlateFindingsAreMeasured() throws {
-        XCTAssertEqual(try ratio("watch session plate label", "dark"), 2.06, accuracy: 0.01)
-        XCTAssertEqual(try ratio("watch episode and Record plate label", "dark"), 3.65, accuracy: 0.01)
+    /// #3731: the Watch's plates were white on the system orange (2.06:1) and blue (3.65:1). Now a dark label on the
+    /// orange and a deeper blue under white.
+    func testTheWatchPlatesAreReadable() throws {
+        XCTAssertGreaterThanOrEqual(try ratio("watch session plate label", "dark"), 8.0)
+        XCTAssertGreaterThanOrEqual(try ratio("watch episode plate label", "dark"), 5.7)
+        XCTAssertGreaterThanOrEqual(try ratio("watch record plate label", "dark"), 5.7)
     }
 
     /// Each finding is a known failure until its own issue fixes it, so a fix that works has to delete the entry.
     func testEveryNewFindingIsListedAsKnownUntilItsIssueFixesIt() {
         let listed = Set(AppColorContrastAudit.knownFailures.map { "\($0.pair) [\($0.appearance)]" })
-        let measured = AppColorContrastAudit.measurements(for: AppColorContrastAudit.timelineRowPairs + AppColorContrastAudit.watchPlatePairs)
+        let measured = AppColorContrastAudit.measurements(for: AppColorContrastAudit.allPairs)
         let failing = measured.filter(\.fails).map { "\($0.pair) [\($0.appearance)]" }
-        XCTAssertFalse(failing.isEmpty, "the audit must see the findings")
         XCTAssertEqual(Set(failing).subtracting(listed), [], "an unlisted failure is a new bug: fix it or list it with its issue")
         XCTAssertEqual(AppColorContrastAudit.staleKnownFailures(), [])
     }
@@ -300,8 +292,7 @@ final class AppColorUsageGuardTests: XCTestCase {
     private enum TintKind: Equatable { case audited, noText, unaudited }
 
     private static let tints: [String: TintKind] = [
-        "evergreen@0.12": .audited, "evergreen@0.07": .audited, "coral@0.08": .audited, "ochre@0.08": .audited,
-        "plum@0.07": .audited,
+        "evergreen@0.12": .noText,
         // #3739 slice 2: `tintedFillPairs`.
         "ochre@0.12": .audited, "evergreen@0.16": .audited,
         "listeningAccent@0.18": .audited, "softGreen@0.85": .audited, "softGreen@0.55": .audited,
@@ -352,6 +343,53 @@ final class AppColorUsageGuardTests: XCTestCase {
         }
     }
 
+    // MARK: Destructive buttons on the dark live-session cards (#4443)
+
+    /// A destructive button with no tint draws the system red, which is dim on `watchControl`: the finish card's Discard
+    /// Session was nearly invisible on the owner's phone. The audit already holds `watchDanger` on `watchControl` to 4.5:1
+    /// ("danger label on watch control"), but only a button that uses the token is measured by it. So every destructive
+    /// button in a live-session view carries `.tint(AppColors.watchDanger)`, except the confirmation dialog's, which the
+    /// system draws.
+    static func untintedDestructiveButtons(in text: String) throws -> [String] {
+        var offenders: [String] = []
+        for match in try NSRegularExpression(pattern: #"Button\([^{}]{0,80}role: \.destructive"#).matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            let start = Range(match.range, in: text)!.lowerBound
+            let before = String(text[..<start].suffix(160))
+            if before.contains(".confirmationDialog(") || before.contains(".alert(") { continue }
+            // The button's own modifiers: up to the next `Button(` or 400 characters.
+            var after = String(text[start...].prefix(400))
+            if let next = after.range(of: "Button(", range: after.index(after.startIndex, offsetBy: 7)..<after.endIndex) {
+                after = String(after[..<next.lowerBound])
+            }
+            if !after.contains(".tint(AppColors.watchDanger)") { offenders.append(String(after.prefix(60))) }
+        }
+        return offenders
+    }
+
+    func testDestructiveButtonScanSeesAnUntintedOneAndSkipsTheDialogs() throws {
+        let bare = #"Button("Discard Session", role: .destructive) { confirmsDiscard = true } } .padding(12)"#
+        let tinted = #"Button(role: .destructive) { a() } label: { Label("Discard Session", systemImage: "trash") } .buttonStyle(.bordered) .tint(AppColors.watchDanger) }"#
+        let dialog = #".confirmationDialog("Discard?", isPresented: $x) { Button("Discard Session", role: .destructive) { go() } }"#
+        XCTAssertEqual(try Self.untintedDestructiveButtons(in: bare).count, 1)
+        XCTAssertEqual(try Self.untintedDestructiveButtons(in: tinted), [])
+        XCTAssertEqual(try Self.untintedDestructiveButtons(in: dialog), [])
+    }
+
+    func testLiveSessionDestructiveButtonsUseTheDangerTokenAndKeepTheirIcon() throws {
+        // Only `LiveSessionView.swift`: its cards are filled with `watchControl`. The Margin detail's Delete has its own
+        // button style on its own surface.
+        let files = try appSwiftFiles()
+        let view = try XCTUnwrap(files.first { $0.lastPathComponent == "LiveSessionView.swift" })
+        let text = try collapsedText(view)
+        XCTAssertGreaterThan(text.components(separatedBy: "role: .destructive").count - 1, 1, "the scan must see Discard Session and its dialog")
+        XCTAssertEqual(try Self.untintedDestructiveButtons(in: text), [], "tint it with AppColors.watchDanger")
+        XCTAssertTrue(text.contains(#"Label("Discard Session", systemImage: "trash")"#), "the icon keeps the words and the shape, not the colour alone")
+        XCTAssertTrue(
+            AppColorContrastAudit.allPairs.contains { $0.name == "danger label on watch control" },
+            "the pair that measures watchDanger on the card"
+        )
+    }
+
     // MARK: System colours
 
     /// A system colour used directly: `Color.red`, `.foregroundStyle(.secondary)`, or an arm of a ternary. The default
@@ -377,15 +415,16 @@ final class AppColorUsageGuardTests: XCTestCase {
     /// The uses that exist today, by file. A file not listed here may not use one; a listed file may not use more.
     /// Lower a number, or delete the line, when a use goes. There is no test for slack, so two PRs that each remove or
     /// add a use never turn each other red.
+    /// MarginRecordingScreen: the divider, and the end-phrase hint (#3940), white at 75% under the timer.
+    /// FootnoteCardView: the note's words (white at 85%) and the card's fill (white at 10%), as `PinnedMarginCardView` draws
+    /// the friend's card above the same passage (#3777).
     private static let systemColorBaseline: [String: Int] = [
-        "AppTopBanners.swift": 1, "EdgeSwipeBackTransition.swift": 1, "MarginRecordingScreen.swift": 1,
-        "FirstMarginPromptCard.swift": 2, "Gate1RootView.swift": 1, "Gate2LiveActivityWidget.swift": 13,
+        "AppTopBanners.swift": 1, "EdgeSwipeBackTransition.swift": 1, "MarginRecordingScreen.swift": 2,
+        "FirstMarginPromptCard.swift": 2, "FootnoteCardView.swift": 2, "Gate1RootView.swift": 1, "Gate2LiveActivityWidget.swift": 13,
         "LiveActivityTourPreview.swift": 1, "LiveSessionActivityWidget.swift": 8, "MiniPlayer.swift": 1,
         "PinnedMarginCardView.swift": 4, "PlaybackFeedbackTagView.swift": 3, "PlaybackLivePassageView.swift": 1,
-        "PlaybackMarginRowView.swift": 1, "PlaybackMarginTranscriptionStatusView.swift": 1, "PlaybackMarginsFilterView.swift": 2,
-        "PlaybackNativeTextPeekView.swift": 1, "PlaybackPaneSwitchView.swift": 2, "PlaybackPositionSlider.swift": 1,
-        "PlaybackScreen.swift": 6, "SpokenMarginsWatchApp.swift": 5, "VoicesSettingsScreen.swift": 2,
-        "WatchUntetheredView.swift": 28
+        "PlaybackMarginRowView.swift": 1, "PlaybackMarginTranscriptionStatusView.swift": 1, "PlaybackPositionSlider.swift": 1,
+        "PlaybackScreen.swift": 6, "WatchUntetheredView.swift": 28
     ]
 
     private func systemColorUses() throws -> [String: Int] {
@@ -433,10 +472,12 @@ final class AppColorUsageGuardTests: XCTestCase {
     }
 
     /// The default placeholder is a system grey, 1.73:1 on the input fill in light mode. `AppTextField` and
-    /// `AppSecureField` draw it in `secondaryText`. Only the three system alerts keep a plain field: the system draws those.
+    /// `AppSecureField` draw it in `secondaryText`. Only the system alerts keep a plain field: the system draws those.
+    /// The follow lists' alerts (#4046) are three of them: New list in the "Lists for <show>" sheet, New list on the Lists
+    /// screen, and Rename on a list's screen.
     private static let plainFieldAllowed: [String: Int] = [
         "ExperienceDesignSystem.swift": 3, "ExperienceItemDetailScreen.swift": 1, "ItemCollectionSheet.swift": 1,
-        "SpokenNoteRenameAlert.swift": 1
+        "SpokenNoteRenameAlert.swift": 1, "FollowListPickerSheet.swift": 1, "FollowListsScreen.swift": 1, "FollowListScreen.swift": 1
     ]
 
     func testTextFieldsUseTheAppPlaceholderColour() throws {
@@ -459,11 +500,14 @@ final class AppColorUsageGuardTests: XCTestCase {
     /// A token foreground and an opaque token background on one modifier chain, in either order, as `(foreground,
     /// background)` token names: `.foregroundStyle(AppColors.secondaryText) ... .background(AppColors.panel)`. The chain
     /// is the modifiers between the two, up to 300 characters, with no brace, semicolon or other view in between, so two
-    /// neighbouring views are never paired. Only the plain `foregroundStyle(AppColors.x)` form is seen: a colour chosen
-    /// by a ternary or a variable is not, and a tint has its own scan above.
+    /// neighbouring views are never paired. A colour chosen by a ternary is seen too: `isActive ? AppColors.onEvergreen :
+    /// AppColors.text` on `isActive ? AppColors.evergreen : AppColors.panel` is two pairs, the first arm on the first
+    /// arm and the second on the second (a ternary on one side only is paired with each arm of the other). An arm that
+    /// is not a bare token (`.clear`, `Color.white`, a tint with `.opacity(`) is not paired here: a tint has its own scan
+    /// above, and a system colour has its own. A colour chosen by a variable or a function is not seen (#3739).
     static func tokenChains(in text: String) throws -> [(foreground: String, background: String)] {
-        let background = #"(?:\.background|\.fill)\(\s*AppColors\.(\w+)\s*[,)]"#
-        let foreground = #"(?:foregroundStyle|foregroundColor)\(\s*AppColors\.(\w+)\s*\)"#
+        let background = #"(?:\.background|\.fill)\(\s*(?=[^(),]*AppColors\.)([^(),]*?)\s*[,)]"#
+        let foreground = #"(?:foregroundStyle|foregroundColor)\(\s*(?=[^()]*AppColors\.)([^()]*?)\s*\)"#
         let between = #"([^{};]{0,300}?)"#
         let otherView = #"\b(?:Text|Image|Label|Button|HStack|VStack|ZStack|ForEach|Spacer|Section|Toggle|Picker|Link|NavigationLink)\("#
         var chains: [(foreground: String, background: String)] = []
@@ -474,10 +518,38 @@ final class AppColorUsageGuardTests: XCTestCase {
             for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
                 func group(_ index: Int) -> String { Range(match.range(at: index), in: text).map { String(text[$0]) } ?? "" }
                 if group(2).range(of: otherView, options: .regularExpression) != nil { continue }
-                chains.append((group(foregroundGroup), group(backgroundGroup)))
+                chains += pairedArms(foreground: tokenArms(group(foregroundGroup)), background: tokenArms(group(backgroundGroup)))
             }
         }
         return chains
+    }
+
+    /// The arms of a colour argument, each a bare `AppColors` token name or nil: one arm for a plain colour, two for a
+    /// ternary (`condition ? first : second`).
+    private static func tokenArms(_ argument: String) -> [String?] {
+        let arms: [String]
+        // The ternary's own ` ? ` and ` : `, so an optional chain (`item?.state`) in the condition is not the question mark.
+        if let question = argument.range(of: " ? "), let colon = argument.range(of: " : ", range: question.upperBound..<argument.endIndex) {
+            arms = [String(argument[question.upperBound..<colon.lowerBound]), String(argument[colon.upperBound...])]
+        } else {
+            arms = [argument]
+        }
+        return arms.map { arm in
+            let trimmed = arm.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("AppColors."), trimmed.dropFirst("AppColors.".count).allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" })
+            else { return nil }
+            return String(trimmed.dropFirst("AppColors.".count))
+        }
+    }
+
+    private static func pairedArms(foreground: [String?], background: [String?]) -> [(foreground: String, background: String)] {
+        let count = max(foreground.count, background.count)
+        return (0..<count).compactMap { index in
+            let fore = foreground.count == 1 ? foreground[0] : foreground[index]
+            let back = background.count == 1 ? background[0] : background[index]
+            guard let fore, let back else { return nil }
+            return (fore, back)
+        }
     }
 
     /// `AppColors` names that are another token under a second name (`Gate1RootView.swift`), so a chain that uses one is
@@ -509,11 +581,38 @@ final class AppColorUsageGuardTests: XCTestCase {
         XCTAssertEqual(try Self.tokenChains(in: blocks).count, 0)
     }
 
+    /// A colour chosen by a ternary is two pairs, first arm on first arm, never a cross product, and an arm that is a
+    /// tint or a system colour is left to the scans that own those (#3739).
+    func testTokenChainScanPairsTernaryArmsOneForOne() throws {
+        func chains(_ text: String) throws -> [String] { try Self.tokenChains(in: text).map { "\($0.foreground)/\($0.background)" } }
+        let both = "Text(\"a\").foregroundStyle(isActive ? AppColors.onEvergreen : AppColors.text).background(isActive ? AppColors.evergreen : AppColors.panel, in: Capsule())"
+        let reversed = "Capsule().fill(highlighted ? AppColors.evergreen : AppColors.softGreen).foregroundStyle(highlighted ? AppColors.onEvergreen : AppColors.evergreen)"
+        let oneSide = "Text(\"a\").foregroundStyle(isOn ? AppColors.text : AppColors.secondaryText).background(AppColors.panel)"
+        let arm = "Text(\"a\").foregroundStyle(isLit ? Color.white : AppColors.watchSecondary).background(isLit ? AppColors.softGreen : AppColors.panel)"
+        let tint = "Text(\"a\").foregroundStyle(AppColors.text).background(isLit ? AppColors.softGreen.opacity(0.5) : AppColors.panel)"
+        XCTAssertEqual(try chains(both), ["onEvergreen/evergreen", "text/panel"])
+        XCTAssertEqual(try chains(reversed), ["onEvergreen/evergreen", "evergreen/softGreen"])
+        XCTAssertEqual(try chains(oneSide), ["text/panel", "secondaryText/panel"])
+        XCTAssertEqual(try chains(arm), ["watchSecondary/panel"])
+        XCTAssertEqual(try chains(tint), [])
+        // A system colour or a clear fill earlier in the chain must not swallow the token pair after it.
+        let swallowed = "X.foregroundStyle(.secondary).foregroundStyle(AppColors.text).background(AppColors.panel)"
+        let clear = "X.foregroundStyle(AppColors.text).background(Color.clear).background(AppColors.panel)"
+        XCTAssertEqual(try chains(swallowed), ["text/panel"])
+        XCTAssertEqual(try chains(clear), ["text/panel"])
+        // An optional chain in the condition is not the ternary's question mark.
+        let optional = "X.foregroundStyle(item?.state == nil ? AppColors.text : AppColors.secondaryText).background(AppColors.panel)"
+        XCTAssertEqual(try chains(optional), ["text/panel", "secondaryText/panel"])
+    }
+
     /// The case the audit found by hand: a pair nobody listed (`secondaryText` on `dangerBackground` is 4.27:1 in light
     /// mode) is invisible to the token list test, which proves only that each token is in some pair. Here a pair is taken
     /// out of the real list, so the lookup has to say it is missing, and the whole list has to have it.
     func testAPairNobodyListedIsSeen() {
-        let withoutIt = AppColorContrastAudit.allPairs.filter { $0.name != "secondary on panel" }
+        // Every pair that measures it, not one by name: the Timeline rows' generated pairs measure it too (#3734).
+        let withoutIt = AppColorContrastAudit.allPairs.filter {
+            !($0.foreground == AppSemanticColorRGB.secondaryText && $0.background == AppSemanticColorRGB.panel)
+        }
         XCTAssertLessThan(withoutIt.count, AppColorContrastAudit.allPairs.count)
         XCTAssertFalse(Self.auditHasPair(foreground: "secondaryText", background: "panel", in: withoutIt))
         XCTAssertTrue(Self.auditHasPair(foreground: "secondaryText", background: "panel"))

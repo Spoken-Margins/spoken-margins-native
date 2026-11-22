@@ -62,7 +62,12 @@ extension Gate1AppModel {
             isRecording: snapshot.isRecording,
             failure: newFailure()
         )
-        recordDeveloperDiagnostic("margin.locked_intent", report.fields)
+        // A begin also says what came just before it, to tell the starts iOS allows from the ones it refuses (#4414).
+        var eventFields = report.fields
+        if action == .begin {
+            for (key, value) in compactBeginContext.fields(now: Date()) where eventFields[key] == nil { eventFields[key] = value }
+        }
+        recordDeveloperDiagnostic("margin.locked_intent", eventFields)
         diagnostics["lastLockedMarginIntent"] = report.summary
         if !report.succeeded { throw LockedMarginIntentFailure(report: report) }
     }

@@ -10,34 +10,40 @@ extension Gate1AppModel {
     func moveItemToTrash(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("move_item_to_trash") else { return }
         do {
-            let store = try requireStore()
-            guard let item = try store.loadItemSummary(id: id) else { throw SessionKitError.missingFixture("item:\(id)") } // the title is all it needs (#2506)
-            if id == Self.guidedOnboardingItemId {
-                UserDefaults.standard.set(true, forKey: Self.guidedOnboardingTombstoneKey)
-            }
-            if let engine, engine.currentSession?.itemId == id {
-                snapshot = try endEngineSession(engine, reason: .itemTrashed)
-            }
-            try store.moveItemToTrash(id: id)
-            removeMarginRows(forItem: id) // its Margins leave the list with it
-            showAsRecentlyDeleted(itemId: id, title: item.title)
-            // An import-only item can be selected without a session. Clearing that idle selection must not
-            // discard another item's live session just because its detail page was open when Delete was tapped.
-            if snapshot.itemId == id { snapshot = SessionSnapshot() }
-            if activeItemId == id {
-                let fallbackId = libraryItems.first?.id
-                activeItemId = fallbackId ?? "item-pill"
-                exportPreview = ""
-                selectedItem = ItemDetailState() // the screen is Home; the replacement's detail arrives from a background read (#2505)
-                if let fallbackId { selectFallbackItemInBackground(id: fallbackId, store: store) }
-            }
+            let title = try trashItemQuietly(id: id, store: try requireStore())
             screen = .home
-            withdrawFeedback(aboutItem: id)
-            presentTrashUndo(itemId: id, title: item.title)
-            reportSuccess("Moved \(item.title) to Recently Deleted.")
+            presentTrashUndo(TrashUndoState(itemId: id, title: title))
+            reportSuccess("Moved \(title) to Recently Deleted.")
         } catch {
             reportFailure(error, context: "Move to Recently Deleted failed")
         }
+    }
+
+    /// One item to Recently Deleted with everything that goes with it, and no banner: the row's delete and Select's bulk
+    /// delete (#4720) both run this, then each says what it did once. Returns the item's title.
+    func trashItemQuietly(id: String, store: SQLiteSessionStore) throws -> String {
+        guard let item = try store.loadItemSummary(id: id) else { throw SessionKitError.missingFixture("item:\(id)") } // the title is all it needs (#2506)
+        if id == Self.guidedOnboardingItemId {
+            UserDefaults.standard.set(true, forKey: Self.guidedOnboardingTombstoneKey)
+        }
+        if let engine, engine.currentSession?.itemId == id {
+            snapshot = try endEngineSession(engine, reason: .itemTrashed)
+        }
+        try store.moveItemToTrash(id: id)
+        removeMarginRows(forItem: id) // its Margins leave the list with it
+        showAsRecentlyDeleted(itemId: id, title: item.title)
+        // An import-only item can be selected without a session. Clearing that idle selection must not
+        // discard another item's live session just because its detail page was open when Delete was tapped.
+        if snapshot.itemId == id { snapshot = SessionSnapshot() }
+        if activeItemId == id {
+            let fallbackId = libraryItems.first?.id
+            activeItemId = fallbackId ?? "item-pill"
+            exportPreview = ""
+            selectedItem = ItemDetailState() // the screen is Home; the replacement's detail arrives from a background read (#2505)
+            if let fallbackId { selectFallbackItemInBackground(id: fallbackId, store: store) }
+        }
+        withdrawFeedback(aboutItem: id)
+        return item.title
     }
 
     /// The detail of the item the listener lands on after deleting the one they had open, read off the main thread. The
@@ -61,18 +67,18 @@ extension Gate1AppModel {
         refreshLibraryRowsInBackground(mustPublish: true)
     }
 
+    /// Undo brings back everything the delete moved: one item, or all of a Select delete (#4720).
     func undoLastTrash() {
         guard let trashUndo else { return }
-        restoreItem(id: trashUndo.itemId)
+        if trashUndo.itemIds.count == 1 { restoreItem(id: trashUndo.itemId) } else { restoreItems(trashUndo.batch) }
     }
 
     func dismissTrashUndo() {
         dismissTrashUndo(id: nil)
     }
 
-    private func presentTrashUndo(itemId: String, title: String) {
+    func presentTrashUndo(_ undo: TrashUndoState) {
         trashUndoDismissTask?.cancel()
-        let undo = TrashUndoState(itemId: itemId, title: title)
         trashUndo = undo
         // VoiceOver and Switch Control listeners keep the banner until they act on it (#1926).
         guard !TrashUndoPolicy.staysUntilDismissed(assistiveTechnologyRunning: AssistiveTechnology.isRunning) else {
@@ -109,16 +115,22 @@ extension Gate1AppModel {
 
     func restoreItem(id: String) {
         do {
-            let store = try requireStore()
-            guard let item = try store.loadItemSummary(id: id) else { throw SessionKitError.missingFixture("item:\(id)") }
-            try store.restoreItem(id: id)
-            refreshMarginRowsInBackground(forItem: id) // and come back with it
+            let title = try restoreItemQuietly(id: id, store: try requireStore())
             refreshLibraryRowsInBackground(mustPublish: true)
             dismissTrashUndo()
-            reportSuccess("Restored \(item.title).")
+            reportSuccess("Restored \(title).")
         } catch {
             reportFailure(error, context: "Restore failed")
         }
+    }
+
+    /// One item back from Recently Deleted, with its Margins, and no banner: Restore and a Select delete's Undo both run
+    /// it (#4720). Returns the item's title.
+    func restoreItemQuietly(id: String, store: SQLiteSessionStore) throws -> String {
+        guard let item = try store.loadItemSummary(id: id) else { throw SessionKitError.missingFixture("item:\(id)") }
+        try store.restoreItem(id: id)
+        refreshMarginRowsInBackground(forItem: id) // and come back with it
+        return item.title
     }
 
     func permanentlyDeleteItem(id: String) {
@@ -131,12 +143,18 @@ extension Gate1AppModel {
             }
             let recordings = try store.loadInterjections(itemId: id)
             let quarantinedRecordings = try store.quarantinedMarginAudioPaths(itemId: id)
+            let ledgerRows = try store.loadOwnedOfflineAssets(itemId: id) // named before any file goes (#4227)
             podcastDownloadCoordinator?.queueRemoval(id)
             removeDurableGeneratedAudio(for: item)
             removeEpisodeMapArtifacts(itemId: id)
-            try deletingFriendRecordings(ofItems: [id], store: store) { try store.deleteItem(id: id) }
+            try purgingItemFiles(
+                ofItems: [id], ledgerRows: ledgerRows,
+                recordingPaths: recordings.compactMap(\.audioPath) + quarantinedRecordings, store: store
+            ) {
+                try deletingFriendRecordings(ofItems: [id], store: store) { try store.deleteItem(id: id) }
+            }
             removeLiveSessionRecord(itemId: id)
-            removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
+            removeFromQueue(deletedItemIds: [id])
             dropPermanentlyDeletedRows(ids: [id])
             guard !libraryItems.contains(where: { $0.id == id }),
                   !recentlyDeletedItems.contains(where: { $0.id == id }),
@@ -144,7 +162,7 @@ extension Gate1AppModel {
                   (try? store.loadSessions(itemId: id))?.isEmpty != false else {
                 throw SessionKitError.persistenceFailed("permanent_delete_verification_failed")
             }
-            if trashUndo?.itemId == id {
+            if trashUndo?.batch.contains(id) == true {
                 dismissTrashUndo()
             }
             withdrawFeedback(aboutItem: id)
@@ -173,18 +191,24 @@ extension Gate1AppModel {
             }
             let recordings = try ids.flatMap { try store.loadInterjections(itemId: $0) }
             let quarantinedRecordings = try ids.flatMap { try store.quarantinedMarginAudioPaths(itemId: $0) }
+            let ledgerRows = try ids.flatMap { try store.loadOwnedOfflineAssets(itemId: $0) } // named before any file goes (#4227)
             ids.forEach { podcastDownloadCoordinator?.queueRemoval($0) }
             items.forEach { removeDurableGeneratedAudio(for: $0) }
             ids.forEach(removeEpisodeMapArtifacts)
-            try deletingFriendRecordings(ofItems: ids, store: store) { try store.deleteItems(ids: ids) }
+            try purgingItemFiles(
+                ofItems: ids, ledgerRows: ledgerRows,
+                recordingPaths: recordings.compactMap(\.audioPath) + quarantinedRecordings, store: store
+            ) {
+                try deletingFriendRecordings(ofItems: ids, store: store) { try store.deleteItems(ids: ids) }
+            }
             ids.forEach(removeLiveSessionRecord)
-            removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
+            removeFromQueue(deletedItemIds: ids)
             dropPermanentlyDeletedRows(ids: Set(ids))
             guard recentlyDeletedItems.isEmpty,
                   ids.allSatisfy({ (try? store.loadItemSummary(id: $0)) == nil }) else {
                 throw SessionKitError.persistenceFailed("bulk_permanent_delete_verification_failed")
             }
-            if let undoItemId = trashUndo?.itemId, ids.contains(undoItemId) {
+            if let undo = trashUndo, ids.contains(where: undo.batch.contains) {
                 dismissTrashUndo()
             }
             withdrawFeedback(aboutItems: ids)

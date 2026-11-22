@@ -47,7 +47,7 @@ extension Gate1AppModel {
         Task { [weak self] in
             try? await coordinator.setMuted(subscriptionId: id, muted: subscription.state != .muted)
             await self?.publishFeedSubscriptionsAfterChange()
-            self?.refreshFollowedSources(force: false)
+            self?.refreshFollowedSources(force: false, trigger: .localChange)
         }
     }
 
@@ -58,7 +58,7 @@ extension Gate1AppModel {
         Task { [weak self] in
             try? await coordinator.setNewItemPolicy(subscriptionId: id, policy: policy)
             await self?.publishFeedSubscriptionsAfterChange()
-            self?.refreshFollowedSources(force: false)
+            self?.refreshFollowedSources(force: false, trigger: .localChange)
         }
     }
 
@@ -81,7 +81,7 @@ extension Gate1AppModel {
                 await self.publishFeedSubscriptionsAfterChange()
                 self.followedSourceCandidates = []
                 self.followedSourceURL = ""
-                await self.performFollowedSourceRefresh(force: true)
+                await self.performFollowedSourceRefresh(force: true, trigger: .afterFollow)
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
             } catch {
@@ -107,7 +107,7 @@ extension Gate1AppModel {
         let sourceId = try await coordinator.followFeed(urlString: feedURL).source.id
         await publishFeedSubscriptionsAfterChange()
         diagnostics["followSourceFailure"] = nil
-        if refreshAfter { await performFollowedSourceRefresh(force: false) }
+        if refreshAfter { await performFollowedSourceRefresh(force: false, trigger: .afterFollow) }
         return sourceId
     }
 
@@ -121,7 +121,7 @@ extension Gate1AppModel {
                 await self.publishFeedSubscriptionsAfterChange()
                 self.followedSourceCandidates = []
                 self.followedSourceURL = ""
-                await self.performFollowedSourceRefresh(force: true)
+                await self.performFollowedSourceRefresh(force: true, trigger: .afterFollow)
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
             } catch {
@@ -255,7 +255,7 @@ extension Gate1AppModel {
                     self.refreshLibraryRowsInBackground(mustPublish: true)
                 }
                 try await self.publishFeedSubscriptions(store: store)
-                await self.performFollowedSourceRefresh(force: true)
+                await self.performFollowedSourceRefresh(force: true, trigger: .afterFollow)
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
@@ -382,7 +382,7 @@ extension Gate1AppModel {
                 try await self.publishFeedSubscriptions(store: store)
                 try store.saveSourceSuggestionDecision(SourceSuggestionDecision(sourceId: candidate.source.id, decision: .accepted, lastPromptAt: Date()))
                 self.storedSourceFollowSuggestionCandidates = []
-                await self.performFollowedSourceRefresh(force: true)
+                await self.performFollowedSourceRefresh(force: true, trigger: .afterFollow)
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
@@ -411,34 +411,66 @@ extension Gate1AppModel {
         storedSourceFollowSuggestionCandidates = []
     }
 
-    func refreshFollowedSources(force: Bool = true) {
-        Task { [weak self] in await self?.performFollowedSourceRefresh(force: force) }
+    /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
+    func reloadFollowedSourceEntries() async {
+        // Subscriptions first: New hides a back catalogue by them (#1589). The entries are read last, so a refresh that lands
+        // while the subscriptions publish is never overwritten by an older read (#4387).
+        guard let coordinator = followedSourceCoordinator else { return }
+        await publishFeedSubscriptionsAfterChange()
+        if let entries = try? await coordinator.entries() { followedSourceEntries = entries }
     }
 
-    func performFollowedSourceRefresh(force: Bool) async {
+    func refreshFollowedSources(force: Bool = true, trigger: FollowedRefreshTrigger) {
+        Task { [weak self] in await self?.performFollowedSourceRefresh(force: force, trigger: trigger) }
+    }
+
+    /// `scope` narrows only this request's own round. A request made during the pass goes round again over every feed, so
+    /// a listener's action never gets less than a full refresh (#4388). Returns what the pass actually covered, the widest
+    /// scope of any round that ran, or nil when none did: the gate refused the request because a pass was already
+    /// running (that pass covers it), or the store could not be opened.
+    @discardableResult
+    func performFollowedSourceRefresh(force: Bool, scope: FeedRefreshScope = .allFeeds, trigger: FollowedRefreshTrigger) async -> FeedRefreshScope? {
+        let covered = await refreshFollowedSourcePasses(force: force, scope: scope)
+        // List addresses are read only for a listener's action (#4046 PR 6). `ListLinkRunner` answers
+        // `trigger.checksListLinks` before it touches the store, so every other trigger costs nothing here. The check runs on
+        // its own task: a slow or dead list host must not keep a pull's spinner turning. **Check now** awaits the runner itself.
+        startListLinkCheck(trigger: trigger)
+        return covered
+    }
+
+    private func refreshFollowedSourcePasses(force: Bool, scope: FeedRefreshScope) async -> FeedRefreshScope? {
         // A request made during a running pass is not dropped: the pass goes round once more, as strong as the
         // strongest request (#2136).
-        guard followedSourceRefreshGate.request(forced: force) else { return }
+        guard followedSourceRefreshGate.request(forced: force) else { return nil }
         isRefreshingFollowedSources = true
         defer { isRefreshingFollowedSources = false }
         var nextForce: Bool? = force
+        var roundScope = scope
+        var covered: FeedRefreshScope?
         while let roundForce = nextForce {
-            await runFollowedSourceRefreshRound(force: roundForce)
+            if await runFollowedSourceRefreshRound(force: roundForce, scope: roundScope) {
+                covered = covered == .allFeeds || roundScope == .allFeeds ? .allFeeds : .firstScreen
+            }
+            roundScope = .allFeeds
             nextForce = followedSourceRefreshGate.finishPass()
         }
+        return covered
     }
 
-    private func runFollowedSourceRefreshRound(force: Bool) async {
+    /// False when the store could not be opened, so no feed was asked for.
+    private func runFollowedSourceRefreshRound(force: Bool, scope: FeedRefreshScope) async -> Bool {
         do {
             let store = try requireStore()
             let coordinator = requireFollowedSourceCoordinator(store: store)
-            for entry in await coordinator.refreshStale(force: force) { importFollowedSourceEntry(entry, startedByListener: false) } // "Add every new item" (#466)
+            for entry in await coordinator.refreshStale(force: force, scope: scope) { importFollowedSourceEntry(entry, startedByListener: false) } // "Add every new item" (#466)
             let subscriptions = try await publishFeedSubscriptions(store: store)
             followedSourceEntries = try await coordinator.entries()
             diagnostics["followedSourceCount"] = "\(subscriptions.count)"
             diagnostics["followedSourceEntryCount"] = "\(followedSourceEntries.count)"
+            return true
         } catch {
             diagnostics["followedSourceRefresh"] = "failed:\(String(describing: type(of: error)))"
+            return false
         }
     }
 
@@ -493,7 +525,7 @@ extension Gate1AppModel {
                         landedItemId = itemId
                     } else {
                         let itemId = self.listeningSignals.followedArticleImported(
-                            try self.importBrowserTextInBackground(handoff, listenerAdded: startedByListener), for: entry) // #4178
+                            try await self.importBrowserTextInBackgroundReloadingOffMain(handoff, listenerAdded: startedByListener), for: entry) // #4178
                         // The earlier record's text map is kept and the save runs off the main actor (#2509), as for a shared link.
                         var audio: PublisherAudio?
                         if let found = try PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId) {
@@ -508,7 +540,7 @@ extension Gate1AppModel {
                 }
                 guard imported else { return }
                 try await self.followedSourceCoordinator?.setEntryState(id: entry.id, state: .imported)
-                await self.performFollowedSourceRefresh(force: false)
+                await self.performFollowedSourceRefresh(force: false, trigger: .localChange)
                 self.reportConfirmation("Imported \(entry.title) into the library.")
             } catch {
                 landedItemId = nil
@@ -519,10 +551,13 @@ extension Gate1AppModel {
 
     func unfollowSource(id: String) {
         guard let coordinator = followedSourceCoordinator else { return }
+        // The show leaves its follow lists with it (#4046). The member is read before the subscription goes.
+        let member = feedSubscriptions.first { $0.id == id }.map { FollowListEditing.member(for: $0) }
         Task { [weak self] in
-            try? await coordinator.unfollow(subscriptionId: id)
+            let unfollowed: Void? = try? await coordinator.unfollow(subscriptionId: id)
+            if unfollowed != nil, let member { await self?.removeFromFollowLists(member) }
             await self?.publishFeedSubscriptionsAfterChange()
-            await self?.performFollowedSourceRefresh(force: false)
+            await self?.performFollowedSourceRefresh(force: false, trigger: .localChange)
         }
     }
 }

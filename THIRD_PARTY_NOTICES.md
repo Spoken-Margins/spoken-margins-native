@@ -8,15 +8,15 @@ This file is generated from [docs/legal/third-party-components.json](docs/legal/
 
 These are compiled into or packaged with the app, and some are also stored in this repository.
 
-### ONNX Runtime, through onnxruntime-swift-package-manager 1.24.2
+### ONNX Runtime 1.24.2, through onnxruntime-swift-package-manager 1.24.3
 
 - Licence: MIT
 - From: Microsoft Corporation
-- Source: <https://github.com/microsoft/onnxruntime-swift-package-manager>
+- Source: <https://github.com/Spoken-Margins/onnxruntime-swift-package-manager>
 - Where: `Packages/SessionKit/Package.swift`
 - Licence text: [ONNXRUNTIME_MIT.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/ONNXRUNTIME_MIT.txt), [ONNXRUNTIME_THIRD_PARTY_NOTICES.txt](App/SpokenMarginsApp/Resources/Supertonic/licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt), [onnxruntime-mit.txt](Contracts/voice-models/licenses/onnxruntime-mit.txt)
 
-Runs the voice models on the phone. ONNX Runtime's own third-party components (MIT, BSD, Apache-2.0, zlib, Boost, ISC, public domain and MPL-2.0 for Eigen) are listed in the second file.
+Runs the voice models on the phone. ONNX Runtime's own third-party components (MIT, BSD, Apache-2.0, zlib, Boost, ISC, public domain and MPL-2.0 for Eigen) are listed in the second file. Built from a copy in the Spoken-Margins organization, because Microsoft's original repository (github.com/microsoft/onnxruntime-swift-package-manager) returned 404 on 2026-11-18 (#4512). The copy's tag 1.24.3 is upstream 1.24.2 with one change: its two ONNX Runtime 1.24.2 archives download from that copy's 1.24.3 release instead of download.onnxruntime.ai, whose certificate was first seen failing on 2026-11-21 (#4913). The archives are byte for byte the published ones; their checksums are unchanged.
 
 ### ZIPFoundation 0.9.20
 
@@ -305,6 +305,16 @@ Parses the workflow files in scripts/tests/test_workflow_files.py. Installed fro
 - Licence text: <https://github.com/lxml/lxml/blob/master/doc/licenses/BSD.txt>
 
 Parses HTML in the research ground-truth tests (research/C1/tools). Installed from requirements-dev.txt so the hosted research step really runs them (#2596); build-time only and none ships.
+
+### regex (Python) 2025.9.18
+
+- Licence: Apache-2.0 AND CNRI-Python
+- From: Matthew Barnett
+- Source: <https://github.com/mrabarnett/mrab-regex>
+- Where: `research/C1/tools`
+- Licence text: <https://raw.githubusercontent.com/mrabarnett/mrab-regex/hg/LICENSE.txt>
+
+Used by research/C1/tools/marker_diff.py to count characters the way Swift does. Installed from requirements-dev.txt so the hosted research step really runs test_marker_diff (#4320); build-time only and none ships.
 
 ### Design prototypes' npm packages
 

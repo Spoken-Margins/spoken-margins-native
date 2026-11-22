@@ -6,6 +6,8 @@ enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
     case invalidURL
     /// The page moved to an address that isn't HTTPS while it loaded (#144).
     case pageLeftHTTPS
+    /// The page sent the reader to another app's address, such as X's `x-safari-https://` (#4776).
+    case handedToAnotherApp
     case oversizedHTML
     case tooManyRedirects
     case missingExtractor
@@ -17,6 +19,7 @@ enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
         switch self {
         case .invalidURL: "Article URLs must use HTTPS."
         case .pageLeftHTTPS: "The article page moved to an address that isn't secure (HTTPS)."
+        case .handedToAnotherApp: "The site tried to open the page in another app instead of showing it here."
         case .oversizedHTML: "The article exceeds the 1 MB safety limit."
         case .tooManyRedirects: "The article redirected more than five times."
         case .missingExtractor: "The bundled readable-page extractor is unavailable."
@@ -105,6 +108,10 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
         configuration.userContentController.add(ruleList)
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
+        // A site that bounces the web view's own iPhone identity to Safari gets Mac Safari's instead (#4776).
+        if let userAgent = ReadablePageBrowserIdentity.userAgent(for: url) {
+            webView.customUserAgent = userAgent
+        }
         self.webView = webView
         navigationRules = ReadablePageNavigationRules(requestedURL: url)
         requestedURL = url
@@ -152,6 +159,9 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
             return .cancel
         case .refuse(.pageLeftHTTPS):
             finish(.failure(ReadablePageExtractionError.pageLeftHTTPS))
+            return .cancel
+        case .refuse(.handedToAnotherApp):
+            finish(.failure(ReadablePageExtractionError.handedToAnotherApp))
             return .cancel
         case .refuse(.tooManyRedirects):
             finish(.failure(ReadablePageExtractionError.tooManyRedirects))

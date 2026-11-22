@@ -21,6 +21,11 @@ struct MarginWritingSheet<Accessory: View>: View {
     let onCancel: () -> Void
     /// What only one caller has, above the editor: a live session's photo and its hint (#2708).
     var lead: AnyView?
+    /// The headline over the error's details. A live session's refused Save says what happened here (#3847).
+    var errorHeadline = "Your draft is still here. Try saving again."
+    /// A plain line in the top block, after the anchor and reply rows: a live session that ended while this screen was
+    /// open says so here (#3847). Information in the secondary colour, not an error.
+    var statusLine: String? = nil
     @ViewBuilder let accessory: () -> Accessory
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -53,6 +58,15 @@ struct MarginWritingSheet<Accessory: View>: View {
                             switchReply: toggleReply
                         )
                     }
+
+                    if let statusLine {
+                        Text(statusLine)
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("liveSession.write.endedLine")
+                    }
                 }
 
                 if let lead { lead }
@@ -82,7 +96,7 @@ struct MarginWritingSheet<Accessory: View>: View {
                 if let error {
                     cappedAtAccessibilitySizes {
                         VStack(alignment: .leading, spacing: 6) {
-                            Label("Your draft is still here. Try saving again.", systemImage: "exclamationmark.triangle")
+                            Label(errorHeadline, systemImage: "exclamationmark.triangle")
                                 .font(.subheadline)
                             DisclosureGroup("Details") { Text(error).font(.caption) }
                         }

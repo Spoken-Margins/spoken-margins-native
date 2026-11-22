@@ -184,12 +184,17 @@ func TestLinkStoreRoundTripExpiryAndSweep(t *testing.T) {
 	if err := reopened.Live(id, expiry.Add(-time.Nanosecond)); err != nil {
 		t.Fatal(err)
 	}
-	// Nothing readable is on disk: neither the Margin's text and title nor the packet's plaintext.
+	// A pin, not a proof (#4318): the store is only ever given sealed bytes, so this can fail only if it invents or
+	// decodes plaintext. What keeps plaintext out is the Sealed() check on Put (the ErrUnsealed rows below). The walk
+	// also has to find the sealed packet on disk, so it cannot pass by looking at nothing.
+	files, foundSealed := 0, false
 	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
+		files++
 		data, _ := os.ReadFile(path)
+		foundSealed = foundSealed || bytes.Equal(data, packet)
 		for _, plain := range [][]byte{[]byte("This is the part I wanted you to hear"), []byte("Fourier"), previewPlain, packetPlain[:32]} {
 			if bytes.Contains(data, plain) {
 				t.Fatalf("%s holds readable %q", path, plain)
@@ -197,6 +202,9 @@ func TestLinkStoreRoundTripExpiryAndSweep(t *testing.T) {
 		}
 		return nil
 	})
+	if files == 0 || !foundSealed {
+		t.Fatalf("looked at %d files and the sealed packet was not among them", files)
+	}
 	if _, err := reopened.Preview(id, expiry); !errors.Is(err, ErrGone) {
 		t.Fatalf("at expiry: %v", err)
 	}

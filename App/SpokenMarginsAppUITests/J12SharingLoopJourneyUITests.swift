@@ -61,6 +61,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             try recordAMargin(seconds: 3)
             try recordAMargin(seconds: 3)
             endStep("two Margins recorded")
+            assertOwnMargins(2) // checking, not listening: step 3 counts its own taps
         }
 
         XCTContext.runActivity(named: "J12 step 3: Send them: the packet is built and its size is shown") { _ in
@@ -68,7 +69,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             // Tap 1 (#1507): Share on the playback screen opens the sheet on its review, with Share pinned.
             tap("playback.shareMargins.button")
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The Share Margins sheet did not open")
-            let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
+            let cleanUpQuestion = app.alerts["Remove ums and long pauses?"]
             if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
             XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 8), "Share did not open on the review step")
             // Tap 2 is Share here, which opens the iOS share sheet. It has to be on screen without scrolling.
@@ -138,10 +139,15 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             app.launch()
             XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Episode is missing after relaunch")
             tap("queue.start.\(itemId)")
-            let skip = offerButton("newMarginsOffer.skip", orLabel: "Listen without them")
-            XCTAssertTrue(skip.waitForExistence(timeout: 5), "Continue did not offer the friend's Margin")
-            skip.tap() // listen on: the answer below is made on the friend's item either way
-            XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
+            // This episode was never started, so Continue plays from the beginning and reaches the friend's Margin on
+            // its own: `PlayRule` asks only about Margins behind a saved place (`PlayRuleTests`, "not open, a row with no
+            // session"; J14 row 3). The offer belongs to an episode with a place past the Margin, which step 4 of the
+            // other test covers, so here it is taken if it shows and is not required (#4253).
+            let skip = app.buttons.matching(NSPredicate(format: "identifier == %@ OR label == %@", "newMarginsOffer.skip", "Listen without them")).firstMatch
+            let nowPlaying = element("playback.screen")
+            waitUntil("Continue neither offered the friend's Margin nor opened Now Playing", timeout: 10) { skip.exists || nowPlaying.exists }
+            if skip.exists { skip.tap() } // listen on: the answer below is made on the friend's item either way
+            XCTAssertTrue(nowPlaying.waitForExistence(timeout: 8), "Now Playing did not open")
             try waitUntilPlaying("Episode never reached the playing state")
             try recordAMargin(seconds: 3)
         }
@@ -150,10 +156,11 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             beginStep()
             tap("playback.shareMargins.button") // tap 1
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The Share sheet did not open")
-            XCTAssertFalse(app.alerts["Clean selected Margins automatically?"].waitForExistence(timeout: 2),
+            XCTAssertFalse(app.alerts["Remove ums and long pauses?"].waitForExistence(timeout: 2),
                            "The cleanup question showed on the reply sheet")
             XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 8), "The reply sheet did not open on its review")
-            XCTAssertTrue(element("build23.sender.heading").label.hasPrefix("Send replies to"), "The sheet is not the reply sheet: \(element("build23.sender.heading").label)")
+            let heading = element("build23.sender.heading").label // "Share replies with <friend>", or "Share your Margins with <friend>" when none is linked as a reply (#3906)
+            XCTAssertTrue(heading.hasPrefix("Share replies with") || heading.hasPrefix("Share your Margins with"), "The sheet is not the reply sheet: \(element("build23.sender.heading").label)")
             XCTAssertFalse(element("build23.sender.review.navigator").exists, "The reply review drew the Margin navigator")
             let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "build23.sender.review.selector."))
             XCTAssertGreaterThanOrEqual(rows.count, 1, "The receipt should hold a row for the Margin going")
@@ -168,6 +175,48 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
         }
     }
 
+    /// #3788: the number the Design asks for. The time from the item screen's first frame, on a friend's arrival, to the
+    /// first Margin's audio starting after one tap on "Skip to …" made as soon as the button shows (about 10 s is the
+    /// goal; the PR that reads this reports the number and files a speed issue when it is over). It is attached and
+    /// logged, never asserted: a slower build is a finding for the desk, not a failed test (see the top of this file).
+    /// The friend's packet is the launch fixture, so the episode is already in the Library: this is the arrival path
+    /// with placement and download out of the way. Opening a packet from Files with the episode absent can't be scripted
+    /// (it needs the Files app), so that case stays with the agent run (docs/journeys.md, J12 step 4).
+    func testFriendArrivalToFirstMarginSeconds() throws {
+        XCTContext.runActivity(named: "J12 arrival, step 1: The episode is in the Library (offline seed)") { _ in
+            app.launch()
+            XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Seeded episode did not appear in the Library")
+        }
+
+        XCTContext.runActivity(named: "J12 arrival, step 2: Force-quit; a friend's Margin arrives; open the item and skip to it") { _ in
+            app.terminate()
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP"] = "1"
+            app.launch()
+            XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Episode is missing from the Library after relaunch")
+            tap("library.row.\(itemId)")
+            let opened = Date()
+            XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
+            let skip = app.buttons["item.reviewNewMargins.button"].firstMatch
+            XCTAssertTrue(skip.waitForExistence(timeout: 30), "The item screen never offered \"Skip to …\"")
+            let skipShownAt = Date().timeIntervalSince(opened)
+            note(String(format: "item screen to \"Skip to …\" shown: %.1fs", skipShownAt))
+            // The intro first, never "Mark complete" or a placement status, on the first frame the choice shows (#3788).
+            XCTAssertTrue(element("item.friendIntro.sender").exists, "The item doesn't say who sent the Margins")
+            for words in ["Mark complete", "Placing in your copy", "Matching positions in your episode"] {
+                let shown = NSPredicate(format: "label CONTAINS[c] %@", words)
+                XCTAssertEqual(app.descendants(matching: .any).matching(shown).count, 0, "\"\(words)\" shows on arrival")
+            }
+            skip.tap()
+            taps += 1
+            XCTAssertTrue(element("review.playing").waitForExistence(timeout: 60), "The friend's Margin never started playing")
+            let seconds = Date().timeIntervalSince(opened)
+            note(String(format: "item screen to the friend's Margin playing: %.1fs (%@ the 10 s goal); %d taps from the Library",
+                        seconds, seconds <= 10 ? "within" : "over", taps))
+            XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+        }
+    }
+
     // MARK: Steps
 
     private func recordAMargin(seconds minimum: Int) throws {
@@ -179,6 +228,23 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
         tap("recording.finish.button")
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Did not return to Now Playing")
         XCTAssertTrue(playPause.waitForExistence(timeout: 5), "Playback control is missing")
+    }
+
+    /// The Margins tab, on Mine, lists exactly `expected` of the listener's own Margins, by its count and by its rows
+    /// (#4315: the step that recorded two never counted them). Back to Now afterwards, where Share is.
+    private func assertOwnMargins(_ expected: Int) {
+        tap("playback.margins.button")
+        tap("playback.margins.filter.mine")
+        let count = element("playback.margins.count")
+        XCTAssertTrue(count.waitForExistence(timeout: 5), "The Margins count is missing")
+        waitUntil("The Margins tab does not count \(expected) of your Margins") { count.label == "Margins: \(expected)" }
+        XCTAssertEqual(count.label, "Margins: \(expected)", "The Margins tab miscounts your Margins")
+        let ownRows = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND NOT (identifier ENDSWITH %@)", "margins.row.", ".play"
+        ))
+        XCTAssertEqual(ownRows.count, expected, "The Margins tab lists \(ownRows.count) of your Margins, not \(expected)")
+        note("Margins tab after recording: \(count.label)")
+        tap("playback.now.button")
     }
 
     private func beginStep() { tapsAtStepStart = taps }

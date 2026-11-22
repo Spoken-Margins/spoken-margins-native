@@ -73,10 +73,14 @@ public struct ListeningMoment: Sendable, Equatable {
         public let id: String
         /// Milliseconds for media, characters for text.
         public let position: Int
+        /// The run-up the sender chose for this Margin (#4171), media only. Nil means the use's own length. A moment's
+        /// explicit `leadInMs` argument still wins, since the caller has already weighed the two.
+        public let leadInMs: Int?
 
-        public init(id: String, position: Int) {
+        public init(id: String, position: Int, leadInMs: Int? = nil) {
             self.id = id
             self.position = max(0, position)
+            self.leadInMs = leadInMs.map(SenderLeadIn.clamped)
         }
     }
 
@@ -198,7 +202,8 @@ public struct ListeningMoment: Sendable, Equatable {
 
     /// - Parameters:
     ///   - previousMargin: the Margin before this one in the same plan and source; the lead-in never starts before it.
-    ///   - leadInMs: overrides the use's media lead-in, for a lead-in the sender trimmed. Ignored for text.
+    ///   - leadInMs: overrides the use's media lead-in. Else the Margin's own length (the sender's, #4171), else the
+    ///     use's. Ignored for text.
     public init(
         use: Use,
         margin: Margin,
@@ -215,7 +220,7 @@ public struct ListeningMoment: Sendable, Equatable {
         var clamp: LeadInClamp?
         switch source.timeline {
         case .media:
-            let length = max(0, leadInMs ?? rule.leadInMs)
+            let length = max(0, leadInMs ?? margin.leadInMs ?? rule.leadInMs)
             wanted = max(0, margin.position - length)
             if margin.position - length < 0 { clamp = .sourceStart }
         case let .text(sentenceStarts):

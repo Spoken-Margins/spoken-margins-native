@@ -97,10 +97,9 @@ export async function buildBackup(
     }
   }
 
-  if (packets.length === 1) {
-    const only = packets[0] as ZipInput;
-    result.file = { name: only.path, bytes: only.data, mimeType: 'application/vnd.spokenmargins.package+zip' };
-  } else if (packets.length > 1) {
+  // Always a .zip, even for one packet: how a file arrives is what tells a backup (the listener's own Margins, left
+  // unsigned) from a friend's packet (#4226), because the packet manifest has no room for a marker.
+  if (packets.length > 0) {
     result.file = { name: backupFileName(now), bytes: await writeZip(packets), mimeType: 'application/zip' };
   }
   return result;
@@ -135,12 +134,12 @@ export function backupSummary(result: BackupResult, describe: (error: unknown) =
  * opaque Android content URI) is looked inside, so a backup still unpacks. Anything that isn't a backup goes to the
  * packet reader as it is, which says plainly when it isn't a Margin file.
  */
-export async function packetsToOpen(bytes: Uint8Array, fileName: string | undefined): Promise<Array<{ name: string | undefined; bytes: Uint8Array }>> {
+export async function packetsToOpen(bytes: Uint8Array, fileName: string | undefined): Promise<Array<{ name: string | undefined; bytes: Uint8Array; fromBackup: boolean }>> {
   if (isBackupArchive(fileName) || fileName === undefined) {
     const packets = await packetsInBackup(bytes).catch(() => []);
-    if (packets.length > 0) return packets;
+    if (packets.length > 0) return packets.map((p) => ({ ...p, fromBackup: true }));
   }
-  return [{ name: fileName, bytes }];
+  return [{ name: fileName, bytes, fromBackup: false }];
 }
 
 /** Whether a picked file is a backup `.zip` rather than a single packet. */

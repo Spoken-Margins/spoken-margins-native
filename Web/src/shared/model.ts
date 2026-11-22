@@ -55,6 +55,12 @@ export interface Margin {
   voice?: { blob: Blob; mimeType: string; durationSeconds: number };
   /** Set on Margins imported from someone else's packet. */
   author?: string;
+  /**
+   * Where this Margin travelled when the listener shared it (#4174): one `packet:<digest>:margin-000N` per packet it
+   * went out in, which is the id a friend's reply to it carries as `replyToId`. Set on the share path only, never
+   * written into a packet. Absent on a Margin that was never shared, or shared before this was kept.
+   */
+  sharedAs?: string[];
   /** The Margin this one answers (2026-10-25 call: recorded during a friend's Margin = a reply). */
   replyToId?: string;
   /**
@@ -68,11 +74,33 @@ export interface Margin {
    */
   readAloud?: false;
   /**
+   * How much of the episode the sender asked their friend to hear before this Margin, in seconds, 0 to 300, from the
+   * packet's `leadInMs` (#4171). Absent means the usual 20 seconds. Never written to a packet by the web.
+   */
+  leadInSeconds?: number;
+  /**
+   * The length of the copy this Margin was made on, in seconds (#4614, #4175): from the packet's `item.durationMs` for a
+   * friend's Margin on a podcast, from the player for the listener's own. A podcast with dynamic ads is a different file
+   * on each request, so the player compares this with the copy it loaded. Absent when the length is unknown.
+   */
+  copyLengthSeconds?: number;
+  /**
    * The listener starred their own Margin to share (#4172): Share starts only the starred ones ticked, as the iPhone app's
    * does. Kept in this browser only. It is never written to a packet or a backup, so a restored Margin comes back unstarred.
    * Only ever `true`; absent means not starred.
    */
   starred?: true;
+}
+
+/**
+ * A Margin a friend left on an article's words, with no time of its own: it carries how far through the article it
+ * sits, and goes where that percent of the audio that plays the article reaches (#4421).
+ */
+export interface PercentMargin {
+  /** The Margin, ready to store once placed. `atSeconds` is 0 until then. */
+  margin: Margin;
+  /** How far through the article it sits, 0 to 100, as the sender's app measured it. */
+  percent: number;
 }
 
 /** Where the listener left off in an episode. */

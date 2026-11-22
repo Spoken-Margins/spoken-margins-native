@@ -30,6 +30,42 @@ final class FriendAnswerSavedCardTests: XCTestCase {
         XCTAssertEqual(card.detail, "To send it to Cole, tap Share below. You pick which of your Margins go.")
     }
 
+    /// #3905: the card says "tap Share below" while the player's Share is an icon, so the view draws that icon before the
+    /// word. Only this stage names a control; the words themselves are pinned by the tests above.
+    func testOnlyTheSavedCardNamesAnIconControlAndTheIconSitsBeforeTheWordShare() throws {
+        let card = try XCTUnwrap(PinnedMarginCard.answerSaved(now: date(210), localMargins: [own("mine", madeAt: 200)], layers: [layer("cole", label: "Cole")]))
+        XCTAssertEqual(card.detailSymbolBefore, "Share")
+        let parts = try XCTUnwrap(card.detailAroundSymbol)
+        XCTAssertEqual(parts.before, "To send it to Cole, tap ")
+        XCTAssertEqual(parts.after, "Share below. You pick which of your Margins go.")
+        XCTAssertEqual(parts.before + parts.after, card.detail, "cutting the line must not change a word")
+
+        let others: [PinnedMarginCard.Stage] = [
+            .speaking, .reading, .voicePaused, .loading, .failed, .comingUp(msRemaining: 8_000), .comingUp(msRemaining: nil),
+            .waitingForTap, .upNext(msRemaining: 120_000, arrival: .playsByItself), .upNext(msRemaining: nil, arrival: .onRequest),
+            .lastMargin(senders: 1), .lastMargin(senders: 3),
+        ]
+        for subject in [PinnedMarginCard.Subject.friend("Cole"), .yours] {
+            for stage in others {
+                let other = PinnedMarginCard(subject: subject, stage: stage, position: nil, voiceTime: nil, noun: .episode, nextPress: .unavailable, run: .none)
+                XCTAssertNil(other.detailSymbolBefore, "\(stage)")
+                XCTAssertNil(other.detailAroundSymbol, "\(stage)")
+            }
+        }
+    }
+
+    /// The cut is at the last "Share", so a friend named Share (or Sharee) keeps the icon on the control the sentence points at.
+    func testAFriendWhoseNameContainsShareDoesNotMoveTheIcon() throws {
+        for name in ["Share", "Sharee", "Mr. Share"] {
+            let card = PinnedMarginCard(
+                subject: .friend(name), stage: .answerSaved(atMs: 65_000, sentTo: name), position: nil, voiceTime: nil,
+                noun: .episode, nextPress: .unavailable, run: .none)
+            let parts = try XCTUnwrap(card.detailAroundSymbol, name)
+            XCTAssertEqual(parts.before, "To send it to \(name), tap ", name)
+            XCTAssertTrue(parts.after.hasPrefix("Share below."), name)
+        }
+    }
+
     func testAnUnnamedFriendIsYourFriendNeverAStandIn() throws {
         for label in ["", " ", "Unsigned sender", "Imported collection"] {
             let card = try XCTUnwrap(PinnedMarginCard.answerSaved(now: date(210), localMargins: [own("mine", madeAt: 200)], layers: [layer("a", label: label)]))

@@ -186,6 +186,50 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
+    /// #4233: a Margin moved from a live session with no place stores a zero media time, which the loader would read as
+    /// "the episode's opening" and name with words from there. It keeps the empty context it has; a Margin at a real time
+    /// (even one placed at 0:30, inside the same segment) still gets its words.
+    func testAMarginWithNoPlaceGetsNoContextWordsFromTheEpisodesOpening() throws {
+        try withFixture { fixture, store, _ in
+            var episode = item("A")
+            episode.media = ItemMedia(sourceType: .nativeMediaFile, url: "file:///A.mp3", durationMs: 600_000)
+            try store.saveItem(episode)
+            try store.saveSession(Session(id: "S", itemId: "A",
+                createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1),
+                status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS,
+                currentTargetId: "A", position: Position(), completionPercent: 0, playbackRate: 1))
+            func media(_ id: String, atMs: Int, unplaced: Bool) -> Interjection {
+                var margin = note(id, session: "S", item: "A", time: 10)
+                margin.anchor = Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: atMs)
+                if unplaced {
+                    margin.movedOrigin = MovedMarginOrigin(
+                        marginId: id, itemId: "A", sessionId: "S", liveMarginId: "live-\(id)", fromLiveSessionId: "live",
+                        fromLiveSessionTitle: "Quick session", markedAt: margin.createdAt, movedAt: margin.createdAt, placeKnown: false)
+                }
+                return margin
+            }
+            let unplacedMargin = media("unplaced", atMs: 0, unplaced: true)
+            try store.saveInterjection(unplacedMargin)
+            try store.saveMovedMarginOrigin(try XCTUnwrap(unplacedMargin.movedOrigin)) // stored as a record of its own
+            try store.saveInterjection(media("placed", atMs: 5_000, unplaced: false))
+            try store.saveTranscriptTimeline(SourceTranscriptTimeline(id: "t", itemId: "A",
+                createdAt: Date(timeIntervalSince1970: 5),
+                timeline: TranscriptTimeline(segments: [
+                    MediaTimelineSegment(id: "opening", startMs: 0, endMs: 60_000, text: "The episode opens here.")
+                ], chapters: [], durationMs: 600_000)))
+
+            let detail = try fixture.load("A", store)
+            let unplaced = try XCTUnwrap(detail.interjections.first { $0.id == "unplaced" })
+            let placed = try XCTUnwrap(detail.interjections.first { $0.id == "placed" })
+            XCTAssertEqual(placed.anchorContextStatus, .ready, "a placed Margin still gets its words")
+            XCTAssertNotEqual(placed.anchor.transcriptSegmentId, nil)
+            XCTAssertNil(unplaced.anchor.transcriptSegmentId, "no segment of the episode's opening")
+            XCTAssertEqual(unplaced.anchor.anchorBefore, "")
+            XCTAssertNotEqual(unplaced.anchorContextStatus, .ready)
+            XCTAssertFalse(unplaced.hasPlace, "the origin survives the load")
+        }
+    }
+
     /// #3664: a Margin on a spoken note's sentence keeps the words and id it was made on when the note's audio is joined
     /// again with the sentence at another time. An episode's Margin is still placed by its time.
     func testASpokenNoteMarginKeepsItsSentenceWhenTheJoinedAudioMovesAndAnEpisodeMarginStillFollowsItsTime() throws {
@@ -479,6 +523,69 @@ final class ItemDetailLoaderTests: XCTestCase {
             hidden.unhideMargin("margin-one")
             XCTAssertEqual(try detailIds(hidden), ["margin-one", "margin-two"])
             XCTAssertEqual(try rowIds(hidden), ["margin-one", "margin-two"])
+        }
+    }
+
+    // MARK: #4186 PR 1: the length the item screen and the Library row both read
+
+    func testDetailLengthIsTheMediaLengthNotTheTimelinesAndMatchesTheLibraryRow() throws {
+        try withFixture { fixture, store, _ in
+            var timelineOnly = item("T")
+            timelineOnly.media = ItemMedia(sourceType: .nativeMediaFile, url: "file:///T.mp3")
+            try store.saveItem(timelineOnly)
+            try store.saveTranscriptTimeline(SourceTranscriptTimeline(id: "tt", itemId: "T", createdAt: Date(timeIntervalSince1970: 5),
+                timeline: TranscriptTimeline(segments: [MediaTimelineSegment(id: "s", startMs: 0, endMs: 1000, text: "Hi.")],
+                                             chapters: [], durationMs: 900_000)))
+            var both = item("B")
+            both.media = ItemMedia(sourceType: .nativeMediaFile, url: "file:///B.mp3", durationMs: 3_725_000)
+            try store.saveItem(both)
+            try store.saveTranscriptTimeline(SourceTranscriptTimeline(id: "tb", itemId: "B", createdAt: Date(timeIntervalSince1970: 5),
+                timeline: TranscriptTimeline(segments: [MediaTimelineSegment(id: "s", startMs: 0, endMs: 1000, text: "Hi.")],
+                                             chapters: [], durationMs: 900_000)))
+
+            let onlyTimeline = try fixture.load("T", store)
+            XCTAssertNil(onlyTimeline.lengthMs, "the transcript timeline's length is never the shown length")
+            XCTAssertEqual(onlyTimeline.mediaDurationMs, 900_000, "the rail and Margin placement keep their fallback")
+            XCTAssertTrue(onlyTimeline.isNativeAudio)
+            XCTAssertNil(onlyTimeline.lengthTextCharacterCount)
+
+            let bothDetail = try fixture.load("B", store)
+            XCTAssertEqual(bothDetail.lengthMs, 3_725_000)
+            XCTAssertEqual(bothDetail.mediaDurationMs, 3_725_000)
+
+            // One value on both screens, saved through the store: the row and the detail state agree.
+            let summaries = try store.listItemSummaries()
+            let snapshot = LibraryReadSnapshot(items: summaries, sessions: [], manifests: [], jobs: [], downloads: [])
+            let rows = LibraryRowBuilder.rows(from: snapshot, context: StartupAudioContext(
+                hasAcceptedCurrentTerms: true, hasSupertonicVoice: true, suppressedItemIds: [], liveSpeechFallbackItemIds: [],
+                failedItemIds: [], preparingItemId: nil, playingItemId: nil, renderSignature: nil, allowsRendering: true))
+            XCTAssertEqual(rows.first { $0.id == "B" }?.mediaDurationMs, bothDetail.lengthMs)
+            XCTAssertEqual(rows.first { $0.id == "T" }?.mediaDurationMs, onlyTimeline.lengthMs)
+        }
+    }
+
+    func testDetailOfTextCarriesItsCharacterCountAndNoLengthAndPreparedNarrationStaysText() throws {
+        try withFixture { fixture, store, _ in
+            try store.saveItem(item("A"))
+            var narrated = item("N")
+            narrated.media = ItemMedia(sourceType: .generatedTTSPrerendered, durationMs: 900_000)
+            try store.saveItem(narrated)
+            var episode = item("E")
+            episode.media = ItemMedia(sourceType: .remoteStream, url: "https://example.com/e.mp3", durationMs: 600_000)
+            try store.saveItem(episode)
+
+            let text = try fixture.load("A", store)
+            XCTAssertNil(text.lengthMs)
+            XCTAssertEqual(text.lengthTextCharacterCount, ListeningTimeEstimator.characterCount(of: "One.\n\nTwo."))
+            XCTAssertFalse(text.isNativeAudio)
+
+            let narration = try fixture.load("N", store)
+            XCTAssertNil(narration.lengthMs, "prepared narration is text")
+            XCTAssertNotNil(narration.lengthTextCharacterCount)
+
+            let audio = try fixture.load("E", store)
+            XCTAssertEqual(audio.lengthMs, 600_000)
+            XCTAssertNil(audio.lengthTextCharacterCount, "recorded audio is never counted by its transcript's characters")
         }
     }
 

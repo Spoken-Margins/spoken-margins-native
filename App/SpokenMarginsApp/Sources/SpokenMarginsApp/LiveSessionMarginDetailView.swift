@@ -20,6 +20,8 @@ struct LiveSessionMarginDetailView: View {
     let sessionTitle: String
     /// Where the Margin is, in the unit the session uses; the caller words it (`positionLabel`).
     let position: String
+    /// A page number read from the Margin's photo, offered as a checkpoint when nothing else places the Margin (#2708).
+    var photoPage: LiveSessionPlace?
     let keepHeardPlace: () -> Void
     let declineHeardPlace: () -> Void
     let saveText: (String) -> Void
@@ -79,13 +81,27 @@ struct LiveSessionMarginDetailView: View {
                     Section {
                         Text("Heard \u{201C}\(heard.label)\u{201D}. Keep it as a checkpoint?")
                             .font(.subheadline)
-                        HStack(spacing: 8) {
+                        AdaptiveStack(spacing: 8) {
                             Button("Keep") { keepHeardPlace(); dismiss() }
                                 .accessibilityIdentifier("marginDetail.keepPlace.button")
                             Button("No") { declineHeardPlace(); dismiss() }
                                 .accessibilityIdentifier("marginDetail.declinePlace.button")
                         }
                         .accessibilityHint("Keep uses \(heard.label) to place the Margins around this one.")
+                    }
+                }
+                if let page = photoPage, margin.heardPlace == nil {
+                    Section {
+                        Text("Read \u{201C}\(Int(page.value))\u{201D} on the page. Keep it as a checkpoint?")
+                            .font(.subheadline)
+                            .accessibilityIdentifier("marginDetail.photoPage.label")
+                        AdaptiveStack(spacing: 8) {
+                            Button("Keep") { keepHeardPlace(); dismiss() }
+                                .accessibilityIdentifier("marginDetail.keepPhotoPage.button")
+                            Button("No") { declineHeardPlace(); dismiss() }
+                                .accessibilityIdentifier("marginDetail.declinePhotoPage.button")
+                        }
+                        .accessibilityHint("Keep uses \(page.label) to place the Margins around this one.")
                     }
                 }
                 Section {
@@ -95,7 +111,7 @@ struct LiveSessionMarginDetailView: View {
                             .frame(minHeight: 120)
                             .accessibilityLabel("Margin words")
                             .accessibilityIdentifier("marginDetail.edit.text")
-                        HStack(spacing: 8) {
+                        AdaptiveStack(spacing: 8) {
                             Button("Save") {
                                 saveText(draft)
                                 isEditing = false

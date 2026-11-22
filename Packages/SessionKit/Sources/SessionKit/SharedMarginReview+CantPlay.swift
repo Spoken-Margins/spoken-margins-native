@@ -17,21 +17,15 @@ extension SharedMarginReview {
         asking: Bool
     ) -> [Entry] {
         let contexts = replyContexts(layers: layers, records: records, ownMargins: ownMargins)
+        let ownIdentities = OwnMarginEchoes.identities(of: ownMargins) // #4697: the same rule as `entriesInMemory`
         return layers.flatMap { layer -> [Entry] in
-            let layerRecords = records[layer.id] ?? []
+            let layerRecords = OwnMarginEchoes.withoutEchoes(records[layer.id] ?? [], in: layer, ownIdentities: ownIdentities)
             guard asking || layer.revealMode == .guided,
                   SharedMarginPrompts.isLayerPlaybackEligible(layer, records: layerRecords) else { return [] }
             return layerRecords.compactMap { record -> Entry? in
-                guard record.isNewToListener, SharedMarginPrompts.isPlayable(record, in: layer),
-                      let mediaTimeMs = SharedMarginPrompts.mediaTimeMs(record, in: layer), mediaTimeMs >= 0 else { return nil }
-                let placed = record.resolution.localMediaTimeMs != nil && SharedMarginPrompts.isPlayable(record.resolution)
-                return Entry(
-                    layer: layer, interjection: record, mediaTimeMs: mediaTimeMs,
-                    isApproximate: !placed || record.resolution.evidenceClass == .mapInterpolated
-                        || record.resolution.evidenceClass == .timestampFallback,
-                    replyContext: contexts[record.id]
-                )
+                guard record.isNewToListener, SharedMarginPrompts.isPlayable(record, in: layer) else { return nil }
+                return entry(for: record, in: layer, durationMs: nil, replyContext: contexts[record.id])
             }
-        }.sorted(by: playsBefore)
+        }.placingAfterOthersLast(durationMs: nil).sorted(by: playsBefore)
     }
 }

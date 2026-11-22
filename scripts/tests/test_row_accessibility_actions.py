@@ -15,9 +15,9 @@ SOURCES = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
 # Files whose context menus are rows, with the reason for any menu that is not.
 ROW_MENUS = {
     "PlaybackTimelineListView.swift": 1,
-    "ExperienceMarginsScreen.swift": 1,
+    "ExperienceMarginsScreen.swift": 2,  # own Margin rows, and shared Margin rows (Play this moment, Details)
     "ExperienceLibraryScreen.swift": 1,
-    "ExperienceSourcesScreen.swift": 1,
+    "ExperienceSourcesScreen.swift": 3,  # the row menu, the row "Lists…" menu and the chip Rename/Delete menu (#4046)
 }
 
 
@@ -36,8 +36,12 @@ class RowAccessibilityActionTests(unittest.TestCase):
     def test_timeline_and_margin_rows_reuse_their_menu_content(self):
         self.assertIn(".accessibilityActions { details(entry.action) }", _read("PlaybackTimelineListView.swift"))
         margins = _read("ExperienceMarginsScreen.swift")
-        self.assertIn(".contextMenu { ownMarginActions(row) }", margins)
-        self.assertIn(".accessibilityActions { ownMarginActions(row) }", margins)
+        self.assertIn(".contextMenu { ownMarginActions(row, repair: repair) }", margins)
+        self.assertIn(".accessibilityActions { ownMarginActions(row, repair: repair) }", margins)
+        # The Retry beside a "needs retry" status is also a row action, under the button's label (#3856).
+        self.assertIn('Button(Self.retryLabel(repair), systemImage: "arrow.clockwise")', margins)
+        self.assertIn('Button("Play this moment") { model.playSharedMarginMoment(row) }', margins)
+        self.assertIn('Button("Details") { selectedSharedMargin = row }', margins)
 
     def test_library_accessibility_actions_use_the_menus_guards(self):
         text = _read("ExperienceLibraryScreen.swift")

@@ -131,6 +131,10 @@ targets:
         product: SessionKitEPUB
       - package: SessionKit
         product: SessionKitFeeds
+      # The PDFKit half of exporting Margins as comments in a copy of a PDF (#4338). Linked now so the export sheet's
+      # PR adds no project change; nothing calls it yet.
+      - package: SessionKit
+        product: SessionKitPDF
       - package: PhononTTS
         product: ptts
       - package: KokoroCoreML
@@ -149,6 +153,7 @@ targets:
         MARKETING_VERSION: "0.1"
         REMOVE_STATIC_EXECUTABLES_FROM_EMBEDDED_BUNDLES: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION))
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -183,6 +188,16 @@ targets:
             LSHandlerRank: Alternate
             LSItemContentTypes:
               - public.json
+          # Opening a transcript from Files, Mail or an AirDrop (#2997). Alternate keeps Word, Pages and the text editors as
+          # the default for these types; ours is one more choice in the Open In list.
+          - CFBundleTypeName: Meeting transcript
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - org.w3.webvtt
+              - com.spokenmargins.subrip
+              - org.openxmlformats.wordprocessingml.document
+              - public.plain-text
         UTExportedTypeDeclarations:
           - UTTypeIdentifier: com.spokenmargins.package
             UTTypeDescription: Spoken Margins Package
@@ -194,6 +209,18 @@ targets:
                 - spokenmargins
               public.mime-type:
                 - application/vnd.spokenmargins.package+zip
+        # SubRip (.srt): the system declares WebVTT but not this one, so the Files picker can't allow it without a
+        # declaration of ours (#2997). It conforms to plain text, so the share extension's `public.text` rule takes it.
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: com.spokenmargins.subrip
+            UTTypeDescription: SubRip subtitles
+            UTTypeConformsTo:
+              - public.text
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - srt
+              public.mime-type:
+                - application/x-subrip
         LSRequiresIPhoneOS: true
         LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false
@@ -224,7 +251,7 @@ targets:
           UIApplicationSupportsMultipleScenes: true
   # Speak a Margin from the wrist during a phone call (#2487): the call holds the iPhone's microphone, the Watch's
   # still records. A single-target watchOS app, embedded in the iOS app. It doesn't link SessionKit; it compiles the
-  # two contract files below directly.
+  # SessionKit files below (the contract, its state, diagnostics, error text and the plate colours) directly.
   SpokenMarginsWatchApp:
     type: application
     platform: watchOS
@@ -236,6 +263,8 @@ targets:
       - path: Packages/SessionKit/Sources/SessionKit/WatchContract.swift
       - path: Packages/SessionKit/Sources/SessionKit/WatchContractState.swift
       - path: Packages/SessionKit/Sources/SessionKit/WatchDiagnostics.swift
+      # The plates' colours, read by the Watch and by the contrast audit (#3731). Foundation only.
+      - path: Packages/SessionKit/Sources/SessionKit/WatchPlatePalette.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.watchkitapp
@@ -324,6 +353,10 @@ targets:
       - path: Packages/SessionKit/Sources/SessionKit/ListenerErrorText.swift
       - path: Packages/SessionKit/Sources/SessionKit/ClipboardIntakeClassifier.swift
       - path: Packages/SessionKit/Sources/SessionKit/SharedTextIntake.swift
+      # A meeting transcript file is copied into the App Group unread (#2997): the folder layout and the size sentence,
+      # Foundation-only and host-tested in SessionKit, where the app's drain reads the same folder.
+      - path: Packages/SessionKit/Sources/SessionKit/TranscriptHandoffFolder.swift
+      - path: Packages/SessionKit/Sources/SessionKit/TranscriptImportMessage.swift
       - path: App/Gate2Shared/Sources
         type: syncedFolder
         excludes:
@@ -363,6 +396,7 @@ targets:
               ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.adobe.pdf" ||
               ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.url" ||
               ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.text" ||
+              ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "org.openxmlformats.wordprocessingml.document" ||
               ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.apple.property-list"
               ).@count > 0
               ).@count > 0

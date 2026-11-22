@@ -17,16 +17,19 @@ public enum SharedMarginReview {
         public let isApproximate: Bool
         /// What this Margin answers when it is a reply (#3221); nil for any other Margin.
         public var replyContext: ReplyContext?
+        /// No usable time in this copy (#3789): it plays after the others, and `mediaTimeMs` is where the others end.
+        public var playsAfterOthers: Bool
 
         public init(
             layer: ImportedCommentaryLayer, interjection: ImportedCommentaryInterjection, mediaTimeMs: Int,
-            isApproximate: Bool, replyContext: ReplyContext? = nil
+            isApproximate: Bool, replyContext: ReplyContext? = nil, playsAfterOthers: Bool = false
         ) {
             self.layer = layer
             self.interjection = interjection
             self.mediaTimeMs = mediaTimeMs
             self.isApproximate = isApproximate
             self.replyContext = replyContext
+            self.playsAfterOthers = playsAfterOthers
         }
 
         /// The identity the playback screen, the conductor and the Timeline all use for this Margin.
@@ -35,7 +38,7 @@ public enum SharedMarginReview {
         public var anchor: MarginMomentAnchor {
             MarginMomentAnchor(
                 marginId: marginId, mediaTimeMs: mediaTimeMs, label: senderLabel, isApproximate: isApproximate,
-                caption: replyContext?.caption, isReadAloud: interjection.isWritten
+                caption: replyContext?.caption, isReadAloud: interjection.isWritten, leadInMs: interjection.senderLeadInMs
             )
         }
     }
@@ -60,28 +63,54 @@ public enum SharedMarginReview {
     public static func entries(
         layers: [ImportedCommentaryLayer],
         records: [String: [ImportedCommentaryInterjection]],
-        ownMargins: [Interjection] = []
+        ownMargins: [Interjection] = [],
+        durationMs: Int? = nil
+    ) -> [Entry] {
+        entriesInMemory(layers: layers, records: records, ownMargins: ownMargins, durationMs: durationMs)
+    }
+
+    /// `entries(layers:records:ownMargins:durationMs:)` under a name no store read shares. It works only on the layers
+    /// and records it is given and reads nothing, so a screen may call it on every render (the Now screen's friend
+    /// listen does, #3790); `entries(itemId:in:)`, which reads the store, is a different function.
+    public static func entriesInMemory(
+        layers: [ImportedCommentaryLayer],
+        records: [String: [ImportedCommentaryInterjection]],
+        ownMargins: [Interjection] = [],
+        durationMs: Int? = nil
     ) -> [Entry] {
         let contexts = replyContexts(layers: layers, records: records, ownMargins: ownMargins)
+        // A copy of the listener's own Margin that came back in a packet is not a friend's to offer (#4697), the same
+        // rule the Library row's count uses, so the row and the offer say the same number.
+        let ownIdentities = OwnMarginEchoes.identities(of: ownMargins)
         return layers.flatMap { layer -> [Entry] in
-            let layerRecords = records[layer.id] ?? []
+            let layerRecords = OwnMarginEchoes.withoutEchoes(records[layer.id] ?? [], in: layer, ownIdentities: ownIdentities)
             guard SharedMarginPrompts.isLayerPlaybackEligible(layer, records: layerRecords) else { return [] }
             return layerRecords.compactMap { record -> Entry? in
-                // The same test and the same time the automatic prompts use. A podcast layer waits for its placement
-                // pass until the episode's audio has been matched, and until then a Margin plays at the sender's time
-                // (#3059). Asking for a placed Margin here left a just-imported packet with nothing to hear: the item
-                // screen said Continue, Continue asked nothing, and the episode went on past every Margin (#4097).
-                guard record.isNewToListener, SharedMarginPrompts.isPlayable(record, in: layer),
-                      let mediaTimeMs = SharedMarginPrompts.mediaTimeMs(record, in: layer), mediaTimeMs >= 0 else { return nil }
-                return Entry(
-                    layer: layer, interjection: record, mediaTimeMs: mediaTimeMs,
-                    isApproximate: record.resolution.localMediaTimeMs == nil // the sender's time, not yet placed
-                        || record.resolution.evidenceClass == .mapInterpolated
-                        || record.resolution.evidenceClass == .timestampFallback,
-                    replyContext: contexts[record.id]
-                )
+                // The same test and the same time the automatic prompts use. A Margin plays where it was placed, else
+                // at the sender's time, before the placement pass has run (#3059, #4097) and after it couldn't place
+                // it (#3789); one with no usable time plays after the others.
+                guard record.isNewToListener, SharedMarginPrompts.isPlayable(record, in: layer) else { return nil }
+                return entry(for: record, in: layer, durationMs: durationMs, replyContext: contexts[record.id])
             }
-        }.sorted(by: playsBefore)
+        }.placingAfterOthersLast(durationMs: durationMs).sorted(by: playsBefore)
+    }
+
+    /// One Margin's entry from its plan (#3789). A Margin with no usable time gets a placeholder time, set by
+    /// `placingAfterOthersLast` once the others are known.
+    static func entry(
+        for record: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer, durationMs: Int?, replyContext: ReplyContext?
+    ) -> Entry? {
+        switch SharedMarginPrompts.plan(record, in: layer, durationMs: durationMs) {
+        case .placed(let ms?):
+            return ms >= 0 ? Entry(layer: layer, interjection: record, mediaTimeMs: ms, isApproximate: false, replyContext: replyContext) : nil
+        case .roughly(let ms?):
+            return ms >= 0 ? Entry(layer: layer, interjection: record, mediaTimeMs: ms, isApproximate: true, replyContext: replyContext) : nil
+        case .afterOthers:
+            return Entry(layer: layer, interjection: record, mediaTimeMs: 0, isApproximate: true,
+                         replyContext: replyContext, playsAfterOthers: true)
+        case .placed(nil), .roughly(nil), .notPlayable:
+            return nil
+        }
     }
 
     /// The same, read from the repository for an item that isn't open.
@@ -119,9 +148,10 @@ public enum SharedMarginReview {
     /// The Margins Continue should ask about: the ones the listener is already past (#3059). A Margin still ahead of
     /// their place plays in place as the episode reaches it, so the big button just plays; only a Margin behind the
     /// place would be skipped, and the review is the way to hear it. With no place given, all of them count.
-    public static func entriesBehind(_ entries: [Entry], placeMs: Int?) -> [Entry] {
-        guard let placeMs else { return entries } // the place isn't known, so none can be ruled out
-        return entries.filter { $0.mediaTimeMs < placeMs }
+    public static func entriesBehind(_ entries: [Entry], placeMs: Int?, placeIsAtEnd: Bool = false) -> [Entry] {
+        // The place isn't known when it is nil, so none can be ruled out. A Margin that plays after the others is past
+        // only when the place is the end itself (#4347); `FriendMarginsPlan` is the one rule.
+        FriendMarginsPlan.behind(entries, place: placeMs.map { .known(mediaTimeMs: $0, isAtEnd: placeIsAtEnd) } ?? .unknown)
     }
 
     /// The text of the offer shown before Continue: how many Margins and whose.
@@ -151,12 +181,27 @@ public enum SharedMarginReview {
     }
 
     static func playsBefore(_ lhs: Entry, _ rhs: Entry) -> Bool {
+        if lhs.playsAfterOthers != rhs.playsAfterOthers { return rhs.playsAfterOthers }
         if lhs.mediaTimeMs != rhs.mediaTimeMs { return lhs.mediaTimeMs < rhs.mediaTimeMs }
         let (left, right) = (lhs.senderLabel, rhs.senderLabel)
         if left.lowercased() != right.lowercased() { return left.lowercased() < right.lowercased() }
         if left != right { return left < right }
         if lhs.interjection.createdAt != rhs.interjection.createdAt { return lhs.interjection.createdAt < rhs.interjection.createdAt }
         return lhs.marginId < rhs.marginId
+    }
+}
+
+extension Array where Element == SharedMarginReview.Entry {
+    /// Gives each Margin that plays after the others the time where the others end: the episode's end when its
+    /// length is known, never earlier than the last Margin that has a place (#3789).
+    func placingAfterOthersLast(durationMs: Int?) -> [Element] {
+        let end = Swift.max(durationMs ?? 0, filter { !$0.playsAfterOthers }.map(\.mediaTimeMs).max() ?? 0)
+        return map { entry in
+            guard entry.playsAfterOthers else { return entry }
+            return SharedMarginReview.Entry(
+                layer: entry.layer, interjection: entry.interjection, mediaTimeMs: end, isApproximate: true,
+                replyContext: entry.replyContext, playsAfterOthers: true)
+        }
     }
 }
 

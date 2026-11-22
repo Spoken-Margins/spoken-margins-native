@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Episode, Margin, Show } from '../../shared/model.ts';
+import type { Episode, Margin, PercentMargin, Show } from '../../shared/model.ts';
 import type { PacketRead } from '../ports.ts';
 import { episode as fixtureEpisode, voiceMargins } from '../../packet/fixtures.ts';
 import { readPacket } from '../../packet/read.ts';
 import { writePacket } from '../../packet/write.ts';
-import { UNNAMED_SENDER, findEpisode, importSummary, landingOffer, placeImport, sharedShowFor } from './import.ts';
+import { UNNAMED_SENDER, findEpisode, importSummary, landingOffer, placeByPercent, placeImport, sharedShowFor, unnamedAuthorFor } from './import.ts';
 
 const show: Show = { id: 'feed:https://feeds.test/show.rss', kind: 'podcast', title: 'Show', feedUrl: 'https://feeds.test/show.rss', followedAt: 'T0' };
 const mine: Episode = {
@@ -22,7 +22,7 @@ function margin(id: string, at: number): Margin {
 }
 
 function read(episode: PacketRead['episode'], extra: Partial<PacketRead> = {}): PacketRead {
-  return { contentDigest: 'd'.repeat(64), episode, margins: [margin('b', 40), margin('a', 12.5)], textMarginCount: 0, ...extra };
+  return { contentDigest: 'd'.repeat(64), episode, margins: [margin('b', 40), margin('a', 12.5)], textMarginCount: 0, percentMargins: [], ...extra };
 }
 
 test('the listener’s own copy is found by guid, then audio address, then page', () => {
@@ -141,4 +141,154 @@ test('opened from a link, a Margin with no sender name is still a friend’s: it
   assert.deepEqual(named.margins.map((m) => m.author), [' Ada ']);
   // A restored backup or an opened file keeps its own Margins as the listener's own.
   assert.deepEqual(placeImport(read({ title: 'T', guid: 'g-1' }), [show], [mine]).margins.map((m) => m.author), [undefined, undefined]);
+});
+
+test('a sender-less packet opened as a file is a friend’s; one out of a backup zip stays unsigned (#4226)', () => {
+  assert.equal(unnamedAuthorFor('file'), 'Your friend');
+  assert.equal(unnamedAuthorFor('link'), 'Your friend');
+  assert.equal(unnamedAuthorFor('backup'), undefined);
+  const authors = (arrival: 'backup' | 'file' | 'link') =>
+    placeImport(read({ title: 'T', guid: 'g-1' }), [show], [mine], undefined, [], { unnamedAuthor: unnamedAuthorFor(arrival) }).margins.map((m) => m.author);
+  assert.deepEqual(authors('file'), ['Your friend', 'Your friend']);
+  assert.deepEqual(authors('backup'), [undefined, undefined]);
+  // A Margin that already has an author keeps it, however the file arrived.
+  const named = read({ title: 'T', guid: 'g-1' }, { margins: [{ ...margin('a', 1), author: 'Ada' }] });
+  assert.deepEqual(placeImport(named, [show], [mine], undefined, [], { unnamedAuthor: unnamedAuthorFor('file') }).margins.map((m) => m.author), ['Ada']);
+});
+
+test('opening your own earlier "Save as a file" again adds no friend copies (#4226)', () => {
+  const here: Margin[] = [
+    { id: 'own-a', episodeId: mine.id, atSeconds: 12.5, createdAt: 'T', text: 'a' },
+    { id: 'own-b', episodeId: mine.id, atSeconds: 40, createdAt: 'T', text: 'b' },
+  ];
+  const again = placeImport(read({ title: 'Ep', guid: 'g-1' }), [show], [mine], 'NOW', here, { unnamedAuthor: unnamedAuthorFor('file') });
+  assert.deepEqual(again.margins, []);
+  assert.equal(again.duplicates, 2);
+});
+
+// #4421: a friend's Margins on an article's words are placed on the voice that plays it, by how far through they sit.
+const pct = (id: string, percent: number, extra: Partial<Margin> = {}): PercentMargin => ({
+  percent,
+  margin: { id: `packet:d:${id}`, episodeId: 'packet:d', atSeconds: 0, createdAt: '2026-11-16T00:00:00Z', text: id, ...extra },
+});
+const voice: Pick<Episode, 'id' | 'title' | 'durationSeconds'> = { id: 'post-1', title: 'A post', durationSeconds: 1200 };
+
+test('a Margin on an article’s words goes where its percent of the voice reaches', () => {
+  const margins = placeByPercent([pct('b', 50), pct('a', 25), pct('c', 0)], voice);
+  assert.deepEqual(margins.map((m) => [m.text, m.atSeconds, m.episodeId]), [['c', 0, 'post-1'], ['a', 300, 'post-1'], ['b', 600, 'post-1']]);
+});
+
+test('a Margin at the very end, or a percent out of range, is kept inside the voice', () => {
+  const margins = placeByPercent([pct('end', 100), pct('over', 140), pct('under', -5)], voice);
+  assert.deepEqual(margins.map((m) => [m.text, m.atSeconds]), [['under', 0], ['end', 1199], ['over', 1199]]);
+  const short = placeByPercent([pct('end', 100)], { ...voice, durationSeconds: 0.5 });
+  assert.equal(short[0]?.atSeconds, 0);
+});
+
+test('with no usable length for the audio nothing is placed', () => {
+  for (const durationSeconds of [undefined, 0, -3, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.deepEqual(placeByPercent([pct('a', 10), pct('b', 20)], { ...voice, durationSeconds }), [], String(durationSeconds));
+  }
+});
+
+test('a Margin already here, at the same place with the same words, is not added again', () => {
+  const first = placeByPercent([pct('a', 25), pct('b', 50)], voice);
+  const again = placeByPercent([pct('a', 25), pct('b', 50), pct('c', 75)], voice, first);
+  assert.deepEqual(again.map((m) => m.text), ['c']);
+});
+
+test('a voice clip and the sender’s other fields survive being placed', () => {
+  const clip = { blob: new Blob([new Uint8Array([1])]), mimeType: 'audio/mp4', durationSeconds: 7 };
+  const margins = placeByPercent([pct('v', 10, { voice: clip, author: 'Cole', replyToId: 'packet:x:1' })], voice);
+  assert.equal(margins[0]?.voice, clip);
+  assert.equal(margins[0]?.author, 'Cole');
+  assert.equal(margins[0]?.replyToId, 'packet:x:1');
+});
+
+test('an opened packet keeps its article Margins to place later, aimed at its episode, signed by a friend with no name', () => {
+  const packet = read({ title: 'A post', pageUrl: 'https://writer.substack.com/p/a-post' }, { margins: [], textMarginCount: 3, percentMargins: [pct('a', 10), pct('b', 20)] });
+  const placed = placeImport(packet, [], [], undefined, [], { unnamedAuthor: UNNAMED_SENDER });
+  assert.equal(placed.margins.length, 0);
+  assert.equal(placed.skipped, 1, 'the one with no rough place has nowhere to go');
+  assert.deepEqual(placed.pending.map((p) => [p.margin.text, p.percent, p.margin.episodeId, p.margin.author]), [
+    ['a', 10, placed.episode.id, UNNAMED_SENDER],
+    ['b', 20, placed.episode.id, UNNAMED_SENDER],
+  ]);
+  const own = placeImport(packet, [], [], undefined, [], {});
+  assert.equal(own.pending[0]?.margin.author, undefined, 'a restored backup keeps its Margins unsigned');
+});
+
+test('a Margin file opens no voice, so its article Margins are still counted as unopened', () => {
+  const packet = read({ title: 'A post', pageUrl: 'https://writer.substack.com/p/a-post' }, { margins: [], textMarginCount: 3, percentMargins: [pct('a', 10), pct('b', 20)] });
+  const placed = placeImport(packet, [], []);
+  assert.match(importSummary(placed, 'Cole'), /3 Margins are on an article’s text, which the web app can’t open yet\./);
+});
+
+// #4783: a page-only Apple episode kept before its audio was known takes the audio the packet now carries.
+const APPLE_PAGE = 'https://podcasts.apple.com/us/podcast/x/id1445582279?i=1000427709574';
+const pageOnlyCopy: Episode = { id: 'shared:Cole#page', showId: 'shared:Cole', title: 'Episode', pageUrl: APPLE_PAGE };
+
+test('a copy kept without audio takes the audio the packet carries, and is stored again', () => {
+  const placed = placeImport(read({ title: 'Episode', pageUrl: APPLE_PAGE, audioUrl: 'https://media.example.com/a.mp3', audioOrigin: 'podcast-enclosure', durationSeconds: 1800 }), [], [pageOnlyCopy]);
+  assert.equal(placed.episode.id, pageOnlyCopy.id, 'still the listener\'s own copy');
+  assert.equal(placed.episode.audioUrl, 'https://media.example.com/a.mp3');
+  assert.equal(placed.episode.audioOrigin, 'podcast-enclosure');
+  assert.equal(placed.episode.durationSeconds, 1800);
+  assert.equal(placed.newEpisode, true, 'the changed copy must be stored');
+});
+
+test('a copy that already has audio, or a packet with none, is left exactly as it was', () => {
+  const withAudio = placeImport(read({ title: 'E', guid: 'g-1', audioUrl: 'https://media.example.com/other.mp3' }), [show], [mine]);
+  assert.equal(withAudio.episode, mine);
+  assert.equal(withAudio.newEpisode, false);
+  const noAudio = placeImport(read({ title: 'Episode', pageUrl: APPLE_PAGE }), [], [pageOnlyCopy]);
+  assert.equal(noAudio.episode, pageOnlyCopy);
+  assert.equal(noAudio.newEpisode, false);
+});
+
+test('the copy keeps its own length when it has one', () => {
+  const placed = placeImport(read({ title: 'Episode', pageUrl: APPLE_PAGE, audioUrl: 'https://media.example.com/a.mp3', durationSeconds: 1800 }), [], [{ ...pageOnlyCopy, durationSeconds: 1500 }]);
+  assert.equal(placed.episode.durationSeconds, 1500);
+});
+
+test('two episodes of one Apple show are never the same page, however alike their addresses (audit on f88c1c7)', () => {
+  const other = 'https://podcasts.apple.com/us/podcast/x/id1445582279?i=1000427709999';
+  const table: Array<[string, string, boolean]> = [
+    [APPLE_PAGE, other, false],
+    [APPLE_PAGE, APPLE_PAGE, true],
+    [APPLE_PAGE, 'https://podcasts.apple.com/us/podcast/x/id1445582279?i=1000427709574&utm_source=a', true],
+    [APPLE_PAGE, 'https://itunes.apple.com/us/podcast/x/id1445582279?i=1000427709574', true],
+    [APPLE_PAGE, 'https://podcasts.apple.com/us/podcast/x/id1445582279', false],
+    ['https://podcasts.apple.com/us/podcast/id1445582279?i=1', 'https://podcasts.apple.com/us/podcast/id1445582279?i=2', false],
+    ['https://podcasts.apple.com/us/podcast/id1445582279?i=1', 'https://podcasts.apple.com/gb/podcast/id1445582279?i=1', true],
+  ];
+  for (const [kept, opened, same] of table) {
+    const copy: Episode = { ...pageOnlyCopy, pageUrl: kept };
+    assert.equal(findEpisode(read({ title: 'Episode', pageUrl: opened }), [copy]) !== undefined, same, `${kept} vs ${opened}`);
+  }
+});
+
+test('opening episode B never stores B’s audio on the kept episode A', () => {
+  const other = 'https://podcasts.apple.com/us/podcast/x/id1445582279?i=1000427709999';
+  const placed = placeImport(read({ title: 'Episode', pageUrl: other, audioUrl: 'https://media.example.com/b.mp3' }), [], [pageOnlyCopy]);
+  assert.notEqual(placed.episode.id, pageOnlyCopy.id);
+  assert.equal(placed.newEpisode, true);
+  assert.equal(pageOnlyCopy.audioUrl, undefined);
+});
+
+test('a kept copy is filled only when it is the packet’s episode by identity, never by an address that names its item in a query', () => {
+  const kept = (pageUrl: string, extra: Partial<Episode> = {}): Episode => ({ id: 'shared:Cole#x', showId: 'shared:Cole', title: 'Video', pageUrl, ...extra });
+  const audio = 'https://media.example.com/b.mp3';
+  // An address that names its item in the query: matched by page, but the audio is not copied across.
+  const sibling = placeImport(read({ title: 'Video', pageUrl: 'https://example.com/watch?v=B', audioUrl: audio }), [], [kept('https://example.com/watch?v=A')]);
+  assert.equal(sibling.episode.audioUrl, undefined);
+  assert.equal(sibling.newEpisode, false);
+  // The guid is identity: the same episode, so its audio is filled in.
+  const byGuid = placeImport(read({ title: 'Video', guid: 'g-9', pageUrl: 'https://example.com/other', audioUrl: audio }), [], [kept('https://example.com/watch?v=A', { guid: 'g-9' })]);
+  assert.equal(byGuid.episode.audioUrl, audio);
+  assert.equal(byGuid.newEpisode, true);
+  // The same Apple episode, whatever the padding of its id or the storefront: filled.
+  const apple = placeImport(read({ title: 'Episode', pageUrl: 'https://podcasts.apple.com/gb/podcast/x/id1445582279?i=01000427709574', audioUrl: audio }), [], [pageOnlyCopy]);
+  assert.equal(apple.episode.audioUrl, audio);
+  assert.equal(apple.newEpisode, true);
 });

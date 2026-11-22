@@ -175,7 +175,9 @@ private struct PlayQueueUIKitPresenter: UIViewControllerRepresentable {
             var presenter: UIViewController = anchor
             while let next = presenter.presentedViewController, !next.isBeingDismissed { presenter = next }
             let close: () -> Void = { [weak self] in self?.setPresented(false) }
+            // UIKit presents it, so there is no `.sheet` to wrap and no scene in its environment (#4337, and #3891 was this sheet).
             let hosting = UIHostingController(rootView: ExperiencePlayQueueScreen(model: model, close: close)
+                .trackedPresentation(place: "PlayQueueSheetHost", scene: anchor.view.window?.windowScene?.session.persistentIdentifier)
                 .tint(AppColors.evergreen))
             hosting.modalPresentationStyle = .pageSheet
             hosting.presentationController?.delegate = self

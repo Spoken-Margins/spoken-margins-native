@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Spoken Margins dispatch backstop every 15 minutes
+
+[Timer]
+# Minutes 7, 22, 37, 52: off the Dial gate's :02/:17/:32/:47 and off :00, where GitHub is slowest.
+OnCalendar=*:7/15
+RandomizedDelaySec=60
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -64,6 +64,9 @@ final class ExperiencePresentationTests: XCTestCase {
                        "the reply follows its parent even though it was made later and the other Margin is closer in time")
         XCTAssertEqual(entries.map(\.depth), [0, 1, 0])
         XCTAssertEqual(entries[1].position, entries[0].position, "a reply sits at the place it answers")
+        XCTAssertEqual(entries[1].cornerLabel, entries[0].cornerLabel, "and its corner reads that place, not its own (#3862)")
+        XCTAssertNotEqual(entries[1].cornerLabel, "34%", "the reply was made at 34%, but the card stands at its parent's 30%")
+        XCTAssertEqual(entries[1].spokenPosition, entries[0].spokenPosition)
         XCTAssertTrue(entries[1].detail.hasPrefix("Reply to Ana · "), entries[1].detail)
         XCTAssertFalse(entries[0].detail.contains("Reply to"))
     }
@@ -166,80 +169,6 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(orphan.first { $0.id == "session::second-25" }).detail.contains("Response unavailable"))
     }
 
-    func testTimelinePullRequiresDeliberateBottomOverscroll() {
-        XCTAssertEqual(
-            TimelinePullPresentation.overscrollDistance(
-                contentOffsetY: 540,
-                contentHeight: 1_200,
-                containerHeight: 640,
-                bottomInset: 0
-            ),
-            0
-        )
-        XCTAssertEqual(
-            TimelinePullPresentation.overscrollDistance(
-                contentOffsetY: 650,
-                contentHeight: 1_200,
-                containerHeight: 640,
-                bottomInset: 0
-            ),
-            90
-        )
-        XCTAssertEqual(
-            TimelinePullPresentation.overscrollDistance(
-                contentOffsetY: 0,
-                contentHeight: 500,
-                containerHeight: 640,
-                bottomInset: 0
-            ),
-            0,
-            "Unused viewport space is not overscroll"
-        )
-        XCTAssertFalse(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: 71))
-        XCTAssertTrue(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: 72))
-    }
-
-    func testTimelinePullMeasuresShortContentFromItsInsetRestingPosition() {
-        // A short player rests above zero because navigation owns the top inset.
-        // The fixed dock also reserves space at the bottom of the scroll view.
-        func distance(_ offset: CGFloat) -> CGFloat {
-            TimelinePullPresentation.overscrollDistance(
-                contentOffsetY: offset, contentHeight: 280,
-                containerHeight: 874, bottomInset: 342, topInset: 116
-            )
-        }
-        XCTAssertEqual(distance(-116), 0, "Resting short content must not open Timeline")
-        XCTAssertEqual(distance(-45), 71)
-        XCTAssertFalse(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance(-45)))
-        XCTAssertEqual(distance(-44), 72)
-        XCTAssertTrue(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance(-44)))
-        XCTAssertEqual(TimelinePullPresentation.overscrollDistance(
-            contentOffsetY: 700, contentHeight: 1_200,
-            containerHeight: 874, bottomInset: 342, topInset: 116
-        ), 32, "Long content must still reach its real bottom before the pull counts")
-    }
-
-    /// #3217: every way in is one tile in the grid, no two do the same thing, and Files is a single tile.
-    func testAddSourceGridHoldsEveryWayInOnceWithOneFilesTile() {
-        XCTAssertEqual(
-            AddSourcePresentation.tiles,
-            [.linkOrPodcast, .findPodcast, .pastedText, .importFromFiles, .quickFolder, .liveSession, .spokenNote]
-        )
-        XCTAssertEqual(Set(AddSourcePresentation.tiles.map(\.title)).count, AddSourcePresentation.tiles.count, "two tiles share a name")
-        let filesTiles = AddSourcePresentation.tiles.filter { $0.route == .importFromFiles }
-        XCTAssertEqual(filesTiles, [.importFromFiles])
-        XCTAssertEqual(AddSourceTile.importFromFiles.title, "Import from Files")
-        // Spoken Note (#3108) sits in a slim row under the grid, so the six grid tiles still end on a full row.
-        XCTAssertEqual(AddSourcePresentation.tiles.filter { $0 != .spokenNote }.count % 2, 0, "the two-column grid should end on a full row")
-        XCTAssertEqual(AddSourceTile.spokenNote.title, "Spoken Note")
-        XCTAssertNil(AddSourceTile.spokenNote.route, "the tile opens the recorder, not a page in the sheet")
-    }
-
-    func testFindPodcastTileIsLeftOutWhereTheCatalogCannotOpen() {
-        XCTAssertFalse(AddSourcePresentation.tiles(canSearchPodcasts: false).contains(.findPodcast))
-        XCTAssertEqual(AddSourcePresentation.tiles(canSearchPodcasts: true), AddSourcePresentation.tiles)
-    }
-
     func testFilesTileAcceptsPacketsByTheExtensionThePacketArchiveWrites() {
         XCTAssertEqual(AddFromFilesPlan.packetExtension, SpokenMarginsPackageArchive.fileExtension)
     }
@@ -257,43 +186,6 @@ final class ExperiencePresentationTests: XCTestCase {
             keys.sorted().map(\.id),
             ["beginning", "chapter", "margin", "assistant", "chapter-later"]
         )
-    }
-
-    func testTimelineTextExcerptCollapsesWhitespaceAndBoundsLongMargins() {
-        let longMargin = Array(repeating: "This is a deliberately long spoken margin", count: 20)
-            .joined(separator: " \n\t")
-
-        let excerpt = TimelineTextPresentation.excerpt(longMargin, characterLimit: 80)
-
-        XCTAssertLessThanOrEqual(excerpt.count, 81)
-        XCTAssertTrue(excerpt.hasSuffix("…"))
-        XCTAssertFalse(excerpt.contains("\n"))
-        XCTAssertFalse(excerpt.contains("\t"))
-        XCTAssertFalse(excerpt.hasSuffix(" margin…"), "The excerpt should use the last complete word inside its limit.")
-
-        // A hard cut at 80 characters ends mid-word and also avoids " margin…", so check where the excerpt stops.
-        let normalized = longMargin.split(whereSeparator: \Character.isWhitespace).joined(separator: " ")
-        let kept = String(excerpt.dropLast())
-        XCTAssertTrue(normalized.hasPrefix(kept), "The excerpt is the start of the Margin, whitespace collapsed.")
-        XCTAssertEqual(normalized[normalized.index(normalized.startIndex, offsetBy: kept.count)], " ", "The excerpt ends where a word ends, not inside one.")
-    }
-
-    func testTimelineTextExcerptCutsAtWordBoundariesForNeighbouringInputs() {
-        let cases: [(text: String, limit: Int, expected: String)] = [
-            ("", 10, ""),
-            ("short", 10, "short"),
-            ("exactly ten", 11, "exactly ten"),
-            ("aaaa bbbb cccc", 9, "aaaa bbbb…"),
-            ("aaaa bbbb cccc", 10, "aaaa bbbb…"),
-            ("aaaa bbbb cccc", 11, "aaaa bbbb…"),
-            ("supercalifragilistic", 8, "supercal…"),
-            ("  leading   and\ttrailing  ", 100, "leading and trailing"),
-            ("caf\u{E9} \u{FC}ni\u{EF}code w\u{F6}rds", 9, "caf\u{E9}…"),
-            ("cafe\u{301} \u{FC}ni\u{EF}code w\u{F6}rds", 9, "cafe\u{301}…")
-        ]
-        for (text, limit, expected) in cases {
-            XCTAssertEqual(TimelineTextPresentation.excerpt(text, characterLimit: limit), expected, "\(text.debugDescription) at \(limit)")
-        }
     }
 
     @MainActor
@@ -373,124 +265,6 @@ final class ExperiencePresentationTests: XCTestCase {
             ["Chapter One", "Chapter Two"]
         )
         XCTAssertEqual(model.selectedItem.chapters.map(\.id), ["chapter-one", "chapter-two"])
-    }
-
-    func testContinueItemPrefersTheActiveUnfinishedItem() throws {
-        let active = libraryRow(
-            id: "active",
-            title: "Active",
-            progress: 0,
-            lastListenedAt: Date(timeIntervalSince1970: 10)
-        )
-        let newer = libraryRow(
-            id: "newer",
-            title: "Newer",
-            progress: 45,
-            lastListenedAt: Date(timeIntervalSince1970: 100)
-        )
-
-        let selected = try XCTUnwrap(
-            LibraryPresentation.continueItem(in: [newer, active], activeItemId: active.id)
-        )
-
-        XCTAssertEqual(selected.id, active.id)
-    }
-
-    func testContinueItemFallsBackToMostRecentlyListenedUnfinishedItem() throws {
-        let older = libraryRow(
-            id: "older",
-            title: "Older",
-            progress: 20,
-            lastListenedAt: Date(timeIntervalSince1970: 10)
-        )
-        let newer = libraryRow(
-            id: "newer",
-            title: "Newer",
-            progress: 30,
-            lastListenedAt: Date(timeIntervalSince1970: 20)
-        )
-        let completed = libraryRow(
-            id: "completed",
-            title: "Completed",
-            progress: 100,
-            lastListenedAt: Date(timeIntervalSince1970: 30)
-        )
-        let unplayed = libraryRow(
-            id: "unplayed",
-            title: "Unplayed",
-            progress: 0,
-            lastListenedAt: Date(timeIntervalSince1970: 40)
-        )
-
-        let selected = try XCTUnwrap(
-            LibraryPresentation.continueItem(
-                in: [older, completed, unplayed, newer],
-                activeItemId: "missing"
-            )
-        )
-
-        XCTAssertEqual(selected.id, newer.id)
-    }
-
-    func testContinueItemUsesIdentifierAsStableTieBreaker() throws {
-        let sameDate = Date(timeIntervalSince1970: 100)
-        let zulu = libraryRow(id: "zulu", title: "Zulu", progress: 10, lastListenedAt: sameDate)
-        let alpha = libraryRow(id: "alpha", title: "Alpha", progress: 10, lastListenedAt: sameDate)
-
-        let selected = try XCTUnwrap(
-            LibraryPresentation.continueItem(in: [zulu, alpha], activeItemId: nil)
-        )
-
-        XCTAssertEqual(selected.id, alpha.id)
-    }
-
-    func testContinueItemDoesNotSuggestNinetyNinePercentItems() throws {
-        let activeNearComplete = libraryRow(
-            id: "active-near-complete",
-            title: "Near complete",
-            progress: 99,
-            lastListenedAt: Date(timeIntervalSince1970: 30)
-        )
-        let eligible = libraryRow(
-            id: "eligible",
-            title: "Eligible",
-            progress: 98,
-            lastListenedAt: Date(timeIntervalSince1970: 20)
-        )
-
-        let selected = try XCTUnwrap(
-            LibraryPresentation.continueItem(
-                in: [activeNearComplete, eligible],
-                activeItemId: activeNearComplete.id
-            )
-        )
-
-        XCTAssertEqual(selected.id, eligible.id)
-        XCTAssertNil(
-            LibraryPresentation.continueItem(
-                in: [activeNearComplete],
-                activeItemId: activeNearComplete.id
-            )
-        )
-    }
-
-    func testMarkedCompleteItemIsExcludedEvenWhenActiveSessionStillHasProgress() {
-        let completed = LibraryItemRow(id: "done", title: "Done", status: "Ready", canDelete: true, hasContinuationSession: true, continuationProgressPercent: 35, isCompleted: true)
-        XCTAssertNil(LibraryPresentation.continueItem(in: [completed], activeItemId: completed.id))
-    }
-
-    func testContinueItemIsNilWithoutAnEligibleUnfinishedItem() {
-        let completed = libraryRow(id: "completed", title: "Completed", progress: 100)
-        let unplayed = libraryRow(id: "unplayed", title: "Unplayed", progress: 0)
-        let noSession = libraryRow(id: "none", title: "No Session", progress: nil)
-
-        XCTAssertNil(
-            LibraryPresentation.continueItem(
-                in: [completed, unplayed, noSession],
-                activeItemId: completed.id
-            )
-        )
-        XCTAssertNil(LibraryPresentation.continueItem(in: [], activeItemId: nil))
     }
 
     func testWrittenMediaMarginHasNoAudioRepairOrPendingContextWork() {
@@ -591,7 +365,7 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertTrue(pending.needsAttention)
         XCTAssertEqual(pending.preview, "Transcribing…")
         XCTAssertTrue(unavailableContext.needsAttention)
-        XCTAssertEqual(unavailableContext.attentionDescription, "Context needs retry")
+        XCTAssertEqual(unavailableContext.attentionDescription, "Couldn't find the source words near this Margin")
         XCTAssertTrue(missingRecording.needsAttention)
         XCTAssertEqual(missingRecording.attentionDescription, "Recording is unavailable")
     }
@@ -602,23 +376,6 @@ final class ExperiencePresentationTests: XCTestCase {
     func testTheClassifiersSeededIdsIncludeTheSampleAndTourThisAppSeeds() {
         XCTAssertTrue(OnboardingEvidenceClassifier.defaultSeededItemIDs.contains(Gate1AppModel.welcomeSampleItemId))
         XCTAssertTrue(OnboardingEvidenceClassifier.defaultSeededItemIDs.contains(Gate1AppModel.guidedOnboardingItemId))
-    }
-
-    private func libraryRow(
-        id: String,
-        title: String,
-        progress: Int?,
-        lastListenedAt: Date? = nil
-    ) -> LibraryItemRow {
-        LibraryItemRow(
-            id: id,
-            title: title,
-            status: "Ready",
-            canDelete: true,
-            hasContinuationSession: progress != nil,
-            continuationProgressPercent: progress,
-            lastListenedAt: lastListenedAt
-        )
     }
 
     private func marginRow(

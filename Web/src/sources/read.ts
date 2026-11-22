@@ -16,8 +16,15 @@ import type { FetchLike } from './search.ts';
 import { inspectSubstackPost, isSubstackPostUrl } from './substack.ts';
 import type { SubstackVoice } from './substack.ts';
 
-/** Why the page is being read. Only an explicit tap may read a Substack post page. */
-export type ReadReason = 'listener-tap' | 'feed-refresh' | 'search';
+/**
+ * Why the page is being read. Only an explicit tap may read a Substack post page: the listener's own tap on the post, or
+ * the sender's tap on Share link, which lets the app's background check read it once through the app's own transport
+ * (#4454, the owner's call of 2026-11-17).
+ */
+export type ReadReason = 'listener-tap' | 'sender-share-check' | 'feed-refresh' | 'search';
+
+/** The reasons that may read a Substack post page: each is a tap the listener made. */
+export const mayReadPostPage = (reason: ReadReason | undefined): boolean => reason === 'listener-tap' || reason === 'sender-share-check';
 
 /** The direct read failed and the relay needs the listener's consent first. Ask once, then retry with `consent: true`. */
 export class NeedsRelayConsent extends Error {
@@ -114,7 +121,7 @@ export interface ReadOptions {
   consent?: boolean;
   /** The share-link server's base address, such as `https://example.org`. The relay is `GET <base>/api/v1/relay?url=…`. */
   relayBase?: string;
-  /** Required to be `'listener-tap'` for a Substack post page. */
+  /** Required to be `'listener-tap'` or `'sender-share-check'` for a Substack post page. */
   reason?: ReadReason;
   /** Largest body to accept. Default 4 MiB for a page, like the iPhone app. */
   maxBytes?: number;
@@ -165,7 +172,7 @@ async function readBody(response: Response, maxBytes: number): Promise<string> {
  * reported as `ReadHttpError` and never retried through the relay.
  */
 export async function readUrl(url: string, options: ReadOptions = {}): Promise<ReadResult> {
-  if (isSubstackPostUrl(url) && options.reason !== 'listener-tap') throw new PostPageReadRefused(url);
+  if (isSubstackPostUrl(url) && !mayReadPostPage(options.reason)) throw new PostPageReadRefused(url);
   const transport: ReadTransport = options.transport ?? (options.fetch ? { kind: 'browser', fetch: options.fetch } : pickReadTransport());
   const doFetch = transport.fetch;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
@@ -183,7 +190,7 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
     if (!direct.ok) throw new ReadHttpError(direct.status, 'direct');
     const finalUrl = direct.url || url;
     // A redirect can land on a post page the listener never tapped.
-    if (finalUrl !== url && isSubstackPostUrl(finalUrl) && options.reason !== 'listener-tap') throw new PostPageReadRefused(finalUrl);
+    if (finalUrl !== url && isSubstackPostUrl(finalUrl) && !mayReadPostPage(options.reason)) throw new PostPageReadRefused(finalUrl);
     return { body: await readBody(direct, maxBytes), via: 'direct', finalUrl };
   }
 
@@ -198,7 +205,7 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
   if (!relayed.ok) throw new ReadHttpError(relayed.status, 'relay', await relayErrorCode(relayed));
   const finalUrl = relayFinalUrl(relayed);
   // The same rule as a direct read: a redirect can land on a post page the listener never tapped.
-  if (finalUrl && finalUrl !== url && isSubstackPostUrl(finalUrl) && options.reason !== 'listener-tap') throw new PostPageReadRefused(finalUrl);
+  if (finalUrl && finalUrl !== url && isSubstackPostUrl(finalUrl) && !mayReadPostPage(options.reason)) throw new PostPageReadRefused(finalUrl);
   const body = await readBody(relayed, maxBytes);
   return finalUrl ? { body, via: 'relay', finalUrl } : { body, via: 'relay' };
 }
@@ -214,10 +221,10 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
  */
 export async function readFeed(
   url: string,
-  options: ReadOptions & Pick<ParseFeedOptions, 'maxItems' | 'followedAt'> = {},
+  options: ReadOptions & Pick<ParseFeedOptions, 'maxItems' | 'followedAt' | 'keepWithoutAudio'> = {},
 ): Promise<ParsedFeed> {
   const { body, finalUrl } = await readUrl(url, options);
-  const parse = { maxItems: options.maxItems, followedAt: options.followedAt };
+  const parse = { maxItems: options.maxItems, followedAt: options.followedAt, keepWithoutAudio: options.keepWithoutAudio };
   try {
     return parseFeed(body, { feedUrl: url, baseUrl: finalUrl, ...parse });
   } catch (error) {
@@ -230,12 +237,15 @@ export async function readFeed(
 }
 
 /**
- * Reads one Substack post page and finds its voice, for a post the listener just tapped. Always passes
- * `reason: 'listener-tap'`, so call it only from that tap. Null when the post has no playable voice; throws
+ * Reads one Substack post page and finds its voice, for a post the listener just tapped. Passes
+ * `reason: 'listener-tap'` unless the sender's share check says `'sender-share-check'`, so call it only from a tap. Null when the post has no playable voice; throws
  * `PaidPostNoVoice` when that is because the post is for paid subscribers.
  */
-export async function readSubstackVoice(postUrl: string, options: Omit<ReadOptions, 'reason'> = {}): Promise<SubstackVoice | null> {
-  const result = await readUrl(postUrl, { ...options, reason: 'listener-tap' });
+export async function readSubstackVoice(
+  postUrl: string,
+  options: Omit<ReadOptions, 'reason'> & { reason?: 'listener-tap' | 'sender-share-check' } = {},
+): Promise<SubstackVoice | null> {
+  const result = await readUrl(postUrl, { ...options, reason: options.reason ?? 'listener-tap' });
   const post = inspectSubstackPost(result.body, result.finalUrl === undefined ? {} : { finalUrl: result.finalUrl });
   // A paid post's voice is behind the paywall, not missing: "no voice" would be the wrong thing to say.
   if (!post.voice && post.paidOnly) throw new PaidPostNoVoice(postUrl);

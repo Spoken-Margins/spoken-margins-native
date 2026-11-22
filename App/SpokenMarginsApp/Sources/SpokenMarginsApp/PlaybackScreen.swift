@@ -40,6 +40,8 @@ struct PlaybackScrubState: Equatable {
 
 struct PlaybackScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    /// The chapter row's Next in queue follows the queue (#3914).
+    @ObservedObject private var playQueue = PlayQueueState.shared
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var selectedPane: PlaybackPane = .now
@@ -55,8 +57,9 @@ struct PlaybackScreen: View {
     @Environment(\.openURL) private var openURL
 
     private enum OptionsDestination { case item, timeline, export, margins, paste, sourceText }
-    @State private var timelinePullTriggered = false
+    @State private var timelinePull = TimelinePullHolder()
     @State private var playbackTick = 0 // bumped by each progress tick, so this screen follows the clock (#2074)
+    @StateObject private var nowScene = NowSceneController()
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
 
     /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
@@ -65,6 +68,8 @@ struct PlaybackScreen: View {
         Button(action: model.openLibrary) {
             Image(systemName: "chevron.left").font(.body.weight(.semibold)).minimumTapTarget()
         }
+        // On the always-dark plate the default tint is too dark in light mode (#3733); the tint is set on the button, never a container.
+        .tint(AppColors.listeningAccent)
         .accessibilityLabel("Library")
         .accessibilityHint("Leaves this screen. Playback keeps going.")
         .accessibilityIdentifier("playback.exit.button")
@@ -94,24 +99,32 @@ struct PlaybackScreen: View {
                                     }
                                     if model.isFirstMarginPromptShowing { FirstMarginPromptCard() }
                                     playbackHeader
+                                        // The Library arrow lives in the header; once following scrolls it away, the toolbar shows it (#4453).
+                                        .onScrollVisibilityChange(threshold: 0.01) { nowScene.headerIsVisible = $0 }
                                     capturePermissionRecovery
                                     importedCommentaryControl
                                     if model.selectedItem.isNativeAudio {
                                         PlaybackNowView()
+                                        if model.shouldShowGuidedOnboardingCoach {
+                                            GuidedOnboardingPlaybackCard {
+                                                openTimeline()
+                                            }
+                                        }
                                     } else {
-                                        PlaybackLivePassageView { offset in
+                                        // Below a long scene these would be out of reach, so they sit above the text (#4453).
+                                        recentMarginPreview
+                                        if model.shouldShowGuidedOnboardingCoach {
+                                            GuidedOnboardingPlaybackCard {
+                                                openTimeline()
+                                            }
+                                        }
+                                        PlaybackLivePassageView(scene: nowScene, proxy: proxy) { offset in
                                             sourceTextTarget = PlaybackTextReaderTarget.resolve(
                                                 text: model.selectedItem.text,
                                                 chapters: model.selectedItem.chapters,
                                                 offset: offset,
                                                 fallbackChapterId: model.currentChapter?.id
                                             )
-                                        }
-                                        recentMarginPreview
-                                    }
-                                    if model.shouldShowGuidedOnboardingCoach {
-                                        GuidedOnboardingPlaybackCard {
-                                            openTimeline()
                                         }
                                     }
                                 }
@@ -121,6 +134,28 @@ struct PlaybackScreen: View {
                                 .frame(maxWidth: .infinity, alignment: .top)
                             }
                             .scrollBounceBehavior(.always)
+                            // The sentences on screen, and the listener's own scrolling (a drag or a fling; a scroll the
+                            // view makes itself reports `.animating`), which stops the scene following playback (#4453).
+                            .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.1) { nowScene.sentencesOnScreen($0) }
+                            .onScrollPhaseChange { _, phase in
+                                // Only a finger still on the screen can pull past the bottom into Timeline (#4816).
+                                timelinePull.tracker.dragChanged(isDragging: phase == .interacting)
+                                switch phase {
+                                case .interacting, .decelerating: nowScene.listenerScrolled()
+                                case .idle: nowScene.scrollCameToRest()
+                                default: break
+                                }
+                            }
+                            // The text area's height: the most a card may take and what a held card has room for (#4588).
+                            .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.height } action: { _, height in
+                                nowScene.setVisibleHeight(Double(height))
+                            }
+                            .overlay(alignment: .bottom) {
+                                // Only over this item's own scene: not over a podcast, nor while another item plays.
+                                if !model.selectedItem.isNativeAudio, model.snapshot.itemId == model.selectedItem.id {
+                                    NowBackToPlayingButton(scene: nowScene)
+                                }
+                            }
                             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                                 // ScrollGeometry's container is the inset content viewport.
                                 // The offset calculation below expects the whole viewport.
@@ -133,13 +168,9 @@ struct PlaybackScreen: View {
                                     topInset: geometry.contentInsets.top
                                 )
                             } action: { _, distance in
-                                if distance < 1 {
-                                    timelinePullTriggered = false
-                                } else if TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance),
-                                          !timelinePullTriggered {
-                                    timelinePullTriggered = true
-                                    openTimeline()
-                                }
+                                // A bounce after a fling, a scene that gets shorter, or the view scrolling itself never
+                                // counts: scrolling to the bottom of Now must not change the tab (#4816).
+                                if timelinePull.tracker.overscrollChanged(distance) { openTimeline() }
                             }
 
                         case .timeline:
@@ -159,6 +190,8 @@ struct PlaybackScreen: View {
                             // A friend's Margin or a review has one fixed place above the title, never in the
                             // scrolling stack, so it can't scroll away or shove the header down (#3220, #1577).
                             if selectedPane == .now { PinnedMarginCardView() }
+                            // A note read where it is cited: the same slot, never beside a friend's card (#3777).
+                            if selectedPane == .now { FootnoteCardPinnedView() }
                             if !model.recordingNavigationIsLocked, let feedback = model.playbackFeedbackTag {
                                 PlaybackFeedbackTagView(event: feedback.event, tag: feedback.tag)
                                     .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
@@ -178,6 +211,9 @@ struct PlaybackScreen: View {
                 .onChange(of: model.marginMoment?.target.marginId) { _, target in
                     if target != nil { selectedPane = .now }
                 }
+                // "Go to this moment in the source" lands on Now for a written Margin too (#3961); a spoken one is also covered
+                // above, and both set the same pane. The first value is never acted on, so a later open never jumps panes.
+                .onChange(of: model.showNowRequests) { _, _ in selectedPane = .now }
                 // The dock returns only once the keyboard has left the Timeline editor (#4043); a missed hide can't
                 // strand it.
                 .tracksKeyboard(for: $timelineDock)
@@ -202,11 +238,17 @@ struct PlaybackScreen: View {
                 }
             }
             .toolbarBackground(AppColors.listeningBackground, for: .navigationBar)
+            // A bar that is only visible once content scrolls under it hands the status bar its style back to the
+            // system, so in light mode the clock and battery were dark on this dark green screen (#4607). Same colour
+            // as the screen, so nothing changes to the eye; the colour scheme below now reaches the status bar.
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 // One meaning for the top-left arrow on every tab: leave the screen. The exception is the Timeline editor
                 // with the keyboard up, where the tab switch is hidden and this is the way back to Now (#4027).
-                let leading = PlaybackLeadingControl.control(pane: leadingControlPane, timelineEditorHasFocus: timelineDock.hidesDock)
+                let leading = PlaybackLeadingControl.control(
+                    pane: leadingControlPane, timelineEditorHasFocus: timelineDock.hidesDock,
+                    nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio)
                 if leading == .libraryExit {
                     ToolbarItem(placement: .topBarLeading) { libraryExitButton }
                 } else if leading == .returnToNow {
@@ -214,26 +256,27 @@ struct PlaybackScreen: View {
                         Button { selectedPane = .now } label: {
                             Label("Now Playing", systemImage: "arrow.left")
                         }
+                        .tint(AppColors.listeningAccent)
                         .accessibilityIdentifier("timeline.nowPlaying.button")
                     }
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .sheet(item: $selectedInterjection) { interjection in
+            .trackedSheet(item: $selectedInterjection) { interjection in
                 ExperienceMarginDetailView(row: MarginRow(interjection: interjection, itemTitle: model.selectedItem.title, sessionDate: nil))
                     .environmentObject(model)
             }
-            .sheet(isPresented: $isPastingAssistantResponse) {
+            .trackedSheet(isPresented: $isPastingAssistantResponse) {
                 PastedAssistantResponseView(isPresented: $isPastingAssistantResponse)
                     .environmentObject(model)
             }
-            .sheet(item: $sourceTextTarget) { target in
+            .trackedSheet(item: $sourceTextTarget) { target in
                 NativeTextPeekView(
                     title: model.selectedItem.title, target: target,
                     text: model.selectedItem.text, chapters: model.selectedItem.chapters
                 )
             }
-            .sheet(isPresented: $isPlaybackOptionsPresented, onDismiss: performPendingOptionsNavigation) {
+            .trackedSheet(isPresented: $isPlaybackOptionsPresented, onDismiss: performPendingOptionsNavigation) {
                 NavigationStack {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 18) {
@@ -265,6 +308,16 @@ struct PlaybackScreen: View {
             }
         }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
+        // The friend's end card counts as the first-Margin prompt: once it shows on the Now pane, the prompt is seen
+        // (#3790). The card lives on that pane, so another pane showing never marks it.
+        .onChange(of: model.friendListenState, initial: true) { _, _ in
+            if selectedPane == .now { model.noteFriendListen() }
+        }
+        .onChange(of: selectedPane) { _, pane in
+            // Now's scroll view is built fresh each time, so a drag or overscroll from the last one is stale (#4816).
+            timelinePull.tracker = TimelinePullTracker()
+            if pane == .now { model.noteFriendListen() }
+        }
     }
 
     /// Spacing only is tightened (owner, 2026-10-13): the rows, their order and their controls stay as approved, so
@@ -279,16 +332,18 @@ struct PlaybackScreen: View {
                 sourceTitle: model.playbackItemHeaderTitle,
                 backward: model.chapterRowBackwardControl,
                 forward: model.chapterRowForwardControl,
-                skimBackwardTitle: model.skimBackwardTitle,
-                skimForwardTitle: model.skimForwardTitle,
-                skimForwardUnavailable: model.skimBridge.forwardUnavailableReason,
+                backwardSpeech: model.chapterRowBackwardSpeech,
+                forwardSpeech: model.chapterRowForwardSpeech,
                 skimLocked: model.snapshot.isRecording,
                 waitingText: model.snapshot.status == .starting
                     ? PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot) : nil,
                 showItem: model.openCurrentPlaybackItem,
                 nextChapter: model.nextChapterFromChapterRow,
                 skimBackward: model.skimBackward,
-                skimForward: model.skimForward
+                skimForward: model.skimForward,
+                playNextItem: { [queuedNext = model.chapterRowForwardControl == .playNextItem ? model.chapterRowQueuedNextId : nil] in
+                    if let queuedNext { model.playNextQueuedItem(expectedId: queuedNext) }
+                }
             )
             playbackPosition
             playbackTransport
@@ -406,30 +461,61 @@ struct PlaybackScreen: View {
                     .foregroundStyle(AppColors.watchSecondary)
                     .accessibilityAddTraits(.isHeader)
                 ForEach(Array(notes)) { note in
-                    Button { selectedInterjection = note } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(InterjectionPositionPresentation.detailDescription(for: note, durationMs: model.snapshot.currentPlaybackDurationMs))
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(AppColors.watchSecondary)
-                            Text(PlaybackMarginPreview.text(displayText: note.displayText,
-                                                            cleanedTranscript: note.cleanedTranscript,
-                                                            transcript: note.transcript,
-                                                            transcriptionStatus: note.transcriptionStatus,
-                                                            captureKind: note.captureKind))
-                                .font(.system(.body, design: .serif))
-                                .foregroundStyle(.white)
-                                .multilineTextAlignment(.leading)
-                                .lineLimit(3)
-                        }
-                        .padding(.leading, 12)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .overlay(alignment: .leading) { Rectangle().fill(AppColors.captureBackground).frame(width: 2) }
-                    }
-                    .buttonStyle(.plain)
+                    recentMarginRow(note)
                 }
             }
         }
+    }
+
+    /// One of the last two Margins under the player. The star (#4173) sits at the trailing edge, outside the button that opens
+    /// the detail sheet, and under the words at accessibility sizes. Only a Margin Share can send has one.
+    @ViewBuilder
+    private func recentMarginRow(_ note: Interjection) -> some View {
+        let star = PlaybackMarginRowView.Star.ownMargin(note, place: .now, model: model)
+        let preview = PlaybackMarginPreview.text(displayText: note.displayText, cleanedTranscript: note.cleanedTranscript,
+                                                 transcript: note.transcript, transcriptionStatus: note.transcriptionStatus,
+                                                 captureKind: note.captureKind)
+        let details = Button { selectedInterjection = note } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(recentMarginCaption(note, isStarred: star?.isStarred == true))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(AppColors.watchSecondary)
+                Text(preview)
+                    .font(.system(.body, design: .serif))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
+            }
+            .padding(.leading, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .leading) { Rectangle().fill(AppColors.captureBackground).frame(width: 2) }
+        }
+        .buttonStyle(.plain)
+        if let star {
+            let starButton = MarginShareStarButton(
+                isStarred: star.isStarred,
+                title: preview,
+                identifier: "playback.now.recent.\(note.id).star", action: star.action)
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    details
+                    starButton.padding(.leading, 12)
+                }
+            } else {
+                HStack(alignment: .center, spacing: 8) {
+                    details
+                    starButton
+                }
+            }
+        } else {
+            details
+        }
+    }
+
+    private func recentMarginCaption(_ note: Interjection, isStarred: Bool) -> String {
+        let place = InterjectionPositionPresentation.detailDescription(for: note, durationMs: model.snapshot.currentPlaybackDurationMs)
+        return isStarred ? "\(place) · Starred" : place
     }
 
     @ViewBuilder
@@ -578,7 +664,7 @@ struct PlaybackScreen: View {
         // The playing and waiting Margin is on the pinned card (#3220); only the auto-play switch is left here.
         if model.hasEnabledImportedCommentary {
             Toggle(
-                "Auto-play shared Margins",
+                FriendArrivalWords.autoPlayLabel,
                 isOn: Binding(
                     get: { model.importedCommentaryAutoPlayEnabled },
                     set: { enabled in
@@ -591,15 +677,13 @@ struct PlaybackScreen: View {
             .tint(AppColors.accent)
             .padding(.horizontal, 4)
             .accessibilityIdentifier("importedCommentary.autoPlay")
-            if !model.importedCommentaryAutoPlayEnabled {
-                Text("Off: a tone marks each shared Margin and the episode plays on.")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.72))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 4)
-            }
+            Text(FriendArrivalWords.autoPlayCaption(isOn: model.importedCommentaryAutoPlayEnabled))
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.72))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 4)
+                .accessibilityIdentifier("importedCommentary.autoPlayCaption")
         }
-
     }
 
     private var playbackHeader: some View {
@@ -629,13 +713,16 @@ struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.showTitle")
             }
 
-            PlaybackMarginTranscriptionStatusView(status: PlaybackMarginTranscriptionStatus(
-                selectedItemId: model.selectedItem.id,
-                playingItemId: model.snapshot.itemId,
-                sessionId: model.snapshot.sessionId,
-                interjections: model.selectedItem.interjections,
-                isRetrying: model.isRetryingInterjectionTranscription
-            ))
+            // The line is about the listener's own Margins, so it waits while a friend's Margin has the screen (#3790).
+            if !model.friendListenState.isInProgress {
+                PlaybackMarginTranscriptionStatusView(status: PlaybackMarginTranscriptionStatus(
+                    selectedItemId: model.selectedItem.id,
+                    playingItemId: model.snapshot.itemId,
+                    sessionId: model.snapshot.sessionId,
+                    interjections: model.selectedItem.interjections,
+                    isRetrying: model.isRetryingInterjectionTranscription
+                ))
+            }
 
             // The chapter title is not repeated here: the dock's chapter row, right above the bar, already shows it
             // and opens the same item details (#1475).
@@ -681,7 +768,9 @@ struct PlaybackScreen: View {
                     },
                     barContent: mediaBarContent,
                     barPositionUnit: .seconds,
-                    positionAccessibilityValue: "\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))"
+                    positionAccessibilityValue: TimelinePositionLabel.appendingSpokenPercent(
+                        to: "\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))",
+                        currentMs: Int(scrubberDisplaySeconds * 1_000), durationMs: mediaDurationMs)
                 )
                 .tint(AppColors.accent)
                 .padding(.vertical, -PlaybackPositionSlider.rowGapOverlap)
@@ -1290,9 +1379,9 @@ struct PlaybackScreen: View {
     }
 
     private var textScrubberPercent: Int {
-        guard textLength > 0 else { return 0 }
+        // The Timeline's current line uses the same function, so the two can't disagree (#3862).
         let offset = textScrubState.displayedValue(canonicalValue: canonicalTextOffset, range: textScrubRange)
-        return max(0, min(100, Int((offset / Double(textLength) * 100).rounded())))
+        return TimelinePositionLabel.textScrubberPercent(offset: offset, length: textLength)
     }
 
     private var timeline: some View {
@@ -1375,10 +1464,7 @@ struct PlaybackScreen: View {
                                 selectedInterjection = interjection
                             },
                             toggleStar: {
-                                model.setInterjectionStarredForSharing(
-                                    interjection.id,
-                                    starred: interjection.isStarredForSharing != true
-                                )
+                                model.toggleStarredForSharing(interjection, place: .detail)
                             }
                         )
                         .accessibilityIdentifier("timeline.interjection.\(interjection.id)")
@@ -2010,4 +2096,10 @@ private struct WatchSecondaryButtonStyle: ButtonStyle {
             .background(AppColors.watchControl.opacity(configuration.isPressed ? 0.72 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
     }
+}
+
+/// Holds the Timeline pull tracker by reference: it changes on every overscroll frame, and none of that is drawn,
+/// so it must not re-run the playback screen's body (#4816).
+private final class TimelinePullHolder {
+    var tracker = TimelinePullTracker()
 }

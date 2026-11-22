@@ -1,23 +1,15 @@
 import Foundation
 import XCTest
 import SessionKit
+import SessionKitPersistence
 import ShippedSessionKit
 
 /// Prepared audio is stored as JSON and Build 29 has to keep opening it, in both directions: a manifest Build 29
 /// wrote must open in this build (an upgraded Library is full of them), and one this build writes must open in
 /// Build 29 (the owner can go back). Each test uses Build 29's frozen model on one side (`ShippedSessionKit`,
-/// scripts/freeze-shipped-reader.sh) and encodes with the store's own date format.
+/// scripts/freeze-shipped-reader.sh) and this build's `SQLiteSessionStore` on the other, with the row read from or
+/// written into the SQLite file (#4309).
 final class PreparedAudioBuild29Tests: XCTestCase {
-    private let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }()
-    private let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
     private let made = Date(timeIntervalSince1970: 1_777_000_000)
 
     func testAManifestBuild29WroteStillOpensWithItsChunks() throws {
@@ -38,9 +30,17 @@ final class PreparedAudioBuild29Tests: XCTestCase {
             },
             createdAt: made, updatedAt: made
         )
-        let stored = try encoder.encode(shipped)
+        // Build 29's store wrote rows with an ISO 8601 date encoder; that build is frozen.
+        let build29Encoder = JSONEncoder()
+        build29Encoder.dateEncodingStrategy = .iso8601
+        let path = try StoredRecordFile.temporaryPath(for: self)
+        let store = try SQLiteSessionStore(path: path)
+        try StoredRecordFile.write(
+            path: path, kind: "prepared_audio_manifest", id: "prepared-b29", itemId: "item", payload: try build29Encoder.encode(shipped)
+        )
 
-        let opened = try decoder.decode(SessionKit.PreparedAudioManifest.self, from: stored)
+        let opened = try XCTUnwrap(try store.loadPreparedAudioManifest(id: "prepared-b29"))
+        XCTAssertEqual(try store.quarantinedRecordCount(), 0)
 
         XCTAssertEqual(opened.id, "prepared-b29")
         XCTAssertEqual(opened.chunks.map(\.id), ["chunk-0", "chunk-1"])
@@ -67,10 +67,12 @@ final class PreparedAudioBuild29Tests: XCTestCase {
             )],
             createdAt: made, updatedAt: made, articleIdentity: "plan-identity"
         )
-        let stored = try encoder.encode(manifest)
+        let path = try StoredRecordFile.temporaryPath(for: self)
+        try SQLiteSessionStore(path: path).savePreparedAudioManifest(manifest)
+        let stored = try StoredRecordFile.payload(path: path, kind: "prepared_audio_manifest", id: "prepared-new")
         XCTAssertTrue(String(decoding: stored, as: UTF8.self).contains("system_voice"), "the new field is really written")
 
-        let opened = try decoder.decode(ShippedSessionKit.PreparedAudioManifest.self, from: stored)
+        let opened = try StoredRecordFile.decodeInShippedBuild(ShippedSessionKit.PreparedAudioManifest.self, from: stored)
 
         XCTAssertEqual(opened.id, "prepared-new")
         XCTAssertEqual(opened.state, .readyOffline)

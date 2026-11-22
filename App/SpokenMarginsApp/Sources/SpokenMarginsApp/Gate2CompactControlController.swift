@@ -1269,13 +1269,13 @@ private final class Gate2LiveSpeechNowPlayingController {
         let ledger = NowPlayingInfoOwnership.shared
         let ledgerDetail = "\(publishesLiveSpeech ? "live_speech" : "native_media") phase=\(snapshot.phase)"
         if publishesLiveSpeech {
-            MainThreadOperationLabels.shared.scoped("nowPlaying.infoWrite") { ledger.write(info, as: .compactControls, detail: ledgerDetail) }
+            MainThreadOperationLabels.shared.scoped("nowPlaying.infoWrite") { ledger.write(info, as: .compactControls, itemId: snapshot.itemId, detail: ledgerDetail) }
             ownsNowPlayingInfo = true
         } else {
             // The player owns a native media card and refreshes it every second. This fills the card only when the
             // player has none, so it never overwrites the player's or takes a card the player is keeping (#2181).
             ownsNowPlayingInfo = MainThreadOperationLabels.shared.scoped("nowPlaying.infoWrite") {
-                ledger.writeIfUnheld(info, as: .compactControls, detail: ledgerDetail)
+                ledger.writeIfUnheld(info, as: .compactControls, itemId: snapshot.itemId, detail: ledgerDetail)
             }
         }
         if publishesLiveSpeech {

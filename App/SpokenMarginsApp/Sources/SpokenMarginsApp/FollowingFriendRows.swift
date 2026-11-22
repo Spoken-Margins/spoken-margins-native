@@ -26,6 +26,14 @@ struct FollowingFriendRowView: View {
                         .multilineTextAlignment(.leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                if let label = friend.newLabel { // the show row's capsule, so "new" reads the same (#4104)
+                    Text(label)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(AppColors.onEvergreen)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(AppColors.evergreen, in: Capsule())
+                }
                 Image(systemName: "chevron.right")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.secondaryText)
@@ -39,7 +47,7 @@ struct FollowingFriendRowView: View {
         .padding(.vertical, 10)
         .background(AppColors.panel)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(friend.name), \(friend.summary)")
+        .accessibilityLabel([friend.name, friend.summary, friend.newLabel].compactMap { $0 }.joined(separator: ", "))
         .accessibilityHint(friend.items.count == 1 ? "Opens it." : "Shows what they shared.")
         .accessibilityIdentifier("sources.friend")
     }

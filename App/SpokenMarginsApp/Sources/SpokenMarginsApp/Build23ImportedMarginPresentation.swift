@@ -38,10 +38,13 @@ enum Build23ImportedLayerPresentation {
         }
     }
 
-    static func provenanceAccessibilityLabel(for layer: Build23ImportedLayerSnapshot) -> String {
+    static func provenanceAccessibilityLabel(
+        for layer: Build23ImportedLayerSnapshot, includesSender: Bool = true, leadingTitle: String? = nil
+    ) -> String {
         FriendArrivalWords.layerAccessibilityLabel(
             senderLabel: layer.senderLabel, isEnabled: layer.isEnabled, isMuted: layer.isMuted,
-            mode: layer.revealMode, placementProblem: FriendArrivalWords.placementProblem(layer.sourceResolution)
+            mode: layer.revealMode, placementProblem: FriendArrivalWords.placementProblem(layer.sourceResolution),
+            includesSender: includesSender, leadingTitle: leadingTitle
         )
     }
 }
@@ -51,10 +54,18 @@ struct Build23ImportedMarginPresentation: View {
     @ObservedObject var coordinator: Build23SharingCoordinator
 
     var showsMargins = true
+    /// The friend's intro above already names the sender, so the section's own "From Cole" heading is dropped (#3788).
+    var hidesHeading = false
+    /// The intro above names the sender, so a single card drops its own "From Cole" line too (#3855). Two or more cards keep
+    /// their names (`FriendArrivalWords.hidesLayerSenderLine`).
+    var friendIntroShowing = false
 
     var body: some View {
-        Build23ImportedLayerList(layers: coordinator.importedLayers, coordinator: coordinator, showsMargins: showsMargins)
-            .equatable()
+        Build23ImportedLayerList(
+            layers: coordinator.importedLayers, coordinator: coordinator, showsMargins: showsMargins, hidesHeading: hidesHeading,
+            friendIntroShowing: friendIntroShowing
+        )
+        .equatable()
     }
 }
 
@@ -62,6 +73,9 @@ private struct Build23ImportedLayerList: View, Equatable {
     let layers: [Build23ImportedLayerSnapshot]
     let coordinator: Build23SharingCoordinator
     let showsMargins: Bool
+    let hidesHeading: Bool
+    /// Part of `==`: without it the card would not redraw when the intro goes (#3855).
+    let friendIntroShowing: Bool
     /// The card whose "Hide this sender" was tapped, until the listener confirms or cancels (#2846).
     @State private var pendingHide: Build23ImportedLayerSnapshot?
     /// The layer and Margin ids of the Margin the listener is being asked to hide (#2846).
@@ -75,14 +89,17 @@ private struct Build23ImportedLayerList: View, Equatable {
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.layers == rhs.layers && lhs.coordinator === rhs.coordinator && lhs.showsMargins == rhs.showsMargins
+            && lhs.hidesHeading == rhs.hidesHeading && lhs.friendIntroShowing == rhs.friendIntroShowing
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(FriendArrivalWords.sectionTitle(senderLabels: layers.map(\.senderLabel)))
-                .font(.title3.weight(.bold))
-                .screenTitle()
-                .foregroundStyle(AppColors.text)
+            if !hidesHeading {
+                Text(FriendArrivalWords.sectionTitle(senderLabels: layers.map(\.senderLabel)))
+                    .font(.title3.weight(.bold))
+                    .screenTitle()
+                    .foregroundStyle(AppColors.text)
+            }
 
             if layers.isEmpty {
                 emptyState
@@ -130,26 +147,41 @@ private struct Build23ImportedLayerList: View, Equatable {
     }
 
     private func provenanceHeader(_ layer: Build23ImportedLayerSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(FriendArrivalWords.fromLine(senderLabel: layer.senderLabel))
-                        .font(.headline)
-                        .foregroundStyle(AppColors.text)
+        let hidesSender = FriendArrivalWords.hidesLayerSenderLine(introShowing: friendIntroShowing, layerCount: layers.count)
+        let provenanceID = "build23.imported.layer.\(layer.id).provenance"
+        let title = Text(layer.itemTitle)
+            .font(.title3.weight(.semibold))
+            .foregroundStyle(AppColors.text)
+        return VStack(alignment: .leading, spacing: 12) {
+            if hidesSender {
+                // The sender line is gone, so the one provenance element (same id) moves onto the title: it reads the
+                // title, then the card's state without the leading "From Sam." the intro already said (#3855).
+                title
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(Text(
+                        Build23ImportedLayerPresentation.provenanceAccessibilityLabel(
+                            for: layer, includesSender: false, leadingTitle: layer.itemTitle)
+                    ))
+                    .accessibilityIdentifier(provenanceID)
+            } else {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(FriendArrivalWords.fromLine(senderLabel: layer.senderLabel))
+                            .font(.headline)
+                            .foregroundStyle(AppColors.text)
+                    }
+                } icon: {
+                    Image(systemName: Build23ImportedLayerPresentation.provenanceSymbolName)
+                        .foregroundStyle(AppColors.plum)
                 }
-            } icon: {
-                Image(systemName: Build23ImportedLayerPresentation.provenanceSymbolName)
-                    .foregroundStyle(AppColors.plum)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(Text(
-                Build23ImportedLayerPresentation.provenanceAccessibilityLabel(for: layer)
-            ))
-            .accessibilityIdentifier("build23.imported.layer.\(layer.id).provenance")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(
+                    Build23ImportedLayerPresentation.provenanceAccessibilityLabel(for: layer)
+                ))
+                .accessibilityIdentifier(provenanceID)
 
-            Text(layer.itemTitle)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(AppColors.text)
+                title
+            }
 
             // A passing check says nothing; only a problem with placing the Margins shows (#3247).
             if let problem = FriendArrivalWords.placementProblem(layer.sourceResolution) {
@@ -248,7 +280,7 @@ private struct Build23ImportedLayerList: View, Equatable {
     @ViewBuilder
     private func marginRail(_ layer: Build23ImportedLayerSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Margin placement")
+            Text("Where they play")
                 .font(.headline)
                 .foregroundStyle(AppColors.text)
 
@@ -275,13 +307,13 @@ private struct Build23ImportedLayerList: View, Equatable {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(AppColors.text)
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("Margin placement. \(margin.positionDescription)")
+                .accessibilityLabel(margin.positionDescription)
 
             if let label = resolutionLabel(margin) {
                 Label(label, systemImage: "scope")
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
-                    .accessibilityLabel(Text("Placement resolution. \(label)"))
+                    .accessibilityLabel(Text(label))
             }
 
             if margin.canListen {

@@ -17,7 +17,8 @@ so they run whether or not the external drive is plugged in; only step 6 needs t
    because this job can't read ~/Documents; they're cleared there, and a slot whose worktree is gone goes whole.
    Idle means no process has its working directory inside the worktree, no xcodebuild,
    swift-build or verify-tests command names it, no live agent holds its worktree lock, and
-   nothing under the cache changed in the last 30 minutes.
+   nothing under the cache changed in the last 30 minutes (3 hours for a Test Desk job's worktree,
+   `<checkout>-test-desk/.claude/worktrees/lane-*`, whose build waits idle for a simulator slot, #4731).
 3. Scratch folders of Claude Code sessions that ended: /private/tmp/claude-<uid>/<project>/<session id>/.
    Ended means the session isn't in Claude Code's live session list (~/.claude/sessions/<pid>.json
    with a live pid), no process names the session id or has a file or working directory inside the
@@ -75,6 +76,9 @@ HOME = Path.home()
 DEV_CHECKOUT = sm_paths.repo(__file__, default=HOME / 'Documents/GitHub/spoken-margins-native')
 
 CACHE_IDLE_SECONDS = 30 * 60
+# A Test Desk job's build is made once and then waits for a simulator slot or a device, touching nothing. Thirty
+# idle minutes deleted two of them while they waited (2026-11-19, #4731); the desk's builds get a few hours.
+DESK_BUILD_IDLE_SECONDS = 3 * 3600
 ARTIFACT_AGE_SECONDS = 2 * 86400
 SESSION_LOG_AGE_SECONDS = 3 * 86400
 PHONE_KEEP_NEWEST = 2
@@ -562,9 +566,27 @@ def cache_dirs(worktree: Path) -> List[Path]:
     return found
 
 
+def is_desk_lane_worktree(path) -> bool:
+    """A Test Desk job's worktree: `<checkout>-test-desk/.claude/worktrees/lane-*` (#4731)."""
+    if not path:
+        return False
+    parts = Path(str(path)).parts
+    return (len(parts) >= 4 and parts[-1].startswith('lane-') and parts[-2:-4:-1] == ('worktrees', '.claude')
+            and parts[-4].endswith('-test-desk') and parts[-4] != '-test-desk')
+
+
+def cache_idle_seconds(worktree) -> int:
+    """How long a worktree's build folders must sit unchanged before they count as regenerable."""
+    return DESK_BUILD_IDLE_SECONDS if is_desk_lane_worktree(worktree) else CACHE_IDLE_SECONDS
+
+
+def idle_words(seconds: int) -> str:
+    """'30 minutes' or '3 hours', for a skip note."""
+    return f'{seconds // 3600} hours' if seconds % 3600 == 0 else f'{seconds // 60} minutes'
+
+
 def plan_caches(cfg: Config, machine: Machine, trees: List[Worktree], busy: dict,
                 protected: List[Path], plan: Plan, removing: set = frozenset()) -> None:
-    idle_since = machine.now() - CACHE_IDLE_SECONDS
     found = []
     for tree in trees:
         if tree.path in removing or is_protected(tree.path, protected):
@@ -579,12 +601,14 @@ def plan_caches(cfg: Config, machine: Machine, trees: List[Worktree], busy: dict
         if tree.path in busy:
             plan.skipped.append(f'caches in {tree.path}: {busy[tree.path]}')
             continue
+        idle = cache_idle_seconds(tree.path)
+        idle_since = machine.now() - idle
         for d in dirs:
             if is_protected(d, protected):
                 continue
             recent = tree_stats(d, stop_if_newer_than=idle_since)
             if recent.newest_mtime > idle_since:
-                plan.skipped.append(f'{d}: changed in the last 30 minutes')
+                plan.skipped.append(f'{d}: changed in the last {idle_words(idle)}')
                 continue
             stats = tree_stats(d)
             if stats.disk_bytes:
@@ -633,7 +657,6 @@ def plan_build_slots(cfg: Config, machine: Machine, procs: List[Proc], protected
     root = cfg.build_cache_dir
     if not root.is_dir() or is_protected(root, protected):
         return
-    idle_since = machine.now() - CACHE_IDLE_SECONDS
     found = []
     for slot in sorted(root.iterdir()):
         if slot.is_symlink() or not slot.is_dir():
@@ -659,9 +682,13 @@ def plan_build_slots(cfg: Config, machine: Machine, procs: List[Proc], protected
                 return 'verify-tests is running there'
             return None
 
+        idle = cache_idle_seconds(owner)
+        idle_since = machine.now() - idle
         if worktree_gone(owner):
-            if tree_stats(slot, stop_if_newer_than=idle_since).newest_mtime > idle_since:
-                plan.skipped.append(f'{slot}: changed in the last 30 minutes')
+            # Nothing is waiting for a build whose worktree is gone, so the desk's longer wait doesn't apply.
+            gone_since = machine.now() - CACHE_IDLE_SECONDS
+            if tree_stats(slot, stop_if_newer_than=gone_since).newest_mtime > gone_since:
+                plan.skipped.append(f'{slot}: changed in the last {idle_words(CACHE_IDLE_SECONDS)}')
                 continue
             size = tree_stats(slot).disk_bytes
             if size:
@@ -676,7 +703,7 @@ def plan_build_slots(cfg: Config, machine: Machine, procs: List[Proc], protected
             dirs.append(slot / 'sessionkit')
         for d in dirs:
             if tree_stats(d, stop_if_newer_than=idle_since).newest_mtime > idle_since:
-                plan.skipped.append(f'{d}: changed in the last 30 minutes')
+                plan.skipped.append(f'{d}: changed in the last {idle_words(idle)}')
                 continue
             size = tree_stats(d).disk_bytes
             if size:

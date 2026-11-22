@@ -104,6 +104,30 @@ final class ItemMetadataTests: XCTestCase {
 
     // MARK: Storage
 
+    /// #4186: a followed show's episode keeps the feed's stated length from the moment it is added.
+    func testFeedEntryLengthFillsRecordedAudioThatHasNone() {
+        func filled(_ media: ItemMedia?, entryMs: Int?) -> Item {
+            var item = Item(id: "item", title: "Episode", mediaType: "transcript_backed_media", text: nil, externalReference: nil, status: "ready", media: media)
+            FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://e.example/1", title: "t", audioDurationMs: entryMs)
+                .fillEpisodeIdentity(of: &item, showTitle: "Show")
+            return item
+        }
+        let url = "https://media.example.com/one.mp3"
+        for type in [AudioSourceType.remoteStream, .nativeMediaFile] {
+            XCTAssertEqual(filled(ItemMedia(sourceType: type, url: url), entryMs: 3_725_000).media?.durationMs, 3_725_000, "fills when nil")
+            XCTAssertEqual(filled(ItemMedia(sourceType: type, url: url, durationMs: 0), entryMs: 3_725_000).media?.durationMs, 3_725_000, "0 means unknown")
+            XCTAssertEqual(filled(ItemMedia(sourceType: type, url: url, durationMs: -1), entryMs: 3_725_000).media?.durationMs, 3_725_000)
+            XCTAssertEqual(filled(ItemMedia(sourceType: type, url: url, durationMs: 1_000_000), entryMs: 3_725_000).media?.durationMs, 1_000_000,
+                           "only the player replaces a length that is there")
+            XCTAssertNil(filled(ItemMedia(sourceType: type, url: url), entryMs: nil).media?.durationMs)
+            XCTAssertNil(filled(ItemMedia(sourceType: type, url: url), entryMs: 0).media?.durationMs, "an entry length of 0 invents nothing")
+            XCTAssertNil(filled(ItemMedia(sourceType: type, url: url), entryMs: -5).media?.durationMs)
+        }
+        XCTAssertNil(filled(nil, entryMs: 3_725_000).media, "an item without media stays without")
+        XCTAssertEqual(filled(ItemMedia(sourceType: .generatedTTSPrerendered), entryMs: 3_725_000).media,
+                       ItemMedia(sourceType: .generatedTTSPrerendered), "prepared narration is text: left alone")
+    }
+
     func testFeedEntrySummaryBecomesTheItemsDescriptionAndAnExistingValueIsKept() {
         let entry = FeedEntry(id: "entry", subscriptionId: "s", canonicalURL: "https://media.example.com/one.mp3",
                               title: "Episode One", summary: "<p>The show notes &amp; links.</p>")

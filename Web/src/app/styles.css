@@ -548,6 +548,11 @@ button:disabled {
   box-shadow: inset 0 0 0 1px var(--rule);
 }
 
+/* A reply listed under the Margin it answers on the Margins screen (#4174): one step in. */
+.margin.is-reply {
+  margin-left: 20px;
+}
+
 .margin::before {
   content: '';
   position: absolute;
@@ -1328,7 +1333,7 @@ button:disabled {
   padding-top: 6px;
 }
 
-/* "Send replies to <friend>": the listener's Margins to pick from (#2168). */
+/* "Share replies with <friend>": the listener's Margins to pick from (#2168). */
 .reply-back {
   margin: 0;
   padding: 0;
@@ -1384,6 +1389,34 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+/* The one invitation to the iPhone app after the first reply (#4671): a status-blue edge, with a heading and a × so the
+   words carry it, never the colour alone. */
+.app-invite {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 2px solid var(--status);
+  border-radius: var(--panel-radius);
+  background: var(--status-soft);
+  color: var(--ink);
+}
+
+.app-invite-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.app-invite h3,
+.app-invite p {
+  margin: 0;
+}
+
+.app-invite .button {
+  justify-self: start;
 }
 
 /* A `.spokenmargins` file dragged over the app. Pointer events stay on, so the drop lands here. */
@@ -1827,4 +1860,115 @@ body:not(:has(.mini-player)) .toasts {
   min-height: 44px;
   line-height: 44px;
   color: var(--tint);
+}
+
+/* ---------- Search (one box on every tab: #4422, #4018) ---------- */
+
+.search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+  padding: 0 0 12px;
+}
+
+.search-label {
+  font-weight: 650;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 4px 0 12px;
+  border: 1px solid var(--field);
+  border-radius: var(--control-radius);
+  background: var(--surface);
+}
+
+.search-box:focus-within {
+  outline: 2px solid var(--tint);
+  outline-offset: 2px;
+}
+
+.search-icon {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.search-box input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.search-clear {
+  flex: none;
+}
+
+/* The browser's own clear button would be a second ×; the field has one of its own. */
+.search-box input::-webkit-search-cancel-button,
+.search-box input::-webkit-search-decoration {
+  display: none;
+  -webkit-appearance: none;
+}
+
+.empty {
+  overflow-wrap: anywhere;
+}
+
+/* A Margins group's title folds its Margins away (#4423). */
+.margin-group-header {
+  display: block;
+  padding: 0;
+}
+
+.margin-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 0 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.margin-group-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.margin-group-chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--muted);
+  transition: transform 120ms ease;
+}
+
+.margin-group-chevron.is-open {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .margin-group-chevron {
+    transition: none;
+  }
+}
+
+.margin-list[hidden] {
+  display: none;
 }

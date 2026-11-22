@@ -17,7 +17,7 @@ extension Gate1AppModel {
                 // A follow whose refresh was skipped (one was already running) has no entries yet. A refresh
                 // asked for while another runs does nothing, so let the running one finish first.
                 for _ in 0..<150 where isRefreshingFollowedSources { try? await Task.sleep(for: .milliseconds(100)) }
-                await performFollowedSourceRefresh(force: true)
+                await performFollowedSourceRefresh(force: true, trigger: .afterFollow)
                 entry = await firstListenEntry(pickedSourceIds: pickedSourceIds)
             }
             if let entry {
@@ -37,5 +37,10 @@ extension Gate1AppModel {
             let entries = subscriptions.flatMap { (try? store.loadFeedEntries(subscriptionId: $0.id)) ?? [] }
             return FirstRunListenChoice.entry(forPickedSourceIds: pickedSourceIds, subscriptions: subscriptions, entries: entries)
         }.value
+    }
+
+    // Moved out of Gate1AppModel.swift unchanged (#4934), to make room for the Margin the listener went to.
+    func makeAppOverviewSample() throws -> (Item, ListeningMap) {
+        try WelcomeSample.make(itemId: Self.welcomeSampleItemId)
     }
 }

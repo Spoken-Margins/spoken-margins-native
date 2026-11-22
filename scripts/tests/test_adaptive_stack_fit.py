@@ -20,9 +20,9 @@ WRAPS_TEXT_ROWS = {
     "Build23SenderSharingComponents.swift": 1,
     # An item's title truncates to one line by design; the short Resume button sits beside it.
     "LiveSessionLiveRow.swift": 1,
-    # Each preview button keeps its player in @State and relabels itself "Stop" while playing; a swap between a row and
-    # a column would rebuild the buttons and stop the audio.
-    "SharingExperience.swift": 1,
+    # The "Where are you now?" field keeps focus while it is typed in (`@FocusState`); a `ViewThatFits` swap would
+    # rebuild it. A column at accessibility sizes, so the placeholder is not cut (#3721).
+    "LiveSessionSessionPane.swift": 1,
 }
 
 
@@ -60,6 +60,23 @@ class AdaptiveStackFitTests(unittest.TestCase):
         self.assertEqual(
             found, WRAPS_TEXT_ROWS,
             "a row that opts out of the fitting rule must be named in WRAPS_TEXT_ROWS with its reason (#3897)")
+
+    def _row_text(self, file_name: str, start: str, end: str) -> str:
+        text = _strip((SOURCES / file_name).read_text())
+        first = text.index(start)
+        return text[first:text.index(end, first)]
+
+    def test_the_session_clock_row_and_heard_place_rows_adapt_to_large_text(self):
+        # A field beside a button, and a pair of buttons, squeeze at accessibility sizes unless they sit in an
+        # AdaptiveStack (#3721, a sibling of #1939).
+        pane = _strip((SOURCES / "LiveSessionSessionPane.swift").read_text())
+        clock = pane[pane.index("Where are you now?"):pane.index("Type it once")]
+        self.assertRegex(clock, r"AdaptiveStack\(spacing: 8, wrapsText: true\)\s*\{\s*AppTextField\(")
+        self.assertNotIn("HStack", clock, "the clock row must not be a raw HStack at large text (#3721)")
+        detail = _strip((SOURCES / "LiveSessionMarginDetailView.swift").read_text())
+        self.assertRegex(detail, r"AdaptiveStack\(spacing: 8\)\s*\{\s*Button\(\"Keep\"\)")
+        self.assertRegex(detail, r"AdaptiveStack\(spacing: 8\)\s*\{\s*Button\(\"Save\"\)")
+        self.assertNotIn("HStack", detail, "a button pair in the Margin detail must not be a raw HStack (#3721)")
 
 
 if __name__ == "__main__":

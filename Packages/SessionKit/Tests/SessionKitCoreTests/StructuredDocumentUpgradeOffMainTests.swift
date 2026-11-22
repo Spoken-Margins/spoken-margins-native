@@ -47,6 +47,11 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
     }
 
     /// The synchronous import and the off-main one end in the same stored state.
+    ///
+    /// The one field that is the wall clock is the re-add stamp (`Item.addedAgainAt`, #4178): each import stamps the
+    /// moment it ran, and the store keeps whole seconds. Comparing the two stored items as they are passed unless the
+    /// two imports straddled a second boundary, which failed the test on a CI run now and then (#4510). So the stamp
+    /// is checked on its own (set on both, the later import's no earlier) and left out of the comparison of the rest.
     @MainActor
     func testTheOffMainImportStoresWhatTheSynchronousImportStores() async throws {
         let sync = try makeFixture()
@@ -56,7 +61,15 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
         try offMain.addReadingSession()
         _ = try await offMain.reimportOffMain()
 
-        XCTAssertEqual(try offMain.stored(), try sync.stored())
+        var syncStored = try sync.stored()
+        var offMainStored = try offMain.stored()
+        let syncStamp = try XCTUnwrap(syncStored.item.addedAgainAt, "a PDF imported again shows as just added")
+        let offMainStamp = try XCTUnwrap(offMainStored.item.addedAgainAt, "the off-main import stamps it too")
+        XCTAssertGreaterThanOrEqual(offMainStamp, syncStamp, "the off-main import ran after the synchronous one")
+        syncStored.item.addedAgainAt = nil
+        offMainStored.item.addedAgainAt = nil
+
+        XCTAssertEqual(offMainStored, syncStored)
     }
 
     /// While the upgrade is planned, the main actor is free. Through the engine's seam, the plan's task queues a

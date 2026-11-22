@@ -17,12 +17,21 @@ public protocol LibraryQueryRow {
     var lastListenedAt: Date? { get }
     var storageRecencyRank: Int { get }
     var sharedMargins: SharedMarginTally { get }
+    /// When the newest friend's Margins that count (`SharedMarginTally.total`) arrived on this item: the newest
+    /// `ImportedCommentaryLayer.importedAt`, never the sender's own clock (#4101).
+    var friendMarginsArrivedAt: Date? { get }
 }
 
 extension LibraryQueryRow {
     /// Rows that don't track shared Margins have none.
     public var sharedMargins: SharedMarginTally { .none }
     public var publishedAt: Date? { nil }
+    public var friendMarginsArrivedAt: Date? { nil }
+
+    /// Where Recently Added places the row: the later of when the listener added it (first add or latest add again) and
+    /// when a friend's Margins last arrived on it, so an old item a friend just replied on comes forward (#4101).
+    /// Nil only when neither is known; the sort then falls back to storage order.
+    var recentlyAddedDate: Date? { [addedAt, friendMarginsArrivedAt].compactMap { $0 }.max() }
 
     /// Whether the default "Unfinished" view lists the row: it isn't finished, or it is but a friend's Margins on it
     /// are still new to the listener (#4103). Without this, a friend's reply packet imported into an episode the
@@ -36,19 +45,16 @@ extension LibraryItemRow: LibraryQueryRow {}
 
 /// Library query rules shared by the app and host tests.
 public enum LibraryQueryEngine {
-    public static func visibleLibraryItems<Row: LibraryQueryRow>(_ libraryItems: [Row], query libraryQuery: LibraryQuery) -> [Row] {
+    /// The rows that pass the query's filters and search, in the order they came.
+    private static func filteredLibraryItems<Row: LibraryQueryRow>(
+        _ libraryItems: [Row], query libraryQuery: LibraryQuery, includingSenders: Bool
+    ) -> [Row] {
         let normalizedQuery = libraryQuery.query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let filtered = libraryItems.filter { row in
-            let metadataMatch: Bool
-            if normalizedQuery.isEmpty {
-                metadataMatch = true
-            } else {
-                metadataMatch = [row.title, row.sourceTitle, row.author]
-                    .compactMap { $0 }
-                    .map { $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) }
-                    .contains { $0.localizedStandardContains(normalizedQuery) }
-            }
+        return libraryItems.filter { row in
+            let metadataMatch = normalizedQuery.isEmpty
+                || titleSourceOrAuthorMatches(row, normalizedQuery: normalizedQuery)
+                || (includingSenders && row.sharedMargins.senderMatches(libraryQuery.query))
             let contentMatch = libraryQuery.contentType == .all || libraryContentType(for: row) == libraryQuery.contentType
             let listeningMatch: Bool
             switch libraryQuery.listeningState {
@@ -62,30 +68,78 @@ public enum LibraryQueryEngine {
             let sharedMatch = libraryQuery.sharedMargins.matches(row.sharedMargins)
             return metadataMatch && contentMatch && listeningMatch && offlineMatch && sharedMatch
         }
-        return filtered.sorted { lhs, rhs in
-            let ordered: ComparisonResult
-            switch libraryQuery.sort {
-            case .recentlyAdded:
-                if lhs.addedAt != nil, rhs.addedAt != nil {
-                    ordered = compareDates(lhs.addedAt, rhs.addedAt)
-                } else if lhs.storageRecencyRank != rhs.storageRecencyRank {
-                    ordered = lhs.storageRecencyRank < rhs.storageRecencyRank ? .orderedAscending : .orderedDescending
-                } else {
-                    ordered = compareDates(lhs.addedAt, rhs.addedAt)
-                }
-            case .recentlyListened:
-                ordered = compareDates(lhs.lastListenedAt, rhs.lastListenedAt)
-            case .published:
-                ordered = compareDates(lhs.publishedAt, rhs.publishedAt)
-            case .title:
-                ordered = lhs.title.localizedStandardCompare(rhs.title)
-            case .progress:
-                let left = lhs.continuationProgressPercent ?? 0
-                let right = rhs.continuationProgressPercent ?? 0
-                ordered = left == right ? .orderedSame : (left > right ? .orderedAscending : .orderedDescending)
+    }
+
+    private static func titleSourceOrAuthorMatches<Row: LibraryQueryRow>(_ row: Row, normalizedQuery: String) -> Bool {
+        [row.title, row.sourceTitle, row.author]
+            .compactMap { $0 }
+            .map { $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) }
+            .contains { $0.localizedStandardContains(normalizedQuery) }
+    }
+
+    /// Why the search listed a row that its title, source and author do not match: who sent the Margins on it, "From Sam
+    /// and 2 friends". Nil for a row the search found by title, source or author, with no search, or when senders are
+    /// not searched, so the line appears only where the match would otherwise be a mystery (#4649).
+    public static func matchedSenderLine<Row: LibraryQueryRow>(
+        _ row: Row, query libraryQuery: LibraryQuery, includingSenders: Bool = true, spoken: Bool = false
+    ) -> String? {
+        let normalizedQuery = libraryQuery.query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard includingSenders, !normalizedQuery.isEmpty,
+              !titleSourceOrAuthorMatches(row, normalizedQuery: normalizedQuery) else { return nil }
+        return row.sharedMargins.senderMatchLine(libraryQuery.query, spoken: spoken)
+    }
+
+    /// How many finished items the listening filter hides, for the "N finished hidden · Show" line at the end of the
+    /// Library (#4698). Zero when nothing is hidden. The hidden items are the finished ones that pass every other filter
+    /// and the search, and that the listening filter leaves out.
+    public static func completedHiddenCount<Row: LibraryQueryRow>(_ libraryItems: [Row], query libraryQuery: LibraryQuery) -> Int {
+        guard libraryHidesCompleted(query: libraryQuery) else { return 0 }
+        var finished = libraryQuery
+        finished.listeningState = .completed
+        // A finished item passes the other filters the same under either listening state, so what the listening state
+        // hides is decided by its own rule: Unfinished lists a finished item only while a friend's Margins on it are new
+        // (#4103); Unplayed and In Progress never list one.
+        return filteredLibraryItems(libraryItems, query: finished, includingSenders: true)
+            .filter { libraryQuery.listeningState != .unfinished || !$0.staysInUnfinished }
+            .count
+    }
+
+    /// - Parameter includingSenders: whether a search also finds items through who sent the Margins on them (#3794).
+    ///   The Library's search does; a list that says "title, source, or author" (the collection checklist) doesn't.
+    public static func visibleLibraryItems<Row: LibraryQueryRow>(
+        _ libraryItems: [Row], query libraryQuery: LibraryQuery, includingSenders: Bool = true
+    ) -> [Row] {
+        let filtered = filteredLibraryItems(libraryItems, query: libraryQuery, includingSenders: includingSenders)
+        return filtered.sorted { areInOrder($0, $1, sort: libraryQuery.sort) }
+    }
+
+    /// The Library's order for two rows under `sort`, ties broken by id. One function, so a Library folder's row and a
+    /// collection's row (#3769) are placed among items by exactly the rules items follow.
+    static func areInOrder<Row: LibraryQueryRow>(_ lhs: Row, _ rhs: Row, sort: LibrarySort) -> Bool {
+        let ordered: ComparisonResult
+        switch sort {
+        case .recentlyAdded:
+            let (left, right) = (lhs.recentlyAddedDate, rhs.recentlyAddedDate)
+            if left != nil, right != nil {
+                ordered = compareDates(left, right)
+            } else if lhs.storageRecencyRank != rhs.storageRecencyRank {
+                ordered = lhs.storageRecencyRank < rhs.storageRecencyRank ? .orderedAscending : .orderedDescending
+            } else {
+                ordered = compareDates(left, right)
             }
-            return ordered == .orderedSame ? lhs.id < rhs.id : ordered == .orderedAscending
+        case .recentlyListened:
+            ordered = compareDates(lhs.lastListenedAt, rhs.lastListenedAt)
+        case .published:
+            ordered = compareDates(lhs.publishedAt, rhs.publishedAt)
+        case .title:
+            ordered = lhs.title.localizedStandardCompare(rhs.title)
+        case .progress:
+            let left = lhs.continuationProgressPercent ?? 0
+            let right = rhs.continuationProgressPercent ?? 0
+            ordered = left == right ? .orderedSame : (left > right ? .orderedAscending : .orderedDescending)
         }
+        return ordered == .orderedSame ? lhs.id < rhs.id : ordered == .orderedAscending
     }
 
     /// Where an item the app just said it added stands in the Library as the listener has it filtered (#4178): listed,
@@ -163,6 +217,11 @@ public enum LibraryQueryEngine {
         case "epub": return "EPUB"
         default: return rawValue.replacingOccurrences(of: "_", with: " ").capitalized
         }
+    }
+
+    /// Whether the row is a PDF by the Library's "PDF" filter rule (#4338).
+    public static func isPDF<Row: LibraryQueryRow>(_ row: Row) -> Bool {
+        libraryContentType(for: row) == .pdf
     }
 
     private static func libraryContentType<Row: LibraryQueryRow>(for row: Row) -> LibraryContentTypeFilter {

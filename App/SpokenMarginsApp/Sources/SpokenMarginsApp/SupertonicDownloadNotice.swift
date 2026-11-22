@@ -69,7 +69,7 @@ struct SupertonicDownloadNoticePresentation: ViewModifier {
                         || model.spokenMarginsPackageImportReview != nil
                 )
             }
-            .sheet(isPresented: $notice.isPresented) {
+            .trackedSheet(isPresented: $notice.isPresented) {
                 SupertonicDownloadNoticeCard(
                     openVoices: {
                         notice.openVoices()
@@ -152,7 +152,7 @@ struct SupertonicDownloadNoticeCard: View {
             Button(action: openVoices) {
                 Text("Open Voices").frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .filledActionButton()
             .controlSize(.large)
             .accessibilityIdentifier("supertonicNotice.openVoices")
             Button("Not Now", action: notNow)

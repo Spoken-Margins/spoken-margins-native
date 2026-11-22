@@ -15,15 +15,26 @@
 # - The script skips PRs from forks, keeps the GitHub token out of Claude's environment, and won't post a comment that
 #   contains the Claude token.
 #
+# Cost and catch of the hosted-check starts: a run with no candidate is about a minute of Linux (checkout and the
+# Claude Code install), no tokens; one waiting run at a time, so a burst of PR pushes costs at most two. Waste
+# signal: a week in which every hosted-check start found no candidate while risky PRs still waited for the schedule.
+#
 # A label change made with this job's token starts no workflow run, so the re-arm after a clean audit also dispatches
 # lane.yml, and the tap check dispatches owner-tap-alert.yml.
 name: claude-audit
 
+# Start (#4866): the `workflow_run` below replaces the 15-minute cron. The VPS (ops/dispatch-backstop/) fires
+# `workflow_dispatch` when no run began in the last 15 minutes; GitHub started this cron 4 times of 96 in the 24 hours to
+# 2026-11-21. The one daily tick is the last resort if the VPS is down too.
 on:
   schedule:
-    - cron: '3,18,33,48 * * * *'  # the backstop; GitHub may run these late
-  workflow_run:  # the usual start: a lane report is what makes a PR ready for its audit
-    workflows: [lane]
+    - cron: '3 6 * * *'  # last resort only
+  # The usual start: a PR's checks finishing is what makes it ready for its audit. Under the lane that was the lane
+  # report; since the merge queue switch-over (lane.yml disabled, 2026-11-20) it is the PR's hosted checks finishing,
+  # which ops/codex/sm_codex_audit.py reads as standing in for a lane PASS (#4746). With only the schedule left, the
+  # audit ran 3 times in the 24 hours to 2026-11-20 15:00 UTC against a 15-minute cron, and 11 risky PRs waited.
+  workflow_run:
+    workflows: [lane, hosted-portable, hosted-web]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -44,7 +55,10 @@ jobs:
   audit:
     # A lane run whose jobs were all skipped posted no report, so it can't have made a PR ready: 141 of 1,272 lane runs
     # in the week to 2026-11-07. Skipped here, before the concurrency group below, so it can't replace a waiting run.
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion != 'skipped'
+    # A merge-group run is not a PR's own check, and the queue merges the PR anyway, so it starts no audit.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion != 'skipped' && github.event.workflow_run.event != 'merge_group')
     # One run at a time, with one waiting: GitHub replaces an older waiting run, and the newest reads every PR anyway.
     concurrency:
       group: claude-audit

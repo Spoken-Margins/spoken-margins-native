@@ -1,0 +1,106 @@
+# The `automerge` label queues the PR in GitHub's merge queue; removing it takes the PR out (#4693, merge queue
+# move). Agents keep arming PRs the way they do today, so no session's instructions change at switch-over.
+# scripts/merge_queue_label_bridge.py says what it does; drafts and "do not merge" / "throwaway" PRs are never queued,
+# and retitling or drafting an armed PR (`edited`, `converted_to_draft`) takes it out again.
+#
+# Inert until switch-over: every job needs the repository variable MERGE_QUEUE to be `on`.
+# At switch-over, in the same hour:
+#   1. the "protect main" ruleset requires the merge queue and its checks;
+#   2. `gh variable set MERGE_QUEUE --body on` and `gh variable set MERGE_QUEUE_MAC --body queue-only`;
+#   3. `gh workflow run merge-queue-label-bridge.yml` with no `pr`: queues every PR armed under the old lane;
+#   4. the old lane's merging is switched off. lane.yml's jobs `route`, `automerge`, `automerge-mac` and `release`
+#      push merges straight to main, which the queue rule refuses, so they must stop (this PR does not change
+#      lane.yml).
+#
+# Token. Events caused by GITHUB_TOKEN start no workflow runs, except workflow_dispatch and repository_dispatch
+# (docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow, "Triggering a
+# workflow from a workflow"). A PR enqueued by GITHUB_TOKEN may therefore get merge groups whose `merge_group`
+# checks never start, which would hold the queue; that is not documented either way. So the step uses the secret
+# MERGE_QUEUE_TOKEN (a fine-grained token or App token with pull requests and contents write) when it exists, and
+# GITHUB_TOKEN otherwise. The trial must show a bridge-queued PR's merge-group checks starting before the switch.
+# The same rule means a label added with GITHUB_TOKEN (by another workflow) starts no run here; the 15-minute
+# sweep queues those. The sweep never takes a PR out: a PR set to merge without the label may be the owner's own
+# Merge tap. A label removed with GITHUB_TOKEN therefore leaves the PR queued; take it out with `gh pr merge
+# --disable-auto` or by hand.
+#
+# `pull_request_target`, not `pull_request`: the script comes from main and nothing from the PR is checked out or run.
+#
+# Start (#4866): the sweep that queues PRs armed by a token-made label change used to wait for a 15-minute cron GitHub ran
+# 4 times of 96 in the 24 hours to 2026-11-21. Now a PR's own `opened`, `reopened`, `synchronize` and `ready_for_review`
+# run the one-PR check (armed PRs only), and the VPS (ops/dispatch-backstop/) fires `workflow_dispatch` for the sweep when
+# no run began in the last 15 minutes; the one daily tick is the last resort. There is no `workflow_run` start: a sweep
+# when any PR's check finishes would queue a PR whose merge group just failed, or one taken out by hand, before
+# merge_queue_dequeued.py has taken `automerge` off it (ci_model scenario d showed the second failing group).
+#
+# Cost and catch: one Linux job of seconds per `automerge` label change, title edit or draft, plus a seconds-long
+# sweep every 15 minutes (only with MERGE_QUEUE on; otherwise each run is a skipped job). Its real cost is the merge
+# group runs each queueing starts (Linux, plus a Mac for a Swift diff). The `needs-fix` guard bounds that to one group
+# per arming: a PR whose group failed gets `needs-fix` and loses `automerge` (merge_queue_dequeued.py), and is not
+# queued again until someone adds `automerge` again. No tokens. It catches every armed
+# PR that would otherwise sit unqueued after switch-over (18 armed PRs on 2026-11-19), and an armed throwaway PR
+# (#4696 carried `automerge` with "do not merge to main" in its title). Waste signal: a month in which agents run
+# `gh pr merge` themselves and the bridge queues nothing.
+name: merge-queue-label-bridge
+
+on:
+  pull_request_target:
+    types: [labeled, unlabeled, edited, converted_to_draft, opened, reopened, synchronize, ready_for_review]
+  schedule:
+    - cron: '7 6 * * *'  # last resort only
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Queue only this PR; empty sweeps every open PR that carries automerge'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bridge:
+    name: merge queue label bridge
+    if: >-
+      vars.MERGE_QUEUE == 'on' &&
+      (github.event_name != 'pull_request_target' || github.event.label.name == 'automerge' ||
+       (github.event.action == 'edited' && github.event.changes.title) ||
+       github.event.action == 'converted_to_draft' ||
+       ((github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize' ||
+         github.event.action == 'ready_for_review') &&
+        contains(github.event.pull_request.labels.*.name, 'automerge')))
+    # On the job, not the workflow: a run for another label skips this job and so never joins the group, where it
+    # would replace a pending `automerge` run (a concurrency group keeps only its newest pending run).
+    concurrency:
+      # Hold checks get their own group, so an `edited` run never replaces a pending `labeled`/`unlabeled` one.
+      group: merge-queue-label-bridge-${{ github.event.pull_request.number || inputs.pr || 'sweep' }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && 'label' || 'check' }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          persist-credentials: false
+          sparse-checkout: scripts/merge_queue_label_bridge.py
+          sparse-checkout-cone-mode: false
+      - name: Queue or unqueue
+        env:
+          GH_TOKEN: ${{ secrets.MERGE_QUEUE_TOKEN || github.token }}
+          # For the "could not queue" comment only, when GH_TOKEN is refused (#4937): an expired queue token then
+          # still leaves a note on the PR instead of only a red run.
+          FALLBACK_GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+        run: |
+          if [ "$EVENT" = pull_request_target ]; then
+            python3 scripts/merge_queue_label_bridge.py --repo "$GH_REPO" --pr "$PR" --action "$ACTION" --label "$LABEL"
+          elif [ -n "$PR" ]; then
+            python3 scripts/merge_queue_label_bridge.py --repo "$GH_REPO" --pr "$PR" --action edited
+          else
+            python3 scripts/merge_queue_label_bridge.py --repo "$GH_REPO" --sweep
+          fi

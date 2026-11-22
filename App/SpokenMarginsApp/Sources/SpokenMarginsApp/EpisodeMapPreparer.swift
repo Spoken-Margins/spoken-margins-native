@@ -205,14 +205,13 @@ final class EpisodeMapPreparer {
                     try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
                 }.value
                 try Task.checkCancellation()
-                let durationMs: Int
-                if let declaredDurationMs = item.media?.durationMs {
-                    durationMs = declaredDurationMs
-                } else if let duration = try? await AVURLAsset(url: localURL).load(.duration) {
-                    durationMs = Int((CMTimeGetSeconds(duration) * 1_000).rounded())
-                } else {
-                    durationMs = 0
+                // The downloaded file's own length first; the stored one can be the feed's provisional length (#4186).
+                var fileDurationMs: Int?
+                if let duration = try? await AVURLAsset(url: localURL).load(.duration) {
+                    let seconds = CMTimeGetSeconds(duration)
+                    if seconds.isFinite, seconds > 0 { fileDurationMs = Int((seconds * 1_000).rounded()) }
                 }
+                let durationMs = EpisodeMapDuration.choose(fileMs: fileDurationMs, storedMs: item.media?.durationMs)
                 let resumed = EpisodeMapAssembly.resumeFingerprints(
                     safeItemComponent: host.safePodcastEvidenceComponent(item.id),
                     nextUnitIndex: job.nextUnitIndex,
@@ -261,7 +260,8 @@ final class EpisodeMapPreparer {
                     let generatedByteCount = try await Gate1AppModel.offMain {
                         Int64((try? Data(contentsOf: generatedFileURL).count) ?? 0)
                     }
-                    try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
+                    // Only while the item still has a row (#4227): a permanent delete asked during the render leaves no row or file.
+                    guard try await ledger.commitIfItemExists(reservationId: reservation.id, asset: OwnedOfflineAsset(
                         id: assetID,
                         itemId: item.id,
                         category: .fingerprintMap,
@@ -269,7 +269,7 @@ final class EpisodeMapPreparer {
                         byteCount: generatedByteCount,
                         isReproducible: true,
                         protections: [.activeEpisodeMapPreparation]
-                    ))
+                    )) else { throw CancellationError() }
                     gridIndex += 1
                     startMs += SparseFingerprintSchedule.periodicIntervalMs
                     job.nextUnitIndex = gridIndex
@@ -319,7 +319,7 @@ final class EpisodeMapPreparer {
                     )
                     do {
                         try await Gate1AppModel.offMain { try transcriptData.write(to: transcriptURL, options: .atomic) }
-                        try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
+                        guard try await ledger.commitIfItemExists(reservationId: reservation.id, asset: OwnedOfflineAsset(
                             id: "episode-transcript-\(safeItemID)",
                             itemId: item.id,
                             category: .transientEpisodeTranscript,
@@ -327,7 +327,7 @@ final class EpisodeMapPreparer {
                             byteCount: Int64(transcriptData.count),
                             isReproducible: true,
                             protections: [.activeEpisodeMapPreparation]
-                        ))
+                        )) else { throw CancellationError() }
                     } catch {
                         try? await ledger.release(reservationId: reservation.id)
                         try? await Gate1AppModel.offMain { try FileManager.default.removeItem(at: transcriptURL) }
@@ -414,16 +414,15 @@ final class EpisodeMapPreparer {
                     matches: EpisodeMapAssembly.identityMatches(for: allLandmarks),
                     exactEdition: true
                 )
-                try await Gate1AppModel.offMain {
-                    try store.saveEpisodeMapPreparationJob(commitJob)
-                    try store.saveEditionFingerprintSpine(spine)
-                    try store.saveTranscriptPhraseSketch(sketch)
-                    try store.savePortableListeningMapProposal(proposal, itemId: itemID)
-                    try store.saveResolvedListeningMapProjection(projection)
-                    for asset in try store.loadOwnedOfflineAssets(itemId: itemID) where asset.category == .fingerprintMap {
-                        try store.updateOwnedOfflineAsset(id: asset.id) { $0.protections.remove(.activeEpisodeMapPreparation) }
-                    }
+                // One transaction that first checks the item still has a row (`commitEpisodeMapRun`): a permanent delete asked
+                // while the run finished lands before the check (nothing is written; the run stops as cancelled) or after the
+                // commit (the delete takes these rows with the item) (#4227).
+                let committed = try await Gate1AppModel.offMain {
+                    try store.commitEpisodeMapRun(
+                        itemId: itemID, job: commitJob, spine: spine, sketch: sketch, proposal: proposal,
+                        projection: projection)
                 }
+                guard committed else { throw CancellationError() }
                 try await host.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
                 try Task.checkCancellation() // the purge now suspends; a cancel that lands there must not complete the run
                 job.stage = .completed
@@ -474,7 +473,8 @@ final class EpisodeMapPreparer {
     /// Takes the save's place in line now and returns the task that runs it (#3331).
     private func enqueueSaveJob(_ job: EpisodeMapPreparationJob, store: SQLiteSessionStore?) -> Task<Void, Error>? {
         guard let store else { return nil }
-        return StoreReader(store).enqueueInOrder(AutomaticEpisodeMapJobs.orderKey) { try $0.saveEpisodeMapPreparationJob(job) }
+        // Only while the item has a row, so a run that stops after a permanent delete can't write its job back (#4227).
+        return StoreReader(store).enqueueInOrder(AutomaticEpisodeMapJobs.orderKey) { _ = try $0.saveEpisodeMapPreparationJobIfItemExists(job) }
     }
 
     /// The start of a request: the job row is written behind the tap, ahead of the run's own first save. A save that

@@ -1,9 +1,18 @@
 import SessionKit
+import SessionKitAudio
 
 extension Gate1AppModel {
     /// Shared post-save hook for the app, Live Activity and Watch completion routes.
     func transcribeAndRecordSavedSpokenMargin() {
+        transcribeAndRecordSavedSpokenMargin(endedByPhrase: false)
+    }
+
+    /// `endedByPhrase` is true only when the spoken "stop margin" ended the Margin (#3940): the Margin is marked before
+    /// its transcription is scheduled, so the job cuts the phrase from its audio and words. Every other save leaves it
+    /// unmarked and keeps everything.
+    func transcribeAndRecordSavedSpokenMargin(endedByPhrase: Bool) {
         guard let interjection = latestInterjectionNeedingTranscription() else { return }
+        if endedByPhrase { MarginEndPhraseEndLedger.shared.markEndedByPhrase(interjectionId: interjection.id) }
         scheduleTranscription(for: interjection)
         recordSpokenMarginSignal(interjection)
     }

@@ -17,6 +17,40 @@ final class SkimStopRoutingTests: XCTestCase {
         SkimStops.Target(stop: stop, leadInStart: leadIn, leadInClamp: nil)
     }
 
+    // MARK: Every item kind with chapters has a stop behind it in a middle chapter (#3865)
+
+    /// The owner's text item: chapters at 0, 56, 65 and 74 percent, playing at 47%. The chapter row's back arrow is
+    /// Skim back, so it is bright only when a stop is behind the playhead. Chapter starts are stops for text (by
+    /// character) and for media (by millisecond) alike, with no Margins, no map and no summary.
+    func testChapterStartsAreStopsBehindAndAheadOnEveryItemKind() throws {
+        let percents = [0, 56, 65, 74]
+        let textChapters = percents.enumerated().map { index, percent in
+            Chapter(id: "c\(index)", title: "Chapter \(index)", startChar: percent * 100,
+                    endChar: (index + 1 < percents.count ? percents[index + 1] : 100) * 100, percent: percent)
+        }
+        let mediaChapters = percents.enumerated().map { index, percent in
+            MediaTimelineChapter(id: "c\(index)", title: "Chapter \(index)", startMs: percent * 10_000,
+                                 transcriptSegmentId: "segment-\(index)")
+        }
+        let text = SkimStopRouting.stops(textChapters: textChapters, mediaChapters: [], ownMargins: [], sharedMargins: [],
+                                         unit: .characters(perSecond: 15))
+        let media = SkimStopRouting.stops(textChapters: [], mediaChapters: mediaChapters, ownMargins: [], sharedMargins: [],
+                                          unit: .milliseconds)
+        for (name, stops, scale) in [("text", text, 100), ("media", media, 10_000)] {
+            // 47%: the first chapter's start is behind, the 56% chapter ahead.
+            XCTAssertEqual(stops.previous(playhead: 47 * scale)?.stop.id, "c0", "\(name) at 47%")
+            XCTAssertEqual(stops.next(playhead: 47 * scale)?.stop.id, "c1", "\(name) at 47%")
+            // 60%: in the 56% chapter, so its own start is behind and 65% ahead.
+            XCTAssertEqual(stops.previous(playhead: 60 * scale)?.stop.id, "c1", "\(name) at 60%")
+            XCTAssertEqual(stops.next(playhead: 60 * scale)?.stop.id, "c2", "\(name) at 60%")
+            // 99%: the last chapter is past its start: back goes to it, nothing ahead.
+            XCTAssertEqual(stops.previous(playhead: 99 * scale)?.stop.id, "c3", "\(name) at 99%")
+            XCTAssertNil(stops.next(playhead: 99 * scale), "\(name) at 99%")
+            // the very start of the first chapter: nothing behind.
+            XCTAssertNil(stops.previous(playhead: 0), "\(name) at 0%")
+        }
+    }
+
     // MARK: Choosing between a stop and the summary
 
     func testAChapterWithNoSummaryPlanIsAStop() {

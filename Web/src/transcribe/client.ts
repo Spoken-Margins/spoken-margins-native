@@ -20,9 +20,14 @@ export interface Transcriber {
   /** Loads the model, downloading it the first time. Progress is in bytes of the known total. */
   prepare(onProgress?: (loaded: number, total: number) => void): Promise<Device>;
   /** Words for a recording, or '' when none were heard. */
-  transcribe(voice: Blob): Promise<Transcript>;
+  transcribe(voice: Blob, onSegment?: (done: number, total: number) => void): Promise<Transcript>;
   /** Forgets the downloaded model. */
   remove(): Promise<void>;
+  /**
+   * Stops a load or run that has gone quiet, keeping the downloaded model, so the next `prepare` starts afresh.
+   * A load still waiting is rejected; a run's promise never settles, as its caller has moved on.
+   */
+  abandon(): void;
 }
 
 function browserSupports(): boolean {
@@ -54,19 +59,24 @@ export function createTranscriber(options: TranscriberOptions = {}): Transcriber
   let worker: Worker | undefined;
   let ready: Promise<Device> | undefined;
   let nextId = 1;
-  const waiting = new Map<number, { resolve: (t: Transcript) => void; reject: (e: Error) => void }>();
+  const waiting = new Map<number, { resolve: (t: Transcript) => void; reject: (e: Error) => void; onSegment?: (done: number, total: number) => void }>();
+  /** Bumped when a stuck worker is stopped or the model is removed, so a call begun before it gives up. */
+  let generation = 0;
+  let abortStart: ((error: Error) => void) | undefined;
   let progressListener: ((loaded: number, total: number) => void) | undefined;
 
   const send = (message: ToWorker, transfer: Transferable[] = []) => worker?.postMessage(message, transfer);
 
   const start = (): Promise<Device> =>
     new Promise<Device>((resolve, reject) => {
+      abortStart = reject;
       worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module', name: 'transcription' });
       worker.onmessage = (event: MessageEvent<FromWorker>) => {
         const message = event.data;
         if (message.type === 'progress') progressListener?.(message.loaded, message.total);
         else if (message.type === 'ready') resolve(message.device);
         else if (message.type === 'load-failed') reject(new Error(message.message));
+        else if (message.type === 'segment') waiting.get(message.id)?.onSegment?.(message.done, message.total);
         else if (message.type === 'result' || message.type === 'failed') {
           const job = waiting.get(message.id);
           waiting.delete(message.id);
@@ -85,14 +95,20 @@ export function createTranscriber(options: TranscriberOptions = {}): Transcriber
     });
 
   const prepare = (onProgress?: (loaded: number, total: number) => void): Promise<Device> => {
-    progressListener = onProgress;
-    ready ??= start().catch((error: unknown) => {
-      // A failed load (no network for the first download, say) can be tried again from scratch.
-      worker?.terminate();
-      worker = undefined;
-      ready = undefined;
-      throw error;
-    });
+    if (onProgress) progressListener = onProgress;
+    if (!ready) {
+      const attempt: Promise<Device> = start().catch((error: unknown) => {
+        // A failed load (no network for the first download, say) can be tried again from scratch. Only the load
+        // still current clears the state: a stopped one must not take down the worker that replaced it.
+        if (ready === attempt) {
+          worker?.terminate();
+          worker = undefined;
+          ready = undefined;
+        }
+        throw error;
+      });
+      ready = attempt;
+    }
     return ready;
   };
 
@@ -111,19 +127,35 @@ export function createTranscriber(options: TranscriberOptions = {}): Transcriber
       }
     },
     prepare,
-    async transcribe(voice) {
+    async transcribe(voice, onSegment) {
+      const mine = generation;
+      const stopped = () => new Error('The speech model was stopped.');
       const samples = await decodeForModel(voice, model.sampleRate);
-      if (peak(samples) < SILENCE_PEAK) return { text: '', ms: 0, device: await prepare(progressListener) };
-      await prepare(progressListener);
+      if (generation !== mine) throw stopped();
+      if (peak(samples) < SILENCE_PEAK) return { text: '', ms: 0, device: await prepare() };
+      await prepare();
+      if (generation !== mine) throw stopped();
       const segments = splitAtQuiet(samples, model.sampleRate, model.maxSegmentSeconds).map((s) => s.slice());
       const id = nextId;
       nextId += 1;
       return new Promise<Transcript>((resolve, reject) => {
-        waiting.set(id, { resolve, reject });
+        waiting.set(id, { resolve, reject, ...(onSegment && { onSegment }) });
         send({ type: 'transcribe', id, segments }, segments.map((s) => s.buffer));
       });
     },
+    abandon() {
+      generation += 1;
+      worker?.terminate();
+      worker = undefined;
+      ready = undefined;
+      waiting.clear();
+      progressListener = undefined;
+      // Anything else awaiting this load (Settings' download, say) is told, not left spinning.
+      abortStart?.(new Error('The speech model was stopped.'));
+      abortStart = undefined;
+    },
     async remove() {
+      generation += 1;
       worker?.terminate();
       worker = undefined;
       ready = undefined;

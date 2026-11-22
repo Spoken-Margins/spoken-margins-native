@@ -140,8 +140,33 @@ final class Build29DatabaseFixtureTests: XCTestCase {
         let feedEntry = FeedEntry(id: "entry-publisher-audio", subscriptionId: "subscription-substack", canonicalURL: "https://example.substack.com/p/post",
                                   audioURL: "https://api.substack.com/feed/podcast/1/a.mp3", title: "Post", bodyWordCount: 720, fullBody: "A full subscriber article", publisherPlatform: "substack", publisherNarrationConfirmed: true, audioDurationMs: 60_000)
         try store.saveFeedEntry(feedEntry)
+        // #4046: a follow list is a record kind the shipped builds' readers never read. It sits in the database the frozen
+        // readers open, so scripts/check-build29-database.sh shows they ignore it.
+        try store.saveFollowList(FollowList(
+            id: "list-fixture", name: "Fixture list", createdAt: Date(timeIntervalSince1970: 1),
+            members: [ListMember(feedKey: "https://example.substack.com/feed", podcastGUID: "fixture-guid")]
+        ))
+        // #4046 PR 6: a list's web address, with a waiting change, the same way.
+        try store.saveListLink(ListLink(
+            id: "link-fixture", listId: "list-fixture", url: "https://example.com/list.opml", title: "Fixture link",
+            etag: "\"v1\"", lastCheckedAt: Date(timeIntervalSince1970: 1), status: .ok, statusAt: Date(timeIntervalSince1970: 1),
+            acceptedMembers: [ListMember(feedKey: "https://example.substack.com/feed")],
+            pending: ListProposal(added: [ProposedShow(member: ListMember(feedKey: "https://example.substack.com/other"), feedURL: "https://example.substack.com/other", title: "Other")], removed: [], checkedAt: Date(timeIntervalSince1970: 1))
+        ))
+        // #4046: a listening rule and a Show less mark, the same way.
+        try store.saveListeningRule(ListeningRule(
+            id: "rule-fixture", action: .skip, words: ["crypto*"], scope: .list("list-fixture"), isOn: true, createdAt: Date(timeIntervalSince1970: 1)
+        ))
+        try store.saveShowLessMark(ShowLessMark(
+            feedKey: "https://example.substack.com/feed", entryId: "entry-publisher-audio", title: "Post", markedAt: Date(timeIntervalSince1970: 1)
+        ))
         XCTAssertEqual(try store.loadPublisherAudio(itemId: v1.id)?.durationMs, 60_000)
         XCTAssertNil(try store.loadTranscriptTimeline(itemId: v1.id), "the map must not make the article transcript-backed")
+        // #4046: a rule suggestion's "Not now", the same way.
+        try store.saveRuleSuggestionState(RuleSuggestionState(
+            key: RuleSuggestionState.key(feedKey: "https://example.substack.com/feed", word: "crypto"),
+            snoozedUntil: Date(timeIntervalSince1970: 2_592_001)
+        ))
 
         // An article playing its publisher's recording through its map (#547). Build 29 must see a plain
         // article, its session reading the article, and a Margin anchored to the article's words.
@@ -238,6 +263,39 @@ final class Build29DatabaseFixtureTests: XCTestCase {
             ],
             ["itemId": linkedFile.id, "mediaURL": "file:///var/mobile/Library/linked.mp3", "durationMs": 1_790_000, "linkedEpisodeGUID": "guid-downloaded"],
         ]
+
+        // #2997: a transcript item and its `transcript_times` record. Build 29 sees an item with an `externalReferenceType` it
+        // has no name for and a record kind it doesn't read, and must still open the database and read the item, its
+        // session and its Margin.
+        let transcript = try TranscriptImport.parse(
+            text: TranscriptFixtures.all["generic.srt"]!, timeZone: TimeZone(identifier: "UTC")!)
+        let builtTranscript = TranscriptItemText.build(transcript, fileName: "generic.srt", timeZone: TimeZone(identifier: "UTC")!)
+        let transcriptItem = Item(
+            id: builtTranscript.id, title: builtTranscript.title, mediaType: "text", text: builtTranscript.text,
+            externalReference: "generic.srt", status: "needs_listening_map",
+            externalReferenceType: TranscriptItemText.referenceType, createdAt: Date(timeIntervalSince1970: 1_758_000_000))
+        try store.saveTranscriptItem(
+            transcriptItem, times: TranscriptTimes(transcript: transcript, built: builtTranscript),
+            readdedAt: Date(timeIntervalSince1970: 1_758_000_000))
+        let transcriptSession = Session(
+            id: "session-\(transcriptItem.id)", itemId: transcriptItem.id, status: "in_progress", phase: .itemPlayback,
+            currentTargetType: .itemTextTTS, currentTargetId: transcriptItem.id, position: Position(charOffset: 3),
+            completionPercent: 10, playbackRate: 1)
+        try store.saveSession(transcriptSession)
+        try store.saveInterjection(Interjection(
+            id: "margin-\(transcriptItem.id)", itemId: transcriptItem.id, sessionId: transcriptSession.id, targetType: .item,
+            targetId: transcriptItem.id, createdAt: Date(timeIntervalSince1970: 1), roughPercent: 10,
+            anchor: Anchor(anchorType: .text, startChar: 0, endChar: 5, anchorBefore: "", anchorAfter: ""),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+            displayText: "A Margin in a meeting", status: "active"))
+        XCTAssertNotNil(try store.loadTranscriptTimes(itemId: transcriptItem.id))
+        expected.append([
+            "itemId": transcriptItem.id,
+            "textSHA256": SHA256.hash(data: Data(builtTranscript.text.utf8)).map { String(format: "%02x", $0) }.joined(),
+            "sessionId": transcriptSession.id,
+            "marginId": "margin-\(transcriptItem.id)",
+            "hasListeningMap": try store.loadListeningMap(itemId: transcriptItem.id) != nil,
+        ])
 
         XCTAssertNil(try store.loadStructuredDocument(itemId: v1.id))
         XCTAssertEqual(try store.loadStructuredDocument(itemId: v2.id), document)

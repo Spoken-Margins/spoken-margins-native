@@ -131,10 +131,13 @@ extension Gate1AppModel {
                     } else {
                         self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, sessionId: interjection.sessionId, timeline: timeline)
                         self.diagnostics[transcriptionKey] = "complete:heard_audio:\(timeline.segments.count)_segments"
-                        if reportsResult { self.reportConfirmation("Source context recovered.") }
                     }
                     self.refreshSelectedItemInBackground()
                     self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
+                    // After the row refresh, so the banner reads the status the retry stored (#3856).
+                    if reportsResult, !timeline.segments.isEmpty {
+                        self.reportConfirmation(self.contextRetryResultMessage(sessionId: interjection.sessionId, interjectionId: interjection.id))
+                    }
                 }
             }
         }
@@ -189,7 +192,9 @@ extension Gate1AppModel {
                         self.heardSourceWindows.discardInBackground(Self.marginIdentity(interjection)) // #652: the context is ready without it
                         self.refreshSelectedItemInBackground()
                         self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
-                        if reportsResult { self.reportConfirmation("Source context recovered.") }
+                        if reportsResult {
+                            self.reportConfirmation(self.contextRetryResultMessage(sessionId: interjection.sessionId, interjectionId: interjection.id))
+                        }
                         self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "complete:stored_transcript"
                         self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", interjection)] = "stored_transcript"
                     }
@@ -303,7 +308,9 @@ extension Gate1AppModel {
                         ? "unavailable:\(reference.failure ?? "temporary_audio_unavailable")"
                         : "complete:\(reference.evidence.count)"
                     self.pendingSourceContextInterjectionIds.remove(identity)
-                    if reportsResult { self.reportConfirmation("Source context recovered.") }
+                    if reportsResult {
+                        self.reportConfirmation(self.contextRetryResultMessage(sessionId: interjection.sessionId, interjectionId: interjectionId))
+                    }
                 }
             } catch {
                 self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "failed:\(SafeErrorText.describe(error))"
@@ -364,19 +371,28 @@ extension Gate1AppModel {
         Task {
             do {
                 let alignedTranscript = try await alignedInterjectionTranscriptionHandler?(audioPath)
+                // Only a Margin the spoken phrase ended loses it from its audio and words (#3940, PR 4). The cut copy is
+                // swapped in once the words are saved; any doubt keeps everything.
+                let endPhraseCut = await MarginEndPhraseSaving.prepare(
+                    audioURL: Self.resolvedInterjectionAudioURL(for: audioPath, applicationSupportDirectory: supportDirectory),
+                    transcript: alignedTranscript,
+                    isSwitchedOn: MarginEndPhraseSaving.isSwitchedOn(),
+                    endedByPhrase: MarginEndPhraseEndLedger.shared.consumeEndedByPhrase(interjectionId: interjection.id)
+                )
+                let savedTranscript = MarginEndPhraseSaving.wordsToSave(heard: alignedTranscript, prepared: endPhraseCut)
                 let transcript: String
-                if let alignedTranscript {
-                    transcript = alignedTranscript.text
+                if let savedTranscript {
+                    transcript = savedTranscript.text
                 } else {
                     transcript = try await interjectionTranscriptionHandler(audioPath)
                 }
                 await MainActor.run {
-                    run { engine in
-                        if let alignedTranscript {
+                    let wordsSaved = run { engine in
+                        if let savedTranscript {
                             snapshot = try engine.transcriptionCompleted(
                                 interjectionId: interjection.id,
                                 sessionId: interjection.sessionId,
-                                alignedTranscript: alignedTranscript
+                                alignedTranscript: savedTranscript
                             )
                         } else {
                             snapshot = try engine.transcriptionCompleted(
@@ -391,6 +407,7 @@ extension Gate1AppModel {
                         withdrawRetryOffer(Self.transcriptionRetryKey(interjection))
                         reportSuccess("Transcribed Margin.")
                     }
+                    MarginEndPhraseSaving.finish(endPhraseCut, wordsSaved: wordsSaved)
                     retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
                     scheduleSourceWindowContextIfNeeded(for: interjection)
                 }

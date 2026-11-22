@@ -35,7 +35,11 @@ DEFAULT_OUT = REPO / 'artifacts' / 'diagnostics-hangs'
 # underscored form a share sheet or upload makes of it.
 EXPORT_GLOBS = ('Spoken Margins diagnostics*.json', 'Spoken_Margins_diagnostics*.json')
 # The first commit with the always-on hang probe (#2099, #2111). A build without it can't record `main.hang`.
-HANG_PROBE_FILE = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/HangTelemetry.swift'
+# The file moved into SessionKit (#318), so a build has the probe if either path exists in its commit.
+HANG_PROBE_FILES = (
+    'App/SpokenMarginsApp/Sources/SpokenMarginsApp/HangTelemetry.swift',
+    'Packages/SessionKit/Sources/SessionKit/HangTelemetry.swift',
+)
 CONTEXT_EVENTS = 3
 TOP_PAIRS = 5
 # Fields worth showing when an event is quoted as context for a hang or a kill.
@@ -143,11 +147,13 @@ def has_hang_probe(sha: str, repo: Path = REPO) -> str:
                                capture_output=True, timeout=20)
         if known.returncode != 0:
             return 'unknown'
-        present = subprocess.run(['git', '-C', str(repo), 'cat-file', '-e', f'{sha}:{HANG_PROBE_FILE}'],
-                                 capture_output=True, timeout=20)
+        present = any(
+            subprocess.run(['git', '-C', str(repo), 'cat-file', '-e', f'{sha}:{path}'],
+                           capture_output=True, timeout=20).returncode == 0
+            for path in HANG_PROBE_FILES)
     except (OSError, subprocess.SubprocessError):
         return 'unknown'
-    return 'yes' if present.returncode == 0 else 'no'
+    return 'yes' if present else 'no'
 
 
 def budget_word(line: str) -> str:

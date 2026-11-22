@@ -10,7 +10,8 @@ public struct ItemDetailLoader {
         snapshotItemId: String?,
         snapshotSessionId currentSnapshotSessionId: String?,
         placementPasses: SharedMarginPlacementPasses,
-        hiddenSenders: HiddenSenders = HiddenSenders()
+        hiddenSenders: HiddenSenders = HiddenSenders(),
+        now: Date = Date()
     ) throws -> ItemDetailState {
         let item = try store.loadItem(id: id)
         var map = try store.loadListeningMap(itemId: id)
@@ -47,7 +48,9 @@ public struct ItemDetailLoader {
         // take is added, so a time read back now could name other words (#3664). It keeps the words it was made on.
         let isNote = SpokenNoteItem.isSpokenNote(mediaType: item.mediaType)
         func placedByTime(_ margin: Interjection) -> Bool {
-            margin.targetType == .item && margin.anchor.mediaTimeMs != nil
+            // A moved Margin with no place stores a zero media time that names the episode's opening, not its moment
+            // (#4233): it keeps the empty context it has rather than words from the start of the episode.
+            margin.targetType == .item && margin.hasPlace && margin.anchor.mediaTimeMs != nil
                 && !(isNote && SpokenNoteMargins.isSentenceAnchored(margin.anchor))
         }
         // Only a Margin that is placed by media time needs the segments to name its surrounding words.
@@ -120,6 +123,10 @@ public struct ItemDetailLoader {
             ? TextSceneSummaryProgress.state(
                 proposals: committed, friendsMapIsHere: map?.id == TextSceneSummaryProgress.sharedMapId(itemId: id))
             : .notApplicable
+        // A meeting transcript's line under the title, from its small times record: no cue is read (#2997).
+        let meetingLine = item.externalReferenceType == TranscriptItemText.referenceType
+            ? (try? store.loadTranscriptTimes(itemId: id))?.meetingLine(now: now)
+            : nil
         return ItemDetailState(
             id: item.id,
             title: item.title,
@@ -138,6 +145,8 @@ public struct ItemDetailLoader {
             listeningMapSummarySpans: sceneStarts.summarySpans,
             mediaDurationMs: item.media?.durationMs ?? timelineSummary?.durationMs,
             isNativeAudio: isNativeAudio,
+            lengthMs: PlayableLength.ms(media: item.media),
+            lengthTextCharacterCount: isNativeAudio ? nil : item.textCharacterCount,
             documentStructure: item.documentStructure,
             sessions: sessions,
             addedAgainAt: item.addedAgainAt,
@@ -151,7 +160,8 @@ public struct ItemDetailLoader {
             turns: turns,
             sourceNoun: SourceNoun(
                 mediaType: item.mediaType, sourceReference: item.externalReference,
-                sourceReferenceType: item.externalReferenceType)
+                sourceReferenceType: item.externalReferenceType),
+            meetingLine: meetingLine
         ).includingTimelineSource(
             try? store.loadStructuredDocument(itemId: id),
             elements: try? store.loadSourceElements(itemId: id))

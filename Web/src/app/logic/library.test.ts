@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
 import {
   followingRows,
+  libraryRowMatches,
+  marginAuthors,
   libraryRows,
   marginGroups,
   newestFirst,
   newestMarginId,
+  startsCollapsed,
   nextSpeed,
   stableId,
   timelineFraction,
@@ -120,4 +123,27 @@ test('timelinePosts shares a post between Margins closer than the gap, and keeps
   assert.equal(timelinePosts(ms, 600, 0.001).length, 4);
   // Unknown duration: everything sits at the start, on one post.
   assert.equal(timelinePosts(ms, undefined, 0.1).length, 1);
+});
+
+test('a Library search finds an item by its title, its show, or the friend who left a Margin on it (#4422)', () => {
+  const shows = [show('lemon', 'The Lemonade Stand'), show('shared:Priya', 'Shared by Priya')];
+  const episodes = [ep('1', 'lemon'), { ...ep('2', 'shared:Priya'), title: 'A friend’s find' }];
+  const margins: Margin[] = [{ ...margin('m', '2', 5, '2026-11-01T00:00:00Z'), author: 'Priya' }];
+  const rows = libraryRows(episodes, shows, []);
+  const authors = marginAuthors(margins);
+  const found = (query: string) => rows.filter((r) => libraryRowMatches(query, r, authors)).map((r) => r.episode.id);
+  assert.equal(found('').length, 2, 'no query shows everything');
+  assert.deepEqual(found('lemonade'), ['1'], 'by show');
+  assert.deepEqual(found('ep 1'), ['1'], 'by title');
+  assert.deepEqual(found('FRIEND’S'), ['2'], 'by title, any case');
+  assert.deepEqual(found('priya'), ['2'], 'by the sender, through the Margin or the shared show');
+  assert.deepEqual(found('zzz'), []);
+});
+
+test('a few Margins groups all start open; a long list opens on the newest only (#4423)', () => {
+  for (const total of [0, 1, 2, 3]) {
+    for (let index = 0; index < total; index += 1) assert.equal(startsCollapsed(index, total), false, `${index} of ${total}`);
+  }
+  assert.equal(startsCollapsed(0, 4), false, 'the newest group is always open');
+  for (const index of [1, 2, 3, 49]) assert.equal(startsCollapsed(index, 50), true, `group ${index} of 50`);
 });

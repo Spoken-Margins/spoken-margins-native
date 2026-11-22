@@ -44,10 +44,7 @@ enum PlayerRunController {
     }
 
     static func observation(of snapshot: SessionSnapshot) -> PlayerRunRecorder.Observation {
-        .init(
-            itemId: snapshot.itemId, mediaTimeMs: snapshot.currentMediaTimeMs, rate: snapshot.playbackRate,
-            isPlaying: snapshot.status == .playing
-        )
+        PlayerRunRecorder.observation(of: snapshot)
     }
 
     /// The runs to file against, newest last.
@@ -63,7 +60,7 @@ enum PlayerRunController {
             if let audioPath = placement.audioPath {
                 saved = try PlayerItemMargin.placeSpoken(
                     audioPath: audioPath, atMediaTimeMs: placement.positionMs, markedAt: placement.markedAt,
-                    itemId: placement.itemId, repository: store
+                    itemId: placement.itemId, repository: store, readAloudPlace: readAloudPlace(for: placement)
                 )
             } else {
                 // A Lock Screen Mark: a written Margin with words that say what it is (#3203).
@@ -82,6 +79,14 @@ enum PlayerRunController {
             if model.activeItemId == placement.itemId { model.refreshSelectedItemInBackground() }
         }
         return true
+    }
+
+    /// For an article read aloud with the on-device voice, which has no media time: the text place it was paused at when
+    /// the Watch began recording. A Margin the listener aimed at the item ("On this episode") with no pause on record
+    /// goes to the article's saved place rather than a quick session; one nobody aimed there gets no text place (#4561).
+    private static func readAloudPlace(for placement: LiveSessionFileWorker.PlayerPlacement) -> PlayerItemMargin.ReadAloudPlace? {
+        if let char = recorder.readAloudPlace(itemId: placement.itemId, near: placement.markedAt) { return .textOffset(char) }
+        return placement.aimedAtItem ? .savedPlace : nil
     }
 
     /// The listener deleted a Margin on the Watch that the phone may already have put on an item: marks it deleted there

@@ -60,7 +60,7 @@ struct SpokenMarginsTermsView: View {
                         Button("Agree and Enable On-Device Voice") {
                             model.acceptCurrentTermsAndEnableOnDeviceVoice()
                         }
-                        .buttonStyle(.borderedProminent)
+                        .filledActionButton()
                         .disabled(!SpokenMarginsTerms.hasBundledText())
                         .accessibilityIdentifier("terms.accept.button")
 
@@ -132,7 +132,7 @@ private struct TermsSummaryView: View {
                 } label: {
                     Text("Agree and Enable On-Device Voice").frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.borderedProminent)
+                .filledActionButton()
                 .disabled(!SpokenMarginsTerms.hasBundledText())
                 .accessibilityIdentifier("terms.accept.button")
                 if !SpokenMarginsTerms.hasBundledText() {

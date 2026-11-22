@@ -1,0 +1,53 @@
+# Re-run a PR's required check once when its newest run on the PR head was cancelled and nothing replaced it (#4937).
+#
+# GitHub reads a required check from the newest check run of that name on the commit. A cancelled newest run blocks
+# the PR, shows grey rather than red, and nothing else starts it again: #4929 (a re-arm's two `merge policy` runs, the
+# newer one cancelled; #4898, #4871 and #4830 sat armed with green checks for 2 to 5 hours), #4747 (passing portable
+# runs cut off at their time limit, which ends `cancelled`), and a hosted Mac job that hangs on a PR.
+# scripts/rerun_cancelled_check.py decides, and leaves alone a run a newer push replaced, a second attempt, a run whose
+# required checks failed, and any PR that is not open and armed. It found these cases in scripts/ci_harness.py's sweep
+# (`*/portable-timeout-once`, `web/mac-hang-once`, the reversed `rearm-burst`).
+#
+# `workflow_run` runs this file and the script from main, never from the PR; nothing from the PR is checked out or run.
+# A run cancelled by a merge group or a dispatch is skipped by the job's `if:`.
+#
+# Cost and catch: one Linux job of about 15 seconds per cancelled PR run of the three workflows (about 40 a day before
+# #4930, mostly merge-policy runs superseded by a newer label event, which the script leaves alone), plus one re-run
+# of the cancelled workflow when it rescues a PR: a 30-second merge-policy run, or a portable run of about 25 minutes.
+# No Mac minutes on a PR (Mac rest runs only in the queue), no tokens. It catches a PR stuck behind a cancelled
+# required check: 3 PRs and about 12 PR-hours on 2026-11-22 (#4929), and the portable time-outs of 2026-11-20 (#4747).
+# Waste signal: a month in which every run says "left alone".
+name: rerun-cancelled
+
+on:
+  workflow_run:
+    workflows: [merge-policy, hosted-portable, hosted-web]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  actions: write  # the re-run
+
+jobs:
+  rerun:
+    name: rerun cancelled check
+    if: github.event.workflow_run.conclusion == 'cancelled' && github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/rerun_cancelled_check.py
+            scripts/required_checks.py
+          sparse-checkout-cone-mode: false
+      - name: Re-run the cancelled check if it is all that blocks the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: python3 scripts/rerun_cancelled_check.py --repo "$GH_REPO" --run-id "$RUN_ID"

@@ -86,6 +86,9 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case comingUp(msRemaining: Int?)
         /// A Margin is here and waits for the listener's tap (tone-only or jumped to).
         case waitingForTap
+        /// The listener went to a friend's Margin that is never spoken (Skim or a Go-to, #4934): the source plays on and the card
+        /// shows its words. `words` is nil when there is nothing to show; `isApproximate` says the place is a guess.
+        case silentHere(words: String?, isApproximate: Bool)
         /// Between Margins of a friend's listen: the next one is `msRemaining` ahead, nil when that is not known.
         case upNext(msRemaining: Int?, arrival: Arrival)
         /// A friend just saved a Margin of their own: it can be sent with Share (`answerSaved`). `atMs` is its place in the
@@ -114,11 +117,20 @@ public struct PinnedMarginCard: Equatable, Sendable {
         /// What happens when the source reaches a Margin, from the same rules the offer uses: a Fresh layer is never
         /// offered, an announced Margin is not offered again, and otherwise the layer's own reveal mode decides
         /// (`SharedMarginPromptStyle`). Per Margin, never per item: layers on one source can differ.
-        public static func forMargin(announced: Bool, heard: Bool = true, revealMode: ImportedCommentaryRevealMode?) -> Arrival {
+        public static func forMargin(announced: Bool, heard: Bool, revealMode: ImportedCommentaryRevealMode?) -> Arrival {
             if revealMode == .fresh { return .waitsForYou }
             if announced { return heard ? .onRequest : .announcedUnheard }
             let style = SharedMarginPromptStyle.style(revealMode: revealMode, arrival: .crossed)
             return style.autoPlayAfterMs != nil ? .playsByItself : .toneThenTap
+        }
+
+        /// What happens when the source reaches `prompt`, from that Margin's own layer and the offer queue's memory, the
+        /// same facts the offer uses. Announced is not heard: the tone sounded or the card was dismissed, and the voice may
+        /// never have played. Only `firstHeardAt` says the listener heard it (#4310).
+        public static func forMargin(_ prompt: ImportedCommentaryPrompt, offers: SharedMarginOfferQueue) -> Arrival {
+            forMargin(
+                announced: offers.announcedIDs.contains(prompt.id), heard: !prompt.interjection.isNewToListener,
+                revealMode: prompt.layer.revealMode)
         }
     }
 
@@ -137,6 +149,9 @@ public struct PinnedMarginCard: Equatable, Sendable {
     /// A can't-play listening chains its Margins with no lead-in between them, so the card never reaches the lead-in's
     /// quiet Stop. While its voice plays, Stop is the listener's only way out of the chain (pause leaves it armed).
     public let chainsWithoutLeadIn: Bool
+    /// The run-up the sender chose for the Margin this card is about, nil for none (#4171). The card's "sec" cut-over and
+    /// its hop buttons count from it rather than from the default.
+    public let targetLeadInMs: Int?
 
     /// "Skip to the Margins" and a can't-play listening are a review: the Margins follow one another and Next Margin moves
     /// between them. "Play this moment" is a moment. A Margin that plays when the episode reaches it is in no run.
@@ -145,8 +160,9 @@ public struct PinnedMarginCard: Equatable, Sendable {
     public init(
         subject: Subject, stage: Stage, position: String? = nil, voiceTime: String? = nil,
         noun: SourceNoun = .episode, nextPress: NextMarginPress = .unavailable, run: Run = .none,
-        chainsWithoutLeadIn: Bool = false
+        chainsWithoutLeadIn: Bool = false, targetLeadInMs: Int? = nil
     ) {
+        self.targetLeadInMs = targetLeadInMs.map(SenderLeadIn.clamped)
         self.run = run
         self.chainsWithoutLeadIn = chainsWithoutLeadIn
         self.subject = subject
@@ -188,6 +204,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case .failed: return "\(title) could not play"
         case .comingUp(let ms): return ms.map { "\(title) in \(Self.countdown($0))" } ?? "\(title) is coming up"
         case .waitingForTap: return "\(title) is here"
+        case .silentHere(_, let isApproximate): return "\(title) is \(isApproximate ? "about here" : "here")"
         case .upNext(let ms, let arrival): return upNextHeadline(msRemaining: ms, arrival: arrival)
         case .answerSaved(let atMs, _):
             return "Your Margin is saved" + (atMs.map { " at \(SharedMarginReview.ReplyContext.clock($0))" } ?? "")
@@ -201,7 +218,25 @@ public struct PinnedMarginCard: Equatable, Sendable {
         // The listener's own Margins, waiting for the others to come round.
         if case .yours = subject { return ms.map { "Your next Margin \(Self.friendCountdown($0))" } ?? "Your next Margin is ahead" }
         if arrival == .onRequest { return "You've heard this one" }
-        return ms.map { "Next Margin \(Self.friendCountdown($0))" } ?? "Next Margin is ahead"
+        return ms.map { "Next Margin \(Self.friendCountdown($0, leadInMs: targetLeadInMs))" } ?? "Next Margin is ahead"
+    }
+
+    /// The word of `detail` that names a control drawn as an icon, so the card can draw that icon inline before it (#3905).
+    /// The saved-answer card says "tap Share below" while the player's Share is an icon until three quarters through the
+    /// item, so the sentence shows the icon it points at. The words never change: this only says where the icon goes.
+    /// Every other stage names no control.
+    public var detailSymbolBefore: String? {
+        if case .answerSaved = stage { return "Share" }
+        return nil
+    }
+
+    /// `detail` cut in two where `detailSymbolBefore` sits, for a view that draws the icon between the halves. The
+    /// last occurrence is the one that counts: the friend's name comes earlier in the sentence and could be "Share".
+    /// Nil when this stage names no control, or the word is missing from the line.
+    public var detailAroundSymbol: (before: String, after: String)? {
+        let line = detail
+        guard let word = detailSymbolBefore, let found = line.range(of: word, options: .backwards) else { return nil }
+        return (String(line[..<found.lowerBound]), String(line[found.lowerBound...]))
     }
 
     /// The second line, which says what the source is doing, so the card keeps one shape in every stage.
@@ -216,6 +251,10 @@ public struct PinnedMarginCard: Equatable, Sendable {
             return "Tap Retry, or skip this Margin."
         case .comingUp: return "It plays by itself when the \(self.noun.inSentence) gets there."
         case .waitingForTap: return "Tap Listen to hear it."
+        case .silentHere(let words, _):
+            // The words themselves, cut as a waiting card cuts them. Placeholder words ("Voice Margin at 12:34") say nothing.
+            let shown = words.flatMap { SharedMarginPlaceholderWords.matches($0) ? nil : Self.waitingTranscript($0, playsByItself: false) }
+            return shown ?? "Not read aloud. The \(noun.inSentence) plays on."
         case .answerSaved(_, let sentTo): return "To send it to \(sentTo), tap Share below. You pick which of your Margins go."
         case .lastMargin(let senders):
             return "To answer\(senders > 1 ? " your friends" : subject.name.map { " \($0)" } ?? ""), add a Margin of your own."
@@ -225,18 +264,19 @@ public struct PinnedMarginCard: Equatable, Sendable {
             case .playsByItself: return "Plays by itself when you get there."
             case .toneThenTap: return "You'll hear a tone. Tap Listen to hear it."
             case .announcedUnheard: return "It won't play by itself."
-            case .onRequest: return ms.map { "It's \(Self.friendSpan($0)) ahead and won't play by itself." } ?? "It won't play by itself."
+            case .onRequest: return ms.map { "It's \(Self.friendSpan($0, leadInMs: targetLeadInMs)) ahead and won't play by itself." } ?? "It won't play by itself."
             case .waitsForYou: return "This one waits for you."
             }
         }
     }
 
     /// "11 min" for a friend's Margin ahead, in whole minutes rounded up so it never promises an early arrival;
-    /// "under 1 min" below a minute, then "15 sec" from the lead-in on (the last `reviewLeadInMs`). It counts the
-    /// source's own time, so it runs long at a speed above 1x. Never "0 min" (#3247).
-    public static func friendSpan(_ ms: Int) -> String {
+    /// "under 1 min" below a minute, then "15 sec" from the lead-in on (the last `leadInMs`, which is the sender's choice
+    /// for this Margin when it made one, #4171, else `reviewLeadInMs`). It counts the source's own time, so it runs long
+    /// at a speed above 1x. Never "0 min" (#3247).
+    public static func friendSpan(_ ms: Int, leadInMs: Int? = nil) -> String {
         let ms = max(0, ms)
-        if ms <= MarginMomentSequence.reviewLeadInMs {
+        if ms <= leadInMs ?? MarginMomentSequence.reviewLeadInMs {
             return "\(max(1, (ms + 999) / 1_000)) sec"
         }
         if ms < 60_000 { return "under 1 min" }
@@ -244,7 +284,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
     }
 
     /// "in 11 min": `friendSpan` for a headline.
-    public static func friendCountdown(_ ms: Int) -> String { "in \(friendSpan(ms))" }
+    public static func friendCountdown(_ ms: Int, leadInMs: Int? = nil) -> String { "in \(friendSpan(ms, leadInMs: leadInMs))" }
 
     /// Minutes and seconds, rounded up so the card never promises an early arrival.
     public static func countdown(_ ms: Int) -> String {
@@ -270,26 +310,28 @@ public enum NextMarginPress: Equatable, Sendable {
     public enum Context: Equatable, Sendable {
         /// A review or "Play this moment" is waiting at its lead-in. In a review the episode plays on between Margins,
         /// so `positionMs` and `targetMs` (the playhead and the Margin ahead, nil when not known) say how far off it is.
-        case momentLeadIn(isReview: Bool, positionMs: Int? = nil, targetMs: Int? = nil)
+        /// `targetLeadInMs` is the run-up the sender chose for that Margin (#4171); nil for the review's own length.
+        case momentLeadIn(isReview: Bool, positionMs: Int? = nil, targetMs: Int? = nil, targetLeadInMs: Int? = nil)
         /// A review's or moment's voice is sounding.
         case momentVoice(isReview: Bool, isLastMargin: Bool)
         /// No moment is running: the episode plays and a friend's Margins come as it reaches them. `positionMs` is the
         /// playhead, `nextMarginMs` the next friend's Margin after it, either nil when not known.
-        case sharedPlayback(positionMs: Int?, nextMarginMs: Int?, arrival: PinnedMarginCard.Arrival)
+        /// `nextLeadInMs` is the run-up the sender chose for that Margin (#4171); nil for the review's own length.
+        case sharedPlayback(positionMs: Int?, nextMarginMs: Int?, arrival: PinnedMarginCard.Arrival, nextLeadInMs: Int? = nil)
     }
 
     private static let leadInSlackMs = 1_000
 
     public static func press(_ context: Context) -> NextMarginPress {
         switch context {
-        case .momentLeadIn(let isReview, let position, let target):
+        case .momentLeadIn(let isReview, let position, let target, let targetLeadInMs):
             guard isReview else { return .unavailable }
             // The episode plays on between a review's Margins and nothing hops ahead by itself: the first press goes to the
             // next Margin's lead-in, the second plays the Margin. A second of slack, so the lead-in's own seek (which can
             // land a millisecond short) is not offered as a hop of its own.
             if let position, let target {
                 let leadIn = MarginMomentSequence.leadInStartMediaTimeMs(
-                    forTarget: MarginMomentAnchor(marginId: "next", mediaTimeMs: target),
+                    forTarget: MarginMomentAnchor(marginId: "next", mediaTimeMs: target, leadInMs: targetLeadInMs),
                     leadInMs: MarginMomentSequence.reviewLeadInMs
                 )
                 if position + leadInSlackMs < leadIn { return .seekToLeadIn(mediaTimeMs: max(0, leadIn)) }
@@ -297,12 +339,12 @@ public enum NextMarginPress: Equatable, Sendable {
             return .playMarginNow
         case .momentVoice(let isReview, let isLastMargin):
             return isReview && !isLastMargin ? .skipVoice : .unavailable
-        case .sharedPlayback(let position, let next, let arrival):
+        case .sharedPlayback(let position, let next, let arrival, let nextLeadInMs):
             guard let next else { return .unavailable }
             // A Fresh layer's Margin is never offered, so a lead-in would end in silence: go straight to it.
             if arrival == .waitsForYou { return .playMarginNow }
             let leadIn = MarginMomentSequence.leadInStartMediaTimeMs(
-                forTarget: MarginMomentAnchor(marginId: "next", mediaTimeMs: next),
+                forTarget: MarginMomentAnchor(marginId: "next", mediaTimeMs: next, leadInMs: nextLeadInMs),
                 leadInMs: MarginMomentSequence.reviewLeadInMs
             )
             // Already inside the lead-in: this press is the second one. This also covers a voice that is sounding right

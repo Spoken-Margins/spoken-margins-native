@@ -37,15 +37,14 @@ final class FriendArrivalWordsTests: XCTestCase {
         XCTAssertEqual(FriendArrivalWords.aboutNote, "Unchanged since it was sent. The name on it comes from the sender's app and isn't proven.")
     }
 
-    func testAPassingPlacementSaysNothingAndAProblemSaysOneLine() throws {
+    func testAPassingPlacementSaysNothingAndOnlyADifferentEpisodeSaysOneLine() throws {
         XCTAssertNil(FriendArrivalWords.placementProblem(.resolved))
-        XCTAssertEqual(FriendArrivalWords.placementProblem(.pending), "Matching positions in your episode")
-        for status in [ImportedSourceResolutionStatus.contextOnly, .ambiguous, .wrongSource, .unavailable, .pending] {
-            let line = try XCTUnwrap(FriendArrivalWords.placementProblem(status), "\(status)")
-            XCTAssertTrue(line.split(separator: " ").count >= 5 && line.hasSuffix(".") || status == .pending,
-                          "a problem is one plain sentence, not a one-word label: \(line)")
-            XCTAssertFalse(line.lowercased().contains("source"), "\"source\" never reaches a friend: \(line)")
+        for status in [ImportedSourceResolutionStatus.pending, .contextOnly, .ambiguous, .unavailable] {
+            XCTAssertNil(FriendArrivalWords.placementProblem(status), "\(status): each Margin's own row says where it plays (#3789)")
         }
+        let line = try XCTUnwrap(FriendArrivalWords.placementProblem(.wrongSource))
+        XCTAssertTrue(line.hasSuffix("."), "one plain sentence: \(line)")
+        XCTAssertFalse(line.lowercased().contains("source"), "\"source\" never reaches a friend: \(line)")
     }
 
     func testPlayModesUseTheReviewedAutoPlayWords() {
@@ -68,6 +67,62 @@ final class FriendArrivalWordsTests: XCTestCase {
                 XCTAssertFalse(text.contains(term), term)
             }
         }
+    }
+
+    // MARK: each fact once above Play (#3855)
+
+    func testASingleLayerCardHidesItsSenderLineOnlyWhileTheIntroShows() {
+        let table: [(introShowing: Bool, layers: Int, hides: Bool)] = [
+            (true, 1, true),    // the intro names the sender; the one card need not
+            (true, 2, false),   // two senders (or two packets): each card's name tells them apart
+            (true, 3, false),
+            (true, 0, false),   // no card, nothing to hide
+            (false, 1, false),  // intro gone (all heard): the card says "From Sam" again
+            (false, 2, false),
+            (false, 0, false)
+        ]
+        for row in table {
+            XCTAssertEqual(
+                FriendArrivalWords.hidesLayerSenderLine(introShowing: row.introShowing, layerCount: row.layers), row.hides,
+                "intro \(row.introShowing), \(row.layers) layers")
+        }
+    }
+
+    func testTheSpokenLabelDropsOnlyTheLeadingFromSentenceWhenTheLineIsHidden() {
+        let args = (isEnabled: true, isMuted: false, mode: ImportedCommentaryRevealMode.companion)
+        let full = FriendArrivalWords.layerAccessibilityLabel(
+            senderLabel: "Cole", isEnabled: args.isEnabled, isMuted: args.isMuted, mode: args.mode, placementProblem: nil)
+        let hidden = FriendArrivalWords.layerAccessibilityLabel(
+            senderLabel: "Cole", isEnabled: args.isEnabled, isMuted: args.isMuted, mode: args.mode, placementProblem: nil,
+            includesSender: false)
+        XCTAssertEqual(full, "From Cole. Cole's Margins are on. Not muted. When Margins play: A tone marks each one")
+        XCTAssertEqual(hidden, "Cole's Margins are on. Not muted. When Margins play: A tone marks each one")
+        XCTAssertFalse(hidden.hasPrefix("From "), "the sender sentence is said once, by the intro")
+        // A placement problem and an unnamed sender still read the same way.
+        let problem = FriendArrivalWords.layerAccessibilityLabel(
+            senderLabel: "", isEnabled: false, isMuted: true, mode: .guided, placementProblem: "Not the same episode.",
+            includesSender: false)
+        XCTAssertEqual(problem, "Your friend's Margins are off. Muted. When Margins play: Play as you reach them. Not the same episode.")
+    }
+
+    func testATitleLeadsTheHiddenSenderLabelWithoutADoubledFullStop() {
+        func label(_ title: String?) -> String {
+            FriendArrivalWords.layerAccessibilityLabel(
+                senderLabel: "Cole", isEnabled: true, isMuted: false, mode: .guided, placementProblem: nil,
+                includesSender: false, leadingTitle: title)
+        }
+        let rest = "Cole's Margins are on. Not muted. When Margins play: Play as you reach them"
+        let table: [(title: String?, expected: String)] = [
+            ("Episode 4", "Episode 4. \(rest)"),
+            ("Why?", "Why? \(rest)"),
+            ("Stop!", "Stop! \(rest)"),
+            ("Ends with a stop.", "Ends with a stop. \(rest)"),
+            ("  Padded  ", "Padded. \(rest)"),
+            ("", rest),
+            ("   ", rest),
+            (nil, rest)
+        ]
+        for row in table { XCTAssertEqual(label(row.title), row.expected, row.title ?? "nil") }
     }
 
     // MARK: a stand-in is never a name (#3247)
@@ -127,6 +182,18 @@ final class FriendArrivalWordsTests: XCTestCase {
         for raw in [nil, "", "  ", SharedPacketArrival.snapshotSenderLabel(nil), "UNSIGNED  sender", "Imported collection"] {
             XCTAssertEqual(FriendArrivalWords.nowPlayingArtist(senderLabel: raw), "A friend", "\(raw ?? "nil")")
             XCTAssertEqual(FriendArrivalWords.liveActivitySender(senderLabel: raw), "a friend", "\(raw ?? "nil")")
+        }
+    }
+
+    /// #3790: the Now screen's switch uses the owner-reviewed words, and its caption follows the global switch only.
+    func testTheNowSwitchSaysWhatItDoesInTheReviewedWords() {
+        XCTAssertEqual(FriendArrivalWords.autoPlayLabel, "Play Margins from friends as you reach them")
+        XCTAssertEqual(FriendArrivalWords.autoPlayCaption(isOn: true), "The episode pauses for each one, then goes on.")
+        XCTAssertEqual(FriendArrivalWords.autoPlayCaption(isOn: false), "A tone marks each one.")
+        for isOn in [true, false] {
+            let caption = FriendArrivalWords.autoPlayCaption(isOn: isOn)
+            XCTAssertFalse(caption.contains("Auto-play"), "the old name is gone")
+            XCTAssertFalse(caption.lowercased().contains("shared"), "a friend's Margin is never 'shared' on Now")
         }
     }
 }

@@ -56,7 +56,7 @@
       "journey": "Live session: End is in the dock, reachable without scrolling after many Margins (#3491)"
     },
     {
-      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLiveSessionEndSheetStaysUpForThreeSeconds",
+      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLiveSessionEndSheetStaysUpWhileTheSessionClockTicks",
       "journey": "Live session: the End sheet stays up until the listener answers it (#2831)"
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "test": "SpokenMarginsAppUITests/J14ComeBackToAFriendsMarginsJourneyUITests",
-      "journey": "J14: a friend's Margins offered and heard by a listener who heard the episode to its end, marked it complete or never started it; the episode found in the Library after (#4100)"
+      "journey": "J14: a friend's Margins offered and heard by a listener who heard the episode to its end, marked it complete or never started it; the episode found in the Library after, under the all-items filter, not the default view (#4100, #3794)"
     },
     {
       "test": "SpokenMarginsAppUITests/J12SharingLoopJourneyUITests",
@@ -152,11 +152,6 @@
       "batch": 2
     },
     {
-      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testPermanentDeleteDoesNotRestoreRecentlyDeletedItem",
-      "journey": "Library: permanently deleting an item does not bring back a recently deleted one (#3206)",
-      "batch": 2
-    },
-    {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText",
       "journey": "Now at AX5: Play, skip and sleep timer stay visible under a long title (#2056)",
       "batch": 2
@@ -173,7 +168,7 @@
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testPrivateExperienceRootsPreserveNowPlayingAndStateConsentBoundaries",
-      "journey": "Following: the roots keep Now Playing, and following a source asks consent first (#141, #3205)",
+      "journey": "Following: the roots keep Now Playing, and Follow on a typed link it cannot read as a feed (an unreachable host) follows nothing and says why on the sheet (#141, #3205, #4314)",
       "batch": 2
     },
     {

@@ -122,7 +122,8 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
     }
 
     /// Fills the episode identity an item added from this entry is missing: the GUID, the followed
-    /// show's title, the publish date and the feed's description. Values the item already has are kept.
+    /// show's title, the publish date, the feed's description and, for recorded audio, the feed's stated length
+    /// (#4186). Values the item already has are kept; a stored 0 counts as no length.
     public func fillEpisodeIdentity(of item: inout Item, showTitle: String?) {
         if item.episodeGUID == nil { item.episodeGUID = Self.nonEmpty(episodeGUID) }
         if item.showTitle == nil { item.showTitle = Self.nonEmpty(showTitle) }
@@ -130,6 +131,11 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
             item.publishedAt = ISO8601DateFormatter().string(from: publishedAt)
         }
         if item.descriptionText == nil { item.descriptionText = ItemMetadata.plainDescription(from: summary) }
+        if let media = item.media, PlayableLength.ms(media: media) == nil,
+           media.sourceType == .nativeMediaFile || media.sourceType == .remoteStream,
+           let stated = audioDurationMs, stated > 0 {
+            item.media?.durationMs = stated
+        }
     }
 
     private static func nonEmpty(_ value: String?) -> String? {
@@ -203,7 +209,7 @@ public enum ManualFollowPolicy {
     /// Items that came from the listener's own files or from the app itself. Even when a file
     /// names a web source (a Markdown `source:` line), the item is the file, not a feed entry.
     static let nonFollowableReferenceTypes: Set<String> = [
-        "file", "epub", "audiobook", "manual", "guided_onboarding", "spoken_margins_package"
+        "file", "epub", "audiobook", "manual", "guided_onboarding", "spoken_margins_package", TranscriptItemText.referenceType
     ]
 
     /// Whether to look for a feed for this item. This never shows Follow by itself: see ``offer``.

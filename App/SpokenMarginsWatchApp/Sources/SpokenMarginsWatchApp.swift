@@ -122,9 +122,10 @@ struct WatchHomeView: View {
     }
 
     /// Blue for the episode, orange for the session, always with the words and a different symbol (the owner is
-    /// red-green colour-blind).
-    private func tint(_ target: WatchRecordingTarget) -> Color {
-        target == .episode ? .blue : .orange
+    /// red-green colour-blind). The colours and their label colours are `WatchPlatePalette`'s, which the contrast audit
+    /// measures (#3731).
+    private func plate(_ target: WatchRecordingTarget) -> WatchPlate {
+        target == .episode ? .episode : .session
     }
 
     private func symbol(_ target: WatchRecordingTarget) -> String {
@@ -143,7 +144,7 @@ struct WatchHomeView: View {
                     .font(.headline)
             }
         }
-        .buttonStyle(WatchPlateButtonStyle(fill: .blue))
+        .buttonStyle(WatchPlateButtonStyle(plate: .record))
         .accessibilityLabel("Record a spoken Margin")
     }
 
@@ -193,7 +194,7 @@ struct WatchHomeView: View {
                 .minimumScaleFactor(0.7)
         }
         // The plate fills this frame and no more, so it cannot draw over the transport row (#3674).
-        .buttonStyle(WatchPlateButtonStyle(fill: tint(target)))
+        .buttonStyle(WatchPlateButtonStyle(plate: plate(target)))
         .frame(height: CGFloat(size))
         .accessibilityLabel("Record a spoken Margin \(target.words.lowercased())")
     }
@@ -218,7 +219,7 @@ struct WatchHomeView: View {
         } label: {
             Image(systemName: symbol)
         }
-        .buttonStyle(WatchPlateButtonStyle(fill: Color.gray.opacity(0.4)))
+        .buttonStyle(WatchPlateButtonStyle(plate: .transport))
         .accessibilityLabel(label)
     }
 
@@ -231,7 +232,7 @@ struct WatchHomeView: View {
         if withTarget {
             Label(target.words, systemImage: symbol(target))
                 .font(.title3.weight(.bold))
-                .foregroundStyle(tint(target))
+                .foregroundStyle(Color(WatchPlatePalette.headerText(plate(target))))
                 .multilineTextAlignment(.center)
                 .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity)
@@ -250,7 +251,7 @@ struct WatchHomeView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .buttonStyle(WatchPlateButtonStyle(fill: withTarget ? tint(target) : .orange))
+            .buttonStyle(WatchPlateButtonStyle(plate: WatchPlatePalette.stopPlate(for: withTarget ? plate(target) : nil)))
             .accessibilityLabel("Stop recording the spoken Margin")
             Button(role: .destructive) {
                 discardTapped(now: now)
@@ -263,7 +264,7 @@ struct WatchHomeView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .buttonStyle(WatchPlateButtonStyle(fill: Color.red.opacity(0.85)))
+            .buttonStyle(WatchPlateButtonStyle(plate: .discard))
             .accessibilityLabel("Discard this recording")
         }
         .frame(height: withTarget ? 84 : 100)
@@ -433,16 +434,21 @@ struct WatchWaitingRow: View {
 /// A button whose coloured plate is exactly the frame it is given, and whose tap area is that plate (#3674). The
 /// system button style sizes its chrome from the label, so a button given a fixed height could draw past it onto the
 /// button below, and take taps meant for it.
+///
+/// Its fill and label colour come from `WatchPlatePalette`, the same numbers the contrast audit measures, so the label is
+/// dark on the orange plate and white on the others (#3731).
 struct WatchPlateButtonStyle: ButtonStyle {
-    let fill: Color
+    let plate: WatchPlate
 
     func makeBody(configuration: Configuration) -> some View {
-        let plate = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        let fill = WatchPlatePalette.fill(plate)
+        let alpha = fill.alpha * (configuration.isPressed ? WatchPlatePalette.pressedMultiplier : 1)
         configuration.label
-            .foregroundStyle(.white)
+            .foregroundStyle(Color(WatchPlatePalette.label(plate)))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(plate.fill(fill.opacity(configuration.isPressed ? 0.6 : 1)))
-            .clipShape(plate)
-            .contentShape(plate)
+            .background(shape.fill(Color(fill.color).opacity(alpha)))
+            .clipShape(shape)
+            .contentShape(shape)
     }
 }
