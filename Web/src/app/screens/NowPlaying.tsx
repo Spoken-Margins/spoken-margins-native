@@ -7,7 +7,7 @@ import { downloadFile } from '../download.ts';
 import { useRestoreFocus } from '../focus.ts';
 import { BackIcon, CloseIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenIcon, PlayIcon, ShareIcon, SkipIcon, StopIcon } from '../icons.tsx';
 import { withCopyLength } from '../logic/copy-length.ts';
-import { cueFor, friendMargins, leading, possessive, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
+import { cueFor, friendMargins, leading, possessive, readingNote, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { marginRows, nextMargin, opensOnMarginsTab, playQueue, startFor, unheardCount, type NextMargin, type Row } from '../logic/margins-control-center.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
@@ -109,7 +109,7 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
       <p className="arrived-margin-text">
         {margin.author ? <strong>{margin.author}</strong> : null} {formatClock(margin.atSeconds)}: {words}
       </p>
-      {voiced && <p className="arrived-margin-note">Your device’s voice is reading {possessive(senderName(margin.author))} words.</p>}
+      {voiced && <p className="arrived-margin-note">{readingNote(margin)}</p>}
     </div>
   );
 }

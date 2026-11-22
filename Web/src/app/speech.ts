@@ -2,7 +2,6 @@
 // "Cole wrote:" and reads the words, so a synthetic voice never passes for the sender's. Nothing is fetched and
 // nothing leaves the page; the voice is the one this browser ships. Where a browser has no voice, the Margin still
 // shows on screen and nothing else changes.
-import { writtenIntro } from './logic/arrival.ts';
 
 let context: AudioContext | undefined;
 
@@ -63,11 +62,11 @@ export interface Reading {
 }
 
 /**
- * Plays the tone, then says "<sender> wrote:" and the words. `onStart` fires as the voice begins (the player turns the
+ * Plays the tone, then says `intro` ("Cole wrote:", "You wrote:"; readingIntro) and the words. `onStart` fires as the voice begins (the player turns the
  * episode down); `onEnd` fires when it finishes or can't speak. Returns undefined where this browser has no voice, and
  * then calls neither.
  */
-export function readWrittenMargin(author: string | undefined, words: string, hooks: { onStart(): void; onEnd(): void }): Reading | undefined {
+export function readWrittenMargin(intro: string, words: string, hooks: { onStart(): void; onEnd(): void }): Reading | undefined {
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
   if (!synth || typeof SpeechSynthesisUtterance === 'undefined' || !words.trim()) return undefined;
   let live = true;
@@ -91,7 +90,7 @@ export function readWrittenMargin(author: string | undefined, words: string, hoo
   };
   const speak = () => {
     if (!live) return;
-    const utterance = new SpeechSynthesisUtterance(`${writtenIntro(author)} ${words}`);
+    const utterance = new SpeechSynthesisUtterance(`${intro} ${words}`);
     // Chrome can collect an utterance that nothing holds, and then never fires `onend`: hold it, and give up on a
     // reading that outlasts any plausible speech so the episode never stays turned down.
     held = utterance;
