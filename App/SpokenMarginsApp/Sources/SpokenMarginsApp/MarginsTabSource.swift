@@ -3,8 +3,9 @@ import SwiftUI
 
 /// The open item's Margins for the Margins tab, the arrival preview and the Next Margin pill: the control centre's rows
 /// (`MarginsControlCenter.rows`) plus the app rows each one opens and plays. Built from what the model already
-/// publishes; it keeps no state and moves nothing. Every jump goes through the actions the old Margins list used, which
-/// play the lead-in and then the Margin (`MarginMomentTap.start`, `playSharedMarginMoment`).
+/// publishes; it keeps no state and moves nothing. Every jump goes through the actions the old Margins list used:
+/// `MarginMomentTap.start` for your own, and `goToSharedMargin` for a friend's, which plays the lead-in and the Margin,
+/// a passage of an article or PDF and then the Margin (#4447), or goes there silently when it is never read aloud (#4934).
 @MainActor
 struct MarginsTabSource {
     let rows: [MarginsControlCenter.Row]
@@ -36,8 +37,16 @@ struct MarginsTabSource {
 
     /// Whether the row's start control can do anything: a placed Margin whose voice (or reading) can be offered.
     func canJump(_ row: MarginsControlCenter.Row) -> Bool {
-        if let shared = sharedRow(row) { return shared.canPlayFromMarginsList }
+        if let shared = sharedRow(row) { return shared.canPlayFromMarginsList || shared.goesToFromList }
         return ownRow(row) != nil && row.timeMs != nil
+    }
+
+    /// Whether the start control goes to the place with nothing read aloud: a friend's Margin never read aloud, or your
+    /// own written one (`SilentMarginWords`, #4934).
+    func goesTo(_ row: MarginsControlCenter.Row) -> Bool {
+        if let shared = sharedRow(row) { return shared.goesToFromList }
+        if let own = ownRow(row) { return SilentMarginWords.ownWrittenGoesTo(own.interjection) }
+        return false
     }
 
     /// The identifier the old list gave this row, kept so journeys and UI tests still find it.
@@ -60,7 +69,7 @@ struct MarginsTabSource {
     /// "Jump to this Margin" / "Start with this Margin": the lead-in, then the Margin, as the old row's Play did.
     func jump(to row: MarginsControlCenter.Row, model: Gate1AppModel) {
         if let shared = sharedRow(row) {
-            model.playSharedMarginMoment(shared)
+            model.goToSharedMargin(shared)
         } else if let own = ownRow(row) {
             MarginMomentTap.start(own, model: model)
         }

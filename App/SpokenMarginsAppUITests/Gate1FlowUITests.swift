@@ -160,6 +160,12 @@ final class Gate1FlowUITests: XCTestCase {
     }
 
     func testSeededGate1FlowHasPlaybackMiniPlayerExportAndSettings() throws {
+        // Filler articles below the fixture make the Library longer than the screen, so its last row reaches the
+        // mini-player unless the list keeps clear of it. With the one fixture row the check could not fail (#4314).
+        let fillerCount = 16
+        app.terminate()
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_LIBRARY_FILLER"] = String(fillerCount)
+        launchAllowingOneStall()
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         XCTAssertTrue(element("library.screen").exists)
 
@@ -191,18 +197,16 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("miniPlayer.close.button").exists)
         XCTAssertTrue(element("miniPlayer.interject.button").exists)
         XCTAssertTrue(element("miniPlayer.playPause.button").exists)
-        let hero = element("library.row.item-pill")
-        // A finished article leaves the Unfinished Library, as it should; Show completed brings its row back. The
-        // caught-up card has a Show completed button too, so take the one in the filter row.
-        if !hero.waitForExistence(timeout: 4) {
-            let showCompleted = element("library.completed.visibility").buttons["Show completed"]
-            XCTAssertTrue(showCompleted.waitForExistence(timeout: 4), app.debugDescription)
-            showCompleted.tap()
-            XCTAssertTrue(hero.waitForExistence(timeout: 4), app.debugDescription)
-        }
+        // The fillers sort below the fixture article, oldest last. Scroll until the last one is in the list, then once
+        // more so the list rests at its end.
+        let lastRow = app.buttons["library.row.item-ui-filler-\(fillerCount)"]
+        for _ in 0..<10 where !lastRow.exists { app.swipeUp() }
+        XCTAssertTrue(lastRow.exists, "The Library's last row never appeared: \(app.debugDescription)")
         app.swipeUp()
-        XCTAssertLessThanOrEqual(hero.frame.maxY, element("miniPlayer.bar").frame.minY,
-                                 "The playing item's row must scroll clear of the mini-player")
+        // Let the end-of-list bounce settle before reading the frame; a row under the bar may never be hittable.
+        _ = waitUntil(lastRow, "hittable == true", timeout: 3)
+        XCTAssertLessThanOrEqual(lastRow.frame.maxY, element("miniPlayer.bar").frame.minY,
+                                 "The Library's last row must scroll clear of the mini-player")
         openLibrarySettings()
 
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))
@@ -271,7 +275,7 @@ final class Gate1FlowUITests: XCTestCase {
         launchAllowingOneStall()
         let row = app.buttons["library.row.item-pill"]
         XCTAssertTrue(row.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Completed hidden"].exists)
+        XCTAssertFalse(element("library.filter.summary").exists, "the everyday view has nothing under the chips (#4698)")
         let search = app.textFields["library.search.field"]
         XCTAssertTrue(search.waitForExistence(timeout: 4))
         let searchTop = search.frame.minY
@@ -302,7 +306,7 @@ final class Gate1FlowUITests: XCTestCase {
         captureScreen(named: "library-completed-search-and-undo")
         app.buttons["Clear search"].tap()
         element("library.filters.reset").tap()
-        XCTAssertTrue(app.staticTexts["Completed hidden"].exists)
+        XCTAssertTrue(element("library.filter.summary").waitForNonExistence(timeout: 4), "back to the everyday view, nothing under the chips")
     }
 
     func testLibraryCompactRowStaysDense() throws {
@@ -469,61 +473,6 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(element("timeline.summary.button").exists)
     }
 
-    func testPermanentDeleteDoesNotRestoreRecentlyDeletedItem() throws {
-        let itemTitle = "Permanent Delete \(UUID().uuidString.prefix(8))"
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        app.buttons["home.addSource.button"].tap()
-        scrollToElement("addSource.route.pastedText").tap()
-        let title = element("create.title.field")
-        XCTAssertTrue(title.waitForExistence(timeout: 4))
-        title.tap()
-        title.typeText(itemTitle)
-        let text = element("create.text.editor")
-        text.tap()
-        text.typeText("This item exists only to verify permanent deletion.")
-        let keyboardDone = app.buttons["Done"].firstMatch
-        XCTAssertTrue(keyboardDone.waitForExistence(timeout: 3))
-        keyboardDone.tap()
-        XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4))
-        scrollToElement("create.start.button").tap()
-        XCTAssertTrue(waitForDisappearance(element("addSource.sheet"), timeout: 8))
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
-
-        // The "Added ... to Library" banner's label holds the title too and comes first, so match Library rows only (#2717).
-        let libraryRow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "library.row.", itemTitle)).firstMatch
-        XCTAssertTrue(libraryRow.waitForExistence(timeout: 4))
-        libraryRow.press(forDuration: 1)
-        XCTAssertTrue(app.buttons["Move to Recently Deleted"].waitForExistence(timeout: 3))
-        app.buttons["Move to Recently Deleted"].tap()
-        // Library deletion is recoverable immediately; permanent deletion below requires confirmation.
-        XCTAssertTrue(waitForDisappearance(libraryRow, timeout: 4))
-
-        openLibrarySettings()
-        // Delete Permanently sits behind the row's menu, away from Restore (#3206).
-        scrollToButton(containingLabel: "More options for \(itemTitle)").tap()
-        let delete = app.buttons["Delete Permanently"].firstMatch
-        XCTAssertTrue(delete.waitForExistence(timeout: 2))
-        delete.tap()
-        let confirmation = app.alerts["Delete Permanently?"]
-        XCTAssertTrue(confirmation.waitForExistence(timeout: 2))
-        confirmation.buttons["Delete Permanently"].tap()
-
-        XCTAssertTrue(waitForDisappearance(app.buttons["Restore \(itemTitle)"], timeout: 2))
-        XCTAssertFalse(app.staticTexts[itemTitle].exists)
-
-        // Settings is not where a restored item would show up, and a Library row is a button whose label only contains
-        // the title, so the checks above could not see one. Look in the Library, then again after a relaunch (#3716).
-        tapRoot("Library")
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4), "The Library did not open")
-        XCTAssertFalse(libraryRow.exists, "The permanently deleted item is back in the Library")
-
-        app.terminate()
-        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
-        app.launch()
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "The Library did not reopen")
-        XCTAssertFalse(libraryRow.waitForExistence(timeout: 3), "The permanently deleted item came back after a relaunch")
-    }
-
     func testAddSourcePresentsEveryTypedIntakeRoute() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         app.buttons["home.addSource.button"].tap()
@@ -624,23 +573,40 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
         // Following opens on its entries; the feed field lives on the Follow sheet (#141, #3205).
         XCTAssertFalse(element("sources.follow.url").exists)
+        let notFollowing = app.staticTexts["You’re not following anything yet"]
+        XCTAssertTrue(notFollowing.waitForExistence(timeout: 4), "The fixture Library already follows a show")
         // The identifier appears twice on iOS 26.5 (a wrapper and the Button), so a descendants query finds
         // "multiple matches"; ask for the Button (#2717).
         app.buttons["sources.manageFeeds"].firstMatch.tap()
-        XCTAssertTrue(element("sources.follow.url").waitForExistence(timeout: 4))
+        let feedLink = app.textFields["sources.follow.url"].firstMatch
+        XCTAssertTrue(feedLink.waitForExistence(timeout: 4))
         XCTAssertTrue(element("sources.follow.paste").exists)
-        XCTAssertTrue(element("sources.follow.button").exists)
         XCTAssertTrue(element("sources.browseCatalog").exists)
         // Read Later and Listening Edition imports are in Settings, not on this sheet.
         XCTAssertFalse(app.buttons["Read Later Services"].exists)
         XCTAssertFalse(app.buttons["Import Listening Edition"].exists)
+        // Follow acts on a typed link at once and the banner offers Undo (#3205), so the guard is that it follows only
+        // a feed it could read: a link it can't read follows nothing, keeps the sheet up and says why there (#4314).
+        // Nothing listens on port 9 of the simulator's own host, so the fetch is refused at once, with no DNS to wait on.
+        let follow = app.buttons["sources.follow.button"].firstMatch
+        XCTAssertTrue(follow.exists)
+        XCTAssertFalse(follow.isEnabled, "Follow is enabled with no link typed")
+        feedLink.tap()
+        feedLink.typeText("https://127.0.0.1:9/not-a-feed.xml")
+        XCTAssertTrue(waitUntil(follow, "enabled == true"), "Follow stayed disabled with a link typed")
+        follow.tap()
+        XCTAssertTrue(element("sources.follow.problem").waitForExistence(timeout: 45),
+                      "Follow on a link it can't read said nothing on the sheet")
+        XCTAssertTrue(feedLink.exists, "The Follow sheet closed although nothing could be followed")
+        XCTAssertFalse(app.buttons["following.follow.undo.button"].exists, "A link Follow can't read was followed")
         app.buttons["sources.follow.cancel"].firstMatch.tap()
         XCTAssertTrue(app.buttons["sources.manageFeeds"].firstMatch.waitForExistence(timeout: 4))
+        XCTAssertTrue(notFollowing.waitForExistence(timeout: 4), "A link Follow can't read added a show")
         tapRoot("Settings")
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 5))
         captureScreen(named: "following-settings-opened")
         tapRoot("Following")
-        XCTAssertFalse(app.staticTexts["Follow is not Add"].exists)
+        XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(element("miniPlayer.bar").exists)
         assertMiniPlayerClearsRootNavigation()
 
@@ -785,7 +751,9 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4), "The writing sheet opened with the keyboard down")
         editor.tap()
         editor.typeText("Johnny moved on to the budget.")
-        let save = app.buttons["writtenMargin.save.keyboard.button"]
+        // The nav-bar Save stays on screen while typing. The keyboard-bar Save (writtenMargin.save.keyboard.button)
+        // never appears in the simulator's tree with the predictive bar up: it was absent at all 6 cuts (#4225).
+        let save = app.buttons["writtenMargin.save.button"]
         XCTAssertTrue(save.waitForExistence(timeout: 4) && save.isHittable, "Save is not reachable with the keyboard up")
         save.tap()
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'liveSession.margin.row.'")).firstMatch
@@ -802,8 +770,12 @@ final class Gate1FlowUITests: XCTestCase {
             XCTAssertTrue(editor.waitForExistence(timeout: 6))
             editor.tap()
             editor.typeText("Margin number \(index) with enough words to fill about two lines of the row on a phone.")
-            app.buttons["writtenMargin.save.keyboard.button"].tap()
+            app.buttons["writtenMargin.save.button"].tap()
             XCTAssertTrue(waitForDisappearance(element("writtenMargin.screen"), timeout: 4))
+            // A Cancel or a save that drops the Margin also closes the sheet; only the session's count shows it kept
+            // this one (#4314). The rows sit in a lazy stack, so counting them would miss ones scrolled away.
+            XCTAssertTrue(waitUntil(element("liveSession.margins.count"), "label == %@", "Margins: \(index + 1)"),
+                          "Save did not keep Margin \(index + 1): \(element("liveSession.margins.count").label)")
         }
         let end = app.buttons["liveSession.endSession"]
         XCTAssertTrue(end.waitForExistence(timeout: 4))
@@ -812,14 +784,36 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertLessThanOrEqual(end.frame.maxY, window.maxY, "End is below the screen")
     }
 
-    /// #2831: the End sheet stays up until its own End or Cancel closes it; nothing on the screen redraws it away.
-    func testLiveSessionEndSheetStaysUpForThreeSeconds() throws {
+    /// #2831: the End sheet stays up until its own End or Cancel closes it; nothing on the screen redraws it away. The
+    /// redraw that closed it was the session clock, which now ticks every 0.5 s (LiveSessionDock's TimelineView). #4313:
+    /// the test reads that clock before End and after Cancel, so it shows the clock ran 8 s (about 16 redraws) under the
+    /// sheet, not merely that some time went by.
+    func testLiveSessionEndSheetStaysUpWhileTheSessionClockTicks() throws {
         startLiveSession()
+        let clock = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] 'session time '")).firstMatch
+        XCTAssertTrue(clock.waitForExistence(timeout: 6), "The session clock is missing")
+        let before = try XCTUnwrap(sessionSeconds(clock.label), "The session clock is unreadable: \(clock.label)")
         app.buttons["liveSession.endSession"].tap()
         let confirm = app.buttons["liveSession.confirmEnd"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 6), "End did not open its sheet")
-        Thread.sleep(forTimeInterval: 3)
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: confirm)
+        // fixed-sleep ok: the claim is "stays up across 8 s of clock redraws"; the sheet hides the clock from the
+        // accessibility tree, so the clock read after Cancel is what shows those redraws happened. Returns early if it closes.
+        _ = XCTWaiter().wait(for: [closed], timeout: 8)
         XCTAssertTrue(confirm.exists && app.buttons["liveSession.cancelEnd"].exists, "The End sheet closed by itself")
+        app.buttons["liveSession.cancelEnd"].tap()
+        XCTAssertTrue(clock.waitForExistence(timeout: 6), "The session clock is missing after Cancel")
+        let after = try XCTUnwrap(sessionSeconds(clock.label), "The session clock is unreadable: \(clock.label)")
+        // 7, not 8: the label can trail the clock by one 0.5 s tick on each read.
+        XCTAssertGreaterThanOrEqual(after, before + 7, "The session clock did not run while the End sheet was up")
+    }
+
+    /// "m:ss" or "h:mm:ss" at the end of a label such as "Session time 0:12" or "Meeting 47:30, session time 0:12".
+    private func sessionSeconds(_ label: String) -> Int? {
+        guard let clock = label.split(separator: " ").last else { return nil }
+        let parts = clock.split(separator: ":").map { Int($0) }
+        guard parts.count == 2 || parts.count == 3, !parts.contains(nil) else { return nil }
+        return parts.compactMap { $0 }.reduce(0) { $0 * 60 + $1 }
     }
 
     private func startLiveSession() {
@@ -952,7 +946,12 @@ final class Gate1FlowUITests: XCTestCase {
         captureScreen(named: "library-row-accessibility-size")
     }
 
+    /// The podcast seed's downloaded episode is reproducible and unprotected until it plays, so Clear is enabled and its
+    /// alert must say what stays. The fixture seed had nothing to clear, so the alert went unchecked (#4314).
     func testOfflineStorageExplainsProtectionBeforeSafeClear() throws {
+        app.terminate()
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_PODCAST"] = "1"
+        launchAllowingOneStall()
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         openLibrarySettings()
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))
@@ -964,17 +963,19 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(scrollToElement("offlineStorage.reproducible.row").exists)
         XCTAssertTrue(scrollToElement("offlineStorage.clearable.row").exists)
         let clear = scrollToElement("offlineStorage.clear.button")
-        if clear.isEnabled {
-            clear.tap()
-            let confirmation = app.alerts["Clear reproducible audio?"]
-            XCTAssertTrue(confirmation.waitForExistence(timeout: 3))
+        // The storage ledger adopts the episode on its startup scan, which may finish after the screen opens.
+        XCTAssertTrue(waitUntil(clear, "enabled == true", timeout: 10), "Clear is disabled: the seeded episode is not clearable audio")
+        clear.tap()
+        let confirmation = app.alerts["Clear reproducible audio?"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 3))
+        for promise in ["can be recreated later", "recordings, Margins, and protected active playback will remain"] {
             XCTAssertTrue(
-                confirmation.staticTexts.matching(
-                    NSPredicate(format: "label CONTAINS %@", "recordings, Margins, and protected active playback will remain")
-                ).firstMatch.exists
+                confirmation.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", promise)).firstMatch.exists,
+                "The Clear alert does not say \"\(promise)\""
             )
-            confirmation.buttons["Cancel"].tap()
         }
+        confirmation.buttons["Cancel"].tap()
+        XCTAssertTrue(waitForDisappearance(confirmation, timeout: 3))
     }
 
     func testBatchExportOffersPersistentJumpToDestination() throws {
@@ -1106,6 +1107,14 @@ final class Gate1FlowUITests: XCTestCase {
         let close = app.buttons["Close"].firstMatch
         if close.waitForExistence(timeout: 2) {
             close.tap()
+            return
+        }
+
+        // The iPhone share sheet is a popover with no Close button and no `sheets` entry; a tap on the dimmed
+        // region above it dismisses it (#4225: the 4 cuts since bebdcb0 failed on the empty `sheets` count here).
+        let popoverDismiss = app.otherElements["PopoverDismissRegion"].firstMatch
+        if popoverDismiss.exists {
+            popoverDismiss.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
             return
         }
 

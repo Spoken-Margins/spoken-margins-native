@@ -115,6 +115,37 @@ final class EpisodeGUIDStorageTests: XCTestCase {
         XCTAssertEqual(item.publishedAt, ISO8601DateFormatter().string(from: published))
     }
 
+    /// #4186: the add path fills from the followed entry and saves, with no playback. The length survives a reopen.
+    func testAFollowedEpisodeKeepsTheFeedsLengthInTheStoreWithoutPlaying() throws {
+        let (folder, path) = try temporaryStorePath()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let entry = FeedEntry(id: "entry", subscriptionId: "s", canonicalURL: "https://example.com/one", audioURL: "https://media.example.com/one.mp3",
+                              title: "Episode One", audioDurationMs: 3_725_000, episodeGUID: "g-1")
+        do {
+            let store = try SQLiteSessionStore(path: path)
+            var item = Item(id: "item", title: "Episode One", mediaType: "transcript_backed_media", text: nil, externalReference: nil, status: "ready",
+                            media: ItemMedia(sourceType: .remoteStream, url: "https://media.example.com/one.mp3"))
+            entry.fillEpisodeIdentity(of: &item, showTitle: "Example Show")
+            try store.saveItem(item)
+        }
+        let stored = try SQLiteSessionStore(path: path).loadItem(id: "item")
+        XCTAssertEqual(PlayableLength.ms(media: stored.media), 3_725_000)
+        XCTAssertEqual(stored.episodeGUID, "g-1")
+    }
+
+    /// #4186, Design default 6: a kept feed length takes part in matching a friend's packet to the episode through
+    /// `LinkedEpisode.lengthsAgree` (20% tolerance, an unknown length always agrees). A length 15% off still lands; 25% off is
+    /// refused, exactly as it is today for an episode the listener has played.
+    func testAKeptFeedLengthStillAgreesWithAPacketsLengthWithinTheTolerance() {
+        let local = 3_725_000
+        XCTAssertTrue(LinkedEpisode.lengthsAgree(Int(Double(local) * 0.85), local), "15% shorter lands")
+        XCTAssertTrue(LinkedEpisode.lengthsAgree(Int(Double(local) * 1.15), local), "15% longer lands")
+        XCTAssertFalse(LinkedEpisode.lengthsAgree(Int(Double(local) * 0.75), local), "25% shorter is refused")
+        XCTAssertFalse(LinkedEpisode.lengthsAgree(Int(Double(local) * 1.35), local), "35% longer is refused")
+        XCTAssertTrue(LinkedEpisode.lengthsAgree(nil, local), "an unknown length on either side agrees")
+        XCTAssertTrue(LinkedEpisode.lengthsAgree(local, nil))
+    }
+
     func testAFollowedFeedEntryKeepsTheItemsOwnIdentity() {
         let entry = FeedEntry(
             id: "entry", subscriptionId: "subscription", canonicalURL: "https://media.example.com/one.mp3",

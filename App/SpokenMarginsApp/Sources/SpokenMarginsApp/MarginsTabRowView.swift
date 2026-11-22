@@ -16,7 +16,11 @@ struct MarginsTabRowView: View {
     let direction: MarginsTabList.JumpDirection
     let identifier: String
     let showDetails: () -> Void
-    let toggleStar: () -> Void
+    /// The sharing star on your own Margin (#4173), or nil for a friend's Margin or one Share can't send.
+    let star: PlaybackMarginRowView.Star?
+    /// The start control goes to the Margin's place with nothing read aloud (Silent Margins, #4934).
+    var goesTo = false
+    var sourceNoun: SourceNoun = .episode
     let jump: () -> Void
 
     @State private var isExpanded = false
@@ -24,8 +28,6 @@ struct MarginsTabRowView: View {
 
     /// Okabe-Ito sky blue, as in the prototype: unheard, always with the dot, the bar and the spoken "Unheard".
     static let unheardBlue = AppColors.unheard
-    /// The star on the always-dark plate (`AppSemanticColorRGB.star`'s dark value).
-    static let starYellow = AppColors.star
 
     private var row: MarginsControlCenter.Row { entry.row }
     private var isHeard: Bool { row.hearing == .heard && !isPlaying }
@@ -40,14 +42,20 @@ struct MarginsTabRowView: View {
                     words
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.trailing, row.isYours ? 34 : 0) // room for the star
+                .padding(.trailing, star != nil ? 34 : 0) // room for the star
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(accessibilityLabel)
             .accessibilityHint("Opens this Margin")
             .accessibilityIdentifier(identifier)
-            .overlay(alignment: .topTrailing) { if row.isYours { star } }
+            .overlay(alignment: .topTrailing) {
+                if let star {
+                    MarginShareStarButton(
+                        isStarred: star.isStarred, title: spokenWords, identifier: "\(identifier).star", action: star.action)
+                        .offset(x: 10, y: -12)
+                }
+            }
             actions
         }
         .padding(.leading, 14)
@@ -82,6 +90,7 @@ struct MarginsTabRowView: View {
                 .foregroundStyle(isHeard ? AppColors.watchSecondary : .white)
             if let replyTo = entry.replyTo { Text("to \(replyTo)") }
             if let ms = row.timeMs { Text(MarginReplyWords.clock(milliseconds: ms)) }
+            if goesTo { Text(SilentMarginWords.notReadAloudSuffix.trimmingCharacters(in: CharacterSet(charactersIn: " ·"))) }
             if isPlaying {
                 Label("Playing", systemImage: "waveform").foregroundStyle(AppColors.listeningAccent).fontWeight(.semibold)
             } else if isHeard {
@@ -152,19 +161,10 @@ struct MarginsTabRowView: View {
         isTruncated = fullHeight > shownHeight + 1
     }
 
-    private var star: some View {
-        Button(action: toggleStar) {
-            Image(systemName: row.isStarred ? "star.fill" : "star")
-                .font(.body)
-                .foregroundStyle(row.isStarred ? Self.starYellow : AppColors.watchSecondary)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .offset(x: 10, y: -12)
-        .accessibilityLabel(row.isStarred ? "Starred to send" : "Star to send")
-        .accessibilityAddTraits(row.isStarred ? .isSelected : [])
-        .accessibilityIdentifier("\(identifier).star")
+    /// The words VoiceOver reads after "Star for sharing:".
+    private var spokenWords: String {
+        if case .text(let text) = row.words { return text }
+        return row.shownName
     }
 
     private var actions: some View {
@@ -182,7 +182,9 @@ struct MarginsTabRowView: View {
                 }
                 .foregroundStyle(AppColors.listeningAccent)
                 .disabled(!canJump)
-                .accessibilityHint(canJump ? "Plays the lead-in, then this Margin" : "This Margin has no place in the episode to go to")
+                .accessibilityHint(
+                    !canJump ? "This Margin has no place in the \(sourceNoun.inSentence) to go to"
+                        : goesTo ? SilentMarginWords.hint(noun: sourceNoun) : "Plays the lead-in, then this Margin")
                 .accessibilityIdentifier("\(identifier).play")
             }
         }
@@ -195,6 +197,7 @@ struct MarginsTabRowView: View {
     }
 
     private var startSymbol: String {
+        if goesTo { return "arrow.turn.down.right" } // never looks like Play when nothing is read (#4934)
         if mode == .arrival { return "play.fill" }
         return direction == .forward ? "forward.fill" : "backward.fill"
     }
@@ -208,6 +211,7 @@ struct MarginsTabRowView: View {
         case .heard: parts.append("Heard")
         case .yours: if row.isStarred { parts.append("Starred") }
         }
+        if goesTo { parts.append("Not read aloud") }
         if isPlaying { parts.append("Playing") }
         switch row.words {
         case .text(let text): parts.append(text)

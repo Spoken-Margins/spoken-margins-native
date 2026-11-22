@@ -443,10 +443,19 @@ def check(sources: dict, state_dir: Path, *, http=None, full: bool = False, mirr
             verify(archive["url"], "archive " + archive["url"].rsplit("/", 1)[-1], archive["byteCount"], archive["sha256"], False)
         for licence in voice["licenses"]:
             url = licence.get("watchURL") or licence["textURL"]
+            # A licence text we serve ourselves (the ONNX Runtime one, #4853) is a mirror file like the others: skipped
+            # with `--mirror skip`, only noted by default, so it is not a catch-22 before the first upload.
+            is_mirror = url.startswith(prefix)
+            if is_mirror and mirror == "skip":
+                continue
             status, body = http.get(url)
             note(f"{voice['id']} licence {licence['id']} {url} status={status} bytes={len(body)}")
             if status != 200:
-                problem("licence-unreachable", f"licence {licence['id']}", url, f"HTTP {status}")
+                if is_mirror and mirror == "note":
+                    notes.append(f"mirror missing: licence {licence['id']} (HTTP {status})")
+                    note(f"NOTE mirror missing: licence {licence['id']}")
+                else:
+                    problem("licence-unreachable", f"licence {licence['id']}", url, f"HTTP {status}", is_mirror)
                 continue
             if sha256_hex(body) == licence["textSHA256"]:
                 continue
@@ -457,7 +466,7 @@ def check(sources: dict, state_dir: Path, *, http=None, full: bool = False, mirr
             licence_dir.mkdir(exist_ok=True)
             (licence_dir / f"{voice['id']}-{licence['id']}.diff").write_text(diff + "\n", encoding="utf-8")
             (licence_dir / f"{voice['id']}-{licence['id']}.new.txt").write_bytes(body)
-            problem("licence-changed", f"licence {licence['id']}", url, f"now hashes to {sha256_hex(body)}; reviewed {licence['textSHA256']}; diff in licences/{voice['id']}-{licence['id']}.diff")
+            problem("licence-changed", f"licence {licence['id']}", url, f"now hashes to {sha256_hex(body)}; reviewed {licence['textSHA256']}; diff in licences/{voice['id']}-{licence['id']}.diff", is_mirror)
         held = any(not p["mirror"] or mirror == "require" for p in problems)
         report["voices"][voice["id"]] = {"held": held, "problems": problems, "notes": notes}
         if held:
@@ -802,7 +811,9 @@ def _wrong_bytes(path: Path, file: dict) -> str | None:
 def repository_copy(voice: dict, file: dict) -> Path | None:
     """The file in the repository, at the voice's `mirrorFrom`. Only the mirrored files we wrote or reviewed
     ourselves live there (the licence copies and the modification notice); the model files don't (#1820). Text the
-    catalog carries itself is read from its `contentFile`, beside sources.json (#2055)."""
+    catalog carries itself is read from its `contentFile`, beside sources.json (#2055). A voice may also name a
+    `mirrorFrom` without mirroring anything: `fetch` then takes any file whose bytes match from that folder, so a
+    licence copy the app already bundles doesn't depend on its upstream URL staying up (#4853)."""
     if "contentFile" in file:
         path = ROOT / "Contracts/voice-models" / file["contentFile"]
         return path if path.is_file() else None

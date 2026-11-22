@@ -2,13 +2,30 @@
 // prefill not replace, failure changes nothing) are in `src/transcribe/state.ts`; this file only wires them to the
 // worker and draws them.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { initialPhase, loadingLine, nextPhase, settingAfter, type Phase, type PhaseEvent } from '../transcribe/state.ts';
+import {
+  FAILED_LINE,
+  LOAD_GIVES_UP_MS,
+  RUN_GIVES_UP_MS,
+  SLOW_AFTER_MS,
+  STUCK_MESSAGE,
+  UNSUPPORTED_LINE,
+  initialPhase,
+  loadingLine,
+  mayRun,
+  nextPhase,
+  settingAfter,
+  slowLine,
+  type Phase,
+  type PhaseEvent,
+} from '../transcribe/state.ts';
 import { useData } from './data.tsx';
 import { plainError } from './logic/messages.ts';
 import { services } from './services.ts';
 
 export interface Transcription {
   phase: Phase;
+  /** The load or run has made no progress for a while: say it is still working, and that the recording is kept. */
+  slow: boolean;
   /** Where the last transcript ran, for tests and diagnostics: 'webgpu' or 'wasm'. */
   device?: string;
   accept(): void;
@@ -23,6 +40,9 @@ export function useTranscription(voice: Blob | undefined, onText: (text: string)
   const data = useData();
   const [phase, setPhase] = useState<Phase>({ kind: 'off' });
   const [device, setDevice] = useState<string>();
+  const [slow, setSlow] = useState(false);
+  /** Which attempt may still change the composer: a stopped or retried attempt must not touch a later one. */
+  const attempt = useRef(0);
   const started = useRef<Blob | undefined>(undefined);
   const gone = useRef(false);
   const textRef = useRef(onText);
@@ -44,17 +64,19 @@ export function useTranscription(voice: Blob | undefined, onText: (text: string)
   useEffect(() => {
     if (!voice || phase.kind !== 'loading' || started.current === voice) return;
     started.current = voice;
+    attempt.current += 1;
+    const mine = attempt.current;
     const step = (event: PhaseEvent) => {
-      if (!gone.current) setPhase((current) => nextPhase(current, event));
+      if (!gone.current && attempt.current === mine) setPhase((current) => nextPhase(current, event));
     };
     services.transcriber
       .prepare((loaded, total) => step({ type: 'progress', loaded, total }))
       .then(() => {
         step({ type: 'loaded' });
-        return services.transcriber.transcribe(voice);
+        return services.transcriber.transcribe(voice, (done, total) => step({ type: 'segment', done, total }));
       })
       .then((result) => {
-        if (gone.current) return;
+        if (gone.current || attempt.current !== mine) return;
         setDevice(result.device);
         step({ type: 'result', text: result.text });
         textRef.current(result.text);
@@ -62,17 +84,36 @@ export function useTranscription(voice: Blob | undefined, onText: (text: string)
       .catch((error: unknown) => step({ type: 'error', message: plainError(error) }));
   }, [voice, phase.kind]);
 
+  // A load or a run that goes quiet is first called slow, then stuck: the worker is stopped (the model stays
+  // downloaded) and the composer says so, with Try again. Any progress, or a new phase, starts the count again.
+  useEffect(() => {
+    setSlow(false);
+    if (!voice || !mayRun(phase)) return;
+    const giveUp = phase.kind === 'loading' ? LOAD_GIVES_UP_MS : RUN_GIVES_UP_MS;
+    const slowTimer = window.setTimeout(() => setSlow(true), SLOW_AFTER_MS);
+    const stuckTimer = window.setTimeout(() => {
+      services.transcriber.abandon();
+      attempt.current += 1;
+      setPhase((current) => nextPhase(current, { type: 'error', message: STUCK_MESSAGE }));
+    }, giveUp);
+    return () => {
+      window.clearTimeout(slowTimer);
+      window.clearTimeout(stuckTimer);
+    };
+  }, [voice, phase]);
+
   const answer = useCallback(
     (event: PhaseEvent) => {
       const setting = settingAfter(event, settingRef.current);
       if (setting !== settingRef.current) void data.setSetting('transcription', setting);
       started.current = undefined;
+      attempt.current += 1;
       setPhase((current) => nextPhase(current, event));
     },
     [data],
   );
 
-  return { phase, ...(device && { device }), accept: () => answer({ type: 'accept' }), decline: () => answer({ type: 'decline' }) };
+  return { phase, slow, ...(device && { device }), accept: () => answer({ type: 'accept' }), decline: () => answer({ type: 'decline' }) };
 }
 
 export function TranscriptionNote({
@@ -93,6 +134,12 @@ export function TranscriptionNote({
   switch (phase.kind) {
     case 'off':
       return null;
+    case 'unsupported':
+      return (
+        <p className="transcribe-note" role="status" data-testid="transcribe-status">
+          {UNSUPPORTED_LINE}
+        </p>
+      );
     case 'offer':
       return (
         <div className="transcribe-note" data-testid="transcribe-offer">
@@ -114,7 +161,7 @@ export function TranscriptionNote({
       return (
         <p className="transcribe-note transcribe-working" role="status" data-testid="transcribe-status">
           <span className="transcribe-spinner" aria-hidden="true" />
-          {phase.kind === 'loading' ? loadingLine(phase, size) : 'Writing out your words…'}
+          {transcription.slow ? slowLine(phase) : phase.kind === 'loading' ? loadingLine(phase, size) : 'Writing out your words…'}
         </p>
       );
     case 'done':
@@ -145,7 +192,10 @@ export function TranscriptionNote({
     case 'failed':
       return (
         <div className="transcribe-note" role="status" data-testid="transcribe-status">
-          <p>Your words couldn’t be written out here, so type them if you like. {phase.message}</p>
+          <p>{FAILED_LINE}</p>
+          <p data-testid="transcribe-detail">
+            <small>What happened: {phase.message}</small>
+          </p>
           <button type="button" className="button" onClick={accept}>
             Try again
           </button>

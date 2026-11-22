@@ -4,24 +4,16 @@ import OnnxRuntimeBindings
 import XCTest
 @testable import SessionKitPocket
 import SessionKit
+import SessionKitTestInputs
 
 /// Tests of the Pocket TTS renderer (#459). The first group needs no downloads. The rest read the
 /// weights `research/C2/pocket/fetch_weights.sh` fetches (or the folder in `POCKET_TTS_MODEL_DIR`)
-/// and say "skipped: weights not fetched" when they aren't there.
+/// and say "skipped: weights not fetched" when they aren't there. Every read from outside the package
+/// goes through `TestInputs`, so a package checked out alone skips these tests with the input named (#1387).
 final class PocketRendererTests: XCTestCase {
-    private static let repoRoot = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().deletingLastPathComponent()
-
-    static var weightsFolder: URL {
-        if let override = ProcessInfo.processInfo.environment["POCKET_TTS_MODEL_DIR"] {
-            return URL(fileURLWithPath: override, isDirectory: true)
-        }
-        return repoRoot.appending(path: "research/C2/models/pocket", directoryHint: .isDirectory)
-    }
-
     private func fetchedWeights() throws -> PocketAssetLocation {
-        let assets = PocketAssetLocation(rootURL: Self.weightsFolder)
+        let folder = try TestInputs.pocketModel()
+        let assets = PocketAssetLocation(rootURL: folder)
         guard (try? assets.validate()) != nil else { throw XCTSkip("skipped: weights not fetched") }
         return assets
     }
@@ -42,8 +34,7 @@ final class PocketRendererTests: XCTestCase {
     }
 
     private func golden() throws -> Golden {
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .appending(path: "Fixtures/pocket-tokenizer-golden.json")
+        let url = TestInputs.packageURL("Tests/SessionKitTests/Fixtures/pocket-tokenizer-golden.json")
         return try JSONDecoder().decode(Golden.self, from: Data(contentsOf: url))
     }
 
@@ -97,10 +88,45 @@ final class PocketRendererTests: XCTestCase {
         try Data(PocketBoolModel.trueConstantModel).write(to: url)
         let session = try ORTSession(env: try ORTEnv(loggingLevel: .warning), modelPath: url.path, sessionOptions: nil)
         let flag = try XCTUnwrap(try session.run(withInputs: [:], outputNames: ["flag"], runOptions: nil)["flag"])
-        // The bindings can't read a boolean tensor back, so this checks the model ran and made a value.
-        // The render tests below feed it to the decoder, which refuses anything but a true boolean.
-        XCTAssertNotNil(flag)
+        // The bindings can't read a boolean tensor back either, so a second model casts it to an Int32 that they
+        // can (#4316). The render tests that feed it to the decoder skip when the weights aren't fetched.
+        let castURL = directory.appending(path: "cast.onnx")
+        try Data(Self.boolToInt32Model).write(to: castURL)
+        let cast = try ORTSession(env: try ORTEnv(loggingLevel: .warning), modelPath: castURL.path, sessionOptions: nil)
+        let value = try XCTUnwrap(try cast.run(withInputs: ["flag": flag], outputNames: ["value"], runOptions: nil)["value"])
+        let read = try value.tensorData() as Data
+        XCTAssertEqual(read.withUnsafeBytes { Array($0.bindMemory(to: Int32.self)) }, [1], "the flag is true")
     }
+
+    /// An ONNX model with a boolean input `flag` of shape [1] and one Cast node to an Int32 output `value`.
+    private static let boolToInt32Model: [UInt8] = {
+        func varint(_ value: UInt64) -> [UInt8] {
+            var value = value
+            var bytes: [UInt8] = []
+            repeat {
+                var byte = UInt8(value & 0x7F)
+                value >>= 7
+                if value != 0 { byte |= 0x80 }
+                bytes.append(byte)
+            } while value != 0
+            return bytes
+        }
+        func number(_ field: UInt64, _ value: UInt64) -> [UInt8] { varint(field << 3) + varint(value) }
+        func bytes(_ field: UInt64, _ payload: [UInt8]) -> [UInt8] { varint(field << 3 | 2) + varint(UInt64(payload.count)) + payload }
+        func string(_ field: UInt64, _ text: String) -> [UInt8] { bytes(field, Array(text.utf8)) }
+        func valueInfo(_ name: String, _ elementType: UInt64) -> [UInt8] {
+            // ValueInfoProto { name, type: tensor_type { elem_type, shape: [1] } }
+            string(1, name) + bytes(2, bytes(1, number(1, elementType) + bytes(2, bytes(1, number(1, 1)))))
+        }
+        let boolType: UInt64 = 9, int32Type: UInt64 = 6
+        // AttributeProto { name: "to", i: INT32, type: INT }
+        let to = string(1, "to") + number(3, int32Type) + number(20, 2)
+        // NodeProto { input: ["flag"], output: ["value"], op_type: "Cast", attribute }
+        let node = string(1, "flag") + string(2, "value") + string(4, "Cast") + bytes(5, to)
+        let graph = bytes(1, node) + string(2, "bool_to_int32") + bytes(11, valueInfo("flag", boolType)) + bytes(12, valueInfo("value", int32Type))
+        // ModelProto { ir_version: 8, opset_import: [{version: 13}], graph }
+        return number(1, 8) + bytes(8, number(2, 13)) + bytes(7, graph)
+    }()
 
     // MARK: With the downloaded weights
 
@@ -162,11 +188,11 @@ final class PocketRendererTests: XCTestCase {
 
         func get(assets: PocketAssetLocation) async throws -> (load: Double, renders: [PassageRender]) {
             if let cached { return cached }
-            let directory = PocketRendererTests.repoRoot.appending(path: "artifacts/pocket", directoryHint: .isDirectory)
+            let directory = try TestInputs.artifactsFolder("pocket")
             let renderer = try PocketNarrationRenderer(assets: assets, outputDirectory: directory, threads: 1, noiseSeed: 20_261_014, governor: OnDeviceVoiceGovernor())
             let load = try await renderer.preload()
             struct File: Decodable { struct Passage: Decodable { var id: String; var text: String }; var passages: [Passage] }
-            let passages = try JSONDecoder().decode(File.self, from: Data(contentsOf: PocketRendererTests.repoRoot.appending(path: "research/C2/passages.json"))).passages
+            let passages = try JSONDecoder().decode(File.self, from: TestInputs.data(.research, "C2/passages.json")).passages
             var renders: [PassageRender] = []
             for passage in passages {
                 let result = try await renderer.render(text: passage.text)
@@ -187,7 +213,7 @@ final class PocketRendererTests: XCTestCase {
     func testRendersTheThreeC2PassagesFasterThanRealTimeOnOneThread() async throws {
         let assets = try fetchedWeights()
         let (load, renders) = try await Self.renders.get(assets: assets)
-        let reference = try JSONDecoder().decode(Reference.self, from: Data(contentsOf: Self.repoRoot.appending(path: "research/C2/results/darwin/pocket-alba.t1.json")))
+        let reference = try JSONDecoder().decode(Reference.self, from: TestInputs.data(.research, "C2/results/darwin/pocket-alba.t1.json"))
         var totalAudio = 0.0, totalRender = 0.0
         for render in renders {
             let expected = try XCTUnwrap(reference.passages[render.id]).audio_s
@@ -205,19 +231,21 @@ final class PocketRendererTests: XCTestCase {
     func testProsePassagesAreSpokenWithinTwoPointsOfThePyTorchWordError() async throws {
         let assets = try fetchedWeights()
         let environment = ProcessInfo.processInfo.environment
-        let python = environment["POCKET_TTS_PYTHON"] ?? Self.repoRoot.appending(path: "research/C2/.venv/bin/python").path
+        let python = try TestInputs.pocketPython(environment: environment)
         guard FileManager.default.isExecutableFile(atPath: python) else {
             throw XCTSkip("skipped: no python with faster-whisper (set POCKET_TTS_PYTHON)")
         }
         let (_, renders) = try await Self.renders.get(assets: assets)
         let clips = try JSONSerialization.data(withJSONObject: Dictionary(uniqueKeysWithValues: renders.map { ($0.id, $0.audioURL.path) }))
-        let clipsURL = Self.repoRoot.appending(path: "artifacts/pocket/clips.json")
+        let clipsURL = try TestInputs.artifactsFolder("pocket").appending(path: "clips.json")
+        let scoringScript = try TestInputs.url(.research, "C2/pocket/wer.py")
+        let passagesFile = try TestInputs.url(.research, "C2/passages.json")
+        let intelligibility = try TestInputs.data(.research, "C2/results/darwin/intelligibility.json")
         try clips.write(to: clipsURL)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: python)
-        process.arguments = ["-I", Self.repoRoot.appending(path: "research/C2/pocket/wer.py").path,
-                             Self.repoRoot.appending(path: "research/C2/passages.json").path, clipsURL.path]
+        process.arguments = ["-I", scoringScript.path, passagesFile.path, clipsURL.path]
         let output = Pipe()
         process.standardOutput = output
         let errors = Pipe()
@@ -232,7 +260,7 @@ final class PocketRendererTests: XCTestCase {
         struct Score: Decodable { var wer: Double; var heard: String }
         let scores = try JSONDecoder().decode([String: Score].self, from: data)
         struct Reference: Decodable { var wer: Double }
-        let reference = try JSONDecoder().decode([String: [String: Reference]].self, from: Data(contentsOf: Self.repoRoot.appending(path: "research/C2/results/darwin/intelligibility.json")))["pocket-alba"] ?? [:]
+        let reference = try JSONDecoder().decode([String: [String: Reference]].self, from: intelligibility)["pocket-alba"] ?? [:]
         for (id, score) in scores.sorted(by: { $0.key < $1.key }) {
             print("POCKET wer \(id)=\(score.wer) reference=\(reference[id]?.wer ?? -1)")
         }

@@ -61,6 +61,13 @@ public struct ExportInterjection: Codable, Equatable {
     /// Where a source Margin's anchor starts in the item's text. A text item has no media clock, so
     /// this orders its Margins within a percent (#1439).
     public var sourceCharOffset: Int? = nil
+    /// True only for a moved Margin captured with no playback position (#4233); nil otherwise, so it stays out of every
+    /// other Margin's export. Its `roughPercent`, `mediaTimeMs` and `sourceCharOffset` are then zeros that mean nothing:
+    /// read `hasPlace`, not them.
+    public var noPlace: Bool? = nil
+
+    /// Whether this Margin has a place on its item (`Interjection.hasPlace`).
+    public var hasPlace: Bool { noPlace != true }
 }
 
 public struct ExportOptions: Equatable {
@@ -115,7 +122,10 @@ public enum SessionExportMarkdownRenderer {
         if let reference = export.item.externalReference { lines += ["Source: " + reference] }
         lines += ["Target: \(note.targetType) / \(note.targetId)", "Session: \(note.sessionId)", "Margin: \(note.id)"]
         // A Margin on an AI reply sits in the reply, not in the source (#112).
-        let position = note.mediaTimeMs.map(MarginDeepLink.clockPosition(ms:)) ?? "\(note.roughPercent)%"
+        // A Margin moved from a live session with no stored position says so, and shows no passage (#4233).
+        let position = note.hasPlace
+            ? note.mediaTimeMs.map(MarginDeepLink.clockPosition(ms:)) ?? "\(note.roughPercent)%"
+            : noPlaceSaved
         lines += [(onSource ? "Position: " : "Position in AI reply: ") + position]
         // The way back to the moment (#171).
         let link = MarginDeepLink(sessionId: note.sessionId, marginId: note.id).url.absoluteString
@@ -123,12 +133,15 @@ public enum SessionExportMarkdownRenderer {
         lines += [note.captureKind == .written ? "## Written Margin" : "## Listener Margin", "", marginText(note), ""]
         // Context captured from an item imported before #560 can hold link titles; the
         // stored anchor keeps them, the note shows the text as read.
-        let before = SpeechTextNormalizer.removingLinkTitleRemnants(from: note.anchorBefore)
-        let after = SpeechTextNormalizer.removingLinkTitleRemnants(from: note.anchorAfter)
+        let before = note.hasPlace ? SpeechTextNormalizer.removingLinkTitleRemnants(from: note.anchorBefore) : ""
+        let after = note.hasPlace ? SpeechTextNormalizer.removingLinkTitleRemnants(from: note.anchorAfter) : ""
         if !before.isEmpty { lines += ["## Context before", "", before, ""] }
         if !after.isEmpty { lines += ["## Context after", "", after, ""] }
         return lines.joined(separator: "\n")
     }
+
+    /// What a Margin moved from a live session with no stored position says where it sits (#4233).
+    public static let noPlaceSaved = "no place saved"
 
     public static let transcriptNotAvailableYet = "Transcript not available yet."
 
@@ -340,12 +353,14 @@ public enum SessionExportMarkdownRenderer {
     /// from the middle of the text first (#1439); those go by where the anchor starts in the text,
     /// or by percent when an older export has no offset. Margins that tie keep their given order.
     static func inSourceOrder(_ interjections: [ExportInterjection]) -> [ExportInterjection] {
-        let timed = interjections.allSatisfy { $0.mediaTimeMs != nil }
-        let located = interjections.allSatisfy { $0.sourceCharOffset != nil }
+        let timed = interjections.filter(\.hasPlace).allSatisfy { $0.mediaTimeMs != nil }
+        let located = interjections.filter(\.hasPlace).allSatisfy { $0.sourceCharOffset != nil }
+        // A Margin with no place (#4233) follows every placed one, in the order it was given.
         func key(_ margin: ExportInterjection, _ index: Int) -> [Int] {
-            if timed { return [margin.mediaTimeMs ?? 0, margin.sourceCharOffset ?? 0, index] }
-            if located { return [margin.sourceCharOffset ?? 0, margin.roughPercent, index] }
-            return [margin.roughPercent, margin.sourceCharOffset ?? 0, margin.mediaTimeMs ?? 0, index]
+            if !margin.hasPlace { return [1, index] }
+            if timed { return [0, margin.mediaTimeMs ?? 0, margin.sourceCharOffset ?? 0, index] }
+            if located { return [0, margin.sourceCharOffset ?? 0, margin.roughPercent, index] }
+            return [0, margin.roughPercent, margin.sourceCharOffset ?? 0, margin.mediaTimeMs ?? 0, index]
         }
         return interjections.enumerated()
             .sorted { key($0.element, $0.offset).lexicographicallyPrecedes(key($1.element, $1.offset)) }
@@ -411,7 +426,11 @@ public enum SessionExportMarkdownRenderer {
         laterContextLabel: String,
         to lines: inout [String]
     ) {
-        guard let first = interjections.first else { return }
+        // A Margin with no place (#4233) is listed after the placed ones, by itself: it has no source passage to print
+        // and no passage to share with its neighbours.
+        let unplaced = interjections.filter { !$0.hasPlace }
+        let interjections = interjections.filter(\.hasPlace)
+        guard !interjections.isEmpty || !unplaced.isEmpty else { return }
         var printed = PrintedPassages()
         func appendPassage(_ label: String, _ passage: String) {
             guard let fresh = printed.unprinted(passage) else { return }
@@ -421,6 +440,10 @@ public enum SessionExportMarkdownRenderer {
         }
         lines.append("### \(heading)")
         lines.append("")
+        guard let first = interjections.first else {
+            for margin in unplaced { appendInterjectionMarker(margin, to: &lines) }
+            return
+        }
         if !first.anchorBefore.isEmpty {
             appendPassage(initialContextLabel, first.anchorBefore)
         }
@@ -464,13 +487,16 @@ public enum SessionExportMarkdownRenderer {
         if !previous.anchorAfter.isEmpty {
             appendPassage(continuationLabel, previous.anchorAfter)
         }
+        for margin in unplaced { appendInterjectionMarker(margin, to: &lines) }
     }
 
     private static func appendInterjectionMarker(
         _ interjection: ExportInterjection,
         to lines: inout [String]
     ) {
-        let position = interjection.mediaTimeMs.map(formattedMediaTime) ?? "\(interjection.roughPercent)%"
+        let position = interjection.hasPlace
+            ? interjection.mediaTimeMs.map(formattedMediaTime) ?? "\(interjection.roughPercent)%"
+            : "No place saved"
         lines.append("#### \(position) — Listener interjection")
         lines.append("")
         if let transcript = interjection.transcript,

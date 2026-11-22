@@ -125,14 +125,23 @@ public struct PDFWordSpacer {
 
     /// Character offsets of `line` that a space goes in front of. Offsets inside or in
     /// front of a `protected` range (a superscript marker, "economy¹") are never used;
-    /// the offset just after one is, when a letter follows it. A word broken by a line-end
+    /// the offset just after one is, when a letter follows it. An `unbroken` range (a math
+    /// index or exponent: the "xx,max" of "σxx,max", the "10" of "log10", the "2" of "Al2O3")
+    /// stays whole and on its letter the same way, and nothing is put after it: what follows
+    /// may be the rest of a formula (#4194). A word broken by a line-end
     /// hyphen is split whole: `carried` is its start on the line before ("Nev" of "Nev-",
     /// so "ertheless" isn't "er the less"), `continued` its end on the next ("tised" of "adver-").
-    public func spaceInsertions(in line: String, protected: [Range<Int>] = [], carried: String = "", continued: String = "") -> [Int] {
+    public func spaceInsertions(
+        in line: String,
+        protected: [Range<Int>] = [],
+        unbroken: [Range<Int>] = [],
+        carried: String = "",
+        continued: String = ""
+    ) -> [Int] {
         let characters = Array(line)
         var insertions = Set<Int>()
         func isProtected(_ offset: Int) -> Bool {
-            protected.contains { $0.lowerBound <= offset && offset < $0.upperBound }
+            (protected + unbroken).contains { $0.lowerBound <= offset && offset < $0.upperBound }
         }
         var tokenStart = 0
         while tokenStart < characters.count {

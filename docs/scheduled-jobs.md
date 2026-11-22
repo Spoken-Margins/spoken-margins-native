@@ -33,7 +33,7 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 |---|---|---|---|---|---|
 | `SM Mac tick` scheduled task (`~/.claude/scheduled-tasks/sm-mac-tick/SKILL.md`) | Every 2 hours (`docs/workstreams/kickoff.md`) | Claude and Codex usage, runners, disk, memory, the main checkout, the Test Desk work list | One comment on #337 (breaker, pacing advice, scorecard, `- Test Desk: GO` line); fast-forwards the main checkout | Owner | Disable the scheduled task |
 | `SM integration run` scheduled task | Understudy only (`docs/workstreams/test-lane.md`). `ops/testdesk/` replaces it once the launchd job has posted a real report (#1178) | | Reports on #184 | Owner | Disable the scheduled task |
-| [Mac finisher](workstreams/finisher.md) | A loop in the thread "Mac finisher" | `needs-mac` PRs | Commits to those PR branches, comments | Owner, and the project instructions | Pause is built in: HALT, disk under 20 GB, Dial Off |
+| [Mac finisher](workstreams/finisher.md) | A loop in the thread "Mac finisher" | `needs-mac` PRs | Commits to those PR branches, comments | Owner, and the project instructions | Pause is built in: HALT (not under Cloud max), disk under 20 GB, Dial Off |
 | Managed Test Desk | Started by hand or by the coordinator when the tick says `Test Desk: GO` | The work list the tick names | Reports on #184 | Coordinator | End the session |
 | Claude Mac worker | Not live. #1599 (PR #1604) | | | | |
 
@@ -62,8 +62,9 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 
 | Workflow | Trigger | Runs on | Does |
 |---|---|---|---|
-| `lane.yml` | `pull_request` into `next` or `lane-check/**` (labels `lane:queued`, `automerge`); `workflow_dispatch` from the lane job after a T3 PASS | `route`, `lane-open-*` on `ubuntu-latest`; `lane`, `automerge`, `release` on the Mac | Tests the PR, merges `automerge` PRs on PASS, pings the Dial when a runner is idle |
+| `lane.yml` | `pull_request` into `next` or `lane-check/**` (labels `lane:queued`, `automerge`); `workflow_dispatch` from the `release` job that re-runs automerge after a clean audit | `route`, `lane-open-*` on `ubuntu-latest`; `lane`, `automerge`, `release` on the Mac | Tests the PR, merges `automerge` PRs on PASS, pings the Dial when a runner is idle |
 | `hosted-portable.yml` | `pull_request` into `main` | GitHub-hosted `ubuntu-latest` | The portable fast checks, then the `owner-tap-alert` job (`linux-t1.yml` was retired in #2442) |
+| `main-t3.yml` | `schedule` every 3 hours plus 6:30 and 15:30 Phoenix; `workflow_dispatch` (`sha`, `force`) | GitHub-hosted Mac | When `main`'s head has no `main-t3` commit status, runs both app test plans and records the status; a failure opens one "Main T3 failed on <sha7>" regression issue (#4573) |
 | `shipped-build-compat.yml` | `pull_request` into `next` touching persistence, sharing or stored types | Mac `sm-lane` | Build 29 can still open the database this PR writes |
 | `verify-tests.py` step `shipped-compat` (#1899) | Every automerge run of `--plan fast` or `--plan fast-mac-rest` whose diff matches that workflow's `paths` | Mac `sm-lane` | The same two checks, inside the plan the runner merges on, because a required check can't stand on the merge commit the runner pushes |
 | `live-state.yml` (#3872) | Every 6 hours, and on request | GitHub-hosted `ubuntu-latest`, environment `phone-build` | Saves App Store Connect's build list as the `asc-builds` artifact for `scripts/sm_live.py` |

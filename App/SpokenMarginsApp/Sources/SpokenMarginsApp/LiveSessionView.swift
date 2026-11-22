@@ -80,6 +80,8 @@ struct LiveSessionView: View, Equatable {
     @State private var photoTappedAt = Date()
     /// A photo waiting for the written Margin it belongs to (Write instead, or a microphone that couldn't start).
     @State private var writingPhoto: LiveSessionPhotoStore.Staged?
+    /// Save was refused (the session was saved or discarded while the listener wrote): the sheet keeps its draft and says why (#3847).
+    @State private var writingRefused = false
     /// A line above the photo on the writing sheet.
     @State private var writingNotice: String?
     @State private var showsCameraOff = false
@@ -101,6 +103,7 @@ struct LiveSessionView: View, Equatable {
     var body: some View {
         #if DEBUG
         let _ = ScreenRedrawProbe.record("liveSession")
+        let _ = ScreenRedrawProbe.printsChanges.contains("liveSession") ? Self._printChanges() : ()
         #endif
         NavigationStack {
             Group {
@@ -119,12 +122,16 @@ struct LiveSessionView: View, Equatable {
             .navigationTitle("Live session")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(isRunningScreen ? AppColors.listeningBackground : AppColors.bone, for: .navigationBar)
+            // As on the player (#4607): the dark scheme reaches the status bar only while the bar's background is shown.
+            .toolbarBackground(isRunningScreen ? .visible : .automatic, for: .navigationBar)
             .toolbarColorScheme(isRunningScreen ? .dark : nil, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: leave) {
                         Image(systemName: "chevron.left").font(.body.weight(.semibold)).minimumTapTarget()
                     }
+                    // Lime on the dark plate, evergreen on the bone setup screen (#3733). Set on the button, not the stack, so a sheet it presents stays evergreen.
+                    .tint(isRunningScreen ? AppColors.listeningAccent : AppColors.evergreen)
                     .accessibilityLabel("Back")
                     .accessibilityHint("Leaves this screen. The session keeps running.")
                     .accessibilityIdentifier("liveSession.back.button")
@@ -141,16 +148,27 @@ struct LiveSessionView: View, Equatable {
         .environment(\.miniPlayerClearance, 0)
         .onAppear {
             finish.screenAppeared()
-            controller.load()
+            // Coming back from under a cover (the writing screen, the camera) must not re-read the store: with no
+            // requested id that reads only the running session, which an ended one is not (#3847).
+            if controller.didLoad {
+                controller.resumeWatching()
+                applyLink()
+            } else {
+                controller.load()
+            }
         }
         .onDisappear {
             unregisterRunningScreen()
-            controller.stopPolling()
+            // The disk observer is how a Watch End reaches this screen, so it stays while this screen is only under
+            // one of its own covers. Every path that dismisses the whole screen runs with `cover == nil`.
+            if cover == nil { controller.stopPolling() }
             finish.screenGone(open: openSavedItem)
         }
         .onChange(of: links.pendingAction) { _, _ in applyLink() }
         .onChange(of: controller.didLoad) { _, _ in applyLink() }
         .onChange(of: controller.session?.id) { _, _ in showsEndCard = false }
+        // Any cover opening or closing clears a refusal, so the next writing screen starts clean.
+        .onChange(of: cover) { _, _ in writingRefused = false }
         // An ended session shows what to do with it, which is on the Session pane.
         .onChange(of: controller.hasEnded, initial: true) { _, ended in if ended { pane = .session } }
         // The mini player's mic starts the item's recording on the root, which sits under this screen. This screen
@@ -199,7 +217,7 @@ struct LiveSessionView: View, Equatable {
         .onChange(of: controller.isRecordingSpoken) { _, recording in
             if !recording && cover == .liveRecording { cover = nil }
         }
-        .fullScreenCover(item: $cover) { cover in
+        .trackedFullScreenCover(item: $cover) { cover in
             switch cover {
             case .liveRecording: recordingScreen
             case .liveWriting: writingScreen
@@ -212,7 +230,7 @@ struct LiveSessionView: View, Equatable {
             Button(LiveSessionPhotoMargin.withoutPhotoTitle) { beginRecording() }
             Button("Cancel", role: .cancel) {}
         }
-        .sheet(isPresented: $showsLineUp) {
+        .trackedSheet(isPresented: $showsLineUp) {
             if let session = controller.session {
                 LiveSessionLineUpView(session: session) { saved in
                     showsLineUp = false
@@ -223,8 +241,8 @@ struct LiveSessionView: View, Equatable {
         }
         // Ending asks "when did it end?" in a sheet on this stable root, which nothing redraws: the sheet once closed
         // by itself before the listener could answer (#2831). Only its own End and Cancel close it.
-        .sheet(isPresented: $showsEndCard) { endSheet }
-        .sheet(item: $openMargin) { target in marginScreen(target) }
+        .trackedSheet(isPresented: $showsEndCard) { endSheet }
+        .trackedSheet(item: $openMargin) { target in marginScreen(target) }
         .alert("Live session", isPresented: Binding(get: { controller.errorMessage != nil }, set: { if !$0 { controller.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -239,6 +257,13 @@ struct LiveSessionView: View, Equatable {
         }
         // Outermost, so the mini player and every sheet and cover this screen opens have the model to watch themselves.
         .environmentObject(model)
+        #if DEBUG
+        // What redraws this screen, by source, for `LiveSessionRedrawTests` (#4379).
+        .recordsPublishes(screen: "liveSession", of: [
+            "controller": controller.objectWillChange, "feed": feed.objectWillChange, "finish": finish.objectWillChange,
+            "links": links.objectWillChange, "capture": capture.objectWillChange,
+        ])
+        #endif
     }
 
     /// Back to where the listener came from. The session keeps running; a spoken Margin still recording is saved, not
@@ -499,7 +524,7 @@ struct LiveSessionView: View, Equatable {
             switch wanted {
             case .liveRecording: controller.isRecordingSpoken
             case .camera: isTakingPhoto && controller.isRunning && !controller.isRecordingSpoken
-            case .liveWriting: controller.isRunning && !controller.isRecordingSpoken
+            case .liveWriting: !controller.isRecordingSpoken && (controller.isRunning || keepsBegunPhoto())
             }
         }
         Task {
@@ -593,14 +618,32 @@ struct LiveSessionView: View, Equatable {
 
     private func openRecorder(with staged: LiveSessionPhotoStore.Staged) {
         isTakingPhoto = false
-        // The session may have ended or started a recording while the camera was open.
-        guard controller.isRunning, !controller.isRecordingSpoken else {
+        // The session may have ended or started a recording while the camera was open. A photo taken as it ended is
+        // kept: the microphone must not start past the End, so the Margin is written, in the ended session (#3847).
+        switch LiveSessionBegunMargin.afterPhoto(
+            isRunning: controller.isRunning, isRecordingSpoken: controller.isRecordingSpoken,
+            photoAt: photoTappedAt, in: controller.session
+        ) {
+        case .record:
+            controller.startSpokenMargin(photo: staged, placedAt: photoTappedAt)
+            cover = .liveRecording
+        case .write:
+            // A direct swap from the camera cover, as the recording branch does. `present` would give up with the
+            // camera cover still set and drop the photo.
+            writingPhoto = staged
+            writingNotice = nil
+            writingStartedAt = photoTappedAt
+            cover = .liveWriting
+        case .discard:
             controller.discardPhoto(staged)
             cover = nil
-            return
         }
-        controller.startSpokenMargin(photo: staged, placedAt: photoTappedAt)
-        cover = .liveRecording
+    }
+
+    /// Whether a photo is waiting for words and the session still takes a Margin begun at `writingStartedAt`: it has
+    /// ended, but is not saved to the Library (#3847).
+    private func keepsBegunPhoto() -> Bool {
+        writingPhoto != nil && controller.checkBegunMargin(markedAt: writingStartedAt) != .refused
     }
 
     /// Throws away a photo that was waiting for a written Margin that can no longer be opened.
@@ -623,7 +666,7 @@ struct LiveSessionView: View, Equatable {
     private func beginWriting(startedAt: Date? = nil) {
         // A spoken Margin still recording keeps its screen; a Write link can't swap it for the writing sheet and
         // leave the microphone on.
-        guard controller.isRunning, !controller.isRecordingSpoken, cover != .camera else {
+        guard controller.isRunning || keepsBegunPhoto(), !controller.isRecordingSpoken, cover != .camera else {
             dropWaitingPhoto() // nothing will take it now, so it is not left to the next launch's sweep
             return
         }
@@ -665,6 +708,12 @@ struct LiveSessionView: View, Equatable {
             anchorLabel: anchorSubtitle(at: writingStartedAt),
             predictedPosition: { controller.predictedPosition(at: $0, adjustmentMs: $1) },
             onSave: { text, whereNote, adjustmentMs in
+                // A Margin begun while the session ran is kept after the End; only a session saved to the Library, or
+                // gone, refuses it, and then the draft stays on screen with the reason (#3847).
+                if controller.checkBegunMargin(markedAt: writingStartedAt) == .refused {
+                    writingRefused = true
+                    return
+                }
                 if let photo = writingPhoto {
                     // The picture's file goes into place before the Margin that names it is saved.
                     let placedAt = writingStartedAt
@@ -684,7 +733,9 @@ struct LiveSessionView: View, Equatable {
                 cover = nil
             },
             photo: writingPhoto,
-            notice: writingNotice
+            notice: writingNotice,
+            endedLine: controller.endedLine,
+            refused: writingRefused
         )
         .environmentObject(model)
     }
@@ -695,6 +746,7 @@ struct LiveSessionView: View, Equatable {
             LiveSessionMarginDetailView(
                 margin: margin, sessionTitle: session.title,
                 position: LiveSessionMarginsList.positionLabel(for: margin, in: session),
+                photoPage: session.photoPageOffer(forMarginId: margin.id),
                 keepHeardPlace: { controller.keepHeardPlace(id: margin.id) },
                 declineHeardPlace: { controller.declineHeardPlace(id: margin.id) },
                 saveText: { controller.updateText(id: margin.id, text: $0) },
@@ -730,7 +782,7 @@ struct LiveSessionView: View, Equatable {
 
     /// The ended session's choices, at the top of the Session pane. Resume is in the dock, where End was.
     private func finishCard(_ session: LiveSession) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(session.isQuick == true ? "Quick session" : "Session ended").font(.headline).accessibilityAddTraits(.isHeader)
             ForEach(Array(LiveSessionPlaceMap.conflicts(in: session).enumerated()), id: \.offset) { _, conflict in
                 Text(conflict.description()).font(.caption).foregroundStyle(AppColors.watchSecondary)
@@ -769,9 +821,15 @@ struct LiveSessionView: View, Equatable {
             .buttonStyle(.bordered)
             .tint(.white)
             .disabled(finish.isSaving)
-            Button("Discard Session", role: .destructive) { confirmsDiscard = true }
+            // The destructive role alone is the system red, which is dim on this dark card (#4443). The icon keeps it a
+            // button for a listener who can't tell the red from the card.
+            Button(role: .destructive) { confirmsDiscard = true } label: {
+                Label("Discard Session", systemImage: "trash").frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .tint(AppColors.watchDanger)
         }
-        .padding(16)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(AppColors.watchControl, in: RoundedRectangle(cornerRadius: 14))
     }

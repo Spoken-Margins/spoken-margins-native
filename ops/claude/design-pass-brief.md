@@ -37,7 +37,7 @@ Write `{{OUT_DIR}}/design.md`: the whole flow, start to finish, across every iss
 4. **Outcomes**: every outcome the owner asked for, quoted from the issue or the record, each with where the design meets it.
 5. **Device conditions**: the rows of `device-conditions.md` this flow meets, so the builder writes those host tests.
 6. **Starting states**: the listener-history states this flow meets (a first run, a finished episode, a friend's Margins on an item already heard, and so on), each with its expected behaviour.
-7. **PR plan**: hidden pieces first (storage, logic, tests; each merges alone), then the visible part, which merges whole: a listener can start, finish and leave the feature, and the flows around it still work. Each PR small enough for one Sonnet session, naming its files and the host test that proves it.
+7. **PR plan**: hidden pieces first (storage, logic, tests; each merges alone), then the visible part, which merges whole: a listener can start, finish and leave the feature, and the flows around it still work. Each PR small enough for one Sonnet session, naming its files and the host test that proves it. The visible PR is written by a session that can't run a simulator: put its before-and-after captures and journey steps in the plan as steps the lane or the Test Desk runs after the PR is armed, never as a first step the builder must finish before writing code. A missing capture is a step for the Test Desk, not a reason for the builder to wait.
 8. **Defaults taken**: every taste or technical call you made, numbered, each with the options you weighed and why you picked yours, so the owner can veto by number.
 9. **Checked:** the files, captures (with their commit) and comments this design rests on.
 

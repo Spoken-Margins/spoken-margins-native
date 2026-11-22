@@ -404,7 +404,8 @@ class TheWorkflow(unittest.TestCase):
         tests = next(i for i, run in enumerate(runs) if 'scripts/linux_core_tests.py run' in run)
         record = next(i for i, run in enumerate(runs) if 'title=lane-hosted-tested' in run)
         self.assertLess(tests, record)
-        self.assertNotIn('if', self.steps('portable')[tests])
+        # Every merge group and dispatch runs them; only a PR's quick tier leaves them to the merge group (2026-11-20).
+        self.assertEqual(self.steps('portable')[tests].get('if'), "github.event_name != 'pull_request'")
         self.assertNotIn('continue-on-error', self.steps('portable')[tests])
         self.assertFalse(any('swift build --build-tests' in run for run in runs), 'swift test builds them')
 
@@ -417,7 +418,7 @@ class TheWorkflow(unittest.TestCase):
         for job, name, path in (('portable', 'linux-core-tests', 'artifacts/test-runs/linux-core/'),
                                 ('mac-rest', 'mac-core-tests', 'artifacts/test-runs/*/package-core.xunit.xml')):
             step = next(s for s in self.steps(job) if s.get('with', {}).get('name') == name)
-            self.assertEqual(step['if'], 'always()')
+            self.assertEqual(step['if'], "always() && github.event_name != 'pull_request'" if job == 'portable' else 'always()')
             self.assertEqual(step['with']['path'], path)
 
     def test_a_linux_retry_pass_reaches_the_tally_job_from_the_step_that_names_it(self):
@@ -457,12 +458,52 @@ class TheWorkflow(unittest.TestCase):
         by_hand = self.yaml.safe_load((ROOT / '.github/workflows/hosted-sessionkit-linux.yml').read_text())
         self.assertEqual(by_hand['jobs']['sessionkit-core']['container'], core.IMAGE)
 
+    def retry_script(self, workflow):
+        """The apt step's script, as the workflow has it: the one step that installs with a retry loop."""
+        text = (ROOT / '.github/workflows' / workflow).read_text()
+        steps = [s['run'] for job in self.yaml.safe_load(text)['jobs'].values() for s in job['steps'] if 'apt-get install' in s.get('run', '')]
+        self.assertEqual(len(steps), 1, workflow)
+        self.assertNotIn('run: apt-get update -qq && apt-get install', text)
+        return steps[0]
+
+    def run_apt_step(self, script, *, update_fails):
+        """Runs the step with a stand-in `apt-get` that fails its first <update_fails> updates (None: always), and a
+        `sleep` that only writes its argument down. Returns (exit code, output, apt calls, sleeps)."""
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            (temp / 'bin').mkdir()
+            apt = temp / 'bin/apt-get'
+            apt.write_text('#!/bin/bash\necho "$1" >> "$LOG/apt"\n'
+                           '[ "$1" = update ] || exit 0\n'
+                           'n=$(grep -c update "$LOG/apt")\n'
+                           '[ -z "$FAILS" ] && exit 100\n'
+                           '[ "$n" -le "$FAILS" ] && exit 100\nexit 0\n')
+            (temp / 'bin/sleep').write_text('#!/bin/bash\necho "$1" >> "$LOG/sleep"\n')
+            for tool in (apt, temp / 'bin/sleep'):
+                tool.chmod(0o755)
+            env = {'PATH': f'{temp / "bin"}:/usr/bin:/bin', 'LOG': str(temp)}
+            if update_fails is not None:
+                env['FAILS'] = str(update_fails)
+            ran = subprocess.run(['bash', '-e', '-c', script], capture_output=True, text=True, env=env, timeout=60)
+            log = lambda name: (temp / name).read_text().split() if (temp / name).exists() else []
+            return ran.returncode, ran.stdout + ran.stderr, log('apt'), log('sleep')
+
     def test_the_other_swift_container_jobs_retry_apt_too(self):
         for name in ('hosted-sessionkit-linux.yml', 'substack-canary.yml'):
-            with self.subTest(workflow=name):
-                text = (ROOT / '.github/workflows' / name).read_text()
-                self.assertIn('for n in 1 2 3; do', text)
-                self.assertNotIn('run: apt-get update -qq && apt-get install', text)
+            script = self.retry_script(name)
+            with self.subTest(workflow=name, case='two failures then success'):
+                code, out, apt, sleeps = self.run_apt_step(script, update_fails=2)
+                self.assertEqual(code, 0, out)
+                self.assertEqual(apt, ['update', 'update', 'update', 'install'], 'installed once, after the third update')
+                self.assertEqual(sleeps, ['10', '20'])
+            with self.subTest(workflow=name, case='first try works'):
+                code, out, apt, sleeps = self.run_apt_step(script, update_fails=0)
+                self.assertEqual((code, apt, sleeps), (0, ['update', 'install'], []), out)
+            with self.subTest(workflow=name, case='never reaches apt'):
+                code, out, apt, _ = self.run_apt_step(script, update_fails=None)
+                self.assertEqual(code, 75, 'a runner network fault is exit 75, which the lane reads as a fault, not a failure')
+                self.assertIn('lane-fault', out)
+                self.assertEqual(apt, ['update', 'update', 'update'], 'three tries, and never an install')
 
     def test_the_command_mounts_the_checkout_and_tests_with_the_cached_build_folder(self):
         command = core.docker_command(Path('/here'))

@@ -39,7 +39,8 @@ struct PinnedMarginCardView: View {
     private var announcementKey: VoiceOverAnnouncements.CardKey {
         VoiceOverAnnouncements.CardKey(
             card: model.pinnedMarginCard,
-            marginID: model.pendingImportedCommentary?.interjection.id ?? model.playingImportedCommentary?.interjection.id)
+            marginID: model.pendingImportedCommentary?.interjection.id ?? model.playingImportedCommentary?.interjection.id
+                ?? model.shownSilentMarginLanding?.marginId) // a second landing on a Margin from the same sender is announced too (#4934)
     }
 
     private func content(_ card: PinnedMarginCard) -> some View {
@@ -60,12 +61,20 @@ struct PinnedMarginCardView: View {
         }
         guard let moment, model.playingImportedCommentary == nil, model.pendingImportedCommentary == nil else { return card.detail }
         let current = moment.playing ?? moment.target
-        if let placing = model.sharedMarginRows.first(where: { $0.id == current.marginId })?.placementStatus.positionDescription {
-            return placing
+        // A podcast Margin that isn't playing yet says where it will play, in the same words as its row (#3789).
+        if let row = model.sharedMarginRows.first(where: { $0.id == current.marginId }) {
+            if row.layer.itemIdentity.itemType == .podcast {
+                if let note = SharedMarginPlacementWording.pinnedCardLine(for: row.placementPlan), current.caption == nil,
+                   !moment.isPlayingMargin {
+                    return note
+                }
+            } else if let placing = row.placementStatus.positionDescription {
+                return placing
+            }
         }
         if let caption = current.caption { return caption }
         if !moment.isPlayingMargin, current.isApproximate || model.marginMomentPositionIsApproximate {
-            return "Approximate position: ads can differ between copies."
+            return SharedMarginPlacementWording.approximatePositionNote
         }
         return card.detail
     }
@@ -78,7 +87,8 @@ struct PinnedMarginCardView: View {
         case .playMomentNow: model.playMarginMomentNow()
         case .keepListening, .stopReview, .stopPlayingMine: model.endMarginMoment()
         case .listen: model.listenToPendingImportedCommentary()
-        case .dismiss: model.dismissPendingImportedCommentary()
+        case .dismiss: model.skipPendingImportedCommentary()
+        case .dismissSilentMargin: model.dismissSilentMarginLanding()
         }
     }
 
@@ -145,6 +155,12 @@ struct PinnedMarginCardBody: View {
         .background(AppColors.listeningBackground)
     }
 
+    /// The stages whose detail line is a Margin's own words, which can be long.
+    private var capsDetail: Bool {
+        if case .silentHere = card.stage { return true }
+        return card.stage == .waitingForTap
+    }
+
     /// The headline, the position and the detail line.
     private var words: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -172,23 +188,36 @@ struct PinnedMarginCardBody: View {
                         .accessibilityIdentifier(isReview ? "review.progress" : "marginCard.position")
                 }
             }
-            Text(detail)
+            detailText
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.85))
-                // The transcript of a Margin waiting for a tap is capped at every size, so Listen and Dismiss stay on the screen.
-                .lineLimit(card.stage == .waitingForTap ? (isLargeText ? 4 : 2) : (isLargeText ? nil : 2))
+                // The transcript of a Margin waiting for a tap, or of a silent one the listener went to (#4934), is capped at every
+                // size, so Listen and Dismiss stay on the screen.
+                .lineLimit(capsDetail ? (isLargeText ? 4 : 2) : (isLargeText ? nil : 2))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
+                // VoiceOver reads the plain words. The inline icon (`detailText`) is only a picture of the control the words name.
+                .accessibilityLabel(detail)
                 .accessibilityFocused($focusedPart, equals: .detail)
                 .accessibilityIdentifier("marginCard.detail")
         }
+    }
+
+    /// The detail line. When the card's own words name a control that is drawn as an icon (the saved-answer card's
+    /// "tap Share below"), the icon is drawn inline before that word, so the listener can match the sentence to the
+    /// control. A detail the view replaced (a placement note, a transcript) is drawn as plain text. It is `Text`, not a
+    /// view, so the icon scales with the text and the line limit still applies (#3905).
+    private var detailText: Text {
+        guard detail == card.detail, let parts = card.detailAroundSymbol else { return Text(detail) }
+        // A no-break space after the icon keeps it on the line with the word it points at.
+        return Text("\(parts.before)\(Image(systemName: "square.and.arrow.up"))\u{00A0}\(parts.after)")
     }
 
     private var icon: String {
         switch card.stage {
         case .speaking, .reading, .voicePaused, .loading: "waveform"
         case .failed: "exclamationmark.triangle"
-        case .comingUp, .waitingForTap, .upNext: "text.bubble"
+        case .comingUp, .waitingForTap, .silentHere, .upNext: "text.bubble"
         case .answerSaved: "checkmark.circle"
         case .lastMargin: "text.bubble"
         }
@@ -259,6 +288,7 @@ struct PinnedMarginCardBody: View {
         case .keepListening, .stopReview, .stopPlayingMine: "marginMoment.end"
         case .listen: "importedCommentary.listen"
         case .dismiss: "importedCommentary.dismiss"
+        case .dismissSilentMargin: "marginCard.silent.dismiss"
         }
     }
 
@@ -268,7 +298,7 @@ struct PinnedMarginCardBody: View {
         case .skipThisMargin: "forward.end.fill"
         case .retry: "arrow.clockwise"
         case .playMomentNow, .listen: "play.fill"
-        case .keepListening, .stopReview, .stopPlayingMine, .dismiss: "xmark"
+        case .keepListening, .stopReview, .stopPlayingMine, .dismiss, .dismissSilentMargin: "xmark"
         }
     }
 }

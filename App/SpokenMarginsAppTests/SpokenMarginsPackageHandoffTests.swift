@@ -1,3 +1,5 @@
+import SwiftUI
+import UIKit
 import XCTest
 @testable import SessionKit
 import SessionKitAudio
@@ -6,6 +8,40 @@ import SessionKitSharing
 @testable import SpokenMarginsApp
 
 final class SpokenMarginsPackageHandoffTests: XCTestCase {
+    /// Importing a packet for an episode at `podcasts.example.com` makes the app resolve and download it, and those are
+    /// real requests that used to fail slowly on DNS, still running when the class ended, so the next class that
+    /// watched the network (`TextSceneMapPreparerTests`) was failed by requests it never made (#4581). Every request
+    /// these tests cause now fails at once, and `tearDown` stops what the models started before the class moves on.
+    private let createdModels = CreatedModels()
+
+    override func setUp() {
+        super.setUp()
+        URLProtocol.registerClass(FailFastNetworkURLProtocol.self)
+    }
+
+    override func tearDown() async throws {
+        await Self.settle(createdModels)
+        URLProtocol.unregisterClass(FailFastNetworkURLProtocol.self)
+        try await super.tearDown()
+    }
+
+    /// Stops the downloads the models started and waits for any import still running, so nothing they ask of the
+    /// network outlives the class. The wait is on the import's own state, with the deadline only as a ceiling.
+    @MainActor
+    private static func settle(_ created: CreatedModels) async {
+        for model in created.take() {
+            model.podcastDownloadCoordinator?.shutdown()
+            await model.waitForPackageStaging()
+            try? await pollUntil(timeout: .seconds(10)) { !model.isImportingSpokenMarginsPackage }
+        }
+    }
+
+    @MainActor
+    private func tracked(_ model: Gate1AppModel) -> Gate1AppModel {
+        createdModels.add(model)
+        return model
+    }
+
     func testPackageHandoffPreservesExactBytesUntilConsumed() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("spoken-margins-package-handoff-tests-\(UUID().uuidString)", isDirectory: true)
@@ -59,7 +95,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
     @MainActor
     func testAppConsumesShareExtensionPackageIntoRecipientImportFlow() async throws {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let model = tracked(Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient()))
         model.resetAndSeed()
         let itemID = model.selectedItem.id
         model.selectedItem.interjections = [Interjection(
@@ -112,7 +148,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(model.spokenMarginsPackageImportReview?.id, review.id)
 
         // The app is killed before Import: the next launch reopens the review once, not on every foreground.
-        let relaunched = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let relaunched = tracked(Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient()))
         try await relaunched.consumePendingSpokenMarginsPackageHandoffs(from: store)
         let reopened = try XCTUnwrap(relaunched.spokenMarginsPackageImportReview, "the packet survived the relaunch")
         XCTAssertFalse(reopened.opensDirectly, "shown on an earlier launch: it waits in the sheet, nothing is fetched unasked")
@@ -132,11 +168,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
     @MainActor
     private func shareLinkModel(root: URL, fetch: @escaping ShareLinkPacketDownloader.Fetch) -> Gate1AppModel {
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: root.appendingPathComponent("recipient.sqlite")
-        )
+        ))
         model.resetAndSeed()
         model.shareLinkOpener.downloader = ShareLinkPacketDownloader(fetch: fetch)
         return model
@@ -178,9 +214,56 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         model.cancelSpokenMarginsPackageImport()
     }
 
-    /// #1967: no connection is not an expired link, and the banner offers Retry.
+    /// #3782: a share link pasted into Paste & go, the copied-link card or the Link or Podcast form opens as a tapped
+    /// one does. It used to go to the article import and come back as a web page the app could not read.
     @MainActor
-    func testAShareLinkOpenedOfflineSaysSoAndOffersARetry() async throws {
+    func testAShareLinkPastedAnywhereOpensAsATappedLinkDoesAndNeverReachesTheLinkImport() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-share-link-paste")
+        let packageURL = root.appendingPathComponent("link.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-share-link-paste")
+        let key = ShareLinkSealing.Key.random()
+        let sealed = try ShareLinkSealing.seal(
+            packet: try Data(contentsOf: packageURL), preview: Data(#"{"schema":"spokenmargins.link-preview.v1"}"#.utf8), key: key
+        )
+        let link = try XCTUnwrap(ShareLinkSealing.linkURL(
+            base: URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)")!, key: key
+        )).absoluteString
+        let message = "Cole sent you a Margin. Hear it here: \(link) Get the app at https://spokenmargins.com/join"
+        let before = Gate1AppModel.PasteAndGoOutcome.openingShareLink
+
+        let routes: [(String, (Gate1AppModel) -> Bool)] = [
+            ("Paste & go", { (model: Gate1AppModel) in model.pasteAndGo(message) == before }),
+            ("the copied-link card", { (model: Gate1AppModel) in
+                guard case .link(let url) = ClipboardLinkOffer.pasteResult(for: message) else { return false }
+                return model.pasteAndGo(url.absoluteString) == before }),
+            ("the Link or Podcast form", { (model: Gate1AppModel) in
+                model.sourceLinkURL = link
+                return model.beginSourceLinkImportFromForm(startSession: false) && model.sourceLinkURL.isEmpty
+                    && model.sourceLinkImportState == "success" }),
+        ]
+        for (route, paste) in routes {
+            let requested = ShareLinkRequestLog()
+            let folder = root.appendingPathComponent(route.replacingOccurrences(of: " ", with: "-"))
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let model = shareLinkModel(root: folder) { url, _ in
+                requested.record(url)
+                return (200, sealed.packet)
+            }
+
+            XCTAssertTrue(paste(model), route)
+            try await waitForShareLink(model) { model.spokenMarginsPackageImportReview != nil }
+
+            XCTAssertEqual(model.spokenMarginsPackageImportReview?.shareLinkId, Self.shareLinkID, route)
+            XCTAssertEqual(requested.urls.map(\.absoluteString),
+                           ["https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)/packet"], route)
+            XCTAssertNotEqual(model.sourceLinkImportState, "resolving", "\(route): the link import never ran")
+            model.cancelSpokenMarginsPackageImport()
+        }
+    }
+
+    /// #1967, #3801: no connection is not an expired link, and the sheet offers Try Again.
+    @MainActor
+    func testAShareLinkOpenedOfflineSaysSoAndOffersATryAgain() async throws {
         let root = try temporaryDirectory(named: "spoken-margins-share-link-offline")
         let model = shareLinkModel(root: root) { _, _ in throw URLError(.notConnectedToInternet) }
         let link = try XCTUnwrap(ShareLinkSealing.linkURL(
@@ -188,11 +271,212 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         ))
 
         model.handleIncomingURL(link)
-        try await waitForShareLink(model) { model.lastError != nil }
+        try await waitForShareLink(model) { model.packetOpenFailures.presented != nil }
 
-        XCTAssertEqual(model.lastError, "You're offline. Reconnect, then tap the link again.")
-        XCTAssertNotNil(model.feedbackEvent?.retry, "an offline link is worth another try")
+        let sheet = try XCTUnwrap(model.packetOpenFailures.presented)
+        XCTAssertEqual(sheet.content.row, .offline)
+        XCTAssertEqual(sheet.content.headline, "You're offline.")
+        XCTAssertTrue(sheet.showsTryAgain, "an offline link is worth another try")
+        XCTAssertNil(model.lastError, "the banner is no longer used for a failed link")
         XCTAssertNil(model.spokenMarginsPackageImportReview)
+    }
+
+    /// #3801: Try Again opens the same link again; when it works the sheet goes and the import review comes up.
+    @MainActor
+    func testTryAgainOnAnOfflineShareLinkOpensItAndTheSheetGoes() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-share-link-try-again")
+        let packageURL = root.appendingPathComponent("link.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-share-link-try-again")
+        let key = ShareLinkSealing.Key.random()
+        let sealed = try ShareLinkSealing.seal(
+            packet: try Data(contentsOf: packageURL), preview: Data(#"{"schema":"spokenmargins.link-preview.v1"}"#.utf8), key: key
+        )
+        let network = ShareLinkNetworkSwitch()
+        let model = shareLinkModel(root: root) { _, _ in
+            if network.isUp { return (200, sealed.packet) }
+            throw URLError(.notConnectedToInternet)
+        }
+        let link = try XCTUnwrap(ShareLinkSealing.linkURL(
+            base: URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)")!, key: key
+        ))
+
+        model.handleIncomingURL(link)
+        try await waitForShareLink(model) { model.packetOpenFailures.presented != nil }
+        network.isUp = true
+        model.packetOpenFailures.tryAgain()
+        XCTAssertTrue(model.packetOpenFailures.isRetrying, "the button shows a spinner while it runs")
+        try await waitForShareLink(model) { model.spokenMarginsPackageImportReview != nil }
+        try await pollUntil { model.packetOpenFailures.presented == nil }
+
+        XCTAssertNil(model.packetOpenFailures.presented, "a Try Again that worked closes the sheet")
+        XCTAssertFalse(model.packetOpenFailures.isRetrying)
+        XCTAssertFalse(model.packetOpenFailures.takeCloseNotice(), "the first-launch drawer is not told of a failure that healed")
+        model.cancelSpokenMarginsPackageImport()
+    }
+
+    /// The audit on PR #4597: a second friend's link tapped while a Try Again runs takes the opener over, so closing the
+    /// old sheet afterwards must not stop it. It used to cancel whatever the opener was running: the new link, silently.
+    @MainActor
+    func testClosingTheOldSheetDoesNotStopALinkTappedDuringItsTryAgain() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-share-link-replaces-try-again")
+        let packageURL = root.appendingPathComponent("second.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-share-link-second")
+        let key = ShareLinkSealing.Key.random()
+        let sealed = try ShareLinkSealing.seal(
+            packet: try Data(contentsOf: packageURL), preview: Data(#"{"schema":"spokenmargins.link-preview.v1"}"#.utf8), key: key
+        )
+        let secondID = "fedcba9876543210fedcba9876543210"
+        let model = shareLinkModel(root: root) { url, _ in
+            if url.absoluteString.contains(secondID) { return (200, sealed.packet) }
+            throw URLError(.notConnectedToInternet)
+        }
+        let first = try XCTUnwrap(ShareLinkSealing.linkURL(
+            base: URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)")!, key: .random()
+        ))
+        let second = try XCTUnwrap(ShareLinkSealing.linkURL(
+            base: URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(secondID)")!, key: key
+        ))
+
+        model.handleIncomingURL(first)
+        try await waitForShareLink(model) { model.packetOpenFailures.presented?.content.row == .offline }
+        model.packetOpenFailures.tryAgain()
+        XCTAssertTrue(model.packetOpenFailures.isRetrying)
+        model.handleIncomingURL(second)
+        XCTAssertFalse(model.packetOpenFailures.isRetrying, "the Try Again's open was dropped for the second link")
+        XCTAssertFalse(model.packetOpenFailures.presented?.showsTryAgain ?? true, "the first link's Try Again is gone")
+        model.packetOpenFailures.tryAgain()
+        model.packetOpenFailures.close()
+
+        try await waitForShareLink(model) { model.spokenMarginsPackageImportReview != nil }
+        XCTAssertNotNil(model.spokenMarginsPackageImportReview, "the second link opened")
+        model.cancelSpokenMarginsPackageImport()
+    }
+
+    /// #3801: a Try Again that fails differently swaps the words in place, on the same sheet; the latest wins.
+    @MainActor
+    func testATryAgainThatFailsDifferentlySwapsTheSheetsWordsInPlace() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-share-link-fails-differently")
+        let network = ShareLinkNetworkSwitch()
+        let model = shareLinkModel(root: root) { _, _ in
+            if network.isUp { return (410, Data()) }
+            throw URLError(.notConnectedToInternet)
+        }
+        let link = try XCTUnwrap(ShareLinkSealing.linkURL(
+            base: URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)")!, key: .random()
+        ))
+
+        model.handleIncomingURL(link)
+        try await waitForShareLink(model) { model.packetOpenFailures.presented != nil }
+        let firstSheetID = try XCTUnwrap(model.packetOpenFailures.presented).id
+        network.isUp = true
+        model.packetOpenFailures.tryAgain()
+        try await waitForShareLink(model) { model.packetOpenFailures.presented?.content.row == .expired }
+
+        let sheet = try XCTUnwrap(model.packetOpenFailures.presented)
+        XCTAssertEqual(sheet.id, firstSheetID, "the sheet stays up; only its words change")
+        XCTAssertFalse(sheet.showsTryAgain, "an expired link has one OK")
+        XCTAssertFalse(model.packetOpenFailures.isRetrying)
+    }
+
+    /// #3801: a Try Again whose download works but whose import fails for a reason that is not the file (the banner's
+    /// kind) must not leave the old "You're offline." words and a spinner on the sheet; the banner has to be readable.
+    @MainActor
+    func testATryAgainThatEndsWithoutOpeningAndWithoutNewWordsClosesTheSheetSoTheBannerShows() async throws {
+        let presenter = PacketOpenFailurePresenter()
+        presenter.present(PacketOpenFailureSheetContent(row: .offline), retry: {})
+        let wordsWhenTheOpenBegan = presenter.generation
+        presenter.tryAgain()
+        XCTAssertTrue(presenter.isRetrying)
+
+        presenter.openEnded(opened: false, since: wordsWhenTheOpenBegan)
+
+        XCTAssertNil(presenter.presented, "the stale offline words are gone")
+        XCTAssertFalse(presenter.isRetrying, "no spinner is left behind")
+        XCTAssertTrue(presenter.takeCloseNotice(), "the drawer a failed friend's file withdrew comes back")
+    }
+
+    /// #3801: new words on the sheet mean an earlier open that ends without opening has nothing to take down.
+    @MainActor
+    func testAnOpenThatEndsAfterTheSheetSaidSomethingNewLeavesTheNewWordsUp() async throws {
+        let presenter = PacketOpenFailurePresenter()
+        presenter.present(PacketOpenFailureSheetContent(row: .offline), retry: {})
+        let before = presenter.generation
+        presenter.present(PacketOpenFailureSheetContent(row: .expired), retry: nil)
+
+        presenter.openEnded(opened: false, since: before)
+
+        XCTAssertEqual(presenter.presented?.content.row, .expired)
+    }
+
+    /// #3801: giving up on the sheet in the middle of a Try Again stops that open and tells the drawer once.
+    @MainActor
+    func testClosingTheSheetInTheMiddleOfATryAgainStopsThatOpen() async throws {
+        let presenter = PacketOpenFailurePresenter()
+        var cancelled = 0
+        presenter.cancelRunningOpen = { cancelled += 1 }
+        presenter.present(PacketOpenFailureSheetContent(row: .offline), retry: {})
+        presenter.tryAgain()
+
+        presenter.close()
+
+        XCTAssertEqual(cancelled, 1)
+        XCTAssertTrue(presenter.takeCloseNotice())
+        XCTAssertFalse(presenter.isRetrying)
+    }
+
+    /// #3801: a pasted link that is not a share link takes over from the download that was running before it, so that
+    /// download's late answer neither replaces the words the listener is looking at nor reports anything.
+    @MainActor
+    func testAnUnparsedLinkCancelsTheDownloadThatWasRunning() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-share-link-replaced-by-join")
+        let gate = ShareLinkAnswerGate()
+        let model = shareLinkModel(root: root) { _, _ in
+            await gate.wait()
+            return (410, Data())
+        }
+        let failures = ShareLinkFailureLog()
+        let first = try XCTUnwrap(ShareLinkURL(url: try XCTUnwrap(ShareLinkSealing.linkURL(
+            base: URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)")!, key: .random()))))
+        // The running task holds `alive` through its `fail` closure and lets go only when it has finished, so waiting for
+        // that is what makes "reported nothing" mean something.
+        final class TaskAlive {}
+        var alive: TaskAlive? = TaskAlive()
+        weak let taskAlive = alive
+        model.shareLinkOpener.open(first, stage: { _ in XCTFail("the first link has no packet") }, fail: { [alive] failure in
+            withExtendedLifetime(alive) { failures.first.append(failure) }
+        })
+        alive = nil
+        try await pollUntil { gate.isWaiting }
+        XCTAssertTrue(gate.isWaiting, "the first download never started")
+
+        model.openShareLink(URL(string: "https://spokenmargins.proximitytoprogress.com/join")!)
+        gate.answer()
+        try await pollUntil { taskAlive == nil }
+
+        XCTAssertNil(taskAlive, "the replaced download never finished")
+        XCTAssertEqual(failures.first, [], "a cancelled download reports nothing")
+        XCTAssertEqual(model.packetOpenFailures.presented?.content.row, .notAShareLink)
+    }
+
+    /// #3801: closing the sheet tells the first-launch drawer once, and Try Again does not.
+    @MainActor
+    func testClosingTheFailureSheetOwesTheDrawerOneNoticeAndTryAgainOwesNone() async throws {
+        let presenter = PacketOpenFailurePresenter()
+        var retries = 0
+        presenter.present(PacketOpenFailureSheetContent(row: .offline), retry: { retries += 1 })
+
+        presenter.tryAgain()
+        XCTAssertEqual(retries, 1)
+        XCTAssertFalse(presenter.takeCloseNotice(), "the sheet is still up")
+        presenter.tryAgain()
+        XCTAssertEqual(retries, 1, "a second tap while one runs does nothing")
+
+        presenter.close()
+        XCTAssertTrue(presenter.takeCloseNotice())
+        XCTAssertFalse(presenter.takeCloseNotice(), "told once")
+        presenter.present(PacketOpenFailureSheetContent(row: .expired), retry: nil)
+        presenter.succeeded()
+        XCTAssertFalse(presenter.takeCloseNotice(), "a failure that healed owes nothing")
     }
 
     @MainActor
@@ -204,14 +488,17 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         ))
 
         model.handleIncomingURL(link)
-        try await waitForShareLink(model) { model.lastError != nil }
+        try await waitForShareLink(model) { model.packetOpenFailures.presented != nil }
 
-        XCTAssertEqual(model.lastError, "This link has expired. Ask your friend to share it again.")
+        let sheet = try XCTUnwrap(model.packetOpenFailures.presented)
+        XCTAssertEqual(sheet.content.row, .expired)
+        XCTAssertEqual(sheet.content.line, "Ask your friend to share it again.")
+        XCTAssertFalse(sheet.showsTryAgain)
         XCTAssertNil(model.spokenMarginsPackageImportReview)
     }
 
     @MainActor
-    func testAShareLinkWithoutItsKeySaysItIsDamagedWithoutAskingTheServer() async throws {
+    func testAShareLinkWithoutItsKeySaysItIsCutOffWithoutAskingTheServer() async throws {
         let root = try temporaryDirectory(named: "spoken-margins-share-link-keyless")
         let requested = ShareLinkRequestLog()
         let model = shareLinkModel(root: root) { url, _ in
@@ -220,9 +507,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         }
 
         model.handleIncomingURL(URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)")!)
-        try await waitForShareLink(model) { model.lastError != nil }
+        try await waitForShareLink(model) { model.packetOpenFailures.presented != nil }
 
-        XCTAssertEqual(model.lastError, "This link is incomplete or damaged.")
+        let sheet = try XCTUnwrap(model.packetOpenFailures.presented)
+        XCTAssertEqual(sheet.content.row, .cutOff)
+        XCTAssertEqual(sheet.content.reportLinkID, Self.shareLinkID, "the whole id can be reported; there is no key to leak")
         XCTAssertTrue(requested.urls.isEmpty)
         XCTAssertNil(model.spokenMarginsPackageImportReview)
     }
@@ -245,16 +534,25 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let first = try XCTUnwrap(ShareLinkURL(url: try XCTUnwrap(ShareLinkSealing.linkURL(base: URL(string: base + firstID)!, key: .random()))))
         let second = try XCTUnwrap(ShareLinkURL(url: try XCTUnwrap(ShareLinkSealing.linkURL(base: URL(string: base + secondID)!, key: .random()))))
 
-        opener.open(first, stage: { _ in XCTFail("the first link has no packet") }, fail: { message, _ in failures.first.append(message) })
+        // The first link's task holds `alive` through its `fail` closure and lets go only when it has finished, after any
+        // fail() it makes. Waiting for that, not a fixed 200 ms, is what makes "no error" mean something: a replaced link
+        // that reported "expired" more slowly than the sleep used to pass (#4313).
+        final class TaskAlive {}
+        var alive: TaskAlive? = TaskAlive()
+        weak let firstTaskAlive = alive
+        opener.open(first, stage: { _ in XCTFail("the first link has no packet") }, fail: { [alive] failure in
+            withExtendedLifetime(alive) { failures.first.append(failure) }
+        })
+        alive = nil
         try await pollUntil { firstAnswer.isWaiting }
         XCTAssertTrue(firstAnswer.isWaiting, "the first link's download never started")
-        opener.open(second, stage: { _ in XCTFail("the second link has no packet") }, fail: { message, _ in failures.second.append(message) })
+        opener.open(second, stage: { _ in XCTFail("the second link has no packet") }, fail: { failure in failures.second.append(failure) })
+        XCTAssertNotNil(firstTaskAlive, "the first link's task is still waiting on its server")
         firstAnswer.answer()
-        try await pollUntil { !(failures.second.isEmpty || !firstAnswer.answered) }
-        // Give the replaced task time to reach its catch on the main actor.
-        try await Task.sleep(for: .milliseconds(200))
+        try await pollUntil { !failures.second.isEmpty && firstTaskAlive == nil }
+        XCTAssertNil(firstTaskAlive, "the replaced link's task never finished")
 
-        XCTAssertEqual(failures.second, ["This link has expired. Ask your friend to share it again."])
+        XCTAssertEqual(failures.second, [.expired])
         XCTAssertEqual(failures.first, [], "the replaced link must not show an error over the link the listener tapped next")
     }
 
@@ -269,9 +567,29 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
         model.handleIncomingURL(URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)/packet")!)
 
-        XCTAssertEqual(model.lastError, "This isn't a Spoken Margins share link.")
+        // Anything else under /l/ is a link that lost part of itself (#3801).
+        XCTAssertEqual(model.packetOpenFailures.presented?.content.row, .cutOff)
         XCTAssertTrue(requested.urls.isEmpty)
         XCTAssertNil(model.spokenMarginsPackageImportReview)
+    }
+
+    /// #3801: the rest of the share host is not a link to a friend's Margins, and nothing is downloaded for it.
+    @MainActor
+    func testAPageOnTheShareHostThatIsNotUnderLSaysItIsNotAShareLink() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-share-link-join-page")
+        let requested = ShareLinkRequestLog()
+        let model = shareLinkModel(root: root) { url, _ in
+            requested.record(url)
+            return (200, Data())
+        }
+
+        model.openShareLink(URL(string: "https://spokenmargins.proximitytoprogress.com/join")!)
+
+        let sheet = try XCTUnwrap(model.packetOpenFailures.presented)
+        XCTAssertEqual(sheet.content.row, .notAShareLink)
+        XCTAssertNil(sheet.content.reportLinkID)
+        XCTAssertTrue(requested.urls.isEmpty)
+        XCTAssertNil(model.lastError)
     }
 
     @MainActor
@@ -284,11 +602,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         // Opening a store migrates/writes metadata. Prepare the inspection connection
         // before asynchronous model work, then read the actual persisted import below.
         let store = try SQLiteSessionStore(path: databaseURL.path)
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         let previouslySelectedItemID = model.selectedItem.id
 
@@ -345,11 +663,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let packageURL = root.appendingPathComponent("referenced-episode.spokenmargins")
         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-reference-with-enclosure")
         let store = try SQLiteSessionStore(path: databaseURL.path)
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: FailingPackagePodcastLinkResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
 
         model.handleIncomingURL(packageURL)
@@ -376,11 +694,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let databaseURL = root.appendingPathComponent("recipient.sqlite")
         let packageURL = root.appendingPathComponent("referenced-episode.spokenmargins")
         _ = try writePodcastPackage(to: packageURL, packageID: "package-import-margin-rows")
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: FailingPackagePodcastLinkResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         await model.settleMarginRows()
 
@@ -395,6 +713,66 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertGreaterThan(timeline, 0, "the packet should carry Margins")
         let shared = model.sharedMarginRows.filter { $0.layer.itemId == itemID }
         XCTAssertEqual(shared.count, timeline, "the Margins tab should list what the Timeline shows")
+    }
+
+    /// #4098: a Shared group's heading opens its item through `openItemFromTap`, the call the heading's button makes.
+    @MainActor
+    func testImportedPacketsSharedGroupHeadingOpensItsItem() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-import-shared-group-open")
+        let packageURL = root.appendingPathComponent("group.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-shared-group-open")
+        let model = tracked(Gate1AppModel(
+            sourceLinkResolver: FailingPackagePodcastLinkResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: root.appendingPathComponent("recipient.sqlite")
+        ))
+        model.resetAndSeed()
+        await model.settleMarginRows()
+
+        model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+        await model.settleMarginRows()
+        let importedID = model.selectedItem.id
+
+        model.openLibrary()
+        XCTAssertNotEqual(model.screen, .item, "the listener is off the item before tapping the heading")
+
+        let entries = model.sharedMarginRows.map {
+            MarginCollection.SharedEntry(interjection: $0.interjection, layer: $0.layer, itemTitle: $0.itemTitle)
+        }
+        let groups = SharedMarginGroups.groups(from: entries, libraryItemIDs: Set(entries.compactMap(\.layer.itemId)))
+        let group = try XCTUnwrap(groups.first { $0.itemID == importedID }, "the packet's Margins form one group under their item")
+        XCTAssertTrue(group.inLibrary)
+        XCTAssertGreaterThan(group.count, 0)
+
+        model.openItemFromTap(id: try XCTUnwrap(group.itemID))
+        await model.settleItemOpen()
+        XCTAssertEqual(model.screen, .item)
+        XCTAssertEqual(model.selectedItem.id, importedID, "the heading opened the item the Margins belong to")
+    }
+
+    @MainActor
+    func testANamelessPacketImportGivesAnAFriendFollowingRow() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-import-nameless-following")
+        let packageURL = root.appendingPathComponent("nameless.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-nameless-following", sender: "Someone")
+        let model = tracked(Gate1AppModel(
+            sourceLinkResolver: FailingPackagePodcastLinkResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: root.appendingPathComponent("recipient.sqlite")
+        ))
+        model.resetAndSeed()
+        await model.settleMarginRows()
+
+        model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+        await model.settleMarginRows()
+
+        XCTAssertEqual(model.followingFriends.first?.name, "A friend", "a packet with no usable sender name still has a Following row, first")
     }
 
     @MainActor
@@ -507,11 +885,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             return (url, manifest)
         }
         let store = try SQLiteSessionStore(path: databaseURL.path)
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         XCTAssertFalse(try store.listItems().contains { $0.media?.url == Self.podcastAudioURL })
 
@@ -557,11 +935,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let packageURL = root.appendingPathComponent("\(name).spokenmargins")
         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-\(name)")
         let store = try SQLiteSessionStore(path: databaseURL.path)
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: resolver,
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         model.handleIncomingURL(packageURL)
         await model.waitForPackageStaging()
@@ -587,11 +965,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let databaseURL = root.appendingPathComponent("recipient.sqlite")
         let packageURL = root.appendingPathComponent("repair-episode.spokenmargins")
         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-repair-episode")
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         let wrongItemID = model.selectedItem.id
         let store = try SQLiteSessionStore(path: databaseURL.path)
@@ -748,9 +1126,20 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             layer,
             records: [resolved, absent]
         ))
-        XCTAssertFalse(Gate1AppModel.isImportedCommentaryLayerPlaybackEligible(
+        // A passage missing from this copy still has a Margin to play, after the others (#3789).
+        XCTAssertTrue(Gate1AppModel.isImportedCommentaryLayerPlaybackEligible(
             layer,
             records: [absent]
+        ))
+        XCTAssertFalse(Gate1AppModel.isImportedCommentaryLayerPlaybackEligible(
+            layer,
+            records: []
+        ))
+        var wrongSource = layer
+        wrongSource.sourceResolutionStatus = .wrongSource
+        XCTAssertFalse(Gate1AppModel.isImportedCommentaryLayerPlaybackEligible(
+            wrongSource,
+            records: [resolved, absent]
         ))
     }
 
@@ -761,12 +1150,12 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let packageURL = root.appendingPathComponent("transcript-fallback.spokenmargins")
         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-transcript-fallback")
         let transcriber = PackageAnchorTranscriptionClient()
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             sourceTranscriptionClient: transcriber,
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         model.handleIncomingURL(packageURL)
         await model.waitForPackageStaging()
@@ -912,10 +1301,10 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         )
         let store = try SQLiteSessionStore(path: databaseURL.path)
         let extractor = ArticlePackageExtractor(extraction)
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         model.readablePageExtractor = extractor
         model.handleIncomingURL(packageURL)
@@ -934,12 +1323,12 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let packageURL = root.appendingPathComponent("stream-then-download.spokenmargins")
         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-stream-then-download")
         let transcriber = PackageAnchorTranscriptionClient()
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             sourceTranscriptionClient: transcriber,
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         model.handleIncomingURL(packageURL)
         await model.waitForPackageStaging()
@@ -1001,11 +1390,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
                 packageID: "package-held-pass-\(sender.lowercased())", sender: sender
             )
         }
-        let model = Gate1AppModel(
+        let model = tracked(Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
-        )
+        ))
         model.resetAndSeed()
         for sender in ["Ana", "Ben"] {
             model.handleIncomingURL(root.appendingPathComponent("\(sender).spokenmargins"))
@@ -1163,6 +1552,28 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     }
 }
 
+/// The models a test made, so `tearDown` can stop their downloads.
+private final class CreatedModels: @unchecked Sendable {
+    private let lock = NSLock()
+    private var models: [Gate1AppModel] = []
+
+    @MainActor func add(_ model: Gate1AppModel) { lock.withLock { models.append(model) } }
+    @MainActor func take() -> [Gate1AppModel] { lock.withLock { let taken = models; models = []; return taken } }
+}
+
+/// Fails every request made while it is registered, at once, so none of them is still running when the test ends.
+/// A test that needs an answer from the network passes its own session; this is for the requests it never meant to make.
+private final class FailFastNetworkURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+    }
+
+    override func stopLoading() {}
+}
+
 private actor PackageAnchorTranscriptionClient: SourceTranscriptionClient {
     private var requestCount = 0
 
@@ -1247,10 +1658,20 @@ private final class ArticlePackageExtractor: ReadablePageExtracting {
     }
 }
 
+/// A network the test turns on between two opens of the same link.
+private final class ShareLinkNetworkSwitch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var up = false
+    var isUp: Bool {
+        get { lock.withLock { up } }
+        set { lock.withLock { up = newValue } }
+    }
+}
+
 @MainActor
 private final class ShareLinkFailureLog {
-    var first: [String] = []
-    var second: [String] = []
+    var first: [ShareLinkPacketDownloader.Failure] = []
+    var second: [ShareLinkPacketDownloader.Failure] = []
 }
 
 /// Holds a stub download until the test answers it. The wait ignores cancellation on purpose: it stands
@@ -1298,4 +1719,68 @@ private final class ShareLinkRequestLog: @unchecked Sendable {
     }
 
     var urls: [URL] { lock.lock(); defer { lock.unlock() }; return recorded }
+}
+
+/// #3800: a file sent as a file says what it is and where to get the app, but only where the line is known to arrive
+/// with the file. These read what the share sheet's item sources hand out for each target, and the caption the sender
+/// sees, not the strings they are built from.
+@MainActor
+final class FileNeedsTheAppShareTests: XCTestCase {
+    private let packet = URL(fileURLWithPath: "/tmp/shared-session.spokenmargins")
+
+    private func type(_ raw: String) -> UIActivity.ActivityType { UIActivity.ActivityType(rawValue: raw) }
+
+    func testAFileWithATitleGoesWithALineThatOnlyMessagesAndMailTake() throws {
+        let items = SharedSpokenMarginsPackageActivityView.activityItems(packageURL: packet, itemTitle: "The Daily")
+        XCTAssertEqual(items.count, 2)
+        let file = try XCTUnwrap(items.first as? SpokenMarginsPackageActivityItem)
+        let line = try XCTUnwrap(items.last as? SpokenMarginsFileMessageActivityItem)
+        let controller = UIActivityViewController(activityItems: [], applicationActivities: nil)
+        let words = "I left you notes on “The Daily”. Open this file in Spoken Margins. Get it here: https://spokenmargins.com/join"
+
+        for target in [UIActivity.ActivityType.message, .mail] {
+            XCTAssertEqual(line.activityViewController(controller, itemForActivityType: target) as? String, words, "\(target)")
+        }
+        // Every other target, and a target that reports none, gets the file alone.
+        let others: [UIActivity.ActivityType?] = [
+            .airDrop, .copyToPasteboard, .saveToCameraRoll, .addToReadingList,
+            type("com.apple.CloudDocsUI.AddToiCloudDrive"), type("net.whatsapp.WhatsApp.ShareExtension"), nil,
+        ]
+        for target in others {
+            XCTAssertNil(line.activityViewController(controller, itemForActivityType: target), "\(String(describing: target))")
+            // The file itself goes to all of them, unchanged.
+            XCTAssertEqual(file.activityViewController(controller, itemForActivityType: target) as? URL, packet)
+        }
+        XCTAssertEqual(line.activityViewController(controller, subjectForActivityType: .mail), "Margins on “The Daily”")
+        XCTAssertEqual(file.activityViewController(controller, subjectForActivityType: .mail), "Margins on “The Daily”")
+    }
+
+    /// A sheet with no title, the old call, still sends the file alone with the old subject.
+    func testAFileWithNoTitleIsUnchanged() throws {
+        let items = SharedSpokenMarginsPackageActivityView.activityItems(packageURL: packet, itemTitle: nil)
+        XCTAssertEqual(items.count, 1)
+        let file = try XCTUnwrap(items.first as? SpokenMarginsPackageActivityItem)
+        let controller = UIActivityViewController(activityItems: [], applicationActivities: nil)
+        XCTAssertEqual(file.activityViewController(controller, subjectForActivityType: .mail), "Spoken Margins shared session")
+    }
+
+    func testTheCaptionFitsTheNarrowestPhoneAtEveryTextSize() throws {
+        for linksOffered in [true, false] {
+            for size in [DynamicTypeSize.large, .accessibility5] {
+                let content = Build23FileNeedsAppCaption(linksOffered: linksOffered)
+                    .environment(\.dynamicTypeSize, size)
+                    .background(Color(uiColor: .systemBackground))
+                let renderer = ImageRenderer(content: content)
+                renderer.proposedSize = ProposedViewSize(width: 343, height: nil)
+                renderer.scale = 2
+                let image = try XCTUnwrap(renderer.uiImage, "links \(linksOffered) \(size): the caption drew nothing")
+                XCTAssertLessThanOrEqual(image.size.width, 344, "links \(linksOffered) \(size): ran off the screen")
+                XCTAssertGreaterThan(image.size.height, 12, "links \(linksOffered) \(size)")
+                let attachment = XCTAttachment(image: image)
+                attachment.name = "file-needs-app-caption-links-\(linksOffered)-\(size)"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+        }
+    }
 }

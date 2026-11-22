@@ -119,6 +119,7 @@ public enum MarginCollection {
         sessions: [Session],
         loadMap: ((String) -> ListeningMap?)? = nil,
         loadMediaChapters: ((String) -> [MediaTimelineChapter])? = nil,
+        loadTranscriptTimes: ((String) -> TranscriptTimes?)? = nil,
         loadInterjections: (String) throws -> [Interjection],
         loadImportedLayers: () throws -> [ImportedCommentaryLayer],
         loadImportedInterjections: (String) throws -> [ImportedCommentaryInterjection]
@@ -146,9 +147,12 @@ public enum MarginCollection {
             }
             .sorted { $0.interjection.createdAt > $1.interjection.createdAt }
         let privateRows = ordered(rows)
-        guard loadMap != nil || loadMediaChapters != nil else { return Entries(privateRows: privateRows, sharedRows: sharedRows) }
+        guard loadMap != nil || loadMediaChapters != nil || loadTranscriptTimes != nil else {
+            return Entries(privateRows: privateRows, sharedRows: sharedRows)
+        }
         let places = MarginPlaces.places(
-            for: privateRows, items: items, loadMap: loadMap, loadMediaChapters: loadMediaChapters ?? { _ in [] })
+            for: privateRows, items: items, loadMap: loadMap, loadMediaChapters: loadMediaChapters ?? { _ in [] },
+            loadTranscriptTimes: loadTranscriptTimes)
         let placedRows = privateRows.map { entry -> PrivateEntry in
             var placed = entry
             placed.place = places[entry.id]

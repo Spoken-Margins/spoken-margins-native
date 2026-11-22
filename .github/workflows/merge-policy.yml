@@ -1,0 +1,78 @@
+# The "merge policy" check for GitHub's merge queue (#4693, step 2 of the merge queue move).
+#
+# The rules GitHub has no setting for, in one check that runs on the PR and again in the queue
+# (scripts/merge_policy.py says which): a clean audit for audio, persistence, packet and lane changes, inherited audit
+# holds, the owner's tap (`owner-tap` label) for `.github/` and `scripts/lane-runner.py`, and an outside contributor's
+# sign-off. Advisory until the "protect main" ruleset lists it as a required check.
+#
+# Safety: the script is checked out from main, never from the PR or the merge group. The PR's commits are fetched as
+# git data and only read with git; nothing from them is built or run. The token is read-only. The PR number and SHAs
+# reach the shell through env, not interpolation. Same-repo PRs only (a fork's PR is skipped, as in every workflow).
+# A limit stated plainly: on pull_request and merge_group GitHub runs this file as the PR or group has it, so a PR
+# that edits this file changes its own check. Such a PR touches `.github/`, which this check holds for the owner's
+# tap, but the edited copy is what decides that. The owner's review of `.github/` diffs is the guard.
+#
+# The audit turns the check green by re-running the PR's own pull_request run of this workflow after it posts
+# (ops/codex/sm_codex_audit.py rerun_merge_policy): a check from a workflow_dispatch run does not satisfy a required
+# check. A label change re-runs it through the labeled/unlabeled events.
+#
+# Cost and catch: one Linux job of about 30 seconds per PR event and per queue entry, no Mac minutes, no tokens. It
+# carries the rules lane-runner.py enforced before merging (it held 10 owner-tap PRs and every audited PR in the
+# 400 merges to 2026-11-19). Waste signal: a month in which it never blocks a PR that would otherwise have merged.
+name: merge-policy
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Check this PR at its current head (a dispatched check does not satisfy a required check)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# No `concurrency` group on purpose (#4905). A re-arm (remove `needs-fix`, add `automerge`) fires two label events in the
+# same second. With `cancel-in-progress` one of the two runs was cancelled, and when the cancelled run was the newer
+# one GitHub read the required check as cancelled and never queued the PR: green checks, auto-merge on, no queue entry,
+# for hours (#4898 for 2 hours, #4871 and #4830 for 5). Both runs read the labels and the audit comments live, so two
+# runs at once are harmless, and each is about 30 seconds on a Linux runner.
+
+jobs:
+  policy:
+    name: merge policy
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # main's copy of the rules, with history so merge bases and the PR's commits can be read.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          lfs: false
+          persist-credentials: false
+      - name: Check the merge rules
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GROUP_HEAD: ${{ github.event.merge_group.head_sha }}
+          SM_LANE_INHERITED_CACHE: ${{ runner.temp }}/inherited-holds.json
+        run: |
+          # The PR heads are fetched with a token-less remote: the repository is public.
+          if [ "$EVENT" = merge_group ]; then
+            python3 scripts/merge_policy.py --repo "$GH_REPO" --group-head "$GROUP_HEAD" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            python3 scripts/merge_policy.py --repo "$GH_REPO" --pr "$PR" --head "$HEAD_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "${PIPESTATUS[0]}"

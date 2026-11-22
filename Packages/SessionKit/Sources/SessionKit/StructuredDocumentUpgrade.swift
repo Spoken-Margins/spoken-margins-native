@@ -76,13 +76,15 @@ public enum StructuredDocumentUpgrader {
             )
         }
         let margins = baseline.margins
-        let nonText = margins.filter { $0.anchor.anchorType != .text }.map(\.id)
+        // A moved Margin with no place has no text range to carry: its zeros are not an anchor. It crosses unchanged
+        // (#4233), where otherwise it would stop the upgrade as a Margin that is not a text anchor.
+        let nonText = margins.filter { $0.hasPlace && $0.anchor.anchorType != .text }.map(\.id)
         guard nonText.isEmpty else { return .failure(.nonTextAnchor(marginIds: nonText)) }
 
         // Margin ids are numbered per session ("ij-001" in each; the store keys them
         // by session and id), so a moved range is tracked by both.
         func key(_ margin: Interjection) -> String { "\(margin.sessionId)::\(margin.id)" }
-        let anchors = margins.map {
+        let anchors = margins.filter(\.hasPlace).map {
             StructuredDocumentMigration.TextAnchor(
                 id: key($0), start: $0.anchor.startChar, end: $0.anchor.endChar,
                 before: $0.anchor.anchorBefore, after: $0.anchor.anchorAfter
@@ -119,6 +121,7 @@ public enum StructuredDocumentUpgrader {
         let newEdition = SHA256.hash(data: Data(document.text.utf8)).map { String(format: "%02x", $0) }.joined()
         let movedMargins = margins.map { margin -> Interjection in
             var moved = margin
+            guard margin.hasPlace else { return moved }
             if let range = placed[key(margin)] {
                 moved.anchor.startChar = range.lowerBound
                 moved.anchor.endChar = range.upperBound

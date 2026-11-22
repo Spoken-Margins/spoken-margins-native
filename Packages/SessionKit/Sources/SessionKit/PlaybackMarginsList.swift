@@ -101,11 +101,14 @@ public enum PlaybackMarginsList {
         return own + shared
     }
 
-    /// A Margin on the item's source sits at its recorded time, else at its text offset.
+    /// A Margin on the item's source sits at its recorded time, else at its text offset. One with no place
+    /// (`Interjection.hasPlace`, #4233) has no position, so it comes last.
     static func row(own entry: MarginCollection.PrivateEntry) -> Row {
         let interjection = entry.interjection
         var position: Position?
-        if let ms = interjection.anchor.mediaTimeMs, ms >= 0 {
+        if !interjection.hasPlace {
+            position = nil
+        } else if let ms = interjection.anchor.mediaTimeMs, ms >= 0 {
             position = .mediaTimeMs(ms)
         } else if interjection.anchor.anchorType == .text, interjection.anchor.startChar >= 0 {
             position = .charOffset(interjection.anchor.startChar)

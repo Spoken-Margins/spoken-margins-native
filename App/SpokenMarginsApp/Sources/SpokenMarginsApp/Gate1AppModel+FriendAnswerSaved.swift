@@ -6,7 +6,7 @@ import SessionKit
 /// rows, which the Margins screen already holds, so it adds no store read.
 extension Gate1AppModel {
     /// The open item's live friend layers and the listener's own Margins on it.
-    private var friendItemFacts: (layers: [ImportedCommentaryLayer], localMargins: [Interjection]) {
+    var friendItemFacts: (layers: [ImportedCommentaryLayer], localMargins: [Interjection]) {
         let itemID = selectedItem.id
         var layers: [String: ImportedCommentaryLayer] = [:]
         for row in sharedMarginRows where row.layer.itemId == itemID { layers[row.layer.id] = row.layer }
@@ -29,7 +29,7 @@ extension Gate1AppModel {
         return PinnedMarginCard.friendsLast(now: Date(), heardAMargin: heard, localMargins: facts.localMargins, layers: facts.layers)
     }
 
-    /// The player's Share: on a friend's item where the listener has answered, "Send replies to <friend>" with the answers
+    /// The player's Share: on a friend's item where the listener has answered, "Share replies with <friend>" with the answers
     /// picked and changeable; on any other item the share sheet it always opened.
     func openPlaybackShareStartingWithFriendAnswers() {
         let facts = friendItemFacts

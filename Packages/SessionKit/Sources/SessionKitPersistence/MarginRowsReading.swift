@@ -11,6 +11,7 @@ public enum MarginRowsReading {
             items: store.listItems(), sessions: store.loadSessions(),
             loadMap: { try? store.loadListeningMap(itemId: $0) },
             loadMediaChapters: { (try? store.loadTranscriptTimelineChapters(itemId: $0)) ?? [] },
+            loadTranscriptTimes: { try? store.loadTranscriptTimes(itemId: $0) },
             loadInterjections: { try store.loadInterjections(sessionId: $0) },
             loadImportedLayers: { hiddenSenders.visible(try store.loadImportedCommentaryLayers()) },
             loadImportedInterjections: { hiddenSenders.visible(try store.loadImportedCommentaryInterjections(layerId: $0)) })
@@ -26,6 +27,7 @@ public enum MarginRowsReading {
             items: [item], sessions: store.loadSessions(itemId: itemId),
             loadMap: { try? store.loadListeningMap(itemId: $0) },
             loadMediaChapters: { (try? store.loadTranscriptTimelineChapters(itemId: $0)) ?? [] },
+            loadTranscriptTimes: { try? store.loadTranscriptTimes(itemId: $0) },
             loadInterjections: { try store.loadInterjections(sessionId: $0) },
             loadImportedLayers: { hiddenSenders.visible(try store.loadImportedCommentaryLayers(itemId: itemId)) },
             loadImportedInterjections: { hiddenSenders.visible(try store.loadImportedCommentaryInterjections(layerId: $0)) })

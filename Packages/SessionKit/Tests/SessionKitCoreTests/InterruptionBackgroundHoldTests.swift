@@ -252,7 +252,7 @@ final class InterruptionBackgroundHoldTests: XCTestCase {
         var resumes = 0
         rig.activationFailure = "CannotInterruptOthers"
         hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
-        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        rig.otherAudioPlaysThenStops(advancing: { advance(rig, by: 0.5) })
         for _ in 0..<40 { advance(rig, by: 0.5) }
 
         XCTAssertTrue(hold.isHolding, "a call must not cause early suspension while waiting for its real end")
@@ -261,14 +261,14 @@ final class InterruptionBackgroundHoldTests: XCTestCase {
         XCTAssertEqual(resumes, 0)
         XCTAssertTrue(rig.pending.isEmpty, "activation is not retried during the call")
         XCTAssertEqual(rig.ledger.events.first?.fields, [
-            "outcome": "activation_failed", "heldMs": "1500", "error": "CannotInterruptOthers"
+            "outcome": "activation_failed", "heldMs": "2000", "error": "CannotInterruptOthers"
         ])
 
         hold.interruptionEnded()
         XCTAssertFalse(hold.isHolding)
         XCTAssertEqual(rig.ledger.ends, 1)
         XCTAssertEqual(hold.outcome, .ended)
-        XCTAssertEqual(rig.ledger.events.last?.fields, ["outcome": "ended", "heldMs": "20000"])
+        XCTAssertEqual(rig.ledger.events.last?.fields, ["outcome": "ended", "heldMs": "20500"])
         for _ in 0..<10 { advance(rig, by: 0.5) }
         XCTAssertEqual(resumes, 0, "only the player's real-end handler decides whether to resume")
     }
@@ -297,8 +297,8 @@ final class InterruptionBackgroundHoldTests: XCTestCase {
             let hold = rig.hold(now: { [unowned self] in self.now })
             var resumes = 0
             rig.activationFailure = "CannotInterruptOthers"
-            rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
             hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+            rig.otherAudioPlaysThenStops(advancing: { advance(rig, by: 0.5) })
             for _ in 0..<3 { advance(rig, by: 0.5) }
             XCTAssertTrue(hold.isHolding)
 
@@ -314,6 +314,7 @@ final class InterruptionBackgroundHoldTests: XCTestCase {
             rig.activationFailure = nil
             hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
             rig.ledger.expire(0)
+            rig.otherAudioPlaysThenStops(advancing: { advance(rig, by: 0.5) })
             for _ in 0..<3 { advance(rig, by: 0.5) }
             XCTAssertEqual(resumes, 1, "the next interruption starts a fresh watch")
             XCTAssertEqual(rig.activations, 2)
@@ -326,11 +327,11 @@ final class InterruptionBackgroundHoldTests: XCTestCase {
         let rig = OtherAudioRig()
         let hold = rig.hold(now: { [unowned self] in self.now })
         var resumes = 0
-        // A phone call: no "other audio" reported, but the call won't give up the audio session.
+        // A phone call: its ring is seen, then no "other audio" is reported, but the call won't give up the audio session.
         rig.activationFailure = "Session activation failed (CannotInterruptOthers)"
 
         hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
-        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        rig.otherAudioPlaysThenStops(advancing: { advance(rig, by: 0.5) })
         for _ in 0..<10 { advance(rig, by: 0.5) }
 
         XCTAssertEqual(resumes, 0)
@@ -340,7 +341,7 @@ final class InterruptionBackgroundHoldTests: XCTestCase {
         XCTAssertEqual(hold.outcome, .activationFailed)
         XCTAssertEqual(rig.ledger.events.last?.fields, [
             "outcome": "activation_failed",
-            "heldMs": "1500",
+            "heldMs": "2000",
             "error": "Session activation failed (CannotInterruptOthers)"
         ])
     }
@@ -372,6 +373,87 @@ final class InterruptionBackgroundHoldTests: XCTestCase {
 
         XCTAssertEqual(resumes, 0, "a suspended app can't resume; the next Play does")
         XCTAssertEqual(hold.outcome, .expired)
+    }
+
+    // MARK: - #4412: another app starting dictation or audio must not be interrupted by the fallback resume
+
+    func testAnotherAppStartingItsMicrophoneIsNeverInterruptedByTheFallbackResume() async {
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+        var resumes = 0
+
+        hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+        // Dictation records the microphone and plays nothing: the session never reports other audio.
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        for _ in 0..<40 { advance(rig, by: 0.5) }
+
+        XCTAssertEqual(rig.activations, 0, "taking the session back would stop the other app's microphone starting")
+        XCTAssertEqual(resumes, 0)
+        XCTAssertTrue(hold.isHolding, "a real end can still arrive")
+        XCTAssertEqual(hold.outcome, .otherAudioStillPlaying, "the window ends the watch")
+        XCTAssertEqual(rig.ledger.events.count, 1)
+        hold.interruptionEnded()
+        XCTAssertEqual(hold.outcome, .ended)
+    }
+
+    func testAnotherAppsAudioStartingAfterTheSettleTimeIsNotInterrupted() async {
+        // The owner's first press failed and the second worked: our pause came first, the other app's audio
+        // started later than the settle time. Clear readings before its audio shows up must not resume us.
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+        var resumes = 0
+
+        hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        for _ in 0..<6 { advance(rig, by: 0.5) }
+        XCTAssertEqual(rig.activations, 0, "3 s of clear readings, nothing ever seen")
+        rig.audio = .init(isPlaying: true, secondaryShouldBeSilenced: true)
+        for _ in 0..<4 { advance(rig, by: 0.5) }
+
+        XCTAssertEqual(resumes, 0)
+        XCTAssertEqual(rig.activations, 0)
+        XCTAssertTrue(hold.isHolding)
+    }
+
+    func testClearReadingsBeforeTheOtherAudioIsSeenDoNotCountTowardsSettling() async {
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+        var resumes = 0
+
+        hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        for _ in 0..<4 { advance(rig, by: 0.5) }
+        rig.audio = .init(isPlaying: true, secondaryShouldBeSilenced: false)
+        advance(rig, by: 0.5)
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        advance(rig, by: 0.5)
+        XCTAssertEqual(resumes, 0, "the settle time starts after the audio was heard, not before")
+        advance(rig, by: 0.5)
+        advance(rig, by: 0.5)
+
+        XCTAssertEqual(resumes, 1)
+        XCTAssertEqual(rig.activations, 1)
+    }
+
+    func testASecondInterruptionBeginningDuringTheSettleTimeRestartsIt() async {
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+        var resumes = 0
+
+        hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+        rig.otherAudioPlaysThenStops(advancing: { advance(rig, by: 0.5) })
+        advance(rig, by: 0.5) // clear for the first time
+        hold.interruptionBegan() // another sound takes the floor before the settle time is up
+        XCTAssertEqual(rig.ledger.begins, 1, "still one wait")
+        advance(rig, by: 0.5)
+        advance(rig, by: 0.5)
+        XCTAssertEqual(resumes, 0, "a clear reading from before the second interruption is not counted")
+        XCTAssertEqual(rig.activations, 0)
+
+        advance(rig, by: 0.5)
+        advance(rig, by: 0.5)
+        XCTAssertEqual(resumes, 1)
+        XCTAssertEqual(rig.activations, 1)
     }
 
     /// Moves the clock on and runs every check that has come due.
@@ -406,6 +488,13 @@ private final class OtherAudioRig {
                 self.pending.append((self.clock().addingTimeInterval(delay), work))
             }
         )
+    }
+
+    /// The other audio is heard for one poll (an announcement, a ring), then goes quiet and stays quiet.
+    func otherAudioPlaysThenStops(advancing advance: () -> Void) {
+        audio = .init(isPlaying: true, secondaryShouldBeSilenced: false)
+        advance()
+        audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
     }
 
     func runDue(at time: Date) {

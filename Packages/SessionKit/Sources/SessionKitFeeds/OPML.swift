@@ -26,6 +26,60 @@ public struct OPMLFeed: Equatable, Sendable {
     public var websiteURL: String?
     /// Titles of the folders the outline sat in, outermost first (for example ["Tech"]).
     public var folders: [String]
+    /// OPML 2.0 `category` values (#4046): a comma-separated list of slash paths. The leading slash is dropped and a
+    /// path stays one name, so `/Tech/AI` is the one name "Tech/AI". Blank and repeated names are dropped.
+    public var categories: [String] = []
+    /// The Podcasting 2.0 `podcast:guid` the row carries, trimmed; nil when absent or blank.
+    public var podcastGUID: String?
+    /// Our own namespaced attributes (`sm:skip`, `sm:more`, `sm:via`). Other apps ignore them.
+    public var sm = OPMLSpokenMarginsAttributes()
+
+    /// The lists this row belongs to: every folder it sat in, then its categories, each once.
+    public var listNames: [String] { OPMLListNames.merged(folders, categories) }
+}
+
+/// The `https://spokenmargins.com/ns/lists/1` attributes on a feed row (#4046). Word lists are comma-separated.
+public struct OPMLSpokenMarginsAttributes: Equatable, Sendable {
+    public static let namespace = "https://spokenmargins.com/ns/lists/1"
+    public var skip: [String] = []
+    public var more: [String] = []
+    /// The title of the included list this show came in through.
+    public var via: String?
+}
+
+/// A row that points at another OPML file (`type="include"`, OPML 2.0). Reading it fetches nothing.
+public struct OPMLInclude: Equatable, Sendable {
+    public var url: String
+    public var title: String
+}
+
+enum OPMLListNames {
+    /// Trims, drops leading slashes and blanks, and keeps the first of names that are the same without case,
+    /// diacritics or Unicode normalisation.
+    static func clean(_ raw: [String]) -> [String] {
+        var seen: [String] = []
+        for entry in raw {
+            var name = entry.trimmingCharacters(in: .whitespacesAndNewlines)
+            while name.hasPrefix("/") { name.removeFirst() }
+            name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, !seen.contains(where: { FollowListName.sameName($0, name) }) else { continue }
+            seen.append(name)
+        }
+        return seen
+    }
+
+    static func merged(_ folders: [String], _ categories: [String]) -> [String] {
+        clean(folders + categories)
+    }
+
+    static func normalizedGUID(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+
+    static func words(_ raw: String?) -> [String] {
+        (raw ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    }
 }
 
 public struct OPMLDocument: Equatable, Sendable {
@@ -35,6 +89,8 @@ public struct OPMLDocument: Equatable, Sendable {
     public var feeds: [OPMLFeed]
     /// Outlines that looked like feeds but had no usable http(s) feed URL.
     public var unusableOutlineCount: Int
+    /// `type="include"` rows in file order (#4046).
+    public var includes: [OPMLInclude] = []
 }
 
 public enum OPMLError: Error, Equatable, Sendable {
@@ -59,7 +115,7 @@ public enum OPMLParser {
         guard delegate.sawOPMLRoot else { throw OPMLError.notOPML }
         // Some XMLParser builds accept a truncated file; a cut-off export must not import half its feeds silently.
         guard delegate.sawOPMLEnd else { throw OPMLError.malformed("the file ends before </opml>") }
-        return OPMLDocument(title: delegate.title, feeds: delegate.feeds, unusableOutlineCount: delegate.unusable)
+        return OPMLDocument(title: delegate.title, feeds: delegate.feeds, unusableOutlineCount: delegate.unusable, includes: delegate.includes)
     }
 
     /// The one place parse's XMLParser is configured: external entities are never resolved.
@@ -80,6 +136,7 @@ private final class OPMLDelegate: NSObject, XMLParserDelegate {
     var sawOPMLEnd = false
     var title: String?
     var feeds: [OPMLFeed] = []
+    var includes: [OPMLInclude] = []
     var unusable = 0
 
     private var depth = 0
@@ -116,14 +173,31 @@ private final class OPMLDelegate: NSObject, XMLParserDelegate {
             outlineStack.append((nil, false))
             return
         }
+        if type == "include", attributes["xmlurl"] == nil {
+            // OPML 2.0 include: a pointer to another file. Nothing is fetched here, and it has no children that matter.
+            outlineStack.append((nil, false))
+            guard let includeURL = attributes["url"].flatMap(OPMLParser.webURL) else { unusable += 1; return }
+            includes.append(OPMLInclude(url: includeURL, title: label.flatMap { $0.isEmpty ? nil : $0 } ?? includeURL))
+            return
+        }
         if let rawURL = attributes["xmlurl"] ?? attributes["url"].flatMap({ type == "rss" ? $0 : nil }) {
             outlineStack.append((nil, true))
-            guard let feedURL = Self.webURL(rawURL) else { unusable += 1; return }
+            guard let feedURL = OPMLParser.webURL(rawURL) else { unusable += 1; return }
             feeds.append(OPMLFeed(
                 title: label.flatMap { $0.isEmpty ? nil : $0 } ?? feedURL,
                 feedURL: feedURL,
-                websiteURL: attributes["htmlurl"].flatMap(Self.webURL),
-                folders: outlineStack.compactMap(\.folder)
+                websiteURL: attributes["htmlurl"].flatMap(OPMLParser.webURL),
+                folders: outlineStack.compactMap(\.folder),
+                categories: OPMLListNames.clean(OPMLListNames.words(attributes["category"])),
+                podcastGUID: attributes["podcast:guid"].flatMap { value in
+                    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? nil : trimmed
+                },
+                sm: OPMLSpokenMarginsAttributes(
+                    skip: OPMLListNames.words(attributes["sm:skip"]),
+                    more: OPMLListNames.words(attributes["sm:more"]),
+                    via: attributes["sm:via"].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
+                )
             ))
             return
         }
@@ -151,7 +225,10 @@ private final class OPMLDelegate: NSObject, XMLParserDelegate {
         if failure == nil { failure = error }
         parser.abortParsing()
     }
+}
 
+extension OPMLParser {
+    /// An http(s) link with a host, trimmed; nil for anything else (feed:, itpc:, a bare word).
     static func webURL(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let components = URLComponents(string: trimmed),
@@ -159,6 +236,51 @@ private final class OPMLDelegate: NSObject, XMLParserDelegate {
               !(components.host ?? "").isEmpty else { return nil }
         return trimmed
     }
+}
+
+/// #4284: the feed links a Shortcut hands over, read into the same document an OPML file gives, so the
+/// import preview and follow path are OPML's. Apple Podcasts on iPhone has no OPML export, but Shortcuts'
+/// "Get Podcasts from Library" gives each show's Feed URL. Each entry may hold several lines; each line is
+/// one show: a feed link, optionally with the show's name around it ("Name https://…" or "Name: https://…").
+/// A line with no usable feed link (a junk line, an Apple Podcasts store page, a feed: or itpc: link)
+/// counts as unusable; blank lines are skipped.
+public enum FeedLinkListParser {
+    public static func parse(_ entries: [String], limits: OPMLLimits = OPMLLimits()) throws -> OPMLDocument {
+        guard entries.reduce(0, { $0 + $1.utf8.count }) <= limits.maximumBytes else { throw OPMLError.tooLarge }
+        var feeds: [OPMLFeed] = []
+        var unusable = 0
+        for line in entries.flatMap({ $0.components(separatedBy: .newlines) }) {
+            let words = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            guard !words.isEmpty else { continue }
+            guard feeds.count + unusable < limits.maximumOutlines else { throw OPMLError.tooManyOutlines }
+            guard let index = words.firstIndex(where: { feedURL(in: $0) != nil }), let url = feedURL(in: words[index]) else {
+                unusable += 1
+                continue
+            }
+            var rest = words
+            rest.remove(at: index)
+            let title = rest.filter { OPMLParser.webURL(trimmingWrappers($0)) == nil }
+                .joined(separator: " ")
+                .trimmingCharacters(in: separators)
+            feeds.append(OPMLFeed(title: title.isEmpty ? url : title, feedURL: url, websiteURL: nil, folders: []))
+        }
+        return OPMLDocument(title: nil, feeds: feeds, unusableOutlineCount: unusable)
+    }
+
+    /// A word that is a feed link once the brackets, quotes and punctuation around it are dropped. An Apple
+    /// Podcasts store page is a web link but not a feed, so following it would only fail later.
+    static func feedURL(in word: String) -> String? {
+        guard let url = OPMLParser.webURL(trimmingWrappers(word)),
+              let host = URLComponents(string: url)?.host?.lowercased(),
+              host != "podcasts.apple.com", host != "itunes.apple.com", !host.hasSuffix(".itunes.apple.com") else { return nil }
+        return url
+    }
+
+    private static func trimmingWrappers(_ word: String) -> String {
+        word.trimmingCharacters(in: CharacterSet(charactersIn: "<>()[]{}\"'“”‘’,;"))
+    }
+
+    private static let separators = CharacterSet.whitespaces.union(CharacterSet(charactersIn: ":-–—|•,;\"“”"))
 }
 
 /// What importing a file would do, for the preview screen. Nothing is followed until
@@ -178,17 +300,22 @@ public struct OPMLImportPreview: Equatable, Sendable {
     /// Repeats of a feed earlier in the same file.
     public var duplicatesInFile: [OPMLFeed]
     public var unusableOutlineCount: Int
+    /// The lists the file holds, for the import screen's "Lists in this file" (#4046).
+    public var lists: [OPMLPlannedList] = []
 }
 
 public enum OPMLImportPlanner {
-    public static func preview(_ document: OPMLDocument, existing subscriptions: [FeedSubscription]) -> OPMLImportPreview {
-        var followedKeys = Set(subscriptions.compactMap { feedKey($0.source.canonicalURL) })
+    /// - Parameter existingLists: the listener's lists, so a list in the file with the same name shows that it adds to it.
+    public static func preview(
+        _ document: OPMLDocument, existing subscriptions: [FeedSubscription], existingLists: [FollowList] = []
+    ) -> OPMLImportPreview {
+        var followedKeys = Set(subscriptions.compactMap { FeedURLKey.make($0.source.canonicalURL) })
         var toFollow: [SourceCandidate] = []
         var already: [OPMLFeed] = []
         var duplicates: [OPMLFeed] = []
         var seenInFile = Set<String>()
         for feed in document.feeds {
-            guard let key = feedKey(feed.feedURL) else { continue }
+            guard let key = FeedURLKey.make(feed.feedURL) else { continue }
             if followedKeys.contains(key) {
                 if seenInFile.insert(key).inserted { already.append(feed) } else { duplicates.append(feed) }
                 continue
@@ -217,19 +344,9 @@ public enum OPMLImportPlanner {
             toFollow: toFollow,
             alreadyFollowed: already,
             duplicatesInFile: duplicates,
-            unusableOutlineCount: document.unusableOutlineCount
+            unusableOutlineCount: document.unusableOutlineCount,
+            lists: OPMLListPlanner.plan(document, existingLists: existingLists)
         )
-    }
-
-    /// Scheme-free key: an http feed in the file and its https subscription are the same feed.
-    static func feedKey(_ raw: String) -> String? {
-        guard var components = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let host = components.host?.lowercased(), !host.isEmpty else { return nil }
-        components.scheme = "https"
-        components.host = host
-        components.fragment = nil
-        if components.path.count > 1, components.path.hasSuffix("/") { components.path.removeLast() }
-        return components.string
     }
 
     /// The follow path requires https (ATS). An http feed is offered as https; if the host
@@ -301,26 +418,80 @@ public struct OPMLExport: Equatable, Sendable {
     public var withheldPrivateCount: Int
 }
 
+/// An include row for an export (#4046): another list this one picks up by its web address.
+public struct OPMLExportInclude: Equatable, Sendable {
+    public var title: String
+    public var url: String
+
+    public init(title: String, url: String) {
+        self.title = title
+        self.url = url
+    }
+}
+
 public enum OPMLExporter {
-    public static func export(_ subscriptions: [FeedSubscription], title: String = "Spoken Margins follows", createdAt: Date = Date()) -> OPMLExport {
+    /// - Parameters:
+    ///   - lists: the follow lists. A show is written with a `category` for each list it is in (`/<name>`, comma-separated),
+    ///     so any reader that knows `category` keeps the grouping and any that doesn't still imports every feed.
+    ///   - podcastGUIDs: a subscription's Podcasting 2.0 GUID by subscription id, written as `podcast:guid` where known.
+    ///   - includes: other lists this one includes, written as `type="include"` rows before the shows.
+    ///   - includedVia: by subscription id, the title of the included list a show came in through, written as `sm:via`.
+    ///     The show is also written as a plain row, so a reader that ignores `include` still gets it.
+    ///
+    /// With none of those the output is what it was before lists: plain rows, no namespaces. Private feeds are left out,
+    /// and so is everything attached to them.
+    public static func export(
+        _ subscriptions: [FeedSubscription],
+        title: String = "Spoken Margins follows",
+        createdAt: Date = Date(),
+        lists: [FollowList] = [],
+        podcastGUIDs: [String: String] = [:],
+        includes: [OPMLExportInclude] = [],
+        includedVia: [String: String] = [:]
+    ) -> OPMLExport {
+        var rows: [String] = []
+        for include in includes {
+            guard let url = OPMLParser.webURL(include.url), ShareableLinkPolicy.shareableLink(url) != nil else { continue }
+            let name = escape(include.title)
+            rows.append(#"    <outline type="include" text="\#(name)" title="\#(name)" url="\#(escape(url))"/>"#)
+        }
+        var exported = 0
+        var withheld = 0
+        var usesGUID = false
+        var usesVia = false
+        let chipOrdered = FollowListName.chipOrder(lists)
+        for subscription in subscriptions.sorted(by: { ($0.source.title ?? "").localizedCaseInsensitiveCompare($1.source.title ?? "") == .orderedAscending }) {
+            let url = subscription.source.canonicalURL
+            guard ShareableLinkPolicy.shareableLink(url) != nil else { withheld += 1; continue }
+            let name = escape(subscription.source.title ?? subscription.source.host)
+            var attributes = #"type="rss" text="\#(name)" title="\#(name)" xmlUrl="\#(escape(url))""#
+            let key = FeedURLKey.make(url)
+            let guid = OPMLListNames.normalizedGUID(ShareableLinkPolicy.shareableEpisodeGUID(OPMLListNames.normalizedGUID(podcastGUIDs[subscription.id])))
+            let categories = chipOrdered.filter { $0.contains(feedKey: key, podcastGUID: guid) }
+                .map { "/" + FollowListName.cleaned($0.name.replacingOccurrences(of: ",", with: " ")) }
+            if !categories.isEmpty { attributes += #" category="\#(escape(categories.joined(separator: ",")))""# }
+            if let guid { attributes += #" podcast:guid="\#(escape(guid))""#; usesGUID = true }
+            if let via = includedVia[subscription.id]?.trimmingCharacters(in: .whitespacesAndNewlines), !via.isEmpty {
+                attributes += #" sm:via="\#(escape(via))""#
+                usesVia = true
+            }
+            rows.append("    <outline \(attributes)/>")
+            exported += 1
+        }
+        var root = #"<opml version="2.0""#
+        if usesGUID { root += #" xmlns:podcast="https://podcastindex.org/namespace/1.0""# }
+        if usesVia { root += " xmlns:sm=\"\(OPMLSpokenMarginsAttributes.namespace)\"" }
+        root += ">"
         var lines = [
             #"<?xml version="1.0" encoding="UTF-8"?>"#,
-            #"<opml version="2.0">"#,
+            root,
             "  <head>",
             "    <title>\(escape(title))</title>",
             "    <dateCreated>\(rfc822(createdAt))</dateCreated>",
             "  </head>",
             "  <body>",
         ]
-        var exported = 0
-        var withheld = 0
-        for subscription in subscriptions.sorted(by: { ($0.source.title ?? "").localizedCaseInsensitiveCompare($1.source.title ?? "") == .orderedAscending }) {
-            let url = subscription.source.canonicalURL
-            guard ShareableLinkPolicy.shareableLink(url) != nil else { withheld += 1; continue }
-            let name = escape(subscription.source.title ?? subscription.source.host)
-            lines.append(#"    <outline type="rss" text="\#(name)" title="\#(name)" xmlUrl="\#(escape(url))"/>"#)
-            exported += 1
-        }
+        lines += rows
         lines += ["  </body>", "</opml>", ""]
         return OPMLExport(data: Data(lines.joined(separator: "\n").utf8), exportedCount: exported, withheldPrivateCount: withheld)
     }

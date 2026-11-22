@@ -96,15 +96,18 @@ public enum ShareLinkPreviewBuilder {
 
     /// The source's public web page, or nil. A page that holds an access secret, carries a query string or
     /// userinfo, is not https, or is really an audio file or a feed (a private feed can hold its token in the
-    /// path) is left out; the link works without it.
+    /// path) is left out; the link works without it. The one query kept is a known episode page's own key
+    /// (`episodePageKeys`), alone.
     static func publicPageURL(_ page: String?, enclosureURL: String?) -> String? {
-        guard let page = page.map(trimmed), !page.isEmpty, page.count <= maximumURLCharacters,
-              ShareableLinkPolicy.shareableLink(page) != nil,
+        guard let original = page.map(trimmed), !original.isEmpty, original.count <= maximumURLCharacters,
+              ShareableLinkPolicy.shareableLink(original) != nil,
+              let page = episodePageKeepingOnlyItsKey(original),
               let components = URLComponents(string: page),
               components.scheme?.lowercased() == "https",
               let host = components.host, !host.isEmpty,
               components.user == nil, components.password == nil, components.port == nil,
-              components.query == nil, components.fragment == nil else { return nil }
+              components.fragment == nil,
+              components.query == nil || episodePageKey(of: components) != nil else { return nil }
         if let enclosure = enclosureURL.map(trimmed), !enclosure.isEmpty, enclosure == page { return nil }
         let lowerHost = host.lowercased()
         if lowerHost.hasPrefix("feed.") || lowerHost.hasPrefix("feeds.") || lowerHost.contains("feedburner") { return nil }
@@ -115,6 +118,53 @@ public enum ShareLinkPreviewBuilder {
             return nil
         }
         return page
+    }
+
+    /// Pages that name their episode in the query, so "no query" would drop every one of them: an Apple Podcasts
+    /// episode is `…/id916273527?i=1000543006547` (owner, 2026-11-17). Per host: the path it must be on (nil for
+    /// any), the one key kept, and that key's value shape. Any other site's query is still left out.
+    private struct EpisodePageKey: Sendable {
+        let hosts: Set<String>
+        let path: String?
+        let name: String
+        let isValue: @Sendable (Substring) -> Bool
+    }
+
+    private static let episodePageKeys: [EpisodePageKey] = [
+        EpisodePageKey(hosts: ["podcasts.apple.com"], path: nil, name: "i") { value in
+            (1...19).contains(value.count) && value.allSatisfy { $0.isASCII && $0.isNumber }
+        },
+        EpisodePageKey(hosts: ["www.youtube.com", "youtube.com", "m.youtube.com"], path: "/watch", name: "v") { value in
+            value.count == 11 && value.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
+        },
+    ]
+
+    /// The rule for this page's host and path, when its query holds exactly one well-formed episode key.
+    private static func episodePageKey(of components: URLComponents) -> (rule: EpisodePageKey, value: Substring)? {
+        guard let host = components.host?.lowercased(),
+              let rule = episodePageKeys.first(where: { $0.hosts.contains(host) }),
+              rule.path == nil || components.percentEncodedPath == rule.path else { return nil }
+        let values = (components.percentEncodedQuery ?? "").split(separator: "&").compactMap { item -> Substring? in
+            let pair = item.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            return pair.count == 2 && pair[0] == Substring(rule.name) ? pair[1] : nil
+        }
+        guard values.count == 1, let value = values.first, rule.isValue(value) else { return nil }
+        return (rule, value)
+    }
+
+    /// A known episode page rebuilt with its key alone (tracking items and the fragment dropped, the host lowercased);
+    /// any other page unchanged; nil for a known episode host whose query is there but holds no single good key.
+    private static func episodePageKeepingOnlyItsKey(_ page: String) -> String? {
+        guard var components = URLComponents(string: page),
+              let host = components.host?.lowercased(),
+              episodePageKeys.contains(where: { $0.hosts.contains(host) }),
+              components.percentEncodedQuery != nil || components.percentEncodedFragment != nil else { return page }
+        components.percentEncodedFragment = nil
+        guard components.percentEncodedQuery != nil else { return components.string }
+        guard let key = episodePageKey(of: components) else { return nil }
+        components.host = host
+        components.percentEncodedQuery = "\(key.rule.name)=\(key.value)"
+        return components.string
     }
 
     private static func trimmed(_ text: String) -> String {

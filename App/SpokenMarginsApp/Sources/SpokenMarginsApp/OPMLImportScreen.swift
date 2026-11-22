@@ -6,9 +6,16 @@ import SessionKitFeeds
 /// #463: follows the feeds in another app's OPML export. The listener sees what is new, already
 /// followed, repeated or unusable, unticks what they don't want, and follows the rest one at a
 /// time through the app's normal follow path. Nothing is added to the Library, downloaded or
-/// prepared. Opens from Following and from the first-run drawer.
+/// prepared. Opens from Following and from the first-run drawer, and with a list of feed links from the
+/// "Follow Podcasts in Spoken Margins" Shortcut action (#4284).
 @MainActor
 final class OPMLImportModel: ObservableObject {
+    /// Where the previewed feeds came from, for the screen's words.
+    enum Origin: Equatable {
+        case file
+        case shortcut
+    }
+
     enum Phase: Equatable {
         case choosing
         case preview(OPMLImportPreview)
@@ -20,6 +27,7 @@ final class OPMLImportModel: ObservableObject {
     @Published private(set) var phase: Phase = .choosing
     /// Ids of the new feeds that will be followed; all of them when a file is read.
     @Published private(set) var selected: Set<String> = []
+    @Published private(set) var origin: Origin = .file
 
     private let subscriptions: @MainActor () -> [FeedSubscription]
     private let follow: @MainActor (String) async throws -> Void
@@ -49,20 +57,22 @@ final class OPMLImportModel: ObservableObject {
         return false
     }
 
-    /// Back to "choose a file", unless a run is still following.
+    /// Back to "choose a file", unless a run is still following. A Shortcut's list is dropped too.
     func reset() {
         guard !isFollowing else { return }
         phase = .choosing
         selected = []
+        origin = .file
     }
 
     func showFailure(_ error: Error) {
         guard !isFollowing else { return }
         selected = []
-        phase = .failed(Self.message(for: error))
+        phase = .failed(Self.message(for: error, origin: origin))
     }
 
     func load(fileAt url: URL) {
+        origin = .file
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
         do {
@@ -75,9 +85,19 @@ final class OPMLImportModel: ObservableObject {
     }
 
     func load(data: Data) {
+        load(.file) { try OPMLParser.parse(data) }
+    }
+
+    /// The links a Shortcut passed in (#4284), previewed exactly as the same feeds in a file would be.
+    func load(feedLinks: [String]) {
+        load(.shortcut) { try FeedLinkListParser.parse(feedLinks) }
+    }
+
+    private func load(_ origin: Origin, document: () throws -> OPMLDocument) {
         guard !isFollowing else { return }
+        self.origin = origin
         do {
-            let preview = OPMLImportPlanner.preview(try OPMLParser.parse(data), existing: subscriptions())
+            let preview = OPMLImportPlanner.preview(try document(), existing: subscriptions())
             selected = Set(preview.toFollow.map(\.id))
             phase = .preview(preview)
         } catch {
@@ -126,19 +146,23 @@ final class OPMLImportModel: ObservableObject {
         if !result.followed.isEmpty { didFollow() }
     }
 
-    static func message(for error: Error) -> String {
-        switch error as? OPMLError {
-        case .tooLarge:
+    static func message(for error: Error, origin: Origin = .file) -> String {
+        switch (error as? OPMLError, origin) {
+        case (.tooLarge, .shortcut):
+            return "The Shortcut passed in more than 4 MB of text, which is more than a podcast list needs. Nothing was imported."
+        case (.tooManyOutlines, .shortcut):
+            return "The Shortcut passed in more than 5,000 lines. Nothing was imported."
+        case (.tooLarge, _):
             return "This file is larger than 4 MB, which is more than a subscription list needs. Nothing was imported."
-        case .tooManyOutlines:
+        case (.tooManyOutlines, _):
             return "This file lists more than 5,000 entries. Nothing was imported."
-        case .tooDeep:
+        case (.tooDeep, _):
             return "This file's folders are nested too deeply to read. Nothing was imported."
-        case .notOPML:
+        case (.notOPML, _):
             return "This isn't an OPML file. In your other app, export your subscriptions as OPML, then choose that file."
-        case .malformed:
+        case (.malformed, _):
             return "This OPML file is damaged or cut off, so nothing was imported. Try exporting it again."
-        case nil:
+        case (nil, _):
             return ListenerErrorText.line(prefix: "The file couldn't be read.", error: error)
         }
     }
@@ -165,7 +189,7 @@ struct OPMLImportScreen: View {
             .scrollContentBackground(.hidden)
             .background(AppColors.bone)
             .safeAreaInset(edge: .bottom) { actions }
-            .navigationTitle("Import from another app")
+            .navigationTitle(importer.origin == .shortcut ? "Import from Apple Podcasts" : "Import from another app")
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarBackButtonHidden(importer.isFollowing)
             .fileImporter(isPresented: $isChoosingFile, allowedContentTypes: OPMLImportModel.contentTypes) { result in
@@ -219,7 +243,7 @@ struct OPMLImportScreen: View {
     private func previewSections(_ preview: OPMLImportPreview) -> some View {
         Section {
             if preview.toFollow.isEmpty {
-                Text("Nothing new to follow in this file.")
+                Text(importer.origin == .shortcut ? "Nothing new to follow in this list." : "Nothing new to follow in this file.")
             }
             ForEach(preview.toFollow) { candidate in
                 Toggle(isOn: Binding(
@@ -251,7 +275,7 @@ struct OPMLImportScreen: View {
                     feedLabel(feed.title, detail: nil)
                 }
             } header: {
-                countHeader("Repeated in the file", preview.duplicatesInFile.count)
+                countHeader(importer.origin == .shortcut ? "Repeated in the list" : "Repeated in the file", preview.duplicatesInFile.count)
             } footer: {
                 Text("Each feed is followed once.")
             }
@@ -315,7 +339,12 @@ struct OPMLImportScreen: View {
                     importer.startFollowing()
                 }
                 .disabled(importer.selected.isEmpty)
-                Button { importer.cancel() } label: { Text("Cancel").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
+                Button {
+                    // A Shortcut's list has no file to go back to choosing: Cancel leaves the import.
+                    let leaves = importer.origin == .shortcut
+                    importer.cancel()
+                    if leaves { dismiss() }
+                } label: { Text("Cancel").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityIdentifier("opml.import.cancel")
             case .following:
                 Button { importer.cancel() } label: { Text("Stop").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }

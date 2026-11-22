@@ -34,10 +34,10 @@ struct MarginsThreadListView: View {
             .overlay(alignment: .bottom) { Rectangle().fill(AppColors.watchSecondary.opacity(0.24)).frame(height: 1) }
             .accessibilityElement(children: .contain)
         }
-        .sheet(item: $selectedMargin) { row in
+        .trackedSheet(item: $selectedMargin) { row in
             ExperienceMarginDetailView(row: row).environmentObject(model)
         }
-        .sheet(item: $selectedSharedMargin) { row in
+        .trackedSheet(item: $selectedSharedMargin) { row in
             SharedMarginDetailView(row: row).environmentObject(model)
         }
     }
@@ -53,10 +53,8 @@ struct MarginsThreadListView: View {
                 if let own = source.ownRow(entry.row) { selectedMargin = own }
                 else if let shared = source.sharedRow(entry.row) { selectedSharedMargin = shared }
             },
-            toggleStar: {
-                guard let own = source.ownRow(entry.row) else { return }
-                model.setMarginStarred(own, starred: !entry.row.isStarred)
-            },
+            star: source.ownRow(entry.row).flatMap { .ownMargin($0.interjection, place: .playerMargins, model: model) },
+            goesTo: source.goesTo(entry.row), sourceNoun: model.sourceNoun,
             jump: {
                 source.jump(to: entry.row, model: model)
                 didStart()

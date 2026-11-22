@@ -159,10 +159,12 @@ extension Gate1AppModel {
         }
         var addedItemIds: [String] = []
         var failedSharedArticles = 0
+        var transcriptRefusals: [TranscriptImportMessage] = []
         // The failure goes last, so a success banner for another share in the same drain can't cover it.
         defer {
             reportPendingHandoffsAdded(itemIds: addedItemIds)
             announceFailedSharedArticles(count: failedSharedArticles)
+            reportTranscriptHandoffRefusals(transcriptRefusals)
         }
 
         do {
@@ -196,9 +198,24 @@ extension Gate1AppModel {
                 defer { browserTextPayloadsInFlight.remove(payloadID) }
                 do {
                     let handoff = try await Self.offMain { try handoffStore.handoff(payloadID: payloadID) }
-                    addedItemIds.append(try hangTelemetry.labels.scoped("pendingBrowserTextImport") {
-                        try importBrowserTextInBackground(handoff)
-                    })
+                    // A shared .txt that reads as a meeting transcript becomes a transcript item (#2997).
+                    // A store that can't be written to is not an answer: the payload stays for the next drain, as a shared
+                    // transcript file does, instead of going to the Import Inbox.
+                    let route: SharedTextFileRoute
+                    do { route = try await routeSharedTextFile(handoff) } catch {
+                        diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "kept:\(SafeErrorText.describe(error))"
+                        continue
+                    }
+                    switch route {
+                    case .transcript(let itemId): addedItemIds.append(itemId)
+                    case .refused(let message): transcriptRefusals.append(message)
+                    case .ordinary:
+                        // The item write keeps its label; the Library read after it runs off the main thread (#2256).
+                        let imported = try hangTelemetry.labels.scoped("pendingBrowserTextImport") {
+                            try browserTextImportEngine().importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff))
+                        }
+                        addedItemIds.append(try await finishBackgroundBrowserTextImportOffMain(imported, handoff: handoff))
+                    }
                     try await Self.offMain { try handoffStore.deletePayload(payloadID: payloadID) }
                     diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "imported"
                 } catch Gate5BrowserTextHandoffStoreError.invalidPayload {
@@ -221,6 +238,11 @@ extension Gate1AppModel {
         } catch {
             diagnostics["pendingBrowserTextImport"] = "unavailable:\(SafeErrorText.describe(error))"
         }
+
+        // Transcript files the share extension copied unread (.vtt, .srt, .docx), imported through the one transcript rule.
+        let transcripts = await drainTranscriptHandoffs()
+        addedItemIds.append(contentsOf: transcripts.addedItemIds)
+        transcriptRefusals.append(contentsOf: transcripts.refusals)
     }
 
     private nonisolated static func sourceLinkStoreOutcome(_ error: any Error) -> PendingHandoffOutcome? {

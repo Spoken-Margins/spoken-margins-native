@@ -3,26 +3,40 @@ import Foundation
 /// What a row in the Margins tab says about a Margin and where it sits (#777). Computed from what is stored, so
 /// nothing here touches the database.
 public enum MarginRowWording {
+    /// What a Margin with no place on its item says where a place would be (#4233).
+    public static let noPlace = "No place"
+
     /// A Margin made within this many days shows its weekday ("Tue"); an older one shows the date too.
     public static let recentDays = 7
 
     /// "Ch. 3 · 21:03 · Tue": where in the source it was made, then the day.
     /// - `placeName`: the chapter or listening-map scene, when there is one.
-    /// - Position: the clock time for media, "paragraph N" for text, else the rough percent.
+    /// - Position: the clock time for media, the meeting clock for a transcript, "paragraph N" for other text, else the
+    ///   rough percent. The meeting clock is the bare clock a podcast Margin shows (#2997).
+    /// - `hasPlace`: false for a moved Margin that was captured with no playback position (`Interjection.hasPlace`,
+    ///   #4233). It says "No place" and the day, never a chapter, a clock time or a percent, because its stored
+    ///   position is zeros that mean nothing.
     public static func placeLine(
         placeName: String? = nil,
         mediaTimeMs: Int?,
+        meetingClockMs: Int? = nil,
         paragraph: Int? = nil,
         roughPercent: Int,
+        hasPlace: Bool = true,
         createdAt: Date,
         now: Date,
         calendar: Calendar = .current,
         locale: Locale = .current
     ) -> String {
+        guard hasPlace else {
+            return [noPlace, day(of: createdAt, now: now, calendar: calendar, locale: locale)].joined(separator: " · ")
+        }
         var parts: [String] = []
         if let name = placeName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty { parts.append(name) }
         if let mediaTimeMs {
             parts.append(MarginDeepLink.clockPosition(ms: mediaTimeMs))
+        } else if let meetingClockMs {
+            parts.append(MarginDeepLink.clockPosition(ms: meetingClockMs))
         } else if let paragraph, paragraph > 0 {
             parts.append("paragraph \(paragraph)")
         } else {
@@ -46,7 +60,8 @@ public enum MarginRowWording {
 
 /// An item's Margins in the order they were heard: by position in the source across all of its sessions, earliest
 /// first (#777). Media Margins sort by their clock time and everything else by character offset, so mixing the two
-/// never breaks the ordering.
+/// never breaks the ordering. A Margin with no place (`Interjection.hasPlace`, #4233) follows every Margin that has
+/// one, oldest first.
 public enum MarginSourceOrder {
     public static func isOrderedBefore(_ lhs: Interjection, _ rhs: Interjection) -> Bool {
         let left = key(lhs), right = key(rhs)
@@ -57,8 +72,10 @@ public enum MarginSourceOrder {
     }
 
     private static func key(_ margin: Interjection) -> (rank: Int, position: Int, createdAt: Date, id: String) {
-        // Responses and summaries aren't positions in the source, so they follow the Margins that are.
-        guard margin.targetType == .item else { return (2, 0, margin.createdAt, margin.id) }
+        // Responses and summaries aren't positions in the source, so they follow the Margins that are, and a Margin on the
+        // source with no place comes between the two: its stored zeros are not a position.
+        guard margin.targetType == .item else { return (3, 0, margin.createdAt, margin.id) }
+        guard margin.hasPlace else { return (2, 0, margin.createdAt, margin.id) }
         if let ms = margin.anchor.mediaTimeMs { return (0, ms, margin.createdAt, margin.id) }
         return (1, margin.anchor.startChar, margin.createdAt, margin.id)
     }

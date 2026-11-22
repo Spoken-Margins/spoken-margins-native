@@ -24,4 +24,13 @@ final class PlaybackLeadingControlTests: XCTestCase {
         XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: false), .none)
         XCTAssertEqual(PlaybackLeadingControl.control(pane: .margins, timelineEditorHasFocus: true), .libraryExit)
     }
+
+    /// #4453: following scrolls the Now header, which holds the Library arrow, out of sight; the toolbar shows it then.
+    func testNowShowsTheLibraryArrowInTheToolbarOnlyWhileItsHeaderIsOutOfView() {
+        XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: false, nowHeaderIsVisible: true), .none)
+        XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: false, nowHeaderIsVisible: false), .libraryExit)
+        XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: false), .none, "the default is today's")
+        XCTAssertEqual(PlaybackLeadingControl.control(pane: .timeline, timelineEditorHasFocus: false, nowHeaderIsVisible: false), .libraryExit)
+        XCTAssertEqual(PlaybackLeadingControl.control(pane: .timeline, timelineEditorHasFocus: true, nowHeaderIsVisible: false), .returnToNow)
+    }
 }

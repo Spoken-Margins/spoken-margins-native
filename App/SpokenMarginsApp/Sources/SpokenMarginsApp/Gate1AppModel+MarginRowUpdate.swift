@@ -26,4 +26,12 @@ extension Gate1AppModel {
         marginOutput.deliverSoon() // The Margin's text or place in the list changed (#171).
         noteCompactTimelineChanged()
     }
+
+    /// What the banner says once a context retry has finished (#3856): the status the retry stored, read from the row
+    /// `refreshMarginRow` just updated. Call it after that refresh. A Margin that isn't listed gets the neutral words.
+    func contextRetryResultMessage(sessionId: String, interjectionId: String) -> String {
+        let status = marginRows.first { $0.interjection.sessionId == sessionId && $0.interjection.id == interjectionId }?
+            .interjection.anchorContextStatus
+        return ContextRetryResultWording.message(status: status)
+    }
 }

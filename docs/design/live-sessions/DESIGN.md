@@ -240,10 +240,10 @@ Kind buttons that start at once, the "Where are you now?" field, checkpoints (th
 
 ### Slice 3: Line up afterwards
 
-Line up from the session's item, and from a transcript file opened or AirDropped to the phone. The result is applied with Undo line-up kept on the item, and every piece of evidence is shown.
+Line up from the session's item. A transcript file opened or AirDropped to the phone becomes its own Library item for now (#2997); lining up from an opened file is not built. The result is applied with Undo line-up kept on the item, and every piece of evidence is shown.
 
 **Your check:**
-1. AirDrop a Teams `.vtt` from your Mac to the phone and open it in Spoken Margins. Yesterday's meeting is picked.
+1. From the session's item, tap Line up and pick the Teams `.vtt` you saved to Files. (AirDropping it to Spoken Margins adds it as a transcript item; it does not line up yet.)
 2. Each Margin shows the matched words, the speaker and the score beside its estimate.
 3. Tap Undo line-up, then line it up again.
 4. Tap Share as Markdown and read the export.

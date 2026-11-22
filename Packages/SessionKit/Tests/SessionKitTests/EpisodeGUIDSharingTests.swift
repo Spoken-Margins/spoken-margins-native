@@ -1,5 +1,6 @@
 import Foundation
 @testable import SessionKit
+import SessionKitPersistence
 @testable import SessionKitSharing
 import ShippedPacketReader
 import XCTest
@@ -123,22 +124,22 @@ final class EpisodeGUIDSharingTests: XCTestCase {
     // MARK: Done when 2 and 6: Build 29 reads the new item record and the packet
 
     func testTheBuild29ItemDecoderReadsARecordWithTheNewFields() throws {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        let path = try StoredRecordFile.temporaryPath(for: self)
         let item = episode(audioURL: senderLink, guid: "show-episode-0001", durationMs: 3_600_000)
-        let payload = try encoder.encode(item)
+        try SQLiteSessionStore(path: path).saveItem(item)
+        let payload = try StoredRecordFile.payload(path: path, kind: "item", id: item.id)
         XCTAssertTrue(String(decoding: payload, as: UTF8.self).contains("\"episodeGUID\""))
         XCTAssertEqual(try ShippedPacketReader.decodeStoredRecord(kind: "item", payload: payload), item.id)
     }
 
     func testTheBuild29FeedEntryDecoderReadsAnEntryWithTheGUID() throws {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        let path = try StoredRecordFile.temporaryPath(for: self)
         let entry = FeedEntry(
             id: "entry", subscriptionId: "subscription", canonicalURL: "https://media.example.com/one.mp3",
             title: "Episode One", publishedAt: Date(timeIntervalSince1970: 1_790_675_200), episodeGUID: "show-episode-0001"
         )
-        let payload = try encoder.encode(entry)
+        try SQLiteSessionStore(path: path).saveFeedEntry(entry)
+        let payload = try StoredRecordFile.payload(path: path, kind: "feed_entry", id: "entry")
         XCTAssertTrue(String(decoding: payload, as: UTF8.self).contains("\"episodeGUID\""))
         XCTAssertEqual(try ShippedPacketReader.decodeStoredRecord(kind: "feed_entry", payload: payload), "entry")
     }

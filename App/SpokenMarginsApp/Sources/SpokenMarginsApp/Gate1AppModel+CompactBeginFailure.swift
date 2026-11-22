@@ -18,7 +18,9 @@ extension Gate1AppModel {
         #endif
         let record = CompactBeginFailureRecord(
             appState: Gate2AppState.isInBackground() ? "background" : "foreground",
-            protectedDataAvailable: protectedData, origin: origin, error: SafeErrorText.describe(error), cue: cue)
+            protectedDataAvailable: protectedData, origin: origin, error: SafeErrorText.describe(error), cue: cue,
+            // The route, category and session-switch error at the refusal, and what came just before (#4414).
+            details: (engine?.recordingCaptureDiagnostics() ?? [:]).merging(compactBeginContext.fields(now: Date())) { _, context in context })
         diagnostics["lastCompactBeginFailure"] = record.diagnosticsLine
         recordDeveloperDiagnostic("margin.compact_begin_failed", record.eventFields)
     }

@@ -15,7 +15,7 @@ extension Gate1AppModel {
                 self?.undoDismissedFollowedSourceEntry(id: id, restoring: previous)
             }
             await self?.reloadFollowedSourceEntries()
-            await self?.performFollowedSourceRefresh(force: false)
+            await self?.performFollowedSourceRefresh(force: false, trigger: .localChange)
         }
     }
 
@@ -25,7 +25,7 @@ extension Gate1AppModel {
         Task { [weak self] in
             try? await coordinator.undoDismissEntry(id: id, restoring: previous)
             await self?.reloadFollowedSourceEntries()
-            await self?.performFollowedSourceRefresh(force: false)
+            await self?.performFollowedSourceRefresh(force: false, trigger: .undo)
         }
     }
 
@@ -44,7 +44,7 @@ extension Gate1AppModel {
             )
             self?.presentFeedback(UserFeedbackEvent(kind: .success, message: FollowingDismissMessages.cleared(count: count), action: action))
             await self?.reloadFollowedSourceEntries()
-            await self?.performFollowedSourceRefresh(force: false)
+            await self?.performFollowedSourceRefresh(force: false, trigger: .localChange)
         }
     }
 
@@ -53,7 +53,7 @@ extension Gate1AppModel {
         Task { [weak self] in
             try? await coordinator.undoDismissEntries(restoring: previous)
             await self?.reloadFollowedSourceEntries()
-            await self?.performFollowedSourceRefresh(force: false)
+            await self?.performFollowedSourceRefresh(force: false, trigger: .undo)
         }
     }
 

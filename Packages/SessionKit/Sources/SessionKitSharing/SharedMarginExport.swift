@@ -3,22 +3,6 @@ import SessionKit
 
 /// Pure sender rules for reviewed Margin packets.
 public enum SharedMarginExport {
-    public static func anchorWarning(for interjection: Interjection, isNativeAudio: Bool) -> String? {
-        guard isNativeAudio && (interjection.podcastAnchorEvidence ?? []).isEmpty else {
-            return nil
-        }
-        switch interjection.podcastAnchorEvidenceCaptureStatus {
-        case .pendingPostResumeSample:
-            return "High-reliability evidence is capturing. Continue podcast playback for about 12 seconds before sharing this Margin."
-        case .pendingExactLocalCapture:
-            return "High-reliability evidence is being prepared from the podcast edition currently playing."
-        case .ready:
-            return nil
-        case .unavailable, nil:
-            return "High-reliability anchor evidence was unavailable at capture. Transcript context may still resolve this Margin; a timestamp alone will not be treated as verified."
-        }
-    }
-
     /// The one map a packet carries: the one the item plays (its resolved projection's), else the newest stored.
     /// Every stored proposal used to travel, one manifest descriptor each, and old Listening Edition revisions piled
     /// up in the store (#2118).
@@ -75,7 +59,9 @@ public enum SharedMarginExport {
             return .reference
         }
         let text = item.text ?? ""
-        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        // A meeting transcript is never embedded, whatever the sender confirms (#2997).
+        if SharedItemTransportRule.allowsEmbeddedText(item),
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            isAppAuthored || confirmsPrivateRights {
             return .embeddedText(
                 text: text,

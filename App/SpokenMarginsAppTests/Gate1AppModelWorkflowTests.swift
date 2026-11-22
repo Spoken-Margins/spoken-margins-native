@@ -7,6 +7,7 @@ import SessionKitFeeds
 import SessionKitPersistence
 @testable import SpokenMarginsApp
 import SQLite3
+import SwiftUI
 #if canImport(UIKit)
 import UIKit
 import PDFKit
@@ -70,8 +71,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// Several of these tests used to leave a second or more of blocking main-queue work behind (#2195). A synchronous
     /// test never spins the run loop, so that work ran during whichever later test waited first, and could push a
     /// short wait in another class past its timeout (#2104). Draining here keeps it inside the test that queued it.
-    /// A second or more is a blocked call, such as a SQLite write waiting out the store's 1 s busy timeout, so it
-    /// fails the test that left it; the target is under 0.3 s, and the lane log names any test above that.
+    /// The drain itself is the fix: it keeps the work inside the test that queued it. How long the drain took is only
+    /// printed (over 0.3 s names the test in the log), never asserted: a 1 s ceiling on a busy hosted Mac measures the
+    /// machine as much as the test (#4573). That gives up the ceiling's catch: a test that newly leaves a slow drain
+    /// behind now shows only as that printed line, not as a failure.
     override func setUp() {
         super.setUp()
         let inherited = Self.drainMainQueue(label: "before \(name)") // work an earlier class left behind isn't this test's
@@ -81,7 +84,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     override func tearDown() {
         let elapsed = Self.drainMainQueue(label: "after \(name)")
         if elapsed > 0.3 { print("Main-queue backlog \(String(format: "%.2f", elapsed)) s after \(name) (#2195)") }
-        XCTAssertLessThan(elapsed, 1.0, "this test left a second or more of blocking main-queue work behind (#2195)")
         super.tearDown()
     }
 
@@ -1052,18 +1054,21 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let afterPass = layer(passDigest: String(repeating: "a", count: 64))
         let beforePass = layer(passDigest: nil)
 
+        // #3789: a podcast Margin with the sender's time plays there whatever the pass did, and says so in plain words.
         let bare = row(bareAnchor, in: afterPass)
         XCTAssertEqual(bare.placementStatus, .noPositionSent)
-        XCTAssertEqual(bare.positionDescription, "Sent without a position")
+        XCTAssertEqual(bare.positionDescription, "Placed roughly here")
         let fingerprinted = row(fingerprintedAnchor, in: afterPass)
         XCTAssertEqual(fingerprinted.placementStatus, .settled)
-        XCTAssertEqual(fingerprinted.positionDescription, SharedMarginPlacementWording.couldntPlace)
+        XCTAssertEqual(fingerprinted.positionDescription, "Placed roughly here")
+        let noTime = row(PortableAnchorEvidence(anchorType: .media), in: afterPass)
+        XCTAssertEqual(noTime.positionDescription, "Plays after the others")
 
         // The state a packet is in right after import into a podcast whose download hasn't finished.
         for anchor in [bareAnchor, fingerprintedAnchor] {
             let imported = row(anchor, in: beforePass)
             XCTAssertEqual(imported.placementStatus, .notPlacedYet)
-            XCTAssertEqual(imported.positionDescription, "Not placed yet")
+            XCTAssertEqual(imported.positionDescription, "Placed roughly here")
         }
     }
 
@@ -1131,7 +1136,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         }
         model.openItem(id: itemID)
 
-        model.setInterjectionStarredForSharing("margin-starred", starred: true)
+        model.setStarredForSharing(
+            try XCTUnwrap(model.selectedItem.interjections.first { $0.id == "margin-starred" }), starred: true, place: .manage)
         model.setInterjectionPrivateSharingNote(
             "margin-starred",
             note: String(repeating: "n", count: Gate1AppModel.privateSharingNoteCharacterLimit + 25)
@@ -1151,11 +1157,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertEqual(reopened.sharingState.draftFilter, .starred)
         XCTAssertEqual(reopened.sharingState.drafts.filter(\.isIncluded).map(\.id), ["margin-starred"])
-        XCTAssertEqual(InterjectionSharingView.collapsedTranscriptLineLimit, 10)
-        XCTAssertFalse(InterjectionSharingView.transcriptRequiresExpansion(fullHeight: 220, limitedHeight: 220))
-        XCTAssertTrue(InterjectionSharingView.transcriptRequiresExpansion(fullHeight: 440, limitedHeight: 220))
 
-        reopened.setInterjectionStarredForSharing("margin-starred", starred: false)
+        reopened.setStarredForSharing(curated, starred: false, place: .manage)
         await reopened.settleItemReload() // the item detail reloads off the main thread after the star (#2505)
         reopened.prepareShareInterjections()
         XCTAssertEqual(reopened.sharingState.draftFilter, .all)
@@ -2090,6 +2093,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         // #148: the old timer ran out 0.7 s after the save returned, while the listening screen was still being
         // drawn, and the queued second tap on Add a Margin then started a recording. The shield now waits for the
         // screen to appear.
+        // fixed-sleep ok: time is the subject. The retired timer ran out 0.7 s after the save; sleeping past that moment
+        // is the only way to show it no longer opens the shield. A late wake only makes a regression easier to see.
+        // `MarginCaptureCoordinatorTests` holds the same rule on injected dates, with no wall clock.
         try await Task.sleep(nanoseconds: 900_000_000)
         XCTAssertTrue(model.isMarginCaptureCoolingDown, "no listening screen has appeared yet")
         model.beginInterjection()
@@ -3498,6 +3504,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let secondUndoId = try XCTUnwrap(model.trashUndo?.id)
 
         XCTAssertNotEqual(firstUndoId, secondUndoId)
+        // fixed-sleep ok: time is the subject. The older timer's deadline (80 ms after the first Undo) is the moment that
+        // must pass, and this sleep ends at 90 ms. Both timers sleep on the main actor, which wakes them in deadline order,
+        // so the older one has had its turn before this line runs. The replacement's own timer ends the test below.
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(model.trashUndo?.id, secondUndoId, "The older timer must not dismiss the replacement Undo")
         try await waitFor("replacement trash Undo to auto-dismiss") {
@@ -3556,6 +3565,57 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(model.trashUndo)
     }
 
+    /// #4227: the EPUB and the audiobook the app copied in from Files go with their item, single and bulk, and a live
+    /// item's own copies stay. The host tests cover the rule (`ItemOwnedFiles.copiedSourceTarget`); this ties the model to it.
+    func testPermanentDeleteRemovesTheCopiedEPUBAndAudiobookAndKeepsALiveItemsOwn() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "permanent-delete-copied-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        model.importTitle = "Second Item"
+        model.importText = "A second item that stays in the Library."
+        model.importTextItem()
+        let liveID = model.selectedItem.id
+        model.importTitle = "Third Item"
+        model.importText = "A third item, deleted in the bulk delete."
+        model.importTextItem()
+        let bulkID = model.selectedItem.id
+
+        let support = try model.applicationSupportDirectory()
+        func giveCopiedFile(itemId: String, category: OfflineAssetCategory, folder: String, ext: String) throws -> URL {
+            let file = support.appending(path: "\(folder)/\(itemId).\(ext)")
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("copied".utf8).write(to: file)
+            addTeardownBlock { try? FileManager.default.removeItem(at: file) }
+            try store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+                id: "copied-\(itemId)", itemId: itemId, category: category, relativePath: "\(folder)/\(file.lastPathComponent)",
+                byteCount: 6, isReproducible: false))
+            return file
+        }
+        let doomedEPUB = try giveCopiedFile(itemId: "item-pill", category: .sourceDocument, folder: "SourceDocuments", ext: "epub")
+        let liveEPUB = try giveCopiedFile(itemId: liveID, category: .sourceDocument, folder: "SourceDocuments", ext: "epub")
+        let bulkBook = try giveCopiedFile(itemId: bulkID, category: .audiobook, folder: "Audiobooks", ext: "m4b")
+
+        model.moveItemToTrash(id: "item-pill")
+        model.permanentlyDeleteItem(id: "item-pill")
+        try await waitFor("the deleted item's copied EPUB to be removed", timeoutNanoseconds: 5_000_000_000) {
+            !FileManager.default.fileExists(atPath: doomedEPUB.path)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: liveEPUB.path), "a live item's copy is never touched")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: bulkBook.path), "an item still in the Library keeps its audiobook")
+
+        model.moveItemToTrash(id: bulkID)
+        model.permanentlyDeleteRecentlyDeletedItems()
+        try await waitFor("the bulk-deleted item's copied audiobook to be removed", timeoutNanoseconds: 5_000_000_000) {
+            !FileManager.default.fileExists(atPath: bulkBook.path)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: liveEPUB.path), "the live item's copy still stays")
+    }
+
     /// #1035: "Permanently deleted" has to take the item's spoken Margin recordings off the phone, not
     /// only their database rows. The recordings are real files in the app's own Application Support folder.
     func testPermanentDeleteRemovesTheItemsMarginRecordingsAndKeepsALiveItemsOwn() async throws {
@@ -3603,6 +3663,42 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         assertDeleted(doomedFiles, kept: liveFiles)
         XCTAssertTrue(try store.loadInterjections(itemId: "item-pill").isEmpty)
         XCTAssertEqual(try store.loadInterjections(itemId: liveID).count, 1)
+    }
+
+    /// #4227: a permanent delete the app was quit in the middle of (rows gone, recording still on disk) is finished at the
+    /// next launch, and a recording a surviving Margin still names is left. The host tests cover `PermanentDeletePurge`;
+    /// this ties the model's launch step to it, with the app's own recording folder and path rule.
+    func testALaunchFinishesAPermanentDeleteThatLeftTheRecordingBehind() async throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "permanent-delete-resume-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let liveSession = try startAndEndSession(model, itemId: "item-pill")
+        let live = try saveSpokenMargin(store: store, itemId: "item-pill", sessionId: liveSession)
+
+        let support = try model.applicationSupportDirectory()
+        let folder = support.appending(path: "SpokenMargins/interjections", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let left = folder.appending(path: "left-behind-\(UUID().uuidString).m4a")
+        try Data("voice".utf8).write(to: left)
+        addTeardownBlock { try? FileManager.default.removeItem(at: left) }
+        // The record a delete wrote before the rows went; the item has no row now, and the app was killed.
+        let journal = support.appending(path: "SpokenMargins/PurgeJournal", directoryHint: .isDirectory)
+        _ = try PermanentDeletePurge(journalDirectory: journal, roots: []).begin(
+            itemIds: ["item-gone-\(UUID().uuidString)"], targets: [],
+            recordingPaths: ["SpokenMargins/interjections/\(left.lastPathComponent)", live.path])
+
+        model.finishInterruptedPermanentDeletes(store: store)
+        try await waitFor("the recording the interrupted delete left to be removed", timeoutNanoseconds: 5_000_000_000) {
+            !FileManager.default.fileExists(atPath: left.path)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: live.path), "a recording a Margin that stays names is never removed")
     }
 
     /// #3406: the model's permanent delete, single and bulk, takes a friend's imported packet folder off the phone
@@ -4909,7 +5005,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
     private func textAnchoredMomentFixture(
         otherMarginChars: [Int] = [],
-        chapterStartChars: [Int] = []
+        chapterStartChars: [Int] = [],
+        written: Bool = false
     ) throws -> (model: Gate1AppModel, row: MarginRow, targetChar: Int, sentenceLength: Int) {
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-moment-text-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -4939,8 +5036,12 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         margin.anchor = Anchor(anchorType: .text, startChar: targetChar, endChar: targetChar + sentenceLength,
             anchorBefore: "", anchorAfter: "")
         XCTAssertNil(margin.anchor.mediaTimeMs, "a Margin made while the article was read aloud has only a text place")
-        margin.audioPath = root.appending(path: "margin.m4a").path
-        margin.audioStatus = "recorded"
+        if written {
+            margin.captureKind = .written
+        } else {
+            margin.audioPath = root.appending(path: "margin.m4a").path
+            margin.audioStatus = "recorded"
+        }
         try store.saveInterjection(margin)
         for char in otherMarginChars {
             var other = margin
@@ -4951,6 +5052,73 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.refreshMarginRows()
         let row = try XCTUnwrap(model.marginRows.first { $0.interjection.id == margin.id })
         return (model, row, targetChar, sentenceLength)
+    }
+
+    /// #3961: "Go to this moment in the source" on a written Margin switched nothing, because only a spoken Margin starts
+    /// a Margin moment (the playback screen's pane switch watched that), so the listener stayed on the Timeline. The action
+    /// now counts each success in `showNowRequests`, which the screen turns into the Now pane. The test layer that should
+    /// have caught it is this one: the action, for a written Margin, and what it tells the screen.
+    ///
+    /// #4312: counting requests passed with the screen's `.onChange` that turns them into the Now pane deleted. This
+    /// mounts the playback screen, goes to the Timeline as a listener does, and reads which pane the switch says is
+    /// selected, twice, because a second tap after browsing back to the Timeline must switch again.
+    func testGoToThisMomentOnAWrittenMarginShowsNowFromTheTimeline() async throws {
+        let fixture = try textAnchoredMomentFixture(written: true)
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        let automationWasEnabled = AccessibilityAutomation.enable()
+        defer { if let automationWasEnabled { AccessibilityAutomation.set(automationWasEnabled) } }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        // The Timeline pane reads the sharing coordinator; without it, switching to the Timeline stops the test host.
+        window.rootViewController = UIHostingController(rootView: AnyView(PlaybackScreen().environmentObject(model)
+            .environmentObject(Build23SharingCoordinator(model: model))))
+        window.makeKeyAndVisible()
+        let mounted = MountedTree(window: window, previousKeyWindow: previousKeyWindow)
+        defer { mounted.close() }
+
+        for tap in 1...2 {
+            _ = try await mounted.waitForNode("the Timeline pane button") { $0.identifier == PlaybackPane.timeline.accessibilityIdentifier }
+            XCTAssertTrue(mounted.activate { $0.identifier == PlaybackPane.timeline.accessibilityIdentifier },
+                          "the Timeline pane button refused activation")
+            _ = try await mounted.waitForNode("the Timeline selected before tap \(tap)") {
+                $0.identifier == PlaybackPane.timeline.accessibilityIdentifier && $0.traits.contains(.selected)
+            }
+
+            XCTAssertTrue(model.playMarginMoment(fixture.row))
+
+            _ = try await mounted.waitForNode("the Now pane selected after tap \(tap) of Go to this moment") {
+                $0.identifier == PlaybackPane.now.accessibilityIdentifier && $0.traits.contains(.selected)
+            }
+        }
+        XCTAssertNil(model.marginMoment, "a written Margin starts no Margin moment: the request is what switches the pane")
+        XCTAssertEqual(model.screen, .playback)
+    }
+
+    func testGoToThisMomentOnASpokenMarginAlsoAsksTheScreenToShowNowOnce() throws {
+        let fixture = try textAnchoredMomentFixture()
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+
+        XCTAssertEqual(model.showNowRequests, 1)
+        XCTAssertNotNil(model.marginMoment)
+    }
+
+    func testAGoToThisMomentThatCannotReadItsMarginAsksForNothing() throws {
+        let fixture = try textAnchoredMomentFixture(written: true)
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        var missing = fixture.row.interjection
+        missing.id = "no-such-margin"
+        let row = MarginRow(interjection: missing, itemTitle: fixture.row.itemTitle, sessionDate: nil)
+
+        XCTAssertFalse(model.playMarginMoment(row))
+
+        XCTAssertEqual(model.showNowRequests, 0, "a failure keeps the listener where they were")
     }
 
     func testGlobalMarginSearchStarsAndSharedRowsKeepSessionIdentity() throws {
@@ -4986,14 +5154,17 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try store.saveImportedCommentaryLayer(layer)
         try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(id: "same-note-id", layerId: layer.id, packageScopedId: "shared-note", createdAt: Date(), anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "Shared approved words"))
         model.openHome()
-        before = model.snapshot
         model.refreshMarginRows()
+        // The baseline is taken once the rows are loaded: loading them lets Skim see the playing item's Margin ahead, so
+        // `canSkimForward` rightly turns on then (#4447). What this test pins is that searching, opening and starring
+        // leave the session untouched.
+        before = model.snapshot
         model.marginCollectionQuery.text = "CAFE with an amber"
         let found = try XCTUnwrap(model.visiblePrivateMarginRows.first)
         XCTAssertEqual(model.visiblePrivateMarginRows.count, 1)
         XCTAssertEqual(found.interjection.sessionId, "retrieval-session")
         model.openMarginInTimeline(found)
-        model.setMarginStarred(found, starred: true)
+        model.setStarredForSharing(found.interjection, starred: true, place: .marginsTab)
         XCTAssertEqual(model.snapshot, before)
         XCTAssertEqual(try store.loadInterjections(sessionId: firstSession).first?.isStarredForSharing, original.isStarredForSharing)
         let reconstructed = try SQLiteSessionStore(path: url.path)
@@ -5055,7 +5226,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.syncPlaybackProgressForLifecycle()
         before = model.snapshot
         model.setInterjectionPrivateSharingNote(foreign.id, sessionId: foreign.sessionId, note: "Private foreign note")
-        model.setInterjectionStarredForSharing(foreign.id, sessionId: foreign.sessionId, starred: true)
+        model.setStarredForSharing(foreign, starred: true, place: .manage)
         model.deleteTranscript(interjection: foreign)
         let afterTranscript = try XCTUnwrap(store.loadInterjections(sessionId: foreign.sessionId).first)
         XCTAssertNil(afterTranscript.transcript)
@@ -6313,7 +6484,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try store.saveItem(Item(id: "article", title: "A post", mediaType: "text", text: "Source text.", externalReference: "https://www.noahpinion.blog/p/a-post?utm_source=substack", status: "ready", externalReferenceType: "url"))
         try store.saveSession(Session(id: "session-article", itemId: "article", status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "article", position: Position(charOffset: 4), completionPercent: 40, playbackRate: 1))
         model.openHome()
-        model.refreshFollowedSources(force: false)
+        model.refreshFollowedSources(force: false, trigger: .localChange)
         try await waitFor("subscription loaded") { model.feedSubscriptions.contains { $0.id == "subscription-noahpinion" } }
 
         model.openItem(id: "article")

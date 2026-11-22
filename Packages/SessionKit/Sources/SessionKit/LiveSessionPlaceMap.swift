@@ -16,21 +16,58 @@ extension LiveSession {
         return positionUnit.map { $0 != .time } ?? false
     }
 
-    /// Keeps the place heard in a Margin's words as that Margin's checkpoint. False when there is none to keep.
+    /// Keeps the place offered for a Margin as its checkpoint: the one heard in its words, else the page number read
+    /// from its photo. False when there is none to keep.
     @discardableResult
     public mutating func keepHeardPlace(forMarginId id: String) -> Bool {
-        guard let index = margins.firstIndex(where: { $0.id == id }), let heard = margins[index].heardPlace else { return false }
-        margins[index].place = heard
+        guard let index = margins.firstIndex(where: { $0.id == id }),
+              let offered = margins[index].heardPlace ?? photoPageOffer(forMarginId: id) else { return false }
+        margins[index].place = offered
         margins[index].declinedHeardPlace = nil
         return true
     }
 
-    /// Turns down the place heard in a Margin's words, so it isn't offered again.
+    /// Turns down the place offered for a Margin, so it isn't offered again.
     @discardableResult
     public mutating func declineHeardPlace(forMarginId id: String) -> Bool {
-        guard let index = margins.firstIndex(where: { $0.id == id }), margins[index].heardPlace != nil else { return false }
+        guard let index = margins.firstIndex(where: { $0.id == id }),
+              margins[index].heardPlace != nil || photoPageOffer(forMarginId: id) != nil else { return false }
         margins[index].declinedHeardPlace = true
         return true
+    }
+
+    // MARK: A page number read from a photo (#2708)
+
+    /// The page checkpoint a photo may offer is a page, so only a session placed by pages (or not yet placed by
+    /// anything) can take it: a percent or a clock session would ignore a page checkpoint.
+    private var takesPageCheckpoint: Bool { positionUnit == nil || positionUnit == .page }
+
+    /// True when this Margin's photo should be read for a page number now: it has a photo that keeps the rules, it has
+    /// not been read, nothing already places it, and the session could use a page.
+    public func needsPageRead(forMarginId id: String) -> Bool {
+        guard let margin = margins.first(where: { $0.id == id }) else { return false }
+        return margin.validPhoto != nil && margin.photoRead != true && margin.place == nil
+            && margin.declinedHeardPlace != true && takesPageCheckpoint
+    }
+
+    /// Records what reading the photo found. A page is stored only as an offer; it is not the Margin's place until the
+    /// listener keeps it. False when the Margin is gone or was already read.
+    @discardableResult
+    public mutating func recordPageRead(_ page: LiveSessionPlace?, forMarginId id: String) -> Bool {
+        guard let index = margins.firstIndex(where: { $0.id == id }), margins[index].photoRead != true else { return false }
+        margins[index].photoRead = true
+        margins[index].photoPlace = page?.unit == .page ? page : nil
+        return true
+    }
+
+    /// "Read 118 on the page. Keep it as a checkpoint?": the page number read from the photo. Nil when the Margin has a
+    /// place of its own, a place heard in its words (that offer comes first), was turned down, or the session can't use
+    /// a page.
+    public func photoPageOffer(forMarginId id: String) -> LiveSessionPlace? {
+        guard let margin = margins.first(where: { $0.id == id }), margin.validPhoto != nil, margin.place == nil,
+              margin.declinedHeardPlace != true, margin.heardPlace == nil, takesPageCheckpoint,
+              let page = margin.photoPlace, page.unit == .page else { return nil }
+        return page
     }
 }
 

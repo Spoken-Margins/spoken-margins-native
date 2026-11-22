@@ -91,11 +91,33 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertEqual(PinnedMarginCard.Subject.friend("Friendly Fran").name, "Friendly Fran", "a real name that starts with the word stays")
     }
 
+    /// A friend's Margin as the model holds it: heard only once `firstHeardAt` is set.
+    private func sharedPrompt(_ id: String, firstHeardAt: Date?) -> ImportedCommentaryPrompt {
+        var layer = ImportedCommentaryLayer(id: "layer", itemId: "item", packageDigest: "digest", packageId: "package",
+                                            itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),
+                                            importedAt: Date(timeIntervalSince1970: 0),
+                                            sourceResolutionStatus: .resolved, isEnabled: true)
+        layer.revealMode = .guided
+        let record = ImportedCommentaryInterjection(
+            id: id, layerId: layer.id, packageScopedId: "packet-\(id)", createdAt: Date(timeIntervalSince1970: 0),
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: "Words",
+            resolution: ImportedAnchorResolution(evidenceClass: .exactEdition, localMediaTimeMs: 60_000),
+            firstHeardAt: firstHeardAt)
+        return ImportedCommentaryPrompt(layer: layer, interjection: record, index: 1, count: 1)
+    }
+
     func testAnAnnouncedMarginIsOnlyHeardWhenItsVoiceTrulyPlayed() {
-        // Announced (the tone sounded, or the card was dismissed) is not heard.
-        XCTAssertEqual(PinnedMarginCard.Arrival.forMargin(announced: true, heard: true, revealMode: .guided), .onRequest)
-        XCTAssertEqual(PinnedMarginCard.Arrival.forMargin(announced: true, heard: false, revealMode: .guided), .announcedUnheard)
-        XCTAssertEqual(PinnedMarginCard.Arrival.forMargin(announced: false, heard: false, revealMode: .guided), .playsByItself)
+        // Announced (the tone sounded, or the card was dismissed) is not heard: `heard` comes from the Margin's own
+        // `firstHeardAt`, through the rule the model calls, never from the offer queue (#4310).
+        let heardOne = sharedPrompt("heard", firstHeardAt: Date(timeIntervalSince1970: 100))
+        let unheardOne = sharedPrompt("unheard", firstHeardAt: nil)
+        let notYet = sharedPrompt("not-yet", firstHeardAt: nil)
+        var offers = SharedMarginOfferQueue()
+        offers.markAnnounced(heardOne.id)
+        offers.markAnnounced(unheardOne.id)
+        XCTAssertEqual(PinnedMarginCard.Arrival.forMargin(heardOne, offers: offers), .onRequest)
+        XCTAssertEqual(PinnedMarginCard.Arrival.forMargin(unheardOne, offers: offers), .announcedUnheard)
+        XCTAssertEqual(PinnedMarginCard.Arrival.forMargin(notYet, offers: offers), .playsByItself)
         let unheard = card(cole, .upNext(msRemaining: 39 * 60_000, arrival: .announcedUnheard), press: seek)
         XCTAssertEqual(unheard.headline, "Next Margin in 39 min")
         XCTAssertEqual(unheard.detail, "It won't play by itself.")
@@ -156,7 +178,7 @@ final class PinnedMarginCardTests: XCTestCase {
         // `stopReview` pauses the source and goes back only to undo the review's own hop (`MarginMomentSequence.placeToReturnToWhenStopped`).
         // It is drawn only at a review's lead-in now, never while a voice plays.
         let stop = card(cole, .comingUp(msRemaining: 8_000), press: more).actions[1]
-        XCTAssertEqual(stop.title, "Stop")
+        XCTAssertEqual(stop.title, "Stop Margins", "it says what it stops (#4611); the hint says it also pauses")
         XCTAssertEqual(stop.hint, "Stops these Margins and pauses the episode. If none of them has played yet, it goes back to where you were.")
         XCTAssertFalse(stop.hint.contains("carries on"))
     }
@@ -188,12 +210,12 @@ final class PinnedMarginCardTests: XCTestCase {
 
     func testAReviewsLeadInMainButtonIsThePressAndItsExitIsStop() {
         let far = card(cole, .comingUp(msRemaining: 39 * 60_000), press: seek)
-        XCTAssertEqual(titles(far), ["Skip to just before Cole", "Stop"])
+        XCTAssertEqual(titles(far), ["Skip to just before Cole", "Stop Margins"])
         XCTAssertEqual(far.actions.map(\.job), [.goToNextMargin, .stopReview])
         XCTAssertEqual(far.actions[0].hint, "Moves the episode to about 20 seconds before this Margin.")
         for press in [NextMarginPress.playMarginNow, .unavailable, .skipVoice] {
             let near = card(cole, .comingUp(msRemaining: 8_000), press: press)
-            XCTAssertEqual(titles(near), ["Skip to Cole now", "Stop"], "\(press)")
+            XCTAssertEqual(titles(near), ["Skip to Cole now", "Stop Margins"], "\(press)")
             XCTAssertEqual(near.actions.map(\.job), [.playMomentNow, .stopReview])
         }
         for c in [far, card(cole, .comingUp(msRemaining: 8_000))] {
@@ -461,16 +483,16 @@ final class PinnedMarginCardTests: XCTestCase {
     /// The card promises what the offer will do, per Margin: a mixed set of layers on one episode (#3220 audit).
     func testWhatHappensAtAMarginComesFromThatMarginsOwnLayerAndTheOfferRules() {
         typealias Arrival = PinnedMarginCard.Arrival
-        XCTAssertEqual(Arrival.forMargin(announced: false, revealMode: .guided), .playsByItself)
-        XCTAssertEqual(Arrival.forMargin(announced: false, revealMode: .companion), .toneThenTap)
-        XCTAssertEqual(Arrival.forMargin(announced: false, revealMode: nil), .toneThenTap)
-        XCTAssertEqual(Arrival.forMargin(announced: true, revealMode: .guided), .onRequest, "announced is not offered again")
-        XCTAssertEqual(Arrival.forMargin(announced: false, revealMode: .fresh), .waitsForYou, "Fresh is never offered")
-        XCTAssertEqual(Arrival.forMargin(announced: true, revealMode: .fresh), .waitsForYou)
+        XCTAssertEqual(Arrival.forMargin(announced: false, heard: true, revealMode: .guided), .playsByItself)
+        XCTAssertEqual(Arrival.forMargin(announced: false, heard: true, revealMode: .companion), .toneThenTap)
+        XCTAssertEqual(Arrival.forMargin(announced: false, heard: true, revealMode: nil), .toneThenTap)
+        XCTAssertEqual(Arrival.forMargin(announced: true, heard: true, revealMode: .guided), .onRequest, "announced is not offered again")
+        XCTAssertEqual(Arrival.forMargin(announced: false, heard: true, revealMode: .fresh), .waitsForYou, "Fresh is never offered")
+        XCTAssertEqual(Arrival.forMargin(announced: true, heard: true, revealMode: .fresh), .waitsForYou)
         // It agrees with the prompt style the model acts on, for every reveal mode.
         for mode in ImportedCommentaryRevealMode.allCases where mode != .fresh {
             let plays = SharedMarginPromptStyle.style(revealMode: mode, arrival: .crossed).autoPlayAfterMs != nil
-            XCTAssertEqual(Arrival.forMargin(announced: false, revealMode: mode) == .playsByItself, plays, "\(mode)")
+            XCTAssertEqual(Arrival.forMargin(announced: false, heard: true, revealMode: mode) == .playsByItself, plays, "\(mode)")
         }
     }
 

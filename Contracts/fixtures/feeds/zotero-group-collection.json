@@ -1,0 +1,2579 @@
+[
+    {
+        "key": "T52IAELZ",
+        "version": 15179,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/T52IAELZ",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/T52IAELZ",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Greenfield and Yan",
+            "parsedDate": "2006",
+            "numChildren": 0
+        },
+        "data": {
+            "key": "T52IAELZ",
+            "version": 15179,
+            "itemType": "journalArticle",
+            "title": "Children, adolescents, and the Internet",
+            "creators": [
+                {
+                    "creatorType": "editor",
+                    "firstName": "P.",
+                    "lastName": "Greenfield"
+                },
+                {
+                    "creatorType": "editor",
+                    "firstName": "Z.",
+                    "lastName": "Yan"
+                }
+            ],
+            "abstractNote": "",
+            "publicationTitle": "Developmental Psychology",
+            "publisher": "",
+            "place": "",
+            "date": "2006",
+            "volume": "42",
+            "issue": "",
+            "section": "",
+            "partNumber": "",
+            "partTitle": "",
+            "pages": "391–394",
+            "series": "",
+            "seriesTitle": "",
+            "seriesText": "",
+            "journalAbbreviation": "Dev. Psychol.",
+            "DOI": "10.1037/0012-1649.42.3.391",
+            "citationKey": "greenfieldChildrenAdolescentsInternet2006",
+            "url": "",
+            "accessDate": "",
+            "PMID": "16756431",
+            "PMCID": "",
+            "ISSN": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "",
+            "callNumber": "",
+            "rights": "",
+            "extra": "genre: special section",
+            "tags": [
+                {
+                    "tag": "Adolescent"
+                },
+                {
+                    "tag": "Adolescent Development"
+                },
+                {
+                    "tag": "Child"
+                },
+                {
+                    "tag": "Child Development"
+                },
+                {
+                    "tag": "Humans"
+                },
+                {
+                    "tag": "Internet"
+                },
+                {
+                    "tag": "Psychology, Adolescent"
+                },
+                {
+                    "tag": "Psychology, Child"
+                },
+                {
+                    "tag": "cleaned"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {},
+            "dateAdded": "2018-11-08T20:39:24Z",
+            "dateModified": "2026-04-03T21:22:44Z"
+        }
+    },
+    {
+        "key": "SFWYZJLW",
+        "version": 15092,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/SFWYZJLW",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/SFWYZJLW",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Shotton",
+            "parsedDate": "1989-10-23",
+            "numChildren": 0
+        },
+        "data": {
+            "key": "SFWYZJLW",
+            "version": 15092,
+            "itemType": "book",
+            "title": "Computer addiction? A study of computer dependency",
+            "creators": [
+                {
+                    "creatorType": "author",
+                    "firstName": "Margaret A.",
+                    "lastName": "Shotton"
+                }
+            ],
+            "abstractNote": "This is an investigation of the syndrome of computer addiction which attempts to discover if obsessive dependency is harmful to the psychological and social development. It is based on case studies made of volunteers from all over the UK who considered themselves to be dependent upon computers. Extensive research was carried out into these people,",
+            "series": "",
+            "seriesNumber": "",
+            "volume": "",
+            "numberOfVolumes": "",
+            "edition": "",
+            "date": "1989-10-23",
+            "publisher": "Taylor & Francis",
+            "place": "London",
+            "originalDate": "",
+            "originalPublisher": "",
+            "originalPlace": "",
+            "format": "",
+            "numPages": "",
+            "ISBN": "978-1-135-47833-9",
+            "DOI": "10.1201/b12555",
+            "citationKey": "shottonComputerAddictionStudy1989",
+            "url": "https://www.taylorfrancis.com/books/9781135478339",
+            "accessDate": "2026-01-14T18:12:32Z",
+            "ISSN": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "DOI.org (Crossref)",
+            "callNumber": "",
+            "rights": "",
+            "extra": "",
+            "tags": [],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {
+                "dc:replaces": [
+                    "http://zotero.org/groups/2205533/items/UK88AI9P",
+                    "http://zotero.org/groups/2205533/items/893H6B7Q"
+                ]
+            },
+            "dateAdded": "2018-11-08T20:38:53Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "34FJELMP",
+        "version": 15076,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/34FJELMP",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/34FJELMP",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Hare and O’Neill",
+            "parsedDate": "2000",
+            "numChildren": 1
+        },
+        "data": {
+            "key": "34FJELMP",
+            "version": 15076,
+            "itemType": "journalArticle",
+            "title": "Effectiveness and efficiency in small academic peer groups: a case study",
+            "creators": [
+                {
+                    "creatorType": "author",
+                    "firstName": "Linda R.",
+                    "lastName": "Hare"
+                },
+                {
+                    "creatorType": "author",
+                    "firstName": "Kevin",
+                    "lastName": "O’Neill"
+                }
+            ],
+            "abstractNote": "What are the dynamics that affect a peer group, making one work more effectively and efficiently than another? What are some of the factors that influence peer group behavior to make some experiences positive and uplifting, whereas others are negative and frustrating? Using the case study method, the current research focuses on a small, academic peer group, during a particular period, in relation to group efficiency and effectiveness in achieving group goals. Issues the group encounters in the process of group work are documented and discussed by peer members and by a participant observer. The authors suggest that the contextual and affective processes associated with the study are not unique and can characterize group behavior in other peer situations. If this is the case, then the ability for such groups to monitor interactional behavior and recognize group problems before effectiveness and efficiency are greatly compromised may be a key factor for peer group success.",
+            "publicationTitle": "Small Group Research",
+            "publisher": "",
+            "place": "",
+            "date": "02/2000",
+            "volume": "31",
+            "issue": "1",
+            "section": "",
+            "partNumber": "",
+            "partTitle": "",
+            "pages": "24-53",
+            "series": "",
+            "seriesTitle": "",
+            "seriesText": "",
+            "journalAbbreviation": "Small Group Res.",
+            "DOI": "10.1177/104649640003100102",
+            "citationKey": "hareEffectivenessEfficiencySmall2000",
+            "url": "https://journals.sagepub.com/doi/10.1177/104649640003100102",
+            "accessDate": "2025-09-09T09:49:16Z",
+            "PMID": "",
+            "PMCID": "",
+            "ISSN": "1046-4964, 1552-8278",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "Effectiveness and efficiency in small academic peer groups",
+            "language": "en",
+            "libraryCatalog": "DOI.org (Crossref)",
+            "callNumber": "",
+            "rights": "https://journals.sagepub.com/page/policies/text-and-data-mining-license",
+            "extra": "",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                },
+                {
+                    "tag": "incorrect output"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {
+                "dc:replaces": "http://zotero.org/groups/2205533/items/QLA3HKE6"
+            },
+            "dateAdded": "2025-09-09T09:49:16Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "UAMQG4R2",
+        "version": 15068,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/UAMQG4R2",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/UAMQG4R2",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Mitchell",
+            "parsedDate": "2007",
+            "numChildren": 0
+        },
+        "data": {
+            "key": "UAMQG4R2",
+            "version": 15068,
+            "itemType": "journalArticle",
+            "title": "The import of uncertainty",
+            "creators": [
+                {
+                    "creatorType": "author",
+                    "firstName": "Sandra D.",
+                    "lastName": "Mitchell"
+                }
+            ],
+            "abstractNote": "",
+            "publicationTitle": "The Pluralist",
+            "publisher": "University of Illinois Press",
+            "place": "",
+            "date": "Spring 2007",
+            "volume": "2",
+            "issue": "1",
+            "section": "",
+            "partNumber": "",
+            "partTitle": "",
+            "pages": "58-71",
+            "series": "",
+            "seriesTitle": "",
+            "seriesText": "",
+            "journalAbbreviation": "Pluralist",
+            "DOI": "",
+            "citationKey": "mitchellImportUncertainty2007",
+            "url": "https://www.jstor.org/stable/20708888",
+            "accessDate": "2025-07-26T18:34:53Z",
+            "PMID": "",
+            "PMCID": "",
+            "ISSN": "1930-7365",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "JSTOR",
+            "callNumber": "",
+            "rights": "",
+            "extra": "",
+            "tags": [],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {
+                "dc:replaces": "http://zotero.org/groups/2205533/items/YJZ2I9NB"
+            },
+            "dateAdded": "2018-11-08T20:39:10Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "742IUZMD",
+        "version": 15057,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/742IUZMD",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/742IUZMD",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Gill et al.",
+            "parsedDate": "2010",
+            "numChildren": 0
+        },
+        "data": {
+            "key": "742IUZMD",
+            "version": 15057,
+            "itemType": "journalArticle",
+            "title": "Spirituality and religiosity: Factors affecting wellness among low-income, rural women",
+            "creators": [
+                {
+                    "creatorType": "author",
+                    "firstName": "Carman S.",
+                    "lastName": "Gill"
+                },
+                {
+                    "creatorType": "author",
+                    "firstName": "Casey A. Barrio",
+                    "lastName": "Minton"
+                },
+                {
+                    "creatorType": "author",
+                    "firstName": "Jane E.",
+                    "lastName": "Myers"
+                }
+            ],
+            "abstractNote": "A study including measures of spirituality, religiosity, and wellness was conducted to identify coping strategies for the multiple challenges to wellness faced by low‐income, rural women. Total spirituality and religiosity accounted for 39% of the variance in wellness, with purpose and meaning in life, unifying interconnectedness, and private religious practices composing the main contributions. Implications for counselors working with these women are discussed, as is the need for further research.",
+            "publicationTitle": "Journal of Counseling & Development",
+            "publisher": "",
+            "place": "",
+            "date": "07/2010",
+            "volume": "88",
+            "issue": "3",
+            "section": "",
+            "partNumber": "",
+            "partTitle": "",
+            "pages": "293-302",
+            "series": "",
+            "seriesTitle": "",
+            "seriesText": "",
+            "journalAbbreviation": "J. Couns. Dev.",
+            "DOI": "10.1002/j.1556-6678.2010.tb00025.x",
+            "citationKey": "gillSpiritualityReligiosityFactors2010",
+            "url": "https://onlinelibrary.wiley.com/doi/10.1002/j.1556-6678.2010.tb00025.x",
+            "accessDate": "2025-06-22T20:37:29Z",
+            "PMID": "",
+            "PMCID": "",
+            "ISSN": "0748-9633, 1556-6676",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "Spirituality and Religiosity",
+            "language": "en",
+            "libraryCatalog": "DOI.org (Crossref)",
+            "callNumber": "",
+            "rights": "",
+            "extra": "",
+            "tags": [],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {
+                "dc:replaces": "http://zotero.org/groups/2205533/items/6WFVJUFS"
+            },
+            "dateAdded": "2018-11-08T20:38:50Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "QDNCCZW2",
+        "version": 15046,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/QDNCCZW2",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/QDNCCZW2",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "parsedDate": "2010-12-17",
+            "numChildren": 1
+        },
+        "data": {
+            "key": "QDNCCZW2",
+            "version": 15046,
+            "itemType": "journalArticle",
+            "title": "",
+            "creators": [],
+            "abstractNote": "The show includes the top scientific breakthrough of 2010 and some of the big ideas of the past decade.\n          , \n            The show includes the top scientific breakthrough of 2010 and some of the big ideas of the past decade.",
+            "publicationTitle": "Science",
+            "publisher": "",
+            "place": "",
+            "date": "2010-12-17",
+            "volume": "330",
+            "issue": "6011",
+            "section": "",
+            "partNumber": "",
+            "partTitle": "",
+            "pages": "1700",
+            "series": "",
+            "seriesTitle": "",
+            "seriesText": "",
+            "journalAbbreviation": "Science",
+            "DOI": "10.1126/science.330.6011.1700-b",
+            "citationKey": "2010",
+            "url": "https://www.science.org/doi/10.1126/science.330.6011.1700-b",
+            "accessDate": "2025-05-04T00:44:46Z",
+            "PMID": "",
+            "PMCID": "",
+            "ISSN": "0036-8075, 1095-9203",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "DOI.org (Crossref)",
+            "callNumber": "",
+            "rights": "",
+            "extra": "genre: podcast transcript",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                },
+                {
+                    "tag": "incorrect output"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {
+                "dc:replaces": "http://zotero.org/groups/2205533/items/UC5CTW9W"
+            },
+            "dateAdded": "2025-05-04T00:44:46Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "JA3W6QNM",
+        "version": 15042,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/JA3W6QNM",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/JA3W6QNM",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Adams",
+            "parsedDate": "1974",
+            "numChildren": 1
+        },
+        "data": {
+            "key": "JA3W6QNM",
+            "version": 15042,
+            "itemType": "thesis",
+            "title": "Building a foundation for evaluation of instruction in higher education and continuing education",
+            "creators": [
+                {
+                    "creatorType": "author",
+                    "firstName": "Ronald Jerry",
+                    "lastName": "Adams"
+                }
+            ],
+            "abstractNote": "",
+            "thesisType": "Doctoral dissertation",
+            "university": "Ohio State University",
+            "place": "",
+            "date": "1974",
+            "series": "",
+            "seriesNumber": "",
+            "numPages": "",
+            "DOI": "",
+            "ISBN": "",
+            "citationKey": "adamsBuildingFoundationEvaluation1974",
+            "url": "http://rave.ohiolink.edu/etdc/view?acc_num=osu148674672383062",
+            "accessDate": "2025-04-30T00:34:28Z",
+            "ISSN": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "etd.ohiolink.edu",
+            "callNumber": "",
+            "rights": "",
+            "extra": "",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {
+                "dc:replaces": "http://zotero.org/groups/2205533/items/97XKLF7D"
+            },
+            "dateAdded": "2018-11-08T20:39:02Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "IQUWX24P",
+        "version": 15032,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/IQUWX24P",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/IQUWX24P",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "parsedDate": "2006",
+            "numChildren": 0
+        },
+        "data": {
+            "key": "IQUWX24P",
+            "version": 15032,
+            "itemType": "journalArticle",
+            "title": "\"What is a disaster\" and why does this question matter?",
+            "creators": [],
+            "abstractNote": "",
+            "publicationTitle": "Journal of Contingencies and Crisis Management",
+            "publisher": "",
+            "place": "",
+            "date": "03/2006",
+            "volume": "14",
+            "issue": "1",
+            "section": "",
+            "partNumber": "",
+            "partTitle": "",
+            "pages": "1–2",
+            "series": "",
+            "seriesTitle": "",
+            "seriesText": "",
+            "journalAbbreviation": "J. Contingencies Crisis Manag.",
+            "DOI": "10.1111/j.1468-5973.2006.00475.x",
+            "citationKey": "WhatDisasterWhy2006",
+            "url": "https://onlinelibrary.wiley.com/doi/10.1111/j.1468-5973.2006.00475.x",
+            "accessDate": "2025-04-14T10:22:40Z",
+            "PMID": "",
+            "PMCID": "",
+            "ISSN": "0966-0879, 1468-5973",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "\"What is a disaster\"",
+            "language": "en",
+            "libraryCatalog": "DOI.org (Crossref)",
+            "callNumber": "",
+            "rights": "",
+            "extra": "genre: editorial",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {
+                "dc:replaces": "http://zotero.org/groups/2205533/items/TMHEPJEE"
+            },
+            "dateAdded": "2018-11-08T20:39:24Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "MZCKNDMM",
+        "version": 15032,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/MZCKNDMM",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/MZCKNDMM",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Wroe et al.",
+            "parsedDate": "2010-12-07",
+            "numChildren": 1
+        },
+        "data": {
+            "key": "MZCKNDMM",
+            "version": 15032,
+            "itemType": "conferencePaper",
+            "title": "The craniomandibular mechanics of being human",
+            "creators": [
+                {
+                    "creatorType": "author",
+                    "firstName": "Stephen",
+                    "lastName": "Wroe"
+                },
+                {
+                    "creatorType": "author",
+                    "firstName": "Toni L.",
+                    "lastName": "Ferrara"
+                },
+                {
+                    "creatorType": "author",
+                    "firstName": "Colin R.",
+                    "lastName": "McHenry"
+                },
+                {
+                    "creatorType": "author",
+                    "firstName": "Darren",
+                    "lastName": "Curnoe"
+                },
+                {
+                    "creatorType": "author",
+                    "firstName": "Uphar",
+                    "lastName": "Chamoli"
+                }
+            ],
+            "abstractNote": "Diminished bite force has been considered a defining feature of modern\n              Homo sapiens\n              , an interpretation inferred from the application of two-dimensional lever mechanics and the relative gracility of the human masticatory musculature and skull. This conclusion has various implications with regard to the evolution of human feeding behaviour. However, human dental anatomy suggests a capacity to withstand high loads and two-dimensional lever models greatly simplify muscle architecture, yielding less accurate results than three-dimensional modelling using multiple lines of action. Here, to our knowledge, in the most comprehensive three-dimensional finite element analysis performed to date for any taxon, we ask whether the traditional view that the bite of\n              H. sapiens\n              is weak and the skull too gracile to sustain high bite forces is supported. We further introduce a new method for reconstructing incomplete fossil material. Our findings show that the human masticatory apparatus is highly efficient, capable of producing a relatively powerful bite using low muscle forces. Thus, relative to other members of the superfamily Hominoidea, humans can achieve relatively high bite forces, while overall stresses are reduced. Our findings resolve apparently discordant lines of evidence, i.e. the presence of teeth well adapted to sustain high loads within a lightweight cranium and mandible.",
+            "proceedingsTitle": "Proceedings of the Royal Society B: Biological Sciences",
+            "conferenceName": "",
+            "publisher": "",
+            "place": "",
+            "date": "2010-12-07",
+            "eventPlace": "",
+            "volume": "277",
+            "issue": "1700",
+            "numberOfVolumes": "",
+            "pages": "3579-3586",
+            "series": "",
+            "seriesNumber": "",
+            "DOI": "10.1098/rspb.2010.0509",
+            "ISBN": "",
+            "citationKey": "wroeCraniomandibularMechanicsBeing2010a",
+            "url": "https://royalsocietypublishing.org/doi/10.1098/rspb.2010.0509",
+            "accessDate": "2025-04-14T07:00:33Z",
+            "ISSN": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "DOI.org (Crossref)",
+            "callNumber": "",
+            "rights": "",
+            "extra": "",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {
+                "dc:replaces": "http://zotero.org/groups/2205533/items/ZTWVZUTJ"
+            },
+            "dateAdded": "2018-11-08T20:39:01Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "PGJVUJ3P",
+        "version": 15032,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/PGJVUJ3P",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/PGJVUJ3P",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Katz et al.",
+            "parsedDate": "2007",
+            "numChildren": 1
+        },
+        "data": {
+            "key": "PGJVUJ3P",
+            "version": 15032,
+            "itemType": "conferencePaper",
+            "title": "A multi-touch surface using multiple cameras",
+            "creators": [
+                {
+                    "creatorType": "author",
+                    "firstName": "Itai",
+                    "lastName": "Katz"
+                },
+                {
+                    "creatorType": "author",
+                    "firstName": "Kevin",
+                    "lastName": "Gabayan"
+                },
+                {
+                    "creatorType": "author",
+                    "firstName": "Hamid",
+                    "lastName": "Aghajan"
+                },
+                {
+                    "creatorType": "editor",
+                    "firstName": "Jacques",
+                    "lastName": "Blanc-Talon"
+                },
+                {
+                    "creatorType": "editor",
+                    "firstName": "Wilfried",
+                    "lastName": "Philips"
+                },
+                {
+                    "creatorType": "editor",
+                    "firstName": "Dan",
+                    "lastName": "Popescu"
+                },
+                {
+                    "creatorType": "editor",
+                    "firstName": "Paul",
+                    "lastName": "Scheunders"
+                }
+            ],
+            "abstractNote": "In this paper we present a framework for a multi-touch surface using multiple cameras. With an overhead camera and a side-mounted camera we determine the fingertip positions. After determining the fundamental matrix that relates the two cameras, we calculate the three dimensional coordinates of the fingertips. The intersection of the epipolar lines from the overhead camera with the fingertips detected in the side camera image provides the fingertip height. Touches are detected when the measured fingertip height from the touch surface is zero. We interpret touch events as hand gestures which can be generalized into commands for manipulating applications. We offer an example application of a multi-touch finger painting program.",
+            "proceedingsTitle": "Advanced concepts for intelligent vision systems",
+            "conferenceName": "9th International Conference, ACIVS 2007",
+            "publisher": "Springer",
+            "place": "Berlin",
+            "date": "2007",
+            "eventPlace": "Delft, The Netherlands",
+            "volume": "",
+            "issue": "",
+            "numberOfVolumes": "",
+            "pages": "97-108",
+            "series": "Lecture notes in computer science",
+            "seriesNumber": "4678",
+            "DOI": "10.1007/978-3-540-74607-2_9",
+            "ISBN": "978-3-540-74607-2",
+            "citationKey": "katzMultitouchSurfaceUsing2007",
+            "url": "",
+            "accessDate": "",
+            "ISSN": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "Springer Link",
+            "callNumber": "",
+            "rights": "",
+            "extra": "event-date: 2007-08-28/2007-08-31",
+            "tags": [],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {
+                "dc:replaces": "http://zotero.org/groups/2205533/items/AD25QTV4"
+            },
+            "dateAdded": "2025-04-14T06:49:20Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "WF85WQLC",
+        "version": 15002,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/WF85WQLC",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/WF85WQLC",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "parsedDate": "2007-12-19",
+            "numChildren": 0
+        },
+        "data": {
+            "key": "WF85WQLC",
+            "version": 15002,
+            "itemType": "podcast",
+            "title": "Shrink rap radio",
+            "creators": [
+                {
+                    "creatorType": "producer",
+                    "firstName": "D.",
+                    "lastName": "Van Nuys"
+                }
+            ],
+            "abstractNote": "",
+            "seriesTitle": "",
+            "episodeNumber": "",
+            "audioFileType": "Audio podcast",
+            "date": "2007-12-19",
+            "publisher": "",
+            "place": "",
+            "runningTime": "",
+            "DOI": "",
+            "citationKey": "vannuysShrinkRapRadio2007",
+            "url": "http://www.shrinkrapradio.com/",
+            "accessDate": "",
+            "shortTitle": "",
+            "language": "en",
+            "rights": "",
+            "extra": "",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {},
+            "dateAdded": "2018-11-08T20:39:05Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "NHLHA9AP",
+        "version": 14992,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/NHLHA9AP",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/NHLHA9AP",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Hoade",
+            "parsedDate": "2010-10-31",
+            "numChildren": 0
+        },
+        "data": {
+            "key": "NHLHA9AP",
+            "version": 14992,
+            "itemType": "podcast",
+            "title": "Zombies in literature: Intro to zombie studies",
+            "creators": [
+                {
+                    "creatorType": "podcaster",
+                    "firstName": "S.",
+                    "lastName": "Hoade"
+                }
+            ],
+            "abstractNote": "",
+            "seriesTitle": "",
+            "episodeNumber": "",
+            "audioFileType": "Video podcast",
+            "date": "2010-10-31",
+            "publisher": "",
+            "place": "",
+            "runningTime": "",
+            "DOI": "",
+            "citationKey": "hoadeZombiesLiteratureIntro2010",
+            "url": "http://itunes.apple.com/",
+            "accessDate": "",
+            "shortTitle": "",
+            "language": "en",
+            "rights": "",
+            "extra": "",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {},
+            "dateAdded": "2018-11-08T20:39:05Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "HD6IJ3Z9",
+        "version": 14991,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/HD6IJ3Z9",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/HD6IJ3Z9",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Flatow",
+            "parsedDate": "2011-02-11",
+            "numChildren": 1
+        },
+        "data": {
+            "key": "HD6IJ3Z9",
+            "version": 14991,
+            "itemType": "podcast",
+            "title": "Science diction: The origin of 'antibiotic'",
+            "creators": [
+                {
+                    "creatorType": "podcaster",
+                    "firstName": "Ira",
+                    "lastName": "Flatow"
+                }
+            ],
+            "abstractNote": "",
+            "seriesTitle": "",
+            "episodeNumber": "",
+            "audioFileType": "Podcast transcript",
+            "date": "2011-02-11",
+            "publisher": "NPR",
+            "place": "",
+            "runningTime": "",
+            "DOI": "",
+            "citationKey": "ScienceDictionOrigin2011",
+            "url": "http://www.npr.org/2011/02/11/133686020/Science-Diction-The-Origin-Of-Antibiotic",
+            "accessDate": "",
+            "shortTitle": "",
+            "language": "en",
+            "rights": "",
+            "extra": "",
+            "tags": [],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {},
+            "dateAdded": "2018-11-08T20:39:07Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "MJ4KAZSC",
+        "version": 14986,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/MJ4KAZSC",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/MJ4KAZSC",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "U.S. Department of Health and Human Services, National Institutes of Health, National Heart, Lung, and Blood Institute",
+            "parsedDate": "2003",
+            "numChildren": 1
+        },
+        "data": {
+            "key": "MJ4KAZSC",
+            "version": 14986,
+            "itemType": "report",
+            "title": "Managing asthma: A guide for schools",
+            "creators": [
+                {
+                    "creatorType": "author",
+                    "name": "U.S. Department of Health and Human Services, National Institutes of Health, National Heart, Lung, and Blood Institute"
+                }
+            ],
+            "abstractNote": "",
+            "reportNumber": "02\\-2650",
+            "reportType": "NIH Publication",
+            "institution": "",
+            "place": "Washington, DC",
+            "date": "2003",
+            "seriesTitle": "",
+            "seriesNumber": "",
+            "pages": "",
+            "DOI": "",
+            "ISBN": "",
+            "citationKey": "u.s.departmentofhealthandhumanservicesnationalinstitutesofhealthnationalheartlungandbloodinstituteManagingAsthmaGuide2003",
+            "url": "http://www.nhlbi.nih.gov/health/prof/lung/asthma/asth_sch.pdf",
+            "accessDate": "",
+            "ISSN": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "",
+            "callNumber": "",
+            "rights": "",
+            "extra": "",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                },
+                {
+                    "tag": "incorrect output"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {},
+            "dateAdded": "2018-11-08T20:38:59Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "KVH6B7FE",
+        "version": 14984,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/KVH6B7FE",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/KVH6B7FE",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Reviewer",
+            "numChildren": 1
+        },
+        "data": {
+            "key": "KVH6B7FE",
+            "version": 14984,
+            "itemType": "journalArticle",
+            "title": "Title of review",
+            "creators": [
+                {
+                    "creatorType": "author",
+                    "firstName": "A. A.",
+                    "lastName": "Reviewer"
+                },
+                {
+                    "creatorType": "reviewedAuthor",
+                    "firstName": "B. B.",
+                    "lastName": "Author"
+                }
+            ],
+            "abstractNote": "",
+            "publicationTitle": "Title of complete work",
+            "publisher": "",
+            "place": "",
+            "date": "year",
+            "volume": "11",
+            "issue": "",
+            "section": "",
+            "partNumber": "",
+            "partTitle": "",
+            "pages": "xxx-xxx",
+            "series": "",
+            "seriesTitle": "",
+            "seriesText": "",
+            "journalAbbreviation": "Title complete work",
+            "DOI": "xxxxx",
+            "citationKey": "reviewerTitleReviewyear",
+            "url": "",
+            "accessDate": "",
+            "PMID": "",
+            "PMCID": "",
+            "ISSN": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "",
+            "callNumber": "",
+            "rights": "",
+            "extra": "type: review\nreviewed-title: Title of article\nreviewed-medium: article",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                },
+                {
+                    "tag": "incorrect output"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {
+                "dc:replaces": "http://zotero.org/groups/2205533/items/I4CIZJMV"
+            },
+            "dateAdded": "2019-02-20T16:51:07Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "6WSXEVZZ",
+        "version": 14984,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/6WSXEVZZ",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/6WSXEVZZ",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Editor et al.",
+            "numChildren": 0
+        },
+        "data": {
+            "key": "6WSXEVZZ",
+            "version": 14984,
+            "itemType": "book",
+            "title": "Title of book",
+            "creators": [
+                {
+                    "creatorType": "editor",
+                    "firstName": "A. A.",
+                    "lastName": "Editor"
+                },
+                {
+                    "creatorType": "editor",
+                    "firstName": "B. B.",
+                    "lastName": "Editor"
+                },
+                {
+                    "creatorType": "editor",
+                    "firstName": "C. C",
+                    "lastName": "Editor"
+                }
+            ],
+            "abstractNote": "",
+            "series": "",
+            "seriesNumber": "",
+            "volume": "",
+            "numberOfVolumes": "",
+            "edition": "",
+            "date": "year",
+            "publisher": "",
+            "place": "",
+            "originalDate": "",
+            "originalPublisher": "",
+            "originalPlace": "",
+            "format": "",
+            "numPages": "",
+            "ISBN": "",
+            "DOI": "",
+            "citationKey": "editorTitleBookyear",
+            "url": "http://xxxxx",
+            "accessDate": "",
+            "ISSN": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "",
+            "callNumber": "",
+            "rights": "",
+            "extra": "",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {
+                "dc:replaces": "http://zotero.org/groups/2205533/items/68QW95E7"
+            },
+            "dateAdded": "2019-02-19T23:21:57Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "N24N4LRB",
+        "version": 14984,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/N24N4LRB",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/N24N4LRB",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Artist",
+            "numChildren": 1
+        },
+        "data": {
+            "key": "N24N4LRB",
+            "version": 14984,
+            "itemType": "audioRecording",
+            "title": "Title of song",
+            "creators": [
+                {
+                    "creatorType": "performer",
+                    "firstName": "B. B.",
+                    "lastName": "Artist"
+                },
+                {
+                    "creatorType": "originalCreator",
+                    "firstName": "A. A.",
+                    "lastName": "Writer"
+                }
+            ],
+            "abstractNote": "",
+            "audioRecordingFormat": "medium",
+            "seriesTitle": "",
+            "volume": "",
+            "numberOfVolumes": "",
+            "label": "",
+            "place": "",
+            "date": "copyright year",
+            "runningTime": "",
+            "ISBN": "",
+            "DOI": "",
+            "citationKey": "artistTitleSongcopyrightyear",
+            "url": "http://xxxxx",
+            "accessDate": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "",
+            "callNumber": "",
+            "rights": "",
+            "extra": "container-title: Title of album\nevent-date: Recording date\nevent-place: Recording place\nevent-title: Recording event\nnumber: Album catalog number\nchapter-number: Track number\noriginal-date: original composition date",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                },
+                {
+                    "tag": "incorrect output"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {},
+            "dateAdded": "2018-11-08T20:39:19Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "8T7SSNZF",
+        "version": 14984,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/8T7SSNZF",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/8T7SSNZF",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Director",
+            "numChildren": 1
+        },
+        "data": {
+            "key": "8T7SSNZF",
+            "version": 14984,
+            "itemType": "film",
+            "title": "Title of motion picture",
+            "creators": [
+                {
+                    "creatorType": "producer",
+                    "firstName": "A. A.",
+                    "lastName": "Producer"
+                },
+                {
+                    "creatorType": "director",
+                    "firstName": "B. B.",
+                    "lastName": "Director"
+                }
+            ],
+            "abstractNote": "",
+            "distributor": "",
+            "place": "",
+            "date": "year",
+            "genre": "",
+            "videoRecordingFormat": "Medium",
+            "runningTime": "",
+            "DOI": "",
+            "citationKey": "directorTitleMotionPictureyeara",
+            "url": "http://xxxxx",
+            "accessDate": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "",
+            "callNumber": "",
+            "rights": "",
+            "extra": "",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {},
+            "dateAdded": "2018-11-08T20:39:18Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "BT54AAQD",
+        "version": 14984,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/BT54AAQD",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/BT54AAQD",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "parsedDate": "2011",
+            "numChildren": 1
+        },
+        "data": {
+            "key": "BT54AAQD",
+            "version": 14984,
+            "itemType": "computerProgram",
+            "title": "Diabetes",
+            "creators": [],
+            "abstractNote": "",
+            "seriesTitle": "",
+            "versionNumber": "3.14",
+            "date": "2011",
+            "system": "",
+            "company": "",
+            "place": "",
+            "programmingLanguage": "",
+            "rights": "",
+            "citationKey": "Diabetes2011",
+            "url": "http://www.epocrates.com/products/iphone/",
+            "accessDate": "",
+            "DOI": "",
+            "ISBN": "",
+            "archive": "",
+            "archiveLocation": "",
+            "libraryCatalog": "",
+            "callNumber": "",
+            "shortTitle": "",
+            "extra": "Container title: Epocrates Essentials for iPhone\nMedium: mobile application software",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                },
+                {
+                    "tag": "incorrect output"
+                },
+                {
+                    "tag": "linter/error",
+                    "type": 1
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {},
+            "dateAdded": "2018-11-08T20:39:09Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "BIHLYWT7",
+        "version": 14984,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/BIHLYWT7",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/BIHLYWT7",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Bruckman",
+            "parsedDate": "1997",
+            "numChildren": 0
+        },
+        "data": {
+            "key": "BIHLYWT7",
+            "version": 14984,
+            "itemType": "thesis",
+            "title": "MOOSE crossing: construction, community, and learning in a networked virtual world for kids",
+            "creators": [
+                {
+                    "creatorType": "author",
+                    "firstName": "Amy Susan",
+                    "lastName": "Bruckman"
+                }
+            ],
+            "abstractNote": "",
+            "thesisType": "PhD thesis",
+            "university": "Massachusetts Institute of Technology",
+            "place": "Boston, MA",
+            "date": "1997",
+            "series": "",
+            "seriesNumber": "",
+            "numPages": "",
+            "DOI": "",
+            "ISBN": "",
+            "citationKey": "bruckmanMOOSECrossingConstruction1997",
+            "url": "https://hdl.handle.net/1721.1/33821",
+            "accessDate": "",
+            "ISSN": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "",
+            "callNumber": "",
+            "rights": "",
+            "extra": "",
+            "tags": [],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {},
+            "dateAdded": "2018-11-08T20:39:03Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "ZCK2ZKMS",
+        "version": 14984,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/ZCK2ZKMS",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/ZCK2ZKMS",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Deglin and Vallerand",
+            "parsedDate": "2010",
+            "numChildren": 1
+        },
+        "data": {
+            "key": "ZCK2ZKMS",
+            "version": 14984,
+            "itemType": "computerProgram",
+            "title": "Naproxen",
+            "creators": [
+                {
+                    "creatorType": "contributor",
+                    "firstName": "J.H.",
+                    "lastName": "Deglin"
+                },
+                {
+                    "creatorType": "contributor",
+                    "firstName": "A.H.",
+                    "lastName": "Vallerand"
+                }
+            ],
+            "abstractNote": "",
+            "seriesTitle": "",
+            "versionNumber": "",
+            "date": "2010",
+            "system": "Mobile application software",
+            "company": "",
+            "place": "",
+            "programmingLanguage": "",
+            "rights": "",
+            "citationKey": "deglinNaproxen2010",
+            "url": "http://www.skyscape.com/estore/productdetail.aspx",
+            "accessDate": "",
+            "DOI": "",
+            "ISBN": "",
+            "archive": "",
+            "archiveLocation": "",
+            "libraryCatalog": "",
+            "callNumber": "",
+            "shortTitle": "",
+            "extra": "Edition: 12\nContainer title: Davis’s Drug Guide for Nurses\nEditor: Deglin || J.H.\nEditor: Vallerand || A.H.",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                },
+                {
+                    "tag": "incorrect output"
+                },
+                {
+                    "tag": "linter/error",
+                    "type": 1
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {},
+            "dateAdded": "2018-11-08T20:39:09Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "GFSR2MSD",
+        "version": 14983,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/GFSR2MSD",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/GFSR2MSD",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Real Academia Espanola",
+            "parsedDate": "2001",
+            "numChildren": 1
+        },
+        "data": {
+            "key": "GFSR2MSD",
+            "version": 14983,
+            "itemType": "book",
+            "title": "Diccionario de la lengua espanola",
+            "creators": [
+                {
+                    "creatorType": "author",
+                    "name": "Real Academia Espanola"
+                }
+            ],
+            "abstractNote": "",
+            "series": "",
+            "seriesNumber": "",
+            "volume": "",
+            "numberOfVolumes": "",
+            "edition": "22",
+            "date": "2001",
+            "publisher": "Author",
+            "place": "Madrid, Spain",
+            "originalDate": "",
+            "originalPublisher": "",
+            "originalPlace": "",
+            "format": "",
+            "numPages": "",
+            "ISBN": "",
+            "DOI": "",
+            "citationKey": "realacademiaespanolaDiccionarioLenguaEspanola2001",
+            "url": "",
+            "accessDate": "",
+            "ISSN": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "es",
+            "libraryCatalog": "",
+            "callNumber": "",
+            "rights": "",
+            "extra": "Translated title: Dictionary of the Spanish language",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                },
+                {
+                    "tag": "incorrect output"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {},
+            "dateAdded": "2018-11-08T20:39:25Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "P44Z6W5F",
+        "version": 14983,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/P44Z6W5F",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/P44Z6W5F",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "numChildren": 0
+        },
+        "data": {
+            "key": "P44Z6W5F",
+            "version": 14983,
+            "itemType": "encyclopediaArticle",
+            "title": "Title of entry",
+            "creators": [],
+            "abstractNote": "",
+            "encyclopediaTitle": "Title of reference work",
+            "series": "",
+            "seriesNumber": "",
+            "volume": "00",
+            "numberOfVolumes": "",
+            "edition": "00",
+            "date": "year",
+            "publisher": "",
+            "place": "",
+            "pages": "",
+            "ISBN": "",
+            "DOI": "",
+            "citationKey": "TitleEntryyeara",
+            "url": "http://xxxxx",
+            "accessDate": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "",
+            "callNumber": "",
+            "rights": "",
+            "extra": "",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {},
+            "dateAdded": "2018-11-08T20:39:16Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "YIRHSNEB",
+        "version": 14983,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/YIRHSNEB",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/YIRHSNEB",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Author et al.",
+            "numChildren": 0
+        },
+        "data": {
+            "key": "YIRHSNEB",
+            "version": 14983,
+            "itemType": "bookSection",
+            "title": "Title of chapter or entry",
+            "creators": [
+                {
+                    "creatorType": "author",
+                    "firstName": "A. A.",
+                    "lastName": "Author"
+                },
+                {
+                    "creatorType": "author",
+                    "firstName": "B. B.",
+                    "lastName": "Author"
+                },
+                {
+                    "creatorType": "author",
+                    "firstName": "C. C.",
+                    "lastName": "Author"
+                },
+                {
+                    "creatorType": "editor",
+                    "firstName": "A. A.",
+                    "lastName": "Editor"
+                },
+                {
+                    "creatorType": "contributor",
+                    "firstName": "B. B.",
+                    "lastName": "Editor"
+                }
+            ],
+            "abstractNote": "",
+            "bookTitle": "Title of book",
+            "series": "",
+            "seriesNumber": "",
+            "volume": "",
+            "numberOfVolumes": "",
+            "edition": "",
+            "date": "year",
+            "publisher": "",
+            "place": "",
+            "originalDate": "",
+            "originalPublisher": "",
+            "originalPlace": "",
+            "format": "",
+            "pages": "xxx-xxx",
+            "ISBN": "",
+            "DOI": "",
+            "citationKey": "authorTitleChapterEntryyear",
+            "url": "http://xxxxx",
+            "accessDate": "",
+            "ISSN": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "",
+            "callNumber": "",
+            "rights": "",
+            "extra": "volume-title: Volume title",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {},
+            "dateAdded": "2018-11-08T20:39:16Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    },
+    {
+        "key": "I6A7UT88",
+        "version": 14983,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/I6A7UT88",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/I6A7UT88",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 1386342,
+                "username": "bwiernik",
+                "name": "Brenton M. Wiernik",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/bwiernik",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "lastModifiedByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "creatorSummary": "Author et al.",
+            "numChildren": 0
+        },
+        "data": {
+            "key": "I6A7UT88",
+            "version": 14983,
+            "itemType": "journalArticle",
+            "title": "Title of article",
+            "creators": [
+                {
+                    "creatorType": "author",
+                    "firstName": "A A",
+                    "lastName": "Author"
+                },
+                {
+                    "creatorType": "author",
+                    "firstName": "B B",
+                    "lastName": "Author"
+                },
+                {
+                    "creatorType": "author",
+                    "firstName": "C C",
+                    "lastName": "Author"
+                }
+            ],
+            "abstractNote": "",
+            "publicationTitle": "Title of Periodical",
+            "publisher": "",
+            "place": "",
+            "date": "year",
+            "volume": "xx",
+            "issue": "",
+            "section": "",
+            "partNumber": "",
+            "partTitle": "",
+            "pages": "pp–pp",
+            "series": "",
+            "seriesTitle": "",
+            "seriesText": "",
+            "journalAbbreviation": "Title Period.",
+            "DOI": "",
+            "citationKey": "authorTitleArticleyeara",
+            "url": "http://xxxxx",
+            "accessDate": "",
+            "PMID": "",
+            "PMCID": "",
+            "ISSN": "",
+            "archive": "",
+            "archiveLocation": "",
+            "shortTitle": "",
+            "language": "en",
+            "libraryCatalog": "",
+            "callNumber": "",
+            "rights": "",
+            "extra": "",
+            "tags": [
+                {
+                    "tag": "cleaned"
+                }
+            ],
+            "collections": [
+                "DMKBHP6P"
+            ],
+            "relations": {},
+            "dateAdded": "2018-11-08T20:39:14Z",
+            "dateModified": "2026-02-16T17:49:34Z"
+        }
+    }
+]

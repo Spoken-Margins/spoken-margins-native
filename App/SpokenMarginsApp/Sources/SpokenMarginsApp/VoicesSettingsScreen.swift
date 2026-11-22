@@ -44,7 +44,7 @@ struct VoicesSettingsScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("settings.voices.screen")
         .task { await voices.open() }
-        .sheet(item: $agreementRow) { row in
+        .trackedSheet(item: $agreementRow) { row in
             VoiceAgreementSheet(row: row) {
                 agreementRow = nil
                 voices.agreeAndDownload(row)
@@ -141,11 +141,10 @@ private struct VoiceRow: View {
         case .downloading(let bytes, let total):
             VStack(alignment: .leading, spacing: 4) {
                 ProgressView(value: Double(bytes), total: Double(max(total, 1)))
-                    .tint(.blue)
                 HStack {
                     Label("Downloading \(Self.size(bytes)) of \(Self.size(total))", systemImage: "arrow.down.circle")
                         .font(.caption)
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(AppColors.evergreen)
                     Spacer()
                     Button("Stop", action: cancel)
                         .buttonStyle(.borderless)
@@ -231,7 +230,7 @@ private struct VoiceAgreementSheet: View {
                     Button(action: agree) {
                         Text("Agree and download").frame(maxWidth: .infinity, minHeight: 44)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .filledActionButton()
                     .accessibilityIdentifier("settings.voices.agree")
                     Button(action: cancel) {
                         Text("Not now").frame(maxWidth: .infinity, minHeight: 44)

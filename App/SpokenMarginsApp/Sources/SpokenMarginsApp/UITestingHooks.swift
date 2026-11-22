@@ -58,6 +58,11 @@ enum UITestingHooks {
         UITestingLaunchSeed.fetchesGuidedTour(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
     }
 
+    /// The launch also follows one show, with the Up next card's three entries (#3863).
+    static var seedsFollowedShow: Bool {
+        UITestingLaunchSeed.seedsFollowedShow(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
+    }
+
     /// A keep-library relaunch also imports one friend's Margin onto the seeded podcast (#474).
     static var importsCoopLayer: Bool {
         UITestingLaunchSeed.importsCoopLayer(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
@@ -67,6 +72,11 @@ enum UITestingHooks {
     static var seedsMarginsTab: Bool {
         guard case .offlinePodcast = seed else { return false }
         return ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_MARGINS_TAB"] == "1"
+    }
+
+    /// The Margin that relaunch imports is the written one that is never read aloud (J9, #4934).
+    static var importsSilentCoopMargin: Bool {
+        UITestingLaunchSeed.importsSilentCoopMargin(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
     }
 
     /// A fresh podcast launch starts with the listener part way, or at the end, of the episode (J14, #4100).
@@ -102,6 +112,11 @@ enum UITestingHooks {
     static var speechRate: Double? {
         guard isActive else { return nil }
         return environment("SPOKEN_MARGINS_UI_TEST_SPEECH_RATE").flatMap(Double.init)
+    }
+
+    /// Filler articles a fixture launch adds below the fixture article, so the Library scrolls (#4314).
+    static var libraryFillerCount: Int {
+        UITestingLaunchSeed.libraryFillerCount(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
     }
 
     /// The script exercises Supertonic narration instead of system speech.
@@ -165,6 +180,8 @@ enum UITestingHooks {
     static var usesStandInAudioServices: Bool { false }
     static var importsCoopLayer: Bool { false }
     static var seedsMarginsTab: Bool { false }
+    static var importsSilentCoopMargin: Bool { false }
+    static var seedsFollowedShow: Bool { false }
     static var podcastPlaceSeconds: Int? { nil }
     static var podcastStartsCompleted: Bool { false }
     static var fetchesGuidedTour: Bool { true }
@@ -173,6 +190,7 @@ enum UITestingHooks {
     static var localFoundationModelClient: (any LocalFoundationModelClient)? { nil }
     static var speechRate: Double? { nil }
     static var usesSupertonic: Bool { false }
+    static var libraryFillerCount: Int { 0 }
     static var summaryInterjectionNote: String? { nil }
     static var liveActivityPreviewTextSize: String? { nil }
     static var appearanceRequest: String? { nil }

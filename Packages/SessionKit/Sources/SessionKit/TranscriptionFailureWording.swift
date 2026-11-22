@@ -21,6 +21,16 @@ public enum TranscriptionFailureWording {
         }
     }
 
+    /// The two statuses a Margins row offers a Retry beside (#3856). `MarginRowRepair` keys off these same strings, so the
+    /// button can only appear beside the words it fixes.
+    ///
+    /// The context status names what failed in the listener's words (#4608): the app could not read the source text near the
+    /// Margin. It says nothing about the Margin's own recording or words, which a failed context never touches, and it
+    /// doesn't say "tap Retry", because the row shows no Retry while the Margin's own transcript is pending or a retry runs.
+    /// The constant keeps its name; only the words changed, and nothing stores them.
+    public static let contextNeedsRetry = "Couldn't find the source words near this Margin"
+    public static let transcriptionNeedsRetry = "Transcription needs retry"
+
     public static func isSpeechRecognitionOff(error: String) -> Bool {
         error.contains(speechRecognitionOffError)
     }
@@ -46,7 +56,7 @@ public enum TranscriptionFailureWording {
 
     /// The one line a voice Margin shows when it needs attention. Speech Recognition being off
     /// comes first: it also stops the source window being transcribed, so the context fails for
-    /// the same reason, and "Context needs retry" alone would hide how to fix both.
+    /// the same reason, and the context words alone would hide how to fix both.
     public static func marginAttention(
         transcriptionStatus: String,
         speechRecognitionOff: Bool,
@@ -55,7 +65,7 @@ public enum TranscriptionFailureWording {
     ) -> String {
         let transcript = marginStatus(transcriptionStatus: transcriptionStatus, speechRecognitionOff: speechRecognitionOff)
         if transcriptionStatus == "failed", speechRecognitionOff, let transcript { return transcript }
-        if contextUnavailable { return "Context needs retry" }
+        if contextUnavailable { return contextNeedsRetry }
         if recordingMissing { return "Recording is unavailable" }
         return transcript ?? "Margin needs attention"
     }
@@ -68,7 +78,7 @@ public enum TranscriptionFailureWording {
         case "failed":
             return speechRecognitionOff
                 ? "No transcript: Speech Recognition is off. Turn it on in Settings."
-                : "Transcription needs retry"
+                : transcriptionNeedsRetry
         case "pending":
             // Only live work is "pending": a launch settles the orphans as "failed" (#942).
             return "Transcribing…"

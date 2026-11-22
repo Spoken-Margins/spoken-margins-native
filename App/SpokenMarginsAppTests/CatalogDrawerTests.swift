@@ -18,7 +18,9 @@ final class CatalogDrawerTests: XCTestCase {
 
     private func makeDrawer(
         defaults: UserDefaults, log: FollowLog, searcher: PodcastNameSearch? = nil,
-        startFirstListen: (@MainActor ([String], Bool) async -> Void)? = nil
+        startFirstListen: (@MainActor ([String], Bool) async -> Void)? = nil,
+        libraryHoldsFriendPacket: (@Sendable () async -> Bool)? = nil,
+        openFriendLink: (@MainActor (URL) -> Void)? = nil
     ) throws -> CatalogDrawerModel {
         let bundled = try XCTUnwrap(Bundle.main.url(forResource: "catalog", withExtension: "json"), "catalog snapshot is bundled")
         let cache = FileManager.default.temporaryDirectory.appending(path: "catalog-drawer-\(UUID().uuidString)")
@@ -46,7 +48,9 @@ final class CatalogDrawerTests: XCTestCase {
                 return sourceId
             },
             searcher: searcher,
-            startFirstListen: startFirstListen
+            startFirstListen: startFirstListen,
+            libraryHoldsFriendPacket: libraryHoldsFriendPacket,
+            openFriendLink: openFriendLink
         )
     }
 
@@ -407,6 +411,214 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertTrue(drawer.isPresented, "back after the second friend's item")
     }
 
+    /// #3801: a friend's link that failed on a first launch leaves no empty Library: the drawer it withdrew is back
+    /// once the failure sheet closes, and Done with nothing picked plays the Welcome sample as on any first launch.
+    func testAFailedFriendFileBringsTheDrawerBackOnTheLibraryAndDonePlaysTheWelcomeSample() async throws {
+        let defaults = try freshDefaults()
+        var started: [(ids: [String], allowsWelcome: Bool)] = []
+        let drawer = try makeDrawer(defaults: defaults, log: FollowLog()) { ids, allowsWelcome in started.append((ids, allowsWelcome)) }
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        XCTAssertFalse(drawer.isPresented, "withdrawn for the friend's file")
+        drawer.didDismiss()
+        XCTAssertTrue(defaults.bool(forKey: CatalogDrawerModel.deferredByFriendFileKey))
+
+        drawer.friendFileFailed(at: .library)
+
+        XCTAssertTrue(drawer.isPresented, "the Library is not left empty")
+        XCTAssertFalse(defaults.bool(forKey: CatalogDrawerModel.deferredByFriendFileKey), "spent as the drawer opens")
+        drawer.finish()
+        drawer.didDismiss()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started.map(\.allowsWelcome), [true], "no friend's item is in the Library, so the Welcome sample may play")
+    }
+
+    /// #3801: a failure that closes while the listener is elsewhere owes the drawer for the next visit to the Library.
+    func testAFailedFriendFileClosedElsewhereBringsTheDrawerBackAtTheNextLibraryVisit() throws {
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog())
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.didDismiss()
+
+        drawer.friendFileFailed(at: .elsewhere)
+        XCTAssertFalse(drawer.isPresented)
+        drawer.listenerMoved(to: .library)
+        XCTAssertTrue(drawer.isPresented)
+    }
+
+    /// The audit on PR #4597: a failure closed away from the Library, then a kill before the Library, owes the drawer to
+    /// the next launch without holding it back, so Done with nothing picked there plays the Welcome sample.
+    func testAFailedFriendFileClosedElsewhereThenAKillOwesTheNextLaunchADrawerThatPlaysTheWelcomeSample() async throws {
+        let defaults = try freshDefaults()
+        let drawer = try makeDrawer(defaults: defaults, log: FollowLog())
+        drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.settleFirstRun(at: .elsewhere)
+        drawer.friendFileArrived()
+        drawer.friendFileFailed(at: .elsewhere)
+        XCTAssertFalse(drawer.isPresented)
+        XCTAssertFalse(defaults.bool(forKey: CatalogDrawerModel.deferredByFriendFileKey), "no friend's item came of it")
+        XCTAssertTrue(defaults.bool(forKey: CatalogDrawerModel.owedAfterFriendFileFailedKey))
+
+        // Killed before the Library. The next launch has the Welcome sample in the Library, so it is not empty.
+        var started: [(ids: [String], allowsWelcome: Bool)] = []
+        let next = try makeDrawer(defaults: defaults, log: FollowLog()) { ids, allowsWelcome in started.append((ids, allowsWelcome)) }
+        next.presentIfFirstRun(libraryWasEmptyAtLaunch: false, followedSourceCount: 0)
+        XCTAssertTrue(next.isPresented, "still owed")
+        XCTAssertFalse(defaults.bool(forKey: CatalogDrawerModel.owedAfterFriendFileFailedKey), "spent as the drawer opens")
+        next.finish()
+        next.didDismiss()
+        await next.playFirstListenIfRequested()
+        XCTAssertEqual(started.map(\.allowsWelcome), [true], "no friend's item is in the Library, so the Welcome sample may play")
+    }
+
+    /// #3801: a failure that lands before the root view has noted the launch is not replayed as an arrival.
+    func testAFriendFileThatFailedBeforeTheRootViewAppearedDoesNotHoldTheDrawerBack() throws {
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog())
+        drawer.friendFileArrived()
+        drawer.friendFileFailed(at: .library)
+        drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.settleFirstRun(at: .library)
+        XCTAssertTrue(drawer.isPresented, "nothing is waiting on a friend's item")
+    }
+
+    /// #3801: a failure with no drawer withdrawn (it was not owed, or the listener has picks) changes nothing.
+    func testAFailedFriendFileWithNoDrawerOwedChangesNothing() throws {
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog())
+        drawer.noteLaunch(libraryWasEmptyAtLaunch: false, followedSourceCount: 3)
+        drawer.settleFirstRun(at: .library)
+        drawer.friendFileFailed(at: .library)
+        XCTAssertFalse(drawer.isPresented)
+    }
+
+    // MARK: The first-launch "Got a link from a friend?" card (#3782)
+
+    private var friendLink: String { "https://\(ShareLinkURL.shareHosts[0])/l/\(String(repeating: "ab12", count: 8))#\(ShareLinkSealing.Key.random().fragment)" }
+
+    /// The card shows on the first-launch opening while the Library holds no friend's packet, never on a later visit.
+    func testTheCardShowsOnTheFirstLaunchOpeningOnlyWhileTheLibraryHoldsNoFriendsPacket() async throws {
+        let empty = try makeDrawer(defaults: try freshDefaults(), log: FollowLog(), libraryHoldsFriendPacket: { false })
+        XCTAssertFalse(empty.showsFriendLinkCard)
+        empty.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        try await pollUntil(timeout: .seconds(30)) { empty.showsFriendLinkCard }
+        XCTAssertTrue(empty.showsFriendLinkCard)
+
+        let holding = try makeDrawer(defaults: try freshDefaults(), log: FollowLog(), libraryHoldsFriendPacket: { true })
+        holding.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        try await pollUntil(timeout: .milliseconds(300)) { holding.showsFriendLinkCard }
+        XCTAssertFalse(holding.showsFriendLinkCard, "a packet is already in the Library")
+
+        let later = try makeDrawer(defaults: try freshDefaults(), log: FollowLog(), libraryHoldsFriendPacket: { false })
+        later.present()
+        try await pollUntil(timeout: .milliseconds(300)) { later.showsFriendLinkCard }
+        XCTAssertFalse(later.showsFriendLinkCard, "opened from Following, not the first-launch opening")
+    }
+
+    /// A friend's file arriving while the card shows takes it away.
+    func testAFriendsFileArrivingHidesTheCard() async throws {
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog(), libraryHoldsFriendPacket: { false })
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        try await pollUntil { drawer.showsFriendLinkCard }
+        drawer.friendFileArrived()
+        XCTAssertFalse(drawer.showsFriendLinkCard)
+    }
+
+    /// Paste of a share link: told to the first-launch order as a friend's file (an untouched drawer withdraws), then opened.
+    func testPastingAShareLinkWithdrawsTheUntouchedDrawerAndOpensTheLink() async throws {
+        var opened: [URL] = []
+        let drawer = try makeDrawer(
+            defaults: try freshDefaults(), log: FollowLog(), libraryHoldsFriendPacket: { false }, openFriendLink: { opened.append($0) })
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        try await pollUntil { drawer.showsFriendLinkCard }
+        let link = friendLink
+
+        drawer.pasteIntoFriendLinkCard("Sam sent you Margins: \(link)")
+
+        XCTAssertEqual(opened, [URL(string: link)!])
+        XCTAssertFalse(drawer.isPresented, "withdrawn so the friend's item comes first")
+        XCTAssertNil(drawer.friendLinkNote)
+    }
+
+    /// Paste of a link when the drawer has picks: the sheet stays and Done plays nothing over the friend's item.
+    func testPastingAShareLinkIntoADrawerWithPicksLeavesTheSheetUp() async throws {
+        var opened: [URL] = []
+        var started: [[String]] = []
+        let drawer = try makeDrawer(
+            defaults: try freshDefaults(), log: FollowLog(), startFirstListen: { ids, _ in started.append(ids) },
+            libraryHoldsFriendPacket: { false }, openFriendLink: { opened.append($0) })
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        await drawer.load()
+        drawer.toggleFollow(try XCTUnwrap(drawer.entries.first))
+
+        drawer.pasteIntoFriendLinkCard(friendLink)
+
+        XCTAssertEqual(opened.count, 1)
+        XCTAssertTrue(drawer.isPresented, "the listener is choosing")
+        drawer.finish()
+        drawer.didDismiss()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started, [])
+    }
+
+    /// Paste of anything else (the join page, an article, nothing): the sheet stays, nothing opens, one line says why.
+    func testPastingSomethingElseOpensNothingAndLeavesALineUntilTheNextPaste() async throws {
+        var opened: [URL] = []
+        let drawer = try makeDrawer(
+            defaults: try freshDefaults(), log: FollowLog(), libraryHoldsFriendPacket: { false }, openFriendLink: { opened.append($0) })
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        try await pollUntil { drawer.showsFriendLinkCard }
+
+        for pasted: String? in ["https://spokenmargins.com/join", "https://example.com/article", nil] {
+            drawer.pasteIntoFriendLinkCard(pasted)
+            XCTAssertEqual(drawer.friendLinkNote, FirstLaunchFriendLinkCard.notAFriendLinkLine)
+            XCTAssertTrue(drawer.isPresented)
+        }
+        XCTAssertEqual(opened, [])
+
+        drawer.pasteIntoFriendLinkCard(friendLink)
+        XCTAssertNil(drawer.friendLinkNote, "the next paste clears the line")
+        XCTAssertEqual(opened.count, 1)
+    }
+
+    /// #3801 meets this card: a pasted link that fails brings the withdrawn drawer back, with the card.
+    func testAPastedLinkThatFailsBringsTheDrawerAndTheCardBack() async throws {
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog(), libraryHoldsFriendPacket: { false })
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        try await pollUntil { drawer.showsFriendLinkCard }
+        drawer.pasteIntoFriendLinkCard(friendLink)
+        drawer.didDismiss()
+
+        drawer.friendFileFailed(at: .library)
+
+        XCTAssertTrue(drawer.isPresented)
+        try await pollUntil { drawer.showsFriendLinkCard }
+        XCTAssertTrue(drawer.showsFriendLinkCard)
+    }
+
+    /// A pasted link that fails while the drawer has picks (it never withdrew): the card returns for another paste, and
+    /// Done plays the pick again because no friend's item arrived.
+    func testAPastedLinkThatFailsOverADrawerWithPicksBringsTheCardBackAndDonePlaysAgain() async throws {
+        var started: [[String]] = []
+        let drawer = try makeDrawer(
+            defaults: try freshDefaults(), log: FollowLog(), startFirstListen: { ids, _ in started.append(ids) },
+            libraryHoldsFriendPacket: { false })
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        await drawer.load()
+        try await pollUntil { drawer.showsFriendLinkCard }
+        drawer.toggleFollow(try XCTUnwrap(drawer.entries.first))
+        drawer.pasteIntoFriendLinkCard(friendLink)
+        XCTAssertFalse(drawer.showsFriendLinkCard)
+        XCTAssertTrue(drawer.isPresented, "the listener has a pick, so the sheet stays")
+
+        drawer.friendFileFailed(at: .library)
+
+        try await pollUntil { drawer.showsFriendLinkCard }
+        XCTAssertTrue(drawer.showsFriendLinkCard, "another paste is possible")
+        drawer.finish()
+        drawer.didDismiss()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started.count, 1, "no friend's item arrived, so Done plays the pick")
+    }
+
     func testADrawerWithPicksStaysButDonePlaysNothingOverTheFriendsItem() async throws {
         let log = FollowLog()
         var started: [[String]] = []
@@ -477,7 +689,7 @@ final class CatalogDrawerTests: XCTestCase {
     func testAShowWithNoPublicFeedIsListedWithItsReasonAndCannotBeFollowed() async throws {
         let log = FollowLog()
         let drawer = try makeDrawer(defaults: try freshDefaults(), log: log, searcher: searcher { _ in
-            Self.iTunesResponse([(7, "Exclusive Show", nil)])
+            Self.iTunesResponse([(7, "Exclusive Show", nil), (8, "Open Show", "https://open.example/feed.xml")])
         })
         await drawer.load()
         drawer.searchText = "exclusive show"
@@ -485,10 +697,15 @@ final class CatalogDrawerTests: XCTestCase {
         let show = try XCTUnwrap(drawer.searchResults?.first)
         XCTAssertNil(show.feed)
         XCTAssertEqual(show.reason, "No public feed: this show is exclusive to another app")
+        let open = try XCTUnwrap(drawer.searchResults?.last)
 
         drawer.followSearchResult(show)
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertEqual(log.feeds, [], "nothing was followed")
+        XCTAssertNil(drawer.state(for: show))
+        // A later follow on the same main actor: once it has landed, a follow the first tap wrongly started would have
+        // run too. A fixed 100 ms passed for a follow slower than that (#4313).
+        drawer.followSearchResult(open)
+        try await waitFor { drawer.state(for: open) == .followed }
+        XCTAssertEqual(log.feeds, ["https://open.example/feed.xml"], "only the show with a feed was followed")
         XCTAssertNil(drawer.state(for: show))
     }
 
@@ -535,7 +752,8 @@ final class CatalogDrawerTests: XCTestCase {
             return Self.iTunesResponse([])
         })
         drawer.searchText = "h"
-        try await Task.sleep(for: .milliseconds(100))
+        // No wait (#4313): the drawer turns one character away before any search task exists, so a search that started
+        // shows at once as isSearchPending, which carries this test; the request count only says none went out yet.
         XCTAssertEqual(requests.value, 0)
         XCTAssertFalse(drawer.isSearching)
         XCTAssertFalse(drawer.isSearchPending)

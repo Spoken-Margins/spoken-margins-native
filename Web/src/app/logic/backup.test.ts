@@ -5,7 +5,8 @@ import { PacketError } from '../../packet/errors.ts';
 import { episode, show, writtenMargins } from '../../packet/fixtures.ts';
 import { readPacket } from '../../packet/read.ts';
 import { writePacket } from '../../packet/write.ts';
-import { listZip, writeZip } from '../../packet/zip.ts';
+import { listZip, readZip, writeZip } from '../../packet/zip.ts';
+import { placeImport, unnamedAuthorFor } from './import.ts';
 import type { Episode, Margin } from '../../shared/model.ts';
 import { voicePlaceholder } from '../../shared/placeholder.ts';
 import { backupSummary, buildBackup, isBackupArchive, MARGINS_PER_PACKET, packetsInBackup, packetsToOpen, uniqueName, type WritePacket } from './backup.ts';
@@ -20,7 +21,7 @@ const write: WritePacket = async (ep, margins, sh) => {
     packageId: 'package-web-fixture-written',
     createdAt: new Date('2026-10-30T12:00:00.000Z'),
   });
-  return { bytes: written.bytes, fileName: written.fileName, mimeType: written.mimeType, included: written.included, ...(written.notice && { notice: written.notice }) };
+  return { bytes: written.bytes, fileName: written.fileName, mimeType: written.mimeType, contentDigest: written.contentDigest, included: written.included, ...(written.notice && { notice: written.notice }) };
 };
 
 const second: Episode = { ...episode, id: 'episode-two', title: 'Episode 2', guid: 'example-episode-guid-2', audioUrl: 'https://example.com/podcast/episode-2.mp3' };
@@ -30,18 +31,23 @@ const voiceOnly = (id: string, episodeId: string, at: number): Margin => ({
   id, episodeId, atSeconds: at, createdAt: '2026-10-30T11:00:00Z',
   voice: { blob: new Blob([recorded], { type: 'audio/mp4' }), mimeType: 'audio/mp4', durationSeconds: 2.9 },
 });
+const unlimited = { totalBytes: Infinity, compressionRatio: Infinity, entryBytes: () => Infinity };
 const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-test('one episode backs up as the very packet the iPhone app’s import test reads', async () => {
-  const result = await buildBackup({ episodes: [episode], shows: [show], margins: writtenMargins() }, write);
-  assert.equal(result.file?.name, 'Episode-1-example-episode.spokenmargins');
-  assert.equal(result.file?.mimeType, 'application/vnd.spokenmargins.package+zip');
+test('one episode backs up as a .zip holding the very packet the iPhone app’s import test reads (#4226)', async () => {
+  const result = await buildBackup({ episodes: [episode], shows: [show], margins: writtenMargins() }, write, new Date(2026, 9, 30));
+  assert.equal(result.file?.name, 'Spoken-Margins-backup-2026-10-30.zip');
+  assert.equal(result.file?.mimeType, 'application/zip');
+  assert.deepEqual(listZip(result.file!.bytes).map((e) => e.path), ['Episode-1-example-episode.spokenmargins']);
+  // packetsToOpen marks what comes out of it as the listener's own.
+  const opened = await packetsToOpen(result.file!.bytes, result.file!.name);
+  assert.deepEqual(opened.map((p) => [p.name, p.fromBackup]), [['Episode-1-example-episode.spokenmargins', true]]);
   // web-written.spokenmargins is what SessionKit's WebPacketImportTests opens through the app's reader, the
   // check that Builds 32 and 34 import web packets. Same content digest: the same packet.
   const committed = await readPacket(new Uint8Array(readFileSync(new URL('web-written.spokenmargins', fixtures))));
-  const backedUp = await readPacket(result.file!.bytes);
+  const backedUp = await readPacket(opened[0]!.bytes);
   assert.equal(backedUp.contentDigest, committed.contentDigest);
-  assert.deepEqual(backupSummary(result, describe), { text: 'Backed up 2 Margins from 1 episode as Episode-1-example-episode.spokenmargins.', problem: false });
+  assert.deepEqual(backupSummary(result, describe), { text: 'Backed up 2 Margins from 1 episode as Spoken-Margins-backup-2026-10-30.zip.', problem: false });
 });
 
 test('several episodes, a voice Margin with no words and a long episode go in one zip, nothing dropped', async () => {
@@ -107,14 +113,14 @@ test('nothing to back up says so; voice Margins without words back up as a packe
   const none = await buildBackup({ episodes: [episode], shows: [show], margins: [] }, write);
   assert.equal(none.file, undefined);
   assert.deepEqual(backupSummary(none, describe), { text: 'Nothing was backed up.', problem: true });
-  const voices = await buildBackup({ episodes: [episode], shows: [], margins: [voiceOnly('a', episode.id, 3), voiceOnly('b', episode.id, 3)] }, write);
-  assert.equal(voices.file?.name, 'Episode-1-example-episode.spokenmargins');
+  const voices = await buildBackup({ episodes: [episode], shows: [], margins: [voiceOnly('a', episode.id, 3), voiceOnly('b', episode.id, 3)] }, write, new Date(2026, 9, 30));
+  assert.equal(voices.file?.name, 'Spoken-Margins-backup-2026-10-30.zip');
   assert.equal(voices.inPackets, 2);
   assert.deepEqual(voices.failed, []);
-  const read = await readPacket(voices.file!.bytes);
+  const read = await readPacket((await packetsInBackup(voices.file!.bytes))[0]!.bytes);
   assert.equal(read.margins.length, 2);
   assert.ok(read.margins.every((m) => m.voice && m.text?.startsWith('Voice Margin at 0:03 in “Episode 1 (example episode)”, recorded ')));
-  assert.deepEqual(backupSummary(voices, describe), { text: 'Backed up 2 Margins from 1 episode as Episode-1-example-episode.spokenmargins.', problem: false });
+  assert.deepEqual(backupSummary(voices, describe), { text: 'Backed up 2 Margins from 1 episode as Spoken-Margins-backup-2026-10-30.zip.', problem: false });
 });
 
 test('an older backup’s loose voice audio is skipped when reading it', async () => {
@@ -148,16 +154,18 @@ test('a backup opens as its packets from every way in, named or not; a packet or
   // Opened with the Android app through an opaque content address: no name, so its contents say so.
   assert.deepEqual((await packetsToOpen(zip, undefined)).map((p) => p.name), names);
 
-  const single = await buildBackup({ episodes: [episode], shows: [show], margins: writtenMargins() }, write);
+  assert.ok((await packetsToOpen(zip, undefined)).every((p) => p.fromBackup));
+  const bare = (await write(episode, writtenMargins(), show)).bytes;
   for (const name of ['Episode-1.spokenmargins', undefined]) {
-    const opened = await packetsToOpen(single.file!.bytes, name);
+    const opened = await packetsToOpen(bare, name);
     assert.equal(opened.length, 1, 'a packet is not a backup, though both are zips');
-    assert.equal(opened[0]!.bytes, single.file!.bytes);
+    assert.equal(opened[0]!.bytes, bare);
     assert.equal(opened[0]!.name, name);
+    assert.equal(opened[0]!.fromBackup, false, 'a packet opened on its own is a friend’s');
   }
   const junk = new Uint8Array([1, 2, 3]);
-  assert.deepEqual(await packetsToOpen(junk, 'x.zip'), [{ name: 'x.zip', bytes: junk }]);
-  assert.deepEqual(await packetsToOpen(junk, undefined), [{ name: undefined, bytes: junk }]);
+  assert.deepEqual(await packetsToOpen(junk, 'x.zip'), [{ name: 'x.zip', bytes: junk, fromBackup: false }]);
+  assert.deepEqual(await packetsToOpen(junk, undefined), [{ name: undefined, bytes: junk, fromBackup: false }]);
 });
 
 test('a backup never carries the name typed for sharing: it is written with the three arguments, no sender (#4107)', async () => {
@@ -167,11 +175,11 @@ test('a backup never carries the name typed for sharing: it is written with the 
     argumentCounts.push(args.length);
     const [ep, margins, sh, sender] = args as [Episode, Margin[], typeof show | undefined, string | undefined];
     const written = await writePacket(ep, margins, { ...(sh && { show: sh }), ...(sender && { sender }) });
-    return { bytes: written.bytes, fileName: written.fileName, mimeType: written.mimeType, included: written.included };
+    return { bytes: written.bytes, fileName: written.fileName, mimeType: written.mimeType, contentDigest: written.contentDigest, included: written.included };
   };
   const result = await buildBackup({ episodes: [episode], shows: [show], margins: writtenMargins() }, wired as WritePacket);
   assert.deepEqual(argumentCounts, [3]);
-  assert.equal((await readPacket(result.file!.bytes)).sender, undefined);
+  assert.equal((await readPacket((await packetsInBackup(result.file!.bytes))[0]!.bytes)).sender, undefined);
 });
 
 test('a backup writes every Margin, starred or not, and carries no star: a restored Margin comes back unstarred (#4172)', async () => {
@@ -180,7 +188,24 @@ test('a backup writes every Margin, starred or not, and carries no star: a resto
   assert.equal(result.inPackets, margins.length);
   const plain = await buildBackup({ episodes: [episode], shows: [show], margins: writtenMargins() }, write);
   assert.deepEqual(result.file!.bytes, plain.file!.bytes, 'the same bytes with and without the star');
-  const restored = await readPacket(result.file!.bytes);
+  const restored = await readPacket((await packetsInBackup(result.file!.bytes))[0]!.bytes);
   assert.equal(restored.margins.length, margins.length);
   for (const m of restored.margins) assert.equal('starred' in m, false);
+});
+
+test('a restored backup keeps no copy length: a Margin made on a 1913 s copy never gains the newest Margin’s 1946.018 s (#4175)', async () => {
+  const own = (id: string, at: number, createdAt: string, copyLengthSeconds: number): Margin => ({ id, episodeId: episode.id, atSeconds: at, createdAt, text: `Margin ${id}.`, copyLengthSeconds });
+  const a = own('a', 600, '2026-11-22T10:00:00Z', 1913);
+  const b = own('b', 1200, '2026-11-22T11:00:00Z', 1946.018);
+  const backup = await buildBackup({ episodes: [episode], shows: [show], margins: [a, b] }, write);
+  const [packet] = await packetsToOpen(backup.file!.bytes, 'Spoken-Margins-backup-2026-11-22.zip');
+  const read = await readPacket(packet!.bytes, { episodeId: episode.id });
+  // The reader still derives the packet's length for every Margin; the arrival decides whether to keep it.
+  const restored = placeImport(read, [show], [episode], undefined, [], { unnamedAuthor: unnamedAuthorFor('backup'), backup: true }).margins;
+  assert.deepEqual(restored.map((m) => m.copyLengthSeconds), [undefined, undefined]);
+  const again = await writePacket(episode, restored.filter((m) => m.atSeconds === 600), { show, sender: 'Web fixture', packageId: 'package-restore', createdAt: new Date('2026-11-22T12:00:00.000Z') });
+  assert.equal(JSON.parse(new TextDecoder().decode((await readZip(again.bytes, unlimited)).get('manifest.json'))).item.durationMs, 1_800_000);
+  // A packet opened on its own is a friend's: it keeps the sender's length.
+  const friends = placeImport(read, [show], [episode], undefined, [], { unnamedAuthor: unnamedAuthorFor('file') }).margins;
+  assert.deepEqual(friends.map((m) => m.copyLengthSeconds), [1946.018, 1946.018]);
 });

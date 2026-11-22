@@ -118,11 +118,37 @@ export function checkPreview(preview) {
 }
 
 /**
+ * Episode pages that name their episode in the query, in the exact form the phone rebuilds them to
+ * (ShareLinkPreviewBuilder.episodePageKeys): one key, nothing else. An Apple Podcasts episode is
+ * `…/id916273527?i=1000543006547` (owner, 2026-11-17).
+ */
+const EPISODE_PAGE_QUERIES = [
+  { hosts: ['podcasts.apple.com'], path: null, query: /^\?i=[0-9]{1,19}$/ },
+  { hosts: ['www.youtube.com', 'youtube.com', 'm.youtube.com'], path: '/watch', query: /^\?v=[A-Za-z0-9_-]{11}$/ },
+];
+
+function isEpisodePageQuery(raw) {
+  const mark = raw.indexOf('?');
+  if (mark < 0 || raw.includes('#')) return false;
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  const host = url.hostname.toLowerCase();
+  return url.protocol === 'https:' && EPISODE_PAGE_QUERIES.some((rule) =>
+    rule.hosts.includes(host) && (rule.path === null || url.pathname === rule.path) && rule.query.test(raw.slice(mark)));
+}
+
+/**
  * The source link the page may show, or '' to leave it out: http or https with a host, and no
- * credentials, query or fragment, which could disclose signed or private URLs.
+ * credentials, query or fragment, which could disclose signed or private URLs. The one query kept
+ * is a known episode page's own key (`EPISODE_PAGE_QUERIES`).
  */
 export function safeSourceURL(raw) {
-  if (typeof raw !== 'string' || raw === '' || raw.trim() !== raw || /[\u0000-\u001f\u007f?#]/.test(raw)) return '';
+  if (typeof raw !== 'string' || raw === '' || raw.trim() !== raw || /[\u0000-\u001f\u007f#]/.test(raw)) return '';
+  if (raw.includes('?') && !isEpisodePageQuery(raw)) return '';
   if (!/^https?:\/\/[^/]/i.test(raw)) return '';
   let url;
   try {

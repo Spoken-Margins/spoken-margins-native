@@ -76,10 +76,10 @@ test('inside the Android app, Back up all Margins goes to the share sheet, and a
   // The listener picks a place: the file went through Android, never a blob download the WebView ignores.
   await becomeAndroidApp(page);
   await page.getByRole('button', { name: 'Back up all Margins' }).click();
-  await expect(page.getByRole('status')).toContainText(/Backed up 1 Margin from 1 episode as .+\.spokenmargins\./);
+  await expect(page.getByRole('status')).toContainText(/Backed up 1 Margin from 1 episode as .+\.zip\./);
   expect(await nativeCalls(page)).toEqual(['Filesystem.writeFile', 'Share.share']);
   const written = await page.evaluate(() => (window as unknown as { __calls: Array<{ options: { path?: string } }> }).__calls[0]?.options.path);
-  expect(written).toMatch(/^packets\/.+\.spokenmargins$/);
+  expect(written).toMatch(/^packets\/.+\.zip$/);
   await expect(page.getByTestId('last-backup')).toHaveText(/^Last backed up .+\.$/);
   expect(downloads).toEqual([]);
   await shot(page, info, '40-android-backup');
@@ -102,7 +102,7 @@ test.describe('installed app', () => {
     const two: Margin = { id: 'b1', episodeId: second.id, atSeconds: 4, createdAt: '2026-10-30T11:00:00Z', text: 'From the second episode.' };
     const backup = await buildBackup({ episodes: [episode, second], shows: [show], margins: [...writtenMargins(), two] }, async (ep, margins, sh) => {
       const w = await writePacket(ep, margins, sh ? { show: sh, sender: 'Sam' } : { sender: 'Sam' });
-      return { bytes: w.bytes, fileName: w.fileName, mimeType: w.mimeType, included: w.included };
+      return { bytes: w.bytes, fileName: w.fileName, mimeType: w.mimeType, contentDigest: w.contentDigest, included: w.included };
     });
     expect(backup.file?.name).toMatch(/\.zip$/);
 

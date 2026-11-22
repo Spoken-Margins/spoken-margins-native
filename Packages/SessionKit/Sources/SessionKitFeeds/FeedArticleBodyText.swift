@@ -2,9 +2,20 @@ import Foundation
 
 /// Converts only a feed's HTML body. Decode references once, after stripping markup, so encoded
 /// literal tags stay text. Titles, URLs, summaries and JSON Feed content_text keep their old path.
+///
+/// A heading (`<h1>` to `<h6>`) is the one structure kept: it becomes a Markdown heading line of its own (level 2 to 6), because
+/// the text is imported as Markdown and the importer makes one chapter per heading (#4461). Everything else is
+/// flattened as before. Without this a followed Substack post, whose body comes from its feed, had no chapters.
 enum FeedArticleBodyText {
+    /// A heading longer than this is a styled paragraph, not a title, and stays running text.
+    static let maximumHeadingCharacters = 200
+    /// Private-use marks put around a heading's line while the tags are stripped, so the whitespace collapse that
+    /// follows cannot join the heading to the text on either side. They never reach the result.
+    private static let headingBreak: Character = "\u{E000}"
+
     static func html(_ value: String) -> String {
-        let withoutTags = value.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
+        let withoutTags = markingHeadings(in: value.replacingOccurrences(of: String(headingBreak), with: ""))
+            .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
         let source = withoutTags as NSString
         let matches = references.matches(in: withoutTags, range: NSRange(location: 0, length: source.length))
         var result = ""
@@ -16,8 +27,34 @@ enum FeedArticleBodyText {
             cursor = match.range.location + match.range.length
         }
         result += source.substring(from: cursor)
-        return result.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let flat = result.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        // Text and headings alternate between the breaks; each is a paragraph of its own.
+        return flat.split(separator: headingBreak)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+    }
+
+    /// `value` with each heading's open tag replaced by a break and its Markdown marker, and its close tag by a break.
+    /// A heading with no words, or whose words run over `maximumHeadingCharacters`, is left to the tag stripping.
+    private static func markingHeadings(in value: String) -> String {
+        let pattern = try! NSRegularExpression(pattern: #"<h([1-6])\b[^>]*>([\s\S]*?)</h\1\s*>"#, options: [.caseInsensitive])
+        let source = value as NSString
+        var result = ""
+        var cursor = 0
+        for match in pattern.matches(in: value, range: NSRange(location: 0, length: source.length)) {
+            let inner = source.substring(with: match.range(at: 2))
+            let words = inner.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !words.isEmpty, words.count <= maximumHeadingCharacters else { continue }
+            result += source.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            // `<h1>` is the post's own title, and a `# ` line in the text would rename the item (and move its id), so
+            // it is kept as a section heading like the rest.
+            let level = max(2, Int(source.substring(with: match.range(at: 1))) ?? 2)
+            result += "\(headingBreak)\(String(repeating: "#", count: level)) \(inner)\(headingBreak)"
+            cursor = match.range.location + match.range.length
+        }
+        return result + source.substring(from: cursor)
     }
 
     private static let references = try! NSRegularExpression(pattern: #"&(#(?:[xX][0-9A-Fa-f]+|[0-9]+)|[A-Za-z][A-Za-z0-9]*);"#)

@@ -18,14 +18,15 @@ final class MainThreadOffloadTests: XCTestCase {
         let started = expectation(description: "slow call started")
         let release = DispatchSemaphore(value: 0)
         let log = Log()
-        let submitted = Date()
-        work.submit {
-            started.fulfill()
-            release.wait()
-            log.add("done")
+        // The caller never waits for the call: submit comes back while the call is still blocked on `release`.
+        assertReturnsWhileHeld("submit") {
+            work.submit {
+                started.fulfill()
+                release.wait()
+                log.add("done")
+            }
         }
-        XCTAssertLessThan(Date().timeIntervalSince(submitted), 0.2, "the caller never waits for the call")
-        wait(for: [started], timeout: 2)
+        wait(for: [started], timeout: 30)
         XCTAssertEqual(log.all, [], "the call is still blocked on the daemon")
         release.signal()
         work.waitUntilIdle()
@@ -66,10 +67,13 @@ final class MainThreadOffloadTests: XCTestCase {
             release.wait()
             return false
         }
-        let began = Date()
-        XCTAssertTrue(flag.value, "before the first answer the flag reads its initial value")
-        XCTAssertTrue(flag.value, "and again while that first read is still blocked")
-        XCTAssertLessThan(Date().timeIntervalSince(began), 0.2)
+        let seen = Log()
+        assertReturnsWhileHeld("two reads of the flag") {
+            seen.add("\(flag.value)")
+            seen.add("\(flag.value)")
+        }
+        XCTAssertEqual(seen.all, ["true", "true"],
+                       "before the first answer the flag reads its initial value, and again while that read is blocked")
         release.signal()
         flag.waitUntilIdle()
         XCTAssertFalse(flag.value, "the background read replaced the answer")

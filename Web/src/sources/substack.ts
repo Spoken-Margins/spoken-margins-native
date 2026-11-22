@@ -2,13 +2,14 @@
 // `PublisherAudioDetector` in Packages/SessionKit/Sources/SessionKitFeeds (#810, #2024).
 //
 // The page is read as data: its `_preloads` JSON is decoded and no page script ever runs. The author's own
-// voiceover wins; Substack's automatic narration (`tts`) is the fallback (owner, 2026-10-14). Paid posts, posts
-// still processing, podcast posts and pages that aren't posts give nothing.
+// voiceover wins; Substack's automatic narration (`tts`) is the fallback (owner, 2026-10-14). A podcast post plays its
+// own episode audio (`podcast_url`), not a narration of it. Paid posts, posts still processing and pages that aren't
+// posts give nothing.
 
 import type { AudioOrigin } from '../shared/model.ts';
 
 export interface SubstackVoice {
-  origin: Extract<AudioOrigin, 'substack-voiceover' | 'substack-generated-voice'>;
+  origin: Extract<AudioOrigin, 'substack-voiceover' | 'substack-generated-voice' | 'podcast-enclosure'>;
   audioUrl: string;
   /** Unset when the page gives no usable duration. */
   durationSeconds?: number;
@@ -89,6 +90,32 @@ function completedRecording(post: Json, type: 'voiceover' | 'tts', requiresVoice
   return voice;
 }
 
+const PAID_AUDIENCES = new Set(['only_paid', 'founding']);
+
+/**
+ * A podcast post's own episode: Substack gives the audio as `podcast_url` and its length as `podcast_duration`. This is
+ * the episode itself, so it is the same kind of audio as a feed's enclosure (`podcast-enclosure`).
+ */
+function podcastEpisode(post: Json): SubstackVoice | undefined {
+  if (post.type !== 'podcast') return undefined;
+  // A paid episode's audio address is on its page, but fetching it without the subscriber's sign-in fails: say it is
+  // for paid subscribers instead of starting audio that cannot play.
+  if (typeof post.audience === 'string' && PAID_AUDIENCES.has(post.audience)) return undefined;
+  const canonicalUrl = post.canonical_url;
+  const audio = post.podcast_url;
+  if (typeof canonicalUrl !== 'string' || typeof audio !== 'string') return undefined;
+  try {
+    const url = new URL(audio);
+    if (url.protocol !== 'https:' || !url.hostname) return undefined;
+  } catch {
+    return undefined;
+  }
+  const voice: SubstackVoice = { origin: 'podcast-enclosure', audioUrl: audio, canonicalUrl };
+  const seconds = post.podcast_duration;
+  if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds >= 0) voice.durationSeconds = seconds;
+  return voice;
+}
+
 /** Same scheme, host and path, ignoring host case, trailing slashes, the query and the fragment. */
 export function samePage(a: string, b: string): boolean {
   function key(raw: string): string | undefined {
@@ -104,8 +131,8 @@ export function samePage(a: string, b: string): boolean {
 }
 
 /**
- * The post's playable voice: the author's completed voiceover, else Substack's completed automatic narration,
- * else null.
+ * The post's playable audio: a podcast post's own episode, else the author's completed voiceover, else Substack's
+ * completed automatic narration, else null.
  */
 export function findSubstackVoice(html: string, options: FindVoiceOptions = {}): SubstackVoice | null {
   return inspectSubstackPost(html, options).voice;
@@ -122,7 +149,14 @@ export interface SubstackPostVoice {
   paidOnly: boolean;
 }
 
-const PAID_AUDIENCES = new Set(['only_paid', 'founding']);
+/**
+ * Whether a page is the data of the post at `finalUrl`: it holds a post, and that post's canonical address is this page. A
+ * page that is not (a bot check, an empty answer, a changed layout, another post) can't say the post has no voice.
+ */
+export function pageHoldsThisPost(html: string, finalUrl: string): boolean {
+  const post = preloads(html)?.post;
+  return isObject(post) && typeof post.canonical_url === 'string' && samePage(post.canonical_url, finalUrl);
+}
 
 /** `findSubstackVoice`, and whether a missing voice is because the post is for paid subscribers. */
 export function inspectSubstackPost(html: string, options: FindVoiceOptions = {}): SubstackPostVoice {
@@ -133,7 +167,7 @@ export function inspectSubstackPost(html: string, options: FindVoiceOptions = {}
   if (options.finalUrl !== undefined && (typeof post.canonical_url !== 'string' || !samePage(post.canonical_url, options.finalUrl))) {
     return { voice: null, paidOnly: false };
   }
-  const voice = completedRecording(post, 'voiceover', true) ?? completedRecording(post, 'tts', false);
+  const voice = podcastEpisode(post) ?? completedRecording(post, 'voiceover', true) ?? completedRecording(post, 'tts', false);
   if (voice) return { voice, paidOnly: false };
   const items = Array.isArray(post.audio_items) ? post.audio_items : [];
   const paywalled = items.some((item) => isObject(item) && item.status === 'paywalled');

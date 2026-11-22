@@ -7,7 +7,7 @@ struct PlaybackMarginTranscriptionStatusView: View {
     let status: PlaybackMarginTranscriptionStatus
 
     var body: some View {
-        if let text = status.text {
+        if let text = status.words {
             Label {
                 Text(text)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
@@ -18,7 +18,7 @@ struct PlaybackMarginTranscriptionStatusView: View {
             .font(.caption.weight(.medium))
             .foregroundStyle(.orange)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(status.accessibilityLabel ?? text)
+            .accessibilityLabel(status.voiceOverWords ?? text)
             .accessibilityIdentifier("playback.marginTranscriptionStatus")
         }
     }

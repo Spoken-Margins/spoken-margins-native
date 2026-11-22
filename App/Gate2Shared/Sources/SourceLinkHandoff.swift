@@ -125,6 +125,10 @@ public struct SourceLinkHandoffStore: @unchecked Sendable {
         self.fileManager = fileManager
     }
 
+    /// The folder this store sits in. The other handoff folders (`TranscriptHandoffs`, #2997) sit beside its own, so a
+    /// test that injects a store with a temporary folder moves them all.
+    public var rootDirectory: URL { baseDirectory }
+
     public static func appGroup(fileManager: FileManager = .default) throws -> SourceLinkHandoffStore {
         guard let containerURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
             throw SourceLinkHandoffStoreError.appGroupUnavailable(appGroupIdentifier)

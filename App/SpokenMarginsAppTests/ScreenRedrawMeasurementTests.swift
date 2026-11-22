@@ -134,14 +134,24 @@ final class ScreenRedrawMeasurementTests: XCTestCase {
 
         for _ in 0..<5 { model.objectWillChange.send() }
         model.preparedTextAudioStatus = "ready"
-        try await Task.sleep(for: .milliseconds(100))
+        await afterTheFeedsNextTurn()
         XCTAssertEqual(published, 0, "Publishes that leave the read value as it was must not reach the screen")
 
         let next = model.skipUnit == "sentence" ? "paragraph" : "sentence"
         model.skipUnit = next
-        try await Task.sleep(for: .milliseconds(100))
+        try await pollUntil { published >= 1 }
+        await afterTheFeedsNextTurn()
         XCTAssertEqual(published, 1)
         XCTAssertEqual(feed.inputs, next, "The feed reads the model after the write, not the value it is about to replace")
+    }
+
+    /// The feed reads the model on the next turn of the main queue after a publish (`ScreenInputsFeed.readAfterChange`).
+    /// The queue is first in, first out, so a block queued now runs after any read the publishes above queued: once it
+    /// has, the feed has either published what it was going to or never will.
+    private func afterTheFeedsNextTurn() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
     }
 
     // MARK: - Publishing

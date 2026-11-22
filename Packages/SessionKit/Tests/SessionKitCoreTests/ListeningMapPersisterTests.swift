@@ -78,4 +78,40 @@ final class ListeningMapPersisterTests: XCTestCase {
         _ = try engine(store).attachListeningMap(map)
         XCTAssertEqual(try store.loadItem(id: item.id).status, "ready")
     }
+
+    /// #4227: the map job finishes while the listener permanently deletes the item. The persist is held right after its
+    /// load; the delete is asked on another thread and waits for the store. Before, the persist's own saves ran after
+    /// the delete's and wrote the map and the item back.
+    func testADeleteAskedWhileAMapIsBeingPersistedLeavesNeitherTheItemNorTheMap() throws {
+        let (store, path) = try makeStore(); defer { try? FileManager.default.removeItem(at: path) }
+        let (item, map) = try markdown()
+        try store.seed(item: item)
+        let loaded = DispatchSemaphore(value: 0)
+        let deleted = DispatchSemaphore(value: 0)
+        let persister = ListeningMapPersister(repository: store, afterLoad: {
+            loaded.signal()
+            // Give the delete time to run if the store would let it in between the persist's steps.
+            _ = deleted.wait(timeout: .now() + 1.0)
+        })
+        let deleter = Thread {
+            loaded.wait()
+            try? store.deleteItem(id: item.id)
+            deleted.signal()
+        }
+        deleter.start()
+        _ = try? persister.persist(map)
+        while !deleter.isFinished { Thread.sleep(forTimeInterval: 0.01) }
+        XCTAssertThrowsError(try store.loadItem(id: item.id), "the late write must not bring the item back")
+        XCTAssertNil(try store.loadListeningMap(itemId: item.id), "the late write must not leave a map for a deleted item")
+    }
+
+    func testPersistingForAnItemThatIsAlreadyGoneWritesNothing() throws {
+        let (store, path) = try makeStore(); defer { try? FileManager.default.removeItem(at: path) }
+        let (item, map) = try markdown()
+        try store.seed(item: item)
+        try store.deleteItem(id: item.id)
+        XCTAssertThrowsError(try ListeningMapPersister(repository: store).persist(map))
+        XCTAssertThrowsError(try store.loadItem(id: item.id))
+        XCTAssertNil(try store.loadListeningMap(itemId: item.id))
+    }
 }

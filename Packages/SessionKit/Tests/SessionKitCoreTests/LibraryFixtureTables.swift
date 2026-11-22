@@ -203,6 +203,36 @@ extension LibraryFixture {
             try store.saveItemCollection(ItemCollection(id: "collection-\(index)", name: "Collection \(index)", itemIDs: Array(articles.prefix(20 + index)), createdAt: epoch))
             counts.collections += 1
         }
+        // #4046: follow lists, so their reads are priced against rows, not an empty table.
+        for index in 0..<3 {
+            try store.saveFollowList(FollowList(
+                id: "follow-list-\(index)", name: "List \(index)", createdAt: epoch,
+                members: (0..<10).map { ListMember(feedKey: "https://feed-\($0).example/feed") }
+            ))
+        }
+        // #4046 PR 6: each list has a web address with a waiting change, priced the same way.
+        for index in 0..<3 {
+            try store.saveListLink(ListLink(
+                id: "list-link-\(index)", listId: "follow-list-\(index)", url: "https://lists.example/\(index).opml", title: "Link \(index)",
+                lastCheckedAt: epoch, statusAt: epoch,
+                acceptedMembers: (0..<10).map { ListMember(feedKey: "https://feed-\($0).example/feed") },
+                pending: ListProposal(added: [ProposedShow(member: ListMember(feedKey: "https://new-\(index).example/feed"), feedURL: "https://new-\(index).example/feed", title: "New")], removed: [], checkedAt: epoch)))
+        }
+        // #4046: listening rules and Show less marks, priced the same way.
+        for index in 0..<20 {
+            try store.saveListeningRule(ListeningRule(
+                id: "listening-rule-\(index)", action: index % 4 == 0 ? .more : .skip, words: ["word\(index)*", "other"], scope: .any,
+                isOn: index % 2 == 0, createdAt: epoch
+            ))
+            try store.saveShowLessMark(ShowLessMark(feedKey: "https://feed-\(index % 10).example/feed", entryId: "entry-\(index)", title: "Episode \(index)", markedAt: epoch))
+        }
+        // #4046: rule suggestions put off or refused, priced the same way.
+        for index in 0..<20 {
+            try store.saveRuleSuggestionState(RuleSuggestionState(
+                key: RuleSuggestionState.key(feedKey: "https://feed-\(index % 10).example/feed", word: "word\(index)"),
+                snoozedUntil: index % 2 == 0 ? epoch.addingTimeInterval(86_400) : nil, never: index % 2 == 1
+            ))
+        }
         for index in 1...min(6, scale.notes) {
             try store.saveInterjectionShareRevision(InterjectionShareRevision(
                 id: "revision-\(index)", interjectionId: "note-\(index)", itemId: itemIds[(index * 7) % itemIds.count], sessionId: "session-\(index)",

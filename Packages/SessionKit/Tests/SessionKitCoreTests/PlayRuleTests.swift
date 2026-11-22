@@ -79,6 +79,49 @@ final class PlayRuleTests: XCTestCase {
             newMargins: newMargins ?? margins(), declined: declined)
     }
 
+    // MARK: The question's second choice (#4125, state D)
+
+    /// "Play from the start" replaces "Listen without them" only when resuming would land on the last few seconds: a
+    /// saved place from 99% up to, not including, 100%. Each row is a state the question can be asked in.
+    func testTheQuestionOffersPlayFromTheStartOnlyWhenThePlaceIsTheVeryEnd() throws {
+        let atEnd = { (context: PlayRule.Context, name: String) in
+            XCTAssertTrue(PlayRule.askedPlaceIsAtEnd(context), name)
+        }
+        let notAtEnd = { (context: PlayRule.Context, name: String) in
+            XCTAssertFalse(PlayRule.askedPlaceIsAtEnd(context), name)
+        }
+        let late = { (percent: Int) in [self.session("a", percent: percent, mediaTimeMs: self.end * percent / 100)] }
+        // The open item reads its sessions.
+        atEnd(context(open: late(99)), "open, 99%")
+        notAtEnd(context(open: late(98)), "open, 98%: mid-way")
+        notAtEnd(context(open: late(50)), "open, 50%")
+        notAtEnd(context(open: [finished()]), "open, finished at 100%: Replay starts at 0")
+        notAtEnd(context(open: []), "open, no session")
+        // An item that isn't open reads its Library row.
+        atEnd(context(row: try row(late(99))), "row, 99%")
+        notAtEnd(context(row: try row(late(98))), "row, 98%")
+        notAtEnd(context(row: try row([finished()])), "row, finished at 100%")
+        notAtEnd(context(row: try row([])), "row, no session")
+        notAtEnd(context(), "not open, the Library holds no row")
+        // A relaunch restores the newest session as the loaded, paused one, so the item is "now playing" at its saved
+        // place: a 99% session there is still the end (the audit's J14 case), and a mid-way one still isn't.
+        atEnd(context(nowPlaying: PlayRule.NowPlaying(itemId: "item", mediaTimeMs: end - 10_000), open: late(99)), "restored at 99%: loaded, paused")
+        notAtEnd(context(nowPlaying: PlayRule.NowPlaying(itemId: "item", mediaTimeMs: end / 2), open: late(50)), "playing mid-way")
+        atEnd(context(nowPlaying: PlayRule.NowPlaying(itemId: "item", mediaTimeMs: end - 10_000), row: try row(late(99))), "playing now, not open, row at 99%")
+        atEnd(context(nowPlaying: PlayRule.NowPlaying(itemId: "other", mediaTimeMs: 1), open: late(99)), "another item playing says nothing about this one")
+    }
+
+    /// The Library row's question and the flag agree: at 99% with a Margin behind, it asks and says the place is the
+    /// end; at 98% it asks and does not.
+    func testTheFlagComesWithTheQuestion() throws {
+        for (percent, atEnd) in [(99, true), (98, false)] {
+            let sessions = [session("a", percent: percent, mediaTimeMs: end * percent / 100)]
+            let ctx = context(row: try row(sessions), margins: margins([120_000]))
+            XCTAssertTrue(PlayRule.decide(ctx).isAsk, "\(percent)%: asks")
+            XCTAssertEqual(PlayRule.askedPlaceIsAtEnd(ctx), atEnd, "\(percent)%")
+        }
+    }
+
     // MARK: Where the listener is
 
     func testNotStartedPlaysFromTheBeginningWhetherOrNotTheItemIsOpen() throws {
@@ -358,6 +401,22 @@ final class PlayRuleTests: XCTestCase {
         for (name, sessions, expected) in table {
             XCTAssertEqual(PlayRule.savedPlaceIsAtEnd(sessions: sessions, addedAgainAt: nil), expected, name)
         }
+    }
+
+    /// The item screen shows its two choices only for Margins the listener hasn't turned down in this run (#4125).
+    func testTheItemScreenDropsMarginsTheListenerAlreadyTurnedDown() {
+        let all = margins()
+        let sessions = [session("a", percent: 99, mediaTimeMs: end)]
+        let behind = { (declined: NewMarginsOfferMemory) in
+            PlayRule.itemScreenMarginsBehind(all, itemId: "item", sessions: sessions, addedAgainAt: nil, declined: declined).map(\.marginId)
+        }
+        XCTAssertEqual(behind(NewMarginsOfferMemory()), all.map(\.marginId), "nothing turned down: all three are behind")
+        var declined = NewMarginsOfferMemory()
+        declined.decline(itemId: "item", margins: all.map(\.marginId))
+        XCTAssertEqual(behind(declined), [], "turned down: the screen is back to Play and Skip")
+        var other = NewMarginsOfferMemory()
+        other.decline(itemId: "other", margins: all.map(\.marginId))
+        XCTAssertEqual(behind(other), all.map(\.marginId), "a decline on another item does not hide this one")
     }
 
     /// The Library row keeps asking about every Margin it can't place, as before: the new function is for a surface

@@ -8,6 +8,9 @@ import SessionKitAudio
 struct NewMarginsOfferRequest: Equatable {
     let itemId: String
     let entries: [SharedMarginReview.Entry]
+    /// The saved place is the very end of the episode, so the way past the question is "Play from the start", not
+    /// "Listen without them" (`PlayRule.askedPlaceIsAtEnd`, #4125). False for the item screen's own requests.
+    var placeIsAtEnd = false
 }
 
 /// "Review new Margins" (#474): plays an item's shared Margins that the listener hasn't heard, one after another,
@@ -28,7 +31,7 @@ extension Gate1AppModel {
         } else if selectedItem.id == itemId {
             entries = SharedMarginReview.entries(
                 layers: selectedItem.importedCommentaryLayers, records: selectedItem.importedCommentaryInterjections,
-                ownMargins: ownMargins(itemId: itemId)
+                ownMargins: ownMargins(itemId: itemId), durationMs: selectedItem.mediaDurationMs
             )
         } else if let store {
             // The listener's own Margins let a friend's reply say which of them it answers (#3221). They come from the
@@ -74,17 +77,18 @@ extension Gate1AppModel {
     /// Margins. An offer the listener already turned down isn't made again until another Margin arrives. This reads
     /// only what the model already holds (no store read on the main thread); `startItem` reads the sessions.
     func continueListening(itemId: String, surface: PlayRule.Surface = .libraryRow, offer: (NewMarginsOfferRequest) -> Void) {
-        let outcome = PlayRule.decide(PlayRule.Context(
+        let context = PlayRule.Context(
             itemId: itemId, surface: surface,
             nowPlaying: hasActiveSession ? snapshot.itemId.map { PlayRule.NowPlaying(itemId: $0, mediaTimeMs: snapshot.currentMediaTimeMs) } : nil,
             openItem: PlayRule.OpenItem(id: selectedItem.id, sessions: selectedItem.sessions, addedAgainAt: addedAgainAt(forItem: selectedItem.id)),
             libraryRow: libraryItems.first(where: { $0.id == itemId }),
             // Only the Library row asks about Margins, so the item screen skips the read.
             newMargins: surface == .libraryRow ? newSharedMargins(itemId: itemId) : [],
-            declined: Self.declinedNewMargins))
-        switch outcome {
+            declined: Self.declinedNewMargins)
+        switch PlayRule.decide(context) {
         case .play: startItem(id: itemId)
-        case .askFirst(let entries): offer(NewMarginsOfferRequest(itemId: itemId, entries: entries))
+        case .askFirst(let entries):
+            offer(NewMarginsOfferRequest(itemId: itemId, entries: entries, placeIsAtEnd: PlayRule.askedPlaceIsAtEnd(context)))
         }
     }
 
@@ -92,6 +96,44 @@ extension Gate1AppModel {
     func continueWithoutNewMargins(_ offer: NewMarginsOfferRequest) {
         Self.declinedNewMargins.decline(itemId: offer.itemId, margins: offer.entries.map(\.marginId))
         startItem(id: offer.itemId)
+    }
+
+    /// The friend Margins behind the place Play would resume on the open item, for the item screen's two pinned buttons
+    /// (#4125). Empty when none is, or when the listener turned them down in this run. The rule is `PlayRule`'s.
+    func itemScreenMarginsBehindSavedPlace(itemId: String) -> [SharedMarginReview.Entry] {
+        guard selectedItem.id == itemId else { return [] }
+        return PlayRule.itemScreenMarginsBehind(
+            newSharedMargins(itemId: itemId), itemId: itemId, sessions: selectedItem.sessions,
+            addedAgainAt: addedAgainAt(forItem: itemId), declined: Self.declinedNewMargins)
+    }
+
+    /// Whether the open item's saved place is its very end, from `PlayRule` (#4125).
+    func selectedItemSavedPlaceIsAtEnd() -> Bool {
+        PlayRule.savedPlaceIsAtEnd(sessions: selectedItem.sessions, addedAgainAt: addedAgainAt(forItem: selectedItem.id))
+    }
+
+    /// What starting an item does before its session begins, for every way of starting it: the imported audio bridges, the
+    /// community map, the publisher voiceover lookup, and opening audio that is still being prepared. False when a
+    /// recording in progress blocks the start.
+    func prepareToStartItem(id: String) -> Bool {
+        guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return false }
+        prepareImportedLocalAudioBridges(itemId: id); fetchCommunityMapIfNeeded(itemId: id); listenerStartedItem(itemId: id)
+        if [.waiting, .preparing].contains(libraryItems.first(where: { $0.id == id })?.startupAudioState) {
+            scheduleStartupAudioPreparationIfNeeded(itemId: id)
+            diagnostics["startupAudioPlayback:\(id)"] = "started_without_waiting_for_opening_buffer"
+        }
+        return true
+    }
+
+    /// "Play from the start" on the item screen and the Library row's question: leaves these Margins new, doesn't ask about them again this run, and
+    /// begins a new session at 0, where they are ahead and play in place. The old session stays, so there is no
+    /// "Start a separate listening session?" question (#4125).
+    func startItemFromBeginning(itemId: String, entries: [SharedMarginReview.Entry]) {
+        // The Library row's question reaches here without the item ever having been opened, so it does what `startItem`
+        // does before a session starts, not only what opening the item screen did (#4125).
+        guard prepareToStartItem(id: itemId) else { return }
+        Self.declinedNewMargins.decline(itemId: itemId, margins: entries.map(\.marginId))
+        startNewSession(id: itemId)
     }
 
     /// Plays the new shared Margins on `itemId` in turn. Afterwards the item goes back to where the listener left

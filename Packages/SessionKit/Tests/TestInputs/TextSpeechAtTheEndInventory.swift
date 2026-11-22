@@ -34,15 +34,24 @@ public enum TextSpeechAtTheEndInventory {
     public final class RefusingAtTheEndSpeech: AudioPlaybackClient {
         var source = ""
         /// Whether the client still reports where its last speech started once it is stopped, as the on-device
-        /// (Supertonic) voice does; the system speech client reports nothing.
+        /// (Supertonic) voice does; the system speech client reports nothing. The offset is the one that voice's own
+        /// `RenderedSpeechPlace` gives with no audio loaded, the state its `stop()` leaves (#4310). It is the worst case:
+        /// an earlier speech's start, never the refused one's.
         let keepsLastOffsetAfterStop: Bool
-        private var lastStart: Int?
+        private var lastStart = 0
         /// With `keepsLastOffsetAfterStop`, an earlier speech (the article playing before the Margin was tapped) started at 5.
         public init(keepsLastOffsetAfterStop: Bool = false) {
             self.keepsLastOffsetAfterStop = keepsLastOffsetAfterStop
-            lastStart = keepsLastOffsetAfterStop ? 5 : nil
+            lastStart = keepsLastOffsetAfterStop ? 5 : 0
         }
-        public func currentCharOffset() -> Int? { keepsLastOffsetAfterStop ? lastStart : nil }
+        public func currentCharOffset() -> Int? {
+            guard keepsLastOffsetAfterStop else { return nil }
+            let projection = SpeechTextNormalizer.normalizeWithSourceOffsets(source)
+            let stopped = RenderedSpeechPlace(
+                projection: projection, chunkStart: projection.spokenCharacterOffset(atOrAfterSourceOffset: lastStart),
+                chunkLength: 0, requestedStart: nil, chunkDuration: 0)
+            return stopped.sourceOffset(playerTime: 0)
+        }
         private(set) var starts: [Int] = []
         /// How often the speech was stopped: a refused start must not leave the old speech running.
         public private(set) var stops = 0

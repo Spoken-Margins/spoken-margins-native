@@ -122,12 +122,14 @@ enum WrittenMarginReadings {
         let task = Task { @MainActor [weak model] in
             let rendered = await wait()
             if tapWaits[prompt.id]?.id == id { tapWaits[prompt.id] = nil }
+            // No `margin.tap` line from this wait: it serves the pinned card's Listen, the compact command and the friend's
+            // Margin that plays on its own, none of them a tap on a Margin's play button, and it logs no start to pair with (#4447).
             guard !Task.isCancelled, let model else { return }
             guard model.selectedItem.id == prompt.layer.itemId, !model.recordingNavigationIsLocked else { return } // the listener left
             if wasPending, model.pendingImportedCommentary?.id != prompt.id { return } // the card was dismissed or replaced
             guard rendered else {
-                if wasPending { model.dismissPendingImportedCommentary() }
                 model.reportWarning("That Margin couldn't be read aloud, so listening continues.")
+                if wasPending { model.skipPendingImportedCommentary() } // finished with: the next Margin waiting for the end is offered (#4347)
                 return
             }
             if !wasPending, model.pendingImportedCommentary != nil || model.playingImportedCommentary != nil || model.marginMoment != nil {
@@ -179,10 +181,17 @@ enum WrittenMarginReadings {
             // The row's callers are not all on the item screen (Now Playing, skim stops, reactions), so `leftItemScreen` does not
             // see every way out. Selecting another item, and Trash (which clears the selection), are caught here: the tap is
             // dropped unless the row's item is still the selected one.
-            guard !Task.isCancelled, let model, model.selectedItem.id == row.layer.itemId, !model.recordingNavigationIsLocked else { return }
-            guard rendered else { return model.reportWarning("That Margin couldn't be read aloud, so listening continues.") }
+            guard let model else { return }
+            guard !Task.isCancelled else { return model.recordMarginTap(.shared, .dropped(.cancelled)) } // left the item mid-wait, a review began, or Skip
+            guard model.selectedItem.id == row.layer.itemId else { return model.recordMarginTap(.shared, .dropped(.leftItem)) }
+            guard !model.recordingNavigationIsLocked else { return model.recordMarginTap(.shared, .dropped(.recordingInProgress)) }
+            guard rendered else {
+                model.recordMarginTap(.shared, .dropped(.readingFailed))
+                return model.reportWarning("That Margin couldn't be read aloud, so listening continues.")
+            }
             if model.pendingImportedCommentary != nil || model.playingImportedCommentary != nil || model.marginMoment != nil {
                 // Something else took the sound while the reading was made; the tap is not dropped without a word.
+                model.recordMarginTap(.shared, .dropped(.soundTaken))
                 return model.reportWarning("That Margin is ready now. Tap it again to hear it.")
             }
             replayingAfterWait.insert(key)

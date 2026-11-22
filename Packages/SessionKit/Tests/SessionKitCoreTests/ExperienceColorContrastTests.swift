@@ -71,7 +71,7 @@ final class AppColorContrastCoverageTests: XCTestCase {
     }
 
     private func appColorsSource() throws -> String {
-        try TestInputs.text(.appSources, "Gate1RootView.swift")
+        try TestInputs.code(.appSources, "Gate1RootView.swift")
     }
 
     private func block(_ text: String, startingAt header: String) throws -> String {
@@ -209,7 +209,7 @@ final class AppColorContrastCoverageTests: XCTestCase {
     /// The app's swipe colours are defined outside `enum AppColors` (a hot file stays small), so the guard that every
     /// `AppColors` colour comes from a shared token reads this file too.
     func testTheAppSwipeColoursComeFromTheSharedSwipeTokens() throws {
-        let text = try TestInputs.text(.appSources, "AppColors+Swipe.swift")
+        let text = try TestInputs.code(.appSources, "AppColors+Swipe.swift")
         for name in ["swipeEvergreen", "swipeOchre", "swipePlum", "swipeSlate"] {
             XCTAssertTrue(text.contains("static let \(name) = dynamicColor(AppSemanticColorRGB.\(name))"), "\(name) must come from its token")
         }

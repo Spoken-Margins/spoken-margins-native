@@ -105,12 +105,151 @@ final class NextChapterSummaryTests: XCTestCase {
         XCTAssertEqual(forward(false, row: false, canForward: true), .hidden)
     }
 
+    // MARK: Next in queue takes the slot a dimmed Skim would hold (#3914)
+
+    func testForwardSlotStartsTheQueuedItemOnlyWhereItWouldBeADimmedSkim() {
+        func forward(
+            _ isAvailable: Bool, row: Bool, canForward: Bool,
+            queued: Bool, loading: Bool = false, locked: Bool = false
+        ) -> Rule.ChapterRowControl {
+            Rule.forwardControl(
+                isAvailable: isAvailable, skimRowShown: row, canSkimForward: canForward,
+                hasQueuedNext: queued, stopsLoading: loading, navigationLocked: locked)
+        }
+        // the last chapter, nothing left to Skim to, another item queued
+        XCTAssertEqual(forward(false, row: true, canForward: false, queued: true), .playNextItem)
+        // the same place with an empty queue stays a dimmed Skim ("Nothing ahead to skim to", #3986)
+        XCTAssertEqual(forward(false, row: true, canForward: false, queued: false), .skimDisabled)
+        // a Margin or scene still ahead in the last chapter: Skim wins over the queue
+        XCTAssertEqual(forward(false, row: true, canForward: true, queued: true), .skim)
+        // a chapter still ahead: Next chapter wins over the queue
+        XCTAssertEqual(forward(true, row: true, canForward: false, queued: true), .nextChapterInSkimSlot)
+        XCTAssertEqual(forward(true, row: false, canForward: false, queued: true), .nextChapter)
+        // no Skim row (a podcast with no chapters): the slot stays empty and the queue advances at the end as before
+        XCTAssertEqual(forward(false, row: false, canForward: false, queued: true), .hidden)
+        XCTAssertEqual(forward(false, row: false, canForward: true, queued: true), .hidden)
+        // Skim's stops are still loading: today's control, so the slot never shows Next in queue and turns into Skim
+        XCTAssertEqual(forward(false, row: true, canForward: false, queued: true, loading: true), .skimDisabled)
+        // a recording or imported commentary locks navigation: dimmed, as Skim is
+        XCTAssertEqual(forward(false, row: true, canForward: false, queued: true, locked: true), .skimDisabled)
+    }
+
+    func testQueuedItemDoesNotChangeAnyOtherForwardControl() {
+        // Every row of the old three-input table gives the same answer whatever the queue state says,
+        // except the one cell that was a dimmed Skim.
+        for isAvailable in [false, true] {
+            for row in [false, true] {
+                for canForward in [false, true] {
+                    let today = Rule.forwardControl(isAvailable: isAvailable, skimRowShown: row, canSkimForward: canForward)
+                    for queued in [false, true] {
+                        for loading in [false, true] {
+                            for locked in [false, true] {
+                                let now = Rule.forwardControl(
+                                    isAvailable: isAvailable, skimRowShown: row, canSkimForward: canForward,
+                                    hasQueuedNext: queued, stopsLoading: loading, navigationLocked: locked)
+                                if today == .skimDisabled && queued && !loading && !locked {
+                                    XCTAssertEqual(now, .playNextItem)
+                                } else {
+                                    XCTAssertEqual(now, today, "available \(isAvailable) row \(row) forward \(canForward) queued \(queued) loading \(loading) locked \(locked)")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     func testBackwardSlotKeepsItsPlaceWhenTheItemHasSkim() {
         XCTAssertEqual(Rule.backwardControl(skimRowShown: true, canSkimBackward: true), .skim)
         XCTAssertEqual(Rule.backwardControl(skimRowShown: true, canSkimBackward: false), .skimDisabled)
         XCTAssertEqual(Rule.backwardControl(skimRowShown: false, canSkimBackward: false), .hidden)
         XCTAssertEqual(Rule.backwardControl(skimRowShown: false, canSkimBackward: true), .hidden)
     }
+    // MARK: two or more chapters always show the chapter row (#3865)
+
+    /// The owner's text item at 47% had chapters ahead at 56%, 65% and 74% and no arrows. Whatever Skim's inputs said
+    /// (no store, no map, nothing to Skim to), an item with two or more chapters keeps the row, for every item kind.
+    func testTwoOrMoreChaptersShowTheChapterRowWhateverSkimSays() {
+        for chapters in 2...6 {
+            XCTAssertTrue(Rule.showsChapterRow(isSkimSource: true, hasSkimAffordance: false, chapterCount: chapters),
+                          "\(chapters) chapters, Skim has nowhere to go")
+            XCTAssertTrue(Rule.showsChapterRow(isSkimSource: true, hasSkimAffordance: true, chapterCount: chapters))
+        }
+    }
+
+    func testRowStillFollowsSkimOrAMapWhereTheItemHasFewerChapters() {
+        for chapters in 0...1 {
+            XCTAssertFalse(Rule.showsChapterRow(isSkimSource: true, hasSkimAffordance: false, chapterCount: chapters),
+                           "\(chapters) chapters and no Skim: the row is the title only, as before")
+            XCTAssertTrue(Rule.showsChapterRow(isSkimSource: true, hasSkimAffordance: true, chapterCount: chapters),
+                          "\(chapters) chapters with Skim or a map keeps the row")
+        }
+    }
+
+    func testChapterRowIsNeverShownForSomethingThatIsNotASkimSource() {
+        for affordance in [false, true] {
+            for chapters in [0, 1, 2, 9] {
+                XCTAssertFalse(Rule.showsChapterRow(isSkimSource: false, hasSkimAffordance: affordance, chapterCount: chapters))
+            }
+        }
+    }
+
+    /// With the row guaranteed, the controls on a chapter-bearing item with Skim's inputs empty (the state the owner's
+    /// screenshot suggests): forward is never hidden, and back is drawn, dimmed until a stop is behind the playhead.
+    func testControlsOnAnItemWithChaptersAndNoSkimInputs() {
+        let row = Rule.showsChapterRow(isSkimSource: true, hasSkimAffordance: false, chapterCount: 3)
+        // a middle chapter: Next chapter takes the Skim slot, back is dimmed until Skim has a stop behind the playhead
+        XCTAssertEqual(Rule.forwardControl(isAvailable: true, skimRowShown: row, canSkimForward: false), .nextChapterInSkimSlot)
+        XCTAssertEqual(Rule.backwardControl(skimRowShown: row, canSkimBackward: false), .skimDisabled)
+        // once Skim's stops arrive, both are Skim
+        XCTAssertEqual(Rule.forwardControl(isAvailable: true, skimRowShown: row, canSkimForward: true), .skim)
+        XCTAssertEqual(Rule.backwardControl(skimRowShown: row, canSkimBackward: true), .skim)
+        // the last chapter, nothing ahead: forward is dimmed, never hidden
+        XCTAssertEqual(Rule.forwardControl(isAvailable: false, skimRowShown: row, canSkimForward: false), .skimDisabled)
+    }
+
+    // MARK: the chapter row counts the chapters the listener sees (#4773)
+
+    private func media(_ id: String, _ startMs: Int) -> MediaTimelineChapter {
+        MediaTimelineChapter(id: id, title: id, startMs: startMs, transcriptSegmentId: "segment-\(id)")
+    }
+
+    /// A podcast whose media chapters are only the transcript's own sections, with a Listening Map: its title, bar and
+    /// Timeline name the scenes, so the row must count them. Counting the sections first made this zero.
+    func testScenesCountWhenTheOnlyMediaChaptersAreTranscriptSections() {
+        let sections = [media("ch-transcript-0", 0), media("ch-transcript-1", 60_000), media("item-ch-transcript-2", 120_000)]
+        let scenes = [media("scene-0", 0), media("scene-1", 90_000)]
+        XCTAssertEqual(Rule.chapterRowChapterCount(isTextReading: false, textChapterCount: 0, mediaChapters: sections, scenes: scenes), 2)
+        XCTAssertTrue(Rule.showsChapterRow(
+            isSkimSource: true, hasSkimAffordance: false,
+            chapterCount: Rule.chapterRowChapterCount(isTextReading: false, textChapterCount: 0, mediaChapters: sections, scenes: scenes)))
+        // Only sections, no map: still no chapters, as before (#3865).
+        XCTAssertEqual(Rule.chapterRowChapterCount(isTextReading: false, textChapterCount: 0, mediaChapters: sections, scenes: []), 0)
+    }
+
+    func testChapterRowCountTable() {
+        let authored = [media("ch-publisher-substack-001", 0), media("ch-publisher-substack-002", 60_000)]
+        let sections = [media("ch-transcript-0", 0)]
+        let scenes = [media("scene-0", 0), media("scene-1", 30_000), media("scene-2", 90_000)]
+        typealias Row = (text: Int, reading: Bool, media: [MediaTimelineChapter], scenes: [MediaTimelineChapter], expected: Int, note: String)
+        let rows: [Row] = [
+            (0, false, [], [], 0, "nothing"),
+            (0, false, authored, scenes, 2, "authored chapters win over scenes, as on the bar"),
+            (0, false, authored + sections, [], 2, "sections are left out"),
+            (0, false, [], scenes, 3, "scenes stand in when there are no media chapters"),
+            (5, false, [], [], 0, "a podcast's text chapters don't count"),
+            (4, true, [], [], 4, "a text item counts its own chapters"),
+            (1, true, authored, scenes, 1, "a text item counts its text chapters only: Skim's stops on text are those"),
+            (-1, true, [], [], 0, "a negative count never goes below zero"),
+        ]
+        for row in rows {
+            XCTAssertEqual(
+                Rule.chapterRowChapterCount(isTextReading: row.reading, textChapterCount: row.text, mediaChapters: row.media, scenes: row.scenes),
+                row.expected, row.note)
+        }
+    }
+
     // MARK: text chapters count characters (#1471)
 
     func testTextChapterSummaryLandsOnTheChapterStartWithinACharacterTolerance() {

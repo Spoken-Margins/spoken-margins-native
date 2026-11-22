@@ -38,6 +38,11 @@ public struct ParsedFeedItem: Equatable, Sendable {
     /// The item's `<guid>`, Atom `id` or JSON Feed `id` as written, without the display cleanup
     /// `id` gets; nil when the feed gives none (`id` then falls back to the link).
     public var guid: String? = nil
+    /// The item's own picture (#3864). Order: `itunes:image`, `media:thumbnail`,
+    /// `media:content` of medium `image`, an `image/*` enclosure; JSON Feed `image`, then
+    /// `banner_image`. Https only; nil when the entry names none. It is never the show's image,
+    /// which stays on `ParsedFeed.imageURL`.
+    public var imageURL: String? = nil
 }
 
 public struct ParsedFeed: Equatable, Sendable {
@@ -117,6 +122,8 @@ public final class FeedParser: @unchecked Sendable {
                 var authors: [Author]?
                 var author: Author?
                 var attachments: [Attachment]?
+                var image: String?
+                var banner_image: String?
             }
             struct Author: Decodable { var name: String? }
             var version: String
@@ -147,7 +154,10 @@ public final class FeedParser: @unchecked Sendable {
                 publishedAt: item.date_published.flatMap(formatter.date(from:)),
                 audioURL: audio,
                 content: content?.nilIfEmpty,
-                guid: item.id?.nilIfEmpty
+                guid: item.id?.nilIfEmpty,
+                imageURL: [item.image, item.banner_image].lazy.compactMap { $0.flatMap(httpsLink) }.first
+                    ?? item.attachments?.lazy.filter { ($0.mime_type ?? "").lowercased().hasPrefix("image/") }
+                        .compactMap { httpsLink($0.url) }.first
             )
         }
         return ParsedFeed(format: .json, title: sanitize(decoded.title), homePageURL: decoded.home_page_url, feedURL: decoded.feed_url, items: items, imageURL: decoded.icon.flatMap(httpsLink))
@@ -188,6 +198,7 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
             inEntry = true
             item = ItemBuilder()
         }
+        if inEntry { collectItemImage(name: name, attributes: attributeDict) }
         if !inEntry, name == "image" {
             // `<itunes:image href>` carries the link itself; RSS `<image>` holds a `<url>` child.
             if let href = attributeDict["href"] {
@@ -201,10 +212,33 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
             if inEntry {
                 if rel == "alternate" { item?.url = href }
                 if rel == "enclosure", (attributeDict["type"] ?? "").lowercased().hasPrefix("audio/") { item?.audioURL = href }
+                if rel == "enclosure", (attributeDict["type"] ?? "").lowercased().hasPrefix("image/"), item?.enclosureImage == nil { item?.enclosureImage = href }
             } else if rel == "self" { feedURL = href } else if rel == "alternate" { homePageURL = href }
         }
         if format == .rss, name == "enclosure", (attributeDict["type"] ?? "").lowercased().hasPrefix("audio/") {
             item?.audioURL = attributeDict["url"]
+        }
+        if format == .rss, name == "enclosure", (attributeDict["type"] ?? "").lowercased().hasPrefix("image/"),
+           item?.enclosureImage == nil {
+            item?.enclosureImage = attributeDict["url"]
+        }
+    }
+
+    /// An entry's own picture candidates, kept apart so `ItemBuilder` can apply the precedence.
+    /// `normalized` drops the namespace prefix, so `media:content` arrives as "content": it counts
+    /// only with a `url` and a medium or type of image (an Atom `<content type="html">` has neither).
+    private func collectItemImage(name: String, attributes: [String: String]) {
+        switch name {
+        case "image":
+            if let href = attributes["href"], item?.itunesImage == nil { item?.itunesImage = href }
+        case "thumbnail":
+            if let url = attributes["url"], item?.mediaThumbnail == nil { item?.mediaThumbnail = url }
+        case "content":
+            guard let url = attributes["url"], item?.mediaContentImage == nil else { return }
+            let medium = (attributes["medium"] ?? "").lowercased()
+            let type = (attributes["type"] ?? "").lowercased()
+            if medium == "image" || (medium.isEmpty && type.hasPrefix("image/")) { item?.mediaContentImage = url }
+        default: break
         }
     }
 
@@ -267,6 +301,10 @@ private struct ItemBuilder {
     var audioURL: String?
     var duration: String?
     var content: String?
+    var itunesImage: String?
+    var mediaThumbnail: String?
+    var mediaContentImage: String?
+    var enclosureImage: String?
     func build() -> ParsedFeedItem? {
         // Podcast feeds, paid ones especially, often give episodes audio and a GUID but no
         // <link> (#179). The enclosure then stands in for the link, so identity falls back to
@@ -287,7 +325,9 @@ private struct ItemBuilder {
             audioURL: audioURL?.nilIfEmpty,
             durationMs: duration.flatMap(FeedDuration.milliseconds(from:)),
             content: content?.nilIfEmpty,
-            guid: guid?.nilIfEmpty
+            guid: guid?.nilIfEmpty,
+            imageURL: [itunesImage, mediaThumbnail, mediaContentImage, enclosureImage].lazy
+                .compactMap { $0.flatMap(httpsLink) }.first
         )
     }
 }

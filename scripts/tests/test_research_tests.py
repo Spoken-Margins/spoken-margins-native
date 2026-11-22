@@ -2,7 +2,6 @@ import contextlib
 import os
 import importlib.util
 import io
-import json
 from pathlib import Path
 import subprocess
 import sys
@@ -26,7 +25,6 @@ def load(name, filename):
 
 scope = load('test_scope', 'test-scope.py')
 verification = load('verification', 'verify-tests.py')
-lane = load('lane_runner', 'lane-runner.py')
 
 
 class ResearchRunnerTests(unittest.TestCase):
@@ -48,6 +46,36 @@ class ResearchRunnerTests(unittest.TestCase):
             self.assertTrue((ROOT / script).is_file(), script)
         for label, folder, arguments in research_tests.PYTHON_SUITES:
             self.assertTrue((ROOT / folder).is_dir(), label)
+
+    def test_marker_diff_is_run_by_the_research_command_not_listed_as_a_gap(self):
+        # #4320: the T1 command for a research change skipped test_marker_diff ("not covered"), so a green run on a
+        # wrong marker_diff.py proved nothing. The suite is counted now, and the package it imports is installed
+        # wherever the hosted step runs (a skipped suite fails the step there), as lxml is for the ground-truth tests.
+        self.assertIn(('python research/C1/tools test_marker_diff', 'research/C1/tools', ('test_marker_diff',)),
+                      research_tests.PYTHON_SUITES)
+        self.assertFalse([label for label, _ in research_tests.NOT_COVERED if 'test_marker_diff' in label])
+        pinned = {line.split('==')[0].lower() for line in (ROOT / 'requirements-dev.txt').read_text().splitlines()
+                  if '==' in line}
+        imported = {line.split()[1] for line in (ROOT / 'research/C1/tools/marker_diff.py').read_text().splitlines()
+                    if line.startswith('import ') and line.split()[1] in research_tests.THIRD_PARTY}
+        self.assertEqual(imported, {'regex'})
+        self.assertTrue(imported <= pinned, f'requirements-dev.txt lacks {imported - pinned}')
+
+    @unittest.skipUnless(importlib.util.find_spec('regex'), 'needs the `regex` package from requirements-dev.txt')
+    def test_a_wrong_marker_diff_result_turns_the_research_suite_red(self):
+        import shutil
+        label, folder, arguments = next(suite for suite in research_tests.PYTHON_SUITES if 'test_marker_diff' in suite[0])
+        self.assertIsNone(research_tests.python_suite(ROOT, label, folder, arguments).error)
+        with tempfile.TemporaryDirectory() as temporary:
+            copy = Path(temporary) / 'research/C1/tools'
+            shutil.copytree(ROOT / 'research/C1/tools', copy, ignore=shutil.ignore_patterns('__pycache__'))
+            module = copy / 'marker_diff.py'
+            source = module.read_text()
+            wrong = source.replace('return regex.findall(r"\\X", text)', 'return list(text)')
+            self.assertNotEqual(wrong, source, 'the mutation must apply')
+            module.write_text(wrong)
+            result = research_tests.python_suite(Path(temporary), label, folder, arguments)
+        self.assertIn('unittest exited 1', result.error or '')
 
     def test_a_diff_that_touches_only_the_tested_research_code_is_t1_not_docs(self):
         # The lane runs nothing for T0, so a server-only PR never reached any gate.
@@ -290,27 +318,6 @@ class ResearchRunnerTests(unittest.TestCase):
             result = research_tests.go_suite(Path(temporary))
         self.assertIn('failed package: example.test/server', result.error)
         self.assertIn('undefined: undefinedThing', result.error)
-
-    def test_a_passing_lane_run_lists_the_suites_the_machine_could_not_run(self):
-        # Done when 3 (#1033): the PASS report, not only the log on the Mac, says a suite was skipped.
-        def runner_writing(steps):
-            def run(command, log, timeout):
-                output = Path(command[command.index('--output') + 1])
-                output.mkdir(parents=True, exist_ok=True)
-                (output / 'manifest.json').write_text(json.dumps({'status': 'verified', 'steps': steps}))
-                return 0
-            return run
-
-        steps = [{'name': 'runner-tests', 'skipped': 'Codex sandbox: `ps` cannot run here'},  # a string, not a list
-                 {'name': 'research', 'skipped': ['go research/B4/server - `go` is not on PATH']}]
-        with tempfile.TemporaryDirectory() as folder:
-            verdict, details = lane.run_fast(Path(folder), runner=runner_writing(steps))
-        self.assertEqual(verdict, 'PASS')
-        self.assertEqual(details, ['research skipped: go research/B4/server - `go` is not on PATH'])
-        with tempfile.TemporaryDirectory() as folder:
-            self.assertEqual(lane.run_fast(Path(folder), runner=runner_writing([{'name': 'research'}])),
-                             ('PASS', []))
-
 
 
 if __name__ == '__main__':

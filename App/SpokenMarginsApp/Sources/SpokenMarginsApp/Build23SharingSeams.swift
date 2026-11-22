@@ -70,6 +70,14 @@ struct Build23SharingMarginSnapshot: Identifiable, Equatable {
     var isShowingPlaceholder = false
     /// Whether the friend's phone is asked to read this Margin aloud when it goes as text (#3427).
     var readAloud = true
+    /// What this Margin is still waiting on, read live from the stored Margin (#3839). Empty when nothing is pending.
+    var steps: [ShareReviewSteps.Step] = []
+    /// "Waiting for words" while the Margin's transcript is still being made (#3839); nil otherwise.
+    var waitingBadge: String? = nil
+    /// The quiet note under the card about where the Margin will land. Nil for an article, a PDF or a placed Margin.
+    var placementNote: String? = nil
+    /// False for a moved Margin with no place on its item (#4233): a packet can't carry it, so its switch stays off.
+    var hasPlace = true
 }
 
 extension Build23SharingMarginSnapshot {
@@ -85,7 +93,8 @@ extension Build23SharingMarginSnapshot {
 
     /// What VoiceOver says about the Margin's place in the packet; matches the visible status.
     var shareStatusDescription: String {
-        isLeftOutForMissingText ? "left out, no transcript yet" : (isIncluded ? "included" : "not included")
+        guard hasPlace else { return "not included, \(ShareableMargins.noPlaceLine.lowercased())" }
+        return isLeftOutForMissingText ? "left out, no transcript yet" : (isIncluded ? "included" : "not included")
     }
 }
 
@@ -131,13 +140,15 @@ struct Build23SharingSnapshot: Equatable {
     let preparationFailures: Int
     let autoCleanSelectedEnabled: Bool
     let needsAutoCleanDecision: Bool
-    /// The sheet was opened as "Send replies to <friend>" (#3792): its review is a receipt, not an editor.
+    /// The sheet was opened as "Share replies with <friend>" (#3792, #3906): its review is a receipt, not an editor.
     let isReplyBack: Bool
     let previewState: Build23SharingPreviewState
     let verifiedPreview: Build23VerifiedRecipientPreview?
     let errorMessage: String?
     let canAdvance: Bool
     let canShareVerifiedFile: Bool
+    /// The one step above "Share link" while an included Margin's moment is still being found (#3839). Nil otherwise.
+    var pinnedStep: ShareReviewSteps.Step? = nil
 }
 
 extension Build23SharingSnapshot {
@@ -288,7 +299,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     @Published private(set) var pendingRecipientSourceRequest: Build23RecipientSourceRequest?
 
     private let model: Gate1AppModel
-    /// The sheet's heading: "Send replies to Ana" when it was opened to send replies back (#3221).
+    /// The sheet's heading: "Share replies with Ana" (or "Share your Margins with Ana" when none is a reply) when it was opened to share replies back (#3221, #3906).
     var senderHeading: String { model.sharingState.replyBackTitle ?? "Share Margins" }
     /// Recovers a private-feed packet's episode from the recipient's own feed (#454).
     let episodeRecovery: SharedEpisodeRecovery
@@ -297,6 +308,11 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     private var previewTask: Task<Void, Never>?
     private var modelChangeCancellables: Set<AnyCancellable> = []
     private var modelChangePending = false
+    /// Whether the sheet's episode was playing at the last check, so a position tick redraws nothing (#3839).
+    private var playsThisItem = false
+    /// What the coalesced change below was asked for: a sharing input changed, or playback may have flipped.
+    private var inputChangePending = false
+    private var playbackCheckPending = false
     @Published private(set) var importedLayers: [Build23ImportedLayerSnapshot] = []
     /// The links the item's friend Margins came from, for "Report" in the item's ⋯ menu (#2239). Empty for Margins
     /// from a file.
@@ -304,7 +320,11 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
 
     init(model: Gate1AppModel) {
         self.model = model
+        #if SM_SHARE_LINK_CREATION
+        ShareLinkPlayChecker.shared.connect(to: model)
+        #endif
         episodeRecovery = SharedEpisodeRecovery(services: SharedEpisodeRecovery.services(model: model))
+        playsThisItem = Self.isPlaying(itemID: model.selectedItem.id, in: model.snapshot)
         importedLayers = makeImportedLayers(from: model.selectedItem)
         reportEntries = ShareLinkReport.entries(for: model.selectedItem.importedCommentaryLayers)
         model.$selectedItem.sink { [weak self] item in
@@ -330,23 +350,56 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                    model.$sharedSpokenMarginsPackageURL.map { _ in () })
             .sink { [weak self] in self?.scheduleModelChange() }
             .store(in: &modelChangeCancellables)
+        // Which words the moment step says depends on whether this item is playing. The model does not publish for a
+        // position-only change, and an unchanged answer redraws nothing.
+        model.objectWillChange
+            .sink { [weak self] in self?.scheduleModelChange(inputChanged: false, checksPlayback: true) }
+            .store(in: &modelChangeCancellables)
     }
 
-    private func scheduleModelChange() {
+    static func isPlaying(itemID: String, in snapshot: SessionSnapshot) -> Bool {
+        snapshot.itemId == itemID && snapshot.status.isPlaybackActive
+    }
+
+    /// One coalesced pass for every kind of change. A sharing input redraws the sheet; a playback check redraws it only
+    /// when whether this item is playing actually flipped, so a model publish that moves neither redraws nothing.
+    private func scheduleModelChange(inputChanged: Bool = true, checksPlayback: Bool = false) {
+        inputChangePending = inputChangePending || inputChanged
+        playbackCheckPending = playbackCheckPending || checksPlayback
         guard !modelChangePending else { return }
         modelChangePending = true
         Task { @MainActor [weak self] in
             await Task.yield()
             guard let self else { return }
             self.modelChangePending = false
-            self.modelDidChange()
+            var changed = self.inputChangePending
+            self.inputChangePending = false
+            if self.playbackCheckPending {
+                self.playbackCheckPending = false
+                let playing = Self.isPlaying(itemID: self.model.selectedItem.id, in: self.model.snapshot)
+                if playing != self.playsThisItem {
+                    self.playsThisItem = playing
+                    changed = true
+                }
+            }
+            if changed { self.modelDidChange() }
         }
     }
 
     var snapshot: Build23SharingSnapshot {
         let state = model.sharingState
+        // The steps read the stored Margin each time, not the copy the draft took when the sheet opened, so a step clears
+        // by itself when the sample lands (#3839).
+        let stored = Dictionary(model.selectedItem.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let isNativeAudio = model.selectedItem.isNativeAudio
+        let playing = Self.isPlaying(itemID: model.selectedItem.id, in: model.snapshot)
+        var waiting: [ShareReviewSteps.Margin] = []
         let margins = state.drafts.map { draft in
             let originalVoiceURL = model.originalAudioURL(forShareDraft: draft.id)
+            let reviewMargin = ShareReviewSteps.Margin(
+                stored[draft.id] ?? draft.interjection, isNativeAudio: isNativeAudio, playingThisItem: playing,
+                hasVoice: originalVoiceURL != nil)
+            if draft.isIncluded { waiting.append(reviewMargin) }
             return Build23SharingMarginSnapshot(
                 id: draft.id,
                 reviewedText: draft.approvedTranscript,
@@ -372,7 +425,11 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 cleanedVoiceURL: draft.cleanedAudioURL,
                 placeholderText: draft.placeholderText,
                 isShowingPlaceholder: draft.isShowingPlaceholder,
-                readAloud: draft.readAloud
+                readAloud: draft.readAloud,
+                steps: ShareReviewSteps.cardSteps(reviewMargin),
+                waitingBadge: ShareReviewSteps.waitingBadge(reviewMargin),
+                placementNote: ShareReviewSteps.cardNote(reviewMargin),
+                hasPlace: draft.interjection.hasPlace
             )
         }
         let hasReviewedSelection = margins.contains {
@@ -412,7 +469,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             verifiedPreview: verifiedPreview,
             errorMessage: state.errorMessage,
             canAdvance: canAdvance,
-            canShareVerifiedFile: previewIsCurrent
+            canShareVerifiedFile: previewIsCurrent,
+            pinnedStep: stage == .review ? ShareReviewSteps.pinnedStep(waiting) : nil
         )
     }
 
@@ -452,20 +510,34 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     /// recording, or a note the phone's voice reads), never the recording's path alone (#3412).
     static func importedMarginSnapshot(
         _ margin: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer,
-        placementPass: SharedMarginPlacementPasses.Pass?, paragraphs: MarginPlaceIndex?
+        placementPass: SharedMarginPlacementPasses.Pass?, paragraphs: MarginPlaceIndex?, durationMs: Int? = nil
     ) -> Build23ImportedMarginSnapshot {
         let placement = SharedMarginPlacementStatus(resolution: margin.resolution, marginId: margin.id,
             layerStatus: layer.sourceResolutionStatus, pass: placementPass,
             hasPositionEvidence: margin.carriesPositionEvidence(in: layer),
             awaitingPlacementPass: layer.awaitsPlacementPass)
+        // A podcast Margin shows the time it plays at, then one of three plain phrases for where that came from; one
+        // with no usable time shows only the phrase (#3789). Other items keep the older wording.
+        var position = placement.positionDescription ?? positionDescription(for: margin.resolution, paragraphs: paragraphs)
+        var label = placement.label
+        if let words = SharedMarginPlacementWording.line(for: margin, in: layer, durationMs: durationMs) {
+            let plan = SharedMarginPrompts.plan(margin, in: layer, durationMs: durationMs)
+            if let clock = SharedMarginPlacementWording.clock(for: plan) {
+                position = clock
+                label = words
+            } else {
+                position = words
+                label = nil
+            }
+        }
         return Build23ImportedMarginSnapshot(
             id: margin.id,
             reviewedText: margin.approvedTranscript,
             resolution: margin.resolution.evidenceClass,
-            positionDescription: placement.positionDescription ?? positionDescription(for: margin.resolution, paragraphs: paragraphs),
+            positionDescription: position,
             isPlayable: Gate1AppModel.isPlayableImportedCommentaryResolution(margin.resolution),
             canListen: SharedMarginAudio.canOffer(margin),
-            placementLabel: placement.label
+            placementLabel: label
         )
     }
 
@@ -477,7 +549,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             .filter { $0.deletedAt == nil }
             .map { layer in
                 let margins = item.importedCommentaryInterjections[layer.id, default: []]
-                    .map { Self.importedMarginSnapshot($0, in: layer, placementPass: item.sharedMarginPlacement, paragraphs: paragraphs) }
+                    .map { Self.importedMarginSnapshot($0, in: layer, placementPass: item.sharedMarginPlacement, paragraphs: paragraphs, durationMs: item.mediaDurationMs) }
                 return Build23ImportedLayerSnapshot(
                     id: layer.id,
                     senderLabel: SharedPacketArrival.snapshotSenderLabel(layer.displayLabel),
@@ -661,6 +733,16 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         stage = newStage
     }
 
+    /// A send tap: one `share.selection` Diagnostics line (#4173).
+    func recordShareSelection() {
+        model.recordShareSelection()
+    }
+
+    /// The system share sheet now shows the packet or the link: the star counts start again (#4173).
+    func recordSystemShareShown() {
+        model.shareSheetPresented()
+    }
+
     /// The share sheet sent the verified packet (logged as an I4 `share` for its item, #483).
     func recordSystemShareCompleted(packetURL: URL) {
         model.listeningSignals.share(packetURL: packetURL)
@@ -669,6 +751,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     private func buildRecipientPreview() {
         guard stage == .review,
               snapshot.canAdvance else { return }
+        // The packet carries the evidence that exists when Share is tapped; the fingerprint is taken after it.
+        refreshDraftsFromStoredMargins()
         previewGeneration += 1
         let generation = previewGeneration
         let fingerprint = currentDraftFingerprint()
@@ -719,7 +803,43 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         }
     }
 
+    /// What the stored Margin gained since the sheet opened goes into the draft, so the packet carries what the card says
+    /// is ready (#3839): its anchor evidence, and, when its words have arrived and the sender has changed nothing, the
+    /// words themselves (the draft is rebuilt from the stored Margin; see `ShareInterjectionDraft.adoptArrivedWords`).
+    /// A sender's edits are never taken away. Nothing here starts a cleanup: a Margin whose words land late is cleaned
+    /// with its own "Remove ums and pauses" button, because the bulk "Clean automatically" pass touches every included
+    /// draft, Words-only and already-undone ones too, and the audit found it overriding both. A change reaches
+    /// `sharingState` once and the next pass sees none.
+    ///
+    /// None of this is something the sender chose, so it never reports as a change of the selection (twice the audit
+    /// found a path where it did): while a packet is being built or the system share sheet is open the draft is frozen,
+    /// and where the packet is kept (back on review or selection) a packet built without the new content is dropped
+    /// quietly, with no "Your selection changed" and no change of stage, so the next Share builds one that carries it.
+    /// Returns whether a draft changed.
+    @discardableResult
+    private func refreshDraftsFromStoredMargins() -> Bool {
+        guard stage == .select || stage == .review else { return false }
+        let stored = Dictionary(model.selectedItem.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var drafts = model.sharingState.drafts
+        var changed = false
+        for index in drafts.indices {
+            guard let margin = stored[drafts[index].id] else { continue }
+            if drafts[index].refreshAnchorEvidence(from: margin) { changed = true }
+            if margin.transcriptionStatus != "pending", drafts[index].interjection.transcriptionStatus != margin.transcriptionStatus,
+               drafts[index].adoptArrivedWords(
+                from: margin, hasVoice: model.originalAudioURL(forShareDraft: drafts[index].id) != nil,
+                itemTitle: model.selectedItem.title) {
+                changed = true
+            }
+        }
+        if changed { model.sharingState.drafts = drafts }
+        return changed
+    }
+
     private func modelDidChange() {
+        if refreshDraftsFromStoredMargins(), verifiedPreview != nil {
+            discardPreview(resetTo: stage)
+        }
         if verifiedPreview != nil,
            previewFingerprint != currentDraftFingerprint() {
             discardPreview(resetTo: .review)

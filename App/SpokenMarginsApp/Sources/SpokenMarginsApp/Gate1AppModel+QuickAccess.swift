@@ -70,18 +70,19 @@ extension Gate1AppModel {
             importQuickFolderLinkLists([file], folderURL: urls.folderURL)
             return
         }
-        beginObsidianMarkdownImport(
+        // A `.txt` that reads as a meeting transcript becomes a transcript item; anything else imports as before (#2997).
+        importFilesWithTranscriptRule(
             urls: [urls.fileURL],
-            securityScopedURLs: [urls.folderURL],
-            refreshQuickFolderWhenFinished: true,
-            openImportedItemWhenFinished: openWhenFinished,
-            quickAccessFileToDismiss: file
-        )
+            route: TranscriptPickRoute(
+                securityScopedURLs: [urls.folderURL],
+                refreshQuickFolderWhenFinished: true,
+                openImportedItemWhenFinished: openWhenFinished,
+                quickAccessFileToDismiss: file))
     }
 
-    func refreshQuickAddFeed(force: Bool = true) {
+    func refreshQuickAddFeed(force: Bool = true, trigger: FollowedRefreshTrigger) {
         refreshQuickAccessFolder()
-        refreshFollowedSources(force: force)
+        refreshFollowedSources(force: force, trigger: trigger)
     }
 
     /// Pull-down refresh on Following (#1438): the toolbar button's refresh, awaited so the spinner stays until
@@ -89,6 +90,6 @@ extension Gate1AppModel {
     /// the list redraws can't cut it short; a pull while a refresh runs returns at once and starts no second one.
     func pullToRefreshFollowing() async {
         refreshQuickAccessFolder()
-        await Task { [self] in await self.performFollowedSourceRefresh(force: true) }.value
+        _ = await Task { [self] in await self.performFollowedSourceRefresh(force: true, trigger: .pull) }.value
     }
 }

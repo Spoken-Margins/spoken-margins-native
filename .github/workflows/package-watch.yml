@@ -1,0 +1,47 @@
+# Weekly check of every Swift package the app builds from against its upstream (#2048, after #4512).
+#
+# On 2026-11-17 Microsoft's onnxruntime-swift-package-manager repository went 404 and every fresh Mac build failed
+# for a day, holding 68 PRs. #4568 builds it from a copy in the Spoken-Margins organization. A copy is only safe if
+# we notice when the original changes, above all a security fix, so this reports, for every pin in the three
+# Package.resolved files: a source or upstream gone, an upstream renamed or moved, a newer upstream release, and
+# GitHub advisories that cover the pinned version (scripts/package_watch.py). It keeps one open issue and comments
+# only when the findings change.
+#
+# Cost and catch: about a minute of free hosted Linux time a week (git ls-remote and a few API reads), no tokens,
+# no owner clicks unless something changed. It would have flagged #4512 the day it happened. Waste signal: six
+# months of comments that led to no package change and no investigation.
+name: package-watch
+
+on:
+  schedule:
+    # Mondays 14:23 UTC. A jittered minute, outside the morning phone-build window.
+    - cron: '23 14 * * 1'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '**/Package.resolved'
+      - 'docs/legal/package-upstreams.json'
+      - 'scripts/package_watch.py'
+      - '.github/workflows/package-watch.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: package-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Check packages against their upstreams
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/package_watch.py --issue \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || [ $? -eq 1 ]

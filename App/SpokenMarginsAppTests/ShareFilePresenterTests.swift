@@ -65,27 +65,33 @@ final class ShareFilePresenterTests: XCTestCase {
 
     /// The owner's recording (build 94a7bfb): with audio rendering, the share sheet over Settings reloaded again and
     /// again, because it was a SwiftUI `.sheet` inside a screen the model's publishes redraw. This mounts Settings in the
-    /// app's own tab bar (which watches the whole model, as it does on the phone), presents the sheet the way the
-    /// Share Diagnostics button does, and publishes about two seconds' worth of every kind of model write audio makes.
+    /// app's own tab bar (which watches the whole model, as it does on the phone), activates Share Diagnostics, and
+    /// publishes about two seconds' worth of every kind of model write audio makes.
     /// The same `UIActivityViewController` must stay presented from the first look to the last: a rebuilt or re-presented
     /// sheet is a different controller (or one briefly not presented).
     ///
-    /// What this does and does not guard: the presentation is called directly, not by tapping Share Diagnostics, so it
-    /// guards that a sheet UIKit presents over the window survives the app's publishes and redraws. It does not catch
-    /// Settings going back to hosting the sheet itself; `SettingsScreen` calls `ShareFilePresenter.present` at both buttons
-    /// and has no `.sheet` for a share view, and a reviewer must keep it so.
+    /// The sheet comes from activating the Share Diagnostics button itself, as VoiceOver does (#4312). An earlier version
+    /// called `ShareFilePresenter.present` directly, so it still passed with Settings hosting the sheet in a `.sheet`; that
+    /// sheet is not a `UIActivityViewController` presented over the window, so this finds none and fails. Export Listening
+    /// Signals is not driven (it shares only once signals exist); it calls `ShareFilePresenter.present` too, and a
+    /// reviewer must keep it so.
     func testTheSheetOverSettingsIsNotReloadedByModelPublishes() async throws {
+        let automationWasEnabled = AccessibilityAutomation.enable()
+        defer { if let automationWasEnabled { AccessibilityAutomation.set(automationWasEnabled) } }
         let model = try makeModel()
         let mounted = try mount(settingsInTheTabBar(model: model))
         defer { mounted.close() }
         try await waitUntilQuiet { ScreenRedrawProbe.count("settings") }
-        let file = try exportFile()
-        defer { try? FileManager.default.removeItem(at: file) }
+        let isShareDiagnostics = { (node: AccessibilityNode) in node.identifier == "settings.shareDiagnostics.button" }
+        _ = try await scrollToNode("the Share Diagnostics button", in: mounted.window, isShareDiagnostics)
+        try await waitUntilQuiet { ScreenRedrawProbe.count("settings") }
         var modelPublishes = 0
         let watch = model.objectWillChange.sink { modelPublishes += 1 }
         defer { watch.cancel() }
 
-        ShareFilePresenter.present(fileURL: file)
+        // Activation finds the element afresh, so a list cell rebuilt while the screen settled is not a dead one.
+        XCTAssertTrue(MountedTree(window: mounted.window, previousKeyWindow: nil).activate(isShareDiagnostics),
+                      "the Share Diagnostics button refused activation")
         let sheet = try await presentedActivitySheet(in: mounted.window)
         // Let the sheet finish coming up, so the looks below are of a settled sheet, not one still animating in.
         try await Task.sleep(for: .milliseconds(500))
@@ -109,27 +115,51 @@ final class ShareFilePresenterTests: XCTestCase {
     }
 
     /// The control for the test above, run against the arrangement #4026 replaced: a plain `.sheet` on a row of a form
-    /// whose screen watches the model. The test above only means something if this shows the fault it guards: every
-    /// publish must re-run the sheet's content closure. If it stops doing that, the test above no longer reproduces the
-    /// owner's recording and its pass proves nothing.
+    /// whose screen watches the model. The test above only means something if this shows the fault it guards: a write
+    /// to what the sheet shows must re-run the sheet's content closure. If it stops doing that, the test above no longer
+    /// reproduces the owner's recording and its pass proves nothing.
+    ///
+    /// This reads what the sheet's content *shows*, not how many times it was built (#4260). A count asserted idle first
+    /// ("no rebuilds with no publish") failed on the hosted runner (6 builds where 2 were expected): a sheet that has just
+    /// come up rebuilds for reasons that are not publishes (its presentation settling, a trait or safe-area change), so
+    /// the count of builds cannot say what caused them. A value only a publish writes can: the sheet shows the status
+    /// and the first Library row's progress the model holds, so each sentinel below reaches the sheet only if a publish
+    /// made the sheet rebuild. The wait for each is a deadline, not a count.
     func testWithAPlainSheetOnAScreenThatWatchesTheModelTheSheetIsRebuiltByPublishes() async throws {
+        PlainSheetShareProbe.reset()
         let model = try makeModel()
+        model.preparedTextAudioStatus = "control-start"
         let mounted = try mount(AnyView(PlainSheetSharePresenter(model: model)))
         defer { mounted.close() }
-        try await pollUntil { PlainSheetShareProbe.builds != 0 }
-        XCTAssertGreaterThan(PlainSheetShareProbe.builds, 0, "The plain sheet's content was never built, so there is nothing to compare")
-        try await waitUntilQuiet { PlainSheetShareProbe.builds }
-        let before = PlainSheetShareProbe.builds
-        try await Task.sleep(for: .milliseconds(500))
-        XCTAssertEqual(PlainSheetShareProbe.builds, before, "The plain sheet kept rebuilding with no publish, so a count after the publishes proves nothing")
+        try await pollUntil { PlainSheetShareProbe.lastStatus != nil }
+        XCTAssertNotNil(PlainSheetShareProbe.lastStatus, "The plain sheet's content was never built, so there is nothing to compare")
 
         for index in 0..<Self.publishes {
             publish(index, on: model)
             try await Task.sleep(for: .milliseconds(25))
         }
 
-        let rebuilt = PlainSheetShareProbe.builds - before
-        XCTAssertGreaterThan(rebuilt, 0, "Plain sheet: \(Self.publishes) model publishes rebuilt the sheet's content \(rebuilt) times")
+        // The sentinels are written after the publishes above, one at a time: the sheet must come to show each. One
+        // is a write to the status, one is a write to a Library row (the two kinds of write the sheet can show; a bare
+        // `objectWillChange` or a progress chunk carries no value to read back).
+        for sentinel in ["control-first", "control-second", "control-third"] {
+            model.preparedTextAudioStatus = sentinel
+            try await pollUntil(timeout: .seconds(10)) { PlainSheetShareProbe.lastStatus == sentinel }
+            XCTAssertEqual(PlainSheetShareProbe.lastStatus, sentinel,
+                           "Plain sheet: after \(Self.publishes) model publishes and a write of \(sentinel), the sheet's content still showed "
+                           + "\(PlainSheetShareProbe.lastStatus ?? "nothing"), so a status write did not rebuild it")
+        }
+        for percent in [901, 902, 903] {
+            model.libraryItems = model.libraryItems.map { row in
+                var row = row
+                row.continuationProgressPercent = percent
+                return row
+            }
+            try await pollUntil(timeout: .seconds(10)) { PlainSheetShareProbe.lastPercent == percent }
+            XCTAssertEqual(PlainSheetShareProbe.lastPercent, percent,
+                           "Plain sheet: after a Library row write of \(percent) percent, the sheet's content still showed "
+                           + "\(PlainSheetShareProbe.lastPercent.map { String($0) } ?? "nothing"), so a Library write did not rebuild it")
+        }
     }
 
     /// Every kind of write audio makes: the bare `objectWillChange` every write ends in, a rendered chunk, the prepared
@@ -183,10 +213,36 @@ final class ShareFilePresenterTests: XCTestCase {
         return AnyView(TabsHost(navigation: navigation, notice: notice).environmentObject(model).environmentObject(drawer))
     }
 
-    private func exportFile() throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("share-sheet-\(UUID().uuidString).json")
-        try Data("{\"fixture\":true}".utf8).write(to: url)
-        return url
+    /// Finds a node in the window, scrolling the screen's list on a screenful at a time: a Form builds only the rows on
+    /// screen, and Share Diagnostics is far down Settings.
+    private func scrollToNode(_ description: String, in window: UIWindow,
+                              _ matches: (AccessibilityNode) -> Bool) async throws -> AccessibilityNode {
+        let tree = MountedTree(window: window, previousKeyWindow: nil)
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
+            if let node = tree.nodes().first(where: matches) { return node }
+            if let list = Self.longestScrollView(in: window) {
+                let bottom = max(0, list.contentSize.height + list.adjustedContentInset.bottom - list.bounds.height)
+                let next = min(bottom, list.contentOffset.y + list.bounds.height * 0.7)
+                list.setContentOffset(CGPoint(x: list.contentOffset.x, y: next), animated: false)
+            }
+            try await Task.sleep(for: .milliseconds(80))
+        }
+        XCTFail("Never found \(description), scrolling to the end of the screen")
+        throw NotPresented()
+    }
+
+    private static func longestScrollView(in view: UIView) -> UIScrollView? {
+        var best: UIScrollView?
+        var stack = [view]
+        while let next = stack.popLast() {
+            if let scroll = next as? UIScrollView, !scroll.isHidden,
+               scroll.contentSize.height - scroll.bounds.height > (best.map { $0.contentSize.height - $0.bounds.height } ?? 0) {
+                best = scroll
+            }
+            stack += next.subviews
+        }
+        return best
     }
 
     @MainActor
@@ -241,10 +297,17 @@ final class ShareFilePresenterTests: XCTestCase {
     private struct NotPresented: Error {}
 }
 
-/// Counts how often the plain sheet's content closure runs; read by the control test. A publish can come from any
-/// thread's point of view of the compiler, so the counter is not actor-bound; SwiftUI runs the closure on the main thread.
+/// Records the status the plain sheet's content closure last showed; read by the control test. A publish can come from
+/// any thread's point of view of the compiler, so the state is not actor-bound; SwiftUI runs the closure on the main thread.
+/// A build is told apart by what it shows, never by how many there were (#4260).
 private enum PlainSheetShareProbe {
-    nonisolated(unsafe) static var builds = 0
+    nonisolated(unsafe) static var lastStatus: String?
+    nonisolated(unsafe) static var lastPercent: Int?
+
+    static func reset() {
+        lastStatus = nil
+        lastPercent = nil
+    }
 }
 
 /// What #4026 replaced: a plain `.sheet` on a row of a form, on a screen that reads the model, as the old Settings did
@@ -260,8 +323,9 @@ private struct PlainSheetSharePresenter: View {
             Text("Audio: \(model.preparedTextAudioStatus)")
             Button("Share Diagnostics") { isPresented = true }
                 .sheet(isPresented: $isPresented) {
-                    let _ = PlainSheetShareProbe.builds += 1
-                    Text("Share sheet, audio \(model.preparedTextAudioStatus)")
+                    let _ = PlainSheetShareProbe.lastStatus = model.preparedTextAudioStatus
+                    let _ = PlainSheetShareProbe.lastPercent = model.libraryItems.first?.continuationProgressPercent
+                    Text("Share sheet, audio \(model.preparedTextAudioStatus), \(model.libraryItems.first?.continuationProgressPercent ?? 0) percent")
                 }
         }
     }

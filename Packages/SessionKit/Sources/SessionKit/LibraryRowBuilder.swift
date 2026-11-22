@@ -127,10 +127,13 @@ public enum LibraryRowBuilder {
             row.addedAgainAt = item.addedAgainAt
             row.usesNewReader = data.structuredDocumentItemIds.contains(item.id)
             row.sharedMargins = data.sharedMarginsByItemId[item.id] ?? .none
+            row.friendMarginsArrivedAt = data.friendMarginsArrivedAtByItemId[item.id]
             row.marginCount = max(0, data.marginCountsByItemId[item.id] ?? 0)
             row.canMarkUnfinished = item.sourceCompletedAt != nil
                 && !PreparationChunkGate.itemAlreadyListened(ItemFinishedRule.countedSessions(item, sessions: sessions))
             row.textCharacterCount = row.hasNativeAudio ? nil : item.textCharacterCount
+            row.mediaDurationMs = PlayableLength.ms(media: item.media)
+            row.continuationMediaTimeMs = continuation?.position.mediaTimeMs
             return row
         }
     }

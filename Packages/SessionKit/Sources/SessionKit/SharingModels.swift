@@ -105,6 +105,11 @@ public struct InterjectionShareRevision: Codable, Equatable, Sendable, Identifia
     /// recording (nothing to choose) or the share is from before the sender's app remembered it. The next share of the
     /// same Margin starts from the newest one.
     public let sentReadAloud: Bool?
+    /// The length of run-up this share wrote on the Margin's record (#4171), exactly what `SenderLeadIn.valueToWrite`
+    /// gave the packet, or `nil` when it wrote none. The next share of the same Margin starts from the newest one, and
+    /// uses it to decide whether taking a length back to 20 s has to be written out loud. Absent in a share from
+    /// before the sender could choose, and left out of the stored record when `nil`.
+    public let sentLeadInMs: Int?
 
     public init(
         id: String,
@@ -120,7 +125,8 @@ public struct InterjectionShareRevision: Codable, Equatable, Sendable, Identifia
         anchorBefore: String,
         anchorAfter: String,
         status: InterjectionShareRevisionStatus = .draft,
-        sentReadAloud: Bool? = nil
+        sentReadAloud: Bool? = nil,
+        sentLeadInMs: Int? = nil
     ) {
         self.id = id
         self.interjectionId = interjectionId
@@ -136,6 +142,7 @@ public struct InterjectionShareRevision: Codable, Equatable, Sendable, Identifia
         self.anchorAfter = anchorAfter
         self.status = status
         self.sentReadAloud = sentReadAloud
+        self.sentLeadInMs = sentLeadInMs
     }
 }
 
@@ -638,6 +645,15 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
     /// The listener's own choice, which beats the sender's. Local only: packets never carry it, and an older build
     /// ignores the key when it reads the record (#3427).
     public var listenerReadAloud: Bool?
+    /// How much of the episode the sender asked their friend to hear before this Margin, in milliseconds, clamped to
+    /// `SenderLeadIn.range` on import (#4171). Nil when the packet said nothing (every packet from a build without the
+    /// setting), which keeps each run-up's own default. A re-sent Margin can change it; `senderLeadInAt` says when this
+    /// value arrived. Optional in local JSON; Build 29, 32 and 36 ignore the key.
+    public var senderLeadInMs: Int?
+    /// When the packet that gave `senderLeadInMs` its latest value was imported, so a copy loaded before a re-send
+    /// can't undo the change when it is saved (the same guard as `senderReadAloudAt`, #3452). Nil until a re-send
+    /// changes the length. Local only; older builds ignore the key.
+    public var senderLeadInAt: Date?
 
     public init(
         id: String,
@@ -656,7 +672,9 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         shareProvenance: String? = nil,
         senderReadAloud: Bool? = nil,
         listenerReadAloud: Bool? = nil,
-        senderReadAloudAt: Date? = nil
+        senderReadAloudAt: Date? = nil,
+        senderLeadInMs: Int? = nil,
+        senderLeadInAt: Date? = nil
     ) {
         self.id = id
         self.layerId = layerId
@@ -675,6 +693,8 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         self.senderReadAloud = senderReadAloud
         self.listenerReadAloud = listenerReadAloud
         self.senderReadAloudAt = senderReadAloudAt
+        self.senderLeadInMs = senderLeadInMs.map(SenderLeadIn.clamped)
+        self.senderLeadInAt = senderLeadInAt
     }
 
     /// Keeps the sender's choice from a later packet that is already stored when this copy was loaded before it
@@ -683,6 +703,14 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         guard let storedAt = stored?.senderReadAloudAt, storedAt > (senderReadAloudAt ?? .distantPast) else { return }
         senderReadAloud = stored?.senderReadAloud
         senderReadAloudAt = storedAt
+    }
+
+    /// Keeps the sender's run-up length from a later packet that is already stored when this copy was loaded before it
+    /// arrived (#4171). The sibling of `keepNewerSenderReadAloud`: a stale save mustn't undo newer state.
+    public mutating func keepNewerSenderLeadIn(from stored: ImportedCommentaryInterjection?) {
+        guard let storedAt = stored?.senderLeadInAt, storedAt > (senderLeadInAt ?? .distantPast) else { return }
+        senderLeadInMs = stored?.senderLeadInMs
+        senderLeadInAt = storedAt
     }
 
     /// Whether the phone's voice reads this Margin out loud: it is a written Margin, and the listener's choice, else the
@@ -774,6 +802,12 @@ public struct SharedInterjectionPackageRecord: Codable, Equatable, Sendable {
     /// when false, so a packet that changes nothing is the packet an older build already makes. Optional and never
     /// a required capability: a build without it ignores the key and reads the Margin aloud, as before (#3427).
     public let readAloud: Bool?
+    /// How much of the episode the sender asks their friend to hear before this Margin, in milliseconds (#4171). Written
+    /// only when it isn't the 20-second default, or when an earlier share of the same Margin used another length (then
+    /// the default is written out loud, so the friend's held copy can come back to it). Optional and never a required
+    /// capability: a build without it ignores the key and uses each run-up's own length, as before. Readers clamp it to
+    /// `SenderLeadIn.range`; a value that isn't a whole number refuses the packet, as `readAloud` does.
+    public let leadInMs: Int?
 
     public init(
         packageScopedId: String,
@@ -781,7 +815,8 @@ public struct SharedInterjectionPackageRecord: Codable, Equatable, Sendable {
         anchor: PortableAnchorEvidence,
         defaultRepresentationId: String,
         representations: [SharedInterjectionRepresentation],
-        readAloud: Bool? = nil
+        readAloud: Bool? = nil,
+        leadInMs: Int? = nil
     ) {
         self.packageScopedId = packageScopedId
         self.createdAt = createdAt
@@ -789,6 +824,7 @@ public struct SharedInterjectionPackageRecord: Codable, Equatable, Sendable {
         self.defaultRepresentationId = defaultRepresentationId
         self.representations = representations
         self.readAloud = readAloud
+        self.leadInMs = leadInMs
     }
 
     public var defaultRepresentation: SharedInterjectionRepresentation? {

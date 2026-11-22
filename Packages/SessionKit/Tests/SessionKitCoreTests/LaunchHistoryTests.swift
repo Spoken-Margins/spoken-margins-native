@@ -18,6 +18,25 @@ final class LaunchHistoryTests: XCTestCase {
         XCTAssertEqual(history.launchesLine, "09-21 14:13Z b36 pre 180ms root 420ms ready 1520ms n=398 usable 1534ms")
     }
 
+    /// #4388: the export shows the time from launch to Following up to date, and whether only its first screen was refreshed.
+    func testTheTimeFromLaunchToFollowingUpToDateIsReadAndKeepsItsFirstValue() throws {
+        var history = LaunchHistory()
+        finishedLaunch(&history, at: start, readyMs: 1520)
+        history.mark(.followingFresh, elapsedMs: 4200)
+        history.mark(.followingFresh, elapsedMs: 9000, firstScreenOnly: true)
+        XCTAssertEqual(history.launchesLine, "09-21 14:13Z b36 pre 180ms root 420ms ready 1520ms n=398 usable 1534ms following_fresh 4200ms")
+
+        var lowPower = LaunchHistory()
+        finishedLaunch(&lowPower, at: start, readyMs: 1520)
+        lowPower.mark(.followingFresh, elapsedMs: 2600, firstScreenOnly: true)
+        XCTAssertTrue(lowPower.launchesLine.hasSuffix("following_fresh 2600ms first_screen_only"), lowPower.launchesLine)
+
+        let reread = try JSONDecoder().decode(LaunchHistory.self, from: JSONEncoder().encode(lowPower))
+        XCTAssertEqual(reread, lowPower)
+        let older = #"{"launches":[{"startedAt":0,"build":"36","usableMs":10}],"exits":[]}"#
+        XCTAssertNoThrow(try JSONDecoder().decode(LaunchHistory.self, from: Data(older.utf8)), "a history saved before this field still reads")
+    }
+
     func testALaunchThatNeverReachedAUsableScreenIsFlaggedOnceAnotherLaunchFollows() {
         var history = LaunchHistory()
         history.beginLaunch(at: start, build: "36", preInitMs: 200)

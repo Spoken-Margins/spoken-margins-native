@@ -69,7 +69,8 @@ struct PasteAndGoBar: View {
         case .resolvingLink:
             // The sheet closes itself when the link import reports success.
             notAddedMessage = nil
-        case .addedText:
+        case .addedText, .openingShareLink:
+            // A friend's link opens its own import review, as a tapped link does; the sheet is done.
             notAddedMessage = nil
             onAdded()
         case .notAdded(let message):

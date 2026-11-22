@@ -10,6 +10,7 @@ import { formatClock } from '../shared/clock.ts';
 import type { Episode, Margin, PlaybackPosition, Show } from '../shared/model.ts';
 import { browserStorage, forgetMirrored, mergeMirror, pruneMirror, readMirror } from './logic/position-mirror.ts';
 import { mergeRefresh } from './logic/refresh.ts';
+import { keepingSharedAs, withSharedAs, type WrittenFacts } from './logic/shared-as.ts';
 import { keepingStar, withStar } from './logic/star.ts';
 import { FailureGate, NotSavedError, notSavedMessage, shouldAskToPersist, type PersistState, type WriteKind } from './logic/storage.ts';
 import type { FeedRead } from './ports.ts';
@@ -29,6 +30,12 @@ export interface DataApi extends Snapshot {
   applyRefresh(showId: string, read: FeedRead): Promise<number>;
   updateEpisode(episode: Episode): Promise<void>;
   addMargin(margin: Margin): Promise<void>;
+  /**
+   * Remembers, on each Margin a packet was just written from, the id that packet gives it (`sharedAs`, #4174). Built from
+   * the Margins as stored now, so an edit made while the file was being written is kept and a Margin deleted meanwhile
+   * stays deleted. Throws a `NotSavedError` when a write isn't kept.
+   */
+  addSharedAs(written: WrittenFacts): Promise<void>;
   /** Stars or unstars the listener's own Margin for sharing (#4172). Throws a `NotSavedError` when it isn't kept. */
   setStarred(marginId: string, on: boolean): Promise<void>;
   deleteMargin(id: string): Promise<void>;
@@ -204,7 +211,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // A rewrite of a Margin (its words, its reply link) is built from a copy that may be older than the star the listener
   // has since put on it, so the stored star is kept unless `setStarred` itself changes it (#4172).
   const addMargin = useCallback(
-    (margin: Margin) => saveMargin(keepingStar(margin, dataRef.current.margins.find((m) => m.id === margin.id))),
+    (margin: Margin) => {
+      const stored = dataRef.current.margins.find((m) => m.id === margin.id);
+      return saveMargin(keepingSharedAs(keepingStar(margin, stored), stored));
+    },
+    [saveMargin],
+  );
+
+  const addSharedAs = useCallback(
+    async (written: WrittenFacts) => {
+      for (const margin of withSharedAs(written, dataRef.current.margins)) await saveMargin(margin);
+    },
     [saveMargin],
   );
 
@@ -239,8 +256,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
   );
 
   const api = useMemo<DataApi>(
-    () => ({ ...data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, setStarred, deleteMargin, savePosition, setSetting }),
-    [data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, setStarred, deleteMargin, savePosition, setSetting],
+    () => ({ ...data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, deleteMargin, savePosition, setSetting }),
+    [data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, deleteMargin, savePosition, setSetting],
   );
   return <DataContext.Provider value={api}>{children}</DataContext.Provider>;
 }

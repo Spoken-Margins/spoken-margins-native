@@ -19,13 +19,31 @@ public struct PlayerRunRecorder: Equatable, Sendable {
         public var rate: Double
         /// True only while audio is really playing (not paused, starting, recording or finished).
         public var isPlaying: Bool
+        /// True while an item is loaded and paused (not recording, starting or failed, and not finished: a natural end is not a pause). The item then stays the
+        /// one a Watch Margin belongs on, at the place it was paused (#4079).
+        public var isPaused: Bool
+        /// Where in the text the player is. For an article read aloud with the on-device voice this is the only place
+        /// there is: it reports no media time (#4561).
+        public var textOffset: Int?
 
-        public init(itemId: String?, mediaTimeMs: Int?, rate: Double, isPlaying: Bool) {
+        public init(itemId: String?, mediaTimeMs: Int?, rate: Double, isPlaying: Bool, isPaused: Bool = false, textOffset: Int? = nil) {
             self.itemId = itemId
             self.mediaTimeMs = mediaTimeMs
             self.rate = rate
             self.isPlaying = isPlaying
+            self.isPaused = isPaused
+            self.textOffset = textOffset
         }
+    }
+
+    /// What the player's snapshot says. A finished item reads as paused in the snapshot (the engine stops at a natural
+    /// end), but it is not one: nothing is waiting to be resumed there (#4079).
+    public static func observation(of snapshot: SessionSnapshot) -> Observation {
+        Observation(
+            itemId: snapshot.itemId, mediaTimeMs: snapshot.currentMediaTimeMs, rate: snapshot.playbackRate,
+            isPlaying: snapshot.status == .playing, isPaused: snapshot.status == .paused && snapshot.phase != .finished,
+            textOffset: snapshot.currentTextStart
+        )
     }
 
     /// How far the reported position may differ from steady playback before it counts as a jump.
@@ -33,6 +51,10 @@ public struct PlayerRunRecorder: Equatable, Sendable {
     /// How long a finished run is kept. A Watch Margin arrives within minutes; this is generous.
     public static let keepFor: TimeInterval = 6 * 60 * 60
     public static let capacity = 200
+    /// How long after a pause the item still holds a Margin: a Watch recording pauses the phone, and its Margin arrives
+    /// within seconds to minutes. Past this, filing falls back to the rest of the rule, so a Margin taken much later
+    /// never lands on an item left paused (#4079).
+    public static let parkedHold: TimeInterval = 10 * 60
 
     private struct Open: Equatable, Sendable {
         var itemId: String
@@ -44,11 +66,27 @@ public struct PlayerRunRecorder: Equatable, Sendable {
 
     private var finished: [LiveSessionFiling.PlayerRun] = []
     private var open: Open?
+    /// An item loaded and paused: a stretch at rate 0, so a Margin taken while it waits files at its place (#4079).
+    private var parked: Open?
+
+    /// An article read aloud that was paused: where, and from when until reading resumed (#4561).
+    private struct TextPause: Equatable, Sendable {
+        var itemId: String
+        var at: Date
+        var charOffset: Int
+        var resumedAt: Date?
+    }
+
+    private var textPauses: [TextPause] = []
+    /// The article being read aloud right now, so only a pause that follows reading is noted.
+    private var readingAloud: String?
 
     public init() {}
 
     /// Notes what the player reports at `time`.
     public mutating func observe(_ observation: Observation, at time: Date) {
+        observeParked(observation, at: time)
+        observeReadingAloud(observation, at: time)
         guard observation.isPlaying, let itemId = observation.itemId, let positionMs = observation.mediaTimeMs,
               observation.rate > 0, positionMs >= 0 else {
             closeOpen(at: time)
@@ -85,7 +123,78 @@ public struct PlayerRunRecorder: Equatable, Sendable {
                 startPositionMs: current.startPositionMs, rate: current.rate
             ))
         }
+        if let current = parked, now >= current.startedAt {
+            all.append(LiveSessionFiling.PlayerRun(
+                itemId: current.itemId, startedAt: current.startedAt,
+                endedAt: min(now, current.startedAt.addingTimeInterval(Self.parkedHold)),
+                startPositionMs: current.startPositionMs, rate: 0
+            ))
+        }
         return all
+    }
+
+    /// Tracks the item the listener just paused. Only an item that was playing in this process parks, started where that
+    /// play run ended (a pause arriving with no play run before it, like the last session restored at launch, parks
+    /// nothing). It holds for `parkedHold` after the pause and no longer. It ends when playing resumes, and a seek or
+    /// another item while paused ends it up to the last sighting; each of those snapshots arrives here, and a paused
+    /// item does not park again without playing first, so the Margin goes to what is on screen or is filed as before.
+    private mutating func observeParked(_ observation: Observation, at time: Date) {
+        if let current = parked {
+            let near = observation.mediaTimeMs.map { abs(Double($0 - current.startPositionMs)) <= Self.jumpTolerance * 1_000 } == true
+            if observation.isPaused, observation.itemId == current.itemId, near {
+                parked?.lastSeenAt = time
+                return
+            }
+            let resumedHere = observation.itemId == current.itemId && observation.isPlaying && near
+            closeParked(at: resumedHere ? time : current.lastSeenAt)
+        }
+        guard observation.isPaused, let itemId = observation.itemId, let positionMs = observation.mediaTimeMs, positionMs >= 0,
+              let last = open, last.itemId == itemId else { return }
+        parked = Open(itemId: itemId, startedAt: last.lastSeenAt, startPositionMs: positionMs, rate: 0, lastSeenAt: time)
+    }
+
+    private mutating func closeParked(at end: Date) {
+        guard let current = parked else { return }
+        parked = nil
+        let end = min(end, current.startedAt.addingTimeInterval(Self.parkedHold))
+        guard end > current.startedAt else { return }
+        finished.append(LiveSessionFiling.PlayerRun(
+            itemId: current.itemId, startedAt: current.startedAt, endedAt: end,
+            startPositionMs: current.startPositionMs, rate: 0
+        ))
+    }
+
+    /// The text place a Margin taken at `time` on an article read aloud belongs at: where it was paused, when the Margin
+    /// was taken while it was paused, or just before a pause that arrived within `LiveSessionFiling.itemRunGrace` (the
+    /// Watch pauses the phone a moment after it starts recording). Nil when no pause of that item holds `time`; a pause
+    /// holds for `parkedHold` at most, as an episode's does (#4561).
+    public func readAloudPlace(itemId: String, near time: Date) -> Int? {
+        textPauses.last { pause in
+            guard pause.itemId == itemId, time <= pause.at.addingTimeInterval(Self.parkedHold) else { return false }
+            if time < pause.at { return pause.at.timeIntervalSince(time) <= LiveSessionFiling.itemRunGrace }
+            return pause.resumedAt.map { time <= $0 } ?? true
+        }?.charOffset
+    }
+
+    /// Notes reading aloud and the pause that follows it. A pause with no reading before it (an article restored at
+    /// launch) notes nothing, as it parks nothing for an episode.
+    private mutating func observeReadingAloud(_ observation: Observation, at time: Date) {
+        let readAloud = observation.mediaTimeMs == nil && observation.textOffset != nil
+        guard readAloud, let itemId = observation.itemId, let charOffset = observation.textOffset else {
+            readingAloud = nil
+            return
+        }
+        if observation.isPlaying {
+            if let last = textPauses.indices.last, textPauses[last].itemId == itemId, textPauses[last].resumedAt == nil {
+                textPauses[last].resumedAt = time
+            }
+            readingAloud = itemId
+        } else if observation.isPaused, readingAloud == itemId {
+            textPauses.append(TextPause(itemId: itemId, at: time, charOffset: max(0, charOffset)))
+            readingAloud = nil
+        } else if !observation.isPaused {
+            readingAloud = nil
+        }
     }
 
     private mutating func closeOpen(at end: Date) {
@@ -102,5 +211,7 @@ public struct PlayerRunRecorder: Equatable, Sendable {
         let oldest = now.addingTimeInterval(-Self.keepFor)
         finished.removeAll { $0.endedAt < oldest }
         if finished.count > Self.capacity { finished.removeFirst(finished.count - Self.capacity) }
+        textPauses.removeAll { ($0.resumedAt ?? $0.at.addingTimeInterval(Self.parkedHold)) < oldest }
+        if textPauses.count > Self.capacity { textPauses.removeFirst(textPauses.count - Self.capacity) }
     }
 }

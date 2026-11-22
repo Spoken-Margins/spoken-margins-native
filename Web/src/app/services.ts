@@ -3,7 +3,7 @@
 import { readPacket } from '../packet/read.ts';
 import { recordVoiceMargin } from '../packet/record.ts';
 import { writePacket } from '../packet/write.ts';
-import { readFeed, readSubstackVoice, searchPodcasts } from '../sources/index.ts';
+import { findAppleEpisodeAudio, readFeed, readSubstackVoice, searchPodcasts } from '../sources/index.ts';
 import { downloadSizeLabel } from '../transcribe/catalog.ts';
 import { createTranscriber } from '../transcribe/client.ts';
 import type { PacketPort, RecorderPort, Services, SourcesPort, TranscriberPort } from './ports.ts';
@@ -31,6 +31,15 @@ const sources: SourcesPort = {
       ...(voice.durationSeconds !== undefined && { durationSeconds: voice.durationSeconds }),
     };
   },
+  async findAppleEpisodeAudio(pageUrl, { relayAllowed, title }) {
+    const found = await findAppleEpisodeAudio(pageUrl, { feed: { title, consent: relayAllowed, ...relayBase() } });
+    if (!found) return null;
+    return {
+      audioUrl: found.audioUrl,
+      audioOrigin: found.audioOrigin,
+      ...(found.durationSeconds !== undefined && { durationSeconds: found.durationSeconds }),
+    };
+  },
 };
 
 const recorder: RecorderPort = {
@@ -47,6 +56,7 @@ const packets: PacketPort = {
       episode,
       margins: read.margins,
       textMarginCount: read.textMargins.length,
+      percentMargins: read.percentMargins,
     };
   },
   async writePacket(episode, margins, show, sender) {
@@ -55,6 +65,7 @@ const packets: PacketPort = {
       bytes: written.bytes,
       fileName: written.fileName,
       mimeType: written.mimeType,
+      contentDigest: written.contentDigest,
       included: written.included,
       ...(written.notice && { notice: written.notice }),
     };

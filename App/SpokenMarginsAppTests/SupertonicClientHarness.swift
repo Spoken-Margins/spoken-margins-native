@@ -47,6 +47,8 @@ final class SupertonicClientHarness {
     /// One entry for each time the client asked the audio session to activate (#2101).
     let sessionActivations = HarnessFallbackLog()
     private let players = HarnessPlayerLog()
+    private let rendersHandled = HarnessCounter()
+    private let chunkEndsHandled = HarnessCounter()
     private let root: URL
 
     init(
@@ -96,6 +98,10 @@ final class SupertonicClientHarness {
             applicationIsActive: applicationIsActive,
             applicationIsInBackground: applicationIsInBackground
         )
+        let rendersHandled = rendersHandled
+        let chunkEndsHandled = chunkEndsHandled
+        client.debugRenderWasHandled = { rendersHandled.bump() }
+        client.debugChunkEndWasHandled = { chunkEndsHandled.bump() }
     }
 
     /// Prepares the text and starts playing from the beginning, then waits until `renders` chunks have
@@ -126,6 +132,21 @@ final class SupertonicClientHarness {
         try? await pollUntil { renderer.finishedCount >= count }
     }
 
+    /// Waits until the client has dealt with `count` renders in all, each one landed, failed or cancelled, and acted on
+    /// it: cached, played or queued the chunk as it called for. A test that says "nothing started" waits here, not
+    /// for a time (#4368).
+    func waitForRendersHandled(_ count: Int) async {
+        try? await pollUntil { rendersHandled.value >= count }
+    }
+
+    /// Releases a held render and waits until the client has dealt with the next outcome. Use it when that render is
+    /// the only one outstanding, as a held render is while the chunk ahead plays.
+    func releaseRenderAndWaitUntilHandled(_ index: Int) async {
+        let before = rendersHandled.value
+        renderer.release(index)
+        try? await pollUntil { rendersHandled.value > before }
+    }
+
     /// Waits until `count` renders have started, held ones included.
     func waitForRenderStarts(_ count: Int) async {
         try? await pollUntil { renderer.startedCount >= count }
@@ -149,6 +170,14 @@ final class SupertonicClientHarness {
         await Task.detached {
             NotificationCenter.default.post(name: .AVPlayerItemDidPlayToEndTime, object: box.item)
         }.value
+    }
+
+    /// Ends the playing chunk as `finishPlayingChunk()` does, then waits until the client has finished handling that
+    /// end and whatever it decided at the seam (#4368).
+    func finishPlayingChunkAndWaitUntilHandled() async {
+        let before = chunkEndsHandled.value
+        await finishPlayingChunk()
+        try? await pollUntil { chunkEndsHandled.value > before }
     }
 
     /// The system turns down the newest player's start, as it did for a new player started with the app away
@@ -224,6 +253,13 @@ final class SupertonicClientHarness {
         try file.write(from: buffer)
         return url
     }
+}
+
+final class HarnessCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func bump() { lock.withLock { count += 1 } }
 }
 
 final class HarnessFallbackLog: @unchecked Sendable {

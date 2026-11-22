@@ -12,8 +12,12 @@ four lists:
 
 The lists: decisions (a `**Decision for Cole**` card), steps on his accounts or machines (a `**Step for Cole**`
 card), merge taps (open PRs labelled `needs-owner-tap`), phone checks (`status: needs-human-validation` or
-`needs-human-validation`). `needs-owner` with no card is listed apart as "needs a card": the owner has nothing to
-answer yet, and `scripts/owner_card_guard.py` tells the thread.
+`needs-human-validation`), owner checks (`needs-owner` plus an `**Owner check**` comment: a phone run, a by-ear
+listen or a Diagnostics export that no thread can do, 2026-11-22). `needs-owner` with none of these is listed apart as
+"needs a card": the owner has nothing to answer yet, and `scripts/owner_card_guard.py` tells the thread.
+
+An owner check is not a decision and not a reason for a thread to wait: the thread records it on the issue and
+stops (the project instructions, "Never wait on Cole without a real decision").
 
 The fixed card (the owner overlay, "A question he can answer"): a line starting `**Decision for Cole**` (or
 `**Step for Cole**`), then what this is in one sentence, the question, the pick, the other options with their
@@ -39,9 +43,12 @@ import sm_status
 NEEDS_OWNER = 'needs-owner'
 NEEDS_DESIGN = 'needs-design'
 TAP_LABEL = 'needs-owner-tap'
+TAP_LIST_URL = ('https://github.com/Spoken-Margins/spoken-margins-native/pulls'
+                '?q=is%3Apr+is%3Aopen+label%3Aneeds-owner-tap')  # the owner's bookmark for the same list (#4939)
 VALIDATION_LABELS = ('status: needs-human-validation', 'needs-human-validation')
 ANSWERED = '<!-- owner-answered -->'
 HEADING = re.compile(r'^[ \t]*\*\*(Decision|Step) for Cole\*\*', re.I)
+CHECK_HEADING = re.compile(r'^[ \t]*\*\*(Owner) check\*\*', re.I)
 FENCE = re.compile(r'^[ \t]*(```|~~~)')
 
 ISSUES_QUERY = '''
@@ -76,14 +83,15 @@ def fetch_issues(api: sm_status.GitHub) -> list[dict]:
 
 
 def fetch_taps(api: sm_status.GitHub) -> list[dict]:
-    """Open PRs labelled `needs-owner-tap` (scripts/owner_tap_alert.py sets it)."""
+    """Open PRs labelled `needs-owner-tap` (scripts/owner_tap_alert.py sets it) that do not carry his `owner-tap` yet."""
     items = api.pages(f'issues?state=open&labels={TAP_LABEL}')
     return [{'number': i['number'], 'title': i['title'], 'url': i['html_url'], 'createdAt': i['created_at']}
-            for i in items if 'pull_request' in i]
+            for i in items if 'pull_request' in i and 'owner-tap' not in {x['name'] for x in i.get('labels') or []}]
 
 
-def cards_in(text: str | None) -> list[dict]:
-    """The cards in one text: {'kind', 'text'}. Fenced code and quoted lines never start one."""
+def cards_in(text: str | None, heading: re.Pattern = HEADING) -> list[dict]:
+    """The cards in one text: {'kind', 'text'}. Fenced code and quoted lines never start one. `heading` picks the
+    kind of card: the default is a Decision or Step for Cole, CHECK_HEADING is an Owner check."""
     lines, found, fenced = (text or '').splitlines(), [], False
     i = 0
     while i < len(lines):
@@ -91,7 +99,7 @@ def cards_in(text: str | None) -> list[dict]:
         if FENCE.match(line):
             fenced = not fenced
         elif not fenced and not line.lstrip().startswith('>'):
-            match = HEADING.match(line)
+            match = heading.match(line)
             if match:
                 end = i + 1
                 while end < len(lines) and lines[end].strip() != '---':
@@ -103,9 +111,9 @@ def cards_in(text: str | None) -> list[dict]:
     return found
 
 
-def newest_card(issue: dict) -> dict | None:
+def newest_card(issue: dict, heading: re.Pattern = HEADING) -> dict | None:
     """The newest card from a trusted author in the issue's body or comments, or None. Adds 'when', 'url' and
-    'answered' (a later trusted comment carries the answered marker)."""
+    'answered' (a later trusted comment carries the answered marker). `heading` as in cards_in."""
     sources = []
     if comment_trust.trusted(issue):
         sources.append((issue.get('createdAt') or '', issue.get('body'), issue.get('url')))
@@ -113,13 +121,19 @@ def newest_card(issue: dict) -> dict | None:
     sources += [(c.get('createdAt') or '', c.get('body'), c.get('url')) for c in trusted_comments]
     best = None
     for when, body, url in sources:
-        cards = cards_in(body)
+        cards = cards_in(body, heading)
         if cards and (best is None or when >= best['when']):
             best = {**cards[-1], 'when': when, 'url': url}
     if best:
         best['answered'] = any(ANSWERED in (c.get('body') or '') and (c.get('createdAt') or '') > best['when']
                                for c in trusted_comments)
     return best
+
+
+def live_check(issue: dict) -> dict | None:
+    """The newest `**Owner check**` comment from a trusted author, unless an owner-answered marker ended it."""
+    check = newest_card(issue, CHECK_HEADING)
+    return check if check and not check['answered'] else None
 
 
 def age_days(created: str | None, now: dt.datetime) -> int | None:
@@ -133,8 +147,8 @@ def build_queue(issues: list[dict], taps: list[dict], now: dt.datetime | None = 
     """The four lists plus 'needs_card', 'answered_label_on' and 'on_design'. One entry per issue: a live card
     first, else a validation label, else `needs-owner` with no card."""
     now = now or dt.datetime.now(dt.timezone.utc)
-    queue = {'decisions': [], 'steps': [], 'merge_taps': [], 'phone_checks': [], 'needs_card': [],
-             'answered_label_on': [], 'on_design': []}
+    queue = {'decisions': [], 'steps': [], 'merge_taps': [], 'phone_checks': [], 'owner_checks': [],
+             'needs_card': [], 'answered_label_on': [], 'on_design': []}
     for issue in sorted(issues, key=lambda i: i['number']):
         labels = set(issue.get('labels') or [])
         card = newest_card(issue)
@@ -147,7 +161,10 @@ def build_queue(issues: list[dict], taps: list[dict], now: dt.datetime | None = 
                  'card_age_days': age_days(live['when'], now)})
         elif labels & set(VALIDATION_LABELS):
             queue['phone_checks'].append(entry)
-        elif NEEDS_OWNER in labels and card:
+        elif NEEDS_OWNER in labels and live_check(issue):
+            check = live_check(issue)
+            queue['owner_checks'].append({**entry, 'card': check['text'], 'card_url': check['url']})
+        elif NEEDS_OWNER in labels and (card or newest_card(issue, CHECK_HEADING)):
             queue['answered_label_on'].append(entry)
         elif NEEDS_OWNER in labels and NEEDS_DESIGN in labels:
             queue['on_design'].append(entry)
@@ -159,7 +176,7 @@ def build_queue(issues: list[dict], taps: list[dict], now: dt.datetime | None = 
 
 
 def count(queue: dict) -> int:
-    return sum(len(queue[k]) for k in ('decisions', 'steps', 'merge_taps', 'phone_checks'))
+    return sum(len(queue[k]) for k in ('decisions', 'steps', 'merge_taps', 'phone_checks', 'owner_checks'))
 
 
 def _age(item: dict) -> str:
@@ -175,10 +192,13 @@ def render(queue: dict) -> str:
         for item in queue[key]:
             note = '' if item['has_label'] else '  [no needs-owner label yet]'
             out += ['', f"#{item['number']} {item['title']}{_age(item)}{note}", item['url'], '', item['card']]
-    out += ['', f"== Merge taps ({len(queue['merge_taps'])}) =="]
+    out += ['', f"== Merge taps ({len(queue['merge_taps'])}) ==", f'The same list on GitHub: {TAP_LIST_URL}']
     out += [f"#{p['number']} {p['title']}{_age(p)}  {p['url']}" for p in queue['merge_taps']]
     out += ['', f"== Phone checks ({len(queue['phone_checks'])}) =="]
     out += [f"#{p['number']} {p['title']}{_age(p)}  {p['url']}" for p in queue['phone_checks']]
+    out += ['', f"== Owner checks ({len(queue['owner_checks'])}): a phone run, a listen or an export; no thread waits =="]
+    for item in queue['owner_checks']:
+        out += ['', f"#{item['number']} {item['title']}{_age(item)}", item['url'], '', item['card']]
     for key, title, why in (
             ('needs_card', 'Needs a card', 'needs-owner but no card: nothing for you to answer yet, a thread must write it'),
             ('answered_label_on', 'Answered, label still on', 'a thread should take needs-owner off'),
@@ -198,7 +218,8 @@ def speak(queue: dict) -> str:
     lines += [f'{total} things are waiting on you.', '']
     n, numbers = 0, []
     for key, what in (('decisions', 'A decision'), ('steps', 'A step on your accounts or machines'),
-                      ('merge_taps', 'A merge tap'), ('phone_checks', 'A phone check')):
+                      ('merge_taps', 'A merge tap'), ('phone_checks', 'A phone check'),
+                      ('owner_checks', 'A check only you can do')):
         for item in queue[key]:
             n += 1
             numbers.append(f"#{item['number']}")

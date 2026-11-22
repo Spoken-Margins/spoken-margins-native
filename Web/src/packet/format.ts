@@ -32,6 +32,8 @@ export const LIMITS = Object.freeze({
   transcriptCharacters: 50_000,
   exactTextCharacters: 1_000,
   contextCharactersPerSide: 500,
+  /** The longest run-up a sender may ask for (#4171); a longer one is clamped to it. */
+  leadInMs: 300_000,
 });
 
 export const MANIFEST_KEYS = new Set([
@@ -159,6 +161,11 @@ export interface MarginRecord {
   representations: Representation[];
   /** The sender's choice for a written Margin: false asks that it not be read aloud. Absent means read aloud. */
   readAloud?: boolean;
+  /**
+   * How much of the episode the sender asks their friend to hear before this Margin, in milliseconds (#4171). Absent means
+   * the run-up's own length. Writers keep it to 0-300000; readers clamp it.
+   */
+  leadInMs?: number;
 }
 
 export interface CommentaryLayer {

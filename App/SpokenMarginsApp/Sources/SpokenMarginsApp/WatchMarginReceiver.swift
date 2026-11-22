@@ -48,6 +48,30 @@ final class WatchMarginReceiver: NSObject {
     /// Passes run one after another, so each Margin is filed once.
     private var lastPass: Task<Void, Never>?
     private var resumeObserver: NSObjectProtocol?
+    /// Called on the main actor whenever the Watch's pairing state changes: the session finished activating, or a
+    /// Watch was paired, unpaired or got the app (#4563). Activation starts in `didFinishLaunching`
+    /// (`SpokenMarginsApp.swift:35`), before any listener is set, so a caller sets this and then reads
+    /// `currentPairingState()` once.
+    var onPairingChange: ((WatchPairingState) -> Void)?
+
+    /// Whether this device can have a paired Watch at all: false on an iPad, and where WatchConnectivity is missing.
+    static var watchSupported: Bool {
+        #if canImport(WatchConnectivity)
+        return WCSession.isSupported()
+        #else
+        return false
+        #endif
+    }
+
+    /// The Watch's pairing state right now. `.none` where WatchConnectivity is missing or unsupported.
+    func currentPairingState() -> WatchPairingState {
+        #if canImport(WatchConnectivity)
+        guard WCSession.isSupported() else { return .none }
+        return Self.pairingState(WCSession.default, activation: WCSession.default.activationState)
+        #else
+        return .none
+        #endif
+    }
 
     init(files: LiveSessionFileWorker) {
         self.files = files
@@ -312,7 +336,26 @@ private struct ReplyHandler: @unchecked Sendable {
 
 extension WatchMarginReceiver: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
-        Task { @MainActor in self.processInbox() }
+        let pairing = Self.pairingState(session, activation: activationState)
+        Task { @MainActor in
+            self.onPairingChange?(pairing)
+            self.processInbox()
+        }
+    }
+
+    /// The Watch was paired or unpaired, or its Spoken Margins app was installed or removed (#4563).
+    nonisolated func sessionWatchStateDidChange(_ session: WCSession) {
+        let pairing = Self.pairingState(session, activation: session.activationState)
+        Task { @MainActor in self.onPairingChange?(pairing) }
+    }
+
+    /// Builds the pairing state from the session's own flags, on whichever queue the callback runs.
+    nonisolated static func pairingState(_ session: WCSession, activation: WCSessionActivationState) -> WatchPairingState {
+        WatchPairingState(
+            supported: WCSession.isSupported(),
+            activated: activation == .activated,
+            paired: session.isPaired,
+            appInstalled: session.isWatchAppInstalled)
     }
 
     nonisolated func sessionDidBecomeInactive(_ session: WCSession) {}

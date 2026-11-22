@@ -140,23 +140,33 @@ final class WatchContractAppTests: XCTestCase {
     func testTheBoardGoesOutOnceMoreAfterATransportCommandEvenWhenNothingChanged() async throws {
         let receiver = makeReceiver(LiveSessionFileWorker(root: root))
         // #4058: the reply's own board and this settle board come from different tasks and can publish in either order.
-        // The test used to note the reply's board and wait for a newer one, so a reply slower than the settle (a loaded
-        // runner) left the settle board already published and nothing newer ever came. It now waits for a board computed
-        // at least one settle after the command, which only the settle board (or a reply that slow) can be.
-        let settle = Duration.milliseconds(300)
-        receiver.transportSettle = settle
+        // #4313: telling them apart by clock ("a board computed one settle after the command") also passed for a reply that
+        // slow, so a build without the settle board went green on a loaded runner. The reply is now held behind a filing
+        // pass stuck in transcription (a command that arrives mid-pass, which the settle must not wait for), so while it is
+        // held the settle board is the only board that can go out, however slow the runner.
+        receiver.transportSettle = .milliseconds(300)
         receiver.runTransport = { _ in } // the player refuses it
         let paused = WatchNowPlaying(itemId: "ep", title: "Episode", isPlaying: false, positionMs: 5_000, positionAt: Date())
         receiver.nowPlayingChanged(paused)
+        // That board comes from a task of its own; it must be out before `before` is read, or it could pass for the settle.
+        try await pollUntil { receiver.lastBoard?.nowPlaying == paused }
+        XCTAssertEqual(receiver.lastBoard?.nowPlaying, paused)
+        let held = TranscriptionGate()
+        receiver.transcribe = { _ in await held.wait(); return nil }
+        try deliver(receiver, WatchMarginTransfer(id: "w-hold", wallStart: Date(), durationMs: 1_000), bytes: "aac-hold")
+        receiver.processInbox()
+        try await pollUntil { held.isWaiting }
+        XCTAssertTrue(held.isWaiting, "the filing pass never reached transcription")
+        let before = try XCTUnwrap(receiver.lastBoard)
 
-        let commandAt = Date()
-        let settledAfter = commandAt.addingTimeInterval(0.3)
-        _ = try await receiver.handle(try overTheWire(envelope(.transport(.play), sentAt: commandAt))).value
+        let reply = receiver.handle(try overTheWire(envelope(.transport(.play), sentAt: Date())))
 
-        try await pollUntil { (receiver.lastBoard?.phoneTime ?? .distantPast) >= settledAfter }
+        try await pollUntil(timeout: .seconds(10)) { receiver.lastBoard != before }
         let settled = try XCTUnwrap(receiver.lastBoard)
-        XCTAssertGreaterThanOrEqual(settled.phoneTime, settledAfter, "a board goes out after the command, with nothing changed")
+        XCTAssertNotEqual(settled, before, "a board goes out after the command, with nothing changed, while the reply is held")
         XCTAssertEqual(settled.nowPlaying?.isPlaying, false, "and it says the item is still paused")
+        held.answer()
+        _ = await reply.value
     }
 
     /// Hello after a lost answer: the reply answers what the phone filed; the rest gets nothing and is sent again.
@@ -206,6 +216,109 @@ final class WatchContractAppTests: XCTestCase {
         screen.stopPolling()
     }
 
+    /// #3847: a Margin begun while the session ran is kept when the Watch ends the session before Save. It goes into the
+    /// ended session, the stored End is untouched, and the writing screen's line says what happened. The first two tests below
+    /// fail on `main`, where `addMargin` returned early once the session was no longer running (they need the new
+    /// `endedLine`, so there they don't compile); the Resume and saved-session tests pin the neighbouring cases.
+    func testAMarginBegunBeforeAWatchEndIsSavedIntoTheEndedSession() async throws {
+        for (kind, whereNote) in [(ElsewhereKind.meeting, String?.none), (.audiobook, "p. 40")] {
+            let files = LiveSessionFileWorker(root: root)
+            let receiver = makeReceiver(files)
+            let id = "live-\(kind.rawValue)"
+            try await files.save(LiveSession(id: id, kind: kind, title: "Budget", startedAt: Date().addingTimeInterval(-300)), generation: 1)
+            let screen = LiveSessionController(sessionId: id, files: files)
+            screen.load()
+            try await waitUntil { screen.session?.id == id }
+            XCTAssertNil(screen.endedLine, "no line while it runs")
+            // The Margin was begun a clear second before the End. The End crosses the wire as seconds since 1970, which moves
+            // a Date by a rounding step (about 100 ns), and `Date()` twice in a row is only nanoseconds apart: with no gap
+            // the stop time could land just before the begun time and the Margin was noted "after the session ended" (#4410).
+            let began = Date().addingTimeInterval(-1)
+
+            _ = await receiver.handle(try overTheWire(envelope(.sessionEnd(id: id, endedAt: Date())))).value
+            try await waitUntil { screen.hasEnded }
+            XCTAssertTrue(try XCTUnwrap(screen.endedLine).hasPrefix("This session was ended on your Watch at"), screen.endedLine ?? "nil")
+
+            let result = screen.addMargin(text: "typed before the Watch ended it", whereNote: whereNote, adjustmentMs: 0, markedAt: began)
+
+            XCTAssertEqual(result, .accepted(afterEnd: false), "marked before the stop time, so no note")
+            XCTAssertFalse(screen.isRunning, "saving does not bring the session back")
+            let stored = try await storedSession(id, in: files) { $0.margins.count == 1 }
+            XCTAssertEqual(stored.margins.map(\.text), ["typed before the Watch ended it"])
+            XCTAssertNotNil(stored.endedAt, "the End is still there")
+            XCTAssertEqual(stored.endReason, LiveSessionWatchSessions.EndReason.watch.rawValue)
+            screen.stopPolling()
+        }
+    }
+
+    /// #3847: a Watch start replaces the phone's session; the Margin the listener was writing stays in the session on
+    /// screen, not the new one, and the line uses the Watch's own words.
+    func testAMarginBegunBeforeAWatchStartReplacedTheSessionStaysInTheOldOne() async throws {
+        let files = LiveSessionFileWorker(root: root)
+        let receiver = makeReceiver(files)
+        try await files.save(LiveSession(id: "live-phone", kind: .meeting, title: "Budget meeting", startedAt: Date().addingTimeInterval(-300)), generation: 1)
+        let screen = LiveSessionController(sessionId: "live-phone", files: files)
+        screen.load()
+        try await waitUntil { screen.session?.id == "live-phone" }
+        let lecture = WatchSessionInfo(id: "live-lecture", kind: .other, title: "Lecture", owner: .watch, startedAt: Date().addingTimeInterval(-10))
+
+        _ = await receiver.handle(try overTheWire(envelope(.sessionStart(lecture)))).value
+        try await waitUntil { screen.hasEnded }
+        XCTAssertTrue(try XCTUnwrap(screen.endedLine).hasPrefix("Budget meeting ended at "), screen.endedLine ?? "nil")
+
+        let result = screen.addMargin(text: "still writing when the lecture began", whereNote: nil, adjustmentMs: 0, markedAt: Date())
+
+        XCTAssertEqual(result, .accepted(afterEnd: true), "marked after the new session's start")
+        let old = try await storedSession("live-phone", in: files) { $0.margins.count == 1 }
+        XCTAssertEqual(old.margins.map(\.text), ["still writing when the lecture began"])
+        XCTAssertEqual(old.margins.first?.filingNote, LiveSessionFiling.afterEndNote)
+        let lectureStored = await files.session(id: "live-lecture")
+        XCTAssertTrue(lectureStored?.margins.isEmpty ?? true, "not filed into the new session")
+        screen.stopPolling()
+    }
+
+    /// #3847: ended on the Watch and resumed while the listener is still writing; Save then stores it as in a running
+    /// session, with no note, and the line is gone.
+    func testAMarginSavedAfterTheWatchResumedTheSessionHasNoNote() async throws {
+        let files = LiveSessionFileWorker(root: root)
+        let receiver = makeReceiver(files)
+        try await files.save(LiveSession(id: "live-phone", kind: .meeting, title: "Budget meeting", startedAt: Date().addingTimeInterval(-300)), generation: 1)
+        let screen = LiveSessionController(sessionId: "live-phone", files: files)
+        screen.load()
+        try await waitUntil { screen.session?.id == "live-phone" }
+        let began = Date()
+        _ = await receiver.handle(try overTheWire(envelope(.sessionEnd(id: "live-phone", endedAt: Date())))).value
+        try await waitUntil { screen.hasEnded }
+        _ = await receiver.handle(try overTheWire(envelope(.sessionResume(id: "live-phone")))).value
+        try await waitUntil { screen.isRunning }
+        XCTAssertNil(screen.endedLine)
+
+        let result = screen.addMargin(text: "typed across an End and a Resume", whereNote: nil, adjustmentMs: 0, markedAt: began)
+
+        XCTAssertEqual(result, .accepted(afterEnd: false))
+        XCTAssertNil(screen.session?.margins.first?.filingNote)
+        XCTAssertTrue(screen.isRunning)
+        screen.stopPolling()
+    }
+
+    /// #3847: a session saved to the Library takes no more Margins, and the answer says so, so the screen can keep the draft.
+    func testASavedSessionRefusesAMarginAndTheDraftIsNotDropped() async throws {
+        let files = LiveSessionFileWorker(root: root)
+        var saved = LiveSession(id: "live-saved", kind: .meeting, title: "Done", startedAt: Date().addingTimeInterval(-300))
+        saved.endedAt = Date().addingTimeInterval(-60)
+        saved.savedItemId = "item-1"
+        try await files.save(saved, generation: 1)
+        let screen = LiveSessionController(sessionId: "live-saved", files: files)
+        screen.load()
+        try await waitUntil { screen.session?.id == "live-saved" }
+
+        XCTAssertEqual(screen.checkBegunMargin(markedAt: Date()), .refused)
+        XCTAssertEqual(screen.addMargin(text: "too late", whereNote: nil, adjustmentMs: 0), .refused)
+        XCTAssertNil(screen.endedLine, "a saved session promises nothing")
+        XCTAssertTrue(screen.session?.margins.isEmpty ?? false)
+        screen.stopPolling()
+    }
+
     /// The phone starting a session ends the one the Watch started, and the board says so in words.
     func testThePhoneEndingAWatchSessionIsToldToTheWatch() async throws {
         let files = LiveSessionFileWorker(root: root)
@@ -238,6 +351,20 @@ final class WatchContractAppTests: XCTestCase {
         XCTAssertTrue(left.isEmpty)
     }
 
+    /// The session as the file worker reads it back, once `ready` holds: a save is a task that lands a moment after the call.
+    private func storedSession(
+        _ id: String, in files: LiveSessionFileWorker, until ready: (LiveSession) -> Bool
+    ) async throws -> LiveSession {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if let session = await files.session(id: id), ready(session) { return session }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTFail("timed out waiting for the stored session \(id)")
+        let last = await files.session(id: id)
+        return try XCTUnwrap(last)
+    }
+
     private func waitUntil(_ condition: @MainActor () -> Bool, timeout: TimeInterval = 5) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition() {
@@ -247,5 +374,38 @@ final class WatchContractAppTests: XCTestCase {
             }
             try await Task.sleep(for: .milliseconds(50))
         }
+    }
+}
+
+/// Holds a transcription until `answer()`, so a filing pass stays under way for as long as a test needs (#4313).
+private final class TranscriptionGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var waiting = false
+    private var released = false
+
+    var isWaiting: Bool { lock.lock(); defer { lock.unlock() }; return waiting }
+
+    func wait() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            if released {
+                lock.unlock()
+                continuation.resume()
+                return
+            }
+            self.continuation = continuation
+            waiting = true
+            lock.unlock()
+        }
+    }
+
+    func answer() {
+        lock.lock()
+        released = true
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume()
     }
 }

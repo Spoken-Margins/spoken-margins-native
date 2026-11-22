@@ -64,6 +64,9 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
                 ("upNext waitsForYou", .upNext(msRemaining: 120_000, arrival: .waitsForYou), .none, .playMarginNow),
                 ("upNext no button", .upNext(msRemaining: nil, arrival: .playsByItself), .none, .unavailable),
                 ("answerSaved", .answerSaved(atMs: 65_000, sentTo: "Cole"), .none, .unavailable),
+                // The saved-answer card with a long name, which draws the inline share icon (#3905). The height budgets above
+                // bound it at accessibility3; the icon itself is proved by the Test Desk's screenshots, not by this table.
+                ("answerSaved long name", .answerSaved(atMs: 65_000, sentTo: longName), .none, .unavailable),
                 ("lastMargin", .lastMargin(senders: 1), .none, .unavailable),
                 ("lastMargin many", .lastMargin(senders: 3), .none, .unavailable),
                 ("moment comingUp", .comingUp(msRemaining: 8_000), .moment, .unavailable),
@@ -97,7 +100,9 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
 
                 let mounted = try mount(body, size: size)
                 defer { mounted.close() }
-                _ = try await mounted.waitForNode("\(context): the detail line") { $0.identifier == "marginCard.detail" }
+                let detailNode = try await mounted.waitForNode("\(context): the detail line") { $0.identifier == "marginCard.detail" }
+                // The saved-answer card draws an inline share icon in its detail (#3905); VoiceOver still reads the shipped words.
+                XCTAssertEqual(detailNode.label, detail, "\(context): the detail's spoken label is not the card's plain words")
                 let buttons = mounted.nodes().filter { $0.traits.contains(.button) }
                     .sorted { ($0.frame.minY, $0.frame.minX) < ($1.frame.minY, $1.frame.minX) }
                 XCTAssertEqual(buttons.map { $0.label ?? "" }, card.actions.map(\.title),

@@ -24,7 +24,8 @@ def inspect_bundle(app):
         raise ValueError('Unresolved or wrong share principal class')
     attributes = metadata['NSExtensionAttributes']
     rule = attributes['NSExtensionActivationRule']
-    for identifier in ('com.spokenmargins.package', 'com.adobe.pdf', 'public.url', 'public.text', 'com.apple.property-list'):
+    for identifier in ('com.spokenmargins.package', 'com.adobe.pdf', 'public.url', 'public.text',
+                       'org.openxmlformats.wordprocessingml.document', 'com.apple.property-list'):
         if f'UTI-CONFORMS-TO "{identifier}"' not in rule:
             raise ValueError(f'Activation metadata omits {identifier}')
     resource = extension / (attributes['NSExtensionJavaScriptPreprocessingFile'] + '.js')

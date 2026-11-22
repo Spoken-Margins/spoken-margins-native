@@ -19,8 +19,14 @@ private struct NewMarginsOffer: ViewModifier {
                 model.reviewNewMargins(itemId: offer.itemId, thenContinue: true, entries: offer.entries)
             }
                 .accessibilityIdentifier("newMarginsOffer.review")
-            Button("Listen without them") { model.continueWithoutNewMargins(offer) }
-                .accessibilityIdentifier("newMarginsOffer.skip")
+            if offer.placeIsAtEnd {
+                // Resuming at the very end would play the last seconds and finish; starting over is the way past (#4125).
+                Button("Play from the start") { model.startItemFromBeginning(itemId: offer.itemId, entries: offer.entries) }
+                    .accessibilityIdentifier("newMarginsOffer.skip")
+            } else {
+                Button("Listen without them") { model.continueWithoutNewMargins(offer) }
+                    .accessibilityIdentifier("newMarginsOffer.skip")
+            }
             Button("Cancel", role: .cancel) {}
         } message: { offer in
             Text(SharedMarginReview.offerMessage(for: offer.entries))

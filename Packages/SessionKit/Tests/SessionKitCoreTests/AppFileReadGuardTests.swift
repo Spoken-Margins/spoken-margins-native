@@ -5,9 +5,10 @@ import SessionKitTestInputs
 /// Guards that read app files as text and need no Apple framework. They live here, in the target that also runs on Linux,
 /// rather than beside the Mac-only tests of the same subject, so a diff under `App/` can be checked without a Mac (#3538).
 final class AppFileReadGuardTests: XCTestCase {
-    func testModelRetainsDiagnosticErrorAndRequestLiterals() throws {
-        // These remain app-owned. Pin their bytes at the call site without pretending to run the app.
-        let source = try TestInputs.text(.appSources, "Gate1AppModel+PackageImport.swift")
+    func testSourceTextModelRetainsDiagnosticErrorAndRequestLiterals() throws {
+        // These remain app-owned. Pin their bytes at the call site without pretending to run the app: the code with its
+        // comments removed, so a commented-out write (#4306) does not count.
+        let source = try TestInputs.code(.appSources, "Gate1AppModel+PackageImport.swift")
         let start = try XCTUnwrap(source.range(of: "func acquirePodcastForImportedPackage("))
         let end = try XCTUnwrap(source.range(of: "\n    }\n", range: start.upperBound..<source.endIndex))
         let body = String(source[start.lowerBound..<end.lowerBound])
@@ -29,7 +30,9 @@ final class AppFileReadGuardTests: XCTestCase {
         // writes the same map-only packet shape to drive the real importer into a store and then Skim (#1471); it asserts nothing
         // about what Build 29 can read. SourceLinkImportTests
         // writes a private-feed packet only to drive the #454 recovery; PrivateFeedRecoveryTests exports the same
-        // kind of linkless packet through exportPacket. This pins that list: a new
+        // kind of linkless packet through exportPacket. PodcastToArticleMemoryTests writes a text-only packet for a
+        // podcast shared by reference only to put shared Margins on it before a memory run (#122); it asserts nothing
+        // about what Build 29 can read. This pins that list: a new
         // direct write fails here until someone either routes it through a packet the Mac package tests also read
         // with Build 29, or adds it below on purpose.
         let appTests = try TestInputs.directory(.appTests)
@@ -40,12 +43,12 @@ final class AppFileReadGuardTests: XCTestCase {
         let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: appTests, includingPropertiesForKeys: nil))
         var counts: [String: Int] = [:]
         for case let file as URL in enumerator where file.pathExtension == "swift" {
-            let text = try String(contentsOf: file, encoding: .utf8)
+            let text = TestInputs.withoutComments(try String(contentsOf: file, encoding: .utf8))
             let matches = call.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text))
             if matches > 0 { counts[file.lastPathComponent] = matches }
         }
         XCTAssertEqual(counts, ["EpisodeMapStoredNamesTests.swift": 1, "LocalAudioListeningPackageTests.swift": 3,
-                                "SkimBridgeControllerTests.swift": 1, "SourceLinkImportTests.swift": 1, "SpokenMarginsPackageHandoffTests.swift": 1,
+                                "PodcastToArticleMemoryTests.swift": 1, "SkimBridgeControllerTests.swift": 1, "SourceLinkImportTests.swift": 1, "SpokenMarginsPackageHandoffTests.swift": 1,
                                 "SpokenMarginsPackageImportCoordinatorTests.swift": 2])
     }
 }

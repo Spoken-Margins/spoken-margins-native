@@ -1,6 +1,7 @@
 // Ordering and grouping for the Library, Following and Margins tabs. Plain TypeScript with no DOM, so
 // `npm run test:web` covers it (library.test.ts).
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
+import { matchesSearch } from './search.ts';
 
 /** Seconds from the end at which an episode counts as finished. */
 export const FINISHED_WITHIN_SECONDS = 15;
@@ -173,4 +174,37 @@ export function timelinePosts(margins: readonly Margin[], durationSeconds: numbe
     else posts.push({ atSeconds: margin.atSeconds, fraction, margins: [margin] });
   }
   return posts;
+}
+
+/**
+ * Whether a Library row answers a search (#4422): the query is in the episode's title, its show or publication, or the
+ * name of someone who left a Margin on it, so a friend's items are found by the friend's name. Same rules as the app's.
+ */
+export function libraryRowMatches(query: string, row: LibraryRow, authors: ReadonlyMap<string, readonly string[]>): boolean {
+  if (query.trim() === '') return true;
+  return matchesSearch(query, [row.episode.title, row.show?.title, row.show?.author, ...(authors.get(row.episode.id) ?? [])]);
+}
+
+/** The names on each episode's Margins, by episode id: built once per change of Margins, not once per row per keystroke. */
+export function marginAuthors(margins: readonly Margin[]): Map<string, string[]> {
+  const byEpisode = new Map<string, string[]>();
+  for (const m of margins) {
+    if (!m.author) continue;
+    const names = byEpisode.get(m.episodeId) ?? [];
+    if (!names.includes(m.author)) names.push(m.author);
+    byEpisode.set(m.episodeId, names);
+  }
+  return byEpisode;
+}
+
+/** With this many groups or fewer, every group starts open; with more, only the one holding the newest Margin does (#4423). */
+export const GROUPS_OPEN_UP_TO = 3;
+
+/**
+ * Whether a Margins group starts collapsed (#4423): a few groups are all shown, but a long list opens on the newest
+ * group only, so reaching another item's Margins is a tap on its title, not a scroll past every Margin above it.
+ * `index` is the group's place in `marginGroups` order, newest first.
+ */
+export function startsCollapsed(index: number, total: number): boolean {
+  return total > GROUPS_OPEN_UP_TO && index > 0;
 }

@@ -17,7 +17,7 @@ extension NarrationChunkPlanner {
         headBudget: Int = fastStartHeadBudget
     ) -> [SpokenChunk] {
         guard let index = chunks.lastIndex(where: {
-            $0.startOffset <= playheadOffset && playheadOffset < $0.startOffset + max(1, $0.sourceLength)
+            !$0.isAside && $0.startOffset <= playheadOffset && playheadOffset < $0.startOffset + max(1, $0.sourceLength)
         }) else { return chunks }
         let chunk = chunks[index]
         let head = RenderedSpeechChunker.sourceSlice(

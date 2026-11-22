@@ -37,6 +37,7 @@ struct PlaybackMarginsView: View {
                 Button(action: model.openMargins) {
                     Label("All Margins and export", systemImage: "quote.bubble").frame(minHeight: 44).contentShape(Rectangle())
                 }
+                .tint(AppColors.listeningAccent)
                 .accessibilityIdentifier("playback.margins.collection.button")
             }
             .padding(.horizontal, 22)

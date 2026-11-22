@@ -2,6 +2,7 @@
 import contextlib
 import datetime as dt
 import io
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -668,6 +669,62 @@ class StatusBreaker(unittest.TestCase):
         text = self.status('HALT (usage breaker: Claude)')
         self.assertIn('Usage breaker: Claude halted (Claude, so this gate holds)', text)
         self.assertIn('HALT (usage breaker: Claude)', text)
+
+
+class CloudMaxIgnoresBreaker(unittest.TestCase):
+    """2026-11-21: the owner set Cloud max for the week; the Mac tick still posted HALT (U > E + 10) and every
+    reader of the HALT stopped. Cloud max is the Dial's "ignore usage", so a HALT holds nothing under it."""
+    CLOUD = BODY.replace('- [x] Paced', '- [ ] Paced').replace('- [ ] Cloud max', '- [x] Cloud max')
+
+    def usage(self):
+        return g.parse_usage([tick(15, NOW - dt.timedelta(minutes=30)),
+                              {'body': '**HALT (usage breaker)**\n- U = 15%', 'author_association': 'OWNER', 'created_at': ts(NOW)}])
+
+    def test_breaker_holds_only_outside_cloud_max(self):
+        usage = self.usage()
+        self.assertTrue(usage['halted'])
+        self.assertFalse(g.breaker_holds(g.parse_dial(self.CLOUD), usage))
+        self.assertTrue(g.breaker_holds(g.parse_dial(BODY), usage))   # Paced still holds
+        off = BODY.replace('- [x] Paced', '- [ ] Paced').replace('- [ ] Off', '- [x] Off')
+        self.assertTrue(g.breaker_holds(g.parse_dial(off), usage))
+        self.assertFalse(g.breaker_holds(g.parse_dial(BODY), {'halted': False}))
+
+    def test_status_says_the_halt_is_ignored_not_that_the_gate_holds(self):
+        dial, usage = g.parse_dial(self.CLOUD), self.usage()
+        decision = g.decide(NOW, dial, usage, 10, None, {}, 0)
+        text = g.status_text(NOW, dial, usage, 10, None, {}, decision, [])
+        self.assertTrue(decision['fire'])
+        self.assertIn('Cloud max ignores usage, so this gate is unaffected', text)
+        self.assertNotIn('so this gate holds', text)
+
+
+class ParseDialCommand(unittest.TestCase):
+    """The Mac tick reads the Mode with `--parse-dial` (#4865), so it halts Claude only when the gate's own parse says
+    Paced. It runs with no token and no network: the tick pipes in the #589 body."""
+
+    def run_main(self, body):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, 'stdin', io.StringIO(body)), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err), \
+                mock.patch.object(g, 'gh', side_effect=AssertionError('no network')), \
+                mock.patch.dict('os.environ', {'SM_DIAL_GITHUB_TOKEN': ''}):
+            code = g.main(['--parse-dial'])
+        return code, out.getvalue()
+
+    def test_prints_the_gate_parse_of_each_mode(self):
+        cloud = CloudMaxIgnoresBreaker.CLOUD
+        off = BODY.replace('- [x] Paced', '- [ ] Paced').replace('- [ ] Off', '- [x] Off')
+        for body, mode in ((BODY, 'paced'), (cloud, 'cloud max'), (off, 'off'), ('mangled', 'off')):
+            code, out = self.run_main(body)
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out), g.parse_dial(body))
+            self.assertEqual(json.loads(out)['mode'], mode)
+
+    def test_an_empty_body_fails_instead_of_reading_off(self):
+        # `gh issue view` failing in a pipe hands the parser nothing, and zsh has no pipefail. Reading that as Off
+        # would let the tick skip a HALT under a Paced Dial, so it fails and the tick falls back to the gate's line.
+        for body in ('', ' \n'):
+            self.assertEqual(self.run_main(body), (1, ''))
 
 
 class Status(unittest.TestCase):

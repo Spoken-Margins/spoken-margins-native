@@ -77,6 +77,21 @@ test('follow a show, play, write a Margin, find it in Margins, and resume after 
   await shot(page, info, '05-writing-margin');
   await nowPlaying.getByRole('button', { name: 'Save Margin' }).click();
   await expect(page.getByText(/Margin saved at/)).toBeVisible();
+  // The Margin keeps the length of the copy it was made on, as the player measured it (#4175): the audio's own length,
+  // not a stored one.
+  const copyLength = await page.evaluate(
+    () =>
+      new Promise<number | undefined>((resolve, reject) => {
+        const open = indexedDB.open('spoken-margins');
+        open.onsuccess = () => {
+          const get = open.result.transaction('margins').objectStore('margins').getAll();
+          get.onsuccess = () => resolve((get.result as Array<{ copyLengthSeconds?: number }>)[0]?.copyLengthSeconds);
+          get.onerror = () => reject(get.error);
+        };
+      }),
+  );
+  expect(copyLength).toBeGreaterThan(0);
+  expect(copyLength).toBe(await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.duration));
   await expect(nowPlaying.getByRole('button', { name: /^Play from .*tides/ })).toHaveAccessibleName(new RegExp(`^Play from ${label?.replace('Your Margin at ', '')}:`));
   // The timeline post: out of the screen reader's path (the list above names it), but there to tap.
   const tick = nowPlaying.locator('.tick[title*="tides"]');

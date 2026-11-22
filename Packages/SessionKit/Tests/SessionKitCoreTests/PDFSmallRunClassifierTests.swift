@@ -16,9 +16,13 @@ final class PDFSmallRunClassifierTests: XCTestCase {
     /// -0.15 is lowered.
     private func row(
         _ name: String, before: String, _ text: String, after: String = "", shift: Double? = 0,
-        math: Bool = false, _ expected: Kind
+        math: Bool = false, raisedCite: Bool = true, _ expected: Kind
     ) -> Row {
-        Row(name: name, run: .init(text: text, before: before, after: after, baselineShift: shift, lineLooksLikeMath: math), expected: expected)
+        Row(
+            name: name,
+            run: .init(text: text, before: before, after: after, baselineShift: shift, lineLooksLikeMath: math, raisedNumbersCite: raisedCite),
+            expected: expected
+        )
     }
 
     private func check(_ rows: [Row], file: StaticString = #filePath, line: UInt = #line) {
@@ -100,6 +104,85 @@ final class PDFSmallRunClassifierTests: XCTestCase {
             row("marker after an acronym that isn't a formula", before: "NASA", "3", after: " and", .footnoteMarker),
             row("raised marker", before: "cost", "4", shift: 0.4, .footnoteMarker),
             row("unknown position", before: "cost", "4", shift: nil, .footnoteMarker),
+        ])
+    }
+
+    /// The index shapes #4194 left silenced on the C1 corpus (#4254), each with the marker that looks like it.
+    func testIndexShapesTheFirstRulesMissed() {
+        check([
+            // No citation is numbered 0.
+            row("L0", before: "where L", "0", after: " and L1 are", .mathIndex),
+            row("C0,1", before: "for all X ∈C", "0,1", after: "(RN)", .mathIndex),
+            row("zero after a word", before: "the rate", "0", after: " is", .mathIndex),
+            row("a list that only holds a zero later", before: "the rate", "1,0", .footnoteMarker),
+            row("zero after a full stop", before: "in 1999.", "0", .footnoteMarker),
+            // Applied like a function.
+            row("GLn(k)", before: "generators of GL", "n", after: "(k)", .mathIndex),
+            row("Canonp(M)", before: "A:= Canon", "p", after: "(M). (2)", .mathIndex),
+            row("QTs0,a(n)", before: "QT", "s0,a", after: "(n)(s0,a)", .mathIndex),
+            row("footnote letter before a spaced bracket", before: "Jane Doe", "a", after: " (Oslo)", .footnoteMarker),
+            row("number before a bracket", before: "the cohort", "3", after: "(see Table 2)", .footnoteMarker),
+            // An index list carried on from the run before.
+            row("Tsd,ad(t)", before: "Tsd", ",a", after: "d(t)", .mathIndex),
+            row("Tn1,n2", before: "Tn1", ",n", after: "2,n3,n4(s)", .mathIndex),
+            row("h′,i′", before: "h′", ",i", after: "′(n) =", .mathIndex),
+            row("letter after an affiliation number", before: "Lingqun Mao1", ",a", after: ", Hongsheng Lu2", .footnoteMarker),
+            row("letter after an affiliation number, before and", before: "Lingqun Mao1", ",a", after: " and Peng Liu", .footnoteMarker),
+            row("letter after an affiliation number, at the line's end", before: "Lingqun Mao1", ",a", .footnoteMarker),
+            // A unit under a slash, or alone in brackets.
+            row("g/cm3", before: "its density is 7.15 g/cm", "3", after: " (World Health", .mathIndex),
+            row("W/m2", before: "a flux in W/m", "2", .mathIndex),
+            row("(cm2) heading a column", before: "Leaf area (cm", "2", after: ") 74 72", .mathIndex),
+            row("a word under a slash", before: "and/or", "1", .footnoteMarker),
+            row("a unit word opening a bracket of prose", before: "(m", "2", after: " is the mass)", .footnoteMarker),
+            row("a letter after a unit under a slash", before: "in g/cm", "a", .footnoteMarker),
+            // After a brace or an angle bracket.
+            row("{xt}n", before: "variables {xt}", "n", .mathIndex),
+            row("{Mv}5", before: "anomaly masks {Mv}", "5", .mathIndex),
+            row("⟨C⟩r", before: "Var[⟨C⟩", "r", after: "]t", .mathIndex),
+            row("⟨·⟩t", before: "Where ⟨…⟩", "t", after: " denotes", .mathIndex),
+        ])
+    }
+
+    /// A digit after a lone letter is an index where the document doesn't cite with raised numbers (#4254).
+    func testDigitsAfterALoneLetterFollowTheDocument() {
+        let shapes: [(name: String, before: String, text: String, after: String)] = [
+            ("X3", "constants X1, X2, and X", "3", "."),
+            ("R2", "the out-of-sample R", "2", " from a regression"),
+            ("K1(R)", "by determining K", "1", "(R) we mean"),
+            ("F2[G]", "the group rings F", "2", "[G] for all"),
+            ("lower-case s1", "the next state s", "1", ", and"),
+            ("index list", "the space C", "1,1", " of regular domains"),
+            ("W1,p", "a weak solution u∈g +W", "1,p", ""),
+            ("En,2", "the second term E", "n,2", " in (5)"),
+            ("kb2", "dt= k", "b2", "[Ap][P]"),
+            ("name-like lower-case word before", "hepatitis B", "12", " is"),
+            ("after a bracket", "(X", "0", ")"),
+            ("after a coefficient", "costs approximately 4M", "2", "dh FLOPs"),
+            ("after a coefficient and an indexed letter", "requires ≈2a1a", "2", "a3 FLOPs"),
+        ]
+        check(shapes.map { row($0.name + ", brackets cite", before: $0.before, $0.text, after: $0.after, raisedCite: false, .mathIndex) })
+        // Where raised numbers cite, every one of these may be a citation. The zero is the exception.
+        check(shapes.filter { !$0.text.hasPrefix("0") }.map {
+            row($0.name + ", raised numbers cite", before: $0.before, $0.text, after: $0.after, raisedCite: true, .footnoteMarker)
+        })
+        // Bylines and names stay silent whatever the document does.
+        check([
+            row("byline initial", before: "Smith J", "1,2", after: ", Doe K", raisedCite: false, .footnoteMarker),
+            row("byline initial before and", before: "Smith J", "1", after: " and Doe K", raisedCite: false, .footnoteMarker),
+            row("byline initial after a comma", before: "Smith, J", "1", raisedCite: false, .footnoteMarker),
+            row("byline initial after a hyphenated name", before: "Smith-Jones J", "3", raisedCite: false, .footnoteMarker),
+            row("one-letter name after a capitalised word", before: "Hepatitis B", "12", after: " is", raisedCite: false, .footnoteMarker),
+            row("the word I", before: "as I", "4", after: " argued", raisedCite: false, .footnoteMarker),
+            row("a letter that ends a number in a name", before: "the model roberta-8k", "4", after: " for Polish", raisedCite: false, .footnoteMarker),
+            row("a letter that ends a number in a glued name", before: "SyjGCaMP8m", "18", raisedCite: false, .footnoteMarker),
+            row("digit after a word", before: "aptitude", "1", after: " and", raisedCite: false, .footnoteMarker),
+            row("digit after a full stop", before: "in 1999.", "2", raisedCite: false, .footnoteMarker),
+            row("affiliation digits", before: "John Roe", "1,2", raisedCite: false, .footnoteMarker),
+            row("acronym", before: "NASA", "3", after: " and", raisedCite: false, .footnoteMarker),
+            row("letter after a table number", before: "12.5", "a", raisedCite: false, .footnoteMarker),
+            row("letter after an acronym", before: "WHO", "a", raisedCite: false, .footnoteMarker),
+            row("letter footnotes", before: "Jane Doe", "a,b", after: ", John Roe", raisedCite: false, .footnoteMarker),
         ])
     }
 

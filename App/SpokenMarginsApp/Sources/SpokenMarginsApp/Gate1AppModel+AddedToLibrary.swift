@@ -9,9 +9,16 @@ extension Gate1AppModel {
     }
 
     func reportAddedToLibrary(title: String, itemId: String) {
-        // Says, in Diagnostics, whether the Library lists what this confirmation says was added, and if not, why (#4178).
-        diagnostics["addedToLibraryVisibility"] = LibraryQueryEngine.addedItemVisibility(
-            itemId: itemId, in: libraryItems, query: libraryQuery)
+        if let capture = libraryCollections.importCapture { // a collection import says it once, at the end (#3769)
+            capture.recordAdded(itemId)
+            startPublicSourceCheck(itemId: itemId)
+            return
+        }
+        // Says, in Diagnostics, whether the Library lists what this confirmation says was added, and if not, why (#4178):
+        // in the Collections view an item inside a collection is listed in its collection's row (#3769).
+        diagnostics["addedToLibraryVisibility"] = LibraryCollectionListEngine.addedItemVisibility(
+            itemId: itemId, rows: libraryItems, collections: libraryCollections.collections, query: libraryQuery,
+            mode: libraryCollections.viewMode)
         startPublicSourceCheck(itemId: itemId) // the listener added this item: the one moment to look at its public copy (#3449)
         let confirmation = AddedToLibraryConfirmation(title: title, nowPlayingIsEmpty: nowPlayingIsEmpty)
         let playNow = confirmation.offersPlayNow ? UserFeedbackEvent.Action(

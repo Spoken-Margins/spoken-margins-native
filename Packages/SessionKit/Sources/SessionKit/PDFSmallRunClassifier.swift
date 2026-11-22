@@ -13,9 +13,14 @@ import Foundation
 /// attachment) is checked the way the extractor's `superscriptRanges` checks it. This is pure: the caller
 /// measures the run and its neighbours.
 ///
+/// A digit after a lone letter ("X0", "K1(R)", "W1,p") reads the same as a citation after a name ("Hepatitis
+/// B¹²"), so the document decides (#4254): where it doesn't cite with raised numbers (`PDFCitationStyle`), the
+/// digit is an index. On the C1 corpus 540 of 579 such runs were in papers that cite in brackets, and of about
+/// 80 read by hand 3 were citations.
+///
 /// Known gaps: a star after a math letter ("x*", an optimum) is still a marker, and so is a digit after a lone
-/// letter outside math ("x2" in prose), because bylines ("Smith J¹,²") and names ("Hepatitis B¹²") look the same.
-/// A one-element formula set level ("O₂") is a marker too.
+/// letter in a paper that cites with raised numbers ("T2, T3 and T4"). A one-element formula set level ("O₂")
+/// is a marker too.
 public enum PDFSmallRunClassifier {
     public enum Kind: Equatable, Sendable {
         /// A citation or footnote marker: silenced.
@@ -41,13 +46,20 @@ public enum PDFSmallRunClassifier {
         /// The extractor reads the whole line as display math. Pass its display-math test, not the looser
         /// `looksLikeMath`, which counts "=" and "+" and would speak the markers of a prose line with a sum in it.
         public var lineLooksLikeMath: Bool
+        /// The document cites with raised numbers (`PDFCitationStyle.citesWithRaisedNumbers`). True, the cautious
+        /// reading, when nobody has counted.
+        public var raisedNumbersCite: Bool
 
-        public init(text: String, before: String, after: String = "", baselineShift: Double?, lineLooksLikeMath: Bool = false) {
+        public init(
+            text: String, before: String, after: String = "", baselineShift: Double?, lineLooksLikeMath: Bool = false,
+            raisedNumbersCite: Bool = true
+        ) {
             self.text = text
             self.before = before
             self.after = after
             self.baselineShift = baselineShift
             self.lineLooksLikeMath = lineLooksLikeMath
+            self.raisedNumbersCite = raisedNumbersCite
         }
     }
 
@@ -90,12 +102,26 @@ public enum PDFSmallRunClassifier {
         if let shift = run.baselineShift, shift < -loweredBy { return .mathIndex }
         guard text.contains(where: { $0.isLetter || $0.isNumber }) else { return .footnoteMarker }
         if run.lineLooksLikeMath || isMathScalar(previous) || closesMath(before) { return .mathIndex }
+        let letters = text.contains(where: \.isLetter)
+        // No citation is numbered 0: "L0", "C0,1".
+        if !letters, text.first == "0", previous.isLetter { return .mathIndex }
+        // Applied like a function ("GLn(k)", "fn(p)"), or an index list carried on from the run before and into
+        // what follows (",a" in "Tsd,ad(t)"). After a name the same run ends at a space or a comma ("Mao1,a, Lu2").
+        if letters, let next = run.after.first,
+           next == "(" || text.first == "," && !next.isWhitespace && !",.;:".contains(next) {
+            return .mathIndex
+        }
         let tokens = before.split(whereSeparator: \.isWhitespace)
         let word = String(before.reversed().prefix { $0.isLetter }.reversed())
         if operatorNames.contains(word) { return .mathIndex }
         if number, let token = tokens.last.map(String.init), isQuantity(token, glued: true)
             || units.contains(word) && token == word && tokens.dropLast().last.map({ isQuantity(String($0)) }) == true {
             // A unit glued to a number ("5cm"), or after a number or another unit ("5 cm", "5 m s⁻¹").
+            return .mathIndex
+        }
+        // A unit under a slash ("7.15 g/cm³", "W/m²"), or alone in brackets as a table heads a column ("(cm²)").
+        if number, units.contains(word), let opener = before.dropLast(word.count).last,
+           opener == "/" || opener == "(" && run.after.first == ")" {
             return .mathIndex
         }
         // A chemical formula: digits straight before a capital ("H₂O", "CH₃OH") or after element symbols ("CO₂").
@@ -108,12 +134,26 @@ public enum PDFSmallRunClassifier {
             return .mathIndex
         }
         // Letters after a lone letter, as in "x", "(h", "set S": a variable's index. Not after an initial in a
-        // byline ("Smith Jᵃ,"), and not digits, which follow initials and names ("Smith J¹", "Hepatitis B¹²").
+        // byline ("Smith Jᵃ,").
         if word.count == 1, !text.contains(where: \.isNumber) {
             let initial = word.first?.isUppercase == true
-                && tokens.dropLast().last.map { $0.count >= 2 && $0.first?.isUppercase == true && $0.allSatisfy { $0.isLetter || "-'’".contains($0) } } == true
+                && tokens.dropLast().last.map { isName($0) } == true
                 && run.after.first(where: { !$0.isWhitespace }).map { $0 == "," } != false
             if !initial { return .mathIndex }
+        }
+        // Digits after a lone letter ("X0", "K1(R)", "W1,p") follow initials and names too ("Smith J¹",
+        // "Hepatitis B¹²"), so they are an index only where the document doesn't cite with raised numbers, and
+        // not after a capitalised word ("Smith J¹,²", "Smith, J¹"), the word "I" ("as I⁴ argued") or a letter
+        // that ends a number in a name ("roberta-8k⁴"; "4M²" and "2a₁a₂" have no word in them).
+        if word.count == 1, text.contains(where: \.isNumber), !run.raisedNumbersCite {
+            let alone = tokens.last.map { $0.count == 1 } == true
+            let wordBefore = alone ? tokens.dropLast().last : nil
+            let afterName = word.first?.isUppercase == true && wordBefore.map { isName(String($0.reversed().drop { ",.".contains($0) }.reversed())) } == true
+            let pronoun = word == "I" && wordBefore.map { $0.count >= 2 && $0.allSatisfy(\.isLowercase) } == true
+            let token = tokens.last.map(String.init) ?? ""
+            let endsANamedNumber = token.dropLast().last?.isNumber == true
+                && token.range(of: #"\p{L}{2,}"#, options: .regularExpression) != nil
+            if !afterName, !pronoun, !endsANamedNumber { return .mathIndex }
         }
         if let next = run.after.first(where: { !$0.isWhitespace }), "=+−<>≤≥×·/^_".contains(next) || isMathScalar(next) {
             return .mathIndex
@@ -135,11 +175,16 @@ public enum PDFSmallRunClassifier {
         }
     }
 
-    /// Ends in a norm or absolute-value bar ("‖w‖", "|x|"), or in a bracket around math ("(1+r)"), not around
-    /// prose ("(Smith, 2020)").
+    /// A capitalised word, as a surname is: "Smith", "Smith-Jones", "O'Neil".
+    private static func isName(_ token: some StringProtocol) -> Bool {
+        token.count >= 2 && token.first?.isUppercase == true && token.allSatisfy { $0.isLetter || "-'’".contains($0) }
+    }
+
+    /// Ends in a norm or absolute-value bar ("‖w‖", "|x|"), a brace or an angle bracket ("{xt}", "⟨C⟩"), or in a
+    /// bracket around math ("(1+r)"), not around prose ("(Smith, 2020)").
     private static func closesMath(_ before: String) -> Bool {
         guard let last = before.last else { return false }
-        if last == "‖" || last == "|" { return true }
+        if "‖|}⟩〉\u{232A}".contains(last) { return true }
         let opening: Character
         switch last {
         case ")": opening = "("

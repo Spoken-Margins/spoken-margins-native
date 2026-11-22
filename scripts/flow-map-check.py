@@ -23,7 +23,7 @@ SOURCES = ROOT / "App/SpokenMarginsApp/Sources/SpokenMarginsApp"
 
 # Calls that open another screen, sheet, dialog or system surface.
 NAV_PATTERN = re.compile(
-    r"NavigationLink|\.sheet\(|\.fullScreenCover\(|\.popover\(|\.confirmationDialog\("
+    r"NavigationLink|\.(?:tracked)?[Ss]heet\(|\.(?:tracked)?[Ff]ullScreenCover\(|\.popover\(|\.confirmationDialog\("
     r"|\.navigationDestination\(|\.tabItem|\.fileImporter\(|\.fileExporter\(|ShareLink\("
     r"|model\.open[A-Z]\w*\(|navigation\.(?:push|present)\("
 )

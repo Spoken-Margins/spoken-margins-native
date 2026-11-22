@@ -61,13 +61,18 @@ extension Gate1AppModel {
             return
         }
         QueueWishController.register(file.id)
-        beginObsidianMarkdownImport(
-            urls: [urls.fileURL],
-            securityScopedURLs: [urls.folderURL],
+        // A `.txt` that reads as a meeting transcript is saved as a transcript item and queued like any other (#2997).
+        importFilesWithTranscriptRule(urls: [urls.fileURL], route: quickFolderSwipeRoute(for: file, folderURL: urls.folderURL))
+    }
+
+    /// How a swiped Quick Folder file is imported: dismissed from the folder's list once saved, and its queue wish
+    /// settled with the one item it saved, or none when it saved nothing.
+    func quickFolderSwipeRoute(for file: QuickAccessFile, folderURL: URL) -> TranscriptPickRoute {
+        TranscriptPickRoute(
+            securityScopedURLs: [folderURL],
             refreshQuickFolderWhenFinished: true,
             quickAccessFileToDismiss: file,
-            onFinished: { [weak self] items in self?.settleQueueWish(key: file.id, itemId: items.first?.id) }
-        )
+            onFinished: { [weak self] outcome in self?.settleQueueWish(key: file.id, itemId: outcome.itemIds.first) })
     }
 
     /// An import for `key` ended: `itemId` is the item it saved, nil when it saved nothing. A wish for it is released to

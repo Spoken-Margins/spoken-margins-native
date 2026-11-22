@@ -15,7 +15,7 @@ public struct FollowingShowRow: Equatable, Identifiable, Sendable {
     public var newestEpisodeDate: Date?
     /// "Oct 16", nil when the newest episode has no date.
     public var dateLabel: String?
-    /// The entry the row's play button plays: always the episode the row previews (`newestEntryID`), so ▶ plays
+    /// The entry the row's play button plays (`FollowingUpNext.pick`, the same episode the show's Up next card names): always the episode the row previews (`newestEntryID`), so ▶ plays
     /// what the listener sees. Nil when the show has nothing left to hear (every episode played or dismissed).
     public var playEntryID: String?
     /// When the previewed episode is already in the Library, its item: ▶ resumes it there instead of importing it again.
@@ -30,12 +30,17 @@ public struct FollowingShowRow: Equatable, Identifiable, Sendable {
     public var isNewestInLibrary: Bool = false
     public var isQuiet: Bool
     public var accessibilityLabel: String
+    /// New episodes a pick rule matched (#4046), always 0 for a Quiet show and while no rule is on.
+    public var pickCount: Int = 0
 
     /// What the row's swipe Add saves: the previewed episode, nil when the show has none or it is in the Library already.
     public var addEntryID: String? { isNewestInLibrary ? nil : newestEntryID }
 
     /// "3 new", nil when nothing is new (the row then shows no badge).
     public var newLabel: String? { newCount > 0 ? "\(newCount) new" : nil }
+
+    /// "1 pick", "2 picks", nil when none.
+    public var pickLabel: String? { pickCount > 0 ? "\(pickCount) \(pickCount == 1 ? "pick" : "picks")" : nil }
 }
 
 public struct FollowingShowList: Equatable, Sendable {
@@ -59,6 +64,11 @@ public struct FollowingShowEpisode: Equatable, Identifiable, Sendable {
     public var isNew: Bool
     /// Played or added already, so it is in the Library.
     public var isInLibrary: Bool
+    /// A rule skipped it or the listener marked it Show less (#4046): it is not counted as new, and the screen lists it
+    /// apart. Always false while no rule is on and nothing is marked.
+    public var isSetAside: Bool = false
+    /// A pick rule matched it.
+    public var isPick: Bool = false
     public var id: String { entry.id }
 }
 
@@ -71,11 +81,15 @@ public enum FollowingShowRows {
     ///   - libraryEpisodes: the Library item behind each imported entry and whether it is finished
     ///     (`FollowingLibraryEpisodes.resolve`). An imported entry with no item here counts as finished: nothing is
     ///     known to resume, so the row moves on to the next unread episode.
+    ///   - rules: what the listener's rules and Show less marks set aside, from `FollowingRuleEvaluation` (#4046). An
+    ///     episode set aside is removed before the row is built, so the preview, date, sort, count, ▶ and swipe all describe
+    ///     the newest episode that is not. Empty (the default) leaves every row as it was.
     public static func build(
         subscriptions: [FeedSubscription],
         entries: [FeedEntry],
         lookedAt: [String: Date] = [:],
         libraryEpisodes: [String: FollowingLibraryEpisode] = [:],
+        rules: ListeningRuleEvaluation = ListeningRuleEvaluation(),
         now: Date = Date(),
         calendar: Calendar = .current,
         locale: Locale = .current
@@ -83,14 +97,21 @@ public enum FollowingShowRows {
         let bySubscription = Dictionary(grouping: entries, by: \.subscriptionId)
         var built: [(row: FollowingShowRow, sortDate: Date, createdAt: Date)] = []
         for subscription in subscriptions {
-            let shown = (bySubscription[subscription.id] ?? []).filter { $0.state != .dismissed }
+            let outcome = rules.outcome(for: subscription.id)
+            let shown = (bySubscription[subscription.id] ?? []).filter {
+                $0.state != .dismissed && !outcome.setAside.contains($0.id)
+            }
             // The episode worth hearing next: unplayed, or in the Library and not finished. If none is left, the newest of
             // what is there, which only names the show's last word and offers no ▶.
-            let hearable = shown.filter { isHearable($0, libraryEpisodes: libraryEpisodes) }
-            let newest = hearable.min(by: newestFirst) ?? shown.min(by: newestFirst)
+            // One rule decides, here and on the show's Up next card (`FollowingUpNext`).
+            let upNext = FollowingUpNext.pick(entries: shown, libraryEpisodes: libraryEpisodes)
+            let newest = upNext ?? shown.min(by: newestFirst)
             let newestDate = newest.flatMap(date(of:))
             let isQuiet = subscription.state == .muted
             let count = isQuiet ? 0 : newCount(of: subscription, in: shown, lookedAt: lookedAt[subscription.id])
+            let picks = isQuiet ? 0 : shown.filter {
+                outcome.picks.contains($0.id) && isNew($0, of: subscription, lookedAt: lookedAt[subscription.id])
+            }.count
             let title = displayTitle(of: subscription)
             let dateLabel = newestDate.map {
                 FollowingEntryRow.dateText($0, now: now, calendar: calendar, locale: locale, spoken: false)
@@ -103,7 +124,8 @@ public enum FollowingShowRows {
             let label = [
                 title,
                 count > 0 ? "\(count) new" : nil,
-                newestTitle.map { "\(hearable.isEmpty ? "Newest" : "Up next"): \($0)" },
+                picks > 0 ? "\(picks) \(picks == 1 ? "pick" : "picks")" : nil,
+                newestTitle.map { "\(upNext == nil ? "Newest" : "Up next"): \($0)" },
                 newest?.state == .imported ? "In your Library" : nil,
                 spokenDate.map { "Published \($0)" },
                 isQuiet ? "Quiet" : nil,
@@ -111,10 +133,10 @@ public enum FollowingShowRows {
             let row = FollowingShowRow(
                 id: subscription.id, title: title, newCount: count,
                 newestEpisodeTitle: newestTitle, newestEpisodeDate: newestDate, dateLabel: dateLabel,
-                playEntryID: hearable.isEmpty ? nil : newest?.id,
-                playItemID: hearable.isEmpty || newest?.state != .imported ? nil : newest.flatMap { libraryEpisodes[$0.id]?.itemID },
+                playEntryID: upNext?.id,
+                playItemID: upNext.flatMap { $0.state == .imported ? libraryEpisodes[$0.id]?.itemID : nil },
                 newestEntryID: newest?.id, isNewestInLibrary: newest?.state == .imported,
-                isQuiet: isQuiet, accessibilityLabel: label
+                isQuiet: isQuiet, accessibilityLabel: label, pickCount: picks
             )
             built.append((row, newestDate ?? .distantPast, subscription.createdAt))
         }
@@ -131,18 +153,24 @@ public enum FollowingShowRows {
         )
     }
 
-    /// A show's episodes, newest first, for its own screen. Dismissed episodes are left out.
+    /// A show's episodes, newest first, for its own screen. Dismissed episodes are left out. Episodes the rules set
+    /// aside stay in the list, flagged, for the screen's own group; they are never new.
     public static func episodes(
-        of subscription: FeedSubscription, in entries: [FeedEntry], lookedAt: Date? = nil
+        of subscription: FeedSubscription, in entries: [FeedEntry], lookedAt: Date? = nil,
+        rules: ListeningRuleEvaluation = ListeningRuleEvaluation()
     ) -> [FollowingShowEpisode] {
-        entries
+        let outcome = rules.outcome(for: subscription.id)
+        return entries
             .filter { $0.subscriptionId == subscription.id && $0.state != .dismissed }
             .sorted(by: newestFirst)
             .map { entry in
-                FollowingShowEpisode(
+                let isSetAside = outcome.setAside.contains(entry.id)
+                return FollowingShowEpisode(
                     entry: entry,
-                    isNew: isNew(entry, of: subscription, lookedAt: lookedAt),
-                    isInLibrary: entry.state == .imported
+                    isNew: !isSetAside && isNew(entry, of: subscription, lookedAt: lookedAt),
+                    isInLibrary: entry.state == .imported,
+                    isSetAside: isSetAside,
+                    isPick: outcome.picks.contains(entry.id)
                 )
             }
     }
