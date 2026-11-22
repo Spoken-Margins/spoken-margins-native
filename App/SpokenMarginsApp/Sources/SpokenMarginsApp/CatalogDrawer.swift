@@ -195,7 +195,10 @@ final class CatalogDrawerModel: ObservableObject {
     func friendItemOpened(_ itemId: String) {
         let hadReached = welcomeOrder.reachedFriendItem
         welcomeOrder.friendItemOpened()
-        guard !hadReached, welcomeOrder.reachedFriendItem else { return }
+        // A file or link that arrives while the first-run drawer shows picks leaves the order where it was (the drawer
+        // stays), so that case is the file having opened underneath it.
+        let openedUnderPicks = isPresented && isFirstRunOpening && friendFileOpenedUnderneath
+        guard openedUnderPicks || (!hadReached && welcomeOrder.reachedFriendItem) else { return }
         var arrival = FirstLaunchArrival(defaults: defaults)
         arrival.recordItem(itemId)
     }

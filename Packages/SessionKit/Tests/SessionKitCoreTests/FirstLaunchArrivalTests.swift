@@ -135,6 +135,31 @@ final class FirstLaunchArrivalTests: XCTestCase {
         XCTAssertEqual(candidate("untitled", title: "  ").displayName, "untitled.example")
     }
 
+    // MARK: which stored decisions count as an answer (#5042 review)
+
+    /// The 25 percent suggestion check saves a `.prompted` record before its own card shows. Only a real answer to a
+    /// Follow question may keep the arrival card away.
+    func testWhichStoredDecisionsCountAsTheListenersAnswer() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let day: TimeInterval = 24 * 60 * 60
+        func stored(_ kind: SourceSuggestionDecisionKind, until: Date? = nil) -> SourceSuggestionDecision {
+            SourceSuggestionDecision(sourceId: "show", decision: kind, decidedAt: now, suppressUntil: until, lastPromptAt: now)
+        }
+        let rows: [(String, SourceSuggestionDecision?, Bool)] = [
+            ("nothing stored", nil, false),
+            ("prompted only", stored(.prompted), false),
+            ("followed", stored(.accepted), true),
+            ("never suggest", stored(.neverSuggest), true),
+            ("declined, hold in force", stored(.notNow, until: now.addingTimeInterval(day)), true),
+            ("declined, hold ends this instant", stored(.notNow, until: now), false),
+            ("declined, hold expired", stored(.notNow, until: now.addingTimeInterval(-day)), false),
+            ("declined with no end date", stored(.notNow), true),
+        ]
+        for (name, decision, expected) in rows {
+            XCTAssertEqual(FirstLaunchArrival.answerSuppressesOffer(decision, now: now), expected, name)
+        }
+    }
+
     // MARK: Not now
 
     func testNotNowHoldsThisShowBackForFourteenDaysLikeTheSuggestionCard() throws {

@@ -52,6 +52,19 @@ public struct FirstLaunchArrival {
         isArrivalItem && finished && canFollow && !decisionExists && !alreadyOffered
     }
 
+    /// Whether a stored decision for the show is a real answer that keeps the card away: followed, never, or a
+    /// "Not now" whose hold is still in force. A `.prompted` record only says the suggestion card was about to show.
+    public static func answerSuppressesOffer(_ decision: SourceSuggestionDecision?, now: Date) -> Bool {
+        guard let decision else { return false }
+        switch decision.decision {
+        case .prompted: return false
+        case .accepted, .neverSuggest: return true
+        case .notNow:
+            guard let until = decision.suppressUntil else { return true }
+            return until > now
+        }
+    }
+
     /// The one show a single tap on the card follows. Nil when discovery found nothing, when it found several feeds
     /// (the Follow button opens a chooser for those) or one the listener must confirm: a card with one button can't ask.
     public static func followTarget(from offer: FollowOffer?) -> SourceCandidateEvidence? {

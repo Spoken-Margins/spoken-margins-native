@@ -24,12 +24,12 @@ struct ArrivalFollowCard: View {
             }
         }
         // Re-asked when the listener's item changes and when discovery lands, never once the card is up.
-        .task(id: "\(model.selectedItem.id)|\(model.canManuallyFollowSelectedSource)") {
+        .task(id: "\(model.snapshot.itemId ?? "")|\(model.canManuallyFollowSelectedSource)") {
+            // The offer is spent inside `arrivalFollowCandidateToOffer`, with no await after its last check.
             guard candidate == nil, let found = await model.arrivalFollowCandidateToOffer() else { return }
-            model.markArrivalFollowOffered()
             candidate = found
         }
-        .onChange(of: model.selectedItem.id) {
+        .onChange(of: model.snapshot.itemId) {
             candidate = nil
             tappedFollow = false
             dismissed = false

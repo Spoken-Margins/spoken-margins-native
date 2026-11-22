@@ -523,6 +523,14 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.friendItemOpened("second-friend-item")
         XCTAssertEqual(FirstLaunchArrival(defaults: defaults).itemId, "friend-episode")
 
+        // A friend's link that arrives while the first-run drawer still shows picks opens its item underneath it.
+        let underPicks = try freshDefaults()
+        let picking = try makeDrawer(defaults: underPicks, log: FollowLog())
+        picking.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        picking.friendFileArrived()
+        picking.friendItemOpened("pasted-link-episode")
+        XCTAssertEqual(FirstLaunchArrival(defaults: underPicks).itemId, "pasted-link-episode")
+
         let returning = try freshDefaults()
         let notFirstLaunch = try makeDrawer(defaults: returning, log: FollowLog())
         notFirstLaunch.friendItemOpened("friend-episode")
