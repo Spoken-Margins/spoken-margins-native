@@ -83,21 +83,25 @@ final class MemoryFootprintVerdictTests: XCTestCase {
         XCTAssertEqual(verdict, .growingPerSwitch(mediaTypes: ["text"], megabytesPerSwitch: 10))
     }
 
+    /// No playback stretches, so the switches alone decide it.
     func testOneReloadAmongSteadySwitchesIsNotGrowth() {
         let verdict = MemoryFootprintVerdict(samples: switches(textAt: [100, 300, 302, 500, 503, 505],
-                                                              podcastAt: [90, 90, 90, 90, 90]))
-        XCTAssertEqual(verdict, .steady(switches: 11, playbackMinutes: 30),
+                                                              podcastAt: [90, 90, 90, 90, 90], textPlayback: { _ in [] }))
+        XCTAssertEqual(verdict, .steady(switches: 11, playbackMinutes: 0),
                        "one 198 MB jump among +2, +3 and +2 is a reload, not memory left behind each time")
     }
 
     func testTheSwitchesAfterMemoryWarningsReloadAndAreNotGrowth() {
         // The app unloads its voices on a warning: 300 → 150 MB, then the next article reloads the voice to 450 MB.
-        let verdict = MemoryFootprintVerdict(samples: samples([
+        // Read without the warnings, the text switches would climb 150 MB four times.
+        var steps: [(MemoryFootprintLog.Event, String, UInt64)] = [
             (.itemStart, "text", 100), (.itemSwitch, "podcast", 90), (.itemSwitch, "text", 300),
-            (.memoryWarning, "text", 150), (.itemSwitch, "podcast", 90), (.itemSwitch, "text", 450),
-            (.memoryWarning, "text", 150), (.itemSwitch, "podcast", 90), (.itemSwitch, "text", 600),
-            (.itemSwitch, "podcast", 90), (.itemSwitch, "text", 602),
-        ]))
+        ]
+        for reloaded: UInt64 in [450, 600, 750, 900] {
+            steps += [(.memoryWarning, "text", 150), (.itemSwitch, "podcast", 90), (.itemSwitch, "text", reloaded)]
+        }
+        steps += [(.itemSwitch, "podcast", 90), (.itemSwitch, "text", 902)]
+        let verdict = MemoryFootprintVerdict(samples: samples(steps))
         XCTAssertEqual(verdict, .tooFewSamples, "each reload after a warning starts the measuring over: \(verdict)")
     }
 
@@ -106,12 +110,13 @@ final class MemoryFootprintVerdictTests: XCTestCase {
     private let recordedSupertonicSwitches: [UInt64] = [116, 112, 363, 361, 410, 428, 428, 429]
 
     /// The measured run's switches, the podcast first and alternating with the article, `perType` into each:
-    /// the recorded ones, then the footprint holding where the recording ended, or climbing `leakPerRound` MB a round.
+    /// the recorded ones, then the footprint holding where the recording ended, with `leakPerRound` MB more left behind
+    /// at each round after the first.
     private func measuredRun(perType: Int, leakPerRound: UInt64 = 0) -> [MemoryFootprintLog.Sample] {
+        let recorded = recordedSupertonicSwitches
         let footprints = (0..<(2 * perType)).map { index -> UInt64 in
-            if index < recordedSupertonicSwitches.count { return recordedSupertonicSwitches[index] }
-            let roundsPast = UInt64(index - recordedSupertonicSwitches.count) / 2 + 1
-            return recordedSupertonicSwitches[recordedSupertonicSwitches.count - 2 + index % 2] + roundsPast * leakPerRound
+            let base = index < recorded.count ? recorded[index] : recorded[recorded.count - 2 + index % 2]
+            return base + UInt64(index / 2) * leakPerRound
         }
         let steps = footprints.enumerated().map { index, megabytes -> (MemoryFootprintLog.Event, String, UInt64) in
             (index == 0 ? .itemStart : .itemSwitch, index % 2 == 0 ? "transcript_backed_media" : "text", megabytes)
@@ -133,11 +138,11 @@ final class MemoryFootprintVerdictTests: XCTestCase {
                        "363 → 410 → 428 MB and then holding is the voice settling, not memory left behind: \(verdict)")
     }
 
-    func testTheMeasuredRunStillCatchesMemoryLeftBehindAfterTheWarmUp() {
+    func testTheMeasuredRunStillCatchesMemoryLeftBehindEachRound() {
         let verdict = MemoryFootprintVerdict(samples: measuredRun(perType: MemoryFootprintVerdict.switchesPerTypeInMeasuredRun,
                                                                   leakPerRound: 30))
         guard case .growingPerSwitch = verdict else {
-            return XCTFail("30 MB left behind each round once the voice settled must read as growth: \(verdict)")
+            return XCTFail("30 MB left behind each round must read as growth, warm-up or not: \(verdict)")
         }
     }
 

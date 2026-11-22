@@ -8,7 +8,7 @@ import Foundation
 ///   The first switch into a type is left out, because it is when that type's engine loads (for example the text
 ///   voice), and so is the first one after a memory warning, since the app unloads its voices on a warning. It needs
 ///   at least four changes: six switches into one type, because a voice keeps settling for about two switches after it
-///   loads (`switchesPerTypeInMeasuredRun`). It takes the median, and with an even count the lower of the middle two,
+///   loads (`minimumChangesPerType`). It takes the median, and with an even count the lower of the middle two,
 ///   so that settling, or one reload, doesn't decide it.
 ///   A switch is sampled as the new item starts, so its footprint is mostly what the items before it left behind.
 ///   When listening alternates between two types, memory left behind by either one shows up in both types' changes,
