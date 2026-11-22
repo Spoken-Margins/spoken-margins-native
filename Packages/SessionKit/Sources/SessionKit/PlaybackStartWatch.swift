@@ -59,8 +59,12 @@ public struct PlaybackStartWatch: Sendable {
                 && Self.sameRequest(requestedAt, targetId, as: start.requestedAt, start.targetId)
             if status == .starting, sameStart {
                 // A start that falls back to another target (narration to live speech) hasn't been heard on that
-                // target yet, so it gets its cue back instead of a silent wait (#842).
-                if self.start?.targetId != targetId { self.start?.heard = false }
+                // target yet, so it gets its cue back instead of a silent wait, even if the first target's chime had
+                // already played before its sound was heard (#842).
+                if self.start?.targetId != targetId, self.start?.heard == true {
+                    self.start?.heard = false
+                    self.start?.cued = false
+                }
                 self.start?.targetId = targetId
                 return []
             }

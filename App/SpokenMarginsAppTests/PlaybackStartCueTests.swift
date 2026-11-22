@@ -599,6 +599,35 @@ final class PlaybackStartCueTests: XCTestCase {
         withExtendedLifetime(cue) {}
     }
 
+    /// Audit of #5020: the first sound of narration ends the cue, then the engine falls back to live speech inside the
+    /// same listener request. The new target is silent, so the start gets its chime.
+    func testAStartThatMovesToAnotherTargetAfterItsFirstSoundGetsItsCue() async throws {
+        let heard = PassthroughSubject<String, Never>()
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            playChime: { [unowned self] in self.chimes += 1; return "played" },
+            checkNow: {},
+            firstAudio: heard.eraseToAnyPublisher(),
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+        var narration = targeted("article", .starting, target: "narration")
+        narration.playbackRequestedAt = clock
+        cue.observe(narration)
+        clock += 0.3
+        heard.send("narration")
+        clock += 0.2
+        var fallback = targeted("article", .starting, target: "live-speech")
+        fallback.playbackRequestedAt = narration.playbackRequestedAt // the same listener request
+        cue.observe(fallback)
+        clock += 1
+
+        try await waitUntil { chimes == 1 }
+
+        XCTAssertEqual(recorded["lastPlaybackStartCue"], "article:played")
+        cue.observe(snapshot("article", .paused)) // ends the cue's checks
+        withExtendedLifetime(cue) {}
+    }
+
     /// A returning listener's start (a paused, part-way item resumed) is an ordinary start: the signal ends its cue.
     func testFirstAudioSignalEndsTheCueOfAResumedPartWayItem() async throws {
         let heard = PassthroughSubject<String, Never>()

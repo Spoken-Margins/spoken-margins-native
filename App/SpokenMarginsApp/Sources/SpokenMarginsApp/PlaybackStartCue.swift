@@ -39,6 +39,8 @@ final class PlaybackStartCue: ObservableObject {
     private var waitingPlayer: AVAudioPlayer?
     /// A stand-in chime (`playChime`) is sounding. Only tests set it; the real chime is known by its players.
     private var chimeSounding = false
+    /// A first sound cancelled this start's cue; if the engine moves the start to another target, schedule it again.
+    private var cueNeededAfterRetarget = false
     private let now: () -> Date
     private let waitingCueDelay: TimeInterval
     private let waitingCuePeriod: TimeInterval
@@ -103,6 +105,7 @@ final class PlaybackStartCue: ObservableObject {
     /// Feed every snapshot change.
     func observe(_ snapshot: SessionSnapshot) {
         let startsBefore = watch.startCount
+        let targetBefore = watch.waitingTargetId
         let outcomes = watch.observe(itemId: snapshot.itemId, targetId: snapshot.targetId, status: snapshot.status,
                                      requestedAt: snapshot.playbackRequestedAt, at: now())
         // A start that resolved (audio began, or it was paused, failed or replaced) ends its chime (audit of #580).
@@ -120,9 +123,25 @@ final class PlaybackStartCue: ObservableObject {
             // The start resolved: no cue, and no extra check (audit of #580).
             cueTask?.cancel()
             cueTask = nil
+            cueNeededAfterRetarget = false
             return
         }
-        guard watch.startCount != startsBefore else { return } // the same start continues; its cue stays scheduled
+        guard watch.startCount != startsBefore else {
+            // The same start continues and its cue stays scheduled, with one exception: a first sound ended that cue,
+            // and the engine has since moved the start to another target (narration falling back to live speech).
+            // That target has not been heard, so the watch gives the start its cue again, and a task must take it (#842).
+            if cueNeededAfterRetarget, watch.waitingTargetId != targetBefore {
+                cueNeededAfterRetarget = false
+                scheduleCue(waiting: waiting)
+            }
+            return
+        }
+        cueNeededAfterRetarget = false
+        scheduleCue(waiting: waiting)
+    }
+
+    /// Schedules the cue for the open start: due 0.8 s after the request, then the chime and the waiting sound.
+    private func scheduleCue(waiting: String) {
         cueTask?.cancel()
         // The cue is due 0.8 s after the request, not after the start was published (audit of #580).
         let delay = watch.cueWait(at: now()) ?? watch.cueDelay
@@ -157,6 +176,8 @@ final class PlaybackStartCue: ObservableObject {
         guard let itemId = watch.waitingItemId, watch.firstAudioHeard(targetId: targetId) else { return }
         cueTask?.cancel()
         cueTask = nil
+        // If the start moves to another target before it resolves, that target gets a cue (see `observe`).
+        cueNeededAfterRetarget = true
         guard let stopped = stopForFirstAudio() else { return }
         if stopped { record("lastPlaybackStartCue", "\(itemId):stopped_by_first_audio") }
     }
