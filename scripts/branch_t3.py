@@ -45,6 +45,9 @@ def parse_tests(text: str) -> list:
         raise ValueError(f'not a test class or Class/method name: {", ".join(bad[:5])}')
     if len(names) > MAX_SELECTORS:
         raise ValueError(f'{len(names)} tests named; the most is {MAX_SELECTORS}. Name classes, or none for the whole suite.')
+    names = [n[:-2] if n.endswith('()') else n for n in names]  # test ids carry no parentheses
+    if APP_TEST_TARGET in names:
+        raise ValueError(f'{APP_TEST_TARGET} is the test target, not a test class; name classes, or none for the whole suite')
     return list(dict.fromkeys(names))
 
 

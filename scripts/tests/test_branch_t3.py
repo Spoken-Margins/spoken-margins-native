@@ -26,8 +26,19 @@ class ParseTestsTests(unittest.TestCase):
         self.assertEqual(B.parse_tests('  \n'), [])
 
     def test_a_class_and_a_method_are_names(self):
-        self.assertEqual(B.parse_tests('LibraryTests/testOne PlayerTests/testTwo()'),
-                         ['LibraryTests/testOne', 'PlayerTests/testTwo()'])
+        self.assertEqual(B.parse_tests('LibraryTests/testOne PlayerTests/testTwo'),
+                         ['LibraryTests/testOne', 'PlayerTests/testTwo'])
+
+    def test_a_trailing_pair_of_parentheses_is_dropped_so_it_matches_the_plan_ids(self):
+        # Audit of c69841b: PlayerTests/testTwo() passed parsing, then matched no plan (ids carry no parentheses) and a
+        # real test got a false FAILED comment.
+        self.assertEqual(B.parse_tests('PlayerTests/testTwo()'), ['PlayerTests/testTwo'])
+        self.assertEqual(B.parse_tests('PlayerTests/testTwo() PlayerTests/testTwo'), ['PlayerTests/testTwo'])
+
+    def test_the_test_target_alone_is_not_a_class(self):
+        for bad in ('SpokenMarginsAppTests', 'LibraryTests SpokenMarginsAppTests'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                B.parse_tests(bad)
 
     def test_nothing_else_is_a_name(self):
         # the input reaches a command line through verify-tests.py --only-testing, so shell and path text is refused
@@ -55,6 +66,11 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(grouped, {'app': ['SpokenMarginsAppTests/LibraryTests'],
                                    'adapters': ['SpokenMarginsAppTests/LibraryTests']})
         self.assertEqual(unknown, [])
+
+    def test_a_method_given_with_parentheses_lands_in_the_plan_that_holds_it(self):
+        plans = {'app': {'SpokenMarginsAppTests/PlayerTests/testTwo'}, 'adapters': {'SpokenMarginsAppTests/SpeechTests/testA'}}
+        grouped, unknown = B.group(B.parse_tests('PlayerTests/testTwo()'), plans)
+        self.assertEqual((grouped, unknown), ({'app': ['SpokenMarginsAppTests/PlayerTests/testTwo']}, []))
 
     def test_a_name_no_plan_holds_is_returned_as_unknown(self):
         grouped, unknown = self.group(['LibraryTests', 'NoSuchTests'])
