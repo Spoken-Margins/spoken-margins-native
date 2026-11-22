@@ -39,9 +39,11 @@ permissions:
   contents: read
   pull-requests: read
 
-concurrency:
-  group: merge-policy-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+# No `concurrency` group on purpose (#4905). A re-arm (remove `needs-fix`, add `automerge`) fires two label events in the
+# same second. With `cancel-in-progress` one of the two runs was cancelled, and when the cancelled run was the newer
+# one GitHub read the required check as cancelled and never queued the PR: green checks, auto-merge on, no queue entry,
+# for hours (#4898 for 2 hours, #4871 and #4830 for 5). Both runs read the labels and the audit comments live, so two
+# runs at once are harmless, and each is about 30 seconds on a Linux runner.
 
 jobs:
   policy:
