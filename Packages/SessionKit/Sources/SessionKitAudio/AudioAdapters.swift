@@ -2074,7 +2074,13 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
         if activeTargetId != targetId || activePlaybackURL != url || player == nil {
             installPlayerItem(url: url, targetId: targetId)
         }
-        firstAudioLatch.arm(targetId: targetId)
+        // A player that is already sounding this target makes no new `.playing` change, so arming would hold the
+        // latch until a later rebuffer posted it late. Its sound is audible now, and the engine's next check sees it.
+        if !rebuildsItem, player?.timeControlStatus == .playing {
+            firstAudioLatch = FirstAudioLatch()
+        } else {
+            firstAudioLatch.arm(targetId: targetId)
+        }
         let sessionStartedAt = ProcessInfo.processInfo.systemUptime
         #if os(iOS) || os(watchOS)
         try MainThreadOperationLabels.shared.scoped("audioSession.activate") {
@@ -2989,9 +2995,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
                 switch status {
                 case .playing:
                     self.finishPlaybackStartTrace(player: player)
-                    if let targetId = self.activeTargetId, self.firstAudioLatch.take(targetId: targetId) {
-                        self.postFirstAudio(targetId)
-                    }
+                    self.noteFirstSound(of: player)
                     self.publishNowPlaying(isPlaying: !self.paused)
                 case .paused:
                     // `paused` tracks user intent. A transient AVPlayer pause must
@@ -3006,6 +3010,18 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
                 }
             }
         }
+    }
+
+    /// The player of the latest `play`, for tests of `noteFirstSound(of:)`.
+    var debugPlayer: AVPlayer? { player }
+
+    /// A `.playing` change reached the main queue. It counts as the first sound of the latest `play` only if that
+    /// player is the current one and is still playing now: the change was queued when it happened, and a `play` that
+    /// arrived since has armed the latch for a start that has made no sound yet (audit of #5012). Main queue only.
+    func noteFirstSound(of observed: AVPlayer) {
+        guard observed === player, observed.timeControlStatus == .playing,
+              let targetId = activeTargetId, firstAudioLatch.take(targetId: targetId) else { return }
+        postFirstAudio(targetId)
     }
 
     private func removePlayerStateObserver() {

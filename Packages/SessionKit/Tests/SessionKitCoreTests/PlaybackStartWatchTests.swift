@@ -263,6 +263,31 @@ final class PlaybackStartWatchTests: XCTestCase {
         XCTAssertTrue(watch.takeCue(at: tap + 0.9))
     }
 
+    /// Audit of #5020: the chime had already played for the first target before its sound was heard. After the
+    /// fallback the new target is silent, so the start gets its cue again.
+    func testAChimedThenHeardStartThatMovesToAnotherTargetIsCuedAgain() {
+        var watch = PlaybackStartWatch()
+        _ = watch.observe(itemId: "article", targetId: "narration", status: .starting, requestedAt: tap, at: tap)
+        XCTAssertTrue(watch.takeCue(at: tap + 0.9), "the first target's chime")
+        XCTAssertTrue(watch.firstAudioHeard(targetId: "narration"))
+
+        _ = watch.observe(itemId: "article", targetId: "live-speech", status: .starting, requestedAt: tap, at: tap + 1.5)
+
+        XCTAssertTrue(watch.takeCue(at: tap + 1.5), "the fallback target is silent: a second cue")
+        XCTAssertFalse(watch.takeCue(at: tap + 1.6), "still one cue per target")
+    }
+
+    /// A start that was chimed and never heard keeps its single cue when it falls back to another target.
+    func testAChimedStartThatMovesToAnotherTargetIsNotCuedAgain() {
+        var watch = PlaybackStartWatch()
+        _ = watch.observe(itemId: "article", targetId: "narration", status: .starting, requestedAt: tap, at: tap)
+        XCTAssertTrue(watch.takeCue(at: tap + 0.9))
+
+        _ = watch.observe(itemId: "article", targetId: "live-speech", status: .starting, requestedAt: tap, at: tap + 1.5)
+
+        XCTAssertFalse(watch.takeCue(at: tap + 1.6), "unchanged: its waiting sound is still running")
+    }
+
     func testAHeardStartThatKeepsItsTargetStaysHeard() {
         var watch = PlaybackStartWatch()
         _ = watch.observe(itemId: "article", targetId: "narration", status: .starting, at: tap)

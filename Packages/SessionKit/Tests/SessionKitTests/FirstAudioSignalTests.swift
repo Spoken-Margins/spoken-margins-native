@@ -124,6 +124,60 @@ final class FirstAudioSignalTests: XCTestCase {
         XCTAssertEqual(posts.all, ["episode-target", "episode-target"])
     }
 
+    /// Audit of #5012: a `.playing` change queued before a `play` arrived is handled after it. It must not take the
+    /// latch of the new start. The item here never loads, so the player is never `.playing` when its note is handled:
+    /// a note for it posts nothing, and neither does a note for a player that is playing but is not the client's.
+    func testAStaleOrForeignPlayingNoteDoesNotTakeTheNewStartsLatch() throws {
+        let (directory, tone) = try makeEpisode()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let posts = Posts()
+        let client = AVPlayerStreamPlaybackClient(postFirstAudio: { posts.add($0) })
+        try client.setPlaybackVolume(0)
+        let missing = FileManager.default.temporaryDirectory.appending(path: "first-audio-missing-\(UUID().uuidString).caf")
+        try client.configureMediaContext(PlaybackMediaContext(
+            itemId: "episode", targetType: .transcriptBackedMedia, targetId: "episode-target",
+            title: "Test episode", playbackURL: missing.absoluteString, durationMs: 8_000,
+            sourceType: .nativeMediaFile
+        ))
+        defer { try? client.stop() }
+        try? client.play(targetId: "episode-target", fromMediaTimeMs: 0) // arms; nothing can sound
+
+        let current = try XCTUnwrap(client.debugPlayer)
+        XCTAssertNotEqual(current.timeControlStatus, .playing, "the item cannot play")
+        client.noteFirstSound(of: current)
+        XCTAssertEqual(posts.all, [], "the current player is not playing: a stale note")
+
+        // A player that really is playing but is not the client's (the old item's player) is not this start's sound.
+        let foreign = AVPlayer(url: tone)
+        foreign.volume = 0
+        foreign.play()
+        defer { foreign.pause() }
+        waitUntil("the foreign player is playing") { foreign.timeControlStatus == .playing }
+        client.noteFirstSound(of: foreign)
+
+        XCTAssertEqual(posts.all, [], "no sound has begun for this start")
+    }
+
+    /// Audit of #5012, the reverse: a `play` on a target that is already sounding makes no new `.playing` change, so
+    /// it must not arm a latch that a later rebuffer would take and post late.
+    func testAPlayOnATargetThatIsAlreadySoundingDoesNotArm() throws {
+        let (directory, url) = try makeEpisode()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let posts = Posts()
+        let client = AVPlayerStreamPlaybackClient(postFirstAudio: { posts.add($0) })
+        try configure(client, url: url)
+        defer { try? client.stop() }
+        try client.play(targetId: "episode-target", fromMediaTimeMs: 0)
+        waitUntil("the first play posted") { posts.all.count == 1 }
+        let current = try XCTUnwrap(client.debugPlayer)
+        XCTAssertEqual(current.timeControlStatus, .playing)
+
+        try client.play(targetId: "episode-target", fromMediaTimeMs: 0) // no pause between: still sounding
+        client.noteFirstSound(of: current) // a later `.playing`, as after a rebuffer
+
+        XCTAssertEqual(posts.all, ["episode-target"], "the second play had no first sound to report")
+    }
+
     /// The system voice, with its synthesizer's callbacks delivered by the test (the pattern of #1129 and #3928).
     func testTheSystemVoicePostsOnDidStartOncePerPlay() throws {
         let posts = Posts()

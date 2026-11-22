@@ -449,6 +449,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let rateChangeLock = NSLock()
     private var lastRateChange: (reason: String, rate: Float, at: ContinuousClock.Instant)?
     private var rateChangeObserver: NSObjectProtocol?
+    /// Watches the current chunk's player for its first `.playing`, which is the first sound of a play (#842).
+    private var playerSoundObservation: NSKeyValueObservation?
+    /// Reports the first sound of each `play` to the start cue (#842). Guarded by `lock`: KVO fires on any thread.
+    private var firstAudioLatch = FirstAudioLatch()
+    private let postFirstAudio: FirstAudioPoster
     private let stallThreshold: Duration
     private let stallSampleInterval: Duration
     private let stallRecoveryCooldown: Duration
@@ -553,6 +558,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onDeviceRenderingAllowed: @escaping @Sendable () -> Bool = { OnDeviceVoiceGovernor.app.supertonicRenderingBlock() == nil },
         pressureRenderer: (any BundledVoiceRendering)? = nil,
         fallbackClient: AudioPlaybackClient? = nil,
+        postFirstAudio: @escaping FirstAudioPoster = { FirstAudioSignals.shared.post($0) },
         interruptionHandler: InterruptionHandler? = nil,
         onGenerationStateChange: GenerationStateHandler? = nil,
         onGenerationProgress: GenerationProgressHandler? = nil,
@@ -588,6 +594,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     ) {
         self.renderer = renderer
         self.voice = voice
+        self.postFirstAudio = postFirstAudio
         self.playbackRate = max(0.25, min(2.0, speed))
         if let fallbackClient {
             self.fallback = fallbackClient
@@ -595,7 +602,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                   !identifier.isEmpty {
             self.fallback = SystemSpeechPlaybackClient(
                 voiceIdentifier: identifier,
-                speechRate: fallbackRate
+                speechRate: fallbackRate,
+                postFirstAudio: postFirstAudio
             )
         } else {
             // The default client follows the user's Spoken Content setting.
@@ -655,6 +663,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     deinit {
         playerItemStatusObservation?.invalidate()
+        playerSoundObservation?.invalidate()
         if let playbackEndObserver {
             NotificationCenter.default.removeObserver(playbackEndObserver)
         }
@@ -751,6 +760,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         // A play is the listener's own act, and other audio (a spoken Margin) may have released the session since the
         // last one; the seams that follow reuse this activation.
         forgetActivatedSession()
+        // The first sound of this play, from the chunk's player or the iOS voice, is what stops the start cue (#842).
+        lock.withLock { firstAudioLatch.arm(targetId: targetId) }
         try activateAudioSession(forPlayback: false)
         // Only another item, or this one having played to its end, lets a stand-in go at a play (#1786).
         let systemVoiceFinished = lock.withLock { voiceHold.voice(for: targetId) == .system }
@@ -795,6 +806,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         switch action {
         case .resumePlayer(let player):
             try activateAudioSession()
+            // A player that is already sounding makes no new `.playing` change, so the latch armed above would wait for
+            // a later rebuffer or chunk and post late. Its sound is audible now (as in AVPlayerStreamPlaybackClient).
+            if player.timeControlStatus == .playing { lock.withLock { firstAudioLatch = FirstAudioLatch() } }
             player.playImmediately(atRate: lock.withLock { playbackRate })
             startStallMonitorIfNeeded()
             return
@@ -3664,11 +3678,31 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 self?.playbackItemFailed(observedItem, request: request)
             }
         }
+        // Each chunk has its own player; the latch lets only the first `.playing` after a play count (#842).
+        playerSoundObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] observed, _ in
+            self?.noteTimeControlStatus(observed.timeControlStatus, of: observed)
+        }
+    }
+
+    /// A chunk player's `.playing` is the first sound of the play when that player is the current one and playback
+    /// is intended; it posts the current target once per play. Not from `startPlayer`, which only schedules (#842).
+    func noteTimeControlStatus(_ status: AVPlayer.TimeControlStatus, of observed: AVPlayer) {
+        // Before `lock` on purpose: `pause()` and `Self.empty` run under it and their `.paused` may be delivered on
+        // this thread, so only `.playing` may go on to take it.
+        guard status == .playing else { return }
+        let targetId = lock.withLock { () -> String? in
+            guard player === observed, transportIntent == .playing, let target = currentTargetId,
+                  firstAudioLatch.take(targetId: target) else { return nil }
+            return target
+        }
+        if let targetId { postFirstAudio(targetId) }
     }
 
     private func removePlaybackEndObserver() {
         playerItemStatusObservation?.invalidate()
         playerItemStatusObservation = nil
+        playerSoundObservation?.invalidate()
+        playerSoundObservation = nil
         if let rateChangeObserver {
             NotificationCenter.default.removeObserver(rateChangeObserver)
             self.rateChangeObserver = nil
