@@ -4,6 +4,8 @@ An `AppShortcut` keeps its phrases opaque at run time, so an app test can only c
 source instead and guards the things that make Siri answer "there's not an app for that" or send the phrase elsewhere:
 
 - exactly one `AppShortcutsProvider` in the app (iOS registers one per app; a second one drops the registration);
+- two shortcuts in it: Add Margin (hands-free, dictated text) and Record a Margin (opens the app and records, #4923),
+  whose phrases never overlap, so "Add a Margin" stays the text route (owner's calls of 2026-11-09 and 2026-11-22);
 - the provider is compiled into every build (nothing defines `SPOKEN_MARGINS_LEGACY`, which compiles it out);
 - every phrase holds the application-name token once, so Siri can route it to this app;
 - the "Add a Margin to/with <app>" forms are registered, because listeners say them (#4814), but Help never teaches
@@ -30,14 +32,30 @@ REGISTERED_DESPITE_CLASH_RISK = {"add a margin to {app}", "add a margin with {ap
 UNPROVEN_ON_PHONE = re.compile(r"\bmargin (to|with)\b", re.I)
 
 
+def _shortcuts() -> dict[str, list[str]]:
+    """The phrases of each AppShortcut, by the name of its intent type."""
+    text = re.sub(r"//[^\n]*", "", PROVIDER.read_text())
+    found: dict[str, list[str]] = {}
+    for match in re.finditer(r"AppShortcut\(\s*intent:\s*(\w+)\(\)\s*,\s*phrases:\s*\[(.*?)\]\s*,\s*shortTitle", text, re.S):
+        phrases = re.findall(r'"((?:[^"\\]|\\.)*)"', match.group(2))
+        assert phrases, f"the phrases list of {match.group(1)} has no string literals"
+        found[match.group(1)] = phrases
+    assert text.count("AppShortcut(") == len(found), "an AppShortcut the scan cannot read: its phrases need checking too"
+    assert found, "no phrases: [...] list in SpokenMarginsAppShortcuts.swift"
+    return found
+
+
 def _phrases() -> list[str]:
-    text = PROVIDER.read_text()
-    assert text.count("AppShortcut(") == 1, "a second AppShortcut needs its phrases checked too"
-    block = re.search(r"phrases:\s*\[(.*?)\]\s*,\s*shortTitle", text, re.S)
-    assert block, "no phrases: [...] list in SpokenMarginsAppShortcuts.swift"
-    phrases = re.findall(r'"((?:[^"\\]|\\.)*)"', re.sub(r"//[^\n]*", "", block.group(1)))
-    assert phrases, "the phrases list has no string literals"
-    return phrases
+    return [phrase for phrases in _shortcuts().values() for phrase in phrases]
+
+
+def _fold(phrase: str) -> str:
+    return " ".join(phrase.replace(TOKEN, "{app}").lower().split())
+
+
+ADD = "AddMarginToSpokenMarginsIntent"
+RECORD = "RecordMarginShortcutIntent"
+INTENTS = APP / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
 
 
 def _swift_sources():
@@ -70,18 +88,46 @@ class SiriPhraseTests(unittest.TestCase):
 
     def test_the_to_and_with_forms_are_registered(self):
         """Cole says "add a margin to spoken margins" (#4814); build 37 did not register it."""
-        folded = {" ".join(p.replace(TOKEN, "{app}").lower().split()) for p in _phrases()}
+        folded = {_fold(p) for p in _shortcuts()[ADD]}
         self.assertTrue(REGISTERED_DESPITE_CLASH_RISK <= folded, REGISTERED_DESPITE_CLASH_RISK - folded)
 
     def test_the_phrases_that_worked_on_the_phone_stay_registered(self):
         """"in" worked on the owner's phone (#3880); a change must not drop it or the name-first fallback."""
-        folded = {" ".join(p.replace(TOKEN, "{app}").lower().split()) for p in _phrases()}
+        folded = {_fold(p) for p in _shortcuts()[ADD]}
         self.assertIn("add a margin in {app}", folded)
         self.assertIn("{app} add a margin", folded)
 
     def test_no_phrase_is_listed_twice(self):
         folded = [" ".join(p.lower().split()) for p in _phrases()]
         self.assertEqual(len(folded), len(set(folded)))
+
+    def test_record_a_margin_is_a_second_shortcut_whose_phrases_never_fit_add_a_margin(self):
+        """"Add a Margin" by voice stays the dictated-text route for driving; "Record a Margin" opens the app (#4923).
+        A phrase in both, or a Record phrase that says "add", would let Siri pick the wrong one."""
+        shortcuts = _shortcuts()
+        self.assertEqual(set(shortcuts), {ADD, RECORD})
+        add = {_fold(p) for p in shortcuts[ADD]}
+        record = [_fold(p) for p in shortcuts[RECORD]]
+        self.assertEqual(add & set(record), set())
+        for phrase in record:
+            self.assertNotRegex(phrase, r"\b(add|write|make)\b", phrase)
+            self.assertIn("record", phrase)
+
+    def test_record_a_margin_opens_the_app_asks_nothing_and_is_listed_in_shortcuts(self):
+        code = re.sub(r"//[^\n]*", "", (INTENTS / "RecordMarginShortcutIntent.swift").read_text())
+        intent = code[code.index("struct RecordMarginShortcutIntent"):]
+        self.assertIn("static let openAppWhenRun = true", intent)
+        self.assertNotIn("@Parameter", intent, "a parameter would make Siri or Shortcuts ask before the app opens")
+        self.assertNotIn("isDiscoverable", intent, "hidden from Shortcuts is what the Live Activity's intent does")
+        self.assertNotIn("requestValue", code)
+
+    def test_add_margin_still_asks_for_the_text_only(self):
+        """Voice and pictures come as separate or optional parameters (#4924, #4925); text stays the one required one."""
+        code = re.sub(r"//[^\n]*", "", (INTENTS / "AddMarginShortcutIntent.swift").read_text())
+        intent = code[code.index("struct AddMarginToSpokenMarginsIntent"):]
+        params = re.findall(r"@Parameter\((?:[^()]|\([^()]*\))*\)\s*var\s+(\w+)\s*:\s*([\w<>?]+)", intent)
+        required = [name for name, kind in params if not kind.endswith("?")]
+        self.assertEqual(required, ["text"])
 
     def test_the_phrases_help_teaches_are_registered(self):
         line = next((l for l in HELP.read_text().splitlines() if "Hands-free: say" in l), None)
