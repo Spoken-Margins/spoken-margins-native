@@ -74,6 +74,23 @@ class SiriPhraseTests(unittest.TestCase):
         for phrase in taught:
             self.assertIn(phrase.lower(), registered, f"Help teaches {phrase!r}, which no AppShortcut phrase says")
 
+    def test_help_says_siri_stays_open_after_the_margin_is_added(self):
+        """The owner's phone showed Siri stays open after "Margin added" and nothing playing comes back by itself
+        (#3894). Help must say so, and must not promise that Siri leaves or that listening comes back on its own: nobody
+        has measured what happens after Siri closes."""
+        line = next((l for l in HELP.read_text().splitlines() if "After Siri says the Margin was added" in l), None)
+        self.assertIsNotNone(line, "Help must say what to expect after Siri adds a Margin (#3894)")
+        self.assertIn("until you dismiss it", line)
+        self.assertNotRegex(line, r"(?i)closes (on its own|by itself)|leaves (on its own|by itself)|wait a moment|comes? back|resumes?")
+
+    def test_the_intent_asks_siri_nothing_after_the_text(self):
+        """Siri asks only for a missing parameter or a confirmation; a second question would keep it listening (#3894)."""
+        code = re.sub(r"//[^\n]*", "", (APP / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
+                                       / "AddMarginShortcutIntent.swift").read_text())
+        self.assertNotIn("requestConfirmation", code)
+        self.assertNotIn("requestDisambiguation", code)
+        self.assertEqual(code.count("requestValueDialog"), 1, "only the text is asked for")
+
     def test_the_name_siri_hears_is_the_display_name_help_uses(self):
         text = (ROOT / "project.yml").read_text()
         self.assertIn("INFOPLIST_KEY_CFBundleDisplayName: Spoken Margins\n", text)

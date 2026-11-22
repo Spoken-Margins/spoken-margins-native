@@ -501,8 +501,7 @@ final class Gate1AppModel: ObservableObject {
     var reviewPlaces = ReviewReturnPlaces() // the place a "Review new Margins" owes the listener, kept across launches (#474)
     var sharedMarginReturn = SharedMarginReturnClaim() // who owes the source back after a shared Margin (#997)
     var importedCommentaryAutoPlayTask: Task<Void, Never>?
-    var bulkSharePreparationTask: Task<Void, Never>?
-    var bulkSharePreparationGeneration = 0
+    let bulkSharePreparation = BulkPreparationRun() // the "Prepare All Included" run and its stale-work rule (#969)
     var shouldForceFirstSharedSourceMissForUITesting = UITestingHooks.forcesFirstSharedSourceMiss
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
     let libraryAudioLoop = LibraryAudioPreparationLoop() // the foreground loop, its render gate and turns (#281, #534, #995)
@@ -878,7 +877,7 @@ final class Gate1AppModel: ObservableObject {
         libraryAudioLoop.cancelOnly()
         sourceImportTask?.cancel()
         importedCommentaryAutoPlayTask?.cancel()
-        bulkSharePreparationTask?.cancel()
+        bulkSharePreparation.cancelOnly()
         offlineServicesStartupTasks.forEach { $0.cancel() }
     }
 
@@ -2624,12 +2623,16 @@ final class Gate1AppModel: ObservableObject {
             startupChunkCount: Self.startupAudioChunkCount)
     }
 
+    /// The web link in pasted text. The shared rule (`PasteIntake.webLink`, also the share extension's) comes first, so
+    /// "Title" then the link is that link; the detector only finds a link inside longer text (#4809).
     static func firstURL(in text: String) -> URL? {
+        if let link = PasteIntake.webLink(in: text) { return link }
         guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
             return URL(string: text)
         }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        return detector.matches(in: text, options: [], range: range).compactMap(\.url).first
+        return detector.matches(in: text, options: [], range: range).compactMap(\.url)
+            .first { ["http", "https"].contains($0.scheme?.lowercased() ?? "") }
     }
 
     func scheduleSourceTranscriptImportIfAvailable(_ links: [SourceTranscriptLink], itemId: String) {

@@ -313,16 +313,23 @@ class Ctx:
 def evaluate(expression, github, merge_queue='on', pr_input=''):
     """Evaluate the small subset of GitHub expressions this workflow uses (||, &&, ==, parentheses, paths)."""
     python = expression.replace('||', ' or ').replace('&&', ' and ')
+    # contains(github.event.pull_request.labels.*.name, 'x'): the one `.*` filter this workflow uses
+    python = re.sub(r"contains\(github\.event\.pull_request\.labels\.\*\.name,\s*'([^']+)'\)", r"has_label('\1')", python)
+    names = [label.get('name') for label in ((github.get('event') or {}).get('pull_request') or {}).get('labels') or []]
     return eval(f'({python})', {'__builtins__': {}},  # noqa: S307 - our own workflow file, test only
-                {'github': Ctx(github), 'vars': Ctx({'MERGE_QUEUE': merge_queue}), 'inputs': Ctx({'pr': pr_input})})
+                {'github': Ctx(github), 'vars': Ctx({'MERGE_QUEUE': merge_queue}), 'inputs': Ctx({'pr': pr_input}),
+                 'has_label': lambda name: name in names})
 
 
 def interpolate(template, github):
     return re.sub(r'\$\{\{(.*?)\}\}', lambda m: str(evaluate(m.group(1), github)), template)
 
 
-def event(action, **extra):
-    payload = {'action': action, 'pull_request': {'number': 7}, **extra}
+def event(action, armed=None, **extra):
+    pull = {'number': 7}
+    if armed is not None:
+        pull['labels'] = [{'name': 'automerge'}] if armed else [{'name': 'docs'}]
+    payload = {'action': action, 'pull_request': pull, **extra}
     return {'event_name': 'pull_request_target', 'event': payload}
 
 
@@ -330,7 +337,8 @@ class WorkflowExpressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import yaml
-        cls.job = yaml.safe_load((ROOT / '.github/workflows/merge-queue-label-bridge.yml').read_text())['jobs']['bridge']
+        workflow = yaml.safe_load((ROOT / '.github/workflows/merge-queue-label-bridge.yml').read_text())
+        cls.job, cls.workflow_on = workflow['jobs']['bridge'], workflow[True]
 
     def runs(self, github):
         return bool(evaluate(self.job['if'], github))
@@ -349,6 +357,19 @@ class WorkflowExpressionTests(unittest.TestCase):
     def test_a_body_only_edit_does_not_run_the_job(self):
         self.assertFalse(self.runs(event('edited', changes={'body': {'from': 'old'}})))
         self.assertTrue(self.runs(event('edited', changes={'title': {'from': 'old'}})))
+
+    def test_a_pr_event_checks_an_armed_pr_and_skips_one_that_is_not_armed(self):
+        # #4866: the PR's own events replace the 15-minute sweep. A push to an unarmed PR starts no job at all.
+        for action in ('opened', 'reopened', 'synchronize', 'ready_for_review'):
+            with self.subTest(action):
+                self.assertTrue(self.runs(event(action, armed=True)))
+                self.assertFalse(self.runs(event(action, armed=False)))
+                self.assertFalse(self.runs(event(action)))
+
+    def test_no_check_finishing_starts_a_sweep(self):
+        # A sweep when a check finishes would queue a PR whose merge group just failed (or that was taken out by hand)
+        # before merge_queue_dequeued.py took `automerge` off it: a second failing group (ci_model scenario d).
+        self.assertNotIn('workflow_run', self.workflow_on)
 
     def test_which_events_run_the_job(self):
         self.assertTrue(self.runs(event('labeled', label={'name': 'automerge'})))
@@ -373,7 +394,8 @@ class WorkflowTests(unittest.TestCase):
 
     def test_retitles_and_drafts_trigger_the_check(self):
         types = self.workflow[True]['pull_request_target']['types']
-        self.assertEqual(set(types), {'labeled', 'unlabeled', 'edited', 'converted_to_draft'})
+        self.assertEqual(set(types), {'labeled', 'unlabeled', 'edited', 'converted_to_draft', 'opened', 'reopened',
+                                      'synchronize', 'ready_for_review'})
         condition = self.workflow['jobs']['bridge']['if']
         for action in bridge.CHECK_ACTIONS:
             self.assertIn(f"github.event.action == '{action}'", condition)

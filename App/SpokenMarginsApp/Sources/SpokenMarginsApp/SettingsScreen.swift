@@ -19,6 +19,8 @@ struct SettingsScreen: View, Equatable {
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @AppStorage(HeadphoneDoublePressAction.storageKey) private var headphoneDoublePress = HeadphoneDoublePressAction.default.rawValue
+    /// Where footnotes are heard (#3777). Read at the next play, never mid-listen.
+    @AppStorage(FootnoteMode.storageKey) private var footnoteMode = FootnoteMode.default.rawValue
     @State private var showsDeveloperTools = false
     #if DEBUG
     @FocusState private var editingMapJSON: Bool
@@ -257,6 +259,18 @@ struct SettingsScreen: View, Equatable {
                         .onCompatibleChange(of: inputs.skipUnit) { _ in
                             model.skipUnitChanged()
                         }
+                        Picker("Footnotes", selection: Binding(
+                            get: { FootnoteMode.pickerSelection(storedValue: footnoteMode).rawValue },
+                            set: { footnoteMode = $0 }
+                        )) {
+                            ForEach(FootnoteMode.pickerChoices, id: \.self) { mode in
+                                Text(mode.pickerTitle).tag(mode.rawValue)
+                            }
+                        }
+                        .accessibilityIdentifier("settings.footnotes.picker")
+                        Text(FootnoteMode.pickerCaption)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
                         Picker("Podcast Skip Back", selection: model.screenBinding(\.mediaSkipBackSeconds)) {
                             ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
                                 Text("\(seconds) seconds").tag(seconds)

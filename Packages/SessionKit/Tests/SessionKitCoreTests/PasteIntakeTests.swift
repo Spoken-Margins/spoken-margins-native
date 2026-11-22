@@ -70,7 +70,7 @@ final class PasteIntakeTests: XCTestCase {
         Hear them here: \(link)
         Don't have the app yet? Get it at https://\(host)/join
         """
-        XCTAssertGreaterThan(message.count, ClipboardIntakeClassifier.shortLinkLineLimit)
+        XCTAssertGreaterThan(message.count, ClipboardIntakeClassifier.shortNoteLimit)
         shareLink(message, opens: link)
     }
 
@@ -134,5 +134,32 @@ final class PasteIntakeTests: XCTestCase {
         XCTAssertEqual(ClipboardLinkOffer.pasteResult(for: "Hear it: \(link)"), .link(URL(string: link)!))
         XCTAssertEqual(ClipboardLinkOffer.pasteResult(for: "https://example.com/post"), .link(URL(string: "https://example.com/post")!))
         XCTAssertEqual(ClipboardLinkOffer.pasteResult(for: "some words"), .notALink)
+    }
+
+    // MARK: A link that comes with text, for a field that takes only a link (#4809)
+
+    func testWebLinkTakesTheLinkOutOfWhatWasPasted() {
+        let address = URL(string: "https://example.com/post")!
+        let shared = "https://\(host)/l/\(id)#\(key)"
+        let cases: [(String?, URL?)] = [
+            ("https://example.com/post", address),
+            ("  https://example.com/post\n", address),
+            ("Check this out https://example.com/post", address),
+            ("Title\nhttps://example.com/post", address),
+            ("https://example.com/post\nTitle", address),
+            ("Title (https://example.com/post).", address),
+            ("example.com/post", address),
+            ("Hear it: \(shared)", URL(string: shared)),
+            ("", nil),
+            (nil, nil),
+            ("no link here", nil),
+            ("two https://example.com/a https://example.com/b", nil),
+            ("mailto:me@example.com", nil),
+            ("ftp://example.com/file", nil),
+            ("itpc://feeds.example.com/show.rss", URL(string: "https://feeds.example.com/show.rss")),
+        ]
+        for (pasted, expected) in cases {
+            XCTAssertEqual(PasteIntake.webLink(in: pasted), expected, "\(String(describing: pasted?.debugDescription))")
+        }
     }
 }

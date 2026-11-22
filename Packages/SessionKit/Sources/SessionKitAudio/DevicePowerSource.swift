@@ -5,24 +5,26 @@ import UIKit
 
 /// Whether the phone is on external power, readable from any thread. The render-ahead policy decides on it (#2703:
 /// a charging phone renders further ahead), and renders ask from background threads, where `UIDevice` can't be read.
-protocol ExternalPowerSource: Sendable {
+public protocol ExternalPowerSource: Sendable {
     /// True when charging or full on power, false on battery, nil when the phone can't tell (the simulator).
     var isOnExternalPower: Bool? { get }
 }
 
 /// The app's one power source: battery monitoring is switched on at launch, and the main actor keeps a lock-protected
 /// copy of the state current from `UIDevice.batteryStateDidChangeNotification`, so any thread reads the latest value.
-final class DevicePowerSource: ExternalPowerSource, @unchecked Sendable {
-    static let app = DevicePowerSource()
+public final class DevicePowerSource: ExternalPowerSource, @unchecked Sendable {
+    public static let app = DevicePowerSource()
+
+    public init() {}
 
     /// What iOS reports, mapped so tests and non-iOS builds needn't name `UIDevice.BatteryState`.
-    enum BatteryState: Sendable { case unknown, unplugged, charging, full }
+    public enum BatteryState: Sendable { case unknown, unplugged, charging, full }
 
     private let lock = NSLock()
     private var state: BatteryState = .unknown
     private var observer: NSObjectProtocol?
 
-    var isOnExternalPower: Bool? {
+    public var isOnExternalPower: Bool? {
         switch lock.withLock({ state }) {
         case .charging, .full: true
         case .unplugged: false
@@ -31,13 +33,13 @@ final class DevicePowerSource: ExternalPowerSource, @unchecked Sendable {
     }
 
     /// Records a state iOS reported. The notification and the first read call it; tests call it directly.
-    func record(_ batteryState: BatteryState) {
+    public func record(_ batteryState: BatteryState) {
         lock.withLock { state = batteryState }
     }
 
     /// Switches battery monitoring on, reads the state once and follows its changes. Safe to call more than once.
     @MainActor
-    func startMonitoring() {
+    public func startMonitoring() {
         #if canImport(UIKit) && os(iOS)
         guard observer == nil else { return }
         let device = UIDevice.current

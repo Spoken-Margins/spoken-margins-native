@@ -580,6 +580,21 @@ class LaneSimTests(unittest.TestCase):
         self.assertEqual([r.get('boot') for r in self.records() if 'boot' in r], [UDID])
         self.assertEqual(lane_sim.unsafe_devices(), {})
 
+    def test_only_a_whole_udid_can_be_marked_unsafe_and_a_malformed_entry_holds_nothing(self):
+        # 2026-11-20: a one-letter `U` entry blocked every integration run through the guard's substring match (#4868).
+        for key in ('', 'U', 'u', ' ', UDID[:8], UDID[:13], UDID + ' ', UDID + '0', 'bad-0001'):
+            with self.subTest(mark=key), self.assertRaises(ValueError):
+                lane_sim.mark_unsafe(key, 'crashed during boot')
+            self.assertEqual(lane_sim.unsafe_devices(), {})
+        for key in (UDID, UDID.upper(), 'BAD-0001'):
+            with self.subTest(mark=key):
+                lane_sim.mark_unsafe(key, 'crashed during boot')
+                self.assertIn(key, lane_sim.unsafe_devices())
+        lane_sim.unsafe_path().write_text(json.dumps({'U': {'reason': 'x'}, UDID: {'reason': 'real'}, 'T': 'x'}))
+        self.assertEqual(set(lane_sim.unsafe_devices()), {UDID})  # `U` and `T` are read as nothing
+        lane_sim.unsafe_path().write_text('["U"]')
+        self.assertEqual(lane_sim.unsafe_devices(), {})
+
     def test_a_finished_boot_marks_the_simulator_quiet_from_that_moment(self):
         # #705: the host app stalled when launched within about 16 s of the boot finishing.
         self.assertIsNone(lane_sim.seconds_quiet(UDID))
@@ -878,15 +893,17 @@ class LaneSimTests(unittest.TestCase):
 
     def test_the_runner_does_not_start_a_simulator_while_another_job_holds_the_slot(self):
         import importlib.util
-        spec = importlib.util.spec_from_file_location('lane_runner_for_slot', SCRIPTS / 'lane-runner.py')
+        spec = importlib.util.spec_from_file_location('lane_t3_for_slot', SCRIPTS / 'lane_t3.py')
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         with mock.patch.object(runner, 'RUNNER_SLOT_WAIT', 0.2), \
                 mock.patch.object(runner, 'prepare_t3_build', return_value=('PASS', ['prepared'])), \
+                mock.patch.object(lane_sim, 'newest_runtime', return_value='iOS-26-5'), \
                 mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}), \
                 mock.patch.object(lane_sim, 'clone_temporary', side_effect=AssertionError('made a simulator')), \
                 lane_slots.simulator_slot('the Test Desk', out=self.quiet), mock.patch('sys.stdout', self.quiet):
-            verdict, _, _, details, _, _ = runner.run_t3(['ExperiencePresentationTests'], 'r1', Path(self.temporary.name))
+            verdict, _, _, details, _, _ = runner._run_t3_grouped({'app': ['ExperiencePresentationTests']}, 'r1',
+                                                                  Path(self.temporary.name))
         self.assertEqual(verdict, 'INCONCLUSIVE')
         self.assertIn('simulator slots stayed busy', details[0])
         self.assertIn('memory pressure is warn', details[0])
@@ -1218,7 +1235,7 @@ class LaneSimTests(unittest.TestCase):
 
     def test_the_runner_reports_why_it_could_not_boot(self):
         import importlib.util
-        spec = importlib.util.spec_from_file_location('lane_runner_for_sim', SCRIPTS / 'lane-runner.py')
+        spec = importlib.util.spec_from_file_location('lane_t3_for_sim', SCRIPTS / 'lane_t3.py')
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         with mock.patch.object(lane_sim, 'LOCK_WAIT', 0.2), \

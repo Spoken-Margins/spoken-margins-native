@@ -338,14 +338,29 @@ def log_decision(event: dict, found, decision: str, desk: str | None, environ) -
         pass
 
 
+# A simulator udid is a UUID. The test fixtures also use short ids like `BAD-0001` (letters, a hyphen, digits). A key of
+# any other shape, such as the one-letter `U` that blocked every integration run from 2026-11-18, names no device.
+UDID_SHAPE = re.compile(r'[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|[A-Z]+-[0-9]+')
+
+
 def unsafe_devices(environ) -> dict:
-    """Simulators the lane marked unsafe (scripts/lane_sim.py): a failed boot or a crash while booting."""
+    """Simulators the lane marked unsafe (scripts/lane_sim.py): a failed boot or a crash while booting.
+
+    Keys that are not udid-shaped are left out, so a malformed entry can't block anything."""
     directory = environ.get('SM_LANE_STATE_DIR') or os.path.expanduser('~/Library/Caches/SpokenMarginsLane')
     try:
         with open(os.path.join(directory, 'unsafe-simulators.json')) as handle:
-            return json.load(handle)
+            marked = json.load(handle)
     except (OSError, ValueError):
         return {}
+    if not isinstance(marked, dict):
+        return {}
+    return {key: info for key, info in marked.items() if isinstance(key, str) and UDID_SHAPE.fullmatch(key)}
+
+
+def names_device(command: str, udid: str) -> bool:
+    """Whether `command` names the whole `udid`, never a piece of a longer word or id (`U` is not in `simctl boot X`)."""
+    return re.search(r'(?<![0-9A-Za-z-])' + re.escape(udid) + r'(?![0-9A-Za-z-])', command) is not None
 
 
 def decide(event: dict, repos: list[str], environ=None) -> str | None:
@@ -358,7 +373,7 @@ def decide(event: dict, repos: list[str], environ=None) -> str | None:
     sim = sorted({what for kind, what in found if kind == SIM})
     protected = sorted({what for kind, what in found if kind == PROTECTED})
     command = (event.get('tool_input') or {}).get('command') or ''
-    unsafe = {udid: info for udid, info in unsafe_devices(environ).items() if udid in str(command)}
+    unsafe = {udid: info for udid, info in unsafe_devices(environ).items() if names_device(str(command), udid)}
     only_removal = all(what in ('simctl delete', 'simctl shutdown') for _, what in found)
     reason = None
     if unsafe and not only_removal:

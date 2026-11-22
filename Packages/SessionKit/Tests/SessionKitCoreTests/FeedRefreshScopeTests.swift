@@ -66,19 +66,38 @@ final class FeedRefreshScopeTests: XCTestCase {
     }
 
     /// Fails without the fix: the old loop fetched one feed at a time, so at most one was ever in flight.
+    /// The feeds are held open until the test sees the cap's worth in flight at once, so the result does not depend on
+    /// how fast a busy runner starts the requests (#4705: a 50 ms timer let a slow start finish one before the next began).
     func testStaleFeedsAreFetchedSeveralAtOnceButNeverAboveTheCap() async throws {
         let repository = InMemorySessionRepository()
         for n in 1...12 { try repository.saveFeedSubscription(subscription(n, refreshedHoursAgo: 7)) }
-        SlowFeedURLProtocol.reset()
+        SlowFeedURLProtocol.reset(holding: true)
+        let followed = coordinator(repository)
+        let now = base
+        let refresh = Task { await followed.refreshStale(now: now, maximumConcurrent: 4) }
 
-        _ = await coordinator(repository).refreshStale(now: base, maximumConcurrent: 4)
+        // Four held open at once means the loop fetches in parallel; a loop that fetches one at a time never gets there.
+        let reachedTheCap = await waitUntil { SlowFeedURLProtocol.heldCount >= 4 }
+        let heldWhileWaiting = SlowFeedURLProtocol.heldCount
+        SlowFeedURLProtocol.releaseAll()
+        _ = await refresh.value
 
+        XCTAssertTrue(reachedTheCap, "only \(heldWhileWaiting) feeds were in flight together; expected 4")
         XCTAssertEqual(SlowFeedURLProtocol.fetchedHosts.count, 12, "every stale feed is fetched once")
-        XCTAssertGreaterThan(SlowFeedURLProtocol.peakInFlight, 1)
-        XCTAssertLessThanOrEqual(SlowFeedURLProtocol.peakInFlight, 4)
+        XCTAssertEqual(SlowFeedURLProtocol.peakInFlight, 4, "four at a time, never more")
         for subscription in try repository.loadFeedSubscriptions() {
             XCTAssertEqual(subscription.lastRefreshAt, base, "\(subscription.id) was marked refreshed")
         }
+    }
+
+    /// A deadline is only a ceiling (docs/testing.md "Waiting in tests"); the answer is the state, not the elapsed time.
+    private func waitUntil(timeout: Duration = .seconds(30), _ condition: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while !condition() {
+            if ContinuousClock.now > deadline { return false }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return true
     }
 
     func testFreshFeedsAreNotFetched() async throws {
@@ -115,13 +134,24 @@ final class FeedRefreshScopeTests: XCTestCase {
 }
 
 /// Answers every `*.example` feed with an empty JSON feed after a short wait, and records how many were open at once.
+/// With `reset(holding: true)` it answers nothing until `releaseAll()`, so a test controls when requests finish.
 private final class SlowFeedURLProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var inFlight = 0
     nonisolated(unsafe) private static var peak = 0
     nonisolated(unsafe) private static var hosts: Set<String> = []
+    nonisolated(unsafe) private static var holding = false
+    nonisolated(unsafe) private static var held: [Finisher] = []
 
-    static func reset() { lock.lock(); inFlight = 0; peak = 0; hosts = []; lock.unlock() }
+    static func reset(holding: Bool = false) {
+        lock.lock(); inFlight = 0; peak = 0; hosts = []; self.holding = holding; held = []; lock.unlock()
+    }
+    static var heldCount: Int { lock.lock(); defer { lock.unlock() }; return held.count }
+    /// Answers every held request and stops holding, so later requests answer after the short wait as usual.
+    static func releaseAll() {
+        lock.lock(); holding = false; let parked = held; held = []; lock.unlock()
+        for finish in parked { finish.run() }
+    }
     static var peakInFlight: Int { lock.lock(); defer { lock.unlock() }; return peak }
     static var fetchedHosts: Set<String> { lock.lock(); defer { lock.unlock() }; return hosts }
 
@@ -133,15 +163,20 @@ private final class SlowFeedURLProtocol: URLProtocol, @unchecked Sendable {
         Self.inFlight += 1
         Self.peak = max(Self.peak, Self.inFlight)
         Self.hosts.insert(request.url?.host ?? "")
-        Self.lock.unlock()
         let finish = Finisher(urlProtocol: self)
+        if Self.holding {
+            Self.held.append(finish)
+            Self.lock.unlock()
+            return
+        }
+        Self.lock.unlock()
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
             finish.run()
         }
     }
 
     /// Carries the protocol to the timer; URLProtocol is not Sendable, and only this timer touches it afterwards.
-    private struct Finisher: @unchecked Sendable {
+    fileprivate struct Finisher: @unchecked Sendable {
         let urlProtocol: SlowFeedURLProtocol
         func run() { urlProtocol.respond() }
     }

@@ -5,14 +5,14 @@ GitHub's merge queue tests the exact merge and merges it. Four of the lane's rul
 one check carries them, on the PR and again in the queue:
 
 1. Audio, persistence, packet and lane changes need a clean Codex or Claude audit of the PR's head
-   (scripts/lane-runner.py merge_blockers and audit_blocker).
+   (scripts/lane_merge_rules.py merge_blockers and audit_blocker).
 2. A PR that brings in another PR's commit with a blocking audit is held until that finding is resolved
-   (lane-runner.py inherited_check, scripts/lane_inherited_holds.py).
-3. A PR touching `.github/` or `scripts/lane-runner.py` merges only with the owner's tap: the `owner-tap` label,
-   which only the owner adds (lane-runner.py owner_tap_paths; owner rule 2026-10-09, #1203).
+   (lane_merge_rules.py inherited_check, scripts/lane_inherited_holds.py).
+3. A PR touching `.github/`, `scripts/lane-runner.py` or `scripts/lane_merge_rules.py` merges only with the owner's tap:
+   the `owner-tap` label, which only the owner adds (lane_merge_rules.py owner_tap_paths; owner rule 2026-10-09, #1203).
 4. An outside contributor's commits carry `Signed-off-by:` (scripts/signoff_check.py, #2114).
 
-The rules themselves are not copied here: they are imported from lane-runner.py, test-scope.py and signoff_check.py
+The rules themselves are not copied here: they are imported from lane_merge_rules.py, test-scope.py and signoff_check.py
 in the same checkout, which the workflow takes from main, never from the PR. The PR's commits are fetched as git data
 and only read.
 
@@ -21,6 +21,11 @@ whose head commit is the group's head (GraphQL mergeQueue.entries). A GitHub rea
 still fails blocks (fail closed), so a blip removes a PR from the queue rather than waving it through.
 
 Prints one line per PR: "may merge" or the reasons it can't. Exit 1 if any PR is blocked or anything couldn't be read.
+
+With --start (pull_request runs, #4867) it also starts any dispatchable required check (scripts/required_checks.py) that
+has no run on the head, and says "not started" for each. A required check that never ran waits for nobody, so the policy
+starts it; that is a note, not a block, and it never changes the exit code. A run that is going, or that finished with
+any verdict, is left alone.
 """
 from __future__ import annotations
 
@@ -41,6 +46,7 @@ if str(SCRIPTS) not in sys.path:
 OWNER_TAP_LABEL = 'owner-tap'
 ATTEMPTS = 3
 RETRY_WAIT = 10  # seconds, doubled after each failed try
+START_RECHECK_WAIT = 60  # seconds: the PR's own checks start with this one, so a run not yet listed gets this long to appear
 QUEUE_QUERY = '''query($owner: String!, $name: String!, $branch: String!) {
   repository(owner: $owner, name: $name) {
     mergeQueue(branch: $branch) {
@@ -64,11 +70,11 @@ def _load(name: str, filename: str):
 _MODULES: dict[str, types.ModuleType] = {}
 
 
-def lane():
-    """scripts/lane-runner.py, where the audit, inherited-hold and owner-tap rules live (one copy)."""
-    if 'lane' not in _MODULES:
-        _MODULES['lane'] = _load('lane_runner_for_merge_policy', 'lane-runner.py')
-    return _MODULES['lane']
+def rules():
+    """scripts/lane_merge_rules.py, where the audit, inherited-hold and owner-tap rules live (one copy, #4769)."""
+    if 'rules' not in _MODULES:
+        _MODULES['rules'] = _load('lane_merge_rules_for_merge_policy', 'lane_merge_rules.py')
+    return _MODULES['rules']
 
 
 def scope_policy():
@@ -83,9 +89,10 @@ class GitHub:
     def __init__(self, repo: str, run=subprocess.run, sleep=time.sleep, attempts: int = ATTEMPTS):
         self.repo, self.run, self.sleep, self.attempts = repo, run, sleep, attempts
 
-    def _gh(self, args: list[str]) -> str:
+    def _gh(self, args: list[str], attempts: int | None = None) -> str:
+        attempts = attempts or self.attempts
         problem, wait = '', RETRY_WAIT
-        for attempt in range(self.attempts):
+        for attempt in range(attempts):
             if attempt:
                 self.sleep(wait)
                 wait *= 2
@@ -97,7 +104,7 @@ class GitHub:
             if done.returncode == 0:
                 return done.stdout
             problem = (done.stderr or '').strip()[:200]
-        raise ReadFailed(f'gh {" ".join(args[:2])} failed {self.attempts} times: {problem}')
+        raise ReadFailed(f'gh {" ".join(args[:2])} failed {attempts} times: {problem}')
 
     def api(self, path: str, paginate: bool = False):
         args = ['api', path] + (['--paginate', '--jq', '.[]'] if paginate else [])
@@ -119,10 +126,27 @@ class GitHub:
     def pull(self, number: int) -> dict:
         return self.api(f'repos/{self.repo}/pulls/{number}')
 
+    def workflow_runs(self, workflow: str, sha: str) -> list[dict]:
+        """The runs of <workflow> on commit <sha>, of any event."""
+        found = self.api(f'repos/{self.repo}/actions/workflows/{workflow}/runs?head_sha={sha}&per_page=100')
+        return (found or {}).get('workflow_runs') or []
+
+    def run_jobs(self, run_id: int) -> list[dict]:
+        """The jobs of one workflow run, each with its own conclusion."""
+        found = self.api(f'repos/{self.repo}/actions/runs/{run_id}/jobs?per_page=100')
+        return (found or {}).get('jobs') or []
+
+    def dispatch(self, workflow: str, ref: str, inputs: dict[str, str]) -> None:
+        """workflow_dispatch <workflow> on branch <ref>. One try: a POST that landed but answered late must not start twice."""
+        args = ['api', '-X', 'POST', f'repos/{self.repo}/actions/workflows/{workflow}/dispatches', '-f', f'ref={ref}']
+        for name, value in inputs.items():
+            args += ['-f', f'inputs[{name}]={value}']
+        self._gh(args, attempts=1)
+
     def comments(self, number: int) -> list[dict]:
         """The PR's comments that the lane trusts (owner, members, collaborators, the project's bot)."""
         found = self.api(f'repos/{self.repo}/issues/{number}/comments?per_page=100', paginate=True)
-        return [c for c in found if lane().trusted_comment(c)]
+        return [c for c in found if rules().trusted_comment(c)]
 
     def queue_entries(self, branch: str) -> list[dict]:
         owner, name = self.repo.split('/', 1)
@@ -191,7 +215,7 @@ def unsigned_commits(tree: Path, base_ref: str, head: str, association: str, log
 
 def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, classify=None, inherited=None) -> list[str]:
     """Why PR <number> at <head> may not merge into <base>, or [] when it may. classify and inherited are injected in
-    tests; by default they are test-scope.py's classify and lane-runner.py's inherited_check."""
+    tests; by default they are test-scope.py's classify and lane_merge_rules.py's inherited_check."""
     base_ref = f'origin/{base}'
     pull = github.pull(number)
     fetch_head(tree, number, head)
@@ -199,9 +223,9 @@ def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, clas
     scope = (classify or (lambda p, d: scope_policy().classify(p, d, root=tree)))(paths, diffs)
     comments = github.comments(number)
     if inherited is None:
-        inherited = lane().inherited_check(types.SimpleNamespace(repo=github.repo, pr=number), tree, base, head)
-    reasons = list(lane().merge_blockers(scope, comments, head, inherited))
-    tap = lane().owner_tap_paths(scope)
+        inherited = rules().inherited_check(types.SimpleNamespace(repo=github.repo, pr=number), tree, base, head)
+    reasons = list(rules().merge_blockers(scope, comments, head, inherited))
+    tap = rules().owner_tap_paths(scope)
     labels = {label.get('name') for label in pull.get('labels') or []}
     if tap and OWNER_TAP_LABEL not in labels:
         shown = ', '.join(f'`{p}`' for p in tap)
@@ -231,7 +255,45 @@ def judge(github: GitHub, tree: Path, base: str, prs: list[tuple[int, str]], out
     return 1 if blocked else 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def start_missing(github: GitHub, number: int, head: str, base: str = 'main', out=sys.stdout, sleep=time.sleep,
+                  recheck_wait: float = START_RECHECK_WAIT) -> list[str]:
+    """Start the dispatchable required checks that have no run on PR <number>'s head (#4867), and return their workflows.
+
+    Skips a closed or draft PR, a fork's, and a head the PR has moved past (the newer push has its own events). A check
+    not listed yet is looked for again after <recheck_wait> seconds, because the PR's own workflows start at the same
+    time as this one, and the PR's head is read again then. A run that was cancelled is not restarted here (the
+    dispatch script does that on purpose). A dispatch that fails is printed and never blocks the merge policy."""
+    import required_checks  # here, not at the top: a broken module must reach main()'s `except`, not stop every verdict
+    def eligible(pull: dict) -> bool:
+        return (pull.get('state') == 'open' and not pull.get('draft') and (pull.get('head') or {}).get('sha') == head
+                and ((pull.get('head') or {}).get('repo') or {}).get('full_name') == github.repo)
+    try:
+        pull = github.pull(number)
+        if not eligible(pull):
+            return []
+        todo = required_checks.missing(github, head)
+        if todo:
+            sleep(recheck_wait)
+            pull = github.pull(number)
+            todo = required_checks.missing(github, head) if eligible(pull) else []
+    except ReadFailed as error:
+        print(f'#{number} at {head[:7]}: could not look for required checks that never ran ({error}).', file=out)
+        return []
+    started, ref = [], pull['head']['ref']
+    for workflow in todo:
+        names = ', '.join(f'`{n}`' for n in required_checks.checks_of(workflow))
+        try:
+            required_checks.start(github, workflow, ref, base)
+        except ReadFailed as error:
+            print(f'#{number} at {head[:7]}: {names} not started, and starting `{workflow}` failed ({error})'
+                  f'{required_checks.failure_hint(error)}.', file=out)
+            continue
+        started.append(workflow)
+        print(f'#{number} at {head[:7]}: {names} not started on this head; started `{workflow}` on `{ref}`.', file=out)
+    return started
+
+
+def main(argv: list[str] | None = None, github: GitHub | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--repo', default=os.environ.get('GITHUB_REPOSITORY', ''))
     parser.add_argument('--base', default='main')
@@ -239,10 +301,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--pr', type=int, help='one PR (pull_request, workflow_dispatch)')
     parser.add_argument('--head', default='', help="the PR's head commit; empty: the PR's current head")
     parser.add_argument('--group-head', default='', help="a merge group's head commit (merge_group)")
+    parser.add_argument('--start', action='store_true',
+                        help="with --pr: start a dispatchable required check that has no run on the PR's head (#4867)")
     args = parser.parse_args(argv)
     if not args.repo or not (args.pr or args.group_head):
         parser.error('--repo and one of --pr or --group-head are required')
-    github = GitHub(args.repo)
+    github = github or GitHub(args.repo)
     try:
         if args.group_head:
             prs = group_prs(github.queue_entries(args.base), args.group_head)
@@ -251,7 +315,13 @@ def main(argv: list[str] | None = None) -> int:
     except ReadFailed as error:
         print(f'merge policy could not find the PRs to check ({error}), so it holds the merge.')
         return 1
-    return judge(github, args.tree, args.base, prs)
+    code = judge(github, args.tree, args.base, prs)
+    if args.start and args.pr and not args.group_head:
+        try:
+            start_missing(github, prs[0][0], prs[0][1], args.base)
+        except Exception as error:  # noqa: BLE001 - starting a check is a courtesy; it never changes the verdict
+            print(f'#{prs[0][0]}: looking for required checks that never ran failed ({str(error)[:200]}); the verdict above stands.')
+    return code
 
 
 if __name__ == '__main__':

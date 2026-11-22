@@ -30,6 +30,7 @@ ROOT = T.ROOT
 MARKER = '<!-- branch-t3 -->'
 MAX_SELECTORS = 40
 SELECTOR = re.compile(r'[A-Za-z_][A-Za-z0-9_]*(?:/[A-Za-z_][A-Za-z0-9_]*(?:\(\))?)?')
+APP_TEST_TARGET = 'SpokenMarginsAppTests'
 COMMENT_LIMIT = 60000  # GitHub's comment limit is 65536
 STATES = ('success', 'failure', 'error')
 
@@ -47,9 +48,27 @@ def parse_tests(text: str) -> list:
     return list(dict.fromkeys(names))
 
 
-def group(names: list, plans: dict, plan_for_tests, full_selector) -> tuple:
+def full_selector(selector: str) -> str:
+    return selector if selector.startswith(APP_TEST_TARGET + '/') else f'{APP_TEST_TARGET}/{selector}'
+
+
+def plan_for_tests(selectors: list, plans: dict) -> tuple:
+    """Group selectors by the plans holding them; selectors no plan holds are returned separately. A class split
+    across plans goes to each plan that runs part of it, or the rest of it would silently not run."""
+    grouped, unknown = {}, []
+    for selector in selectors:
+        full = full_selector(selector)
+        holding = [p for p, tests in plans.items() if any(t == full or t.startswith(full + '/') for t in tests)]
+        for plan in holding:
+            grouped.setdefault(plan, []).append(full)
+        if not holding:
+            unknown.append(selector)
+    return grouped, unknown
+
+
+def group(names: list, plans: dict) -> tuple:
     """({plan: selectors}, unknown names). No names means both whole plans (an empty selector list). `plans` is
-    {plan: set of test ids}; the two functions are lane-runner.py's."""
+    {plan: set of test ids}."""
     if not names:
         return {plan: [] for plan in plans}, []
     return plan_for_tests(names, plans)
@@ -98,10 +117,10 @@ def command_run(args) -> int:
     details, results = [], {'passed': 0, 'failed': [], 'retried': []}
     try:
         names = parse_tests(args.tests)
-        lane = T.load_lane_runner()
+        lane = T.load_lane_t3()
         from test_inventory import plan_tests
         plans = {plan: plan_tests(ROOT, name) for plan, name in lane.PLANS.items()}
-        grouped, unknown = group(names, plans, lane.plan_for_tests, lane.full_selector)
+        grouped, unknown = group(names, plans)
         if unknown:
             verdict, details = 'FAIL', [f'No app test plan holds: {", ".join(unknown)}. A named test that does not '
                                         'exist is a failure.']

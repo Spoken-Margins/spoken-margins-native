@@ -464,7 +464,7 @@ struct ExperienceMarginsScreen: View, Equatable {
 
     private func marginRowBody(_ row: MarginRow, itemTitle: String, repair: MarginRowRepair) -> some View {
         // The row plays the Margin's moment; the chevron beside it opens details (#1866).
-        Button { MarginMomentTap.start(row, model: model) } label: {
+        Button { tapOwnRow(row) } label: {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: row.interjection.isStarredForSharing == true ? "star.fill" : (row.needsAttention ? "exclamationmark.bubble.fill" : (row.isWritten ? "square.and.pencil" : "quote.bubble")))
                     .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.evergreen)
@@ -516,6 +516,14 @@ struct ExperienceMarginsScreen: View, Equatable {
         .accessibilityActions { ownMarginActions(row, repair: repair) }
     }
 
+    /// A Margin with a place plays its moment; one with no place has none to play, so its row opens its details (#4233).
+    private func tapOwnRow(_ row: MarginRow) {
+        switch MarginRowTap.action(for: row.interjection) {
+        case .playMoment: MarginMomentTap.start(row, model: model)
+        case .openDetails: selectedMargin = row
+        }
+    }
+
     private func marginRowChevron(_ row: MarginRow, itemTitle: String) -> some View {
         Button { selectedMargin = row } label: {
             Image(systemName: "chevron.right")
@@ -548,7 +556,7 @@ struct ExperienceMarginsScreen: View, Equatable {
     }
 
     private static func retryLabel(_ repair: MarginRowRepair) -> String {
-        repair == .retryTranscription ? "Retry transcription" : "Retry context"
+        repair == .retryTranscription ? "Retry transcription" : "Retry finding source words"
     }
 
     /// The model's own retries, as the details call them.
@@ -562,7 +570,9 @@ struct ExperienceMarginsScreen: View, Equatable {
 
     @ViewBuilder
     private func ownMarginActions(_ row: MarginRow, repair: MarginRowRepair) -> some View {
-        Button("Play this moment", systemImage: "play.fill") { MarginMomentTap.start(row, model: model) }
+        if MarginPlacePresentation.offersGoToMoment(row.interjection) {
+            Button("Play this moment", systemImage: "play.fill") { MarginMomentTap.start(row, model: model) }
+        }
         // Also for VoiceOver and the long-press menu (#3856).
         if repair != .none {
             Button(Self.retryLabel(repair), systemImage: "arrow.clockwise") { retry(row, repair: repair) }

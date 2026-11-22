@@ -45,8 +45,7 @@ class GroupTests(unittest.TestCase):
              'adapters': {'SpokenMarginsAppTests/SpeechTests/testA', 'SpokenMarginsAppTests/LibraryTests/testTwo'}}
 
     def group(self, names):
-        lane = T.load_lane_runner()
-        return B.group(names, self.PLANS, lane.plan_for_tests, lane.full_selector)
+        return B.group(names, self.PLANS)
 
     def test_no_names_is_every_plan_whole(self):
         self.assertEqual(self.group([]), ({'app': [], 'adapters': []}, []))

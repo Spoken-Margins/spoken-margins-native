@@ -1,5 +1,8 @@
-import SwiftUI
+import Combine
 import SessionKit
+import SessionKitPersistence
+import SwiftUI
+import UIKit
 
 /// What the Now tab's scene is doing, shared by the playback screen (which sees the scroll) and the passage (which
 /// draws the scene): the scene state, whether the header is on screen, and which sentences are (#4453).
@@ -18,8 +21,95 @@ final class NowSceneController: ObservableObject {
     /// Bumped when the view should scroll to the lit sentence: Back to playing, and a jump the listener chose.
     @Published private(set) var scrollToLitRequest = 0
 
+    /// The tables' and figures' cards of a PDF, with where their pictures are read from and the room they have (#4588).
+    /// `clipsVersion` moves whenever the cards or their folder change, so the list can tell without comparing them.
+    private(set) var cards = NowClipCards.none
+    @Published private(set) var clipsVersion = 0
+    /// The height of the text area the cards and the hold are sized against. Published so a rotation resizes the cards;
+    /// guarded, so a scroll never redraws the list.
+    @Published private(set) var visibleHeight: Double = 0
+    /// The width of the scene list, for sizing cards and estimating how tall a sentence is. Not published: it only
+    /// changes with the layout, and the cards read it when they are drawn.
+    private(set) var listWidth: Double = 0
+    /// Bumped when a hold that did not keep the lit sentence on screen is dropped, so the view scrolls the usual way.
+    @Published private(set) var holdDroppedRequest = 0
+    /// The cards whose hold did not keep the lit sentence on screen. They hold no more, so a wrong height estimate costs
+    /// one correction, not one for every sentence after (`ClipHold.stillDropped`).
+    private var droppedHolds: Set<Int> = []
+
     func reset(text: String, chapters: [Chapter]) {
         state = PlaybackNowSceneState(text: text, chapters: chapters)
+        // The cards belong to the text that is gone; the view finds them again for the new one.
+        cards = NowClipCards(source: .none, anchors: [], listWidth: listWidth, visibleHeight: visibleHeight)
+        droppedHolds = []
+        clipsVersion &+= 1
+    }
+
+    /// The cards the scene shows, found off the main actor. An empty list clears them.
+    func setClips(anchors: [PDFClipAnchor], saved: Set<String>, source: TimelineClipSource) {
+        guard var next = state else { return }
+        let source = saved.isEmpty ? TimelineClipSource.none : source
+        // The same cards from the same folder: nothing to redraw.
+        guard anchors != cards.anchors || source != cards.source else { return }
+        next.setClips(anchors: anchors, saved: saved)
+        state = next
+        droppedHolds = []
+        cards = NowClipCards(source: source, anchors: anchors, listWidth: listWidth, visibleHeight: visibleHeight)
+        clipsVersion &+= 1
+    }
+
+    func setVisibleHeight(_ height: Double) {
+        guard abs(height - visibleHeight) >= 1 else { return }
+        visibleHeight = height
+        cards.visibleHeight = height
+    }
+
+    func setListWidth(_ width: Double) {
+        guard abs(width - listWidth) >= 1 else { return }
+        listWidth = width
+        cards.listWidth = width
+        clipsVersion &+= 1
+    }
+
+    /// Where following scrolls for the lit sentence: a card whose caption is being read, held at the top while what is
+    /// read fits under it, or the sentence itself (#4588).
+    func scrollTarget(sentences: (PlaybackLivePassage.Sentence) -> [PlaybackLivePassage.Fragment]) -> PlaybackLivePassage.ScrollTarget {
+        guard let state, let lit = state.litSentence, let litID = state.litSentenceID, !state.clipHoldStarts.isEmpty,
+              visibleHeight > 0, listWidth > 0 else { return .sentence }
+        let scene = state.shownScene
+        droppedHolds = PlaybackLivePassage.ClipHold.stillDropped(
+            droppedHolds, holdStarts: state.clipHoldStarts, litStart: scene.sentences[lit].start)
+        let body = UIFont.preferredFont(forTextStyle: .body)
+        let metrics = PlaybackLivePassage.ClipHold.Metrics(
+            // The text column: the list's width less the diamond gutter (18), the spacing (10) and the row's own padding (20).
+            columnWidth: listWidth - 18 - 10 - 20, visibleHeight: visibleHeight,
+            bodyPointSize: Double(body.pointSize), lineHeight: Double(body.lineHeight))
+        // The cards in the order they stand: ids run -1, -2, ... in the order of the anchor list.
+        let clips = state.clipHoldStarts.keys.sorted(by: >).compactMap { id -> (id: Int, holdStart: Int, height: Double)? in
+            guard let start = state.clipHoldStarts[id], let anchor = cards.anchor(forCard: id) else { return nil }
+            return (id, start, cards.rowHeight(for: anchor))
+        }
+        let target = PlaybackLivePassage.ClipHold.target(
+            scene: scene, lit: lit, clips: clips, visibleHeight: visibleHeight, dropped: droppedHolds,
+            sentenceHeight: { index in
+                PlaybackLivePassage.ClipHold.rowHeight(fragments: sentences(scene.sentences[index]), metrics: metrics)
+            })
+        if case .clip(let card) = target { checkHoldKeptLitSentence(litID, card: card) }
+        return target
+    }
+
+    /// A held card must never leave the sentence being read out of sight (the height estimate can be wrong). Once the
+    /// scroll has settled, a hold that left the lit sentence off screen is dropped and the view scrolls the usual way.
+    /// Judged after a pause, not on the first report of what is on screen: that one can come mid-scroll, and a scroll
+    /// that moves nothing (the card already at the top) reports nothing at all.
+    private func checkHoldKeptLitSentence(_ litID: Int, card: Int) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(700))
+            guard let self, !Task.isCancelled, let state = self.state, state.follow.isFollowing,
+                  state.litSentenceID == litID, !self.visibleSentenceIDs.contains(litID) else { return }
+            self.droppedHolds.insert(card)
+            self.holdDroppedRequest &+= 1
+        }
     }
 
     func move(offset: Int, margins: [PlaybackLivePassage.Margin], byListenerControl: Bool = false) {
@@ -50,7 +140,8 @@ final class NowSceneController: ObservableObject {
     }
 
     func sentencesOnScreen(_ ids: [Int]) {
-        visibleSentenceIDs = Set(ids)
+        // Cards have negative ids and are not sentences: one on screen never counts as the lit sentence being visible.
+        visibleSentenceIDs = Set(ids.filter { $0 >= 0 })
         guard let state, let playing = state.playingSentenceID, !state.isReadingAnotherScene,
               let first = visibleSentenceIDs.min() else {
             if playingIsAbove { playingIsAbove = false }
@@ -77,6 +168,15 @@ struct PlaybackLivePassageView: View {
     @State private var margins: [PlaybackLivePassage.Margin] = []
     @State private var lastOffset: Int?
     @State private var playbackTick = 0 // bumped by each progress tick: the current sentence follows the source offset (#2074)
+    /// Bumped when the item's clips were saved (a PDF just imported, or imported again) and by each rebuild of the scene,
+    /// so the cards are found again for the scene that now stands (#4588).
+    @State private var clipsSaved = 0
+    @State private var rebuilds = 0
+    @State private var selectedClip: TimelineClipSelection?
+    /// The input the scene was last built for by this view. A full-screen cover takes the view under it off screen and
+    /// back, so `onAppear` also runs when the picture viewer closes; the scene is rebuilt only for an input it has not
+    /// been built for, never to return from the viewer, where it would lose the listener's place and the cards.
+    @State private var builtInput: Input?
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @AccessibilityFocusState private var focusedSentence: Int?
 
@@ -87,6 +187,21 @@ struct PlaybackLivePassageView: View {
     }
     private var input: Input {
         Input(itemID: model.selectedItem.id, text: model.selectedItem.text, chapters: model.selectedItem.chapters)
+    }
+    /// What finding the cards depends on, as counts: this is read on every tick, so it never compares the document.
+    private struct ClipsInput: Equatable {
+        let itemID: String
+        let textLength: Int
+        let floats: Int
+        let segments: Int
+        let saved: Int
+        let rebuilds: Int
+    }
+    private var clipsInput: ClipsInput {
+        let source = model.selectedItem.pdfClipSource
+        return ClipsInput(itemID: model.selectedItem.id, textLength: model.selectedItem.text.utf8.count,
+                          floats: source?.floats.count ?? 0, segments: source?.segments.count ?? 0,
+                          saved: clipsSaved, rebuilds: rebuilds)
     }
     private var sourceOffset: Int? {
         PlaybackLivePassage.sourceOffset(snapshot: model.snapshot, itemID: model.selectedItem.id,
@@ -106,16 +221,21 @@ struct PlaybackLivePassageView: View {
         return VStack(spacing: 0) {
                 if isShowing, let state = scene.state {
                     NowSceneList(
-                        scene: state.shownScene, revision: state.sceneRevision, lit: state.litSentence,
+                        items: state.shownItems, revision: state.sceneRevision, lit: state.litSentence, litID: state.litSentenceID,
                         sourceVersion: sourceVersion, sourceIndex: sourceIndex, endLine: state.endLine,
-                        focus: $focusedSentence, openReader: openCurrentSentence
+                        cards: scene.cards, clipsVersion: scene.clipsVersion, visibleHeight: scene.visibleHeight,
+                        focus: $focusedSentence, openReader: openCurrentSentence,
+                        openClip: { selectedClip = $0 }
                     )
                     .equatable()
+                    .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { scene.setListWidth($0) }
                     // Room under the last row for the Back to playing button, so it never covers it.
                     .padding(.bottom, state.offersBackToPlaying ? 96 : 0)
                 }
             }
             .onAppear {
+                // Back from the picture viewer: the scene, the cards and the listener's place are as they were left.
+                guard builtInput != input || scene.state == nil else { return }
                 rebuild()
                 // Opening Now always starts with following on, at the lit sentence, without a scroll animation, once
                 // its rows are laid out.
@@ -145,11 +265,28 @@ struct PlaybackLivePassageView: View {
                 AccessibilityNotification.Announcement("Now in \(title)").post()
             }
             .onChange(of: model.showNowRequests) { _, _ in scene.backToPlaying() }
+            .onChange(of: scene.holdDroppedRequest) { _, _ in
+                // A held card left the lit sentence off screen: go to the sentence the usual way.
+                guard let state = scene.state, state.follow.scrollsOnItsOwn(assistiveTechnologyRunning: voiceOverEnabled) else { return }
+                scrollToLit(animated: true)
+            }
+            // The tables and figures of a PDF with a picture to show. Found off the main actor, and again when the item's
+            // clips are saved; until then there are no cards and the scene is its text, as it always was (#4588).
+            .task(id: clipsInput) { await findClips() }
+            .onReceive(NotificationCenter.default.publisher(for: PDFClipStore.didSaveClipsNotification)
+                .receive(on: DispatchQueue.main)) { notice in
+                if notice.userInfo?[PDFClipStore.itemIdKey] as? String == input.itemID { clipsSaved &+= 1 }
+            }
+            .trackedFullScreenCover(item: $selectedClip) { clip in
+                TimelineClipViewer(selection: clip)
+            }
             .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
     }
 
     private func rebuild() {
         lastOffset = nil
+        rebuilds &+= 1
+        builtInput = input
         scene.reset(text: input.text, chapters: input.chapters)
         sourceIndex = PlaybackLivePassage.SourceIndex(model.selectedItem.timelineSource)
         sourceVersion &+= 1
@@ -180,14 +317,43 @@ struct PlaybackLivePassageView: View {
     }
 
     /// The lit sentence about a third of the way down the visible area. Near the start of a scene the scroll view's own
-    /// top edge stops it, so the header stays in sight.
+    /// top edge stops it, so the header stays in sight. While a table's or figure's caption is read and what is read still
+    /// fits under its card, the card is held at the top instead, with the caption directly under it (#4588).
     private func scrollToLit(animated: Bool) {
         guard let id = scene.state?.litSentenceID else { return }
-        if animated {
-            withMotion { proxy.scrollTo(id, anchor: Self.litAnchor) }
-        } else {
-            proxy.scrollTo(id, anchor: Self.litAnchor)
+        let target = scene.scrollTarget { [sourceIndex] in sourceIndex.fragments(for: $0) }
+        let (scrollID, anchor): (Int, UnitPoint) = switch target {
+        case .sentence: (id, Self.litAnchor)
+        case .clip(let cardID): (cardID, .top)
         }
+        if animated {
+            withMotion { proxy.scrollTo(scrollID, anchor: anchor) }
+        } else {
+            proxy.scrollTo(scrollID, anchor: anchor)
+        }
+    }
+
+    /// Finds which of a PDF's tables and figures have a picture on this phone and where each stands in the text. The work
+    /// is off the main actor: the anchors are pure CPU over the segment table and the folder is listed once (no clip file
+    /// is opened). Nothing is found for an article, a page or a podcast, or a PDF imported before pictures were kept.
+    private func findClips() async {
+        let itemID = input.itemID
+        let text = input.text
+        guard let source = model.selectedItem.pdfClipSource, let store = model.pdfClipStore() else {
+            scene.setClips(anchors: [], saved: [], source: .none)
+            return
+        }
+        let found = await Task.detached(priority: .utility) {
+            (anchors: PDFClipAnchors.make(text: text, source: source), available: store.available(forItem: itemID))
+        }.value
+        // The listener may have moved to another item, or the text may have been rebuilt, while this ran.
+        guard !Task.isCancelled, input.itemID == itemID, input.text == text else { return }
+        let saved = Set(found.anchors.map(\.floatId).filter { found.available.contains(floatId: $0) })
+        scene.setClips(anchors: found.anchors, saved: saved,
+                       source: TimelineClipSource(store: store, itemId: itemID, available: found.available))
+        // Cards arriving in a scene that is following re-scroll to where the reading line now is, without animation.
+        guard let state = scene.state, state.follow.scrollsOnItsOwn(assistiveTechnologyRunning: voiceOverEnabled) else { return }
+        Task { @MainActor in scrollToLit(animated: false) }
     }
 
     /// Tapping a sentence opens the reader at the playing sentence, as it always has.
@@ -200,32 +366,43 @@ struct PlaybackLivePassageView: View {
 /// The scene's rows. Equatable on what changes what is drawn (the scene's revision, the lit sentence, the source's
 /// fragments), so a playback tick that changes none of them draws nothing, however long the scene is.
 private struct NowSceneList: View, Equatable {
-    let scene: PlaybackLivePassage.Scene
+    /// The scene's sentences with a card before the sentence that holds each caption (`PlaybackNowSceneState.shownItems`).
+    let items: [PlaybackLivePassage.SceneItem]
     let revision: Int
     let lit: Int?
+    /// The lit sentence's id (`lit` is its index among the sentences; the items hold cards between them).
+    let litID: Int?
     let sourceVersion: Int
     let sourceIndex: PlaybackLivePassage.SourceIndex
     let endLine: PlaybackNowSceneState.EndLine
+    let cards: NowClipCards
+    let clipsVersion: Int
+    let visibleHeight: Double
     let focus: AccessibilityFocusState<Int?>.Binding
     let openReader: () -> Void
+    let openClip: (TimelineClipSelection) -> Void
 
-    private var litID: Int? {
-        guard let lit, scene.sentences.indices.contains(lit) else { return nil }
-        return scene.sentences[lit].id
-    }
-
+    // The cards' version and the text area's height are what change a card; a tick changes neither, so it draws nothing.
     nonisolated static func == (lhs: NowSceneList, rhs: NowSceneList) -> Bool {
         lhs.revision == rhs.revision && lhs.lit == rhs.lit && lhs.sourceVersion == rhs.sourceVersion
+            && lhs.clipsVersion == rhs.clipsVersion && lhs.visibleHeight == rhs.visibleHeight
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             LazyVStack(alignment: .leading, spacing: 10) {
-                ForEach(scene.sentences) { sentence in
-                    NowSceneRow(
-                        sentence: sentence, fragments: sourceIndex.fragments(for: sentence), isLit: sentence.id == litID,
-                        focus: focus, openReader: openReader
-                    )
+                ForEach(items) { item in
+                    switch item {
+                    case .sentence(let sentence):
+                        NowSceneRow(
+                            sentence: sentence, fragments: sourceIndex.fragments(for: sentence), isLit: sentence.id == litID,
+                            focus: focus, openReader: openReader
+                        )
+                    case .clip(_, let id):
+                        if let anchor = cards.anchor(forCard: id) {
+                            NowClipCard(anchor: anchor, cards: cards, open: openClip)
+                        }
+                    }
                 }
             }
             .scrollTargetLayout()

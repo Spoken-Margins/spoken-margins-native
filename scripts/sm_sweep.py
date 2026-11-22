@@ -672,7 +672,7 @@ def slots(facts):
     held = None
     if dial['mode'] == 'off' or allowed == 0:
         held = 'the Dial is Off'
-    elif usage['halted']:
+    elif dial_gate.breaker_holds(dial, usage):   # not under Cloud max, which ignores usage
         held = 'HALT (usage breaker)'
     elif (facts['dial_now'] or '').startswith(('Holding', 'Off', 'Paced, but')):
         held = f'the Dial gate says: {facts["dial_now"]}'
@@ -694,7 +694,7 @@ def decide(facts, window=STALE_AFTER):
     live = [c for c in claims if c['state'] != 'stale']
     ready = startable(facts['ready'], live)
 
-    if facts['usage']['halted']:
+    if dial_gate.breaker_holds(facts['dial'], facts['usage']):
         act('halt', RED, 'HALT (usage breaker): start nothing, and tell running threads to finish their commit, '
             'push, post their stop note and stop.')
 

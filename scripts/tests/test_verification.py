@@ -388,7 +388,7 @@ class VerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary) / 'state'
             state.mkdir()
-            (state / 'desk-simulator-pool.json').write_text(json.dumps({'devices': {'pool-device': {'name': 'SM Lane Desk pool 1'}}}))
+            (state / 'desk-simulator-pool.json').write_text(json.dumps({'devices': {'POOL-0001': {'name': 'SM Lane Desk pool 1'}}}))
             seen = {}
 
             def shutdown(command, **kwargs):
@@ -397,7 +397,7 @@ class VerificationTests(unittest.TestCase):
                 return mock.Mock(returncode=0)
 
             run = verification.Run(Path(temporary) / 'run', 'test')
-            run.manifest['destination'] = {'udid': 'pool-device'}
+            run.manifest['destination'] = {'udid': 'POOL-0001'}
             run.crash_baseline = {}
             crashes = [f'WidgetRenderer_Default-2026-09-24-10000{i}.ips' for i in range(3)]
             with patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}), \
@@ -405,7 +405,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification.subprocess, 'run', side_effect=shutdown):
                 with self.assertRaises(RuntimeError):
                     run.command('crash-check', [sys.executable, '-c', 'import time; time.sleep(60)'])
-            self.assertIn('crash flood', seen['unsafe_at_shutdown']['pool-device']['reason'])
+            self.assertIn('crash flood', seen['unsafe_at_shutdown']['POOL-0001']['reason'])
 
     def test_a_crash_report_renamed_while_it_is_read_is_skipped(self):
         # integration-4ca9d9c (#767): macOS wrote `.SpokenMarginsApp-….ips`, then renamed it between
@@ -692,9 +692,9 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual(scope, 'readers')
         self.assertIn('test_research_tests', verification.RUNNER_TEST_READERS)
         self.assertIn('test_hot_file_ratchet', verification.RUNNER_TEST_READERS)
-        # The lane runner's T3 tests plan against the real TestPlans/ and app test sources: renaming an app test
+        # The T3 tests plan against the real TestPlans/ and app test sources: renaming an app test
         # or editing a plan must still reach them (found in review of #898).
-        for name in ('test_lane_runner.ScopeClassTests', 'test_lane_runner.T3Tests',
+        for name in ('test_lane_runner.ScopeClassTests', 'test_lane_t3.T3Tests',
                      'test_lane_runner.OnlyTestingTests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit'):
             self.assertIn(name, verification.RUNNER_TEST_READERS)
         for path in ('TestPlans/AudioAdapters.xctestplan', 'App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift'):

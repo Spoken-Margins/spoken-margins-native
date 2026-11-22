@@ -51,6 +51,11 @@ public struct ItemDetailState: Equatable, Sendable {
     public var isNativeAudio = false
     public var timelineSource = TimelineSourceContent(text: "")
     public var documentStructure: PDFDocumentStructure?
+    /// What the Now tab needs to place a PDF's table and figure cards (#4588): the document's floats and where its
+    /// segments are, with no copy of the text. Set with `includingTimelineSource`; nil for anything that is not a PDF
+    /// with located floats, and for a document whose text is not the item's, so Now draws no cards. Kept out of the
+    /// memberwise init: only `includingTimelineSource` sets it.
+    public internal(set) var pdfClipSource: PDFClipSource?
     public var sessions: [Session] = []
     /// When the listener last added the item again (`Item.addedAgainAt`, #4178), read with the item when the detail loads.
     public var addedAgainAt: Date?

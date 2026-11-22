@@ -426,7 +426,8 @@ struct Build23MarginSelectionRow: View {
                             Build23PlaceholderTag()
                         }
 
-                        Text(margin.isLeftOutForMissingText ? "Left out: no transcript yet" : (margin.isIncluded ? "Included" : "Tap to include"))
+                        Text(!margin.hasPlace ? ShareableMargins.noPlaceLine
+                            : (margin.isLeftOutForMissingText ? "Left out: no transcript yet" : (margin.isIncluded ? "Included" : "Tap to include")))
                             .font(.caption)
                             .foregroundStyle(margin.isIncluded && !margin.isLeftOutForMissingText ? AppColors.evergreen : AppColors.secondaryText)
                     }
@@ -434,7 +435,7 @@ struct Build23MarginSelectionRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(!isEnabled)
+                .disabled(!isEnabled || !margin.hasPlace)
                 .accessibilityLabel("\(margin.isStarred ? "Starred " : "")Margin, \(margin.spokenWordsDescription), \(margin.shareStatusDescription)")
                 .accessibilityIdentifier("build23.sender.margin.row.\(margin.id)")
 
@@ -451,8 +452,10 @@ struct Build23MarginSelectionRow: View {
                 // the switch beside it would be a second, identical control to swipe past (#3730).
                 .accessibilityHidden(true)
                 .accessibilityIdentifier("build23.sender.margin.include.\(margin.id)")
-                .disabled(!isEnabled)
+                .disabled(!isEnabled || !margin.hasPlace)
             }
+            // Dimmed, and the line above says why: the words carry the meaning, not the dimming (#4233).
+            .opacity(margin.hasPlace ? 1 : 0.6)
         }
     }
 }

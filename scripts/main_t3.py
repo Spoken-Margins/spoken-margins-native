@@ -27,13 +27,14 @@ Subcommands:
   With a URL, a decision to run leaves a `pending` status on the commit at once, so a second run deciding a minute
   later (a tick beside a push run, which have separate concurrency groups) skips instead of racing the first.
 - run --sha SHA --run-url URL: set `pending`, run both app plans (AppBehavior and AudioAdapters, every test in them)
-  through lane-runner.py's T3 machinery on a fresh simulator clone, set the final status, and on `failure` open or
+  through scripts/lane_t3.py's T3 machinery (moved out of lane-runner.py, #4769) on a fresh simulator clone, set the final status, and on `failure` open or
   update the one open "Main T3 failed on <sha7>" issue (label `regression`, marker MARKER). On `success` it closes
   that issue with a note. Tests that failed and passed on a retry are logged on the flake tally (#2176) as the lane
   does. Exits 0 only on `success`.
 - lost --sha SHA --run-url URL: the job died after `pending`; set `error` so the next tick retries.
 
-Bisecting a red main is #4574's: the issue names the failing tests, the previous green SHA and the merges between.
+Bisecting a red main is #4574's, in scripts/main_t3_bisect.py: this issue names the failing tests, the previous green
+SHA and the merges between; the bisection narrows them to one merge and opens a `ready` + `regression` issue for it.
 Environment: GH_TOKEN and GH_REPO (the workflow's). Stdlib only, Python 3.9-compatible.
 """
 from __future__ import annotations
@@ -201,6 +202,20 @@ def truncate(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit - 3].rstrip() + '...'
 
 
+# Detail lines that report how long a step took or what was retried, not what went wrong. The lane writes them for every
+# run (a passing build says "took 7m44s"), so the status line skips them to name the line that says what failed.
+NEUTRAL_DETAIL = re.compile(
+    r'^(shared build before simulator boot took |boot of the cloned simulator took |'
+    r'template preparation and simulator clone took |test-scope |\w+: passed on retry|'
+    r'boot stall on the first clone |tolerated one SpringBoard change |\w+: recovered after 1 startup stall)')
+
+
+def first_problem(details: list, default: str) -> str:
+    """The first detail that names a fault; failing that the first detail at all; failing that `default`."""
+    named = [d for d in details if d]
+    return next((d for d in named if not NEUTRAL_DETAIL.match(d)), named[0] if named else default)
+
+
 def description(state: str, results: dict, details: list) -> str:
     """The status line: '1870 passed', '3 failed: A/testB, ...', or the runner fault, within 140 characters."""
     passed, failed = results.get('passed', 0), results.get('failed', [])
@@ -212,9 +227,9 @@ def description(state: str, results: dict, details: list) -> str:
     if state == 'failure':
         if failed:
             return truncate(f'{len(failed)} failed: ' + ', '.join(short_test(t) for t, _ in failed), DESCRIPTION_LIMIT)
-        first = next((d for d in details if d), 'the build or a plan failed')
+        first = first_problem(details, 'the build or a plan failed')
         return truncate(f'failed, no test result: {first}', DESCRIPTION_LIMIT)
-    first = next((d for d in details if d), 'no test result')
+    first = first_problem(details, 'no test result')
     return truncate(f'runner fault: {first}', DESCRIPTION_LIMIT)
 
 
@@ -409,8 +424,8 @@ def close_on_green(sha: str, run_url: str, results: dict) -> None:
 
 # ---- The run --------------------------------------------------------------------------------------
 
-def load_lane_runner():
-    spec = importlib.util.spec_from_file_location('lane_runner', ROOT / 'scripts/lane-runner.py')
+def load_lane_t3():
+    spec = importlib.util.spec_from_file_location('lane_t3', ROOT / 'scripts/lane_t3.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -428,10 +443,10 @@ def read_manifests(evidence: Path) -> dict:
 
 def run_suite(sha: str, run_id: str, evidence: Path, grouped: dict | None = None, label: str = 'main',
               log_retries: bool = True):
-    """lane-runner.py's T3 on a fresh clone with every test of both plans (no --only-testing), or the `grouped`
+    """lane_t3.py's T3 on a fresh clone with every test of both plans (no --only-testing), or the `grouped`
     selectors (branch_t3.py, #4839). Returns (verdict, ran, details, crashes, results). `log_retries` False makes no
     GitHub call, for a run that holds no token."""
-    lane = load_lane_runner()
+    lane = load_lane_t3()
     lane.T3_TIMEOUT = RUN_TIMEOUT
     if grouped is None:
         grouped = {plan: [] for plan in PLANS}  # an empty selector list runs the whole plan

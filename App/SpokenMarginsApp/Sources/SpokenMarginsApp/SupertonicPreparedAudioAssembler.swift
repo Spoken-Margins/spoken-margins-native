@@ -23,7 +23,11 @@ enum SupertonicPreparedAudioAssembler {
         outputDirectory: URL,
         fileManager: FileManager = .default
     ) async throws -> PreparedTextAudio {
-        let ordered = chunks.sorted { $0.startOffset < $1.startOffset }
+        // Plan order within one start offset: a footnote's aside starts where the sentence after its citation does, and
+        // must stay in front of it (#3777). A plain `sorted` makes no promise about equal keys.
+        let ordered = chunks.enumerated().sorted {
+            ($0.element.startOffset, $0.offset) < ($1.element.startOffset, $1.offset)
+        }.map(\.element)
         guard !ordered.isEmpty else {
             throw SessionKitError.persistenceFailed("supertonic_prepared_audio_empty")
         }
@@ -49,6 +53,7 @@ enum SupertonicPreparedAudioAssembler {
             sourceText: sourceText,
             destination: pcmTemporary
         )
+        DiskWriteLedgerStore.shared.record(fileAt: pcmTemporary, source: .speechAssembly)
         guard let exporter = AVAssetExportSession(
             asset: AVURLAsset(url: pcmTemporary),
             presetName: AVAssetExportPresetAppleM4A
@@ -59,6 +64,7 @@ enum SupertonicPreparedAudioAssembler {
         if fileManager.fileExists(atPath: destination.path) {
             try fileManager.removeItem(at: destination)
         }
+        DiskWriteLedgerStore.shared.record(fileAt: encodedTemporary, source: .speechAssembly)
         try fileManager.moveItem(at: encodedTemporary, to: destination)
         var audio = destination
         var audioValues = URLResourceValues()
