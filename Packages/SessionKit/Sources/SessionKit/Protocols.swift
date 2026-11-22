@@ -272,6 +272,12 @@ public protocol AudioPlaybackClient {
     func currentPlaybackPosition() -> PlaybackPosition?
     func currentCharOffset() -> Int?
     func currentRecoveryCharOffset() -> Int?
+    /// Where the text continues when a note read where it is cited (a footnote aside, #3777) is cut short with the
+    /// paragraph-forward button: the source offset of the first chunk after the run of notes at that citation, which is
+    /// the next sentence of the main text, or the end of the text when nothing follows. Nil when the player is not
+    /// reading such a note, which is every client but the narration player, so the button moves by paragraph as it
+    /// always did.
+    func footnoteContinuationSourceOffset() -> Int?
     func currentMediaTimeMs() -> Int?
     func currentPlaybackDurationMs() -> Int?
     func isPlaybackComplete(targetId: String) -> Bool
@@ -441,6 +447,8 @@ public extension AudioPlaybackClient {
     func currentRecoveryCharOffset() -> Int? {
         currentCharOffset()
     }
+
+    func footnoteContinuationSourceOffset() -> Int? { nil }
 
     func currentMediaTimeMs() -> Int? {
         currentPlaybackPosition()?.mediaTimeMs

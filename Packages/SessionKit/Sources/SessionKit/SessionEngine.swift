@@ -120,6 +120,9 @@ public final class SessionEngine {
     /// Where the last Back tap in text landed, so the next one can tell it is a repeat (#1102). Only listening on
     /// from there keeps it: every other change of position calls `forgetBackTapLanding()` (#1122).
     private var lastBackTapLanding: (targetKey: String, charOffset: Int)?
+    /// Where the last forward skip left a footnote read where it is cited (#3777), so a second press from there, with
+    /// the player still on the note (paused, or the next sentence still rendering), moves on instead of staying put.
+    private var lastFootnoteExit: (sessionId: String, charOffset: Int)?
     private var protectedPosition = ProtectedResumePosition()
     /// A start of text speech that found nothing left to read (#4067). It stands in for the speech client's own
     /// completion, which a start that never began cannot set.
@@ -1455,6 +1458,8 @@ public final class SessionEngine {
         let text = item.text ?? ""
         if unit == "chapter" {
             session.position.charOffset = nextChapterBoundary(after: session.position.charOffset, text: text)
+        } else if let exit = footnoteExitOffset(unit: unit, session: session, text: text) {
+            session.position.charOffset = exit
         } else {
             let baseline = session.position.charOffset
             let firstBoundary = nextBoundary(after: baseline, unit: unit, text: text)
@@ -6349,6 +6354,29 @@ public final class SessionEngine {
             return min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
         }
         return text.count
+    }
+
+    /// Where a forward sentence or paragraph skip goes while the player reads a note where it is cited (#3777), or nil
+    /// when it is not on one. The held position is the citing sentence's end, so the next boundary from it would skip
+    /// the sentence after the note: the skip goes on from where the player says the text continues, whatever distance
+    /// was asked for. The player's offset is in what it speaks (a Listening Map's preface, a PDF's listenable text), so
+    /// it goes through the conversion every other position it reports does.
+    private func footnoteExitOffset(unit: String, session: Session, text: String) -> Int? {
+        guard unit == "sentence" || unit == "paragraph",
+              let continuation = audio.footnoteContinuationSourceOffset() else {
+            lastFootnoteExit = nil
+            return nil
+        }
+        let exit = max(session.position.charOffset, min(text.count, itemSourceOffset(forAudioOffset: continuation)))
+        // The press that left the note already put the position here, and the player has not moved off it yet: this
+        // is another press, and it moves on by the unit as usual.
+        if let last = lastFootnoteExit, last.sessionId == session.id, last.charOffset == exit,
+           session.position.charOffset == exit {
+            lastFootnoteExit = nil
+            return nil
+        }
+        lastFootnoteExit = (session.id, exit)
+        return exit
     }
 
     private func previousBoundary(before offset: Int, unit: String, text: String) -> Int {
