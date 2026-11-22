@@ -39,7 +39,8 @@ struct PinnedMarginCardView: View {
     private var announcementKey: VoiceOverAnnouncements.CardKey {
         VoiceOverAnnouncements.CardKey(
             card: model.pinnedMarginCard,
-            marginID: model.pendingImportedCommentary?.interjection.id ?? model.playingImportedCommentary?.interjection.id)
+            marginID: model.pendingImportedCommentary?.interjection.id ?? model.playingImportedCommentary?.interjection.id
+                ?? model.shownSilentMarginLanding?.marginId) // a second landing on a Margin from the same sender is announced too (#4934)
     }
 
     private func content(_ card: PinnedMarginCard) -> some View {
@@ -87,8 +88,7 @@ struct PinnedMarginCardView: View {
         case .keepListening, .stopReview, .stopPlayingMine: model.endMarginMoment()
         case .listen: model.listenToPendingImportedCommentary()
         case .dismiss: model.skipPendingImportedCommentary()
-        // The stage that offers this is not shown yet (#4934); the next change wires the model call.
-        case .dismissSilentMargin: break
+        case .dismissSilentMargin: model.dismissSilentMarginLanding()
         }
     }
 
@@ -155,6 +155,12 @@ struct PinnedMarginCardBody: View {
         .background(AppColors.listeningBackground)
     }
 
+    /// The stages whose detail line is a Margin's own words, which can be long.
+    private var capsDetail: Bool {
+        if case .silentHere = card.stage { return true }
+        return card.stage == .waitingForTap
+    }
+
     /// The headline, the position and the detail line.
     private var words: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -185,8 +191,9 @@ struct PinnedMarginCardBody: View {
             detailText
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.85))
-                // The transcript of a Margin waiting for a tap is capped at every size, so Listen and Dismiss stay on the screen.
-                .lineLimit(card.stage == .waitingForTap ? (isLargeText ? 4 : 2) : (isLargeText ? nil : 2))
+                // The transcript of a Margin waiting for a tap, or of a silent one the listener went to (#4934), is capped at every
+                // size, so Listen and Dismiss stay on the screen.
+                .lineLimit(capsDetail ? (isLargeText ? 4 : 2) : (isLargeText ? nil : 2))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 // VoiceOver reads the plain words. The inline icon (`detailText`) is only a picture of the control the words name.

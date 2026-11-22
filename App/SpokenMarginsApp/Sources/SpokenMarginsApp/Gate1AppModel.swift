@@ -279,7 +279,9 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var marginMoment: MarginMomentSequence?
     /// How many times "Go to this moment in the source" has succeeded (#3961). The playback screen switches to Now each time
     /// this changes, so a written Margin lands on the source as a spoken one does. It holds no state beyond the count.
-    @Published private(set) var showNowRequests = 0
+    /// Settable from other files so the go-to in `Gate1AppModel+SilentMarginJump.swift` can ask for Now (#4934).
+    @Published var showNowRequests = 0
+    @Published var silentMarginLanding: SilentMarginLanding? // a friend's silent Margin the listener went to; the pinned card shows it (#4934)
     @Published private(set) var marginMomentVoiceIsPaused = false
     /// Whose Margin the moment is for ("Your Margin", "Cole's Margin"), and whether its position is only a guess.
     @Published private(set) var marginMomentTitle = "Your Margin"
@@ -1143,6 +1145,7 @@ final class Gate1AppModel: ObservableObject {
         clock: MarginMomentClock = .media
     ) {
         marginMomentClock = clock
+        silentMarginLanding = nil // a moment takes the silent Margin's card (#4934)
         let conductor = MarginMomentConductor(
             sequence: sequence,
             source: .init(
@@ -1247,10 +1250,6 @@ final class Gate1AppModel: ObservableObject {
         }
         diagnostics["supertonicMemoryPressure"] = "sessions_unloaded"
         unloadNarrationRenderers(removingGeneratedAudio: false)
-    }
-
-    func makeAppOverviewSample() throws -> (Item, ListeningMap) {
-        try WelcomeSample.make(itemId: Self.welcomeSampleItemId)
     }
 
     @discardableResult func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil, listenerAdded: Bool = true) throws -> String { // listenerAdded: SessionEngine's (#4178)
@@ -1564,6 +1563,7 @@ final class Gate1AppModel: ObservableObject {
 
     func startItem(id: String) {
         guard prepareToStartItem(id: id) else { return }
+        silentMarginLanding = nil
         do {
             let store = try requireStore()
             switch PlayRule.startAction(sessions: try store.loadSessions(itemId: id), addedAgainAt: addedAgainAt(forItem: id)) {

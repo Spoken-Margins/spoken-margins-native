@@ -58,6 +58,25 @@ final class MarginsListPlayAppTests: XCTestCase {
         XCTAssertEqual(tapLines(model), ["shared/waiting/reading_not_ready"], "one line for the tap, and it does not say started")
     }
 
+    // A friend's article Margin that is never read aloud (#4934): its row goes to the passage and plays on, with no Margin offered.
+    func testAFriendsSilentMarginMatchedInAnArticleGoesToItsPassageWithNothingOffered() {
+        let (model, row) = articleModelWithFriendMargin()
+        var record = row.interjection
+        record.senderReadAloud = false
+        let silent = SharedMarginRow(interjection: record, layer: row.layer, itemTitle: row.itemTitle)
+        XCTAssertFalse(silent.canPlayFromMarginsList, "nothing to play")
+        XCTAssertTrue(silent.goesToFromList, "the row's button goes to the passage")
+
+        model.goToSharedMargin(silent)
+
+        XCTAssertNil(model.lastError)
+        XCTAssertNil(model.pendingImportedCommentary, "nothing is offered or spoken")
+        XCTAssertNil(model.marginMoment)
+        XCTAssertEqual(model.silentMarginLanding?.position, 120, "the card is for the passage's own character offset")
+        XCTAssertEqual(model.silentMarginLanding?.words, "Remember this part.")
+        XCTAssertEqual(model.screen, .playback)
+    }
+
     func testATapOnAMarginOfAnotherItemSaysSoAndMovesNothing() {
         let (model, row) = articleModelWithFriendMargin()
         var elsewhere = row.layer

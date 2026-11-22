@@ -12,6 +12,11 @@ struct PlaybackMarginRowView: View {
     var canPlay = true
     var playLabel = "Play this moment"
     var playHint: String? = nil
+    /// The button goes to the Margin's place and plays on, with nothing read aloud (#4934): a friend's Margin that is never
+    /// spoken, or the listener's own written one. It must not look like Play, which promises sound.
+    var goesTo = false
+    /// What the open source is called, for the Go-to button's hint ("Moves the episode here…").
+    var sourceNoun: SourceNoun = .episode
     /// A live session's photo beside the words (#2708); its Margin's row also reads "with a photo".
     var thumbnail: AnyView? = nil
     /// The sharing star (#4173). Only the listener's own rows pass it; a friend's row and a live session's row pass nil
@@ -96,12 +101,13 @@ struct PlaybackMarginRowView: View {
 
     private var playButton: some View {
         Button(action: play) {
-            Image(systemName: "play.fill")
+            Image(systemName: goesTo ? "arrow.turn.down.right" : "play.fill")
                 .minimumTapTarget()
         }
         .disabled(!canPlay)
-        .accessibilityLabel("\(playLabel): \(title)")
-        .accessibilityHint(playHint ?? (canPlay ? "Plays the source lead-in and this Margin" : "Open details to review this Margin’s audio and position"))
+        .accessibilityLabel("\(goesTo ? SilentMarginWords.goToLabel : playLabel): \(title)")
+        .accessibilityHint(goesTo ? SilentMarginWords.hint(noun: sourceNoun)
+            : playHint ?? (canPlay ? "Plays the source lead-in and this Margin" : "Open details to review this Margin’s audio and position"))
         .accessibilityIdentifier("\(identifier).play")
     }
 }
@@ -121,6 +127,8 @@ private struct OptionalAccessibilityValue: ViewModifier {
 extension SharedMarginRow {
     /// The Now tab's "Nearby Margins" row.
     var canPlayFromNearbyList: Bool { SharedMarginAudio.canOffer(interjection) }
+    /// A friend's Margin that is never read aloud but has a place: the row's button goes there and plays on (#4934).
+    var goesToFromList: Bool { SilentMarginWords.friendGoesTo(interjection, in: layer) }
     /// The Margins tab's row also needs a place to jump to: a time in the episode, or a matched passage of the text
     /// in a layer that is on (`SharedMarginListPlay`, #4447).
     var canPlayFromMarginsList: Bool { SharedMarginListPlay.canPlay(interjection, in: layer) }

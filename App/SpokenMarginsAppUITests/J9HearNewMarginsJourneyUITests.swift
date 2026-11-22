@@ -203,6 +203,35 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
         }
     }
 
+    /// #4934: the same position, but the friend's Margin is a written one that is never read aloud
+    /// (`SPOKEN_MARGINS_UI_TEST_COOP_SILENT`, `UITestingLaunchSeed.coopSilentInterjection`). Its row on the Margins tab has
+    /// a Go-to button, not Play: the tap lands at the Margin's own place (5:00, no lead-in) and the episode plays on with no
+    /// voice. The pinned card on Now shows the words and a Dismiss. That nothing is spoken is the owner's by ear.
+    func testMarginsTabGoesToASilentFriendMarginWithNoVoice() throws {
+        try openTheEpisodeFarPastAFriendsMargin(step: "J9 silent Go-to", silentFriend: true)
+
+        try XCTContext.runActivity(named: "J9 silent Go-to, step 4: The friend's row has a Go-to that lands at the Margin and plays on") { _ in
+            tap("playback.margins.button")
+            let goTo = app.buttons.matching(NSPredicate(
+                format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "margins.shared.row.", ".play"
+            )).firstMatch
+            XCTAssertTrue(goTo.waitForExistence(timeout: 8), "The friend's silent Margin has no button on the Margins tab")
+            XCTAssertTrue(goTo.isEnabled, "The friend's silent Margin is listed with a button that is disabled")
+            XCTAssertTrue(goTo.isHittable, "The button can't be tapped")
+            XCTAssertTrue(goTo.label.hasPrefix("Go to this moment"), "The button says \(goTo.label), not Go to this moment")
+            let before = try position()
+            goTo.tap()
+            waitUntil("Go-to did not take the episode from \(before) s to the Margin at \(friendMarginAt) s; clock shows \(element("playback.progress.label").label)", timeout: 15) {
+                self.currentPosition().map { ($0 >= self.friendMarginAt - 5) && $0 <= self.friendMarginAt + 20 } ?? false
+            }
+            XCTAssertTrue(element("marginCard").waitForExistence(timeout: 8), "The pinned card did not appear on Now")
+            XCTAssertTrue(app.buttons["marginCard.silent.dismiss"].firstMatch.exists, "The card has no Dismiss")
+            XCTAssertFalse(element("review.playing").exists, "A voice started for a Margin that is never read aloud")
+            XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+            try waitUntilPlaying("The episode did not play on after Go-to")
+        }
+    }
+
     /// #4447: the same position, the same friend. Skim's two arrows are on the playback screen beside the chapter
     /// title, and Skim backward goes to the friend's Margin. A hidden arrow (no row) is the owner's other symptom.
     func testSkimArrowsAreOnTheNowScreenAndGoBackToAFriendsMargin() throws {
@@ -226,7 +255,7 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
 
     /// The owner's position for #4447: saved near 20:00 and paused, then a friend's Margin from 5:00 arrives and he
     /// chooses "Listen without them", so the Margin is behind him and the Now screen is where he is.
-    private func openTheEpisodeFarPastAFriendsMargin(step: String) throws {
+    private func openTheEpisodeFarPastAFriendsMargin(step: String, silentFriend: Bool = false) throws {
         XCTContext.runActivity(named: "\(step), step 1: The episode is in the Library (offline seed)") { _ in
             app.launch()
             XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "Library did not open")
@@ -249,13 +278,19 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
             app.terminate()
             app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
             app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP"] = "1"
+            if silentFriend { app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP_SILENT"] = "1" }
             app.launch()
             XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "Library did not reopen")
             XCTAssertTrue(revealLibraryRow(), "Episode is missing from the Library after relaunch")
             tap("queue.start.\(itemId)")
             let skip = offerButton("newMarginsOffer.skip", orLabel: "Listen without them")
-            XCTAssertTrue(skip.waitForExistence(timeout: 5), "Continue did not offer a way to carry on without the new Margin")
-            skip.tap()
+            if silentFriend {
+                // Whether a note nobody reads aloud is offered as new is #3402's rule, not this step's: take the offer if it comes.
+                if skip.waitForExistence(timeout: 5) { skip.tap() }
+            } else {
+                XCTAssertTrue(skip.waitForExistence(timeout: 5), "Continue did not offer a way to carry on without the new Margin")
+                skip.tap()
+            }
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
             try waitUntilPlaying("The episode never carried on without the friend's Margin")
             playPause.tap()

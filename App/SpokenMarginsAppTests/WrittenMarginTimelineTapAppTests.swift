@@ -58,11 +58,24 @@ final class WrittenMarginTimelineTapAppTests: XCTestCase {
         XCTAssertNil(model.lastError)
     }
 
-    // A note the voice cannot read says so with the reading's words, and no moment starts.
-    func testTappingANoteTheVoiceCannotReadSaysSoAndStartsNoMoment() async throws {
+    // A note the voice cannot read has a place the Timeline's tap goes to with no voice (#4934): no moment, no failure line, the
+    // source plays on from the place. The voice-only path, which nothing in the Timeline now takes for it, still says why.
+    func testTappingANoteTheVoiceCannotReadGoesToItsPlaceAndStartsNoMoment() async throws {
         let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: "🎧")
         defer { fixture.cleanUp() }
         let model = fixture.model
+        model.seekMedia(toMediaTimeMs: 20_000)
+        try await fixture.waitUntil("the source is playing near 20 s") {
+            model.snapshot.status == .playing && (model.snapshot.currentMediaTimeMs ?? 0) >= 19_900
+        }
+
+        model.goToSharedMargin(row(fixture))
+        defer { model.pause() }
+        XCTAssertNil(model.lastError, "the tap goes there and says nothing is wrong")
+        XCTAssertNil(model.marginMoment)
+        try await fixture.waitUntil("the source is at the Margin's place and playing on") {
+            model.snapshot.status == .playing && (model.snapshot.currentMediaTimeMs ?? Int.max) < 5_000
+        }
 
         model.playSharedMarginMoment(row(fixture))
         XCTAssertEqual(model.lastError, "This Margin can't be read aloud on this iPhone.")

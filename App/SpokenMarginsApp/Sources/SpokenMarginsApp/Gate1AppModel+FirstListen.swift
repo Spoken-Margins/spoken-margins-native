@@ -38,4 +38,9 @@ extension Gate1AppModel {
             return FirstRunListenChoice.entry(forPickedSourceIds: pickedSourceIds, subscriptions: subscriptions, entries: entries)
         }.value
     }
+
+    // Moved out of Gate1AppModel.swift unchanged (#4934), to make room for the Margin the listener went to.
+    func makeAppOverviewSample() throws -> (Item, ListeningMap) {
+        try WelcomeSample.make(itemId: Self.welcomeSampleItemId)
+    }
 }

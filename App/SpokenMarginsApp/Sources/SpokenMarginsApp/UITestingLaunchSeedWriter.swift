@@ -58,6 +58,11 @@ enum UITestingLaunchSeedWriter {
         guard UITestingHooks.importsCoopLayer else { return }
         let layer = UITestingLaunchSeed.coopLayer(importedAt: Date())
         guard try store.loadImportedCommentaryLayer(packageDigest: layer.packageDigest) == nil else { return }
+        // The written Margin that is never read aloud has no recording to make (#4934).
+        if UITestingHooks.importsSilentCoopMargin {
+            _ = try store.importCommentaryLayer(layer, interjections: [UITestingLaunchSeed.coopSilentInterjection(createdAt: layer.importedAt)])
+            return
+        }
         let support = try FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         )

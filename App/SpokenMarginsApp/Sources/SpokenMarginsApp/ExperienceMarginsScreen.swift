@@ -765,11 +765,15 @@ struct ExperienceMarginsScreen: View, Equatable {
                 .accessibilityIdentifier("margins.shared.row.\(row.id)")
                 .accessibilityActions {
                     if sharedRowPlays(row) { Button("Play this moment") { model.playSharedMarginMoment(row) } }
+                    if sharedRowGoesTo(row) { Button(SilentMarginWords.goToTitle) { model.goToSharedMargin(row) } }
                     Button("Details") { selectedSharedMargin = row }
                 }
                 .contextMenu {
                     if sharedRowPlays(row) {
                         Button("Play this moment", systemImage: "play.fill") { model.playSharedMarginMoment(row) }
+                    }
+                    if sharedRowGoesTo(row) {
+                        Button(SilentMarginWords.goToTitle, systemImage: "arrow.turn.down.right") { model.goToSharedMargin(row) }
                     }
                     Button("Details", systemImage: "info.circle") { selectedSharedMargin = row }
                 }
@@ -791,20 +795,31 @@ struct ExperienceMarginsScreen: View, Equatable {
     private func sharedRowTopLine(_ row: SharedMarginRow, isReply: Bool) -> String {
         let name = FriendName.usable(row.layer.displayLabel) ?? "A friend"
         let who = isReply ? "Reply · \(name)" : name
-        guard row.layer.itemId != nil, let position = SharedMarginPlaybackPosition(row.interjection) else { return who }
-        return "\(who) · \(MarginReplyWords.clock(milliseconds: position.mediaTimeMs))"
+        // A Margin that is never read aloud says so, as its row on the playback screen does (#4934).
+        let notRead = sharedRowGoesTo(row) ? SilentMarginWords.notReadAloudSuffix : ""
+        guard row.layer.itemId != nil, let position = SharedMarginPlaybackPosition(row.interjection) else { return who + notRead }
+        return "\(who) · \(MarginReplyWords.clock(milliseconds: position.mediaTimeMs))" + notRead
     }
 
     /// The Timeline's rule (#158): a Margin with a place in the item plays its moment; one with no place, no item in the
     /// Library, or words the phone can't read aloud opens its details, where its words and Reply are.
     private func tapSharedRow(_ row: SharedMarginRow) {
-        if sharedRowPlays(row) { model.playSharedMarginMoment(row) } else { selectedSharedMargin = row }
+        if sharedRowPlays(row) {
+            model.playSharedMarginMoment(row)
+        } else if sharedRowGoesTo(row) {
+            model.goToSharedMargin(row) // a Margin never read aloud still has a place to go (#4934); opens the item first
+        } else {
+            selectedSharedMargin = row
+        }
+    }
+
+    /// A friend's Margin the phone never reads aloud, with a place in an item in the Library: a tap goes there with no voice.
+    private func sharedRowGoesTo(_ row: SharedMarginRow) -> Bool {
+        SilentMarginWords.libraryRowTap(row.interjection, in: row.layer) == .goTo
     }
 
     private func sharedRowPlays(_ row: SharedMarginRow) -> Bool {
-        row.layer.itemId != nil
-            && SharedMarginPlaybackPosition(row.interjection) != nil
-            && !(row.interjection.isWritten && !SharedMarginAudio.canOffer(row.interjection))
+        SilentMarginWords.libraryRowTap(row.interjection, in: row.layer) == .playMoment
     }
 
     /// The listener's own reply, shown in the conversation it belongs to.
@@ -858,6 +873,7 @@ struct SharedMarginDetailView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var shouldOpenItem = false
+    @State private var goesToMargin = false
     @State private var pendingReply: ReplyKind?
     @State private var confirmingHide = false
     let row: SharedMarginRow
@@ -954,6 +970,22 @@ struct SharedMarginDetailView: View {
                     }
                 }
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                // A Margin that is never read aloud still has a place to go (#4934): the same button your own Margin's details
+                // have. The sheet closes first, then the go-to runs, as Open Item does. A voiced Margin has Play on its row.
+                if SilentMarginWords.friendGoesTo(current.interjection, in: current.layer) {
+                    Button(SilentMarginWords.goToTitle, systemImage: "arrow.turn.down.right") {
+                        goesToMargin = true
+                        dismiss()
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("sharedMargin.goTo.button")
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
+                    .background(AppColors.bone)
+                }
+            }
             .scrollContentBackground(.hidden)
             .background(AppColors.bone)
             .navigationTitle("Shared Margin")
@@ -977,6 +1009,8 @@ struct SharedMarginDetailView: View {
             }
             .onDisappear {
                 if shouldOpenItem, let itemID = row.layer.itemId { model.openItemFromTap(id: itemID) }
+                if goesToMargin { model.goToSharedMargin(current) }
+                goesToMargin = false
                 if let pendingReply { model.replyToSharedMargin(current, inWriting: pendingReply == .written) }
                 pendingReply = nil
             }
