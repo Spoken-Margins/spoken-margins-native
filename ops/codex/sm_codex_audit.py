@@ -1522,7 +1522,7 @@ def sweep_due(now: float, path: Path | None = None) -> bool:
 
 def record_sweep(now: float, path: Path | None = None) -> None:
     try:
-        (path or SWEEP_PATH).write_text(f"{now:.0f}\n")
+        (path or SWEEP_PATH).write_text(f"{int(now)}\n")  # rounded down: rounded up, it reads as the future for half a second
     except OSError as exc:
         log(f"could not record the sweep ({exc}); the next run sweeps again")
 

@@ -119,6 +119,10 @@ class OnePrPerCheckFinish(unittest.TestCase):
         self.assertFalse(A.sweep_due(1000.0 + A.SWEEP_EVERY - 1, self.path))
         self.assertTrue(A.sweep_due(1000.0 + A.SWEEP_EVERY, self.path))
 
+    def test_a_run_in_the_same_second_as_the_sweep_does_not_sweep_again(self):
+        A.record_sweep(1000.6, self.path)
+        self.assertFalse(A.sweep_due(1000.7, self.path))
+
     def test_a_record_from_the_future_does_not_hold_sweeps_off(self):
         A.record_sweep(5000.0, self.path)
         self.assertTrue(A.sweep_due(1000.0, self.path))
