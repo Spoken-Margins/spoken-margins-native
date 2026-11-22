@@ -224,7 +224,7 @@ def resolved_rewrite(paths: list[str]) -> str | None:
     if SESSIONKIT_RESOLVED in paths and SESSIONKIT_MANIFEST not in paths:
         return (f'it changes `{SESSIONKIT_RESOLVED}` but not `{SESSIONKIT_MANIFEST}`; SwiftPM on Linux rewrites that '
                 f'file and drops the Mac\'s pins. Put it back with `git checkout origin/main -- {SESSIONKIT_RESOLVED}` '
-                'and push; on Linux run scripts/run-sessionkit-linux-tests.sh and stage files by path, not `git add -A`')
+                '(merge `main` first if the branch is behind and main changed it) and push; on Linux run scripts/run-sessionkit-linux-tests.sh and stage files by path, not `git add -A`')
     return None
 
 
