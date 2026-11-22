@@ -176,7 +176,11 @@ def comment_body(number, reason, head, check, armed=True, cancelled=None, retry=
         if retry:
             lines[0] += '\n' + RETRY_MARKER
             lines.append(f'{where}. That usually means it ran out of time, so nothing needs fixing in the PR.')
-            if requeued:
+            if not armed:
+                # #4942 audit: a PR set to merge by hand, without the label, is queued again by nothing here.
+                lines.append(f'It has no `{ARM_LABEL}` label, so nothing queues it again: tap Merge again, or add '
+                             f'`{ARM_LABEL}`.')
+            elif requeued:
                 lines.append(f'It keeps `{ARM_LABEL}` and is set to merge again now, once.')
             else:
                 lines.append(f'It keeps `{ARM_LABEL}`; setting it to merge again failed here, so the label bridge\'s '

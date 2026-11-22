@@ -52,7 +52,7 @@ rule, the queue's admission, black-box Mac jobs (pass, fail, hang to the time li
 timeout, never get a runner), download outages, token refusals, dropped schedules and the VPS backstop. Its docstring
 lists the GitHub rules it assumes and the invariants it checks.
 
-- `.venv/bin/python scripts/ci_harness.py --check` runs all 376 combinations (about 30 seconds) and fails on a stuck,
+- `.venv/bin/python scripts/ci_harness.py --check` runs every combination (418 on 2026-11-22, about 35 seconds) and fails on a stuck,
   silent, looping or broken-merge case that `KNOWN` does not list, on a `KNOWN` entry that no longer happens, and on
   a static finding (workflow-level concurrency over jobs that skip on the label; a required job skipped when an
   unrequired job it needs fails; a required check no job reports). The `hosted fast: portable` job runs it on every
@@ -79,10 +79,11 @@ Each fix is replayed with `ci_harness.py --diff <merge>^1 <merge>` where the old
 | #4753, #4755 | Audit before the hosted checks; the re-arm job standing down | caught in hindsight | the older trees do not load |
 | #4746, #4754 | Audit without the lane; the merge audit trusting the queue | missed | the older trees do not load |
 | #4835 (#4795) | download.onnxruntime.ai's bad certificate failed Mac jobs; each PR was re-armed by hand | missed | caught as `outage-90m` / `needs-person`; open as #4940 |
-| #4937 | The bridge's token refused (403) with no word on the PR; a timed-out queue entry disarmed; workflow-level groups in two more workflows; the web check skipped (= passed) when change detection failed | missed | caught: 42 + 9 combinations, and the static rules |
+| #4937 | The bridge's token refused (403), or expired (401 on every read, found by #4942's audit), with no word on the PR; a timed-out queue entry disarmed; workflow-level groups in two more workflows; the web check skipped (= passed) when change detection failed | missed | caught: 42 + 9 combinations, and the static rules |
 
-Against `main` at b825e9dd, #4937 fixes 134 of 222 violating combinations and moves 9 more from silent to told or
-slow. The 88 left are in `KNOWN`: outages and one-off Mac failures in the queue (#4940), dropped schedules with the
+Against `main` at b825e9dd, over the first 376 combinations, #4937 fixes 134 of 222 violating ones and moves 9 more
+from silent to told or slow. The expired-token fault added after #4942's audit adds 42 combinations, all of them told
+on the PR. The 88 left are in `KNOWN`: outages and one-off Mac failures in the queue (#4940), dropped schedules with the
 backstop down (#4866, now reported by the wake sweep's rule 15), and GitHub's runner pool.
 
 ## Assumptions

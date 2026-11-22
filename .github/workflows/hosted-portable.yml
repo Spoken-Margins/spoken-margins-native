@@ -172,7 +172,7 @@ jobs:
           PR_QUICK: ${{ github.event_name == 'pull_request' && '--pr-quick' || '' }}
         run: .venv/bin/python scripts/verify-tests.py --plan fast-portable $PR_QUICK
       # #4937: the pipeline harness. It runs this tree's workflows, queue scripts, merge policy and VPS backstop through
-      # 376 timed combinations (black-box Mac jobs that pass, fail, hang or never start; same-second label bursts in
+      # about 400 timed combinations (black-box Mac jobs that pass, fail, hang or never start; same-second label bursts in
       # both orders; download outages; token refusals; dropped schedules) and fails on a stuck, silent, looping or
       # broken-merge case not in its KNOWN list, or on a KNOWN entry that no longer happens.
       # Cost and catch: about 30 seconds of a hosted Linux job per PR push and per merge group, no Mac, no tokens. It

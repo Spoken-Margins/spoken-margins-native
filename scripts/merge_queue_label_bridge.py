@@ -24,8 +24,11 @@ label into the queue's own commands. merge-queue-label-bridge.yml runs it from m
 Every call is tried a few times. One plain line per PR. Exit 1 when a PR could not be queued or unqueued, so the
 run shows red. The next sweep retries a failed queueing, and the PR gets one comment saying it could not be queued
 and why (#4937: with MERGE_QUEUE_TOKEN refused, every armed PR sat unqueued and only the bridge's own run was red,
-which nobody reads). A comment the main token cannot post is tried once more with FALLBACK_GH_TOKEN (the workflow's
-GITHUB_TOKEN), so an expired queue token still leaves a note on the PR. A failed unqueue is not retried (the sweep never takes a
+which nobody reads). Reads, label removals and comments the main token is refused (401 or 403; for a comment, any
+failure) are tried once more with FALLBACK_GH_TOKEN (the workflow's GITHUB_TOKEN), so an expired or revoked queue
+token still gets as far as `gh pr merge`, fails there, and leaves a note on the PR (FALLBACK_KINDS; #4942's audit found
+the first version fell back only for the comment, so a dead token failed on its first read and said nothing). Setting
+a PR to merge never falls back. A failed unqueue is not retried (the sweep never takes a
 PR out), so it posts a comment on the PR saying it is still set to merge and how to take it out.
 
 Run: `python3 scripts/merge_queue_label_bridge.py --repo owner/name (--pr N --action ACTION | --sweep)`.
@@ -44,6 +47,10 @@ FIX_LABEL = 'needs-fix'
 TRIES = 3
 MARKER = '<!-- merge-queue-label-bridge not-queued -->'
 QUEUE_FAILED_MARKER = '<!-- merge-queue-label-bridge could-not-queue -->'
+# Calls retried once with FALLBACK_GH_TOKEN when the main token is refused (#4937, #4942). Never setting a PR to merge:
+# a merge set with GITHUB_TOKEN would put it in a group whose events start no workflows, and it would never pass.
+FALLBACK_KINDS = frozenset({'read', 'label', 'comment'})
+REFUSED = re.compile(r'\b(401|403)\b|Bad credentials|not accessible', re.I)
 # gh's wording when there is nothing left to do. Matched on any reply; an answer that matches is not retried.
 ALREADY = re.compile(r'already (queued|in the merge queue|enabled)|auto-?merge (is )?already|is already set to', re.I)
 NOT_QUEUED = re.compile(r'not (in|on) the merge queue|not queued', re.I)
@@ -77,6 +84,16 @@ class GitHub:
         self.owner, self.name = repo.split('/', 1)
         self.sleep = sleep
 
+    def call(self, kind, args):
+        """`gh` with the main token, then once with FALLBACK_GH_TOKEN for a kind in FALLBACK_KINDS when the main token
+        was refused (any failure, for a comment)."""
+        code, out = self.gh(args)
+        fallback = os.environ.get('FALLBACK_GH_TOKEN')
+        if code and kind in FALLBACK_KINDS and fallback and fallback != os.environ.get('GH_TOKEN') \
+                and (kind == 'comment' or REFUSED.search(out)):
+            code, out = self.gh(args, env={**os.environ, 'GH_TOKEN': fallback})
+        return code, out
+
     def gh(self, args, env=None):
         """(returncode, stdout + stderr) after up to TRIES attempts; a non-zero code is returned, not raised."""
         out = ''
@@ -98,7 +115,7 @@ class GitHub:
         for key, value in variables.items():
             if value is not None:
                 args += ['-F' if isinstance(value, int) else '-f', f'{key}={value}']
-        code, out = self.gh(args)
+        code, out = self.call('read', args)
         if code:
             raise Failed(out.strip()[-300:])
         try:
@@ -127,22 +144,19 @@ class GitHub:
             after = page['pageInfo']['endCursor']
 
     def comments(self, number):
-        code, out = self.gh(['api', f'repos/{self.repo}/issues/{number}/comments', '--paginate', '--jq', '.[].body'])
+        code, out = self.call('read', ['api', f'repos/{self.repo}/issues/{number}/comments', '--paginate', '--jq',
+                                       '.[].body'])
         if code:
             raise Failed(out.strip()[-300:])
         return out
 
     def comment(self, number, body):
-        args = ['pr', 'comment', str(number), '--repo', self.repo, '--body', body]
-        code, out = self.gh(args)
-        fallback = os.environ.get('FALLBACK_GH_TOKEN')
-        if code and fallback and fallback != os.environ.get('GH_TOKEN'):
-            code, out = self.gh(args, env={**os.environ, 'GH_TOKEN': fallback})
+        code, out = self.call('comment', ['pr', 'comment', str(number), '--repo', self.repo, '--body', body])
         if code:
             raise Failed(out.strip()[-300:])
 
     def remove_label(self, number, name):
-        code, out = self.gh(['api', '-X', 'DELETE', f'repos/{self.repo}/issues/{number}/labels/{name}'])
+        code, out = self.call('label', ['api', '-X', 'DELETE', f'repos/{self.repo}/issues/{number}/labels/{name}'])
         if code and 'Label does not exist' not in out and '404' not in out:
             raise Failed(out.strip()[-300:])
 
@@ -241,11 +255,13 @@ def say_could_not_queue(github, number, text, out):
     try:
         if QUEUE_FAILED_MARKER in github.comments(number):
             return
-        token_hint = ' The bridge\'s token (`MERGE_QUEUE_TOKEN`, #4745) may have expired or lost its access.' \
-            if re.search(r'\b(401|403)\b|Bad credentials|not accessible', text, re.I) else ''
+        if REFUSED.search(text):
+            why = (' The bridge\'s token (`MERGE_QUEUE_TOKEN`, #4745) may have expired or lost its access; nothing '
+                   'in the PR needs changing.')
+        else:   # #4942 audit: a conflict or a dirty branch is the PR's own, so don't say nothing needs doing in it
+            why = ' If that names something in the PR (a conflict, a draft), fix it and push.'
         github.comment(number, f'{QUEUE_FAILED_MARKER}\n`{LABEL}` is on, but this PR could not be queued for '
-                               f'merging: `{text.strip()[-200:]}`.{token_hint} Each sweep tries again; nothing '
-                               f'else needs doing in the PR.')
+                               f'merging: `{text.strip()[-200:]}`.{why} Each sweep tries again.')
     except Failed as error:
         print(f'#{number}: could not say so on the PR either: {error}', file=out)
 

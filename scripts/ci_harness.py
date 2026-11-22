@@ -156,6 +156,7 @@ class Case(M.Scenario):
     jobs: dict = dataclasses.field(default_factory=dict)  # (workflow, job) -> per-attempt outcomes
     outage: tuple | None = None       # (start minute, end minute) when EXTERNAL_DOWNLOADS hosts fail
     token_403: frozenset = frozenset()  # secret names whose writes answer 403
+    token_401: frozenset = frozenset()  # secret names that are expired or revoked: every call answers 401
     admission: str = 'created'        # 'created' | 'reversed': the order same-instant runs enter a group
     backstop: bool = True             # the VPS dispatch backstop (ops/dispatch-backstop) runs every 15 minutes
     owner_tap_at: int | None = None   # when the owner adds `owner-tap` (an owner-tap PR)
@@ -238,19 +239,52 @@ class TimedWorld(M.World):
         world = self
         secret = job['token'][len('secret:'):] if job['token'].startswith('secret:') else None
 
+        expired = bool(secret and secret in world.c.token_401)
+        refused = expired or bool(secret and secret in world.c.token_403)
+        module = world.tree.module('bridge', 'scripts/merge_queue_label_bridge.py')
+        # The script's own fallback policy: which kinds of call it retries with the workflow's GITHUB_TOKEN, and only
+        # if the workflow passes that token. A tree from before FALLBACK_KINDS fell back for comments alone.
+        passes_fallback = 'FALLBACK_GH_TOKEN' in world.tree.yaml_text('merge-queue-label-bridge.yml')
+        kinds = set(getattr(module, 'FALLBACK_KINDS', {'comment'})) if passes_fallback else set()
+
+        def gate(kind, what):
+            """Raise the script's Failed when the token is refused for this call and the script does not fall back."""
+            if not (expired if kind in ('read', 'label') else refused):
+                return
+            if kind in kinds:
+                world.note(cause, f'bridge: {what} with the fallback GITHUB_TOKEN')
+                return
+            code = 401 if expired else 403
+            world.note(cause, f'bridge: {what} refused, HTTP {code} ({secret})')
+            raise module.Failed(f'HTTP {code}')
+
         class Bridge(M.FakeBridgeGitHub):
+            def pull(self, number):
+                gate('read', 'PR read')
+                return super().pull(number)
+
+            def open_pulls(self):
+                gate('read', 'PR list read')
+                return super().open_pulls()
+
+            def comments(self, number):
+                gate('read', 'comments read')
+                return super().comments(number)
+
+            def remove_label(self, number, name):
+                gate('label', f'`{name}` removal')
+                return super().remove_label(number, name)
+
             def merge(self, number):
-                if secret and secret in world.c.token_403:
-                    world.note(cause, f'bridge: `gh pr merge` refused, HTTP 403 ({secret})')
-                    return 1, 'HTTP 403: Resource not accessible by personal access token'
+                if refused:
+                    code = 401 if expired else 403
+                    world.note(cause, f'bridge: `gh pr merge` refused, HTTP {code} ({secret})')
+                    return 1, f'HTTP {code}: ' + ('Bad credentials' if expired else
+                                                   'Resource not accessible by personal access token')
                 return super().merge(number)
 
             def comment(self, number, body):
-                if secret and secret in world.c.token_403:
-                    if 'FALLBACK_GH_TOKEN' not in world.tree.yaml_text('merge-queue-label-bridge.yml'):
-                        world.note(cause, f'bridge: comment refused, HTTP 403 ({secret})')
-                        raise world.tree.module('bridge', 'scripts/merge_queue_label_bridge.py').Failed('HTTP 403')
-                    world.note(cause, 'bridge: comment posted with the fallback GITHUB_TOKEN')
+                gate('comment', 'comment')
                 return super().comment(number, body)
         return Bridge(self, job['token'], cause)
 
@@ -685,6 +719,8 @@ FAULTS = {
     'mac-no-runner': dict(mac=('never',), expect='told'),
     'outage-90m': dict(outage=(0, 90), transient=True),
     'bridge-token-403': dict(token_403=frozenset({'MERGE_QUEUE_TOKEN'}), expect='told'),
+    # #4942's audit: an expired token is refused on reads too, not only on `gh pr merge` and the comment.
+    'bridge-token-expired': dict(token_401=frozenset({'MERGE_QUEUE_TOKEN'}), expect='told'),
     'portable-timeout-once': dict(jobs={('hosted-portable.yml', 'portable'): ('hang', 'pass')}, transient=True),
     'schedules-dropped': dict(schedule_mode='dropped', backstop=False),
     'backstop-off': dict(backstop=False),

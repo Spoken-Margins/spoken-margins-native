@@ -227,6 +227,19 @@ class NotifyTests(unittest.TestCase):
         self.assertEqual(github.requeued, 0)
         self.assertIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
 
+    def test_an_unlabelled_pr_that_times_out_is_told_to_tap_merge_again(self):
+        # #4942 audit: the owner's own Merge tap carries no `automerge`. Its retry comment promised the bridge's sweep,
+        # which only queues labelled PRs, so the PR sat out of the queue while its comment said it would be retried.
+        for reason, conclusion in (('CI_TIMEOUT', 'in_progress'), ('CI_FAILURE', 'cancelled')):
+            with self.subTest(reason=reason):
+                github = self.github(check_conclusion=conclusion)
+                self.assertEqual(mq.notify(github, event(reason=reason, armed=False), out=io.StringIO()), 'told: retry')
+                self.assertEqual((github.requeued, github.deletes), (0, []))
+                body = github.posts[0][1]['body']
+                self.assertIn('tap Merge again', body)
+                self.assertNotIn('sweep', body)
+                self.assertNotIn('It keeps', body)
+
     def test_a_failure_with_no_failed_check_found_still_needs_a_fix(self):
         # Not a timeout and nothing cancelled: the reason says the group failed, so the PR is held as before.
         github = self.github(check_conclusion='in_progress')

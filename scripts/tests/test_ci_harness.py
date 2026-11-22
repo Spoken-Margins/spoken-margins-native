@@ -39,6 +39,20 @@ class LiveFaultTests(unittest.TestCase):
         self.assertEqual(H.violations(in_order, H.simulate(in_order, tree), tree), [],
                          'only the order GitHub does not promise loses the newer run')
 
+    def test_an_expired_queue_token_is_silent_when_only_comments_fall_back(self):
+        # #4942's audit: the first fix fell back to GITHUB_TOKEN for the comment only, so a dead MERGE_QUEUE_TOKEN
+        # failed on the bridge's first read and no PR was told.
+        expired = H.case('sessionkit', 'person', 'bridge-token-expired')
+        tree = fresh_tree()
+        self.assertEqual(H.violations(expired, H.simulate(expired, tree), tree), [])
+        module = tree.module('bridge', 'scripts/merge_queue_label_bridge.py')
+        saved = module.FALLBACK_KINDS
+        try:
+            module.FALLBACK_KINDS = frozenset({'comment'})
+            self.assertEqual(H.violations(expired, H.simulate(expired, tree), tree), ['silent-stuck'])
+        finally:
+            module.FALLBACK_KINDS = saved
+
     def test_static_rules_see_each_fixed_shape_again(self):
         tree = fresh_tree()
         self.assertEqual(H.static_findings(tree), [])
