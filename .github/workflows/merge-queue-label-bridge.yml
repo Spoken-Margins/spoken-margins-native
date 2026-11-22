@@ -88,6 +88,9 @@ jobs:
       - name: Queue or unqueue
         env:
           GH_TOKEN: ${{ secrets.MERGE_QUEUE_TOKEN || github.token }}
+          # For the "could not queue" comment only, when GH_TOKEN is refused (#4937): an expired queue token then
+          # still leaves a note on the PR instead of only a red run.
+          FALLBACK_GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           EVENT: ${{ github.event_name }}
           ACTION: ${{ github.event.action }}

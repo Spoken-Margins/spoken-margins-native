@@ -12,10 +12,12 @@ Two jobs, independent of each other:
    A removal for a failure also gets the `needs-fix` label and loses `automerge`, so the label bridge
    (merge_queue_label_bridge.py) does not queue it again until someone adds `automerge` again, as with the old
    lane. A removal by hand means "stop": the PR loses `automerge` too, but gets no `needs-fix` since nothing
-   failed. A group whose only bad check was cancelled (a job's `timeout-minutes` ends as `cancelled`, not
-   `timed_out`) failed nothing in the PR: the first time, the PR keeps `automerge` and gets no `needs-fix`, so the
-   bridge's sweep queues it again; a second cancelled removal of the same PR is treated as a failure, so a job
-   that hangs every time costs one retry, not a loop. `automerge` is removed only when the event shows the PR carries it (the owner's own Merge tap on an
+   failed. A group in which no check failed failed nothing in the PR: its only bad check was cancelled (a job's `timeout-minutes` ends as `cancelled`, not
+   `timed_out`), or a check never reported before the queue's timeout (no Mac free for two hours). The first time,
+   the PR keeps `automerge`, gets no `needs-fix`, and is set to merge again here with the queue token, so it goes
+   back in without waiting for the bridge's sweep, which runs only when the VPS backstop or a schedule GitHub often
+   drops starts it (#4937). A second such removal of the same PR is treated as a failure, so a job that hangs every
+   time costs one retry, not a loop. `automerge` is removed only when the event shows the PR carries it (the owner's own Merge tap on an
    unlabelled PR has nothing to remove, and its comment says nothing about a label). A PR that merged keeps its labels. Each comment carries a hidden marker with the group head (or the PR
    head when no group ran), so a second event for the same group adds nothing. A failed read logs a warning and exits 0: a notifier must not go red.
 
@@ -99,6 +101,20 @@ class GitHub:
     def post(self, path, body):
         self._gh(['-X', 'POST', f'repos/{self.repo}/{path}', '--input', '-'], data=json.dumps(body))
 
+    def requeue(self, number):
+        """Set the PR to merge again (`gh pr merge`), with MERGE_QUEUE_TOKEN when the workflow passes it as
+        QUEUE_TOKEN: an enqueue by GITHUB_TOKEN may get merge groups whose checks never start (see
+        merge-queue-label-bridge.yml). True when it is set to merge."""
+        env = dict(os.environ)
+        if env.get('QUEUE_TOKEN'):
+            env['GH_TOKEN'] = env['QUEUE_TOKEN']
+        try:
+            done = subprocess.run(['gh', 'pr', 'merge', str(number), '--repo', self.repo], env=env, text=True,
+                                  timeout=90, capture_output=True)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return done.returncode == 0 or 'already' in f'{done.stdout}{done.stderr}'.lower()
+
     def delete(self, path):
         """DELETE; a 404 (already gone) is fine."""
         try:
@@ -140,18 +156,34 @@ def carries_arm_label(pr):
     return any((label or {}).get('name') == ARM_LABEL for label in pr.get('labels') or [])
 
 
-def comment_body(number, reason, head, check, armed=True, cancelled=None, retry=False):
+def nothing_failed(reason, check):
+    """A removal in which no check failed and that is not a conflict, a merge or a removal by hand: a cancelled
+    check, or one that never reported before the queue's timeout. Nothing in the PR needs fixing."""
+    upper = (reason or '').upper()
+    return not check and upper not in NO_LABEL_REASONS and 'CONFLICT' not in upper
+
+
+def comment_body(number, reason, head, check, armed=True, cancelled=None, retry=False, requeued=None):
     lines = [MARKER.format(head=head),
              f'**Left the merge queue** ({reason or "no reason given"}).']
-    if cancelled and not check and reason.upper() not in MANUAL_REASONS:
-        where = f'"{cancelled.get("name", "?")}" on the merge group `{head[:7]}` was cancelled, not failed: ' \
-                f'{cancelled.get("html_url", "")}'
+    if nothing_failed(reason, check) and (cancelled or retry or 'TIME' in (reason or '').upper()):
+        if cancelled:
+            where = f'"{cancelled.get("name", "?")}" on the merge group `{head[:7]}` was cancelled, not failed: ' \
+                    f'{cancelled.get("html_url", "")}'
+        else:
+            where = f'No check failed on the merge group `{head[:7]}`; one did not report before the queue\'s time ' \
+                    f'limit (usually no runner was free)'
         if retry:
             lines[0] += '\n' + RETRY_MARKER
             lines.append(f'{where}. That usually means it ran out of time, so nothing needs fixing in the PR.')
-            lines.append(f'It keeps `{ARM_LABEL}` and will be queued again within 15 minutes, once.')
+            if requeued:
+                lines.append(f'It keeps `{ARM_LABEL}` and is set to merge again now, once.')
+            else:
+                lines.append(f'It keeps `{ARM_LABEL}`; setting it to merge again failed here, so the label bridge\'s '
+                             f'sweep will queue it, once.')
             return '\n\n'.join(lines)
-        lines.append(f'{where}. It was cancelled on its last try too, so it is held as a failure this time.')
+        again = 'It was cancelled on its last try too' if cancelled else 'That happened on its last try too'
+        lines.append(f'{where}. {again}, so it is held as a failure this time.')
         lines.append(f'To get back in: find why that job does not finish, push, then add `{ARM_LABEL}` again.')
         return '\n\n'.join(lines)
     if reason.upper() in MANUAL_REASONS:
@@ -187,8 +219,7 @@ def notify(github, event, out=sys.stdout):
         head = (run or {}).get('head_sha') or (pr.get('head') or {}).get('sha') or 'unknown'
         check = failed_check(github, run['head_sha']) if run and run.get('head_sha') else None
         cancelled = None
-        if not check and run and run.get('head_sha') and reason.upper() not in MANUAL_REASONS \
-                and 'CONFLICT' not in reason.upper():
+        if nothing_failed(reason, check) and run and run.get('head_sha'):
             cancelled = cancelled_check(github, run['head_sha'])
         comments = github.get(f'issues/{number}/comments?per_page=100')
     except ReadFailed as error:
@@ -198,13 +229,19 @@ def notify(github, event, out=sys.stdout):
     if any(marker in (comment.get('body') or '') for comment in comments):
         print(f'#{number}: already told about group {head[:7]}.', file=out)
         return 'skipped: already told'
-    retry = bool(cancelled) and not any(RETRY_MARKER in (comment.get('body') or '') for comment in comments)
+    # A group nothing failed in (a cancelled check, or a queue timeout with no check reported) gets one retry.
+    # MANUAL removals are not retried: they mean "stop".
+    retry = nothing_failed(reason, check) and reason.upper() not in MANUAL_REASONS \
+        and (bool(cancelled) or 'TIME' in reason.upper()) \
+        and not any(RETRY_MARKER in (comment.get('body') or '') for comment in comments)
     try:
         armed = carries_arm_label(pr)
+        requeued = github.requeue(number) if retry and armed and hasattr(github, 'requeue') else None
         github.post(f'issues/{number}/comments',
-                    {'body': comment_body(number, reason, head, check, armed, cancelled, retry)})
+                    {'body': comment_body(number, reason, head, check, armed, cancelled, retry, requeued)})
         if retry:
-            print(f'#{number}: group {head[:7]} was cancelled, not failed; left armed for one retry.', file=out)
+            print(f'#{number}: nothing failed in group {head[:7]}; left armed for one retry'
+                  f'{" and set to merge again" if requeued else ""}.', file=out)
             return 'told: retry'
         if reason.upper() not in NO_LABEL_REASONS:
             github.post(f'issues/{number}/labels', {'labels': [LABEL]})

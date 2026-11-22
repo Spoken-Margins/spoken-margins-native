@@ -22,13 +22,17 @@ label into the queue's own commands. merge-queue-label-bridge.yml runs it from m
   the `unlabeled` event, a hold `edited`/`converted_to_draft` event, or merge_queue_dequeued.py's label removal.
 
 Every call is tried a few times. One plain line per PR. Exit 1 when a PR could not be queued or unqueued, so the
-run shows red. The next sweep retries a failed queueing. A failed unqueue is not retried (the sweep never takes a
+run shows red. The next sweep retries a failed queueing, and the PR gets one comment saying it could not be queued
+and why (#4937: with MERGE_QUEUE_TOKEN refused, every armed PR sat unqueued and only the bridge's own run was red,
+which nobody reads). A comment the main token cannot post is tried once more with FALLBACK_GH_TOKEN (the workflow's
+GITHUB_TOKEN), so an expired queue token still leaves a note on the PR. A failed unqueue is not retried (the sweep never takes a
 PR out), so it posts a comment on the PR saying it is still set to merge and how to take it out.
 
 Run: `python3 scripts/merge_queue_label_bridge.py --repo owner/name (--pr N --action ACTION | --sweep)`.
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -39,6 +43,7 @@ LABEL = 'automerge'
 FIX_LABEL = 'needs-fix'
 TRIES = 3
 MARKER = '<!-- merge-queue-label-bridge not-queued -->'
+QUEUE_FAILED_MARKER = '<!-- merge-queue-label-bridge could-not-queue -->'
 # gh's wording when there is nothing left to do. Matched on any reply; an answer that matches is not retried.
 ALREADY = re.compile(r'already (queued|in the merge queue|enabled)|auto-?merge (is )?already|is already set to', re.I)
 NOT_QUEUED = re.compile(r'not (in|on) the merge queue|not queued', re.I)
@@ -72,12 +77,12 @@ class GitHub:
         self.owner, self.name = repo.split('/', 1)
         self.sleep = sleep
 
-    def gh(self, args):
+    def gh(self, args, env=None):
         """(returncode, stdout + stderr) after up to TRIES attempts; a non-zero code is returned, not raised."""
         out = ''
         for attempt in range(TRIES):
             try:
-                done = subprocess.run(['gh', *args], text=True, capture_output=True, timeout=90)
+                done = subprocess.run(['gh', *args], text=True, capture_output=True, timeout=90, env=env)
             except (OSError, subprocess.SubprocessError) as error:
                 out = repr(error)
             else:
@@ -128,7 +133,11 @@ class GitHub:
         return out
 
     def comment(self, number, body):
-        code, out = self.gh(['pr', 'comment', str(number), '--repo', self.repo, '--body', body])
+        args = ['pr', 'comment', str(number), '--repo', self.repo, '--body', body]
+        code, out = self.gh(args)
+        fallback = os.environ.get('FALLBACK_GH_TOKEN')
+        if code and fallback and fallback != os.environ.get('GH_TOKEN'):
+            code, out = self.gh(args, env={**os.environ, 'GH_TOKEN': fallback})
         if code:
             raise Failed(out.strip()[-300:])
 
@@ -223,7 +232,22 @@ def queue(github, pr, out=sys.stdout, rearmed=False):
         print(f'#{number}: queued (GitHub adds it once its required checks pass)', file=out)
         return True
     print(f'#{number}: could not queue: {text.strip()[-300:]}', file=out)
+    say_could_not_queue(github, number, text, out)
     return False
+
+
+def say_could_not_queue(github, number, text, out):
+    """One comment per PR that it is armed but could not be queued. Never raises: the run is red either way."""
+    try:
+        if QUEUE_FAILED_MARKER in github.comments(number):
+            return
+        token_hint = ' The bridge\'s token (`MERGE_QUEUE_TOKEN`, #4745) may have expired or lost its access.' \
+            if re.search(r'\b(401|403)\b|Bad credentials|not accessible', text, re.I) else ''
+        github.comment(number, f'{QUEUE_FAILED_MARKER}\n`{LABEL}` is on, but this PR could not be queued for '
+                               f'merging: `{text.strip()[-200:]}`.{token_hint} Each sweep tries again; nothing '
+                               f'else needs doing in the PR.')
+    except Failed as error:
+        print(f'#{number}: could not say so on the PR either: {error}', file=out)
 
 
 def unqueue(github, pr, out=sys.stdout):
