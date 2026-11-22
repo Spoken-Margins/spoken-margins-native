@@ -4072,8 +4072,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         #if os(iOS)
         let options = PlaybackAudioSessionPolicy.options(mixes: key.mixes, lowersBackground: key.lowersBackground)
-        try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: options)
-        try AVAudioSession.sharedInstance().setActive(true)
+        try AudioSessionOperationLabel.scoped(AudioSessionOperationLabel.supertonicActivate) {
+            try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: options)
+            try AVAudioSession.sharedInstance().setActive(true)
+        }
         #endif
         lock.withLock { activatedSessionKey = key }
     }

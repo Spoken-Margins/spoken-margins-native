@@ -240,6 +240,39 @@ final class MainThreadHangProbeTests: XCTestCase {
         XCTAssertEqual(stack.current, "")
     }
 
+    /// #842: the label stack is process-wide, so a call on a background queue must stay unlabelled. Otherwise the probe
+    /// would name an audio-session call that ran off the main thread as the cause of a main-thread stall.
+    func testScopedOnMainThreadLabelsOnlyOnTheMainThread() throws {
+        let stack = MainThreadOperationLabels()
+        var seenOnMain = ""
+        var seenOffMain = "unset"
+        let result: Int = stack.scopedOnMainThread("session.playbackCategory", onMainThread: true) {
+            seenOnMain = stack.current
+            return 7
+        }
+        stack.scopedOnMainThread("session.playbackCategory", onMainThread: false) { seenOffMain = stack.current }
+        XCTAssertEqual(result, 7)
+        XCTAssertEqual(seenOnMain, "session.playbackCategory")
+        XCTAssertEqual(seenOffMain, "")
+        XCTAssertEqual(stack.current, "")
+    }
+
+    func testScopedOnMainThreadPopsItsLabelWhenTheBodyThrowsAndKeepsAnOuterLabel() throws {
+        struct Boom: Error {}
+        let stack = MainThreadOperationLabels()
+        let outer = stack.push("run")
+        do {
+            try stack.scopedOnMainThread("speech.sessionActivate", onMainThread: true) { throw Boom() }
+            XCTFail("the body's error should come out")
+        } catch is Boom {
+            XCTAssertEqual(stack.current, "run")
+        } catch {
+            XCTFail("unexpected \(error)")
+        }
+        stack.pop(outer)
+        XCTAssertEqual(stack.current, "")
+    }
+
     /// Timer leeway is how far the system may postpone a check, and a late check widens the unknown stretch
     /// before a freeze. The Linux host never postpones, so the bound is asserted directly.
     func testTheTimersLeewayIsAtMostATenthOfItsInterval() {
