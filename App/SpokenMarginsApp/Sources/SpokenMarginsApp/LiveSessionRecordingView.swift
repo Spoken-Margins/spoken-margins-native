@@ -1,3 +1,4 @@
+import Combine
 import SessionKit
 import SwiftUI
 
@@ -20,6 +21,10 @@ struct LiveSessionRecordingView: View {
     var kind: ElsewhereKind = .meeting
     /// Called after the recording was thrown away (Cancel, confirmed), so the screen that owns the cover closes it.
     var onCancelled: () -> Void = {}
+    /// The small label above the anchor card; a live session's is "Live session".
+    var anchorCaption = "Live session"
+    /// False for a recording that has no session to write into (`QuickMarginRecordingView`, #4927).
+    var offersWriteInstead = true
 
     var state: MarginRecordingScreenState {
         let subtitle = anchorSubtitle()
@@ -28,7 +33,7 @@ struct LiveSessionRecordingView: View {
             isFinishing: false,
             hasKeepableAudio: capture.isRecording(for: sessionId),
             startedAt: capture.recordingStartedAt ?? Date(),
-            anchorCaption: "Live session",
+            anchorCaption: anchorCaption,
             anchorIsLocked: false,
             anchorTitle: anchorTitle,
             anchorSubtitle: subtitle,
@@ -36,7 +41,8 @@ struct LiveSessionRecordingView: View {
             justHeard: nil,
             reply: nil,
             error: nil,
-            canRetry: false
+            canRetry: false,
+            offersWriteInstead: offersWriteInstead
         )
     }
 
@@ -70,5 +76,48 @@ struct LiveSessionRecordingView: View {
     private var lead: AnyView? {
         guard let photo = capture.photo else { return nil }
         return AnyView(LiveSessionPhotoLead(url: photo.url, hint: LiveSessionPhotoMargin.hint(for: kind)).foregroundStyle(.white))
+    }
+}
+
+/// The recording screen for "Record a Margin" when nothing runs (#4927): no live session and nothing in the player. It
+/// is the live session's recording screen, driven by the same capture, with the Margin going to a quick session when
+/// Finish is tapped (`LiveSessionSpokenCapture.quickDestination`). It closes when the recording ends, however it ends,
+/// and says why when the microphone could not start. There is no writing screen to fall back to here, so Write instead
+/// is not offered.
+struct QuickMarginRecordingView: View {
+    @ObservedObject private var capture = LiveSessionSpokenCapture.shared
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var links = LiveSessionLinkRouter.shared
+    /// The line for a recording that could not start (the microphone is off, or a call holds it).
+    @State private var notice: String?
+
+    static let caption = "Nothing is playing"
+    static let title = "Quick session"
+    static let subtitle = "Kept in your Library when you finish"
+
+    var body: some View {
+        LiveSessionRecordingView(
+            capture: capture, sessionId: LiveSessionSpokenCapture.quickDestination, anchorTitle: Self.title,
+            anchorSubtitle: { Self.subtitle }, onWriteInstead: { _ in dismiss() }, onCancelled: { dismiss() },
+            anchorCaption: Self.caption, offersWriteInstead: false
+        )
+        // Taken on the next turn, as the live session screen does, so clearing it is not overwritten by the set that sent it.
+        .onReceive(capture.$notice.compactMap { $0 }.receive(on: DispatchQueue.main)) { line in
+            notice = line
+            capture.notice = nil
+        }
+        .onAppear { links.quickScreenAppeared() }
+        .onDisappear { links.quickScreenDisappeared() }
+        // A recording that has ended closes the screen, unless there is a line to read first (one here, or one waiting
+        // to be taken): that is answered, then the screen closes.
+        .onChange(of: capture.isRecordingQuick, initial: true) { _, recording in
+            if !recording && notice == nil && capture.notice == nil { dismiss() }
+        }
+        .alert("Record a Margin", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) {
+            // Never closes the screen over a recording that is still going: it would have no Finish or Cancel.
+            Button("OK", role: .cancel) { if !capture.isRecordingQuick { dismiss() } }
+        } message: {
+            Text(notice ?? "")
+        }
     }
 }
