@@ -79,6 +79,12 @@ export interface Margin {
    */
   leadInSeconds?: number;
   /**
+   * The length of the copy this Margin was made on, in seconds (#4614, #4175): from the packet's `item.durationMs` for a
+   * friend's Margin on a podcast, from the player for the listener's own. A podcast with dynamic ads is a different file
+   * on each request, so the player compares this with the copy it loaded. Absent when the length is unknown.
+   */
+  copyLengthSeconds?: number;
+  /**
    * The listener starred their own Margin to share (#4172): Share starts only the starred ones ticked, as the iPhone app's
    * does. Kept in this browser only. It is never written to a packet or a backup, so a restored Margin comes back unstarred.
    * Only ever `true`; absent means not starred.

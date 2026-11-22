@@ -189,3 +189,12 @@ test('a starred Margin writes the very bytes an unstarred one does: a star never
   assert.deepEqual(b.bytes, a.bytes);
   assert.equal(b.contentDigest, a.contentDigest);
 });
+
+test('a Margin’s copyLengthSeconds is never written into a packet: the packet’s only length is the item’s (#4614)', async () => {
+  const tagged = voiceMargins().map((m) => ({ ...m, copyLengthSeconds: 9999 }));
+  const plain = await writePacket(episode, voiceMargins(), { show, sender: 'Web fixture', packageId: 'package-web-fixture-voice', createdAt: new Date('2026-10-30T12:00:00.000Z') });
+  const withField = await writePacket(episode, tagged, { show, sender: 'Web fixture', packageId: 'package-web-fixture-voice', createdAt: new Date('2026-10-30T12:00:00.000Z') });
+  assert.equal(withField.contentDigest, plain.contentDigest);
+  const entries = await readZip(withField.bytes, unlimited);
+  for (const bytes of entries.values()) assert.equal(new TextDecoder().decode(bytes).includes('9999'), false);
+});
