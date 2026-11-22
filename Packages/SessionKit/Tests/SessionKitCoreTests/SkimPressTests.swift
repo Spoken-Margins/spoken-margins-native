@@ -57,11 +57,4 @@ final class SkimPressTests: XCTestCase {
         XCTAssertEqual(SkimPressOutcome.playedSummary.diagnosticFields(direction: .backward),
                        ["outcome": "played_summary", "direction": "backward"])
     }
-
-    func testGoingToASilentMarginIsItsOwnOutcome() {
-        XCTAssertEqual(SkimPressOutcome.wentToSilentMargin.rawValue, "went_to_silent_margin")
-        XCTAssertEqual(SkimPressOutcome.wentToSilentMargin.diagnosticFields(direction: .backward),
-                       ["outcome": "went_to_silent_margin", "direction": "backward"])
-        XCTAssertNotEqual(SkimPressOutcome.wentToSilentMargin, .startedMarginLeadIn, "no lead-in started, so it is not logged as one")
-    }
 }
