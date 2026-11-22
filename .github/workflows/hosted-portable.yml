@@ -171,6 +171,19 @@ jobs:
         env:
           PR_QUICK: ${{ github.event_name == 'pull_request' && '--pr-quick' || '' }}
         run: .venv/bin/python scripts/verify-tests.py --plan fast-portable $PR_QUICK
+      # #4937: the pipeline harness. It runs this tree's workflows, queue scripts, merge policy and VPS backstop through
+      # 376 timed combinations (black-box Mac jobs that pass, fail, hang or never start; same-second label bursts in
+      # both orders; download outages; token refusals; dropped schedules) and fails on a stuck, silent, looping or
+      # broken-merge case not in its KNOWN list, or on a KNOWN entry that no longer happens.
+      # Cost and catch: about 30 seconds of a hosted Linux job per PR push and per merge group, no Mac, no tokens. It
+      # runs on every PR rather than on a path list, because a path list is one more thing to fall out of date and the
+      # harness reads scripts no list would name. Replayed against the last two days, it finds #4929 (a re-arm left the
+      # required check cancelled for 2 to 5 hours), the bridge's silent 403, the disarmed timed-out queue entry, the
+      # grey cancelled portable check (#4747) and the skipped-means-passed web check (docs/workstreams/ci-model.md).
+      # Waste signal: three months in which it never fails a PR, or it passes 2 minutes; then run it only on pipeline
+      # paths.
+      - name: Pipeline harness
+        run: .venv/bin/python scripts/ci_harness.py --check
       # #2681: SessionKit also builds on Linux (the daily Substack canary runs on it), but no per-PR check compiled it
       # there, so #2671's Foundation-only `.bySentences` broke the Linux build on main unnoticed. #3529: and it runs
       # SessionKitCoreTests here, in the same swift image and dependency cache as hosted-sessionkit-linux.yml, so a red

@@ -126,7 +126,7 @@ DURATIONS = {
     ('claude-audit.yml', 'audit'): 12,
     ('signoff-check.yml', 'signoff'): 0.3,
     ('main-t3.yml', 't3'): 90,
-    ('hosted-app-macos.yml', 't2-sim'): 40,
+    ('hosted-app-macos.yml', 'app'): 40,
 }
 DEFAULT_LINUX = 0.5
 DEFAULT_MAC = 30
@@ -142,7 +142,7 @@ EXTERNAL_DOWNLOADS = {
     ('hosted-portable.yml', 'portable'): 'PyPI, github.com (Caddy), Docker Hub (swift image)',
     ('hosted-web.yml', 'web'): 'Playwright CDN, Hugging Face (speech model)',
     ('main-t3.yml', 't3'): 'download.onnxruntime.ai, Homebrew (xcodegen), Git LFS',
-    ('hosted-app-macos.yml', 't2-sim'): 'download.onnxruntime.ai, Homebrew casks, Git LFS',
+    ('hosted-app-macos.yml', 'app'): 'download.onnxruntime.ai, Homebrew casks, Git LFS',
 }
 
 SLOW_MINUTES = 240
@@ -765,7 +765,8 @@ KNOWN = {
     # merge-stall watch (not modelled) opens its issue after an hour. The pool is GitHub's.
     'web/*/mac-no-runner/*: silent-stuck': 'GitHub-hosted runner pool; merge-stall watch',
     # A PR armed by a token-made label is queued only by the bridge's sweep, which only the VPS backstop starts in
-    # time. With the backstop down or its token refused (2026-11-22), the PR waits for GitHub's daily tick.
+    # time. With the backstop down or every token it has refused, the PR waits for GitHub's daily tick. Nothing on the
+    # PR says so; the coordinator's wake sweep (scripts/sm_sweep.py rule 15) reports the missing bridge runs instead.
     '*/token/schedules-dropped/*: silent-stuck': '#4866',
     '*/token/schedules-dropped-backstop-403/*: silent-stuck': '#4866',
     '*/token/backstop-off/*: slow': '#4866',

@@ -616,8 +616,9 @@ def scenarios() -> list[Scenario]:
                  'flipped).', ['Packages/SessionKit/Sources/SessionKit/Example.swift'],
                  steps=[(1, 'label', 'automerge', 'user')], defects={'sessionkit_test_failure'},
                  flags={'dequeue_keeps_auto_merge': True}, horizon=6 * 60),
-        Scenario('e-app-swift-compile-error', 'An app Swift file that does not compile passes every required check '
-                 'and merges; main\'s app build is the first to fail.',
+        Scenario('e-app-swift-compile-error', 'An app Swift file that does not compile: `hosted app: build (no '
+                 'tests)` is required (ruleset re-read 2026-11-22), so the merge group fails and the PR is held '
+                 'with needs-fix instead of breaking main.',
                  ['App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExampleView.swift'],
                  steps=[(1, 'label', 'automerge', 'user')], defects={'app_compile_error'}),
         Scenario('f-rearm-by-token-after-fix', 'A dequeued PR (needs-fix) re-armed with GITHUB_TOKEN: the bridge does '
