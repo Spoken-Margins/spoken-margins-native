@@ -35,7 +35,12 @@ export function appleEpisodeRef(pageUrl: string): AppleEpisodeRef | undefined {
   const episodeId = episodes[0];
   // Exactly one show id and one episode id: a page that names two of either is not read as either.
   if (shows.length !== 1 || episodes.length !== 1 || episodeId === undefined || !ID.test(episodeId)) return undefined;
-  return { showId: shows[0] as string, episodeId };
+  return { showId: withoutLeadingZeros(shows[0] as string), episodeId: withoutLeadingZeros(episodeId) };
+}
+
+/** `0123` and `123` name one Apple id; the lookup's `trackId` is a number, so the ids are compared without padding. */
+function withoutLeadingZeros(id: string): string {
+  return id.replace(/^0+(?=[0-9])/, '');
 }
 
 /** What the lookup found for an episode that is listed with audio. */
@@ -57,6 +62,8 @@ export class AppleLookupError extends Error {
 export interface AppleLookupOptions {
   /** Injected in tests. Defaults to native HTTP inside the Android app and the browser's `fetch` elsewhere. */
   fetch?: FetchLike;
+  /** Injected in tests; the lookup's own limit otherwise (`LOOKUP_TIMEOUT_MS`). */
+  timeoutMs?: number;
 }
 
 /** How long the lookup may take. The friend's card waits on it, so a lookup that never answers must end. */
@@ -68,6 +75,26 @@ function deadline(ms: number): AbortSignal {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms);
   return controller.signal;
+}
+
+/**
+ * `run`, but rejected after `ms` whatever `run` does. The Android app's native read ignores the abort signal, so the
+ * signal alone would leave the listener's card waiting on a lookup that never answers.
+ */
+function within<T>(ms: number, run: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timed out')), ms);
+    run().then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 /** The lookup address for a show's newest 200 episodes, the one the iPhone app asks. */
@@ -108,7 +135,8 @@ export async function findAppleEpisodeAudio(pageUrl: string, options: AppleLooku
   const doFetch: FetchLike = options.fetch ?? pickReadTransport().fetch;
   let response: Response;
   try {
-    response = await doFetch(appleLookupUrl(ref.showId), { credentials: 'omit', signal: deadline(LOOKUP_TIMEOUT_MS) });
+    const limit = options.timeoutMs ?? LOOKUP_TIMEOUT_MS;
+    response = await within(limit, () => doFetch(appleLookupUrl(ref.showId), { credentials: 'omit', signal: deadline(limit) }));
   } catch {
     throw new AppleLookupError('Apple Podcasts didn’t answer. Check your connection and try again.');
   }

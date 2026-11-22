@@ -168,10 +168,13 @@ extension Gate1AppModel {
     }
 
     /// Goes to a friend's Margin and plays it, whether the listener asked from the card or the episode got there.
-    func playSharedMarginNow(_ prompt: ImportedCommentaryPrompt) {
+    /// False when the jump failed; it has told the listener why.
+    @discardableResult
+    func playSharedMarginNow(_ prompt: ImportedCommentaryPrompt) -> Bool {
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: true) } // the episode comes back, so the jump reads it as playing
         dismissPendingImportedCommentary()
-        guard jumpToImportedCommentary(interjectionID: prompt.interjection.id) else { return }
+        guard jumpToImportedCommentary(interjectionID: prompt.interjection.id) else { return false }
         listenToPendingImportedCommentary()
+        return true
     }
 }

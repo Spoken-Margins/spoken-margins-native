@@ -205,19 +205,19 @@ struct MarginRecordingScreen: View {
     /// Under the timer, only while listening for the phrase is on (#3940). The words carry the state, never colour alone.
     @ViewBuilder
     private var endPhraseHint: some View {
+        if let words = endPhraseHintWords {
+            Text(words)
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.75))
+                .accessibilityIdentifier("recording.endPhrase.hint")
+        }
+    }
+
+    private var endPhraseHintWords: String? {
         switch state.endPhraseHint {
-        case .none:
-            EmptyView()
-        case .listening:
-            Text("Say \u{201C}stop margin\u{201D} to finish")
-                .font(.footnote)
-                .foregroundStyle(.white.opacity(0.75))
-                .accessibilityIdentifier("recording.endPhrase.hint")
-        case .finishing:
-            Text("Finishing\u{2026}")
-                .font(.footnote)
-                .foregroundStyle(.white.opacity(0.75))
-                .accessibilityIdentifier("recording.endPhrase.hint")
+        case .none: nil
+        case .listening: "Say \u{201C}stop margin\u{201D} to finish"
+        case .finishing: "Finishing\u{2026}"
         }
     }
 

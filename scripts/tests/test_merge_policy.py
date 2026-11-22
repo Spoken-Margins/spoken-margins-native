@@ -253,6 +253,13 @@ class WorkflowTests(unittest.TestCase):
             self.assertNotIn('paths-ignore', trigger or {})
         self.assertEqual([job['name'] for job in self.workflow['jobs'].values()], ['merge policy'])
 
+    def test_no_run_of_the_check_can_cancel_another(self):
+        # Two label events in one second (a re-arm) started two runs; the concurrency group cancelled one, and a
+        # cancelled run with the newer id left the required check cancelled and the PR out of the queue (#4905).
+        self.assertNotIn('concurrency', self.workflow)
+        for name, job in self.workflow['jobs'].items():
+            self.assertNotIn('concurrency', job, name)
+
     def test_the_rules_come_from_main_with_a_read_only_token(self):
         self.assertEqual(self.workflow['permissions'], {'contents': 'read', 'pull-requests': 'read'})
         job = self.workflow['jobs']['policy']

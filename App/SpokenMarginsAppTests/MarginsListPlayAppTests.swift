@@ -36,6 +36,13 @@ final class MarginsListPlayAppTests: XCTestCase {
         return (model, SharedMarginRow(interjection: record, layer: layer, itemTitle: "You Can't Inspect the Pill"))
     }
 
+    /// The `margin.tap` lines the model has recorded, as `origin/outcome/reason` (#4447): a tap that does nothing must say why.
+    private func tapLines(_ model: Gate1AppModel) -> [String] {
+        model.playbackEventRecording.events.filter { $0.kind == "margin.tap" }.map {
+            [$0.fields["origin"], $0.fields["outcome"], $0.fields["reason"]].compactMap { $0 }.joined(separator: "/")
+        }
+    }
+
     func testAFriendsMarginMatchedInAnArticleHasAnEnabledPlayAndATapGoesToItsPassage() {
         let (model, row) = articleModelWithFriendMargin()
         XCTAssertNil(SharedMarginPlaybackPosition(row.interjection), "an article Margin has no time in the item")
@@ -46,6 +53,9 @@ final class MarginsListPlayAppTests: XCTestCase {
         XCTAssertNil(model.lastError, "the tap says nothing is wrong")
         XCTAssertEqual(model.pendingImportedCommentary?.id, row.interjection.id, "it went to the passage and offered the Margin")
         XCTAssertEqual(model.diagnostics["lastSharedMarginNavigation"], "opened:received-margin-7")
+        // A written Margin whose reading is not made yet: the card's wait plays it later, so the tap has not started (audit on b149832).
+        XCTAssertNil(model.playingImportedCommentary, "no voice is playing yet")
+        XCTAssertEqual(tapLines(model), ["shared/waiting/reading_not_ready"], "one line for the tap, and it does not say started")
     }
 
     // A friend's article Margin that is never read aloud (#4934): its row goes to the passage and plays on, with no Margin offered.
@@ -75,6 +85,7 @@ final class MarginsListPlayAppTests: XCTestCase {
 
         XCTAssertNotNil(model.lastError)
         XCTAssertNil(model.pendingImportedCommentary)
+        XCTAssertEqual(tapLines(model), ["shared/refused/item_did_not_open"])
     }
 
     func testAFriendsMarginOnALayerTurnedOffHasNoPlayAndATapSaysWhy() {
@@ -89,5 +100,6 @@ final class MarginsListPlayAppTests: XCTestCase {
         XCTAssertEqual(model.lastError, "This friend's Margins are turned off. Turn them on to hear this one.",
                        "the real reason, not 'isn't ready'")
         XCTAssertNil(model.pendingImportedCommentary)
+        XCTAssertEqual(tapLines(model), ["shared/refused/margins_off"])
     }
 }

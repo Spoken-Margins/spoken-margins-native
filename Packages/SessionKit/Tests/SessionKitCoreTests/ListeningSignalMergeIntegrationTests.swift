@@ -38,7 +38,7 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
             ("Gate1AppModel.swift", "func performGate2CompactCommand(", "func synchronizeStreamingSpeechAnchorIfNeeded(")
         ] {
             let route = try body(appSource(file), from: start, to: end)
-            XCTAssertTrue(route.contains("transcribeAndRecordSavedSpokenMargin()"), start)
+            XCTAssertTrue(route.contains("transcribeAndRecordSavedSpokenMargin("), start) // with or without `endedByPhrase:` (#3940)
             XCTAssertTrue(route.contains("recordSpokenMarginSavedBeforeFailure(engine"),
                           "\(start): a Margin saved before resuming playback failed still counts")
         }
