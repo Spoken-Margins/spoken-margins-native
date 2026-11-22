@@ -639,7 +639,20 @@ def save_state(state: dict) -> None:
 def main(argv=None, now: dt.datetime | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--dry-run', action='store_true', help='print the decision; write and fire nothing')
+    ap.add_argument('--parse-dial', action='store_true',
+                    help='read a Dial body on stdin, print what the gate reads from it as JSON, and exit')
     args = ap.parse_args(argv)
+
+    # The Mac tick's usage breaker reads the Mode with this parser instead of its own reading of the boxes, so
+    # the tick and the gate can't disagree about Cloud max (#4865). It needs no token: the tick pipes in the body.
+    # An empty body is a failed fetch (zsh has no pipefail), not an Off Dial, so it fails and the tick falls back.
+    if args.parse_dial:
+        body = sys.stdin.read()
+        if not body.strip():
+            print('dial_gate: no Dial body on stdin', file=sys.stderr)
+            return 1
+        print(json.dumps(parse_dial(body)))
+        return 0
 
     token = os.environ.get('SM_DIAL_GITHUB_TOKEN') or (CONFIG_DIR / 'github-token').read_text().strip()
     now = now or dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
