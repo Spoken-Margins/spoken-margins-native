@@ -11,6 +11,8 @@ enum AddMarginShortcutError: Error, Equatable, LocalizedError {
     case itemNotFound
     case itemNotStarted
     case notSaved(String?)
+    /// Add Voice Margin refused the recording (#4924); the line says why and that nothing was saved.
+    case voiceRefused(VoiceMarginImport.Refusal)
 
     init(_ failure: StoredSessionMargin.Failure) {
         switch failure {
@@ -36,6 +38,8 @@ enum AddMarginShortcutError: Error, Equatable, LocalizedError {
             return "Start this once before adding a Margin to it."
         case .notSaved(let reason):
             return reason ?? SiriMarginRoute.notSaved
+        case .voiceRefused(let refusal):
+            return refusal.line
         }
     }
 }

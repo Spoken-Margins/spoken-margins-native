@@ -34,6 +34,8 @@ public final class SessionEngine {
     public private(set) var lastSummaryCandidates: [Interjection] = []
     public private(set) var lastSpokenText: String?
     public private(set) var lastScheduledTranscriptionInterjectionId: String?
+    /// The Margin the last `saveSpokenInterjection` stored, so a caller needs no read to learn what it saved (#4924).
+    public private(set) var lastSavedSpokenInterjection: Interjection?
     public private(set) var currentWatchPackage: WatchAudioPackage?
     public private(set) var lastResolvedMediaAnchor: MediaResolvedAnchor?
     public private(set) var lastQueuedWatchSyncEvent: WatchSyncEvent?
@@ -2084,6 +2086,54 @@ public final class SessionEngine {
             replyTo: capture.replyTo
         )
         try repository.saveInterjection(interjection)
+        return closeWrittenCapture(capture, session: session)
+    }
+
+    /// Saves the voice of an audio file the app already holds (a recording a Shortcut handed over, #4924) as a spoken
+    /// Margin at the place `beginWrittenInterjection` locked, then closes the capture as a written Margin's Save does:
+    /// transport is put back the way the capture found it. `audioRef` is a path under Application Support, as a
+    /// recorded Margin's. Words are transcribed afterwards by the ordinary transcription (`transcriber`), so the Margin
+    /// is `pending` until they arrive. Throws, and keeps the capture open, when it is not the pending one.
+    @discardableResult
+    public func saveSpokenInterjection(captureId: String, audioRef: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
+        guard let capture = pendingWrittenInterjection, capture.id == captureId,
+              let session = currentSession,
+              session.id == capture.sessionId,
+              session.itemId == capture.itemId,
+              !audioRef.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SessionKitError.invalidCommandForState("saveSpokenInterjection")
+        }
+        let interjection = Interjection(
+            id: "ij-voice-\(capture.id)",
+            itemId: capture.itemId,
+            sessionId: capture.sessionId,
+            targetType: capture.targetType,
+            targetId: capture.targetId,
+            createdAt: now(),
+            roughPercent: capture.roughPercent,
+            anchor: capture.anchor,
+            audioPath: audioRef,
+            audioStatus: "saved",
+            transcriptionStatus: "pending",
+            transcript: nil,
+            cleanedTranscript: nil,
+            displayText: nil,
+            status: "active",
+            anchorContextStatus: Interjection.contextStatus(for: capture.anchor),
+            replyTo: capture.replyTo
+        )
+        try repository.saveInterjection(interjection)
+        lastSavedSpokenInterjection = interjection
+        // Scheduling words is a request, not part of the save: the Margin is already durable, so a failure here must
+        // not read as a failed save (a second submit would store a second Margin).
+        try? transcriber.scheduleTranscription(interjection: interjection)
+        lastScheduledTranscriptionInterjectionId = interjection.id
+        return closeWrittenCapture(capture, session: session)
+    }
+
+    /// What a Save does after the Margin is stored, for a written or an imported spoken Margin alike.
+    private func closeWrittenCapture(_ capture: WrittenInterjectionCapture, session: Session) -> SessionSnapshot {
         lastMediaPercentageRepair = nil
         pendingWrittenInterjection = nil
         let resumesSource = takeResumeWhenWrittenCaptureCloses(capture)
