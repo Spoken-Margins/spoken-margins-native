@@ -4,6 +4,10 @@
 # the ruleset does not require code-owner review, and the `owner-tap` label rule in scripts/merge_policy.py still
 # decides what merges today. The last matching line wins, and every line names the same owner.
 # scripts/tests/test_codeowners.py fails if a path the merge rules hold for the owner is left out.
+#
+# Only `/ops/runner-guard/` of ops/ is listed (owner, 2026-11-22, #4915 step 3): it keeps fork PRs off the self-hosted
+# Macs. The rest of ops/ is not held for the owner by the merge rules, and once the ruleset requires code-owner review
+# every line here becomes an Approve he must give.
 
 # The pipeline: workflows, merge rules, trust rules and the runner and audit tooling.
 /.github/                       @uncomposed
@@ -13,7 +17,7 @@
 /scripts/comment_trust.py       @uncomposed
 /scripts/signoff_check.py       @uncomposed
 /scripts/owner_tap_alert.py     @uncomposed
-/ops/                           @uncomposed
+/ops/runner-guard/              @uncomposed
 
 # Text that agents read as instructions.
 /AGENTS.md                      @uncomposed
