@@ -274,7 +274,7 @@ extension NarrationChunkPlanner {
 
     /// What the narrator says before a note: "Note 3." for the labels `3` and `a`, and for `note-3`; "Note." for a label
     /// with no number or letter to say, so a long label is never spelled out.
-    fileprivate static func asideLead(forLabel label: String) -> String {
+    static func asideLead(forLabel label: String) -> String {
         if label.count == 1 || label.allSatisfy(\.isNumber) { return "Note \(label)." }
         let digits = String(label.reversed().prefix(while: \.isNumber).reversed())
         if !digits.isEmpty, label.dropLast(digits.count).allSatisfy({ $0.isLetter || $0 == "-" || $0 == "_" }) {

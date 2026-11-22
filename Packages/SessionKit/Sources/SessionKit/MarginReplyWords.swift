@@ -53,7 +53,15 @@ public enum MarginReplyWords {
         let visible = String(String.UnicodeScalarView(text.unicodeScalars.filter { $0.properties.generalCategory != .format }))
         let line = visible.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !line.isEmpty, !SharedMarginPlaceholderWords.matches(line) else { return nil }
-        let flattened = String(line.map { character -> Character in
+        let flattened = singleQuoted(line)
+        guard flattened.count > excerptLimit else { return flattened }
+        let kept = String(flattened.prefix(excerptLimit)).trimmingCharacters(in: .whitespaces)
+        return kept + "…"
+    }
+
+    /// `text` with every double quote turned into a single one, so a line that wraps it in double quotes never nests them.
+    static func singleQuoted(_ text: String) -> String {
+        String(text.map { character -> Character in
             switch character {
             case "\u{201C}": return "\u{2018}"
             case "\u{201D}": return "\u{2019}"
@@ -61,9 +69,6 @@ public enum MarginReplyWords {
             default: return character
             }
         })
-        guard flattened.count > excerptLimit else { return flattened }
-        let kept = String(flattened.prefix(excerptLimit)).trimmingCharacters(in: .whitespaces)
-        return kept + "…"
     }
 
     /// The player clock the stand-in uses: `m:ss`, or `h:mm:ss` from an hour. Partial seconds are dropped.
