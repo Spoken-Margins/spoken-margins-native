@@ -79,6 +79,16 @@ struct HelpScreen: View {
                     Text("Hands-free ending: say \"stop margin\" or \"end margin\" when you're done. Pauses never end a Margin.")
                     Text("After Siri says the Margin was added, Siri stays open until you dismiss it: press the side button or swipe it away. Spoken Margins has no way to close it. If your listening doesn't start again once Siri has closed, tap Play.")
                 }
+                if WatchMarginReceiver.watchSupported {
+                    Section("Apple Watch") {
+                        Text("To keep Spoken Margins on your wrist while you listen, turn on Return to App. On your Apple Watch:")
+                        ForEach(Array(WatchReturnToAppSteps.steps.enumerated()), id: \.offset) { index, step in
+                            Text("\(index + 1). \(step)")
+                                .accessibilityIdentifier("help.watch.step.\(index + 1)")
+                        }
+                        Text("If Spoken Margins isn't in that list, open the Watch app on your iPhone and install it under Available Apps.")
+                    }
+                }
                 Section("Optional AI") {
                     Text("Summarize Notes uses Apple’s on-device Foundation Model when available. Listening Maps use publisher chapters for podcasts and deterministic structure for native text.")
                     Text("AI-generated Listening Maps are reserved for a future server-hosted option and are not included in this release.")
