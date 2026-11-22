@@ -197,8 +197,10 @@ final class SharedMarginCountAgreementTests: XCTestCase {
         XCTAssertEqual(SharedMarginAudio.unavailableWords(for: margin("x", words: "यह बहुत अच्छा है")), "This Margin can't be read aloud on this iPhone.")
         XCTAssertEqual(SharedMarginAudio.unavailableWords(for: margin("x", words: "Great point.", sender: false)),
                        "This Margin is set not to be read aloud. Turn reading on for it to hear it.")
-        XCTAssertEqual(ReadAloudWords.footer(for: margin("x", words: "यह बहुत अच्छा है"), senderName: "Cole"), "This Margin can't be read aloud on this iPhone.")
-        XCTAssertEqual(ReadAloudWords.footer(for: margin("x", words: "Great point."), senderName: "Cole"),
+        XCTAssertEqual(ReadAloudWords.footer(for: margin("x", words: "यह बहुत अच्छा है"), senderName: "Cole", hasPlace: false), "This Margin can't be read aloud on this iPhone.")
+        XCTAssertEqual(ReadAloudWords.footer(for: margin("x", words: "यह बहुत अच्छा है"), senderName: "Cole", hasPlace: true),
+                       "This Margin can't be read aloud on this iPhone. Skim and the Margins tab still take you here.")
+        XCTAssertEqual(ReadAloudWords.footer(for: margin("x", words: "Great point."), senderName: "Cole", hasPlace: true),
                        "Your phone reads this Margin aloud where it comes up, and Skim stops at it.")
     }
 

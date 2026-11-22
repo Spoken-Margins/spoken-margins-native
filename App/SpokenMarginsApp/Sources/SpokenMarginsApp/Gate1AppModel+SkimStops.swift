@@ -17,6 +17,10 @@ extension Gate1AppModel {
             ? .characters(perSecond: ListeningTimeEstimator.defaultCharactersPerSecond) : .milliseconds
         let own = marginRows.map(\.interjection).filter { $0.itemId == itemId && $0.isSpokenItemMargin }
         var layerIsEligible: [String: Bool] = [:] // once per layer, not once per Margin
+        // A friend's Margin that is never read aloud is a stop too: Skim goes to its place and plays on, with nothing spoken (#4934).
+        let silent = sharedMarginRows.filter {
+            $0.layer.itemId == itemId && SharedMarginListPlay.isSilentSkimStop($0.interjection, in: $0.layer)
+        }.map(\.interjection)
         let shared = sharedMarginRows.filter { row in
             guard row.layer.itemId == itemId, SharedMarginAudio.canOffer(row.interjection) else { return false }
             if let known = layerIsEligible[row.layer.id] { return known }
@@ -28,15 +32,21 @@ extension Gate1AppModel {
         return SkimStopRouting.stops(
             textChapters: selectedItem.chapters,
             mediaChapters: selectedItem.mediaChapters.isEmpty ? selectedItem.listeningMapScenes : selectedItem.mediaChapters,
-            ownMargins: own, sharedMargins: shared, unit: unit)
+            ownMargins: own, sharedMargins: shared, silentSharedMargins: silent, unit: unit)
     }
 
     func skimStopChoice(direction: SkimDirection, at position: Int, summaryDestination: Int?) -> SkimStopRouting.Choice {
         let target: SkimStops.Target?
         if let stops = skimStopList {
-            target = direction == .forward
-                ? stops.next(playhead: position, leadInMs: MarginMomentSequence.defaultLeadInMs)
-                : stops.previous(playhead: position, leadInMs: MarginMomentSequence.defaultLeadInMs)
+            // Never the silent stop the listener was just taken to, whichever way the seek landed (`SilentMarginLanding.skimTarget`).
+            // A pure read, so the arrows may ask it while a view builds.
+            if let landing = silentMarginLanding, landing.itemId == skimSource?.itemId {
+                target = landing.skimTarget(direction: direction, playhead: position, in: stops, leadInMs: MarginMomentSequence.defaultLeadInMs)
+            } else {
+                target = direction == .forward
+                    ? stops.next(playhead: position, leadInMs: MarginMomentSequence.defaultLeadInMs)
+                    : stops.previous(playhead: position, leadInMs: MarginMomentSequence.defaultLeadInMs)
+            }
         } else {
             target = nil
         }
@@ -71,6 +81,9 @@ extension Gate1AppModel {
         switch stop.kind {
         case .chapter: goToSkimChapter(id: stop.id)
         case .margin:
+            // A silent Margin has nothing to start: it is a place, like a chapter. Checked before `startSkimMargin`, which would
+            // report a failure for a Margin with no voice (#4934).
+            if stop.isSilent { goToSilentSkimStop(stop, itemId: itemId); return }
             let playhead = skimCurrentMediaTimeMs ?? 0
             let started = startSkimMargin(id: stop.id, itemId: itemId)
             if started {
