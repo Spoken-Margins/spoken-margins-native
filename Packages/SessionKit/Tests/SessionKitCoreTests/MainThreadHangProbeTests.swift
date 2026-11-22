@@ -242,7 +242,7 @@ final class MainThreadHangProbeTests: XCTestCase {
 
     /// #842: the label stack is process-wide, so a call on a background queue must stay unlabelled. Otherwise the probe
     /// would name an audio-session call that ran off the main thread as the cause of a main-thread stall.
-    func testScopedOnMainThreadLabelsOnlyOnTheMainThread() throws {
+    func testScopedOnMainThreadLabelsOnlyOnTheMainThread() {
         let stack = MainThreadOperationLabels()
         var seenOnMain = ""
         var seenOffMain = "unset"
@@ -257,7 +257,7 @@ final class MainThreadHangProbeTests: XCTestCase {
         XCTAssertEqual(stack.current, "")
     }
 
-    func testScopedOnMainThreadPopsItsLabelWhenTheBodyThrowsAndKeepsAnOuterLabel() throws {
+    func testScopedOnMainThreadPopsItsLabelWhenTheBodyThrowsAndKeepsAnOuterLabel() {
         struct Boom: Error {}
         let stack = MainThreadOperationLabels()
         let outer = stack.push("run")
