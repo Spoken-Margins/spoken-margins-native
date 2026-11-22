@@ -18,9 +18,16 @@ struct MarginsTabSource {
         let sharedRows = model.sharedMarginRows.filter { $0.layer.itemId == itemId && $0.layer.deletedAt == nil }
         var layers: [ImportedCommentaryLayer] = []
         for row in sharedRows where !layers.contains(where: { $0.id == row.layer.id }) { layers.append(row.layer) }
-        rows = MarginsControlCenter.rows(
-            itemId: itemId, localMargins: ownRows.map(\.interjection), layers: layers,
-            importedMargins: sharedRows.map(\.interjection))
+        if ownRows.isEmpty && sharedRows.isEmpty {
+            // The Margins list reads an item after it opens, so on a just-opened item it can hold none yet. The item
+            // screen's own state already has them; without this the arrival preview's gate saw no Margins at all
+            // (lane T4 on 5bdcb06, step 1). The rows can't open or jump until the list arrives.
+            rows = MarginsControlCenter.rows(item: model.selectedItem)
+        } else {
+            rows = MarginsControlCenter.rows(
+                itemId: itemId, localMargins: ownRows.map(\.interjection), layers: layers,
+                importedMargins: sharedRows.map(\.interjection))
+        }
         own = Dictionary(ownRows.map { ($0.interjection.id, $0) }, uniquingKeysWith: { first, _ in first })
         shared = Dictionary(sharedRows.map { ($0.interjection.id, $0) }, uniquingKeysWith: { first, _ in first })
     }

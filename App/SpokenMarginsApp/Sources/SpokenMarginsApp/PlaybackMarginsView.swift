@@ -22,7 +22,7 @@ struct PlaybackMarginsView: View {
                     .foregroundStyle(AppColors.watchSecondary)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                     .truncationMode(.tail)
-                controlsLine
+                controlsLine(hasFriendsMargins: source.rows.contains { !$0.isYours })
                 Text("Margins: \(shown.reduce(0) { $0 + $1.entries.count })")
                     .font(.caption)
                     .foregroundStyle(AppColors.watchSecondary)
@@ -51,14 +51,16 @@ struct PlaybackMarginsView: View {
     }
 
     /// The filter, and the Autoplay menu at the end of the same line. At accessibility sizes they stack.
+    /// The menu shows when the list has a friend's Margin: the same rows the tab draws, so a friend's row is never shown
+    /// without it (lane T4 on 5bdcb06, step 4, found it missing while Sam's and Rae's rows showed).
     @ViewBuilder
-    private var controlsLine: some View {
+    private func controlsLine(hasFriendsMargins: Bool) -> some View {
         let layout = dynamicTypeSize.isAccessibilitySize
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
         layout {
             PlaybackMarginsFilterView(selection: $filter)
                 .fixedSize(horizontal: !dynamicTypeSize.isAccessibilitySize, vertical: false)
-            if model.hasEnabledImportedCommentary {
+            if hasFriendsMargins {
                 Spacer(minLength: 0)
                 MarginsAutoplayMenu()
             }
