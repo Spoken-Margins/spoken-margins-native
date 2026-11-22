@@ -1087,6 +1087,27 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         return exit
     }
 
+    /// Whether the plan now playing has note chunks at all: false for every article without a note that can be read where
+    /// it is cited, and for the system voice. The card's view asks this first, so plain narration is never polled.
+    var hasFootnoteAsides: Bool { lock.withLock { generationHasAsides && !fallbackIsActive } }
+
+    /// The Footnote card for the note now being read (#3777): its label and whole text, across every chunk the planner split
+    /// the note into. Nil when the chunk now playing (or held, while paused) is not an aside, when the voice has handed
+    /// over to the system voice, and for a note with nothing left once its lead is removed. Called twice a second by the
+    /// card's view, so it looks at the one current chunk first and builds the plan's tags only on a note.
+    func currentFootnoteCard() -> FootnoteCard? {
+        // No `applyQueuedAdvance` here, unlike `footnoteContinuationSourceOffset`: the view calls this twice a second from
+        // the main thread, and that call reaches chunk start-up work (the main-thread-reads ratchet lists it). The player's
+        // own timer and the playback tick apply a queued advance, so the card follows within a tick of the note ending.
+        return lock.withLock { () -> FootnoteCard? in
+            guard !fallbackIsActive,
+                  let index = generationPlan.firstIndex(where: { $0.key == currentChunk }),
+                  generationPlan[index].isAside else { return nil }
+            return FootnoteCard.forChunk(
+                at: index, tags: generationPlan.map(\.footnote), texts: generationPlan.map(\.text))
+        }
+    }
+
     #if DEBUG
     /// The render headroom the resume mark would read for the current generation in the app's current state (#2703).
     func debugRenderHeadroom(isStandIn: Bool) -> Double? {
