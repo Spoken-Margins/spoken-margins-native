@@ -494,6 +494,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var generationHasAsides = false
     /// The notes this client has read where they were cited, so the notes chapter skips them (#3777). Guarded by `lock`.
     private var heardNotes = FootnoteHeardSet()
+    /// The note the listener asked to leave with a sentence or paragraph skip, until the next play consumes it. A skip
+    /// on a paused client only moves the session's place (to where the text continues, which is also the note's own
+    /// offset), so the play after it must not take that place for the one the client reported and go back before the
+    /// note (`spokenOffsetBeforeNote`). Guarded by `lock`.
+    private var noteLeftChunk: ChunkKey?
     /// Where the article starts after a spoken preface, in spoken and source characters. Prepared
     /// audio covers the article alone, so the article is planned as its own section (#258).
     private var articleSpokenStart = 0
@@ -779,7 +784,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return
         }
         applyFootnoteSilencing(targetId: targetId)
-        let spokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
+        let requestedSpokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
+        let spokenOffset = lock.withLock {
+            spokenOffsetBeforeNote(requested: requestedSpokenOffset, targetId: targetId, isSeek: isSeek)
+        }
         replaceBundledVoiceChunks(after: spokenOffset, targetId: targetId)
         let before = resumeDiagnostics(targetId: targetId, spokenOffset: spokenOffset)
         let action = resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset, isSeek: isSeek)
@@ -1053,7 +1061,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// definition, or the end of the text when nothing is left. Nil when the chunk now playing is not an aside.
     func footnoteContinuationSourceOffset() -> Int? {
         applyQueuedAdvance(finished: nil)
-        return lock.withLock { () -> Int? in
+        let exit = lock.withLock { () -> Int? in
             guard !fallbackIsActive,
                   let index = generationPlan.firstIndex(where: { $0.key == currentChunk }) else { return nil }
             let tags = generationPlan.map(\.footnote)
@@ -1075,6 +1083,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
             return preparedSpeechProjection.sourceOffset(atSpokenCharacterOffset: generationPlan[target].startOffset)
         }
+        if exit != nil { lock.withLock { noteLeftChunk = currentChunk } }
+        return exit
     }
 
     #if DEBUG
@@ -3506,6 +3516,28 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// Whether the chunk now playing is an aside. Call with the lock held.
     private var currentChunkIsAside: Bool {
         generationPlan.first(where: { $0.key == currentChunk })?.isAside == true
+    }
+
+    /// Where a play on a paused client goes when the chunk now playing is a note and the play asks for the place the
+    /// client reported while it read (the aside's own offset, the citing sentence's end, which the next body chunk
+    /// shares): the start of the citing sentence's last chunk, so the plan's own order reads the note again after it.
+    /// Left at that offset the play would start the body chunk after the note and drop the note without a word (#3777).
+    /// The reported place itself stays the citing sentence's end: Back, Skim's offers and the progress read it, and a
+    /// place that moved earlier while a note read would make them act on a move that was not the listener's. A play
+    /// that is a seek, a play on a client that is playing (a rate change), and a place other than the held one are the
+    /// listener's own and keep their offset, and so does the play after a skip that left this note while paused
+    /// (`noteLeftChunk`): that skip's place is the same offset and means the note is not wanted. Call with the lock held.
+    private func spokenOffsetBeforeNote(requested: Int, targetId: String, isSeek: Bool) -> Int {
+        // Every play consumes the mark, so a note left once is not left for good (a later seek back to it reads it).
+        let left = noteLeftChunk
+        noteLeftChunk = nil
+        guard !isSeek, transportIntent == .paused, currentTargetId == targetId, left != currentChunk,
+              let index = generationPlan.firstIndex(where: { $0.key == currentChunk }),
+              generationPlan[index].isAside, generationPlan[index].startOffset == requested,
+              let held = FootnoteNoteControls.heldStartOffset(
+                forChunkAt: index, tags: generationPlan.map(\.footnote), startOffsets: generationPlan.map(\.startOffset))
+        else { return requested }
+        return held
     }
 
     /// Where playback goes when the chunk now playing ends. The plan's own order when an aside is on either side of

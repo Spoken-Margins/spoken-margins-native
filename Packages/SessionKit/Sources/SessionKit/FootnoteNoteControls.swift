@@ -57,6 +57,18 @@ public enum FootnoteNoteControls {
         return after < tags.count ? after : index
     }
 
+    /// Where a play that resumes during a note starts, in the plan's own offsets: the start of the chunk
+    /// `resumeIndex(forChunkAt:tags:)` names. An aside's own offset is the citing sentence's end, which the next body
+    /// chunk shares, so a resume at it would start that body chunk and drop the note without a word. Resuming at the
+    /// citing sentence's last chunk plays it again and the player's own order then reads the note, which is "the note
+    /// plays again after it" of the Design's Around it. Nil when the chunk at `index` is not an aside (the play keeps
+    /// its own offset then) or when `startOffsets` does not line up with `tags`.
+    public static func heldStartOffset(forChunkAt index: Int, tags: [Tag?], startOffsets: [Int]) -> Int? {
+        guard tags.count == startOffsets.count, isAside(at: index, tags: tags),
+              let resume = resumeIndex(forChunkAt: index, tags: tags) else { return nil }
+        return startOffsets[resume]
+    }
+
     /// The index range of the one note whose aside chunks include `index`: every neighbouring aside chunk with the
     /// same label (a note longer than the chunk budget is split into several). Nil when `index` is not an aside.
     public static func noteRange(containing index: Int, tags: [Tag?]) -> Range<Int>? {
