@@ -20,6 +20,11 @@ public struct TimelineSourceContent: Equatable, Sendable {
     /// The pictures, embeds and links the import kept, in text order (#2032). They are not entries: the text
     /// they sit in is already one, and Timeline draws a row of their own for each.
     public let elements: [SourceElement]
+    /// The figures of a PDF that have no printed text of their own: a photo, a micrograph, a chart without labels. Each
+    /// is the caption "Figure 3" names, in text order (#4587). They are not entries, for the same reason pictures
+    /// aren't: the caption's words already sit in a body entry, and Now's overlap check reads `entries` as a partition
+    /// of the text. Set by `ItemDetailState.includingTimelineSource`, empty otherwise.
+    public internal(set) var figures: [Entry] = []
 
     public func entry(atCharacter offset: Int) -> Entry? {
         guard offset >= 0, offset <= characterCount else { return nil }

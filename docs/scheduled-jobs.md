@@ -31,7 +31,7 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 
 | Job | Schedule | Reads | Writes | Config owner | Pause |
 |---|---|---|---|---|---|
-| `SM Mac tick` scheduled task (`~/.claude/scheduled-tasks/sm-mac-tick/SKILL.md`) | Every 2 hours (`docs/workstreams/kickoff.md`) | Claude and Codex usage, runners, disk, memory, the main checkout, the Test Desk work list | One comment on #337 (breaker, pacing advice, scorecard, `- Test Desk: GO` line); fast-forwards the main checkout | Owner | Disable the scheduled task |
+| `SM Mac tick` scheduled task (`~/.claude/scheduled-tasks/sm-mac-tick/SKILL.md`) | Every 2 hours (`docs/workstreams/kickoff.md`) | Claude and Codex usage, runners, disk, memory, the main checkout, the Test Desk work list | One comment on #337 (breaker, pacing advice, scorecard, `- Test Desk: GO` line); fast-forwards the main checkout; removes finished worktrees (see below) | Owner | Disable the scheduled task |
 | `SM integration run` scheduled task | Understudy only (`docs/workstreams/test-lane.md`). `ops/testdesk/` replaces it once the launchd job has posted a real report (#1178) | | Reports on #184 | Owner | Disable the scheduled task |
 | [Mac finisher](workstreams/finisher.md) | A loop in the thread "Mac finisher" | `needs-mac` PRs | Commits to those PR branches, comments | Owner, and the project instructions | Pause is built in: HALT (not under Cloud max), disk under 20 GB, Dial Off |
 | Managed Test Desk | Started by hand or by the coordinator when the tick says `Test Desk: GO` | The work list the tick names | Reports on #184 | Coordinator | End the session |
@@ -92,6 +92,16 @@ crontab -l; sudo crontab -l; ls /etc/cron.d
 ```
 
 From any machine with repo admin: `gh api repos/uncomposed/spoken-margins-native/actions/runners` and `gh secret list -R uncomposed/spoken-margins-native`.
+
+## Worktree clean-up (Mac tick and integration run)
+
+Decided 2026-11-22 after 90 worktrees piled up (41 removed by hand, about 10 GB freed).
+
+- **Mac tick, `.claude/worktrees/`** of the main checkout and the Test Desk folder: unchanged. Remove one when its branch is merged into origin/main (or it's a detached lane worktree older than 24 hours), `git status --porcelain` is empty, and no session's folder is inside it.
+- **Mac tick, sibling worktrees** (any other path from `git worktree list` under `~/Documents/GitHub`, such as `sm-*`, `smn-*`, `spoken-margins-native-*`): remove one only when its branch has a merged or closed PR, or is already an ancestor of origin/main; `git status --porcelain` is empty; the branch matches `origin/<branch>` (nothing unpushed); no session's folder and no process's working directory is inside it. Delete its `.build` folder, then `git worktree remove`, never `--force`.
+- **Never touched by the tick:** the main checkout, the Test Desk folder and its `lane-build29` and `lane-integration-*` worktrees, the finisher's folders, `~/.codex/`, `~/SpokenMargins-phone/`, `~/SpokenMarginsOps/`, and any worktree whose branch has an open PR.
+- **Integration run:** before it removes its own `intrun-<sha7>` worktree it runs `git restore SpokenMarginsNative.xcodeproj/project.pbxproj`. The build regenerates that file, and without the restore `git worktree remove` refuses the dirty tree (six were left behind). The restore touches nothing else; if any other file is dirty the run leaves the worktree and says so.
+- The tick still never archives a session; archiving is covered by the owner's `auto_archive_inactive_days` setting.
 
 ## Needs a fix
 

@@ -1,0 +1,96 @@
+# Deploy the VPS tools from main, with no human at a terminal (#4866).
+#
+# Until now each server tool (dial gate, dispatch backstop, bandwidth check, voice catalog check) was copied to the VPS
+# by hand, through `ops/*/deploy.sh` and a sudo password typed at a Mac. This workflow does the same copy when a merge
+# to main touches a tool's files, or on demand. It connects as the `smci` user with a deploy key stored as secrets in
+# the `server-deploy` environment (no required reviewer). That key can run exactly one forced command: it asks the
+# root-owned /usr/local/sbin/sm-deploy to install one named target from a commit that is already on main
+# (ops/server-deploy/README.md has the whole threat model). Secrets under /etc/sm-* never move.
+#
+# Cost and catch: one 1-minute hosted Linux job per merge that touches a server tool (about one to three a week),
+# no tokens, no owner clicks. It removes the password session that every server change needed (#4866 took three).
+# Waste signal: a month with no run, or any run whose deploy is not what the next hand deploy would have copied.
+name: server-deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/dispatch-backstop/sm_dispatch_backstop.py'
+      - 'ops/dispatch-backstop/sm-dispatch-backstop.service'
+      - 'ops/dispatch-backstop/sm-dispatch-backstop.timer'
+      - 'ops/dial/dial_gate.py'
+      - 'ops/dial/sm-dial-gate.service'
+      - 'ops/dial/sm-dial-gate.timer'
+      - 'ops/bandwidth/bandwidth_check.py'
+      - 'ops/bandwidth/sm-bandwidth.service'
+      - 'ops/bandwidth/sm-bandwidth.timer'
+      - 'scripts/voice_catalog.py'
+      - 'scripts/voice_catalog_tools.py'
+      - 'ops/voice-catalog/sm-voice-catalog.service'
+      - 'ops/voice-catalog/sm-voice-catalog.timer'
+      - 'Contracts/voice-models/**'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which tool to install from the current main'
+        type: choice
+        options: [all, backstop, dial, bandwidth, voice-catalog]
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository == 'Spoken-Margins/spoken-margins-native' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: server-deploy
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: ops/server-deploy
+      - name: Work out which targets changed
+        id: targets
+        env:
+          EVENT: ${{ github.event_name }}
+          CHOICE: ${{ inputs.target }}
+        run: |
+          # A push deploys every target: sm-deploy leaves unchanged files alone, and a diff-based list would miss
+          # the targets of a run that GitHub cancelled in the queue or that failed. The `paths` filter gates the trigger.
+          all="backstop dial bandwidth voice-catalog"
+          if [ "$EVENT" = workflow_dispatch ] && [ -n "$CHOICE" ] && [ "$CHOICE" != all ]; then list=$CHOICE; else list=$all; fi
+          echo "targets: $list"
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+      - name: Deploy each target
+        if: steps.targets.outputs.list != ''
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          LIST: ${{ steps.targets.outputs.list }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          trap 'rm -f ~/.ssh/deploy_key' EXIT
+          rc=0
+          for target in $LIST; do
+            echo "::group::deploy $target at $GITHUB_SHA"
+            ok=0
+            for attempt in 1 2 3; do
+              if ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes \
+                  "smci@${DEPLOY_HOST}" "$target $GITHUB_SHA"; then ok=1; break; fi
+              echo "attempt $attempt failed"; sleep 5
+            done
+            echo "::endgroup::"
+            [ "$ok" = 1 ] || { echo "::error::deploy of $target failed"; rc=1; }
+          done
+          exit $rc

@@ -13,6 +13,9 @@ one check carries them, on the PR and again in the queue:
 4. An outside contributor's commits carry `Signed-off-by:` (scripts/signoff_check.py, #2114).
 5. A PR that changes `Packages/SessionKit/Package.resolved` without `Packages/SessionKit/Package.swift` is held: SwiftPM
    on Linux rewrites that file and drops the Mac's pins (#4972; the rewrite reached #4965 and #4970).
+6. A PR whose body says `Closes #N` for a listener-facing issue is held until a real-use proof (or a waiver) is recorded
+   on the PR or the issue, and the proof still covers the PR's code (scripts/real_use_proof.py, #4979). `Part of #N`
+   is never held: a fix that can't be run before the merge says so, and the issue closes later with its proof.
 
 The rules themselves are not copied here: they are imported from lane_merge_rules.py, test-scope.py and signoff_check.py
 in the same checkout, which the workflow takes from main, never from the PR. The PR's commits are fetched as git data
@@ -147,6 +150,17 @@ class GitHub:
             args += ['-f', f'inputs[{name}]={value}']
         self._gh(args, attempts=1)
 
+    def issue(self, number: int) -> dict:
+        return self.api(f'repos/{self.repo}/issues/{number}')
+
+    def issue_comments(self, number: int) -> list[dict]:
+        """An issue's comments that the lane trusts (the same filter as `comments`, for a PR's issue)."""
+        return self.comments(number)
+
+    def issue_timeline(self, number: int) -> list[dict]:
+        """An issue's timeline events: the last `reopened` one ends every proof written before it (#4979)."""
+        return self.api(f'repos/{self.repo}/issues/{number}/timeline?per_page=100', paginate=True)
+
     def comments(self, number: int) -> list[dict]:
         """The PR's comments that the lane trusts (owner, members, collaborators, the project's bot)."""
         found = self.api(f'repos/{self.repo}/issues/{number}/comments?per_page=100', paginate=True)
@@ -210,6 +224,11 @@ def changes(tree: Path, base_ref: str, head: str) -> tuple[list[str], dict[str, 
     return sorted(set(paths)), diffs
 
 
+def commit_messages(tree: Path, base_ref: str, head: str) -> str:
+    """The messages of the PR's own commits, which GitHub also reads for closing keywords."""
+    return git(tree, 'log', '--format=%B', f'{base_ref}..{head}')
+
+
 def unsigned_commits(tree: Path, base_ref: str, head: str, association: str, login: str) -> list[dict]:
     import signoff_check
     raw = git(tree, 'log', f'--format=%H{signoff_check.FIELD}%P{signoff_check.FIELD}%ae{signoff_check.FIELD}%B'
@@ -226,6 +245,30 @@ def resolved_rewrite(paths: list[str]) -> str | None:
                 f'file and drops the Mac\'s pins. Put it back with `git checkout origin/main -- {SESSIONKIT_RESOLVED}` '
                 '(merge `main` first if the branch is behind and main changed it) and push; on Linux run scripts/run-sessionkit-linux-tests.sh and stage files by path, not `git add -A`')
     return None
+
+
+def proof_blockers(github: GitHub, tree: Path, base_ref: str, number: int, head: str, pull: dict,
+                   comments: list[dict]) -> list[str]:
+    """#4979: the real-use proof a `Closes #N` PR needs for a listener-facing issue. A PR that names no closing issue
+    costs nothing here. ReadFailed from a read propagates (the merge is held); any other failure inside the proof
+    check holds only this PR, and says so, so a bug in the rule cannot hide behind a pass."""
+    import real_use_proof
+    # GitHub also closes an issue on a `Closes #N` in a commit message when the squash message carries it.
+    messages = commit_messages(tree, base_ref, head)
+    if not real_use_proof.closing_issues((pull.get('body') or '') + '\n' + messages, number, github.repo):
+        return []
+    def own_commits() -> list[str]:
+        return git(tree, 'rev-list', f'{base_ref}..{head}').split()
+    def paths_after(commit: str) -> list[str]:
+        # -c shows what a merge commit changed beyond its parents (a conflict resolution); quotepath off keeps non-ASCII names whole
+        return git(tree, '-c', 'core.quotepath=false', 'log', '-c', '--format=', '--name-only', head,
+                   f'^{commit}', f'^{base_ref}').split('\n')
+    try:
+        return real_use_proof.pr_blockers(github, number, pull, comments, own_commits, paths_after, messages)
+    except ReadFailed:
+        raise
+    except Exception as error:  # noqa: BLE001
+        return [f'the real-use proof check failed ({str(error)[:200]}), so it holds this PR']
 
 
 def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, classify=None, inherited=None) -> list[str]:
@@ -249,6 +292,7 @@ def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, clas
     rewrite = resolved_rewrite(paths)
     if rewrite:
         reasons.append(rewrite)
+    reasons.extend(proof_blockers(github, tree, base_ref, number, head, pull, comments))
     bad = unsigned_commits(tree, base_ref, head, pull.get('author_association') or '',
                            (pull.get('user') or {}).get('login') or '')
     if bad:

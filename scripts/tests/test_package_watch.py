@@ -253,5 +253,70 @@ class ReportTests(unittest.TestCase):
             with self.subTest(identity=identity):
                 self.assertEqual(len(set(by_file.values())), 1, by_file)
 
+
+class FileIssueTests(unittest.TestCase):
+    """#4915 step 3: package-watch acts as the GitHub App. Its open issue may have been filed by the workflows' bot
+    (#4969 was) or by the App, and either must be found, or a run would open a second issue every week."""
+
+    SIG = 'abc123'
+    REPO = 'Spoken-Margins/spoken-margins-native'
+
+    def setUp(self):
+        self._api = pw.api
+        self._repo = pw.os.environ.get('GITHUB_REPOSITORY')
+        pw.os.environ['GITHUB_REPOSITORY'] = self.REPO
+        self.calls = []
+
+    def tearDown(self):
+        pw.api = self._api
+        if self._repo is None:
+            pw.os.environ.pop('GITHUB_REPOSITORY', None)
+        else:
+            pw.os.environ['GITHUB_REPOSITORY'] = self._repo
+
+    def serve(self, issues, comments=()):
+        def fake(method, path, body=None):
+            self.calls.append((method, path))
+            if method == 'GET' and '/issues?' in path:
+                creator = pw.urllib.parse.parse_qs(path.split('?', 1)[1]).get('creator', [''])[0]
+                return [i for i in issues if i['user']['login'] == creator]
+            if method == 'GET' and path.endswith('/comments?per_page=100'):
+                return list(comments)
+            return {'number': 999}
+        pw.api = fake
+
+    @staticmethod
+    def issue(number, login, sig='abc123'):
+        return {'number': number, 'title': pw.TITLE, 'user': {'login': login},
+                'body': f'report\n\n<!-- package-watch: {sig} -->'}
+
+    def posts(self):
+        return [path for method, path in self.calls if method == 'POST']
+
+    def test_the_creators_are_the_bot_and_the_agents_app(self):
+        self.assertEqual(pw.issue_creators(), ('github-actions[bot]', 'spoken-margins-agent[bot]'))
+
+    def test_the_bots_issue_is_still_found_when_the_app_runs(self):
+        self.serve([self.issue(4969, 'github-actions[bot]')])
+        self.assertEqual(pw.file_issue('report', self.SIG, True, ''), 'unchanged')
+        self.assertEqual(self.posts(), [])
+
+    def test_the_apps_own_issue_is_found_and_not_filed_again(self):
+        self.serve([self.issue(5100, 'spoken-margins-agent[bot]')])
+        self.assertEqual(pw.file_issue('report', self.SIG, True, ''), 'unchanged')
+        self.assertEqual(self.posts(), [])
+
+    def test_a_changed_report_comments_on_the_newest_of_our_issues(self):
+        self.serve([self.issue(4969, 'github-actions[bot]', sig='old'),
+                    self.issue(5100, 'spoken-margins-agent[bot]', sig='old')])
+        self.assertEqual(pw.file_issue('report', self.SIG, True, ''), 'commented')
+        self.assertEqual(self.posts(), [f'/repos/{self.REPO}/issues/5100/comments'])
+
+    def test_a_look_alike_issue_is_not_ours(self):
+        self.serve([self.issue(5200, 'spoken-margins-agent'), self.issue(5201, 'Spoken-Margins-Agent[bot]')])
+        self.assertEqual(pw.file_issue('report', self.SIG, True, ''), 'opened')
+        self.assertEqual(self.posts(), [f'/repos/{self.REPO}/issues'])
+
+
 if __name__ == '__main__':
     unittest.main()

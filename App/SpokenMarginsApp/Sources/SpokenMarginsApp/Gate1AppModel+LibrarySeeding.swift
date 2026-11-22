@@ -97,7 +97,8 @@ extension Gate1AppModel {
                 try LibraryReadSnapshot.read(store: store, hiddenSenders: hiddenSenders.current), store: store)
             rows = LibraryRowBuilder.rows(from: launchData, context: startupAudioContext)
             let deletedRows = Self.recentlyDeletedRows(from: launchData)
-            try reconcileOnboardingEvidence(items: launchData.liveItems, store: store)
+            let hadMargin = try reconcileOnboardingEvidence(items: launchData.liveItems, store: store)
+            WatchReturnToAppTipNotice.shared.noteLibraryLoaded(hadMargin: hadMargin)
             try recoverInterruptedAIJobs(store: store); settleOrphanedTranscriptions(store: store)
             libraryItems = rows
             if let stored = launchData.collections { libraryCollections.publish(stored, folders: launchData.libraryFolders) }

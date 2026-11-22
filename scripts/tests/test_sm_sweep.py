@@ -822,6 +822,53 @@ class ScheduleGapTests(unittest.TestCase):
         self.assertNotIn('schedule-gap', rules(sweep.decide(facts)[0]))
 
 
+def open_pull(number, title='Some change', draft=True, base='main', sha=None):
+    return {'number': number, 'title': title, 'draft': draft, 'base': {'ref': base},
+            'head': {'sha': sha or f'{number:040d}'}}
+
+
+class StaleDrafts(unittest.TestCase):
+    """Rule 16: a draft nobody is finishing. The Margins tab stack (#4466, #4496, #4505) sat 5 days as drafts after the
+    owner session that built it was archived; #4496 was stacked on #4466, so the trunk-only PR snapshot never saw it."""
+
+    def router(self, pulls, dates):
+        router = world(refs={'dates': dates})
+        router.on(r'^pulls\?state=open&per_page', list(pulls))
+        return router
+
+    def drafts(self, pulls, dates):
+        actions, _ = sweep.decide(facts_of(self.router(pulls, dates)))
+        return [a for a in actions if a['rule'] == 'draft-stalled']
+
+    def test_a_quiet_draft_on_a_stacked_base_is_reported(self):
+        found = self.drafts([open_pull(4496, 'Margins tab and arrival preview', base='margins-tab-logic')],
+                            {f'{4496:040d}': at(days=5)})
+        self.assertEqual([a['prs'] for a in found], [[4496]])
+        self.assertIn('into `margins-tab-logic`', found[0]['detail'])
+        self.assertIn('no commit for', found[0]['detail'])
+
+    def test_a_draft_with_a_commit_today_is_quiet(self):
+        self.assertEqual(self.drafts([open_pull(1)], {f'{1:040d}': at(hours=23)}), [])
+
+    def test_ready_prs_and_do_not_merge_drafts_are_left_alone(self):
+        pulls = [open_pull(2, draft=False), open_pull(3, 'DO NOT MERGE: mutation proof for #3713'),
+                 open_pull(4, 'do-not-merge experiment')]
+        dates = {f'{n:040d}': at(days=9) for n in (2, 3, 4)}
+        self.assertEqual(self.drafts(pulls, dates), [])
+
+    def test_an_unreadable_head_commit_still_reports_the_draft(self):
+        found = self.drafts([open_pull(5)], {})     # the commit read gives no date
+        self.assertEqual([a['prs'] for a in found], [[5]])
+        self.assertIn('could not be read', found[0]['detail'])
+
+    def test_an_unreadable_pr_list_says_so(self):
+        router = world()
+        router.on(r'^pulls\?state=open&per_page', sm_status.GitHubError('boom'))
+        actions, _ = sweep.decide(facts_of(router))
+        self.assertIn('drafts-unreadable', rules(actions))
+        self.assertNotIn('draft-stalled', rules(actions))
+
+
 if __name__ == '__main__':
     unittest.main()
 

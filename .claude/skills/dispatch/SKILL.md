@@ -11,9 +11,11 @@ Runs at 20 past each hour as a scheduled task in the project. If there is nothin
 
 1. Read the Dial on #589. Off, or Paced and Holding: start nothing. Paced: if the latest Mac tick on #337 says `HALT (usage breaker: Claude)` (or an unscoped `HALT (usage breaker)`) with no later `RESUMED`, start nothing and tell running threads to finish their commit, push, post their stop note and stop. Cloud max: the breaker does not stop dispatch.
 2. Follow the latest "advice for dispatch" line on #337 for pacing, unless the Dial is Cloud max.
-3. Run `python3 scripts/sm_sweep.py` and act on what it prints; `--apply` releases stale claims. It looks for free Claude slots, the Mac idle while `where:mac` ready issues exist (start a Mac thread), `in-progress` claims quiet for 6+ hours, armed PRs red on their head, T4 requests waiting over an hour with no desk running (start a Test Desk), and `needs-mac` PRs untouched for an hour. Before any status line, run `python3 scripts/sm_status.py` and name what you checked.
+3. Run `python3 scripts/sm_sweep.py` and act on what it prints; `--apply` releases stale claims. It looks for free Claude slots, the Mac idle while `where:mac` ready issues exist (start a Mac thread), `in-progress` claims quiet for 6+ hours, armed PRs red on their head, T4 requests waiting over an hour with no desk running (start a Test Desk), `needs-mac` PRs untouched for an hour, and draft PRs (into any base) with no commit for 24 hours. A stalled draft goes to a free thread to finish, test and arm, or is closed with a line saying why; nobody else watches drafts, and an owner session that built one may be archived. Before any status line, run `python3 scripts/sm_status.py` and name what you checked.
 
 4. **Resolve threads waiting on non-decisions (Cole, 2026-11-22).** List the project's threads in the `blocked` state. For each, read its last ask. It is a real wait only if it is a decision only the owner can make and the thread can't go on without it. If it is a phone check, a by-ear check, a Diagnostics export, an "after the next build" step, a check of merged work, or "keep working under a HALT?", then: make sure the issue carries an `**Owner check**` comment with the steps and `needs-owner` (write the comment yourself from the thread's ask if it didn't), then resolve the thread. Under Cloud max the answer to a HALT question is always "keep going": message the thread to continue if its PR isn't armed, else resolve it. Never message the owner about it.
+
+5. **Proof and parked issues (Cole, 2026-11-22).** Run `python3 scripts/real_use_proof.py --sweep --apply`: it reopens any listener-facing issue closed as completed without a `**Real-use proof**` on the issue or on the PR that closed it, and comments why. Then run `python3 scripts/real_use_proof.py --parked`: each open `bug` or `found-on-phone` issue it lists is parked on `needs-owner` with neither a `**Repro attempt**` nor an `**Owner check**`. Take `needs-owner` off, comment that a repro attempt comes first (thread-workflow skill, section 5), and put it back to `ready` if it has the five headings (else complete it). Report nothing to the owner unless a sweep read failed twice running.
 
 ## 1. Work through new lane reports and Codex audits on `automerge` PRs
 
@@ -24,7 +26,7 @@ Runs at 20 past each hour as a scheduled task in the project. If there is nothin
 
 ## 2. Merged PRs
 
-For each PR merged into `main`, on each issue it closes: remove `in-progress` and comment naming the PR. Close internal work (model-split moves, test fixes, lane, pipeline or ops fixes) with `sm-gh close-issue` against the merged PR.
+For each PR merged into `main`, on each issue it closes: remove `in-progress` and comment naming the PR. Close internal work (groundwork: model-split moves, test fixes, lane, pipeline or ops fixes) with `sm-gh close-issue` against the merged PR. **Never close a listener-facing issue (any area but groundwork) by hand until `python3 scripts/real_use_proof.py --issue N --pr M` exits 0** (M is the merged PR); a merged fix without proof stays open as `agent-verify` or `status: needs-human-validation` below, and any status line says "merged, not yet shown working", never "fixed" (docs/workstreams/real-use-proof.md).
 
 For a listener-facing fix, don't add `status: needs-human-validation` by default. Pick one:
 

@@ -58,7 +58,9 @@ public enum PlaybackAudioSessionPolicy {
             optionsRawValue: session.categoryOptions.rawValue
         )
         guard AudioSessionConfiguration.needsCategoryChange(current: current, wanted: wanted) else { return false }
-        try session.setCategory(.playback, mode: mode, options: options)
+        try AudioSessionOperationLabel.scoped(AudioSessionOperationLabel.playbackCategory) {
+            try session.setCategory(.playback, mode: mode, options: options)
+        }
         return true
     }
 
@@ -70,7 +72,9 @@ public enum PlaybackAudioSessionPolicy {
         var options = session.categoryOptions
         options.remove(.duckOthers)
         options.insert(.mixWithOthers)
-        try session.setCategory(.playback, mode: .spokenAudio, options: options)
+        try AudioSessionOperationLabel.scoped(AudioSessionOperationLabel.releaseDucking) {
+            try session.setCategory(.playback, mode: .spokenAudio, options: options)
+        }
     }
 }
 #endif
