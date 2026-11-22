@@ -19,7 +19,8 @@ A PR is audited when all of these hold:
     the runner and its helpers, owner rule 2026-10-01), or the lane runner's
     newest report says it won't merge the PR until it has a Codex or Claude audit (the
     runner classifies files with scripts/test-scope.py, which is wider than the
-    list here: #402 and #439 waited on an audit this script never ran), or a
+    list here: #402 and #439 waited on an audit this script never ran; so the audio,
+    persistence and packet categories of test-scope.py count as risky too, #4843), or a
     comment on the PR or its linked issue asks for a Codex audit.
 
 A head that already has an audit is audited again only for one of these (the lane runner already
@@ -70,6 +71,7 @@ import argparse
 import datetime as _dt
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -178,11 +180,46 @@ RISKY_PATTERNS = {
         r"^\.github/workflows/",
         r"^scripts/lane",
         r"^scripts/(xcodebuild-lane|host-test-lane|install-lane-guard\.py|test-scope\.py"
-        r"|hot_file_ratchet\.py|merge_audit\.py|merge_policy\.py|signoff_check\.py|verify-tests\.py|trunk\.py)$",
+        r"|hot_file_ratchet\.py|merge_audit\.py|merge_policy\.py|signoff_check\.py|verify-tests\.py|trunk\.py"
+        r"|parallel_unittest\.py|runner_test_seconds\.json|ci_step_budgets\.json)$",
         r"^TestPlans/(AppBehavior|AudioAdapters)\.xctestplan$",
     ],
 }
 _RISKY_RE = {k: [re.compile(p, re.I) for p in v] for k, v in RISKY_PATTERNS.items()}
+
+# The merge policy holds a PR for an audit by test-scope.py's category (lane-runner.py merge_blockers: AUDITED), which is
+# wider than the hand-kept list above: an app file is audio when its NAME matches APP_AUDIO and packets when it matches
+# APP_PACKET. A PR the policy holds that this script did not call risky waited for an audit nobody ran (#4666, #4792,
+# #4801, #4811, #4812, #4822, #4843). So the categories the policy audits are read from test-scope.py itself.
+SCOPE_AUDIT_AREAS = {"audio": "audio", "persistence": "persistence", "packet": "sharing"}  # lane-runner.py AUDITED
+_SCOPE = None
+
+
+def _scope_policy():
+    global _SCOPE
+    if _SCOPE is None:
+        path = sm_paths.repo(__file__) / "scripts" / "test-scope.py"
+        spec = importlib.util.spec_from_file_location("test_scope_for_audit", path)
+        _SCOPE = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_SCOPE)
+    return _SCOPE
+
+
+def scope_areas(paths: list[str]) -> list[str]:
+    """The areas test-scope.py's classification of these paths holds a merge for (the policy's own reading)."""
+    scope = _scope_policy()
+    # The category depends on the path (and, for a public-API change, the diff), never on the tree. A root with no
+    # files makes classify_path skip the test-class reads it does for the lane's T3 request, which this does not need.
+    nowhere = Path("/nonexistent-tree-for-scope-categories")
+    found = set()
+    for p in sorted(set(paths)):
+        try:
+            category = scope.classify_path(nowhere, p).category if p else ""
+        except (IndexError, ValueError):  # a path git cannot produce (a bare `.../Sources`): one must not stop the audit run
+            continue
+        if category in SCOPE_AUDIT_AREAS:
+            found.add(SCOPE_AUDIT_AREAS[category])
+    return sorted(found)
 _NEVER_RISKY_RE = NEVER_RISKY_RE
 _UNCOUNTED_RE = re.compile(r"(^|/)research/|(^|/)fixtures/", re.I)
 
@@ -374,6 +411,11 @@ def rearm_decision(pr: dict, comments: list[dict],
     return True, "clean audit of the head, lane not run since"
 
 
+def changed_paths(files: list[dict] | None) -> list[str]:
+    """Every path a PR's files touch, both sides of a rename: the merge policy diffs with --no-renames (#4843)."""
+    return [p for f in files or [] for p in (f.get("filename") or f.get("path"), f.get("previous_filename")) if p]
+
+
 def risky_areas(paths: list[str]) -> list[str]:
     areas = []
     for area, pats in _RISKY_RE.items():
@@ -383,6 +425,7 @@ def risky_areas(paths: list[str]) -> list[str]:
             if any(r.search(p) for r in pats):
                 areas.append(area)
                 break
+    areas += [a for a in scope_areas(paths) if a not in areas]  # what the merge policy holds (#4843)
     return areas
 
 
@@ -499,8 +542,10 @@ def evaluate(pr: dict, comments: list[dict], files: list[dict] | None,
              tap_checks_done: bool = False) -> tuple[bool, str, dict | None]:
     """evaluate_pr, plus the re-audit plan (reaudit_trigger) when the head is audited again, else None.
 
-    `tap_checks_done` (#2052): the caller found the PR touches an owner-tap path and the head's checks have
-    finished with none failed. Such a PR gets no lane report PASS (nothing arms it), so that stands in for one.
+    `tap_checks_done` (#2052, #4693): the head has no lane report and its checks have finished with none failed,
+    which stands in for a lane PASS. An owner-tap PR is never armed, so it gets no lane report; and with the lane
+    off for the merge queue (2026-11-20) no PR does. An owner-tap PR is then always audited; any other still has to
+    be risky or asked for.
     """
     head = pr["headRefOid"]
     if pr.get("isDraft"):
@@ -520,11 +565,11 @@ def evaluate(pr: dict, comments: list[dict], files: list[dict] | None,
         tap_only = True
     if files is None:
         return False, "need files", None
-    if tap_only and not plan:
+    if tap_only and not plan and touches_owner_tap(files):
         return True, "owner-tap PR, checks finished", None
     if plan:  # an audited head was audited because it was risky or asked for; the trigger decides now
         return True, reason, plan
-    areas = risky_areas([f.get("filename") or f.get("path") or "" for f in files])
+    areas = risky_areas(changed_paths(files))
     if areas:
         return True, "risky: " + ",".join(areas), None
     if runner_waits_on_audit(comments):
@@ -869,14 +914,17 @@ def find_candidates(prs: list[dict], force: bool = False) -> tuple[list[dict], d
             ok, why, plan = evaluate(pr, comments, None, force=force)
             files = None
             tap_checks_done = False
-            if lane_report_missing_for_head(why):  # an owner-tap PR is never armed, so it gets no lane report (#2052)
+            # No lane report on the head: an owner-tap PR is never armed (#2052), and with the lane off for the merge
+            # queue no PR gets one (#4693). The head's finished checks stand in, read only for a PR that could be audited.
+            if lane_report_missing_for_head(why):
                 files = fetch_files(n)
-                if touches_owner_tap(files):
+                tap = touches_owner_tap(files)
+                if tap or risky_areas(changed_paths(files)):
                     state, _ = head_checks_state(pr["headRefOid"])
                     if state == "ok":
                         tap_checks_done = True
                     else:
-                        why = f"owner-tap PR, checks {state}"
+                        why = f"owner-tap PR, checks {state}" if tap else f"checks {state}"
             if why == "need files" or tap_checks_done:
                 files = files or fetch_files(n)
                 ok, why, plan = evaluate(pr, comments, files, force=force, tap_checks_done=tap_checks_done)
@@ -1138,12 +1186,12 @@ def build_prompt(batch: list[dict], blocks: list[str], base_sha: str) -> str:
     return "\n".join(head + blocks + tail)
 
 
-# PRs the lane runner never merges (scripts/lane-runner.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). After an audit on
+# PRs only the owner merges (scripts/lane_merge_rules.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). After an audit on
 # one, the owner-tap alert checks it at once (#2047): the audit is often the last thing such a PR waits for. This
 # script posts as the owner, whose comment notifies nobody and starts no workflow, and GitHub refuses a
 # workflow_dispatch of owner-tap-alert.yml until main carries it (#1492). So it removes and re-adds the
 # `owner-tap-check` label; the labeled run of .github/workflows/owner-tap-alert.yml posts the alert as the bot.
-OWNER_TAP_FILES = {"scripts/lane-runner.py"}
+OWNER_TAP_FILES = {"scripts/lane-runner.py", "scripts/lane_merge_rules.py"}
 OWNER_TAP_PREFIXES = (".github/",)
 OWNER_TAP_LABEL = "owner-tap-check"
 

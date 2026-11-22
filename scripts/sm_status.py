@@ -79,9 +79,9 @@ CLOSING = re.compile(r'\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)
 BRANCH_ISSUE = re.compile(r'^ws/(\d+)-')
 
 SHOWN_LABELS = ('automerge', 'needs-mac', 'lane:queued', 'lane:running', 'merge-audit', 'priority')
-# Mirrors lane-runner.py AUDITED, OWNER_TAP_FILES and OWNER_TAP_PREFIXES; a test keeps them equal.
+# Mirrors lane_merge_rules.py AUDITED, OWNER_TAP_FILES and OWNER_TAP_PREFIXES; a test keeps them equal.
 AUDITED_CATEGORIES = {'audio': 'audio', 'persistence': 'persistence', 'packet': 'packets'}
-OWNER_TAP_FILES = {'scripts/lane-runner.py'}
+OWNER_TAP_FILES = {'scripts/lane-runner.py', 'scripts/lane_merge_rules.py'}
 OWNER_TAP_PREFIXES = ('.github/',)
 FAILING = {'failure', 'timed_out', 'startup_failure', 'action_required'}
 NO_VERDICT = {'skipped', 'neutral', 'cancelled', 'stale', None, ''}

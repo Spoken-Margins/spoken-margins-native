@@ -171,6 +171,7 @@ struct ExperienceMarginsScreen: View, Equatable {
             }
             .refreshable { await model.refreshMarginRowsAsync() }
             .scrollDismissesKeyboard(.interactively)
+            .searchKeyboardDoneBar() // #4636
             .trackedSheet(item: $selectedMargin) { row in
                 ExperienceMarginDetailView(row: row).environmentObject(model)
             }
@@ -547,7 +548,7 @@ struct ExperienceMarginsScreen: View, Equatable {
     }
 
     private static func retryLabel(_ repair: MarginRowRepair) -> String {
-        repair == .retryTranscription ? "Retry transcription" : "Retry context"
+        repair == .retryTranscription ? "Retry transcription" : "Retry finding source words"
     }
 
     /// The model's own retries, as the details call them.

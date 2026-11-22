@@ -865,8 +865,9 @@ enum PDFStructuredTextExtractor {
         return (result, figure)
     }
 
+    /// One rule for what opens a figure caption, shared with `PDFFigureCaptionLocator` (#4587).
     static func isFigureCaption(_ text: String) -> Bool {
-        text.range(of: #"^(?:Fig(?:ure)?\.?|FIG(?:URE)?\.?)\s*[0-9S]+[0-9.]*(?:[.:|]|\s*$|\s+\p{Lu}|\s*\()"#, options: .regularExpression) != nil
+        PDFFigureCaption.isCaptionStart(text)
     }
 
     /// Title-page matter (owner, #191): author names are read, the rest is not.
@@ -1124,8 +1125,9 @@ enum PDFStructuredTextExtractor {
         return names.count >= 2 && lower.count <= max(0, words.count / 5)
     }
 
+    /// One rule for what opens a table caption, shared with the Now tab's card placement (#4588).
     static func isTableCaption(_ text: String) -> Bool {
-        text.range(of: #"^(?:Table|TABLE)\s+[0-9IVXS]+[0-9.]*(?:[.:|]|\s*$|\s+\p{Lu})"#, options: .regularExpression) != nil
+        PDFCaptionPattern.isCaption(text, kind: .table)
     }
 
     /// Lines that follow a "Table N" caption in smaller type than the body: the

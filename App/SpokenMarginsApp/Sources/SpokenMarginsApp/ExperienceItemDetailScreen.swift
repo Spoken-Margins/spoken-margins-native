@@ -34,30 +34,47 @@ struct ExperienceItemDetailScreen: View {
     /// The kept copy of this item's PDF, when it is a PDF and this iPhone holds its file: the only case the menu offers
     /// "Export PDF with Margins" (#4338). Looked up off the main thread when the item opens.
     @State private var keptPDFOriginal: URL?
+    /// The kept copy of this item's Word document, when it was added as one and this iPhone holds its file: the only
+    /// case the menu offers "Export Word document with Margins" (#4595).
+    @State private var keptWordOriginal: URL?
     @State private var pdfExport: PDFCommentExportModel?
     /// A tap on Play or "Skip to …" made before its start is possible, kept until it can run (#3788).
     @StateObject private var arrival = FriendArrivalPresenter()
     private let episodeLinker = ImportedFileEpisodeLinker()
 
-    /// Finds whether the open item is a PDF with a kept original (#4338). Both must hold, so a listener never meets an
-    /// entry that cannot finish.
-    private func refreshKeptPDFOriginal() async {
+    /// Finds whether the open item is a PDF, or a Word document, with a kept original (#4338, #4595). Both must hold, so a
+    /// listener never meets an entry that cannot finish. A PDF needs the Library row and a kept .pdf; Word needs only a
+    /// kept .docx, so no row offers the wrong export.
+    private func refreshKeptOriginal() async {
         let id = model.selectedItem.id
-        guard !id.isEmpty, let row = model.libraryItems.first(where: { $0.id == id }), LibraryQueryEngine.isPDF(row) else {
+        guard !id.isEmpty, let row = model.libraryItems.first(where: { $0.id == id }) else {
             keptPDFOriginal = nil
+            keptWordOriginal = nil
             return
         }
-        let url = await model.keptPDFOriginalURL(itemId: id)
+        let isPDF = LibraryQueryEngine.isPDF(row)
+        let kept = await model.keptOriginal(itemId: id)
         guard id == model.selectedItem.id else { return }
-        keptPDFOriginal = url
+        keptPDFOriginal = isPDF && kept?.kind == .pdf ? kept?.url : nil
+        // The kept file's own kind is authoritative for Word: a file named "x.pdf.docx" reads as a PDF row by its name.
+        keptWordOriginal = kept?.kind == .docx ? kept?.url : nil
     }
 
     private func openPDFExport() {
         guard let original = keptPDFOriginal else { return }
+        openCommentExport(original: original, document: .pdf)
+    }
+
+    private func openWordExport() {
+        guard let original = keptWordOriginal else { return }
+        openCommentExport(original: original, document: .word)
+    }
+
+    private func openCommentExport(original: URL, document: PDFCommentExportState.Document) {
         let id = model.selectedItem.id
         pdfExport = PDFCommentExportModel(
             itemId: id, itemTitle: model.selectedItem.title, original: original,
-            margins: model.ownMargins(itemId: id), store: model.store)
+            margins: model.ownMargins(itemId: id), store: model.store, document: document)
     }
 
     var body: some View {
@@ -80,7 +97,9 @@ struct ExperienceItemDetailScreen: View {
                     downloadRecovery
                     ItemLastFailureCard(itemId: model.selectedItem.id)
                     if !sharingCoordinator.importedLayers.isEmpty {
-                        Build23ImportedMarginPresentation(coordinator: sharingCoordinator, hidesHeading: friendIntro != nil)
+                        Build23ImportedMarginPresentation(
+                            coordinator: sharingCoordinator, hidesHeading: friendIntro != nil, friendIntroShowing: friendIntro != nil
+                        )
                     }
                     reactionsEntry
                     SourceFollowSuggestionCard()
@@ -151,9 +170,15 @@ struct ExperienceItemDetailScreen: View {
                         // A copy of the kept PDF with the listener's own Margins as comments (#4338). Only for a PDF this
                         // iPhone holds the file of; off while the item has no Margin of the listener's own.
                         if keptPDFOriginal != nil {
-                            Button("Export PDF with Margins", systemImage: "doc.richtext", action: openPDFExport)
+                            Button(PDFCommentExportState.Document.pdf.menuTitle, systemImage: "doc.richtext", action: openPDFExport)
                                 .disabled(model.ownMargins(itemId: model.selectedItem.id).isEmpty)
                                 .accessibilityIdentifier("item.menu.exportPDF.button")
+                        }
+                        // The same for a Word document: a copy with the listener's own Margins as real Word comments (#4595).
+                        if keptWordOriginal != nil {
+                            Button(PDFCommentExportState.Document.word.menuTitle, systemImage: "doc.text", action: openWordExport)
+                                .disabled(model.ownMargins(itemId: model.selectedItem.id).isEmpty)
+                                .accessibilityIdentifier("item.menu.exportWord.button")
                         }
                         quickActionButtons
                         if episodeLinkStatus.canLink && !episodeLinkStatus.canChange {
@@ -199,7 +224,7 @@ struct ExperienceItemDetailScreen: View {
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
             // Runs again when the item's Library row arrives, so the entry is not missed on a screen opened before the row.
             .task(id: "\(model.selectedItem.id)|\(model.libraryItems.contains { $0.id == model.selectedItem.id })") {
-                await refreshKeptPDFOriginal()
+                await refreshKeptOriginal()
             }
             .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
             .onDisappear {
@@ -610,12 +635,13 @@ struct ExperienceItemDetailScreen: View {
             Button {
                 confirmsNewSession = true
             } label: {
-                Label("New session", systemImage: "plus.circle")
+                Label("Start over", systemImage: "plus.circle")
                     .frame(minHeight: 40)
                     .expandedHitArea(vertical: 2)
             }
             .buttonStyle(.bordered)
             .tint(AppColors.evergreen)
+            .accessibilityHint("Begins a separate pass. Your current place and Margins stay where they are.")
             .accessibilityIdentifier("item.startNew.button")
         }
 
@@ -655,7 +681,7 @@ struct ExperienceItemDetailScreen: View {
 
     private var structure: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Chapters", detail: "Authored source structure")
+            sectionHeading("Chapters", detail: "The chapters and headings in the source itself")
             if !model.selectedItem.navigation.isEmpty {
                 ExperienceSurface {
                     ExperienceCanonicalNavigationTree(
@@ -731,9 +757,9 @@ struct ExperienceItemDetailScreen: View {
                 }
             } else {
                 ExperienceSurface {
-                    Label("No authored chapters", systemImage: "doc.text")
+                    Label("No chapters in this source", systemImage: "doc.text")
                         .font(.headline)
-                    Text("Listening is available from the beginning. A generated map is optional and lives under Advanced.")
+                    Text("You can listen from the beginning. A Listening Map, if you want one, is under Advanced.")
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .padding(.top, 4)
@@ -802,7 +828,7 @@ struct ExperienceItemDetailScreen: View {
 
     private var sessions: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Listening sessions", detail: "Each pass keeps its own position and Margins")
+            sectionHeading("Listening sessions", detail: "Each one keeps its own place and Margins")
             if model.selectedItem.sessionRows.isEmpty {
                 ExperienceSurface { Text("No sessions yet.").foregroundStyle(AppColors.secondaryText) }
             } else {

@@ -105,6 +105,32 @@ class StatusTests(unittest.TestCase):
             'runner fault: The cloned simulator did not boot'))
         self.assertIn('no test result', M.description('failure', {'failed': []}, ['Build before simulator boot: x']))
 
+    def test_the_status_line_names_the_fault_not_the_build_time(self):
+        # 846e7e5 (2026-11-21): 1899 app tests passed, the adapters plan could not fetch a licence text, and the status
+        # said "runner fault: shared build before simulator boot took 7m44s".
+        details = ['shared build before simulator boot took 7m44s (reused: False); evidence: /w/verify-build/manifest.json',
+                   'boot of the cloned simulator took 2m25s (memory pressure at boot: normal)',
+                   'app: passed on retry: none',
+                   'adapters: Process exit 2 (see /w/verify-adapters/supertonic-model.log).',
+                   'template preparation and simulator clone took 11m02s']
+        self.assertEqual(M.description('error', {'passed': 1899, 'failed': []}, details),
+                         'runner fault: adapters: Process exit 2 (see /w/verify-adapters/supertonic-model.log).')
+        self.assertTrue(M.description('failure', {'failed': []}, details).startswith(
+            'failed, no test result: adapters: Process exit 2'))
+        for neutral in details[:3] + details[4:]:  # all neutral: the first still shows, as before
+            with self.subTest(neutral=neutral[:30]):
+                self.assertEqual(M.first_problem([neutral], 'none'), neutral)
+        self.assertEqual(M.first_problem(['', ''], 'none'), 'none')
+        # Recovered-stall lines (lane-runner.py 2699, 3020, 3023) are also information, found by the review of this change.
+        for recovered in ('boot stall on the first clone (A), so it was deleted and one fresh clone (B) booted in 40s',
+                          "tolerated one SpringBoard change in the first 30 s of the first boot (owner's rule)",
+                          'app: recovered after 1 startup stall (xcode-tests printed no test output) and counts as a PASS'):
+            with self.subTest(recovered=recovered[:30]):
+                self.assertEqual(M.first_problem([recovered, 'adapters: Process exit 2'], 'none'), 'adapters: Process exit 2')
+        self.assertEqual(M.first_problem(['app: passed on retry: Foo/testBar', 'x failed'], 'none'), 'x failed')
+        self.assertEqual(M.first_problem(['Build before simulator boot: Process exit 74'], 'none'),
+                         'Build before simulator boot: Process exit 74')
+
     def test_every_description_fits_githubs_limit(self):
         many = [(f'SpokenMarginsAppTests/Class{i}/testSomethingLong{i}', []) for i in range(40)]
         for state, results, details in (('failure', {'failed': many}, []), ('error', {}, ['x ' * 200]),
@@ -179,17 +205,17 @@ class IssueTests(unittest.TestCase):
 
 
 class LaneRunnerCouplingTests(unittest.TestCase):
-    """main_t3.py drives lane-runner.py's T3 machinery; a rename there must fail here, not on the hosted Mac."""
+    """main_t3.py drives lane_t3.py's T3 machinery; a rename there must fail here, not on the hosted Mac."""
 
     def test_the_lane_runner_still_has_what_the_main_run_calls(self):
-        lane = M.load_lane_runner()
+        lane = M.load_lane_t3()
         for name in ('_run_t3_grouped', 'log_retry_passes', 'RepoTally', 'T3_TIMEOUT'):
             with self.subTest(name=name):
                 self.assertTrue(hasattr(lane, name))
         self.assertEqual(sorted(lane.PLANS), sorted(M.PLANS))
 
     def test_an_empty_selector_list_runs_the_whole_plan(self):
-        lane = M.load_lane_runner()
+        lane = M.load_lane_t3()
         _, _, ran, _ = lane.run_plans({'app': []}, lambda plan, selectors, output: manifest(passed=['T/A/test1']),
                                       Path('/nonexistent'))
         self.assertEqual(len(ran), 1)
@@ -211,6 +237,60 @@ class WorkflowTests(unittest.TestCase):
 
     def test_hosted_integration_no_longer_runs_on_a_push(self):
         self.assertEqual(list(self.load('hosted-integration.yml')), ['workflow_dispatch'])
+
+
+CERT_LOG = '''Resolve Package Graph
+failed downloading 'https://download.onnxruntime.ai/pod-archive-onnxruntime-c-1.24.2.zip' which is required by binary target 'onnxruntime': downloadError("The certificate for this server is invalid.")
+xcodebuild: error: Could not resolve package dependencies:
+  failed downloading 'https://download.onnxruntime.ai/pod-archive-onnxruntime-c-1.24.2.zip' which is required by binary target 'onnxruntime': downloadError("The certificate for this server is invalid.")
+'''
+
+
+class PackageFetchFaultTests(unittest.TestCase):
+    """#4664: run 44855924738 on 915828e failed in 67 s on a TLS certificate error from download.onnxruntime.ai and
+    stayed red until main moved. A network fault while resolving packages is a runner fault (`error`, one retry)."""
+    NONE = {'passed': 0, 'failed': [], 'retried': []}
+
+    def test_a_download_or_certificate_error_while_resolving_is_a_fetch_fault(self):
+        self.assertTrue(M.package_fetch_fault(CERT_LOG))
+        for cause in ('Could not resolve host: github.com', 'The network connection was lost.', 'Failed to clone',
+                      'fatal: unable to access https://github.com/x/y.git', 'The operation timed out.',
+                      'Connection reset by peer'):
+            with self.subTest(cause=cause):
+                self.assertTrue(M.package_fetch_fault(f'xcodebuild: error: Could not resolve package dependencies:\n  {cause}'))
+
+    def test_a_resolution_error_with_no_network_cause_is_main_s_own(self):
+        for text in ('xcodebuild: error: Could not resolve package dependencies:\n  Dependencies could not be resolved '
+                     'because no versions of x match the requirement 9.9.9',
+                     'xcodebuild: error: Could not resolve package dependencies:',
+                     '',
+                     'error: failed downloading a model file',  # not a package resolution error
+                     'FollowListsScreen.swift:33:37: error: function declares an opaque return type'):
+            with self.subTest(text=text[:40]):
+                self.assertFalse(M.package_fetch_fault(text))
+
+    def test_only_a_run_that_ran_no_test_becomes_a_runner_fault(self):
+        self.assertEqual(M.state_after_build_fault('failure', self.NONE, True), 'error')
+        self.assertEqual(M.state_after_build_fault('failure', self.NONE, False), 'failure')
+        self.assertEqual(M.state_after_build_fault('failure', {'passed': 5, 'failed': [], 'retried': []}, True), 'failure')
+        self.assertEqual(M.state_after_build_fault('failure', {'passed': 0, 'failed': ['A/testB'], 'retried': []}, True), 'failure')
+        self.assertEqual(M.state_after_build_fault('success', {'passed': 5, 'failed': [], 'retried': []}, True), 'success')
+        self.assertEqual(M.state_after_build_fault('error', self.NONE, True), 'error')
+
+    def test_it_reads_the_build_log_in_the_evidence_folder(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            evidence = Path(folder)
+            self.assertFalse(M.fetch_fault_in_builds(evidence))
+            (evidence / 'verify-build').mkdir()
+            (evidence / 'verify-build' / 'build-for-testing.log').write_text('error: type mismatch')
+            self.assertFalse(M.fetch_fault_in_builds(evidence))
+            (evidence / 'verify-build' / 'build-for-testing.log').write_text(CERT_LOG)
+            self.assertTrue(M.fetch_fault_in_builds(evidence))
+
+    def test_the_faulted_commit_runs_again_once_then_waits(self):
+        self.assertTrue(M.should_run([status('error')], NOW)[0])
+        self.assertFalse(M.should_run([status('error'), status('error', hours_ago=3)], NOW)[0])
 
 
 class CommandLineTests(unittest.TestCase):

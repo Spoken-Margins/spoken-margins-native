@@ -584,20 +584,21 @@ class Paging(unittest.TestCase):
 
 
 class LaneFormatsStayInStep(unittest.TestCase):
-    """sm_status mirrors a few lane-runner.py constants. If the runner changes them, these fail first."""
+    """sm_status mirrors a few constants of lane-runner.py and lane_merge_rules.py. If those change, these fail first."""
 
     @classmethod
     def setUpClass(cls):
         cls.runner = (SCRIPTS / 'lane-runner.py').read_text()
+        cls.rules = (SCRIPTS / 'lane_merge_rules.py').read_text()  # moved out of the runner (#4769)
 
     def test_the_owner_tap_paths_match_the_runners(self):
-        self.assertIn("OWNER_TAP_FILES = {'scripts/lane-runner.py'}", self.runner)
-        self.assertIn("OWNER_TAP_PREFIXES = ('.github/',)", self.runner)
-        self.assertEqual(status.OWNER_TAP_FILES, {'scripts/lane-runner.py'})
+        self.assertIn("OWNER_TAP_FILES = {'scripts/lane-runner.py', 'scripts/lane_merge_rules.py'}", self.rules)
+        self.assertIn("OWNER_TAP_PREFIXES = ('.github/',)", self.rules)
+        self.assertEqual(status.OWNER_TAP_FILES, {'scripts/lane-runner.py', 'scripts/lane_merge_rules.py'})
         self.assertEqual(status.OWNER_TAP_PREFIXES, ('.github/',))
 
     def test_the_audited_kinds_match_the_runners(self):
-        runner = re.search(r"AUDITED = \{(.*?)\}", self.runner).group(1)
+        runner = re.search(r"AUDITED = \{(.*?)\}", self.rules).group(1)
         self.assertEqual(dict(re.findall(r"'(\w+)': '([^']+)'", runner)),
                          {'audio': 'the audio session', 'persistence': 'persistence', 'packet': 'packets'})
         self.assertEqual(set(status.AUDITED_CATEGORIES), {'audio', 'persistence', 'packet'})
@@ -606,7 +607,7 @@ class LaneFormatsStayInStep(unittest.TestCase):
         self.assertIn("REPORT = re.compile(r'^Lane report \\S+ — (PASS|FAIL|INCONCLUSIVE)', re.M)", self.runner)
         self.assertIn("REQUEST = re.compile(r'^\\s*/lane\\s+(T\\d)\\b', re.M)", self.runner)
         self.assertIn("NOTE = '<!-- lane-note -->'", self.runner)
-        self.assertIn("BOT = ('github-actions[bot]'", self.runner)
+        self.assertIn("BOT = ('github-actions[bot]'", self.rules)
 
 
 class RequestHeaders(unittest.TestCase):

@@ -125,6 +125,14 @@ public final class SessionEngine {
     /// completion, which a start that never began cannot set.
     private var emptyTextStart: EmptyTextStart?
     private var pendingWrittenInterjection: WrittenInterjectionCapture?
+    /// A system interruption ended while a written Margin was open, so the item resumes when the capture closes (#4831).
+    private var resumeWhenWrittenCaptureCloses = false
+    /// Counts the listener's transport commands (Play, Pause, a seek, a skip, a jump), so a retry of a refused resume
+    /// can tell the listener has acted without reading it from the place, which a step-back or a skip to the same place
+    /// can fake (#4846). Not counted: the system's own pause, a rate or voice change, and the resume after an
+    /// interruption, whose internal `resumePlayback()` is not the listener's.
+    public private(set) var listenerTransportEpoch = 0
+    private var isResumingAfterInterruption = false
 
     private struct PlaybackPlan {
         var text: String
@@ -370,13 +378,44 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// Pauses the source for a Margin capture (begin, Save or Cancel of a written Margin, a recording's start). A source
+    /// the system already paused (Siri, a call) is left as it is: the audio client holds an automatic resume for it,
+    /// and `pause()` is the listener's own Pause to the client, which cancels that resume, so a Margin added while Siri
+    /// was open left the item silent after Siri closed (#4831). A finished source still gets the real pause: there is
+    /// nothing to resume.
+    private func pauseSourceForCapture(_ session: Session) throws {
+        if !snapshot.status.isPlaybackActive, !isFinishedAtEnd(session),
+           interruptionResumePoint.isPausedBySystem(sessionId: session.id) {
+            return
+        }
+        try audio.pause()
+    }
+
+    /// The system ended an interruption and asks the item to resume while a written Margin is open. Navigation is refused
+    /// while it is, so a resume now would throw and, with the arming spent, leave the item silent after Save or Cancel.
+    /// Returns true when a capture is open: the resume waits for Save or Cancel, which then play the item as they do
+    /// for one that was playing when the Margin began (#4831). False means nothing is open and the caller resumes now.
+    public func deferResumeToWrittenCapture() -> Bool {
+        guard pendingWrittenInterjection != nil else { return false }
+        resumeWhenWrittenCaptureCloses = true
+        interruptionResumePoint.forget()
+        return true
+    }
+
+    /// Whether the source plays on once the written Margin that just closed is saved or cancelled.
+    private func takeResumeWhenWrittenCaptureCloses(_ capture: WrittenInterjectionCapture) -> Bool {
+        defer { resumeWhenWrittenCaptureCloses = false }
+        return capture.wasPlaying || resumeWhenWrittenCaptureCloses
+    }
+
     /// Resumes after the system ended an interruption. A podcast or recording first steps back by
     /// `InterruptionRewind` for how long it was paused, so the listener picks up the thread; anything else
     /// resumes as `resumePlayback()` does. The step happens once: a retry of a refused resume starts from the
     /// stepped-back place (#1975).
     @discardableResult
     public func resumePlaybackAfterInterruption() throws -> SessionSnapshot {
-        defer { interruptionResumePoint.forget() }
+        isResumingAfterInterruption = true
+        defer { isResumingAfterInterruption = false; interruptionResumePoint.forget() }
         guard var session = currentSession, snapshot.status == .paused,
               let pause = interruptionResumePoint.rewindMs(sessionId: session.id, mediaTimeMs: session.position.mediaTimeMs, now: now) else {
             return try resumePlayback()
@@ -1690,14 +1729,14 @@ public final class SessionEngine {
         } else if usesNativeMediaClock {
             // Freeze native transport before sampling its clock. Sampling first
             // lets media advance before the interruption and accumulates drift.
-            try audio.pause()
+            try pauseSourceForCapture(session)
             session = try syncCurrentPositionFromAudio(session)
         } else {
             // Speech pause callbacks can report terminal state synchronously.
             // Capture text position before pausing so that callback cannot turn an
             // in-progress interjection anchor into end-of-source completion.
             session = try syncCurrentPositionFromAudio(session)
-            try audio.pause()
+            try pauseSourceForCapture(session)
         }
         marginCaptureTiming?.sourcePaused(at: ProcessInfo.processInfo.systemUptime)
         currentSession = session
@@ -1944,13 +1983,13 @@ public final class SessionEngine {
             let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
                 || session.currentTargetType == .browserOwnedMedia
             if usesNativeMediaClock {
-                try audio.pause()
+                try pauseSourceForCapture(session)
                 session = try syncCurrentPositionFromAudio(session)
             } else if endedUnseen {
                 try audio.pause() // the end of the text is the place; a stopped speech player's offset is not
             } else {
                 session = try syncCurrentPositionFromAudio(session)
-                try audio.pause()
+                try pauseSourceForCapture(session)
             }
             let anchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
             try persistSession(session)
@@ -1972,6 +2011,7 @@ public final class SessionEngine {
                 replyTo: replyTo
             )
             pendingWrittenInterjection = capture
+            resumeWhenWrittenCaptureCloses = false
             publish(status: .paused, phase: session.phase)
             return capture
         } catch {
@@ -1982,7 +2022,7 @@ public final class SessionEngine {
             if wasPlaying {
                 try? restoreWrittenInterjectionTransport(wasPlaying: true, session: originalSession)
             } else {
-                try? audio.pause()
+                try? pauseSourceForCapture(originalSession)
                 publish(status: .paused, phase: originalSession.phase)
             }
             throw error
@@ -2028,19 +2068,89 @@ public final class SessionEngine {
         try repository.saveInterjection(interjection)
         lastMediaPercentageRepair = nil
         pendingWrittenInterjection = nil
+        let resumesSource = takeResumeWhenWrittenCaptureCloses(capture)
         do {
             // A written Margin rejoins like a spoken one (#776), but a source that was
             // already paused stays exactly where the listener left it.
-            let resumed = capture.wasPlaying ? try rejoiningAfterSavedMargin(session) : session
-            try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: resumed)
+            let resumed = resumesSource ? try rejoiningAfterSavedMargin(session) : session
+            try restoreWrittenInterjectionTransport(wasPlaying: resumesSource, session: resumed)
         } catch {
             // The note is already durable. Do not report this as a save failure
             // or retain a retryable draft: doing either would allow a second
             // submit to create a duplicate. Leave transport safely paused.
-            try? audio.pause()
+            try? pauseSourceForCapture(session)
             publish(status: .paused, phase: session.phase)
         }
         return snapshot
+    }
+
+    /// Writes a Margin on `sessionId`'s item at character `atCharacter`, without a capture: the Paper note's Write it
+    /// puts an answer where the listener is or at the start of a page they pick (#4340). The anchor is built by
+    /// `textAnchor`, as a capture's is.
+    ///
+    /// The session need not be the engine's current one, and nothing here touches transport. When it is current the
+    /// snapshot's Margin count is refreshed; the session's position, progress and completion, the playhead and playback
+    /// are never changed, and the session is not saved. `id` is the caller's draft id: a second call with it writes
+    /// nothing and returns the Margin the first one saved, so a double tap on Save makes one Margin. Throws before
+    /// writing when the text is empty, the session or its item is gone, or the item has no text.
+    @discardableResult
+    public func addWrittenInterjection(
+        id: String,
+        sessionId: String,
+        atCharacter: Int,
+        text: String,
+        paperRole: PaperNoteRole? = nil
+    ) throws -> Interjection {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let session = try repository.loadSession(id: sessionId) else {
+            throw SessionKitError.invalidCommandForState("addWrittenInterjection")
+        }
+        let item = currentItem?.id == session.itemId ? currentItem : try? repository.loadItem(id: session.itemId)
+        guard let item, item.deletedAt == nil, let itemText = item.text, !itemText.isEmpty else {
+            throw SessionKitError.invalidCommandForState("addWrittenInterjection")
+        }
+        let marginId = "ij-written-\(id)"
+        let anchor = textAnchor(in: itemText, startingAt: atCharacter)
+        let margin = Interjection(
+            id: marginId,
+            itemId: session.itemId,
+            sessionId: session.id,
+            targetType: .item,
+            targetId: session.itemId,
+            createdAt: now(),
+            roughPercent: percent(for: anchor.startChar, text: itemText),
+            anchor: anchor,
+            audioPath: nil,
+            audioStatus: "discarded",
+            transcriptionStatus: "transcribed",
+            transcript: text,
+            cleanedTranscript: nil,
+            displayText: text,
+            status: "active",
+            anchorContextStatus: !anchor.anchorBefore.isEmpty || !anchor.anchorAfter.isEmpty ? .ready : .unavailable,
+            captureKind: .written,
+            paperRole: paperRole
+        )
+        // The check and the save are one transaction where the store has them, so two taps race to one Margin.
+        let saved = try inRepositoryTransaction { () throws -> Interjection in
+            if let existing = try loadInterjection(marginId, inSession: session.id) { return existing }
+            try repository.saveInterjection(margin)
+            return margin
+        }
+        if currentSession?.id == session.id {
+            lastMediaPercentageRepair = nil
+            let counter = repository as? SessionRecordCounting
+            snapshot.activeInterjectionCount = (try? counter?.activeInterjectionCount(sessionId: session.id)
+                ?? repository.loadInterjections(sessionId: session.id).filter { $0.status == "active" }.count)
+                ?? snapshot.activeInterjectionCount
+        }
+        return saved
+    }
+
+    /// Gives a Margin of `sessionId` a Paper note role, or takes it off with nil (#4340). Only the role changes.
+    /// Throws when the session or the Margin is not found.
+    public func setPaperRole(_ role: PaperNoteRole?, interjectionId: String, sessionId: String) throws {
+        try updateInterjection(interjectionId, sessionId: sessionId) { $0.paperRole = role }
     }
 
     @discardableResult
@@ -2052,8 +2162,9 @@ public final class SessionEngine {
               session.itemId == capture.itemId else {
             throw SessionKitError.invalidCommandForState("cancelWrittenInterjection")
         }
-        try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: session)
+        try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying || resumeWhenWrittenCaptureCloses, session: session)
         pendingWrittenInterjection = nil
+        resumeWhenWrittenCaptureCloses = false
         return snapshot
     }
 
@@ -2087,7 +2198,7 @@ public final class SessionEngine {
                 publishPlaybackStart(for: session, phase: session.phase)
             }
         } else {
-            try audio.pause()
+            try pauseSourceForCapture(session)
             publish(status: .paused, phase: session.phase)
         }
     }
@@ -4835,11 +4946,18 @@ public final class SessionEngine {
     }
 
     private func requirePlayback(_ command: String) throws {
+        if !isResumingAfterInterruption, !Self.commandsNotTheListenersTransport.contains(command) {
+            listenerTransportEpoch &+= 1
+        }
         guard profile.hasAny("playback", ["realtime_tts", "prerendered_audio", "native_media", "assistant_turn_tts", "summary_turn_tts"])
             || profile.has("remoteControl", "send_transport_commands") else {
             throw SessionKitError.invalidCommandForCapability(command)
         }
     }
+
+    private static let commandsNotTheListenersTransport: Set<String> = [
+        "reconcileSystemInitiatedPause", "updateSpeechPlaybackSettings", "setPlaybackRate"
+    ]
 
     private func requireNavigationAllowed(_ command: String) throws {
         guard snapshot.status != .recording, pendingWrittenInterjection == nil else {
@@ -5003,8 +5121,14 @@ public final class SessionEngine {
                 turnSegmentIndex: segmentIndex
             )
         }
-        let text = currentItem?.text ?? ""
-        let start = max(0, min(playbackPosition.textStart ?? session.position.charOffset, text.count))
+        return textAnchor(in: currentItem?.text ?? "", startingAt: playbackPosition.textStart ?? session.position.charOffset)
+    }
+
+    /// The anchor of a Margin on an item's own text that starts at character `rawStart`: it ends at the next sentence
+    /// end and carries the sentences around it. The one place this is built, so a Margin captured while listening and
+    /// one written at a chosen place (a Paper note answer, #4340) are anchored the same way.
+    func textAnchor(in text: String, startingAt rawStart: Int) -> Anchor {
+        let start = max(0, min(rawStart, text.count))
         let end = min(text.count, max(start + 1, nextBoundary(after: start, unit: "sentence", text: text)))
         let context = textAnchorShoulder(in: text, at: start)
         return Anchor(
@@ -5753,6 +5877,7 @@ public final class SessionEngine {
     /// beginning), so a playing client must move even when the new position is close to the live
     /// one. A plain play, resume or rate change isn't a seek (#346).
     private func playCurrentTarget(_ session: Session, seeking: Bool = false) throws {
+        interruptionResumePoint.forget() // playing again: the system's pause no longer holds (#4831)
         if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
             try audio.configureMediaContext(playbackMediaContext(for: session))
             try audio.play(targetId: session.currentTargetId, fromMediaTimeMs: session.position.mediaTimeMs ?? 0)

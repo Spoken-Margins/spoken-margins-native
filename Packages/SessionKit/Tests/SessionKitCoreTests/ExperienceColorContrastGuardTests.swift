@@ -470,10 +470,11 @@ final class AppColorUsageGuardTests: XCTestCase {
 
     /// The default placeholder is a system grey, 1.73:1 on the input fill in light mode. `AppTextField` and
     /// `AppSecureField` draw it in `secondaryText`. Only the system alerts keep a plain field: the system draws those.
-    /// The follow lists' New list and Rename alerts (#4046) are two of them.
+    /// The follow lists' alerts (#4046) are three of them: New list in the "Lists for <show>" sheet, New list on the Lists
+    /// screen, and Rename on a list's screen.
     private static let plainFieldAllowed: [String: Int] = [
         "ExperienceDesignSystem.swift": 3, "ExperienceItemDetailScreen.swift": 1, "ItemCollectionSheet.swift": 1,
-        "SpokenNoteRenameAlert.swift": 1, "ExperienceSourcesScreen.swift": 1, "FollowListPickerSheet.swift": 1
+        "SpokenNoteRenameAlert.swift": 1, "FollowListPickerSheet.swift": 1, "FollowListsScreen.swift": 1, "FollowListScreen.swift": 1
     ]
 
     func testTextFieldsUseTheAppPlaceholderColour() throws {
@@ -496,11 +497,14 @@ final class AppColorUsageGuardTests: XCTestCase {
     /// A token foreground and an opaque token background on one modifier chain, in either order, as `(foreground,
     /// background)` token names: `.foregroundStyle(AppColors.secondaryText) ... .background(AppColors.panel)`. The chain
     /// is the modifiers between the two, up to 300 characters, with no brace, semicolon or other view in between, so two
-    /// neighbouring views are never paired. Only the plain `foregroundStyle(AppColors.x)` form is seen: a colour chosen
-    /// by a ternary or a variable is not, and a tint has its own scan above.
+    /// neighbouring views are never paired. A colour chosen by a ternary is seen too: `isActive ? AppColors.onEvergreen :
+    /// AppColors.text` on `isActive ? AppColors.evergreen : AppColors.panel` is two pairs, the first arm on the first
+    /// arm and the second on the second (a ternary on one side only is paired with each arm of the other). An arm that
+    /// is not a bare token (`.clear`, `Color.white`, a tint with `.opacity(`) is not paired here: a tint has its own scan
+    /// above, and a system colour has its own. A colour chosen by a variable or a function is not seen (#3739).
     static func tokenChains(in text: String) throws -> [(foreground: String, background: String)] {
-        let background = #"(?:\.background|\.fill)\(\s*AppColors\.(\w+)\s*[,)]"#
-        let foreground = #"(?:foregroundStyle|foregroundColor)\(\s*AppColors\.(\w+)\s*\)"#
+        let background = #"(?:\.background|\.fill)\(\s*(?=[^(),]*AppColors\.)([^(),]*?)\s*[,)]"#
+        let foreground = #"(?:foregroundStyle|foregroundColor)\(\s*(?=[^()]*AppColors\.)([^()]*?)\s*\)"#
         let between = #"([^{};]{0,300}?)"#
         let otherView = #"\b(?:Text|Image|Label|Button|HStack|VStack|ZStack|ForEach|Spacer|Section|Toggle|Picker|Link|NavigationLink)\("#
         var chains: [(foreground: String, background: String)] = []
@@ -511,10 +515,38 @@ final class AppColorUsageGuardTests: XCTestCase {
             for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
                 func group(_ index: Int) -> String { Range(match.range(at: index), in: text).map { String(text[$0]) } ?? "" }
                 if group(2).range(of: otherView, options: .regularExpression) != nil { continue }
-                chains.append((group(foregroundGroup), group(backgroundGroup)))
+                chains += pairedArms(foreground: tokenArms(group(foregroundGroup)), background: tokenArms(group(backgroundGroup)))
             }
         }
         return chains
+    }
+
+    /// The arms of a colour argument, each a bare `AppColors` token name or nil: one arm for a plain colour, two for a
+    /// ternary (`condition ? first : second`).
+    private static func tokenArms(_ argument: String) -> [String?] {
+        let arms: [String]
+        // The ternary's own ` ? ` and ` : `, so an optional chain (`item?.state`) in the condition is not the question mark.
+        if let question = argument.range(of: " ? "), let colon = argument.range(of: " : ", range: question.upperBound..<argument.endIndex) {
+            arms = [String(argument[question.upperBound..<colon.lowerBound]), String(argument[colon.upperBound...])]
+        } else {
+            arms = [argument]
+        }
+        return arms.map { arm in
+            let trimmed = arm.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("AppColors."), trimmed.dropFirst("AppColors.".count).allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" })
+            else { return nil }
+            return String(trimmed.dropFirst("AppColors.".count))
+        }
+    }
+
+    private static func pairedArms(foreground: [String?], background: [String?]) -> [(foreground: String, background: String)] {
+        let count = max(foreground.count, background.count)
+        return (0..<count).compactMap { index in
+            let fore = foreground.count == 1 ? foreground[0] : foreground[index]
+            let back = background.count == 1 ? background[0] : background[index]
+            guard let fore, let back else { return nil }
+            return (fore, back)
+        }
     }
 
     /// `AppColors` names that are another token under a second name (`Gate1RootView.swift`), so a chain that uses one is
@@ -544,6 +576,30 @@ final class AppColorUsageGuardTests: XCTestCase {
         XCTAssertEqual(try Self.tokenChains(in: reversed).map { "\($0.foreground)/\($0.background)" }, ["evergreen/softGreen"])
         XCTAssertEqual(try Self.tokenChains(in: neighbours).count, 0)
         XCTAssertEqual(try Self.tokenChains(in: blocks).count, 0)
+    }
+
+    /// A colour chosen by a ternary is two pairs, first arm on first arm, never a cross product, and an arm that is a
+    /// tint or a system colour is left to the scans that own those (#3739).
+    func testTokenChainScanPairsTernaryArmsOneForOne() throws {
+        func chains(_ text: String) throws -> [String] { try Self.tokenChains(in: text).map { "\($0.foreground)/\($0.background)" } }
+        let both = "Text(\"a\").foregroundStyle(isActive ? AppColors.onEvergreen : AppColors.text).background(isActive ? AppColors.evergreen : AppColors.panel, in: Capsule())"
+        let reversed = "Capsule().fill(highlighted ? AppColors.evergreen : AppColors.softGreen).foregroundStyle(highlighted ? AppColors.onEvergreen : AppColors.evergreen)"
+        let oneSide = "Text(\"a\").foregroundStyle(isOn ? AppColors.text : AppColors.secondaryText).background(AppColors.panel)"
+        let arm = "Text(\"a\").foregroundStyle(isLit ? Color.white : AppColors.watchSecondary).background(isLit ? AppColors.softGreen : AppColors.panel)"
+        let tint = "Text(\"a\").foregroundStyle(AppColors.text).background(isLit ? AppColors.softGreen.opacity(0.5) : AppColors.panel)"
+        XCTAssertEqual(try chains(both), ["onEvergreen/evergreen", "text/panel"])
+        XCTAssertEqual(try chains(reversed), ["onEvergreen/evergreen", "evergreen/softGreen"])
+        XCTAssertEqual(try chains(oneSide), ["text/panel", "secondaryText/panel"])
+        XCTAssertEqual(try chains(arm), ["watchSecondary/panel"])
+        XCTAssertEqual(try chains(tint), [])
+        // A system colour or a clear fill earlier in the chain must not swallow the token pair after it.
+        let swallowed = "X.foregroundStyle(.secondary).foregroundStyle(AppColors.text).background(AppColors.panel)"
+        let clear = "X.foregroundStyle(AppColors.text).background(Color.clear).background(AppColors.panel)"
+        XCTAssertEqual(try chains(swallowed), ["text/panel"])
+        XCTAssertEqual(try chains(clear), ["text/panel"])
+        // An optional chain in the condition is not the ternary's question mark.
+        let optional = "X.foregroundStyle(item?.state == nil ? AppColors.text : AppColors.secondaryText).background(AppColors.panel)"
+        XCTAssertEqual(try chains(optional), ["text/panel", "secondaryText/panel"])
     }
 
     /// The case the audit found by hand: a pair nobody listed (`secondaryText` on `dangerBackground` is 4.27:1 in light

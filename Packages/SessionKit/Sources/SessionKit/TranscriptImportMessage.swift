@@ -52,7 +52,8 @@ public struct TranscriptImportMessage: Error, LocalizedError, Equatable, Sendabl
         case .docxUnreadable:
             return "\(name) couldn't be read as a Word document. Save it again as .docx and try again."
         case .docxNotATranscript:
-            return "\(name) isn't a meeting transcript. Spoken Margins adds Word files only when they are transcripts. To hear it, copy its text and use Paste Text."
+            // Only the share sheet still says this: + › Import from Files adds a Word document as a document (#4594).
+            return "\(name) isn't a meeting transcript. To add it as a document, use + › Import from Files."
         case .couldNotRead:
             return "\(name) couldn't be read. If it's in iCloud Drive, open it in Files so it downloads, then try again."
         case .unsupportedType:

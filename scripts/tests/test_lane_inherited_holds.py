@@ -17,7 +17,8 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import lane_inherited_holds as holds  # noqa: E402
 
-spec = importlib.util.spec_from_file_location('lane_runner_for_inherited', SCRIPTS / 'lane-runner.py')
+# The merge rules that call lane_inherited_holds (moved out of lane-runner.py, #4769).
+spec = importlib.util.spec_from_file_location('lane_merge_rules_for_inherited', SCRIPTS / 'lane_merge_rules.py')
 lane = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lane)
 

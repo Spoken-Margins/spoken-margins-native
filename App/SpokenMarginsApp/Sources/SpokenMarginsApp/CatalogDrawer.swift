@@ -783,7 +783,8 @@ struct CatalogSubjectChipLabel: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            if isSelected { Image(systemName: "checkmark").font(.caption.weight(.bold)) }
+            // The chip's selected trait says it; the glyph would read "checkmark" on top (#4639).
+            if isSelected { Image(systemName: "checkmark").font(.caption.weight(.bold)).accessibilityHidden(true) }
             Text(title).font(.subheadline.weight(isSelected ? .semibold : .regular))
         }
         .padding(.horizontal, 12)

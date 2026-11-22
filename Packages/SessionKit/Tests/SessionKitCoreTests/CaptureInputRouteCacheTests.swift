@@ -36,9 +36,11 @@ final class CaptureInputRouteCacheTests: XCTestCase {
         }
         XCTAssertEqual(started.wait(timeout: .now() + 5), .success)
 
-        let begin = ProcessInfo.processInfo.systemUptime
-        for _ in 0..<100 { XCTAssertEqual(cache.value, "BuiltInMic", "the poll sees the last answer while the read waits") }
-        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - begin, 1, "100 polls did not wait for the read")
+        let seen = SeenRoutes()
+        assertReturnsWhileHeld("100 polls") {
+            for _ in 0..<100 { seen.add(cache.value) }
+        }
+        XCTAssertEqual(seen.all, [String?](repeating: "BuiltInMic", count: 100), "the poll sees the last answer while the read waits")
 
         release.signal()
         cache.waitUntilIdle()
@@ -107,4 +109,11 @@ private final class LockedFlag: @unchecked Sendable {
     private var flag = false
     func set() { lock.withLock { flag = true } }
     var isSet: Bool { lock.withLock { flag } }
+}
+
+private final class SeenRoutes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String?] = []
+    func add(_ value: String?) { lock.withLock { values.append(value) } }
+    var all: [String?] { lock.withLock { values } }
 }

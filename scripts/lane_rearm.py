@@ -112,6 +112,14 @@ def rearm(api, trunk: str, head: str, conclusion: str, out=sys.stdout, own_runs:
     if conclusion == 'cancelled' and active_runs_on(api, head) - own_runs > 0:
         print(f'{head[:7]}: cancelled while a newer hosted run is active; its end starts the merge run', file=out)
         return [], []
+    # Since the merge queue switch-over (#4693) lane.yml is disabled and the merge queue, fed by the automerge label
+    # (merge-queue-label-bridge.yml), merges armed PRs. A dispatch of a disabled workflow is refused, which turned this
+    # job red on every armed PR, and the audit skips a head with a red check (owner_tap_alert.checks_state), so risky
+    # PRs never got their audit (2026-11-20). With the lane off there is nothing to start: stand down, green.
+    lane_state = api.get('actions/workflows/lane.yml').get('state')
+    if lane_state != 'active':
+        print(f'lane.yml is {lane_state}: the merge queue merges armed PRs; nothing to start', file=out)
+        return [], []
     started, failed = [], []
     for pr, base in armed_prs_on(api, trunk, head):
         try:

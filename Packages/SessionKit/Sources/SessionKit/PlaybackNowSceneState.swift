@@ -19,6 +19,14 @@ public struct PlaybackNowSceneState: Sendable {
     public private(set) var litSentence: Int?
     /// Bumped whenever `shownScene` is replaced, so a view can tell a new scene from a moved light without comparing rows.
     public private(set) var sceneRevision = 0
+    /// What the list draws for `shownScene`: its sentences, with a card before the sentence that holds each table's or
+    /// figure's caption (#4588). Built whenever the scene or the cards change, never on a tick, so it is the same value
+    /// for as long as `sceneRevision` is.
+    public private(set) var shownItems: [PlaybackLivePassage.SceneItem] = []
+    /// For each card in `shownItems`, the start of the sentence it stands before.
+    public private(set) var clipHoldStarts: [Int: Int] = [:]
+    private var clipAnchors: [PDFClipAnchor] = []
+    private var savedClipIds: Set<String> = []
 
     public init(text: String, chapters: [Chapter] = []) {
         index = PlaybackLivePassage.Index(text: text, chapters: chapters)
@@ -93,6 +101,27 @@ public struct PlaybackNowSceneState: Sendable {
 
     public mutating func listenerScrolled() { follow.listenerScrolled() }
 
+    /// The tables and figures of a PDF that have a picture to show, found off the main actor when Now opened. Cards
+    /// appear in the scene on screen at once, and the revision moves so the view can tell.
+    public mutating func setClips(anchors: [PDFClipAnchor], saved: Set<String>) {
+        guard anchors != clipAnchors || saved != savedClipIds else { return }
+        clipAnchors = anchors
+        savedClipIds = saved
+        rebuildItems()
+        sceneRevision += 1
+    }
+
+    private mutating func rebuildItems() {
+        guard !clipAnchors.isEmpty, !savedClipIds.isEmpty else {
+            shownItems = shownScene.sentences.map { .sentence($0) }
+            clipHoldStarts = [:]
+            return
+        }
+        let placed = PlaybackLivePassage.ClipPlacement.items(scene: shownScene, anchors: clipAnchors, saved: savedClipIds)
+        shownItems = placed.items
+        clipHoldStarts = placed.holdStarts
+    }
+
     public mutating func scrollCameToRest(litSentenceIsVisible: Bool) {
         follow.scrollCameToRest(litSentenceIsVisible: litSentenceIsVisible)
     }
@@ -108,6 +137,7 @@ public struct PlaybackNowSceneState: Sendable {
         }
         if change == .scene || !shownIsPlaying {
             shownScene = playing
+            rebuildItems()
             sceneRevision += 1
         }
         shownIsPlaying = true

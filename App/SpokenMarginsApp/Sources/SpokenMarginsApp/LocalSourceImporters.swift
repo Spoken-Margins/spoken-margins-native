@@ -42,12 +42,13 @@ actor LocalSourceImporter {
         self.fileManager = fileManager
     }
 
-    func importEPUB(from sourceURL: URL) async throws -> Item {
+    /// `itemId` is fixed by the caller when it must be known before the item is saved (a collection import, #3769).
+    func importEPUB(from sourceURL: URL, itemId fixedItemId: String? = nil) async throws -> Item {
         guard sourceURL.isFileURL else { throw LocalSourceImportError.unsupportedURL }
         guard sourceURL.pathExtension.lowercased() == "epub" else { throw LocalSourceImportError.unsupportedType }
         let size = try fileSize(sourceURL)
         let reservation = try await ledger.reserve(ownerId: "epub-import-\(UUID().uuidString)", byteCount: size)
-        let itemId = "epub-\(UUID().uuidString.lowercased())"
+        let itemId = fixedItemId ?? "epub-\(UUID().uuidString.lowercased())"
         let directory = applicationSupportDirectory.appending(path: "SourceDocuments", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = directory.appending(path: "\(itemId).epub")
@@ -97,14 +98,14 @@ actor LocalSourceImporter {
         }
     }
 
-    func importAudiobook(from sourceURL: URL) async throws -> Item {
+    func importAudiobook(from sourceURL: URL, itemId fixedItemId: String? = nil) async throws -> Item {
         guard sourceURL.isFileURL else { throw LocalSourceImportError.unsupportedURL }
         let allowed = ["mp3", "m4a", "m4b", "mp4"]
         let ext = sourceURL.pathExtension.lowercased()
         guard allowed.contains(ext) else { throw LocalSourceImportError.unsupportedType }
         let size = try fileSize(sourceURL)
         let reservation = try await ledger.reserve(ownerId: "audiobook-import-\(UUID().uuidString)", byteCount: size)
-        let itemId = "audiobook-\(UUID().uuidString.lowercased())"
+        let itemId = fixedItemId ?? "audiobook-\(UUID().uuidString.lowercased())"
         let directory = applicationSupportDirectory.appending(path: "Audiobooks", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = directory.appending(path: "\(itemId).\(ext)")
