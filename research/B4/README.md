@@ -13,10 +13,16 @@ CADDY=caddy SMSERVER=smserver research/B4/deploy/test-edit-caddyfile.sh   # Cadd
 research/B4/deploy/test-server-rollback.sh   # deploy keeps the old smserver and puts it back on rollback
 research/B4/deploy/test-remote-root.sh       # the non-root deploy's sudo wrapper and its two on-box scripts
 research/B4/deploy/deploy.sh --dry-run <user>@<vps>         # from the Mac: show every change on the box, change nothing
-research/B4/deploy/deploy-web.sh --dry-run <user>@<vps>     # from the Mac: build Web/ and list what would change, change nothing
+research/B4/deploy/deploy-web.sh --dry-run <user>@<vps>     # from the Mac (fallback): build Web/ and list what would change, change nothing
 ```
 
-The web app (`Web/`, #3020) is served by the same Caddy from `https://app.spokenmargins.com` (the old `app.spokenmargins.proximitytoprogress.com` answers a 301 to it, `deploy/caddy-legacy-web.caddy`): `deploy.sh` adds that site block (`deploy/caddy-web.caddy`, no access log) and an empty `/srv/www/spokenmargins-web`, and `deploy-web.sh` builds the committed `Web/` with `VITE_RELAY_ORIGIN` set to this server and copies it there. The unit lists both app origins, new and old, in `-relay-origins` and `-link-origins` during the move; the relay still answers 503 until `smserver switch ... relay on`.
+## Web player and website deploys (#4982)
+
+The web player and the website deploy from GitHub, not from the Mac. A merge to `main` that changes `Web/` (or the share-link opener it builds from `server/internal/links/`, or `deploy/deploy-web.sh`) starts `.github/workflows/deploy-web.yml`; one that changes `Site/` (or `scripts/deploy-spoken-margins-site.sh`) starts `.github/workflows/deploy-site.yml`. Each run first comments on the merged PR, @mentioning the owner with what is shipping and a link to the run. Its deploy job then waits in the `web-deploy` or `site-deploy` environment until the owner taps Review deployments and Approve; it runs the same script the Mac runs, with that environment's key for the normal deploy login, and fails unless `scripts/sm_live.py` then reads this commit as live. Nobody needs to remember to run anything; a fix that sits undeployed is a run waiting for the owner's tap. A run can also be started by hand from the Actions tab (Run workflow, on `main`).
+
+The Mac scripts stay as the fallback, for when GitHub Actions is down or the server's key has changed: `deploy-web.sh <user>@<vps>` and `scripts/deploy-spoken-margins-site.sh` work as before. The voice mirror still goes up from the Mac (`scripts/voice-catalog publish --apply`, ops/voice-catalog/README.md); the GitHub site deploy never deletes it. `deploy.sh` (the server itself, Caddy, systemd) still needs a person at a terminal, as below.
+
+The web app (`Web/`, #3020) is served by the same Caddy from `https://app.spokenmargins.com` (the old `app.spokenmargins.proximitytoprogress.com` answers a 301 to it, `deploy/caddy-legacy-web.caddy`): `deploy.sh` adds that site block (`deploy/caddy-web.caddy`, no access log) and an empty `/srv/www/spokenmargins-web`, and `deploy-web.sh` (run by `deploy-web.yml`, above) builds the committed `Web/` with `VITE_RELAY_ORIGIN` set to this server and copies it there. The unit lists both app origins, new and old, in `-relay-origins` and `-link-origins` during the move; the relay still answers 503 until `smserver switch ... relay on`.
 
 ## Server access (#2478)
 

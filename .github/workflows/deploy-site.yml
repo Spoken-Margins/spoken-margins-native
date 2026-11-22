@@ -1,0 +1,102 @@
+# Deploy the website (Site/, https://spokenmargins.com) after the owner approves (#4982).
+#
+# Until now scripts/deploy-spoken-margins-site.sh ran only when someone remembered to run it on the Mac. Now a push to
+# main that changes Site/ starts this run, built like deploy-web.yml (read its header for the why):
+#   1. `notice` (no environment, no secrets) posts one comment as github-actions[bot] that @mentions the owner on the
+#      PR behind the commit, listing what is shipping and linking this run (scripts/deploy_check.py notice).
+#   2. `deploy` waits in the `site-deploy` environment until he taps Approve (required reviewer, main only), then runs
+#      the same script the Mac runs, with the environment's key, and checks with scripts/sm_live.py that every page
+#      matches main and the deploy stamp is this commit (scripts/deploy_check.py verify).
+# The voice mirror (SPOKEN_MARGINS_VOICE_MIRROR_DIR) is left unset: `scripts/voice-catalog publish --apply` uploads it
+# from the Mac, and the site upload never deletes voices/files/. The Mac script stays as the fallback.
+#
+# Trust: only main deploys. Triggers are push to main and workflow_dispatch, both jobs refuse any other ref, and the
+# environment admits main only. There is no pull_request, pull_request_target, issue_comment or workflow_run trigger,
+# and there must never be: that would hand the deploy key to code nobody reviewed.
+#
+# Secrets (environment `site-deploy`): SM_DEPLOY_SSH_KEY, SM_DEPLOY_KNOWN_HOSTS, SM_DEPLOY_HOST (user@host). The login
+# owns /srv/www/spokenmargins and has no root, so the script leaves Caddy alone when its block is already there.
+#
+# One deploy at a time: a running deploy finishes, and a newer run queued behind it replaces an older queued one. A run
+# already waiting for approval can hold its place, so when a newer notice arrives, reject the older run.
+#
+# Cost and catch: about 1 to 2 minutes of free hosted Linux per merge that changes Site/, plus one owner tap. It
+# catches merged site changes that never go live, the gap the web player showed (19 commits, 2026-11-18 to 11-22).
+# Waste signal: runs left unapproved or rejected for weeks, or site deploys that keep going out by hand anyway.
+name: deploy-site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Site/**'
+      - 'scripts/deploy-spoken-margins-site.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notice:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write       # the commit comment, when no PR is behind the commit
+      pull-requests: write  # the PR comment
+      issues: write         # PR comments go through the issues API
+    steps:
+      - name: Check the ref
+        run: '[ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+      - name: Tell the owner what is shipping and where to approve it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/deploy_check.py notice --target site --sha "$SHA" --run-url "$RUN_URL"
+
+  deploy:
+    needs: notice
+    # A failed notice still leaves the run for the owner to find; it never blocks the deploy.
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: site-deploy
+    timeout-minutes: 15
+    concurrency:
+      group: site-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Check the ref
+        run: '[ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Stop if main already has a newer change to deploy
+        env:
+          SHA: ${{ github.sha }}
+        run: python3 scripts/deploy_check.py newest --target site --sha "$SHA"
+      - name: Set up the deploy key
+        env:
+          SSH_KEY: ${{ secrets.SM_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.SM_DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.SM_DEPLOY_HOST }}
+        run: scripts/deploy-ssh-setup.sh
+      - name: Copy the website
+        env:
+          HOST: ${{ secrets.SM_DEPLOY_HOST }}
+        run: |
+          unset SPOKEN_MARGINS_VOICE_MIRROR_DIR
+          SPOKEN_MARGINS_VPS_REMOTE="$HOST" SPOKEN_MARGINS_VPS_SSH_KEY="$HOME/.ssh/sm_deploy" scripts/deploy-spoken-margins-site.sh
+      - name: Check that every live page matches this commit
+        env:
+          SHA: ${{ github.sha }}
+        run: python3 scripts/deploy_check.py verify --target site --sha "$SHA"
+      - name: Remove the deploy key
+        if: always()
+        run: rm -f "$HOME/.ssh/sm_deploy"
