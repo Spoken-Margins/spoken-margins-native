@@ -41,6 +41,50 @@ names, disabled workflows, and how often GitHub actually ran the schedules. By d
 (the audit about every 8 hours, the bridge sweep about every 12, against 15-minute crons); scenario `c2` shows the
 nominal cron.
 
+## The timed harness (#4937)
+
+`scripts/ci_model.py` runs one PR with every run finishing at once, so it could not see the faults that reached live
+PRs on 2026-11-20 to 22: a re-arm whose two label events left the newest `merge policy` run cancelled (#4929), a
+queue entry that timed out and disarmed its PR, a token the bridge was refused with no word anywhere, a portable job
+at its time limit ending grey (#4747). `scripts/ci_harness.py` reuses this model's static extraction, expression
+evaluator and the tree's own decision code, and adds time, concurrency groups as GitHub runs them, the newest-check
+rule, the queue's admission, black-box Mac jobs (pass, fail, hang to the time limit, cancel, run past the queue's
+timeout, never get a runner), download outages, token refusals, dropped schedules and the VPS backstop. Its docstring
+lists the GitHub rules it assumes and the invariants it checks.
+
+- `.venv/bin/python scripts/ci_harness.py --check` runs all 376 combinations (about 30 seconds) and fails on a stuck,
+  silent, looping or broken-merge case that `KNOWN` does not list, on a `KNOWN` entry that no longer happens, and on
+  a static finding (workflow-level concurrency over jobs that skip on the label; a required job skipped when an
+  unrequired job it needs fails; a required check no job reports). The `hosted fast: portable` job runs it on every
+  PR and merge group, so a pipeline change has to pass it before it merges.
+- `--diff origin/main` lists the violations a branch adds or fixes; `--one <kind> <arming> <fault> <admission>`
+  prints one combination's event log; `--check-snapshot` compares the ruleset in `SNAPSHOT` with the live one.
+- `scripts/tests/test_ci_harness.py` puts fixed faults back into the in-memory model (the merge-policy group, the
+  web job's skip, a required check nobody reports) and expects the harness to see them again.
+
+A PR that changes the pipeline says what `--diff origin/main` printed. When it fixes a `KNOWN` entry, it removes it.
+
+### What it would have caught (retrospective, 2026-11-22)
+
+Each fix is replayed with `ci_harness.py --diff <merge>^1 <merge>` where the older tree still loads; trees before
+`scripts/lane_merge_rules.py` (#4769) do not, and for those the row names the fault class that covers the case.
+
+| Fix | What happened live | `ci_model.py` | `ci_harness.py` |
+| --- | --- | --- | --- |
+| #4930 (#4929) | A re-arm's two label events left the newest `merge policy` run cancelled; #4898, #4871, #4830 waited 2 to 5 hours | missed (runs take no time) | caught: 26 combinations stuck before the commit, none after |
+| #4849 (#4843) | Audio and persistence PRs were never audited, so they never merged (#4666, 37 hours) | missed | caught: before the commit an audio PR with no fault never merges (62 combinations fixed) |
+| #4888 (#4867) | A required check that never ran on a PR head | missed | missed: neither models a check added to the ruleset after the head was pushed |
+| #4752 | A cancelled queue entry disarmed its PR | missed | covered by `mac-cancel-once`; still stuck on `main` until #4937 (9 combinations); the older tree does not load |
+| #4747 | A passing portable run at its time limit ended `cancelled`, grey, and nothing re-ran it | missed | covered by `portable-timeout-once`: 35 combinations fixed by #4937's re-run |
+| #4753, #4755 | Audit before the hosted checks; the re-arm job standing down | caught in hindsight | the older trees do not load |
+| #4746, #4754 | Audit without the lane; the merge audit trusting the queue | missed | the older trees do not load |
+| #4835 (#4795) | download.onnxruntime.ai's bad certificate failed Mac jobs; each PR was re-armed by hand | missed | caught as `outage-90m` / `needs-person`; open as #4940 |
+| #4937 | The bridge's token refused (403) with no word on the PR; a timed-out queue entry disarmed; workflow-level groups in two more workflows; the web check skipped (= passed) when change detection failed | missed | caught: 42 + 9 combinations, and the static rules |
+
+Against `main` at b825e9dd, #4937 fixes 134 of 222 violating combinations and moves 9 more from silent to told or
+slow. The 88 left are in `KNOWN`: outages and one-off Mac failures in the queue (#4940), dropped schedules with the
+backstop down (#4866, now reported by the wake sweep's rule 15), and GitHub's runner pool.
+
 ## Assumptions
 
 Every rule taken on trust is in `ASSUMPTIONS`, marked documented, observed or inferred, with its source. The ones
@@ -50,8 +94,10 @@ PR (A8).
 
 ## Limits
 
-- One PR at a time. Groups of several PRs, queue ordering and HEADGREEN grouping are not modelled.
-- Runs take no time, so races appear only when a scenario sets one up (`b3`).
+- One PR at a time. Groups of several PRs, queue ordering and HEADGREEN grouping are not modelled (nor in the
+  harness).
+- Runs take no time, so races appear only when a scenario sets one up (`b3`). The harness adds time.
+- Neither models a required check added to the ruleset after a PR's head was pushed (#4867, #4888).
 - A job with no behaviour in `BEHAVIOURS` succeeds and does nothing.
 - In `--diff`, helper modules that the imported scripts load by name (for example `comment_trust`) come from the
   first tree loaded.
