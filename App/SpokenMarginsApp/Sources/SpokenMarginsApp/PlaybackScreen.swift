@@ -57,7 +57,7 @@ struct PlaybackScreen: View {
     @Environment(\.openURL) private var openURL
 
     private enum OptionsDestination { case item, timeline, export, margins, paste, sourceText }
-    @State private var timelinePullTriggered = false
+    @State private var timelinePull = TimelinePullHolder()
     @State private var playbackTick = 0 // bumped by each progress tick, so this screen follows the clock (#2074)
     @StateObject private var nowScene = NowSceneController()
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
@@ -138,6 +138,8 @@ struct PlaybackScreen: View {
                             // view makes itself reports `.animating`), which stops the scene following playback (#4453).
                             .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.1) { nowScene.sentencesOnScreen($0) }
                             .onScrollPhaseChange { _, phase in
+                                // Only a finger still on the screen can pull past the bottom into Timeline (#4816).
+                                timelinePull.tracker.dragChanged(isDragging: phase == .interacting)
                                 switch phase {
                                 case .interacting, .decelerating: nowScene.listenerScrolled()
                                 case .idle: nowScene.scrollCameToRest()
@@ -166,13 +168,9 @@ struct PlaybackScreen: View {
                                     topInset: geometry.contentInsets.top
                                 )
                             } action: { _, distance in
-                                if distance < 1 {
-                                    timelinePullTriggered = false
-                                } else if TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance),
-                                          !timelinePullTriggered {
-                                    timelinePullTriggered = true
-                                    openTimeline()
-                                }
+                                // A bounce after a fling, a scene that gets shorter, or the view scrolling itself never
+                                // counts: scrolling to the bottom of Now must not change the tab (#4816).
+                                if timelinePull.tracker.overscrollChanged(distance) { openTimeline() }
                             }
 
                         case .timeline:
@@ -314,6 +312,8 @@ struct PlaybackScreen: View {
             if selectedPane == .now { model.noteFriendListen() }
         }
         .onChange(of: selectedPane) { _, pane in
+            // Now's scroll view is built fresh each time, so a drag or overscroll from the last one is stale (#4816).
+            timelinePull.tracker = TimelinePullTracker()
             if pane == .now { model.noteFriendListen() }
         }
     }
@@ -2094,4 +2094,10 @@ private struct WatchSecondaryButtonStyle: ButtonStyle {
             .background(AppColors.watchControl.opacity(configuration.isPressed ? 0.72 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
     }
+}
+
+/// Holds the Timeline pull tracker by reference: it changes on every overscroll frame, and none of that is drawn,
+/// so it must not re-run the playback screen's body (#4816).
+private final class TimelinePullHolder {
+    var tracker = TimelinePullTracker()
 }
