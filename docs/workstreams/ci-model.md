@@ -30,7 +30,8 @@ an outcome changes on purpose.
 3. **The repository's own decisions are not copied.** These run from the tree under test against a fake GitHub,
    so a change to them shows up in `--diff`:
    - the label bridge (`merge_queue_label_bridge.main`) and the dequeue notifier (`merge_queue_dequeued.notify`);
-   - the merge policy (`merge_policy.blockers`, with its git reads replaced by the scenario's paths);
+   - the merge policy (`merge_policy.blockers` and `merge_policy.verdict`, with its git reads replaced by the scenario's
+     paths; a PR that only waits for an audit or the owner's tap leaves the `merge policy` check in progress, #4986);
    - the `rearm` jobs (`lane_rearm.main`, with `--results` rendered from the workflow step);
    - the audit's eligibility (`sm_codex_audit.evaluate`, `owner_tap_alert.checks_state`) and its merge policy re-run
      (`sm_codex_audit.rerun_merge_policy`);

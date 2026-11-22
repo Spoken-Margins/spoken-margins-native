@@ -6,6 +6,7 @@ tree and expects the harness to see it again.
 """
 from __future__ import annotations
 
+import dataclasses
 import io
 import sys
 import unittest
@@ -52,6 +53,24 @@ class LiveFaultTests(unittest.TestCase):
             self.assertEqual(H.violations(expired, H.simulate(expired, tree), tree), ['silent-stuck'])
         finally:
             module.FALLBACK_KINDS = saved
+
+    def test_a_pr_only_waiting_for_the_owner_tap_reads_pending_not_red(self):
+        # 2026-11-22: 11 runs of `merge policy` went red while a PR only waited for an audit or the tap, and the PR's
+        # thread sat in "Waiting on you" for a red check it could not fix (#4986). Pending leaves no red check.
+        waiting = dataclasses.replace(H.case('workflow', 'person', 'none'), owner_tap_at=None)
+        tree = fresh_tree()
+        result = H.simulate(waiting, tree)
+        self.assertEqual((result['merged'], result['red_on_head']), (False, []))
+        self.assertTrue(any('policy=success' in line for line in result['log'] if 'merge-policy' in line))
+        # The tree from before the change reports the same PR red.
+        before = fresh_tree()
+        del before.module('merge_policy', 'scripts/merge_policy.py').verdict
+        self.assertEqual(H.simulate(waiting, before)['red_on_head'], ['merge policy'])
+
+    def test_the_same_pr_still_merges_when_the_owner_taps(self):
+        tapped = H.case('workflow', 'person', 'none')
+        tree = fresh_tree()
+        self.assertEqual(H.violations(tapped, H.simulate(tapped, tree), tree), [])
 
     def test_static_rules_see_each_fixed_shape_again(self):
         tree = fresh_tree()

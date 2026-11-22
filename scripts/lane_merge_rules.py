@@ -65,6 +65,11 @@ AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
 CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)  # how the audit task's verdict line opens
 
 
+# The start of every reason audit_blocker gives when no audit covers the head yet. merge_policy.py treats a PR held only
+# for this (or for the owner's tap) as waiting, not failed; an audit with blocking findings never starts with it.
+AUDIT_MISSING = 'has no Codex or Claude audit'
+
+
 def audit_blocker(comments: list[dict], head: str) -> str | None:
     """Why the Codex or Claude audits on the PR don't clear its head, or None when the newest audit of the head is clean.
 
@@ -82,12 +87,12 @@ def audit_blocker(comments: list[dict], head: str) -> str | None:
             verdict = next((line.strip() for line in rest.splitlines() if line.strip()), '')
             audits.append((AUDIT_SHA.findall(heading), verdict))
     if not audits:
-        return 'has no Codex or Claude audit comment yet'
+        return f'{AUDIT_MISSING} comment yet'
     on_head = [verdict for shas, verdict in audits if any(head.startswith(sha) for sha in shas)]
     if not on_head:
         audited = next((shas[0] for shas, _ in reversed(audits) if shas), None)
-        return (f'has no Codex or Claude audit of its head: the audit is on `{audited}`, the head is `{head[:7]}`' if audited
-                else f'has no Codex or Claude audit naming its head `{head[:7]}`')
+        return (f'{AUDIT_MISSING} of its head: the audit is on `{audited}`, the head is `{head[:7]}`' if audited
+                else f'{AUDIT_MISSING} naming its head `{head[:7]}`')
     if not CLEAN_AUDIT.match(on_head[-1]):
         return f'the Codex or Claude audit on the head `{head[:7]}` has blocking findings (it doesn\'t say "No blocking findings")'
     return None

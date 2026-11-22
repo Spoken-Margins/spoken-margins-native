@@ -477,7 +477,9 @@ class TimedWorld(M.World):
 
     def finish_job(self, run, job_id, result, outputs):
         row = run['rows'].get(job_id)
-        if row:
+        if row and outputs.get('check') == 'pending':  # the job succeeded and left its check run in progress (#4986)
+            row['status'], row['conclusion'] = 'in_progress', None
+        elif row:
             row['status'], row['conclusion'] = 'completed', result
         run['jobs'][job_id] = {'result': result, 'outputs': outputs}
         run['state'][job_id] = 'done'
