@@ -49,7 +49,7 @@ class FakeChecks:
                            + [f'{when} unlabeled\n' for when in self.removed])
         if '/annotations' in path:
             return json.dumps(self.annotations[int(path.split('/')[-2])])
-        name = next(name for name in lane.HOSTED_FAST_CHECKS
+        name = next(name for name in {**lane.HOSTED_FAST_CHECKS, **lane.HOSTED_MERGED_CHECKS}
                     if 'check_name=' + lane.urllib.parse.quote(name, safe='') + '&' in path)
         return json.dumps({'check_runs': self.runs.get(name, [])})
 
@@ -335,6 +335,57 @@ class HostedRecordsTests(unittest.TestCase):
         checks.runs['hosted fast: portable'][1]['app'] = {'slug': 'someone-else'}
         found, why = lane.hosted_fast_records(checks, self.HEAD)
         self.assertTrue(lane.HOSTED_REARMED.search(why), why)
+
+    def two_dispatches(self, first=(), rerun=(), armed=('2026-10-18T08:50:00Z', '2026-10-18T09:20:00Z'),
+                       removed=('2026-10-18T09:10:00Z',)):
+        """PR 7 with two hosted dispatches on one head. W1: portable (run 20) failed at 09:05 with <first>, and
+        stop-macs-on-red cancelled Mac rest (run 21). W2 (09:25): portable passed (run 1), Mac rest (run 2) failed at
+        09:40 with <rerun>. `automerge` was added at <armed> and removed at <removed>."""
+        portable, rest = 'hosted fast: portable', 'hosted fast: Mac rest'
+        w2 = {'started_at': '2026-10-18T09:25:00Z'}
+        checks = passing(self.HEAD, checks=lane.HOSTED_MERGED_CHECKS,
+                         **{portable: w2, rest: {**w2, 'conclusion': 'failure', 'completed_at': '2026-10-18T09:40:00Z'}})
+        checks.annotations[2] = list(rerun)
+        w1 = {'app': {'slug': 'github-actions'}, 'status': 'completed', 'started_at': '2026-10-18T09:00:00Z',
+              'completed_at': '2026-10-18T09:05:00Z'}
+        checks.runs[portable].append({**w1, 'id': 20, 'conclusion': 'failure'})
+        checks.runs[rest].append({**w1, 'id': 21, 'conclusion': 'cancelled'})
+        checks.annotations[20], checks.annotations[21] = list(first), []
+        checks.pr, checks.armed, checks.removed = 7, list(armed), list(removed)
+        return checks
+
+    def test_the_one_more_try_belongs_to_the_head_not_to_one_check(self):
+        # #4584 audit on 78177ac: W1's portable failed and its Mac rest was cancelled; a re-add started W2, whose Mac rest
+        # failed on the PR's own code. A second re-add found no earlier failed Mac rest run, so no try used, and started
+        # a third run that could merge over W2's red result.
+        rest = lane.HOSTED_MERGED_CHECKS
+        again = ('2026-10-18T08:50:00Z', '2026-10-18T09:20:00Z', '2026-10-18T09:50:00Z')
+        twice = ('2026-10-18T09:10:00Z', '2026-10-18T09:45:00Z')
+        fault = [self.lane_fault()]
+        for name, checks in (
+                ('a second re-add', self.two_dispatches(armed=again, removed=twice)),
+                ('a re-add after a lane-fault rerun', self.two_dispatches(fault, armed=again[::2], removed=twice[1:])),
+                ('a lane fault after a lane-fault rerun', self.two_dispatches(fault, fault, armed=again[:1], removed=())),
+                ('a lane fault after a re-add rerun', self.two_dispatches(rerun=fault))):
+            with self.subTest(name):
+                found, why = lane.hosted_fast_records(checks, self.HEAD, rest)
+                self.assertIsNone(found)
+                self.assertIn('"hosted fast: Mac rest" ended failure', why)
+                self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+                self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
+        # W2 dispatched by hand (no re-add before it): the lane has granted nothing, so a re-add after it is the try.
+        found, why = lane.hosted_fast_records(self.two_dispatches(armed=again[::2], removed=twice[1:]), self.HEAD, rest)
+        self.assertTrue(lane.HOSTED_REARMED.search(why), why)
+
+    def test_another_checks_fault_in_the_same_dispatch_is_not_an_earlier_try(self):
+        # Both jobs of one dispatch hit the runner fault: that is one try, not two (it finished after run 1 started).
+        faulty = [self.lane_fault()]
+        checks = self.failed('failure', faulty)
+        checks.runs['hosted fast: Mac rest'] = [{**checks.runs['hosted fast: portable'][0], 'id': 30,
+                                                 'completed_at': '2026-10-18T10:20:00Z'}]
+        checks.annotations[30] = faulty
+        found, why = lane.hosted_fast_records(checks, self.HEAD)
+        self.assertIn('with a lane-fault annotation', why)
 
     def test_failures_someone_re_ran_by_hand_do_not_use_up_the_try(self):
         # #4560 on 2026-11-18: "hosted fast: Mac rest" failed at 13:46, 14:11 and 14:21 on 800b6e8 (a rerun of the failed

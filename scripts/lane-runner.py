@@ -1234,7 +1234,7 @@ HOSTED_TESTED_TITLE = 'lane-hosted-tested'
 # Only the Actions check run's own annotation counts. The second such failure on one head is a FAIL as before, so a
 # fault that keeps happening (or a PR that prints the title itself) is not retried forever.
 HOSTED_LANE_FAULT_TITLE = 'lane-fault'
-HOSTED_LANE_FAULT_LIMIT = 2  # fault runs of one check on one head; the first is run again, the second ends as FAIL
+HOSTED_LANE_FAULT_LIMIT = 2  # fault runs on one head, any hosted check; the first is run again, the second is a FAIL
 HOSTED_FAILED_CONCLUSIONS = ('failure', 'timed_out')
 HOSTED_TESTED = re.compile(r'^plan=(\S+) tree=([0-9a-f]{40}) parents=([0-9a-f]{40}) ([0-9a-f]{40})\s*$')
 
@@ -1321,8 +1321,8 @@ def hosted_lane_fault(github, run: dict, name: str, head: str) -> str:
     """What to add to a failed hosted check's "ended failure on <head>" line when the runner, not the PR's code, failed
     it (#4085): ' with a lane-fault annotation (run <id>): <message>', else ''. <run> is the newest Actions run of <name>
     on <head>. It is '' (so a FAIL, as before) when the run carries no `lane-fault` failure annotation, or when
-    another earlier run of this check on this head failed the same way: HOSTED_LANE_FAULT_LIMIT runs, then it is the
-    PR's to look at. An earlier failure that automerge was removed and added again after, before this run started,
+    an earlier run of any hosted check on this head failed the same way (_earlier_hosted_failures: one dispatch reruns
+    them all): HOSTED_LANE_FAULT_LIMIT runs, then it is the PR's to look at. An earlier failure that automerge was removed and added again after, before this run started,
     counts too: the re-add already started the check again once (hosted_rearmed_after_failure, #4584), and this has
     to hold in whichever automerge job reads the rerun, not only the one that started it. The extra reads happen only
     for a failed check."""
@@ -1330,11 +1330,7 @@ def hosted_lane_fault(github, run: dict, name: str, head: str) -> str:
         message = _lane_fault_message(github, run)
         if message is None:
             return ''
-        earlier = json.loads(github.api(f'repos/{github.repo}/commits/{head}/check-runs?check_name='
-                                        f'{urllib.parse.quote(name, safe="")}&filter=all&per_page=100'))
-        earlier = [other for other in earlier.get('check_runs', [])
-                   if (other.get('app') or {}).get('slug') == 'github-actions' and other.get('id') != run.get('id')
-                   and other.get('conclusion') in HOSTED_FAILED_CONCLUSIONS]
+        earlier = _earlier_hosted_failures(github, run, head)
         events = _automerge_events(github) if earlier and getattr(github, 'pr', None) else []
         faults = 1
         for other in earlier:
@@ -1368,6 +1364,27 @@ def _re_added_between(events: list[tuple[str, str]], after: str | None, before: 
                for when, event in events)
 
 
+# Every hosted check one dispatch of hosted-portable.yml runs. The lane's one more try is a dispatch, so it belongs to the
+# head, not to one check: when `portable` fails, stop-macs-on-red cancels `Mac rest`, and a count of Mac rest's own
+# failed runs found no try used and started a third run (#4584 audit on 78177ac).
+HOSTED_HEAD_CHECKS = {**HOSTED_FAST_CHECKS, **HOSTED_REST_CHECK}
+
+
+def _earlier_hosted_failures(github, run: dict, head: str) -> list[dict]:
+    """The failed Actions runs of any hosted check (HOSTED_HEAD_CHECKS) on <head>, other than <run>, that finished
+    before <run> started: the earlier runs that could have used up the head's one more try. A run of another check in
+    <run>'s own workflow run finished after <run> started, so it is not one. A read that fails raises."""
+    before, found = run.get('started_at'), []
+    for name in HOSTED_HEAD_CHECKS:
+        runs = json.loads(github.api(f'repos/{github.repo}/commits/{head}/check-runs?check_name='
+                                     f'{urllib.parse.quote(name, safe="")}&filter=all&per_page=100'))
+        found += [other for other in runs.get('check_runs', [])
+                  if (other.get('app') or {}).get('slug') == 'github-actions' and other.get('id') != run.get('id')
+                  and other.get('conclusion') in HOSTED_FAILED_CONCLUSIONS
+                  and not (before and (other.get('completed_at') or other.get('started_at') or '') >= before)]
+    return found
+
+
 def _lane_retried(github, run: dict, before: str | None, events: list) -> bool:
     """Whether the lane already started <run>, a failed run of a check, again: it carries a `lane-fault` failure
     annotation (#4085), or `automerge` was removed and added again after it finished and before <before>, the start of
@@ -1386,11 +1403,13 @@ def hosted_rearmed_after_failure(github, run: dict, name: str, head: str) -> str
     re-reported it (2026-11-18: about 68 PRs whose checks had failed on the package-clone fault before #4568 merged, a
     fault with no `lane-fault` annotation). Someone who re-adds the label after a failure is asking for another try, so
     the check is started again once (hosted_rest_checks treats the marker as it does a lane fault). It is '' (so a FAIL,
-    as before) when the label was added before the run finished (the failure is the first answer to that arming: the
-    audit's and the rearm job's runs, and a PR armed while its checks ran), when the label was added after it but never
+    as before) when the label was added before the run finished (the failure is the first answer to that arming: a PR
+    armed while its checks ran, or a run the job itself dispatched), when the label was added after it but never
     removed since (a first arming: the lane has not answered with this failure yet), when the lane already started an
-    earlier failed run of this check on this head again (_lane_retried: one more try per head, shared with a lane
-    fault, #4085), and when the PR is unknown or a read fails. Earlier failures someone re-ran by hand do not count:
+    earlier failed run of any hosted check on this head again (_earlier_hosted_failures, _lane_retried: one more try per
+    head, shared with a lane fault, #4085), and when the PR is unknown or a read fails. The audit's re-arm
+    (ops/codex/sm_codex_audit.py rearm_pass) also removes and re-adds the label, but only after a held-for-audit PASS,
+    so the newest run of each check passed; it reruns a check only if a run on the same head failed after that PASS. Earlier failures someone re-ran by hand do not count:
     #4560 had three failed runs of its Mac check before the re-add of 2026-11-18. A fresh run that fails again finished
     after the label was added, so it is a FAIL."""
     pr = getattr(github, 'pr', None)
@@ -1401,12 +1420,8 @@ def hosted_rearmed_after_failure(github, run: dict, name: str, head: str) -> str
         events = _automerge_events(github)
         if not _re_added_between(events, finished):
             return ''
-        earlier = json.loads(github.api(f'repos/{github.repo}/commits/{head}/check-runs?check_name='
-                                        f'{urllib.parse.quote(name, safe="")}&filter=all&per_page=100'))
         if any(_lane_retried(github, other, run.get('started_at'), events)
-               for other in earlier.get('check_runs', [])
-               if (other.get('app') or {}).get('slug') == 'github-actions' and other.get('id') != run.get('id')
-               and other.get('conclusion') in HOSTED_FAILED_CONCLUSIONS):
+               for other in _earlier_hosted_failures(github, run, head)):
             return ''
     except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, AttributeError):
         return ''  # can't tell: a failure blocks, as before
