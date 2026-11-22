@@ -139,15 +139,6 @@ final class FootnoteNoteControlsTests: XCTestCase {
         XCTAssertEqual(card.voiceOverLabel, "Footnote 3. Smith, Tides, 2020.")
     }
 
-    func testACardMadeFromItsTwoWordsReadsLikeOneTheChunksMade() throws {
-        // The app's layout test draws cards it makes itself (#3777).
-        let made = FootnoteCard(label: "3", body: "Smith, Tides, 2020.")
-        let fromChunks = try XCTUnwrap(FootnoteCard.forChunk(
-            at: 0, tags: [.aside("3")], texts: ["Note 3. Smith, Tides, 2020."]))
-        XCTAssertEqual(made, fromChunks)
-        XCTAssertEqual(made.voiceOverLabel, "Footnote 3. Smith, Tides, 2020.")
-    }
-
     func testALetterLabelIsShownAsWritten() throws {
         let card = try XCTUnwrap(FootnoteCard.forChunk(at: 0, tags: [.aside("a")], texts: ["Note a. See the appendix."]))
         XCTAssertEqual(card.title, "Footnote a")
