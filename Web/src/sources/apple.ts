@@ -75,11 +75,14 @@ export interface AppleLookupOptions {
    * `consent`, `relayBase`, `fetch` and `transport` are the read path's, as for any feed: the browser's own read first, the
    * server's relay only with the listener's OK (`NeedsRelayConsent` otherwise).
    */
-  feed?: { title: string } & Pick<ReadOptions, 'consent' | 'relayBase' | 'transport' | 'fetch'>;
+  feed?: { title: string; /** Injected in tests; `FEED_TIMEOUT_MS` otherwise. */ timeoutMs?: number } & Pick<ReadOptions, 'consent' | 'relayBase' | 'transport' | 'fetch'>;
 }
 
 /** The most items of a show's feed read to find one episode: far past the newest 500 a followed show keeps. */
 const FEED_ITEMS_SEARCHED = 5_000;
+
+/** How long the show's feed may take, through the relay or not: the friend's card waits on it, so a feed that never answers must end. */
+export const FEED_TIMEOUT_MS = 15_000;
 
 /** How long the lookup may take. The friend's card waits on it, so a lookup that never answers must end. */
 export const LOOKUP_TIMEOUT_MS = 8_000;
@@ -192,17 +195,20 @@ function showFeedUrl(results: unknown[]): string | undefined {
  * agreed to the server's relay, and `AppleLookupError` when the feed couldn't be read for another reason that may pass.
  */
 async function findInShowFeed(feedUrl: string, options: NonNullable<AppleLookupOptions['feed']>): Promise<AppleEpisodeAudio | null> {
-  const { title, ...read } = options;
-  let episodes;
+  const { title, timeoutMs, ...read } = options;
+  let parsed;
   try {
-    episodes = (await readFeed(feedUrl, { ...read, reason: 'feed-refresh', maxItems: FEED_ITEMS_SEARCHED })).episodes;
+    // Items with no audio are read too: a twin of the title with nothing to play still makes the title not unique.
+    parsed = await within(timeoutMs ?? FEED_TIMEOUT_MS, () => readFeed(feedUrl, { ...read, reason: 'feed-refresh', maxItems: FEED_ITEMS_SEARCHED, keepWithoutAudio: true }));
   } catch (error) {
     if (error instanceof NeedsRelayConsent) throw error;
     // A page that is not a feed, or one too large to read, will not read any better tomorrow: no audio to find.
     if (error instanceof FeedParseError || error instanceof ReadTooLarge) return null;
     throw new AppleLookupError('This show’s feed can’t be read right now. Try again in a minute.');
   }
-  const match = episodeInFeed(episodes, title);
+  // A feed with more items than were read may hold a twin of the title beyond them: not certain, so not played.
+  if (parsed.truncated) return null;
+  const match = episodeInFeed(parsed.episodes, title);
   const audioUrl = playableAudioAddress(match?.audioUrl);
   if (!match || !audioUrl) return null;
   return {

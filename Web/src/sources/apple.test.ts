@@ -230,3 +230,28 @@ test('a feed that errors says so once, and one that is not a feed or is too larg
   const huge: FetchLike = async (input) => (input.startsWith('https://itunes') ? lookupOnly.fetch(input) : new Response('x', { headers: { 'content-length': String(8 * 1024 * 1024) } }));
   assert.equal(await findAppleEpisodeAudio(PAGE, { fetch: huge, feed: { title: TITLE, fetch: huge } }), null);
 });
+
+test('a twin of the title with no audio still makes it not unique, as the feed reader leaves such an item out unless asked', async () => {
+  const twinNoAudio = '<item><title>People Parks and Policy with RFF’s Margaret Walls</title><guid>twin</guid></item>';
+  const { fetch } = lookupThenFeed(rss(rssItem(TITLE, GAP_AUDIO), twinNoAudio));
+  assert.equal(await findAppleEpisodeAudio(PAGE, { fetch, feed: { title: TITLE, fetch } }), null);
+});
+
+test('titles one character apart in a number are different episodes, even when the real one is missing from the feed', async () => {
+  const { fetch } = lookupThenFeed(rss(rssItem('Episode 15', 'https://example.com/15.mp3')));
+  assert.equal(await findAppleEpisodeAudio(PAGE, { fetch, feed: { title: 'Episode 1.5', fetch } }), null);
+});
+
+test('a feed longer than the items read is never matched, as a twin may lie beyond them', async () => {
+  const many = Array.from({ length: 5_001 }, (_, i) => rssItem(i === 4_000 ? TITLE : `Item ${i}`, `https://example.com/${i}.mp3`)).join('');
+  const { fetch } = lookupThenFeed(rss(many));
+  assert.equal(await findAppleEpisodeAudio(PAGE, { fetch, feed: { title: TITLE, fetch } }), null);
+});
+
+test('a feed that never answers ends at its limit with a plain error, never a hang', async () => {
+  const lookupOnly = lookupThenFeed(rss());
+  const silent: FetchLike = (input) => (input.startsWith('https://itunes') ? lookupOnly.fetch(input) : new Promise<Response>(() => {}));
+  const started = Date.now();
+  await assert.rejects(findAppleEpisodeAudio(PAGE, { fetch: silent, feed: { title: TITLE, fetch: silent, timeoutMs: 40 } }), AppleLookupError);
+  assert.ok(Date.now() - started < 2_000, 'it rejected, it did not hang');
+});

@@ -12,7 +12,7 @@ const sameTitle: Array<[string, string]> = [
   ['curly apostrophe, no comma after Policy (Apple’s page)', 'People, Parks, and Policy with RFF’s Margaret Walls'],
   ['upper case', TITLE.toUpperCase()],
   ['extra and odd spaces', '  People,  Parks, and Policy, with RFF\'s   Margaret Walls '],
-  ['dashes for commas', 'People - Parks - and Policy - with RFFs Margaret Walls'],
+  ['apostrophes dropped, colons and brackets as spaces', 'People: Parks, and (Policy), with RFFs Margaret Walls'],
 ];
 for (const [name, other] of sameTitle) {
   test(`one title: ${name}`, () => {
@@ -20,6 +20,11 @@ for (const [name, other] of sameTitle) {
     assert.equal(episodeInFeed([ep('Another one'), ep(TITLE, { id: 'wanted' })], other)?.id, 'wanted');
   });
 }
+
+test('a typographic dash and a hyphen are one dash', () => {
+  assert.equal(titleKey('Part 1 \u2014 Roads'), titleKey('Part 1 - Roads'));
+  assert.equal(titleKey('Part 1 \u2013 Roads'), titleKey('Part 1 - Roads'));
+});
 
 test('accents and Unicode forms of one title match', () => {
   assert.equal(titleKey('Café Économie'), titleKey('Café Economie'));
