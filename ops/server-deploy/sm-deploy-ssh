@@ -1,0 +1,5 @@
+#!/bin/sh
+# The only command the deploy key may run (forced by authorized_keys). It hands the key's request, "<target> <sha>",
+# to sm-deploy through sudo as separate arguments. sm-deploy validates both and refuses anything else.
+set -f
+exec /usr/bin/sudo -n /usr/local/sbin/sm-deploy ${SSH_ORIGINAL_COMMAND:-}
