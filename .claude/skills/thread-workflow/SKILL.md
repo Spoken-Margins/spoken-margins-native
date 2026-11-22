@@ -23,6 +23,7 @@ A project thread works one issue and ends. When its PR is armed, or the issue is
 2. Write the change. Needing an iOS build, a simulator or captures is never a reason to skip or stop: write the Swift change, put host-testable logic in SessionKit, and let `main-t3` compile and test it after the merge. Say "Not checked: not built, no journey run" in the PR.
 3. The cloud can't run Xcode. For app tests you may comment `/lane T3` with a `tests:` line and add `lane:queued`; never T4 or T5. A lane failure you can't reproduce goes to the Mac finisher (section 5); don't push guesses.
 4. Run the host tests: `.venv/bin/python scripts/verify-tests.py --plan fast`, or the suites your change touches (Python, Node, SessionKit on Linux). Run a new regression test once without the fix and confirm it fails.
+   On Linux run `scripts/run-sessionkit-linux-tests.sh`, never raw `swift test` (it rewrites `Packages/SessionKit/Package.resolved`), and stage files by path, not `git add -A`; the merge policy holds a PR that changes that file without `Package.swift` (#4972).
 5. A fix for an owner-found bug names the test layer that should have caught it and adds a test there.
 6. Before arming, have a fresh-context sub-agent review your diff against the issue's **Done when** and **Must not break**. Fix the real findings.
 
