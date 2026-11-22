@@ -7,10 +7,15 @@ public enum ItemShareSessionSelection {
         newestFirst sessionIds: [String],
         margins: (String) throws -> [Interjection]
     ) rethrows -> String? {
-        for sessionId in sessionIds where try margins(sessionId).contains(where: isShareable) {
-            return sessionId
+        // A session with a Margin a packet can carry comes first. One that holds only Margins with no place (#4233) is
+        // still opened when nothing better exists, so the sheet can say why nothing can be shared.
+        var fallback: String?
+        for sessionId in sessionIds {
+            let candidates = try margins(sessionId).filter(isShareable)
+            if candidates.contains(where: ShareableMargins.canShare) { return sessionId }
+            if fallback == nil, !candidates.isEmpty { fallback = sessionId }
         }
-        return nil
+        return fallback
     }
 
     /// Matches the filter in Gate1AppModel.prepareShareInterjections(candidates:).

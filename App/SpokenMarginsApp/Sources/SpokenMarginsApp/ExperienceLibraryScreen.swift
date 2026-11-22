@@ -581,6 +581,8 @@ struct ExperienceLibraryScreen: View {
                     isLoadedItem: isCurrent && model.activePlaybackItemId == row.id,
                     isPlayingNow: isCurrent && model.activePlaybackItemId == row.id && model.activePlaybackIsPlaying,
                     showsFinishedCheck: model.libraryQuery.listeningState != .unfinished,
+                    matchedSender: LibraryQueryEngine.matchedSenderLine(row, query: model.libraryQuery),
+                    matchedSenderSpoken: LibraryQueryEngine.matchedSenderLine(row, query: model.libraryQuery, spoken: true),
                     playbackSpeed: model.speechPlaybackRateMultiplier,
                     spokenNoteFolders: model.marginOutput.spokenNotes,
                     onOpen: { openRow(row) },
@@ -675,6 +677,10 @@ struct ExperienceLibraryCompactRow: View {
     /// The list shows finished items on purpose (Everything, Completed), so a finished row carries a check. Under
     /// Unfinished a finished row is listed only for a friend's new Margins, and its unread dot says why (#4698).
     var showsFinishedCheck = false
+    /// Why a search listed this row when only who sent its Margins matches: "From Sam and 2 friends" (#4649). Nil when
+    /// there is no search or the title, source or author matched. `matchedSenderSpoken` is the same with the whole name.
+    var matchedSender: String?
+    var matchedSenderSpoken: String?
     /// The listener's speech speed, for a text item's estimated length (#305).
     var playbackSpeed: Double = 1
     /// Which spoken notes were saved to the export folder, for the "Exported" word on a finished note (#3661).
@@ -973,14 +979,18 @@ struct ExperienceLibraryCompactRow: View {
 
     /// The progress words come first ("about 24 min left", "Completed"), then byline, kind and status as before. The
     /// separate percent is gone: the words say how much is left and the ring shows the fraction (#4062).
-    private var detail: LibraryRowDetail {
+    private var detail: LibraryRowDetail { detail(matched: matchedSender) }
+
+    private func detail(matched: String?) -> LibraryRowDetail {
         // "· in Daily Brief" on the end while a search or filter lists a collection's items on their own (#3769).
         LibraryRowDetail(byline: sourceByline, kind: mediaLabel, length: lines.progress, listening: nil,
-                         status: LibraryCollectionListEngine.detailLine(statusDetail ?? "", collectionNames: row.collectionNames))
+                         status: LibraryCollectionListEngine.detailLine(statusDetail ?? "", collectionNames: row.collectionNames),
+                         matched: matched)
     }
 
     private var openAccessibilityLabel: String {
-        [row.title, lines.progressSpoken, detail.rest.isEmpty ? nil : detail.rest, lines.marginsSpoken]
+        let rest = detail(matched: matchedSenderSpoken).rest
+        return [row.title, lines.progressSpoken, rest.isEmpty ? nil : rest, lines.marginsSpoken]
             .compactMap { $0 }.joined(separator: ". ")
     }
 

@@ -128,6 +128,33 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(ids(rows, LibraryQuery(query: "ZOË", listeningState: .unfinished)), ["zoe"], "the sender matches though the title does not")
     }
 
+    /// #4649: three friends sent Margins; searching one friend's name must leave the row saying who matched.
+    func testARowFoundOnlyBySenderSaysWhoMatched() {
+        let three = SharedMarginTally(total: 5, new: 0, senders: [
+            .init(key: "c", name: "Cole", count: 2), .init(key: "s", name: "Sam", count: 2), .init(key: "a", name: "Ana", count: 1)])
+        let found = Row(id: "found", title: "Essay", sharedMargins: three)
+        let query = LibraryQuery(query: "Sam", listeningState: .all)
+        XCTAssertEqual(ids([found], query), ["found"], "the search lists it")
+        XCTAssertEqual(LibraryQueryEngine.matchedSenderLine(found, query: query), "From Sam and 2 friends")
+        XCTAssertTrue(LibraryQueryEngine.matchedSenderLine(found, query: query)?.contains("Sam") ?? false)
+        // A row that matched by title, source or author says nothing extra, even if a sender matches too.
+        let byTitle = Row(id: "title", title: "Sam's notes", sharedMargins: three)
+        XCTAssertNil(LibraryQueryEngine.matchedSenderLine(byTitle, query: query))
+        XCTAssertNil(LibraryQueryEngine.matchedSenderLine(Row(id: "src", title: "Essay", sourceTitle: "Samizdat", sharedMargins: three), query: query))
+        XCTAssertNil(LibraryQueryEngine.matchedSenderLine(Row(id: "au", title: "Essay", author: "SAM Hill", sharedMargins: three), query: query))
+        // No search, no match, a list that does not search senders, no friends' Margins.
+        XCTAssertNil(LibraryQueryEngine.matchedSenderLine(found, query: LibraryQuery(query: "", listeningState: .all)))
+        XCTAssertNil(LibraryQueryEngine.matchedSenderLine(found, query: LibraryQuery(query: "Zed", listeningState: .all)))
+        XCTAssertNil(LibraryQueryEngine.matchedSenderLine(found, query: query, includingSenders: false))
+        XCTAssertNil(LibraryQueryEngine.matchedSenderLine(Row(id: "none", title: "Essay"), query: query))
+        // Every row the search lists only through a sender carries a line naming a sender that matches.
+        let rows = [found, Row(id: "two", title: "Other", sharedMargins: from("Sam")), byTitle, Row(id: "plain", title: "Plain")]
+        for row in LibraryQueryEngine.visibleLibraryItems(rows, query: query) {
+            let byMetadata = row.id == "title"
+            XCTAssertEqual(LibraryQueryEngine.matchedSenderLine(row, query: query) != nil, !byMetadata, row.id)
+        }
+    }
+
     func testAListThatSaysTitleSourceOrAuthorDoesNotSearchBySender() {
         let rows = [Row(id: "cole", title: "Essay", sharedMargins: from("Cole"))]
         XCTAssertEqual(LibraryQueryEngine.visibleLibraryItems(rows, query: LibraryQuery(query: "Cole", listeningState: .all), includingSenders: false).map(\.id), [])

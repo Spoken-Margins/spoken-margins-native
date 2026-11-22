@@ -116,6 +116,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     typealias PauseLogHandler = @Sendable (_ kind: String, _ fields: [String: String]) -> Void
     /// The article text a target speaks, without the engine's spoken preface ("Overview. …").
     typealias ArticleTextLookup = @Sendable (_ targetId: String) -> String?
+    /// Whether a preparation created now for the target's article is planned with its notes read where they are cited
+    /// (#3777). The app's one rule (`FootnotePlanDecision`); a client without it plays today's plan.
+    typealias FootnoteAsidesLookup = @Sendable (_ targetId: String) -> Bool
     /// Which way a play request went, for diagnostics (#235).
     typealias ResumeDecisionHandler = @Sendable (_ fields: [String: String]) -> Void
     /// `stopReason` is set only with `.stopped`: the code that stopped generation (#314).
@@ -480,6 +483,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     var debugRenderAheadRestarts: Int { lock.withLock { renderAheadRestarts } }
     #endif
     private let articleText: ArticleTextLookup?
+    private let footnoteAsides: FootnoteAsidesLookup?
+    /// Whether `preparedSpeechProjection` is the one with the article's matched citations silent (#3777). Reset by
+    /// `prepareSpeechText`, set by `applyFootnoteSilencing` when a play starts. Guarded by `lock`.
+    private var projectionHasAsides = false
+    /// The last silenced projection and the text it was made from, so a resume of the running generation does not read the
+    /// store or normalize the article again (#3777). Guarded by `lock`.
+    private var silencedProjection: (source: String, projection: NormalizedSpeechText)?
+    /// The plan kind of the generation now running, which a resume or seek keeps: its offsets are in that kind's text.
+    private var generationHasAsides = false
+    /// The notes this client has read where they were cited, so the notes chapter skips them (#3777). Guarded by `lock`.
+    private var heardNotes = FootnoteHeardSet()
     /// Where the article starts after a spoken preface, in spoken and source characters. Prepared
     /// audio covers the article alone, so the article is planned as its own section (#258).
     private var articleSpokenStart = 0
@@ -541,6 +555,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onPreparationPlan: PreparationPlanHandler? = nil,
         onPreparedChunk: PreparedChunkHandler? = nil,
         articleText: ArticleTextLookup? = nil,
+        footnoteAsides: FootnoteAsidesLookup? = nil,
         preparedChunkLookup: PreparedChunkLookup? = nil,
         bundledVoiceChunkLookup: PreparedChunkLookup? = nil,
         onPreparedAudio: PreparedAudioHandler? = nil,
@@ -615,6 +630,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.stallSampleInterval = stallSampleInterval
         self.stallRecoveryCooldown = stallRecoveryCooldown
         self.articleText = articleText
+        self.footnoteAsides = footnoteAsides
         self.onResumeDecision = onResumeDecision
         self.renderWaitLimit = renderWaitLimit
         self.backgroundGapWaitLimit = backgroundGapWaitLimit
@@ -668,8 +684,44 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         lock.withLock {
             preparedSourceText = text
             preparedSpeechProjection = projection
+            // The plain projection until a play of an article with notes silences their citations (#3777).
+            projectionHasAsides = false
         }
         return projection.text
+    }
+
+    /// When the article being played has a note that can be read where it is cited, and the app's rule (`footnoteAsides`)
+    /// says this preparation is planned that way, replaces the held projection with one in which every matched citation
+    /// is silent, so `spokenPlan(asides: true)` matches it (#3777). Called at the start of a play, before any offset is
+    /// read from the projection: the engine hands over the whole text, with no target, so the client learns the article
+    /// here. A generation that is running keeps its plan kind, so a resume or a seek never changes what its offsets mean.
+    private func applyFootnoteSilencing(targetId: String) {
+        let held = lock.withLock { () -> (source: String, running: Bool, runningHasAsides: Bool, cached: NormalizedSpeechText?) in
+            let running = currentTargetId == targetId && !generationPlan.isEmpty && activeSourceText == preparedSourceText
+            let cached = silencedProjection.flatMap { $0.source == preparedSourceText ? $0.projection : nil }
+            return (preparedSourceText, running, generationHasAsides, cached)
+        }
+        // A play of an item with no `[^` (almost every one) or of a running plain generation reads nothing from the store:
+        // a resume is a tap the listener waits on.
+        guard held.source.contains("[^"), !(held.running && !held.runningHasAsides) else { return }
+        if held.running, let cached = held.cached {
+            lock.withLock {
+                guard preparedSourceText == held.source else { return }
+                preparedSpeechProjection = cached
+                projectionHasAsides = true
+            }
+            return
+        }
+        guard let article = articleText?(targetId), !article.isEmpty, held.source.hasSuffix(article) else { return }
+        let asides = held.running ? held.runningHasAsides : (footnoteAsides?(targetId) ?? false)
+        guard asides, let silenced = NarrationChunkPlanner.silencedSpeech(source: held.source, endingWith: article) else { return }
+        lock.withLock {
+            // A text prepared meanwhile is not the one the answer is for.
+            guard preparedSourceText == held.source else { return }
+            preparedSpeechProjection = silenced
+            projectionHasAsides = true
+            silencedProjection = (held.source, silenced)
+        }
     }
 
     func play(targetId: String) throws {
@@ -726,6 +778,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             startStallMonitorIfNeeded()
             return
         }
+        applyFootnoteSilencing(targetId: targetId)
         let spokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
         replaceBundledVoiceChunks(after: spokenOffset, targetId: targetId)
         let before = resumeDiagnostics(targetId: targetId, spokenOffset: spokenOffset)
@@ -1357,6 +1410,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let snapshot = lock.withLock { () -> (Int, String?, Int, CachedAudio?, TimeInterval, UUID, URL?, RenderedSpeechChunkBoundary, ChunkKey, Bool) in
             // Set with the finished player detached, so the monitor never sees the old player as the next one.
             handOverHoldRequested = handOverHold != nil
+            recordHeardNote()
             let next = followingChunk()
             let nextOffset = next.offset
             // Commit audible progress before detaching the finished player.
@@ -1529,8 +1583,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         snapshot.renderControl?.cancel()
         for url in snapshot.urls { discardAudio(url) }
         let article = articleStart(targetId: targetId)
+        let asides = lock.withLock { projectionHasAsides }
         let spokenPlan = NarrationChunkPlanner.spokenPlan(
-            spokenText: snapshot.source, articleText: article.text, articleSpokenStart: article.spoken, budget: maxCharacters
+            spokenText: snapshot.source, articleText: article.text, articleSpokenStart: article.spoken, budget: maxCharacters,
+            asides: asides
         )
         lock.withLock {
             articleSpokenStart = spokenPlan.articleSpokenStart
@@ -1570,6 +1626,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let forward = Array(plan[playbackIndex...])
         lock.withLock {
             generationPlan = plan
+            generationHasAsides = asides
             preparationPlan = canonicalPlan
             fastStartOriginals = fastStartOriginal.map { [$0.key: $0] } ?? [:]
             // Navigation is also a demand signal. Render from the new playhead
@@ -1762,7 +1819,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     let start = self.articleSpokenStart
                     let plan = needsPlan ? self.preparationPlan.compactMap { part in
                         part.articleIndex.map {
-                            PreparedChunkPlan(index: $0, startOffset: part.startOffset - start, sourceLength: part.sourceLength, text: part.text)
+                            PreparedChunkPlan(index: $0, startOffset: part.startOffset - start, sourceLength: part.sourceLength, text: part.text,
+                                              footnote: part.footnote)
                         }
                     } : []
                     return (self.articleIdentity ?? "", plan, needsPlan && self.articleIdentity != nil)
@@ -3407,6 +3465,15 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         generationPlan.first(where: { $0.startOffset == offset && !$0.isAside })?.key ?? ChunkKey(startOffset: offset)
     }
 
+    /// The chunk now playing played to its end: when it is the last aside of a note, that note is heard and its definition
+    /// in the notes chapter is skipped (#3777). Call with the lock held, before `currentChunk` moves on.
+    private func recordHeardNote() {
+        guard let identity = articleIdentity,
+              let index = generationPlan.firstIndex(where: { $0.key == currentChunk }),
+              generationPlan[index].isAside else { return }
+        heardNotes.recordPlayedToEnd(chunkAt: index, tags: generationPlan.map(\.footnote), itemId: identity)
+    }
+
     /// Whether the chunk now playing is an aside. Call with the lock held.
     private var currentChunkIsAside: Bool {
         generationPlan.first(where: { $0.key == currentChunk })?.isAside == true
@@ -3417,6 +3484,29 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// before it again. Anywhere else, the old rule: the offset where this chunk's source ends (#3777).
     /// Call with the lock held.
     private func followingChunk() -> (key: ChunkKey, offset: Int, isAside: Bool) {
+        let next = chunkAfterCurrent()
+        guard let identity = articleIdentity,
+              let index = generationPlan.firstIndex(where: { $0.key == next.key }) else { return next }
+        // The chunk now playing counts as played to its end: this is asked where it ends, and a background queue asks
+        // while it still plays, when its note is not recorded yet. Without this, the last note's definition would be
+        // queued behind its own aside and read twice back to back.
+        var heard = heardNotes
+        if let current = generationPlan.firstIndex(where: { $0.key == currentChunk }) {
+            heard.recordPlayedToEnd(chunkAt: current, tags: generationPlan.map(\.footnote), itemId: identity)
+        }
+        guard heard.skips(generationPlan[index].footnote, itemId: identity) else { return next }
+        // A note's definition in the notes chapter, for a note already read where it was cited: on to the first chunk
+        // that is not one (#3777). Every other chunk plays, including the definition of a note that was not heard.
+        guard let target = heard.firstPlayableIndex(from: index, tags: generationPlan.map(\.footnote), itemId: identity)
+                .map({ generationPlan[$0] }) else {
+            let end = preparedSpeechProjection.text.count
+            return (ChunkKey(startOffset: end), end, false)
+        }
+        return (target.key, target.startOffset, target.isAside)
+    }
+
+    /// The chunk the plan puts after the one now playing, before any note is skipped. Call with the lock held.
+    private func chunkAfterCurrent() -> (key: ChunkKey, offset: Int, isAside: Bool) {
         if let index = generationPlan.firstIndex(where: { $0.key == currentChunk }), index + 1 < generationPlan.count,
            generationPlan[index].isAside || generationPlan[index + 1].isAside {
             let next = generationPlan[index + 1]
@@ -3749,6 +3839,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             activeAudioURL = queued.cached.url
             activeAudioDuration = queued.cached.duration
             currentTargetId = request.targetId
+            recordHeardNote() // the chunk the queue moved on from played to its end
             currentChunk = request.key
             currentChunkLength = request.sourceLength
             currentChunkBoundary = request.boundary

@@ -186,6 +186,50 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
+    /// #4233: a Margin moved from a live session with no place stores a zero media time, which the loader would read as
+    /// "the episode's opening" and name with words from there. It keeps the empty context it has; a Margin at a real time
+    /// (even one placed at 0:30, inside the same segment) still gets its words.
+    func testAMarginWithNoPlaceGetsNoContextWordsFromTheEpisodesOpening() throws {
+        try withFixture { fixture, store, _ in
+            var episode = item("A")
+            episode.media = ItemMedia(sourceType: .nativeMediaFile, url: "file:///A.mp3", durationMs: 600_000)
+            try store.saveItem(episode)
+            try store.saveSession(Session(id: "S", itemId: "A",
+                createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1),
+                status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS,
+                currentTargetId: "A", position: Position(), completionPercent: 0, playbackRate: 1))
+            func media(_ id: String, atMs: Int, unplaced: Bool) -> Interjection {
+                var margin = note(id, session: "S", item: "A", time: 10)
+                margin.anchor = Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: atMs)
+                if unplaced {
+                    margin.movedOrigin = MovedMarginOrigin(
+                        marginId: id, itemId: "A", sessionId: "S", liveMarginId: "live-\(id)", fromLiveSessionId: "live",
+                        fromLiveSessionTitle: "Quick session", markedAt: margin.createdAt, movedAt: margin.createdAt, placeKnown: false)
+                }
+                return margin
+            }
+            let unplacedMargin = media("unplaced", atMs: 0, unplaced: true)
+            try store.saveInterjection(unplacedMargin)
+            try store.saveMovedMarginOrigin(try XCTUnwrap(unplacedMargin.movedOrigin)) // stored as a record of its own
+            try store.saveInterjection(media("placed", atMs: 5_000, unplaced: false))
+            try store.saveTranscriptTimeline(SourceTranscriptTimeline(id: "t", itemId: "A",
+                createdAt: Date(timeIntervalSince1970: 5),
+                timeline: TranscriptTimeline(segments: [
+                    MediaTimelineSegment(id: "opening", startMs: 0, endMs: 60_000, text: "The episode opens here.")
+                ], chapters: [], durationMs: 600_000)))
+
+            let detail = try fixture.load("A", store)
+            let unplaced = try XCTUnwrap(detail.interjections.first { $0.id == "unplaced" })
+            let placed = try XCTUnwrap(detail.interjections.first { $0.id == "placed" })
+            XCTAssertEqual(placed.anchorContextStatus, .ready, "a placed Margin still gets its words")
+            XCTAssertNotEqual(placed.anchor.transcriptSegmentId, nil)
+            XCTAssertNil(unplaced.anchor.transcriptSegmentId, "no segment of the episode's opening")
+            XCTAssertEqual(unplaced.anchor.anchorBefore, "")
+            XCTAssertNotEqual(unplaced.anchorContextStatus, .ready)
+            XCTAssertFalse(unplaced.hasPlace, "the origin survives the load")
+        }
+    }
+
     /// #3664: a Margin on a spoken note's sentence keeps the words and id it was made on when the note's audio is joined
     /// again with the sentence at another time. An episode's Margin is still placed by its time.
     func testASpokenNoteMarginKeepsItsSentenceWhenTheJoinedAudioMovesAndAnEpisodeMarginStillFollowsItsTime() throws {

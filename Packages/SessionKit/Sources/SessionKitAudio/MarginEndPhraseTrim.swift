@@ -39,6 +39,11 @@ public enum MarginEndPhraseTrim {
         @discardableResult
         public func swapIn() -> Bool {
             guard claim() else { return false }
+            // The Margin was deleted while the cut was made: swapping in would leave a stray file at its path.
+            guard FileManager.default.fileExists(atPath: target.path) else {
+                try? FileManager.default.removeItem(at: temporary)
+                return false
+            }
             do {
                 _ = try FileManager.default.replaceItemAt(target, withItemAt: temporary)
                 return true

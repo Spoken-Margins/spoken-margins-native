@@ -40,9 +40,22 @@ public struct DiskWriteLedger: Codable, Equatable, Sendable {
         guard bytes > 0 else { return }
         let day = Self.day(of: date)
         days[day, default: [:]][source.rawValue, default: 0] += bytes
-        if days.count > Self.keptDays {
-            for stale in days.keys.sorted().dropLast(Self.keptDays) { days[stale] = nil }
-        }
+        Self.prune(&days, today: day)
+    }
+
+    /// Drops what is not a day, then keeps the newest `keptDays` days up to today and the newest `keptDays` days after
+    /// it. A write never deletes a day only because it is later than the write, and the summary never hides a day
+    /// because of the clock: the clock now may be the wrong one, and trusting it would erase or hide every real day
+    /// while it is set back. Keeping the two groups apart means a clock set ahead pushes real days out only while it is
+    /// still ahead; once it is right again the days it left count as later days and no longer crowd out real ones.
+    /// The export names them as recorded, so a wrong clock shows up in the export instead of being hidden.
+    private static func prune(_ days: inout [String: [String: Int64]], today: String) {
+        for key in days.keys where !isDay(key) { days[key] = nil }
+        let sorted = days.keys.sorted()
+        let past = sorted.filter { $0 <= today }
+        let later = sorted.filter { $0 > today }
+        for stale in past.dropLast(keptDays) { days[stale] = nil }
+        for stale in later.dropFirst(keptDays) { days[stale] = nil }
     }
 
     /// The Diagnostics `diskWritesBySource` line: the newest days first, each as `<day> total=<n>MB <source>=<n>MB ...`

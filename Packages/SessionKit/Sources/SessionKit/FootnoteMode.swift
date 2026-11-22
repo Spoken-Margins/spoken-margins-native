@@ -25,6 +25,25 @@ public enum FootnoteMode: String, CaseIterable, Equatable, Sendable {
     /// half-built.
     public static let pickerChoices: [FootnoteMode] = [.whereCited, .atEnd]
 
+    /// The row's words in Settings → Voice → Controls (Design, Screens).
+    public var pickerTitle: String {
+        switch self {
+        case .whereCited: "Read where cited"
+        case .chime: "Chime where cited"
+        case .atEnd: "Read at the end"
+        }
+    }
+
+    /// The caption under the picker, for the choices it offers.
+    public static let pickerCaption = "Where cited: a footnote is read right after the sentence that points to it. At the end: footnotes are read in the notes section, as before."
+
+    /// The picker's selection for a stored value. A value the picker does not offer (a later build's `chime`, or text
+    /// that is not a mode) shows as the default, so the row never shows nothing selected; it is not written back.
+    public static func pickerSelection(storedValue: String?) -> FootnoteMode {
+        let stored = FootnoteMode(storedValue: storedValue)
+        return pickerChoices.contains(stored) ? stored : .default
+    }
+
     /// Whether the article's narration plan carries the note chunks (`NarrationChunkPlanner.articlePlan(_:asides:)`).
     /// The chime mode plans the same chunks as `whereCited` and skips them at play time, so both share one prepared-audio
     /// identity.

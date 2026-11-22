@@ -21,6 +21,8 @@ struct SettingsScreen: View, Equatable {
     @AppStorage(HeadphoneDoublePressAction.storageKey) private var headphoneDoublePress = HeadphoneDoublePressAction.default.rawValue
     /// End a Margin by saying "stop margin" (#3940). On until the listener turns it off.
     @AppStorage(MarginEndPhraseAvailability.storageKey) private var endsMarginByPhrase = true
+    /// Where footnotes are heard (#3777). Read at the next play, never mid-listen.
+    @AppStorage(FootnoteMode.storageKey) private var footnoteMode = FootnoteMode.default.rawValue
     @State private var showsDeveloperTools = false
     #if DEBUG
     @FocusState private var editingMapJSON: Bool
@@ -259,6 +261,18 @@ struct SettingsScreen: View, Equatable {
                         .onCompatibleChange(of: inputs.skipUnit) { _ in
                             model.skipUnitChanged()
                         }
+                        Picker("Footnotes", selection: Binding(
+                            get: { FootnoteMode.pickerSelection(storedValue: footnoteMode).rawValue },
+                            set: { footnoteMode = $0 }
+                        )) {
+                            ForEach(FootnoteMode.pickerChoices, id: \.self) { mode in
+                                Text(mode.pickerTitle).tag(mode.rawValue)
+                            }
+                        }
+                        .accessibilityIdentifier("settings.footnotes.picker")
+                        Text(FootnoteMode.pickerCaption)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
                         Picker("Podcast Skip Back", selection: model.screenBinding(\.mediaSkipBackSeconds)) {
                             ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
                                 Text("\(seconds) seconds").tag(seconds)
