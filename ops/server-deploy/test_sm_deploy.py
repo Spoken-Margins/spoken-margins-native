@@ -260,7 +260,7 @@ class RepoDriftTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_bootstrap_accepts_one_commented_key_line_and_refuses_more(self):
-        check = (HERE / 'bootstrap-root.sh').read_text().splitlines()[7]
+        check = next(l for l in (HERE / 'bootstrap-root.sh').read_text().splitlines() if 'exactly one public key line' in l)
         self.assertIn('exactly one public key line', check)
         for text, ok in (('ssh-ed25519 AAAAC3Nza sm-deploy github-actions\n', True), ('ssh-ed25519 AAAAC3Nza\n', True),
                          ('ssh-ed25519 AAAA x\nssh-ed25519 BBBB y\n', False), ('command="x" ssh-ed25519 AAAA x\n', False),
