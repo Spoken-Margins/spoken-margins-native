@@ -89,7 +89,7 @@ class AuthorTable(unittest.TestCase):
         self.assertEqual(trust.ignored_summary([rest('a', 'OWNER')]), '')
 
 
-APP = 'spoken-margins-agent'  # the slug the #4915 registration link proposes; the owner may pick another
+APP = 'spoken-margins-agent'  # the App the owner created on 2026-11-22 (#4915)
 
 
 class AppIdentity(unittest.TestCase):
@@ -113,10 +113,16 @@ class AppIdentity(unittest.TestCase):
             ('gh --json', {'author': {'login': f'app/{slug}', 'is_bot': True}, 'authorAssociation': 'NONE'}),
         ]
 
-    def test_the_shipped_list_trusts_no_app_yet(self):
-        # Today the App would read as an outsider. The change that moves the first job to it (#4915 step 3) adds its
-        # slug to TRUSTED_APP_SLUGS and turns this test into one that names the configured slug.
-        self.assertEqual(trust.TRUSTED_APP_SLUGS, ())
+    def test_the_shipped_list_trusts_exactly_the_agents_app(self):
+        # #4915 step 3: package-watch acts as this App, so its issue and comments must read as ours as shipped.
+        self.assertEqual(trust.TRUSTED_APP_SLUGS, (APP,))
+        for name, item in self.shapes():
+            with self.subTest(name):
+                self.assertTrue(trust.trusted(item))
+
+    def test_an_unlisted_app_reads_as_an_outsider(self):
+        # Fails if the App were trusted for any reason other than its listed slug (#4915 Done when 3).
+        trust.TRUSTED_APP_SLUGS = ()
         for name, item in self.shapes():
             with self.subTest(name):
                 self.assertFalse(trust.trusted(item))
@@ -150,6 +156,7 @@ class AppIdentity(unittest.TestCase):
                 self.assertFalse(trust.trusted(item))
 
     def test_configuring_the_app_leaves_everyone_else_as_before(self):
+        trust.TRUSTED_APP_SLUGS = ()
         before = [trust.trusted(item) for item in self._population()]
         trust.TRUSTED_APP_SLUGS = (APP,)
         self.assertEqual([trust.trusted(item) for item in self._population()], before)
@@ -185,7 +192,8 @@ class CopiesStayEqual(unittest.TestCase):
 
     def test_the_merge_audit_copy_decides_like_the_helper_in_every_shape(self):
         shapes = []
-        for login in ('uncomposed', BOT, 'github-actions', 'app/github-actions', 'stranger', ''):
+        for login in ('uncomposed', BOT, 'github-actions', 'app/github-actions', 'stranger', '',
+                      f'{APP}[bot]', APP, f'app/{APP}', f'{APP}[bot]x', 'Spoken-Margins-Agent[bot]'):
             for association in ('OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'NONE', None):
                 shapes.append({'user': {'login': login}, 'author_association': association})
                 shapes.append({'author': {'login': login}, 'authorAssociation': association})
@@ -197,7 +205,7 @@ class CopiesStayEqual(unittest.TestCase):
                 self.assertEqual(merge_audit.trusted(item), trust.trusted(item))
 
     def test_the_copies_decide_like_the_helper(self):
-        for login in ('uncomposed', BOT, 'github-actions', 'stranger'):
+        for login in ('uncomposed', BOT, 'github-actions', 'stranger', f'{APP}[bot]', APP, f'{APP}[bot]x'):
             for association in ('OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'NONE', None):
                 item = rest(login, association)
                 with self.subTest(login=login, association=association):

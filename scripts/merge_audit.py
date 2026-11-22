@@ -46,6 +46,7 @@ import time
 TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
 TRUSTED_BOTS = ('github-actions[bot]',)
 GRAPHQL_BOT_LOGINS = ('github-actions', 'app/github-actions')
+TRUSTED_APP_SLUGS = ('spoken-margins-agent',)  # the GitHub App the agents act as (#4915)
 
 
 def trusted(item: dict) -> bool:
@@ -53,10 +54,12 @@ def trusted(item: dict) -> bool:
     person = item.get('user') or item.get('author') or {}
     login = person.get('login') or ''
     association = item.get('author_association', item.get('authorAssociation'))
-    if (isinstance(association, str) and association in TRUSTED_ASSOCIATIONS) or login in TRUSTED_BOTS:
+    rest_bots = TRUSTED_BOTS + tuple(f'{slug}[bot]' for slug in TRUSTED_APP_SLUGS)
+    if (isinstance(association, str) and association in TRUSTED_ASSOCIATIONS) or login in rest_bots:
         return True
+    graphql_bots = GRAPHQL_BOT_LOGINS + TRUSTED_APP_SLUGS + tuple(f'app/{slug}' for slug in TRUSTED_APP_SLUGS)
     author = item.get('author')
-    return (isinstance(author, dict) and login in GRAPHQL_BOT_LOGINS
+    return (isinstance(author, dict) and login in graphql_bots
             and (author.get('__typename') == 'Bot' or author.get('is_bot') is True))
 
 
