@@ -7,10 +7,12 @@ description: The life of one Spoken Margins project thread, from claiming a read
 
 A project thread works one issue and ends. When its PR is armed, or the issue is handed back, it posts the stop note and stops; the coordinator starts a fresh thread for the next issue. A cloud session may push only the branch it was given, so never start a second issue in the same thread.
 
+**A thread ends "stopped", never "waiting on Cole" (Cole, 2026-11-22).** It holds a real decision only when only he can make it and the work can't go on without it (the [ask-cole skill](../ask-cole/SKILL.md) has the test). A phone check, a by-ear check, a Diagnostics export, an "after the next build" step, a check of merged work, and "should I keep working?" are not decisions: record them on the issue (section 4) and stop.
+
 ## 1. Before you start
 
 1. Read the issue, its comments, and its area in [docs/areas.md](../../../docs/areas.md). An issue that changes what a listener sees or hears needs a **Design** comment before building (`needs-design` until then).
-2. If the Dial on #589 reads Off, or Paced and its status says Holding, start nothing (finish a PR already under way first). If it reads Paced and the latest Mac tick on #337 says `HALT (usage breaker: Claude)` with no later `RESUMED`, start nothing. In Cloud max, the breaker does not stop you.
+2. If the Dial on #589 reads Off, or Paced and its status says Holding, start nothing (finish a PR already under way first). If it reads Paced and the latest Mac tick on #337 says `HALT (usage breaker: Claude)` with no later `RESUMED`, start nothing. In Cloud max, ignore any HALT on #337 and the usage numbers: a note on #337 saying the Dial is Cloud max is enough, so don't stop to verify it. Whether to work while a HALT shows is never a question for the owner: the Dial decides. Paced and halted means stop quietly (finish your commit, push, post the stop note); Cloud max means keep going.
 3. Claim it: add `in-progress`, remove `ready`, make sure it has exactly one area label, and comment exactly:
    `Claimed by project thread "<your thread title>"`
 4. If its files likely overlap a running thread's, say so in a comment.
@@ -33,7 +35,13 @@ A project thread works one issue and ends. When its PR is armed, or the issue is
 
 ## 4. Record what isn't code
 
-Phone checks, by-ear checks and every **Default taken** go on the issue as comments. Your last message ends with a question only for a decision you can't make; before asking the owner anything, run the [ask-cole skill](../ask-cole/SKILL.md).
+Phone checks, by-ear checks, Diagnostics exports, "after the next build" steps, checks of merged work and every **Default taken** go on the issue as comments. They are never a `**Decision for Cole**` or `**Step for Cole**` and never a reason to end the thread waiting.
+
+1. Comment on the issue, starting with the line `**Owner check**`: what to do, on which build or after which merge (the PR number), the exact steps, and what you or the next session will read when the result is in and what it unblocks. Write it so a session with no memory of this thread can act on the result.
+2. Add `needs-owner` (leave `ready` off if only the check is left; `agent-verify` and `validate-by-use` issues keep their label and gain `needs-owner` only when the check needs his hands). `scripts/owner_card_guard.py` leaves an issue alone that has `needs-owner` and an `**Owner check**`, and `scripts/sm_owner_queue.py` lists it under "Owner checks". It is not a decision, so no thread waits on it.
+3. Say it once in your stop note, then end the thread. Don't repeat it as a message asking for his reply.
+
+Your last message ends with a question only when you hold a real decision (see the ask-cole skill, section 1) that blocks your work. Before asking the owner anything, run that skill.
 
 An `agent-verify` issue shows a merged fix working with a host test, a real file or Diagnostics. Close it on a shown pass. On a fail, put it back to `ready` (milestone only if it blocks a release).
 
@@ -46,7 +54,7 @@ An `agent-verify` issue shows a merged fix working with a host test, a real file
 3. Post one comment starting `Handing to the Mac finisher:` with what fails and the report link, Done when, Must not break, the lane tier after the fix, and anything it must not change.
 4. Stop pushing to that branch.
 
-The finisher pauses on a Claude HALT in Paced mode, disk under 20 GB, or Dial Off. It won't take lane faults, product or taste calls, packet or database calls, fixes over about an hour, or `.github/` and `scripts/lane*` changes. Details: [docs/workstreams/finisher.md](../../../docs/workstreams/finisher.md).
+The finisher pauses on a Claude HALT in Paced or Off mode (never in Cloud max), disk under 20 GB, or Dial Off. It won't take lane faults, product or taste calls, packet or database calls, fixes over about an hour, or `.github/` and `scripts/lane*` changes. Details: [docs/workstreams/finisher.md](../../../docs/workstreams/finisher.md).
 
 **Back to the queue** (you can't finish it): remove `in-progress`, add `ready`, and say why on the issue. The only valid reasons are the owner's phone or data, a named defect in the code or the Design (cite `file:line`), or the label `where:mac`. "Needs a Mac build" is never one.
 
@@ -61,6 +69,7 @@ A `where:mac` issue (Mac hardware, signed-in Mac accounts or a physical device),
 3. Never boots a simulator.
 4. After the merge, deletes the worktree's `.build` folder and removes the worktree.
 5. Takes the next Mac-only ready issue after arming. The headless Claude Mac worker (`ops/claude/`, #1599) does the same unattended.
+6. **Ends its own Claude Code session (Cole, 2026-11-22: no idle sessions).** Once its work is merged or handed off, it posts the stop note (section 7) and then exits its session, so it never sits idle holding a session on his computer. The long-lived Mac finisher is the only exception. This is about the session on the Mac; nothing here closes or resolves a thread in the project.
 
 The project instructions' pointer to "Threads on the owner's Mac" means this section.
 
@@ -69,3 +78,5 @@ The project instructions' pointer to "Threads on the owner's Mac" means this sec
 On stopping for any reason, comment on your issue exactly:
 
 `Thread "<your thread title>" stopping: <PRs you armed> · <reason>`
+
+Then end the thread. A thread listed as waiting must hold a real decision; the coordinator resolves one that is only waiting on an owner check, a phone step or "keep going?" (dispatch skill, section 0).

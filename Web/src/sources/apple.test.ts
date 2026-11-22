@@ -37,6 +37,8 @@ const refs: Array<[string, ReturnType<typeof appleEpisodeRef>]> = [
   ['https://PODCASTS.APPLE.COM/us/podcast/x/id1445582279?i=1000427709574', { showId: '1445582279', episodeId: '1000427709574' }],
   ['https://podcasts.apple.com/us/podcast/id1445582279?i=1000427709574', { showId: '1445582279', episodeId: '1000427709574' }],
   ['https://itunes.apple.com/us/podcast/x/id1445582279?i=1000427709574', { showId: '1445582279', episodeId: '1000427709574' }],
+  ['https://podcasts.apple.com/us/podcast/x/id0001445582279?i=0001000427709574', { showId: '1445582279', episodeId: '1000427709574' }],
+  ['https://podcasts.apple.com/us/podcast/x/id1445582279?i=000', { showId: '1445582279', episodeId: '0' }],
   ['https://podcasts.apple.com/us/podcast/x/id1445582279', undefined],
   ['https://podcasts.apple.com/us/podcast/x/id1445582279?i=', undefined],
   ['https://podcasts.apple.com/us/podcast/x/id1445582279?i=abc', undefined],
@@ -126,4 +128,17 @@ test('the lookup carries a deadline, so a card waiting on Apple never waits fore
   await findAppleEpisodeAudio(PAGE, { fetch });
   assert.ok(signal, 'a signal was passed');
   assert.equal(signal.aborted, false);
+});
+
+test('a lookup that ignores the abort signal and never answers still ends at its limit (the Android app\'s native read does)', async () => {
+  const neverAnswers: FetchLike = () => new Promise<Response>(() => {});
+  const started = Date.now();
+  await assert.rejects(findAppleEpisodeAudio(PAGE, { fetch: neverAnswers, timeoutMs: 40 }), AppleLookupError);
+  assert.ok(Date.now() - started < 2_000, 'it rejected, it did not hang');
+});
+
+test('an episode whose page id is zero-padded is still matched by its number', async () => {
+  const { fetch } = answering({ results: [{ wrapperType: 'podcastEpisode', trackId: 1000427709574, episodeUrl: 'https://media.example.com/a.mp3' }] });
+  const found = await findAppleEpisodeAudio('https://podcasts.apple.com/us/podcast/x/id1445582279?i=0001000427709574', { fetch });
+  assert.equal(found?.audioUrl, 'https://media.example.com/a.mp3');
 });

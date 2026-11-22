@@ -118,6 +118,15 @@ enum AddMarginShortcutAction {
         guard model.hasActiveSession else { throw AddMarginShortcutError.nothingRunning }
         guard !model.recordingNavigationIsLocked else { throw AddMarginShortcutError.writingInProgress }
 
+        // One line in the developer log for what Add Margin found playing and what it left (#4926).
+        let before = playbackState(of: model)
+        var saved = false
+        defer {
+            model.recordDeveloperDiagnostic(
+                "shortcut.add_margin",
+                AddMarginPlaybackTrace(before: before, after: playbackState(of: model)).fields(saved: saved)
+            )
+        }
         model.beginWrittenMargin()
         guard let draft = model.writtenMarginDraft else {
             throw AddMarginShortcutError.notSaved(model.lastError)
@@ -130,7 +139,16 @@ enum AddMarginShortcutAction {
             model.cancelWrittenMargin()
             throw AddMarginShortcutError.notSaved(reason)
         }
+        saved = true
         return draft.itemTitle
+    }
+
+    private static func playbackState(of model: Gate1AppModel) -> AddMarginPlaybackTrace.State {
+        AddMarginPlaybackTrace.state(
+            status: model.snapshot.status,
+            pausedBySystem: model.engine?.isPausedBySystemInterruption ?? false,
+            hasSession: model.hasActiveSession
+        )
     }
 }
 
