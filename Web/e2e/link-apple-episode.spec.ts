@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page, type Request } from '@playwright/test';
-import { serveAudio, serveFixtures } from './fixtures.ts';
+import { feedFixture, serveAudio, serveFixtures } from './fixtures.ts';
 
 const STUB = 'http://127.0.0.1:4174';
 const vector = JSON.parse(
@@ -115,4 +115,82 @@ test('when Apple does not answer, Play asks again and says so plainly, never tha
   await expect(page.getByText('Apple Podcasts can’t look this episode up right now', { exact: false }).first()).toBeVisible();
   await expect(page.getByText('neither the writer nor Substack', { exact: false })).toHaveCount(0);
   expect(asked.length).toBeGreaterThanOrEqual(2);
+});
+
+// The owner's 2026-11-22 share: an episode from 2019, which Apple's lookup of the show does not list (it lists the newest
+// 200). The packet holds the Apple page and no audio address, so the audio is in the show's own feed, found by the title the
+// packet carries. The lookup and the feed below are trimmed copies of the real answers (Contracts/fixtures/feeds/): the real
+// lookup leaves the episode out, so a test whose lookup lists it (the first test above) can't fail the way the share did.
+const OUTSIDE_LINK = `${STUB}/l/vectorapple02#${KEY}`;
+const SHOW_FEED = 'https://feeds.soundcloud.com/users/**';
+const ENCLOSURE = 'https://feeds.soundcloud.com/stream/559432260-resourcesradio-people-parks-and-policy-with-rffs-margaret-walls.mp3';
+const REAL_LOOKUP = feedFixture('apple-lookup-resources-radio.json').toString('utf8');
+const REAL_FEED = feedFixture('resources-radio-apple-gap.rss').toString('utf8');
+const OUTSIDE_TITLE = "People, Parks, and Policy, with RFF's Margaret Walls";
+
+async function outsideLookupPage(page: Page, feed: 'readable' | 'refused-by-browsers', feedXml = REAL_FEED) {
+  const asked = { lookup: [] as string[], feed: [] as string[], relay: [] as string[] };
+  await serveFixtures(page);
+  await serveAudio(page, 'https://feeds.soundcloud.com/stream/**');
+  await page.route(LOOKUP, (route) => {
+    asked.lookup.push(route.request().url());
+    return route.fulfill({ status: 200, body: REAL_LOOKUP, headers: { 'access-control-allow-origin': '*', 'content-type': 'text/javascript; charset=utf-8' } });
+  });
+  await page.route(SHOW_FEED, (route) => {
+    asked.feed.push(route.request().url());
+    // Like feeds.soundcloud.com, which answers browsers on another site's origin with no permission (checked 2026-11-22).
+    if (feed === 'refused-by-browsers') return route.abort('failed');
+    return route.fulfill({ status: 200, body: feedXml, headers: { 'content-type': 'application/rss+xml', 'access-control-allow-origin': '*' } });
+  });
+  await page.route(`${STUB}/api/v1/relay**`, (route) => {
+    asked.relay.push(route.request().url());
+    return route.fulfill({ status: 200, body: feedXml, headers: { 'content-type': 'application/rss+xml', 'access-control-allow-origin': '*', 'x-final-url': new URL(route.request().url()).searchParams.get('url') ?? '' } });
+  });
+  return asked;
+}
+
+test('an Apple episode the lookup does not list plays from the show\'s feed, matched by its own title', async ({ page }) => {
+  const asked = await outsideLookupPage(page, 'readable');
+  await page.goto(OUTSIDE_LINK);
+  const arrival = page.getByTestId('arrival');
+  await expect(arrival.getByRole('heading', { name: OUTSIDE_TITLE })).toBeVisible();
+  await expect(arrival.getByText('no audio the browser can play')).toHaveCount(0);
+  await expect(arrival.getByRole('button', { name: 'Play' })).toBeEnabled();
+  await arrival.getByRole('button', { name: 'Play' }).click();
+  await expect(page.getByRole('dialog', { name: OUTSIDE_TITLE })).toBeVisible();
+  await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThan(0.3);
+  expect(await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.currentSrc)).toBe(ENCLOSURE);
+  // One lookup, one read of the show's feed, nothing from the link in either.
+  expect(asked.lookup).toEqual(['https://itunes.apple.com/lookup?id=1445582279&entity=podcastEpisode&limit=200']);
+  expect(asked.feed).toHaveLength(1);
+  for (const url of [...asked.lookup, ...asked.feed]) expect(url).not.toContain(KEY.slice(0, 12));
+  expect(asked.relay).toEqual([]);
+});
+
+test('when the feed refuses browsers, Play asks once to read it through the server, then plays', async ({ page }) => {
+  const asked = await outsideLookupPage(page, 'refused-by-browsers');
+  await page.goto(OUTSIDE_LINK);
+  const arrival = page.getByTestId('arrival');
+  await expect(arrival.getByRole('button', { name: 'Play' })).toBeEnabled();
+  await expect(arrival.getByText('no audio the browser can play')).toHaveCount(0);
+  await arrival.getByRole('button', { name: 'Play' }).click();
+  const ask = page.getByRole('dialog', { name: 'Read this feed through our server?' });
+  await expect(ask).toBeVisible();
+  await ask.getByRole('button', { name: 'Use the server' }).click();
+  await expect(page.getByRole('dialog', { name: OUTSIDE_TITLE })).toBeVisible();
+  await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThan(0.3);
+  expect(await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.currentSrc)).toBe(ENCLOSURE);
+  expect(asked.relay).toHaveLength(1);
+  expect(decodeURIComponent(asked.relay[0] as string)).toContain('https://feeds.soundcloud.com/users/');
+  expect(asked.relay[0]).not.toContain(KEY.slice(0, 12));
+});
+
+test('two episodes in the feed with the packet\'s title are never guessed between', async ({ page }) => {
+  const twin = REAL_FEED.replace('</channel>', `<item><title>People, Parks and Policy with RFF’s Margaret Walls</title><guid>twin</guid><enclosure type="audio/mpeg" url="https://feeds.soundcloud.com/stream/1-twin.mp3" length="1"/></item></channel>`);
+  await outsideLookupPage(page, 'readable', twin);
+  await page.goto(OUTSIDE_LINK);
+  const arrival = page.getByTestId('arrival');
+  await expect(arrival.getByRole('heading', { name: OUTSIDE_TITLE })).toBeVisible();
+  await expect(arrival.getByText('no audio the browser can play', { exact: false })).toBeVisible();
+  await expect(arrival.getByRole('button', { name: 'Play' })).toHaveCount(0);
 });
