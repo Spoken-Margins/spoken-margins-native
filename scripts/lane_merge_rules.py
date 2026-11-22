@@ -35,15 +35,21 @@ TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
 
 
 TRUSTED_BOTS = (BOT[0],)
+# The GitHub App the agents act as (#4915). GitHub reports its comments as `<slug>[bot]` with association NONE, so
+# without this entry an audit, hold note or /lane request an agent posts as the App would be ignored and the PR held.
+# Kept equal to scripts/comment_trust.py's list by scripts/tests/test_app_identity_trust.py.
+TRUSTED_APP_SLUGS = ('spoken-margins-agent',)
 
 
 def trusted_comment(comment: dict) -> bool:
-    """Whether the runner may act on this comment: the owner's, a member's or collaborator's, or the project's bot.
+    """Whether the runner may act on this comment: the owner's, a member's or collaborator's, the project's bot, or
+    the agents' App.
 
     A comment without author_association (GitHub always sends it) is not trusted.
     """
     login = (comment.get('user') or {}).get('login')
-    return comment.get('author_association') in TRUSTED_ASSOCIATIONS or login in TRUSTED_BOTS
+    bots = TRUSTED_BOTS + tuple(f'{slug}[bot]' for slug in TRUSTED_APP_SLUGS)
+    return comment.get('author_association') in TRUSTED_ASSOCIATIONS or login in bots
 
 
 def base_policy(tree: Path, base: str, path: str):
