@@ -19,6 +19,7 @@
       "minimumMemoryMegabytes": 4096,
       "status": "available",
       "bundled": false,
+      "mirrorDir": "supertonic-3-int8/onnxruntime-1.24.2/",
       "mirrorFrom": "App/SpokenMarginsApp/Resources/Supertonic/",
       "upstreamArchives": [
         {
@@ -150,14 +151,14 @@
           "path": "licenses/ONNXRUNTIME_MIT.txt",
           "byteCount": 1073,
           "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
-          "upstream": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.2/LICENSE",
+          "mirrored": true,
           "licenseId": "onnxruntime-mit"
         },
         {
           "path": "licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt",
           "byteCount": 325054,
           "sha256": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
-          "upstream": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.2/ThirdPartyNotices.txt",
+          "mirrored": true,
           "licenseId": "onnxruntime-mit"
         },
         {
@@ -212,7 +213,7 @@
           "id": "onnxruntime-mit",
           "name": "MIT License (ONNX Runtime)",
           "spdxId": "MIT",
-          "textURL": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.2/LICENSE",
+          "textURL": "https://spokenmargins.proximitytoprogress.com/voices/files/supertonic-3-int8/onnxruntime-1.24.2/licenses/ONNXRUNTIME_MIT.txt",
           "textSHA256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
           "requiresAcceptance": false,
           "reviewedText": "licenses/onnxruntime-mit.txt"
