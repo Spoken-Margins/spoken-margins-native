@@ -213,7 +213,7 @@ class CandidateFilter(unittest.TestCase):
         self.assertEqual(A.risky_areas(["App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift"]), [])
 
     LANE_PATHS = [
-        ".github/workflows/lane.yml", ".github/workflows/hosted-portable.yml", "scripts/lane-runner.py",
+        ".github/workflows/main-t3.yml", ".github/workflows/hosted-portable.yml", "scripts/lane_t3.py",
         "scripts/lane_sim.py", "scripts/lane_slots.py", "scripts/lane_guard.py", "scripts/lane-sim-boot",
         "scripts/xcodebuild-lane", "scripts/host-test-lane", "scripts/install-lane-guard.py",
         "scripts/test-scope.py", "scripts/hot_file_ratchet.py", "scripts/merge_audit.py",
@@ -224,7 +224,7 @@ class CandidateFilter(unittest.TestCase):
         # Owner rule 2026-10-01: lane PRs get the same audit as sharing, persistence and audio PRs.
         for p in self.LANE_PATHS:
             self.assertEqual(A.risky_areas([p]), ["lane"], p)
-        lane_pr = [{"filename": "scripts/lane-runner.py", "additions": 40, "deletions": 3}]
+        lane_pr = [{"filename": "scripts/lane_t3.py", "additions": 40, "deletions": 3}]
         ok, why = A.evaluate_pr(pr(), FIXTURE["comments_audited_old_head"], lane_pr)
         self.assertEqual((ok, why), (True, "risky: lane"))
 
@@ -242,14 +242,14 @@ class CandidateFilter(unittest.TestCase):
             self.assertTrue(scope.is_lane_path(p), p)
             self.assertEqual(A.risky_areas([p]), ["lane"], f"{p} is held for an audit by the runner but not risky here")
         # and the other way round, on the paths named in these tests: the audit adds no lane path of its own
-        for p in self.LANE_PATHS + ["scripts/tests/test_lane_runner.py", "TestPlans/scripted-journeys.json",
+        for p in self.LANE_PATHS + ["scripts/tests/test_lane_t3.py", "TestPlans/scripted-journeys.json",
                                     "scripts/phone-build", "ops/claude/sm_claude_worker.py"]:
             self.assertEqual("lane" in A.risky_areas([p]), scope.is_lane_path(p), p)
 
     def test_ordinary_paths_stay_off_the_lane(self):
         # The audit count for ordinary PRs must not rise: the lane's tests, the Test Desk's journey list,
         # other scripts, the ops tools and the lane docs don't make a PR risky.
-        for p in ["scripts/tests/test_lane_runner.py", "TestPlans/scripted-journeys.json",
+        for p in ["scripts/tests/test_lane_t3.py", "TestPlans/scripted-journeys.json",
                   "TestPlans/Release.xctestplan", "scripts/phone-build", "scripts/validate-contracts.py",
                   "scripts/setup-worktree.sh", "docs/workstreams/test-lane.md", ".claude/skills/lane-request/SKILL.md",
                   ".github/ISSUE_TEMPLATE/bug.yml", "ops/claude/sm_claude_worker.py",
@@ -1093,7 +1093,7 @@ class OwnerTapAlertDispatch(unittest.TestCase):
     def test_which_prs_dispatch(self):
         rows = [
             ([{"filename": ".github/workflows/lane.yml"}], True),
-            ([{"filename": "scripts/lane-runner.py"}], True),
+            ([{"filename": "scripts/lane_merge_rules.py"}], True),
             ([{"filename": "docs/x.yml", "previous_filename": ".github/x.yml"}], True),
             ([{"path": ".github/ISSUE_TEMPLATE/bug.yml"}], True),
             ([{"filename": "scripts/lane_slots.py"}], False),
@@ -1105,9 +1105,9 @@ class OwnerTapAlertDispatch(unittest.TestCase):
             with self.subTest(files=files):
                 self.assertEqual(A.touches_owner_tap(files), want)
 
-    def test_same_paths_as_the_runner(self):
+    def test_same_paths_as_the_merge_rules(self):
         spec = importlib.util.spec_from_file_location(
-            "lane_runner_for_tap", Path(__file__).resolve().parents[2] / "scripts" / "lane-runner.py")
+            "lane_merge_rules_for_tap", Path(__file__).resolve().parents[2] / "scripts" / "lane_merge_rules.py")
         lane = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(lane)
         self.assertEqual(A.OWNER_TAP_FILES, lane.OWNER_TAP_FILES)

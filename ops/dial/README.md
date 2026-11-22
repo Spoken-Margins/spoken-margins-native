@@ -26,7 +26,9 @@ Cloud max on the Dial means "ignore usage". The Mac tick's own rule (Claude use 
 
 Every reader in this repository now asks `dial_gate.breaker_holds(dial, usage_info)` instead of reading `halted` alone: a Claude HALT holds under Paced and Off, and holds nothing under Cloud max. That covers the Mac worker (`pacing_hold`), `scripts/sm_sweep.py` (its slots and its `halt` action), the Dial gate's status line and `ops/away/away_check.py`. The Mac worker's disk and memory holds stay. Paced and Off are unchanged.
 
-Not in this repository, so the owner or the Mac finisher applies it: the tick's rule in `sm-mac-tick/SKILL.md`, the coordinator's project instructions, and the finisher and integration prompts. Until they read the Dial, a HALT can still appear on #337 under Cloud max, and the coordinator's project-instruction rule will still obey it. The text below for the tick covers the first.
+Not in this repository, so the owner or the Mac finisher applies it: the tick's rule in `sm-mac-tick/SKILL.md`, the coordinator's project instructions, and the finisher and integration prompts. Until they read the Dial, a HALT can still appear on #337 under Cloud max, and the coordinator's project-instruction rule will still obey it. The text below for the tick covers the first. Its Cloud max rule is on the Mac since 2026-11-22 (the 03:17Z tick on #337 posted `RESUMED (usage breaker: Claude)` and "breaker off: Cloud max"); the parser call, the Off rule and the Mode on every pace line still wait for a Mac thread to paste them (#4865).
+
+The tick reads the Mode with this gate's own parser, `dial_gate.py --parse-dial`, which takes the #589 body on stdin and prints what the gate reads from it as JSON. So the tick and the gate can't disagree about the Mode. It posts a new Claude HALT only under Paced. Under Cloud max it posts a RESUMED if a HALT stood; under Off it posts no new Claude marker, since nothing wakes under Off anyway. Its pace line always names the Mode, so a reader can see why a HALT did or didn't appear.
 
 ## What lives where
 
@@ -49,12 +51,16 @@ The marker is `HALT (usage breaker: <providers>)` or `RESUMED (usage breaker: <p
 
 ## Text for the Mac tick
 
-Replace the single usage-breaker step in `SKILL.md` with:
+In the usage-breaker step of `SKILL.md`, keep the test (U > E + 10, or U ≥ 90), its resume rule, the state file and the phone push as they are, and make the provider and Mode rules say the text below. In the tick's pace line (its status step), name the Mode as the text says.
 
 ```text
 USAGE BREAKER, per provider. Apply the existing breaker test (the same thresholds and stop line) to Claude and to Codex separately, each against its own usage and its own share of the week gone. Never let one provider's result halt the other.
-- First read the Mode on the Dial (#589). If Claude's Mode is Cloud max, Claude is never in the halted set: post `**RESUMED (usage breaker: Claude)** · Dial is Cloud max` if the last marker was a HALT, and say "breaker off: Cloud max" in the pace line.
-- Halted set = the providers that fail the test. Compare it with the last HALT or RESUMED marker on #337.
+- First read the Mode on the Dial (#589) with the gate's parser: `cd ~/Documents/GitHub/spoken-margins-native && gh issue view 589 --json body -q .body | python3 <(git show origin/main:ops/dial/dial_gate.py) --parse-dial`. Its `mode` is `paced`, `cloud max` or `off`. If the command fails, use the "I read:" line of the comment marked `dial-gate-status` on #589, and say so in the pace line. The Mode is Claude's; Codex is tested as before whatever it says.
+- Paced: test Claude as before.
+- Cloud max: Claude is never in the halted set. Post `**RESUMED (usage breaker: Claude)** · Dial is Cloud max` if the last marker was a HALT, remove Claude's entry from the breaker state file, and say "breaker off: Cloud max" in the pace line.
+- Off: post no new HALT or RESUMED for Claude; Claude keeps whatever state it had. Say "breaker idle: Dial is Off" in the pace line. A HALT left standing under Off holds nothing the Off Dial doesn't already hold; when the Dial goes back to Paced, the next tick tests Claude and posts RESUMED if it passes.
+- Every pace line names the Mode it read, for example "Dial: Paced".
+- Halted set = the providers that fail the test, with Claude placed by its Mode as above. Compare it with the last HALT or RESUMED marker on #337.
 - If a provider joined the set, post `**HALT (usage breaker: <providers>)** · <provider> N% used, M% of its week gone.` as its own comment. If one left it, post `**RESUMED (usage breaker: <providers>)** · <why>`. Name only the providers that changed.
 - The last line of every tick: `- advice for dispatch:` followed by `HALT (usage breaker: <providers>): <what pauses and what continues>` when the set is not empty, using the wording in ops/dial/README.md, otherwise the usual pacing advice.
 - Claude halted: your own Claude work (SM integration run, Mac finisher) pauses. Codex halted: only Codex tasks pause; run the Claude work as usual.

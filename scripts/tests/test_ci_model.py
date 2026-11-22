@@ -89,7 +89,7 @@ class ExtractTests(unittest.TestCase):
         workflows = TREE.model['workflows']
         self.assertEqual(workflows['merge-queue-label-bridge.yml']['jobs']['bridge']['token'], 'secret:MERGE_QUEUE_TOKEN')
         self.assertEqual(workflows['merge-queue-dequeued.yml']['jobs']['dequeued']['token'], 'github_token')
-        self.assertTrue(workflows['lane.yml']['disabled'])
+        self.assertNotIn('lane.yml', workflows)  # retired with its runner (#4769)
 
     def test_effects_are_found_however_a_script_is_formatted(self):
         """On a fixture script, never a live one: how a live script is formatted must not matter to any test."""

@@ -8,7 +8,7 @@ one check carries them, on the PR and again in the queue:
    (scripts/lane_merge_rules.py merge_blockers and audit_blocker).
 2. A PR that brings in another PR's commit with a blocking audit is held until that finding is resolved
    (lane_merge_rules.py inherited_check, scripts/lane_inherited_holds.py).
-3. A PR touching `.github/`, `scripts/lane-runner.py` or `scripts/lane_merge_rules.py` merges only with the owner's tap:
+3. A PR touching `.github/` or `scripts/lane_merge_rules.py` merges only with the owner's tap:
    the `owner-tap` label, which only the owner adds (lane_merge_rules.py owner_tap_paths; owner rule 2026-10-09, #1203).
 4. An outside contributor's commits carry `Signed-off-by:` (scripts/signoff_check.py, #2114).
 

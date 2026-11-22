@@ -37,6 +37,7 @@ NOW = dt.datetime(2026, 10, 18, 12, 0, tzinfo=dt.timezone.utc)
 BIG = b"model bytes " * 100
 SMALL = b'{"style": 1}\n'
 LICENCE = b"Example licence\nYou may use this.\nYou may not misuse it.\n"
+ONNX_RUNTIME_LICENCE_FILES = ("licenses/ONNXRUNTIME_MIT.txt", "licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt")
 
 
 def sha(data: bytes) -> str:
@@ -132,8 +133,8 @@ class TheShippedSources(unittest.TestCase):
     def test_the_onnx_runtime_licences_are_fetched_from_the_repository_when_their_upstream_is_gone(self):
         # main-t3's adapters plan failed at `voice-catalog fetch` because microsoft/onnxruntime's raw LICENSE and
         # ThirdPartyNotices.txt at v1.24.2 returned 404 (#4853). The app bundles both files at the pinned bytes, so
-        # fetch takes them from there and never asks the dead URL. Every other upstream answers 404 here too, so
-        # the only way these two files arrive is from the repository.
+        # fetch takes them from there; the HTTP double answers 404 to anything, so the only way these two files
+        # arrive is from the repository.
         sources = copy.deepcopy(vc.load_sources())
         voice = next(v for v in sources["voices"] if v["id"] == "supertonic-3-int8")
         wanted = ("licenses/ONNXRUNTIME_MIT.txt", "licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt")
@@ -155,17 +156,31 @@ class TheShippedSources(unittest.TestCase):
                 self.assertIsNone(vc._wrong_bytes(folders["supertonic-3-int8"] / file["path"], file), file["path"])
         self.assertEqual(http.asked, [])
 
-    def test_the_two_licences_the_repository_serves_stay_in_the_catalog_as_the_reviewed_upstream_says(self):
-        # Reading them from the repository changes how fetch gets the bytes, not what the app is told: the entry the
-        # app and the site read still lists the pinned upstream, with no mirror and nothing carried inline.
+    def test_the_two_onnx_runtime_licence_files_are_served_from_the_mirror_and_nothing_inline(self):
+        # Their publisher URL is gone, so the entry names our mirror as the only source (owner, 2026-11-22, #4853), and
+        # the notices file (325 KB) is far over what a catalog entry may carry inline.
         sources = vc.load_sources()
         voice = next(v for v in sources["voices"] if v["id"] == "supertonic-3-int8")
         entry = vc.voice_entry(sources, voice)
         self.assertNotIn("mirrorFrom", entry)
         for item in entry["files"]:
-            if item["path"] in ("licenses/ONNXRUNTIME_MIT.txt", "licenses/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt"):
-                self.assertEqual(len(item["sources"]), 1, item["path"])
+            if item["path"] in ONNX_RUNTIME_LICENCE_FILES:
+                self.assertEqual(item["sources"], [vc.mirror_prefix(sources) + voice["mirrorDir"] + item["path"]], item["path"])
                 self.assertNotIn("content", item)
+
+    def test_the_mirrored_onnx_runtime_licences_are_the_exact_files_the_app_bundles(self):
+        # `publish` uploads what repository_copy finds, after checking size and SHA-256, so what the site serves is
+        # the file in the PyPI wheel onnxruntime 1.24.2 (same hashes), which is also the file the app bundles.
+        sources = vc.load_sources()
+        voice = next(v for v in sources["voices"] if v["id"] == "supertonic-3-int8")
+        mirrored = [f["path"] for f in voice["files"] if f.get("mirrored")]
+        self.assertEqual(sorted(mirrored), sorted(ONNX_RUNTIME_LICENCE_FILES))
+        for file in voice["files"]:
+            if file.get("mirrored"):
+                kept = vc.repository_copy(voice, file)
+                self.assertIsNotNone(kept, file["path"])
+                self.assertIsNone(vc._wrong_bytes(kept, file), file["path"])
+                self.assertNotIn("upstream", file)
 
     def test_supertonic_comes_out_exactly_as_the_reviewed_draft_lists_it(self):
         sources = vc.load_sources()
@@ -261,8 +276,11 @@ class TheShippedSources(unittest.TestCase):
         for voice in sources["voices"]:
             for file in voice["files"]:
                 with self.subTest(voice=voice["id"], path=file["path"]):
-                    self.assertFalse(file.get("mirrored"))
-                    self.assertFalse(any(url.startswith(site) for url in vc.file_source_urls(sources, voice, file)))
+                    # The one exception: Microsoft's repository is gone, so the two ONNX Runtime licence files are
+                    # on the owner's site (owner, 2026-11-22, "let's host them as long as that's allowed", #4853).
+                    allowed = file["path"] in ONNX_RUNTIME_LICENCE_FILES
+                    self.assertEqual(bool(file.get("mirrored")), allowed)
+                    self.assertEqual(any(url.startswith(site) for url in vc.file_source_urls(sources, voice, file)), allowed)
 
     def test_the_committed_site_catalog_downloads_nothing_from_the_owners_server(self):
         # #2086: catalog version 1 (Site/voices/v1/) sent every Supertonic file to voices/files/ on the owner's server,
@@ -274,8 +292,10 @@ class TheShippedSources(unittest.TestCase):
         for voice in catalog["voices"]:
             urls = [url for file in voice["files"] for url in file.get("sources", [])]
             urls += [url for archive in voice.get("archives", []) for url in archive["sources"]]
+            mirror_urls = {site + sources["site"]["mirrorPath"] + "supertonic-3-int8/onnxruntime-1.24.2/" + path for path in ONNX_RUNTIME_LICENCE_FILES}
             with self.subTest(voice=voice["id"]):
-                self.assertEqual([url for url in urls if url.startswith(site)], [])
+                # Only the two ONNX Runtime licence files may point at the site, and not before they are re-signed in.
+                self.assertTrue({url for url in urls if url.startswith(site)} <= mirror_urls)
 
     def test_the_committed_site_manifest_describes_the_committed_catalog(self):
         catalog_bytes = (vc.SITE_DIR / vc.CATALOG_REL).read_bytes()
@@ -604,6 +624,26 @@ class CheckingTheSources(unittest.TestCase):
         self.assertTrue(required["voices"]["alpha"]["held"])
         skipped, _ = self.run_check(mirror="skip")
         self.assertFalse(skipped["voices"]["alpha"]["held"])
+
+    def test_a_licence_text_we_serve_ourselves_is_a_mirror_file_not_a_catch_22(self):
+        # #4853: the ONNX Runtime licence's only source is our mirror, which has nothing on it until the first
+        # publish uploads it, and publish needs a clean check. So a missing copy is noted, never a hold, unless
+        # the mirror is required; `--mirror skip` does not ask for it at all.
+        licence = self.sources["voices"][0]["licenses"][0]
+        mirror_path = "/voices/files/alpha/1.0/licenses/example.txt"
+        licence["watchURL"] = self.server.base + mirror_path.lstrip("/")
+        noted, _ = self.run_check(mirror="note")
+        self.assertFalse(noted["voices"]["alpha"]["held"])
+        self.assertTrue(any("licence" in line for line in noted["voices"]["alpha"]["notes"]))
+        required, _ = self.run_check(mirror="require")
+        self.assertTrue(required["voices"]["alpha"]["held"])
+        self.assertEqual(required["voices"]["alpha"]["problems"][0]["kind"], "licence-unreachable")
+        before = self.server.gets(mirror_path)
+        skipped, _ = self.run_check(mirror="skip")
+        self.assertFalse(skipped["voices"]["alpha"]["held"])
+        self.assertEqual(self.server.gets(mirror_path), before)
+        self.server.files[mirror_path] = (200, LICENCE)
+        self.assertEqual(self.run_check(mirror="require")[0]["voices"]["alpha"]["problems"], [])
 
     def test_a_mirror_serving_the_wrong_bytes_is_caught_when_required(self):
         self.server.files["/voices/files/alpha/1.0/styles/a.json"] = (200, SMALL.replace(b"1", b"2"))

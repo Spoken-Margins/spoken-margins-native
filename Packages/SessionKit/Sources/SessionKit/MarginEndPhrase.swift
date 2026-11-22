@@ -260,13 +260,17 @@ public struct MarginEndPhraseWindow: Sendable {
         audioNowMs: Int,
         hearing batch: [MarginEndPhraseWord] = [],
         isFinal: Bool = false,
-        resultStartMs: Int? = nil
+        resultStartMs: Int? = nil,
+        resultEndMs: Int? = nil
     ) -> MarginEndPhrase.Outcome {
         if let start = resultStartMs ?? batch.first?.startMs {
-            if isFinal, let last = batch.last {
-                let end = max(last.endMs, batch.map(\.endMs).max() ?? 0)
+            if isFinal {
+                // A final settles the whole stretch it covers: its range (when the recogniser says it), or at least its
+                // words. A guess for that stretch that the final no longer holds is gone, even when the final is empty
+                // or shorter than the guess.
+                let end = max(resultEndMs ?? 0, batch.map(\.endMs).max() ?? 0)
                 words.removeAll { $0.startMs >= start && $0.startMs < end }
-            } else if !isFinal {
+            } else {
                 words.removeAll { $0.startMs >= start }
             }
             words.append(contentsOf: batch)

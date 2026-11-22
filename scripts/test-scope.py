@@ -11,7 +11,6 @@ disagree, take the higher tier and say why in the lane request.
 """
 import argparse
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
@@ -41,9 +40,9 @@ WEB_PREFIXES = ('Web/',)
 BUILD_FILES = ('project.yml', 'SpokenMarginsNative.xcodeproj/', 'Config/')
 
 # The lane's own machinery (owner rule 2026-10-01). A PR touching any of these merges only after a clean
-# Codex or Claude audit of its head, like an audio, persistence or packet change (lane-runner.py, merge_blockers).
-# scripts/lane-runner.py and .github/ go further: only the owner merges those (lane-runner.py, owner_tap_paths).
-# The list: every workflow; the runner and its helpers (lane-runner.py, lane_sim.py, lane_slots.py,
+# Codex or Claude audit of its head, like an audio, persistence or packet change (lane_merge_rules.py, merge_blockers).
+# scripts/lane_merge_rules.py and .github/ go further: only the owner merges those (lane_merge_rules.py, owner_tap_paths).
+# The list: every workflow; the runner and its helpers (lane_t3.py, lane_merge_rules.py, lane_sim.py, lane_slots.py,
 # lane_guard.py, lane-sim-boot, xcodebuild-lane, host-test-lane, install-lane-guard.py); the policies the
 # runner loads from next (this file, hot_file_ratchet.py, merge_audit.py); verify-tests.py, which runs the
 # lane's host tests and T3 plans; and the two test plans a T3 runs. Tests of the lane (scripts/tests/)
@@ -57,7 +56,7 @@ LANE_FILES = {'scripts/xcodebuild-lane', 'scripts/host-test-lane', 'scripts/inst
               'scripts/parallel_unittest.py', 'scripts/runner_test_seconds.json',  # runner-tests' driver (#4769)
               'scripts/verify-tests.py', 'scripts/ci_step_budgets.json', 'scripts/trunk.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan'}
 LANE_NOTE = ('Lane change: the runner merges it only after a Codex or Claude audit of the head that says "No blocking '
-             'findings". The audit runs by itself once the automerge run passes. A change to scripts/lane-runner.py or '
+             'findings". The audit runs by itself once the automerge run passes. A change to scripts/lane_merge_rules.py or '
              '.github/ also needs the owner\'s merge tap: the runner never merges it.')
 
 SESSIONKIT_RISK = {'SessionKitAudio': 'audio', 'SessionKitPersistence': 'persistence', 'SessionKitSharing': 'packet'}
@@ -565,36 +564,6 @@ def classify(paths, diffs=None, root=ROOT):
             'app_tests': app_tests, 'lane_paths': lane_paths}
 
 
-HOSTED_RUNNER = ['ubuntu-latest']  # runs-on for the off-Mac automerge job; lane.yml keys on it (#2442)
-
-# #1389 phase 2: once the repo is public, /lane T2 and T3 requests run on a GitHub-hosted Mac, the image and Xcode the
-# hosted fast checks use (hosted-portable.yml). Rollout guard, not a feature switch: lane.yml's route job hands this
-# repository variable over, and unset (a private repo, whose hosted minutes cost money) the lane job stays on the Mac.
-HOSTED_APP_SWITCH = 'LANE_HOSTED_APP'
-HOSTED_APP_RUNNER = ['xcode-27']
-
-
-def hosted_app_routing(result, env=None):
-    """The lane job (T2/T3 requests) on a GitHub-hosted Mac when LANE_HOSTED_APP is `on`; the automerge job keeps
-    its route. Anything else leaves <result> as it is."""
-    if (os.environ if env is None else env).get(HOSTED_APP_SWITCH, '').strip().lower() != 'on':
-        return result
-    return dict(result, lane=list(HOSTED_APP_RUNNER))
-
-
-def hosted_merge_routing(result, env=None):
-    """#2459: every automerge job starts on a GitHub-hosted Linux runner once the hosted fast pair runs
-    (LANE_HOSTED_FAST `on`, the rule lane-runner.py's hosted_fast_on reads). There the job waits for the hosted
-    checks without a Mac: with LANE_HOSTED_MAC_REST `on` too it merges on all
-    three and runs no test; without it, it hands the run to the build Mac (lane.yml's automerge-mac) only once the
-    pair has finished. T0 and ops diffs test themselves, as before. The lane job keeps its route. Anything else
-    leaves <result> as it is."""
-    env = os.environ if env is None else env
-    if env.get('LANE_HOSTED_FAST', '').strip().lower() != 'on':
-        return result
-    return dict(result, automerge=list(HOSTED_RUNNER))
-
-
 # #2596: the hosted Mac checks (hosted-portable.yml: SessionKit core and Mac rest) prove nothing for a diff that
 # reaches no Swift input, yet 22 of 62 PRs in a day were such diffs and spent 23% of the Mac minutes. A diff needs the
 # Mac checks unless EVERY changed path is on the not-needed list below; a path nobody listed is needed (fail safe).
@@ -628,14 +597,14 @@ MAC_PREFIXES = MAC_READS + ('Packages/', 'Config/', 'TestPlans/', 'SpokenMargins
 # hosted Mac for about 30 minutes (#4724). test_mac_checks_scope.py fails when a workflow with any other runner is
 # missing here, so a new Mac workflow can't slip out of the rule.
 MAC_WORKFLOWS = frozenset('.github/workflows/' + name for name in (
-    'hosted-app-macos.yml', 'hosted-integration.yml', 'hosted-portable.yml', 'hosted-web.yml', 'lane.yml',
+    'hosted-app-macos.yml', 'hosted-integration.yml', 'hosted-portable.yml', 'hosted-web.yml',
     'main-t3.yml', 'phone-build.yml', 'shipped-build-compat.yml'))
 MAC_FILES = {'project.yml', 'Package.swift', 'Package.resolved', 'requirements-dev.txt', '.nvmrc'} | MAC_WORKFLOWS
 # scripts/ files that drive the Mac jobs, or that the Apple-tool runner tests (verify-tests.py
 # PORTABLE_RUNNER_TESTS_LEFT_OUT) exercise: matched on the file name, in scripts/ and scripts/tests/.
 MAC_SCRIPT_NAME = re.compile(r'lane|verif|test-scope|test_scope|phone|sim[_-]|sessionkit|xcode|host|audio|freeze|'
                              r'build29|shipped|bootstrap|slots|ledger|package|fast|trunk', re.I)
-# Helpers the name match misses that the Mac-only code imports or runs (phone-build, ops/disk, lane-runner.py,
+# Helpers the name match misses that the Mac-only code imports or runs (phone-build, ops/disk,
 # verify-tests.py). test_mac_checks_scope.py walks that code's imports and fails when one is missing here.
 MAC_SCRIPT_FILES = {'sm_paths.py', 'sm_build_cache.py', 'comment_trust.py', 'setup-worktree.sh', 'merge_audit.py',
                     'simctl_preflight.py', 'test_inventory.py', 'third_party_notices.py', 'node_modules_drift.py',
@@ -724,93 +693,6 @@ def web_check_required(paths):
 MAC_ONLY_OPS = ('ops/power/',)
 
 
-def hosted_automerge(scope):
-    """Only T0 and ops plus docs can run without the Mac. Lane/app inputs always stay there."""
-    files = scope['files']
-    paths = [f['path'] for f in files]
-    if not paths or any(is_lane_path(p) or p.startswith(('App/', 'Packages/', 'Contracts/') + MAC_ONLY_OPS)
-                        for p in paths):
-        return False
-    if scope['tier'] == 'T0':
-        return True
-    return (scope['tier'] == 'T1' and all(f['category'] in ('ops', 'docs') for f in files)
-            and all(p.startswith(('ops/', 'docs/')) or p.endswith('.md') for p in paths))
-
-
-def runner_routing(pr, file_pages, runner_pages, root=ROOT, offmac=True):
-    """Choose queue labels, never capacity. API errors/incomplete diffs keep today's queues.
-
-    Inputs are the event's PR and gh api --paginate --slurp responses. Busy online runners
-    count: priority work queues there, but an absent/offline runner must not strand a job.
-    Overflow (#1327): an automerge job that isn't priority work goes to the priority runner when it
-    is idle and no build runner is, instead of queueing behind them while the Mac has a runner free.
-    Never slower (#2147), a guard: if every online priority runner also takes build jobs, a priority automerge job uses the
-    build queue, because GitHub gives waiting self-hosted jobs no order and the narrower label only means fewer
-    runners. Priority does not jump the queue; real ordering is #1057.
-    """
-    normal = {'lane': ['self-hosted', 'macOS', 'sm-lane'],
-              'automerge': ['self-hosted', 'macOS', 'sm-lane-build']}
-    priority = ['self-hosted', 'sm-lane-priority']
-    try:
-        # An API error, malformed page, duplicate or truncated listing cannot prove a hosted diff.
-        if not isinstance(file_pages, list) or not all(isinstance(p, list) for p in file_pages):
-            return normal
-        if not isinstance(runner_pages, list) or not runner_pages:
-            return normal
-        if not all(isinstance(page['runners'], list) for page in runner_pages):
-            return normal
-        runners = [r for page in runner_pages for r in page['runners']]
-        if not all(r['status'] in ('online', 'offline') and isinstance(r['labels'], list)
-                   and all(isinstance(label['name'], str) for label in r['labels']) for r in runners):
-            return normal
-        files = [file for page in file_pages for file in page]
-        if not all(isinstance(file, dict) for file in files):
-            return normal
-        if any(file.get('status') == 'renamed' and 'previous_filename' not in file for file in files):
-            return normal
-        paths = {file['filename'] for file in files}
-        complete = (bool(files) and len(files) == pr['changed_files'] and len(paths) == len(files)
-                    and all(isinstance(p, str) and p for p in paths))
-        paths.update(file['previous_filename'] for file in files if 'previous_filename' in file)
-        if not all(isinstance(p, str) and p for p in paths):
-            return normal
-        labelled = any(label['name'] == 'priority' for label in pr['labels'])
-
-        def names(runner):
-            return {label['name'] for label in runner['labels']}
-
-        # A GitHub-hosted Linux runner, free for the public repo (#2442; the VPS runner sm-vps-t1 until then, which
-        # had to be online). GitHub always has one, so there is no runner to look for.
-        if offmac and complete and hosted_automerge(classify(paths, root=root)):
-            # Only the automerge job leaves the Mac: explicit /lane requests keep the Mac routing they had.
-            return dict(runner_routing(pr, file_pages, runner_pages, root, offmac=False),
-                        automerge=list(HOSTED_RUNNER))
-
-        # Only an explicit busy=false is idle: a runner whose state is missing or unreadable is not.
-        def idle(runner, wanted):
-            return runner['status'] == 'online' and runner.get('busy') is False and wanted <= names(runner)
-
-        if not any(r['status'] == 'online' and set(priority) <= names(r) for r in runners):
-            return normal
-        overflow = dict(normal)
-        if any(idle(r, set(priority)) for r in runners) and not any(idle(r, {'sm-lane-build'}) for r in runners):
-            overflow['automerge'] = priority
-        if not labelled:
-            if not complete:
-                return overflow
-            # Both sides of a rename belong to the diff: moving app code into ops isn't ops-only.
-            if not all(path.startswith(('ops/', 'docs/')) or is_lane_path(path) for path in paths):
-                return overflow
-            if classify(paths, root=root)['tier'] != 'T1':
-                return overflow
-        # The lane job keeps the priority runner: the build queue would only add the host-test backlog to it.
-        shared = all('sm-lane-build' in names(r) for r in runners
-                     if r['status'] == 'online' and set(priority) <= names(r))
-        return {'lane': priority, 'automerge': normal['automerge'] if shared else priority}
-    except (KeyError, TypeError, ValueError):
-        return normal
-
-
 def git(*args):
     return subprocess.check_output(['git', '-C', str(ROOT), *args], text=True)
 
@@ -858,8 +740,6 @@ def main(argv=None):
     parser.add_argument('--app-compile-required', metavar='FILE',
                         help='read changed paths (one per line) and print app=true|false and app_reason= lines for '
                              '$GITHUB_OUTPUT; any trouble reading says true')
-    parser.add_argument('--runner-routing', nargs=3, metavar=('EVENT', 'FILES', 'RUNNERS'),
-                        help='route lane jobs from event JSON and paginated gh API JSON files')
     args = parser.parse_args(argv)
     if args.mac_required:
         try:
@@ -874,14 +754,6 @@ def main(argv=None):
         except (OSError, ValueError) as error:
             required, why = True, f'the changed paths could not be read ({error!r})'
         print(f'app={"true" if required else "false"}\napp_reason={why}')
-        return 0
-    if args.runner_routing:
-        try:
-            event, files, runners = [json.loads(Path(path).read_text()) for path in args.runner_routing]
-            result = runner_routing(event['pull_request'], files, runners)
-        except (OSError, ValueError, KeyError, TypeError):
-            result = runner_routing({}, [], [])
-        print(json.dumps(hosted_merge_routing(hosted_app_routing(result))))
         return 0
     if not args.files and args.base is None:  # #1492: the trunk (scripts/trunk.py)
         from trunk import trunk_ref

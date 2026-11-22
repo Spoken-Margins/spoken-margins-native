@@ -80,7 +80,7 @@ final class MemoryFootprintRecorderTests: XCTestCase {
         recorder.record(.launch, mediaType: nil)
         XCTAssertEqual(diagnostics.values["memoryVerdict"], "too few samples to say")
 
-        for (switchIndex, articleMB) in ([300, 340, 380, 420] as [UInt64]).enumerated() {
+        for (switchIndex, articleMB) in ([300, 340, 380, 420, 460, 500] as [UInt64]).enumerated() {
             footprintMB = 120
             clock += 120
             recorder.observe(snapshot("podcast-\(switchIndex)", .playing), mediaType: { "podcast" })

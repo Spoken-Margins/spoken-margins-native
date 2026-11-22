@@ -24,15 +24,12 @@ from test_workflow_files import ROOT
 WORKFLOWS = sorted(p.name for p in (ROOT / '.github' / 'workflows').glob('*.yml'))
 
 # xcodebuild resolves packages into -clonedSourcePackagesDirPath (verify-tests.py adds it from SM_SPM_DIR).
-XCODEBUILD = re.compile(r'xcodebuild -project|lane-runner\.py"? --tree|main_t3\.py run|sm_integration_run|--plan app\b')
+XCODEBUILD = re.compile(r'xcodebuild -project|main_t3\.py run|sm_integration_run|--plan app\b')
 # `swift build` and `swift test` resolve them into Packages/SessionKit/.build.
 SWIFTPM = re.compile(r'swift (build|test)\b|--plan fast-hosted-sessionkit|--plan fast-mac-rest|check-build29-database')
 
 
 def is_hosted_mac(workflow_name: str, job_name: str, job: dict) -> bool:
-    # lane.yml's `lane` job is a hosted Mac only when the router says so; its hosted steps are marked github-hosted.
-    if workflow_name == 'lane.yml' and job_name == 'lane':
-        return True
     return job.get('runs-on') == 'xcode-27'
 
 
@@ -71,7 +68,7 @@ class HostedSwiftJobsKeepTheirPackagesTests(unittest.TestCase):
     def test_the_check_sees_every_known_hosted_mac_swift_job(self):
         # A pattern that matched nothing would pass every test below.
         seen = {(w, j) for w, j, *_ in hosted_swift_jobs()}
-        for expected in [('lane.yml', 'lane'), ('hosted-integration.yml', 'integration'),
+        for expected in [('hosted-integration.yml', 'integration'),
                          ('hosted-portable.yml', 'sessionkit'), ('hosted-portable.yml', 'app-compile'),
                          ('hosted-portable.yml', 'mac-rest'), ('shipped-build-compat.yml', 'compat'),
                          ('hosted-app-macos.yml', 'app'), ('phone-build.yml', 'build'), ('main-t3.yml', 't3')]:
@@ -110,16 +107,6 @@ class HostedSwiftJobsKeepTheirPackagesTests(unittest.TestCase):
             with self.subTest(job=f'{workflow}:{name}'):
                 self.assertTrue(restoring and min(restoring) < building,
                                 f'{workflow}:{name} builds (step {building}) before it restores the packages {restoring}')
-
-    def test_the_lane_job_keeps_its_package_folder_out_of_the_build_folder_the_runner_replaces(self):
-        # scripts/lane-runner.py warm_build_folders() removes a real .build directory and links it to the warm cache
-        # before every T2/T3 build, so a folder inside .build is empty by the time xcodebuild reads it.
-        job = W.load('lane.yml')['jobs']['lane']
-        writes = [str(step.get('run', '')) for step in job['steps'] if 'SM_SPM_DIR=' in str(step.get('run', ''))]
-        self.assertEqual(len(writes), 1, writes)
-        value = re.search(r'SM_SPM_DIR=(\S+)', writes[0]).group(1)
-        self.assertNotIn('.build', value)
-        self.assertIn('RUNNER_TEMP', value)
 
 
 class SessionKitBuildCacheKeysTests(unittest.TestCase):

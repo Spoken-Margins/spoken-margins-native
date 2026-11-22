@@ -87,28 +87,61 @@ struct PacketOpenFailureSheet: View {
     }
 }
 
-/// Hosts the failure sheet on the root view. When the listener closes it, the first-launch drawer a failed friend's
-/// file withdrew comes back (`CatalogDrawerModel.friendFileFailed`), once the sheet is gone.
+/// Hosts the failure sheet on the root view while no first-launch drawer is up. When the listener closes it, the drawer
+/// a failed friend's file withdrew comes back (`CatalogDrawerModel.friendFileFailed`), once the sheet is gone. With the
+/// drawer up the drawer hosts it instead (`PacketOpenFailureDrawerSheetModifier`): a root sheet cannot present over it.
 private struct PacketOpenFailureSheetModifier: ViewModifier {
     @ObservedObject var model: Gate1AppModel
     @ObservedObject var presenter: PacketOpenFailurePresenter
     @ObservedObject var drawer: CatalogDrawerModel
 
+    private var hosts: Bool { PacketOpenFailureHost.hosting(drawerIsPresented: drawer.isPresented) == .root }
+
     func body(content: Content) -> some View {
         content.trackedSheet(
-            item: Binding(get: { presenter.presented }, set: { if $0 == nil { presenter.close() } }),
+            item: Binding(
+                get: { hosts ? presenter.presented : nil },
+                set: { if $0 == nil, hosts { presenter.close() } }
+            ),
             onDismiss: {
                 if presenter.takeCloseNotice() { drawer.friendFileFailed(at: FirstLaunchWelcomeOrder.Place(model)) }
             },
-            content: { presented in
-                PacketOpenFailureSheet(
-                    content: presented.content,
-                    showsTryAgain: presented.showsTryAgain,
-                    isRetrying: presenter.isRetrying,
-                    tryAgain: presenter.tryAgain,
-                    close: presenter.close
-                )
-            }
+            content: { presented in PacketOpenFailureSheet(presenter: presenter, presented: presented) }
+        )
+    }
+}
+
+/// Hosts the failure sheet from inside the first-launch drawer, which a paste with picks leaves up: the sheet cannot
+/// present from the root over it, so the failure would never show and the drawer would never be told (#3782).
+private struct PacketOpenFailureDrawerSheetModifier: ViewModifier {
+    @ObservedObject var presenter: PacketOpenFailurePresenter
+    @ObservedObject var drawer: CatalogDrawerModel
+
+    private var hosts: Bool { PacketOpenFailureHost.hosting(drawerIsPresented: drawer.isPresented) == .drawer }
+
+    func body(content: Content) -> some View {
+        content.trackedSheet(
+            item: Binding(
+                get: { hosts ? presenter.presented : nil },
+                set: { if $0 == nil, hosts { presenter.close() } }
+            ),
+            onDismiss: {
+                // The drawer is up, so it was never withdrawn: it only needs to be told no friend's item is coming.
+                if presenter.takeCloseNotice() { drawer.friendFileFailed(at: .elsewhere) }
+            },
+            content: { presented in PacketOpenFailureSheet(presenter: presenter, presented: presented) }
+        )
+    }
+}
+
+extension PacketOpenFailureSheet {
+    fileprivate init(presenter: PacketOpenFailurePresenter, presented: PacketOpenFailurePresenter.Presented) {
+        self.init(
+            content: presented.content,
+            showsTryAgain: presented.showsTryAgain,
+            isRetrying: presenter.isRetrying,
+            tryAgain: presenter.tryAgain,
+            close: presenter.close
         )
     }
 }
@@ -116,5 +149,10 @@ private struct PacketOpenFailureSheetModifier: ViewModifier {
 extension View {
     func packetOpenFailureSheet(model: Gate1AppModel, drawer: CatalogDrawerModel) -> some View {
         modifier(PacketOpenFailureSheetModifier(model: model, presenter: model.packetOpenFailures, drawer: drawer))
+    }
+
+    /// For the first-launch drawer's own view; see `PacketOpenFailureDrawerSheetModifier`.
+    func packetOpenFailureSheet(presenter: PacketOpenFailurePresenter, drawer: CatalogDrawerModel) -> some View {
+        modifier(PacketOpenFailureDrawerSheetModifier(presenter: presenter, drawer: drawer))
     }
 }

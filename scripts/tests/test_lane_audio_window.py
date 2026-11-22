@@ -148,10 +148,10 @@ class HostedMacTests(unittest.TestCase):
         self.assertIn(f'Audio check for `{AUDIO_TEST}`: not run: the hosted Mac has no audio loopback', text)
         self.assertIn('still owed', text)
 
-    def test_the_manifest_steps_carry_the_field_the_lane_runner_reads(self):
-        """verify-tests.py writes `audio_not_run` through record_not_run; lane-runner.py's summarize_manifest reads it."""
+    def test_the_manifest_steps_carry_the_field_the_t3_summary_reads(self):
+        """verify-tests.py writes `audio_not_run` through record_not_run; lane_t3.py's summarize_manifest reads it."""
         lane = importlib.util.module_from_spec(importlib.util.spec_from_file_location(
-            'lane_runner_for_audio', SCRIPTS / 'lane-runner.py'))
+            'lane_t3_for_audio', SCRIPTS / 'lane_t3.py'))
         lane.__spec__.loader.exec_module(lane)
         steps = [{'name': 'build-for-testing'}, {'name': 'xcode-tests', 'tests': self.records}]
         self.assertTrue(lane_audio_window.record_not_run(steps, hosted_runner=True))

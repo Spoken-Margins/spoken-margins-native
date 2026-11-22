@@ -52,6 +52,43 @@ public enum TimelinePullPresentation {
     }
 }
 
+/// Decides when a pull past the bottom of Now opens Timeline (#4816). A pull is the listener's finger still
+/// dragging, begun from rest at the bottom. A fling's rubber-band, a scene that gets shorter under the scroll
+/// position, or the view scrolling itself can report the same overscroll distance, and none of them may change tab.
+public struct TimelinePullTracker: Equatable, Sendable {
+    private var isDragging = false
+    private var startedAtRest = false
+    private var hasFired = false
+    private var lastDistance: CGFloat = 0
+
+    public init() {}
+
+    /// The listener's finger went down on the scroll view, or came up (a drag ended, or the scroll is coasting).
+    public mutating func dragChanged(isDragging: Bool) {
+        self.isDragging = isDragging
+        startedAtRest = isDragging && lastDistance < 1
+        if isDragging { hasFired = false }
+    }
+
+    /// The scroll view's distance past its bottom changed. Returns true once, when this pull should open Timeline.
+    public mutating func overscrollChanged(_ distance: CGFloat) -> Bool {
+        defer { lastDistance = distance }
+        if distance < 1 {
+            hasFired = false
+            return false
+        }
+        // A finger rubber-bands through small distances. Jumping from rest past the activation distance in one
+        // step is the content changing under a resting finger (a shorter scene), not a pull.
+        if lastDistance < 1, TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance) {
+            startedAtRest = false
+        }
+        guard isDragging, startedAtRest, !hasFired,
+              TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance) else { return false }
+        hasFired = true
+        return true
+    }
+}
+
 /// A tile in the Add sheet's top grid. Each is a different way in; none repeats another (#3217).
 public enum AddSourceTile: String, CaseIterable, Identifiable, Hashable, Sendable {
     case linkOrPodcast
