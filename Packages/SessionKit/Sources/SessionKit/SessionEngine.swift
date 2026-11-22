@@ -378,6 +378,14 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// The system (Siri, dictation, a call) paused the current session's source and nothing has moved it since, so an
+    /// automatic resume may still be waiting for the interruption to end (#4926). Read-only: a trace asks it, nothing
+    /// decides on it.
+    public var isPausedBySystemInterruption: Bool {
+        guard let session = currentSession else { return false }
+        return interruptionResumePoint.isPausedBySystem(sessionId: session.id)
+    }
+
     /// Pauses the source for a Margin capture (begin, Save or Cancel of a written Margin, a recording's start). A source
     /// the system already paused (Siri, a call) is left as it is: the audio client holds an automatic resume for it,
     /// and `pause()` is the listener's own Pause to the client, which cancels that resume, so a Margin added while Siri

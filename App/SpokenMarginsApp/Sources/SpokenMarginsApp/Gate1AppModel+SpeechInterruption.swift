@@ -31,6 +31,15 @@ extension Gate1AppModel {
     }
 
     func handleMediaPlaybackInterruption(_ event: AudioPlaybackInterruptionEvent) {
+        // A podcast's interruption left no line in the export, so a pause by Siri or dictation looked like the app's own
+        // (#4926). One line each way; an end that iOS does not ask to resume reaches no handler, so a `began` with no
+        // `ended` after it is that case.
+        defer {
+            recordDeveloperDiagnostic(
+                event == .began ? "media.interruption_began" : "media.interruption_ended",
+                ["outcome": diagnostics["mediaPlaybackInterruption"] ?? "none"]
+            )
+        }
         switch event {
         case .began:
             Self.mediaInterruptionResumeRetrier.cancel()
