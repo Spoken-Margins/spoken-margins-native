@@ -207,7 +207,7 @@ struct ExperienceMarginDetailView: View {
                         .accessibilityIdentifier("marginDetail.openSettings.button")
                     }
                     if !current.isWritten, current.interjection.anchorContextStatus == .unavailable {
-                        Button(model.isRetryingAnchorContext(current.interjection) ? "Recovering Context…" : "Retry Context", systemImage: "arrow.clockwise") {
+                        Button(model.isRetryingAnchorContext(current.interjection) ? "Finding Source Words…" : "Retry Finding Source Words", systemImage: "arrow.clockwise") {
                             model.retryAnchorContext(current.interjection)
                         }
                         .disabled(model.isRetryingAnchorContext(current.interjection))

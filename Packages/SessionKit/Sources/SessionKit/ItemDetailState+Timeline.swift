@@ -7,6 +7,7 @@ extension ItemDetailState {
         var result = self
         result.timelineSource = TimelineSourceContent(
             text: text, document: document, elements: elements?.elements(for: text) ?? [])
+        result.pdfClipSource = document.flatMap { PDFClipSource(document: $0, text: text) }
         return result
     }
 }

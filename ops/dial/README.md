@@ -20,6 +20,14 @@ The usage breaker stops work when a weekly allowance is running ahead of its lin
 
 The thresholds, the stop line and the trend rule are unchanged. Only the scope of the halt changed.
 
+## Cloud max ignores the breaker (2026-11-21)
+
+Cloud max on the Dial means "ignore usage". The Mac tick's own rule (Claude use above the week's share gone plus 10) does not read the Dial, so on 2026-11-21, with Cloud max set for the week, the tick posted `HALT (usage breaker)` at 15% used and 4.9% of the week gone, and the coordinator, the Mac worker and the sweep stopped.
+
+Every reader in this repository now asks `dial_gate.breaker_holds(dial, usage_info)` instead of reading `halted` alone: a Claude HALT holds under Paced and Off, and holds nothing under Cloud max. That covers the Mac worker (`pacing_hold`), `scripts/sm_sweep.py` (its slots and its `halt` action), the Dial gate's status line and `ops/away/away_check.py`. The Mac worker's disk and memory holds stay. Paced and Off are unchanged.
+
+Not in this repository, so the owner or the Mac finisher applies it: the tick's rule in `sm-mac-tick/SKILL.md`, the coordinator's project instructions, and the finisher and integration prompts. Until they read the Dial, a HALT can still appear on #337 under Cloud max, and the coordinator's project-instruction rule will still obey it. The text below for the tick covers the first.
+
 ## What lives where
 
 1. **The decision** is made by the `SM Mac tick` scheduled task on the Mac (`~/.claude/scheduled-tasks/sm-mac-tick/SKILL.md`), outside this repository. It reads both providers' usage and posts the result on #337. The text below goes there.
@@ -45,6 +53,7 @@ Replace the single usage-breaker step in `SKILL.md` with:
 
 ```text
 USAGE BREAKER, per provider. Apply the existing breaker test (the same thresholds and stop line) to Claude and to Codex separately, each against its own usage and its own share of the week gone. Never let one provider's result halt the other.
+- First read the Mode on the Dial (#589). If Claude's Mode is Cloud max, Claude is never in the halted set: post `**RESUMED (usage breaker: Claude)** · Dial is Cloud max` if the last marker was a HALT, and say "breaker off: Cloud max" in the pace line.
 - Halted set = the providers that fail the test. Compare it with the last HALT or RESUMED marker on #337.
 - If a provider joined the set, post `**HALT (usage breaker: <providers>)** · <provider> N% used, M% of its week gone.` as its own comment. If one left it, post `**RESUMED (usage breaker: <providers>)** · <why>`. Name only the providers that changed.
 - The last line of every tick: `- advice for dispatch:` followed by `HALT (usage breaker: <providers>): <what pauses and what continues>` when the set is not empty, using the wording in ops/dial/README.md, otherwise the usual pacing advice.
@@ -65,7 +74,7 @@ The Mac finisher's pause rule (`artifacts/finisher-prompt.md` on the Mac) and th
 ## Apply it
 
 1. Paste the tick text into `sm-mac-tick/SKILL.md` and the instruction text into the project instructions and the finisher and integration prompts.
-2. Redeploy the Dial gate: `ops/dial/deploy.sh <ssh-host> --dry-run`, then `--enable`.
+2. Redeploy the Dial gate: `ops/dial/deploy.sh <ssh-host> --dry-run`, then `--enable`. With a normal (non-root) login the root steps run through `sudo` and ask for its password at the terminal, once per root step (#4848), so an unattended session can't deploy it.
 3. The next tick on #337 should name the halted provider. Until the tick is updated, its old unscoped HALT still reads as every provider to anything that reads it.
 
 ## Tests

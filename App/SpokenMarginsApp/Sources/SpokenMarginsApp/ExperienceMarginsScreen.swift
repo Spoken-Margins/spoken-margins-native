@@ -548,7 +548,7 @@ struct ExperienceMarginsScreen: View, Equatable {
     }
 
     private static func retryLabel(_ repair: MarginRowRepair) -> String {
-        repair == .retryTranscription ? "Retry transcription" : "Retry context"
+        repair == .retryTranscription ? "Retry transcription" : "Retry finding source words"
     }
 
     /// The model's own retries, as the details call them.

@@ -81,7 +81,7 @@ extension SharedMarginTally {
         guard total > 0 else { return nil }
         let people = Self.mergedSenders(senders)
         // A tally with no sender read (an older caller) is one friend with no name.
-        let who = Self.who(people)
+        let who = Self.who(people, spoken: spokenSuffix)
         let wordsAreNew = new == total
         let somewhatNew = new > 0 && new < total
         let marginCount = total - min(max(replies, 0), total)
@@ -105,18 +105,43 @@ extension SharedMarginTally {
         "\(n) \(isNew ? "new " : "")\(n == 1 ? noun : plural)"
     }
 
-    private static func who(_ people: [Sender]) -> String {
+    /// The words for who. On screen a long name is cut (`shownName`); spoken, VoiceOver gets the whole name, since
+    /// how "…" is spoken depends on the voice (#4648). Two different friends who read the same ("Sam" and "Sam", or
+    /// two long names cut to the same start) are "Sam and another Sam", so the line never reads as one friend twice.
+    private static func who(_ people: [Sender], spoken: Bool, matching query: String? = nil) -> String {
         guard !people.isEmpty else { return "a friend" }
         let named = people.filter(\.isNamed).count
+        func label(_ sender: Sender) -> String {
+            guard sender.isNamed else { return "a friend" }
+            return spoken ? sender.name : sender.shownName
+        }
         switch people.count {
         case 1:
-            return people[0].isNamed ? people[0].shownName : "a friend"
+            return label(people[0])
         case 2:
             if named == 0 { return "friends" }
-            return people.map { $0.isNamed ? $0.shownName : "a friend" }.joined(separator: " and ")
+            let first = label(people[0]), second = label(people[1])
+            if people[0].isNamed, people[1].isNamed, first.folded == second.folded {
+                return "\(first) and another \(second)"
+            }
+            return "\(first) and \(second)"
         default:
+            // A search that found the item through one of them names that friend first: "Sam and 2 friends", so the row
+            // says why it matched (#4649). Without a search, or with no named match, it is the count alone.
+            if let query, let found = people.first(where: { $0.isNamed && $0.matches(query) }) {
+                return "\(label(found)) and \(people.count - 1) friends"
+            }
             return "\(people.count) friends"
         }
+    }
+
+    /// Why a Library search listed an item that matched only through who sent its Margins: "From Sam", "From Cole and
+    /// Sam", "From Sam and 2 friends". The matched friend is named even when three or more sent Margins, where the
+    /// row's own count words say only "3 friends" (#4649). Nil when the query is empty or no named sender matches, so
+    /// a row that matched by title says nothing extra. `spoken` gives VoiceOver the whole name, not the cut one.
+    public func senderMatchLine(_ query: String, spoken: Bool = false) -> String? {
+        guard senderMatches(query) else { return nil }
+        return "From " + Self.who(Self.mergedSenders(senders), spoken: spoken, matching: query)
     }
 
     /// Whether a Library search finds the item through who sent the Margins: the same match as titles (case and
@@ -125,11 +150,17 @@ extension SharedMarginTally {
         let wanted = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wanted.isEmpty else { return false }
         // `senders` was merged when the tally was made.
-        return senders.contains { $0.isNamed && $0.name.localizedStandardContains(wanted) }
+        return senders.contains { $0.isNamed && $0.matches(wanted) }
     }
 }
 
 extension SharedMarginTally.Sender {
+    /// The Library search's rule for a name: case and diacritics ignored, a substring.
+    fileprivate func matches(_ query: String) -> Bool {
+        let wanted = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !wanted.isEmpty && name.localizedStandardContains(wanted)
+    }
+
     /// The sort label: the name, or "a friend".
     fileprivate var shownLabel: String { isNamed ? shownName : "a friend" }
 }

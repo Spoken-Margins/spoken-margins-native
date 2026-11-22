@@ -18,10 +18,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SOURCES = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
 FIELD_FILE = SOURCES / "ExperienceDesignSystem.swift"
-# Library, Margins and the collection's item picker used the box when this was written (2026-11-21).
-MIN_HOSTS = 3
-# The sheet's navigation bar has Cancel and its own Done, so a second Done on the keyboard would confuse (#4636).
-OWN_DONE = {"CollectionItemsSheet.swift"}
+# Library and Margins use the box (the collection's item picker, `CollectionItemsSheet`, was retired by #3769's Select).
+MIN_HOSTS = 2
+# A sheet whose navigation bar has Cancel and its own Done would not take a second Done on the keyboard (#4636); none today.
+OWN_DONE: set[str] = set()
 
 
 def field_body(text: str) -> str:

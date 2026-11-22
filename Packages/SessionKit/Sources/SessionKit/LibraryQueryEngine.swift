@@ -52,16 +52,9 @@ public enum LibraryQueryEngine {
         let normalizedQuery = libraryQuery.query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return libraryItems.filter { row in
-            let metadataMatch: Bool
-            if normalizedQuery.isEmpty {
-                metadataMatch = true
-            } else {
-                metadataMatch = [row.title, row.sourceTitle, row.author]
-                    .compactMap { $0 }
-                    .map { $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) }
-                    .contains { $0.localizedStandardContains(normalizedQuery) }
-                    || (includingSenders && row.sharedMargins.senderMatches(libraryQuery.query))
-            }
+            let metadataMatch = normalizedQuery.isEmpty
+                || titleSourceOrAuthorMatches(row, normalizedQuery: normalizedQuery)
+                || (includingSenders && row.sharedMargins.senderMatches(libraryQuery.query))
             let contentMatch = libraryQuery.contentType == .all || libraryContentType(for: row) == libraryQuery.contentType
             let listeningMatch: Bool
             switch libraryQuery.listeningState {
@@ -75,6 +68,26 @@ public enum LibraryQueryEngine {
             let sharedMatch = libraryQuery.sharedMargins.matches(row.sharedMargins)
             return metadataMatch && contentMatch && listeningMatch && offlineMatch && sharedMatch
         }
+    }
+
+    private static func titleSourceOrAuthorMatches<Row: LibraryQueryRow>(_ row: Row, normalizedQuery: String) -> Bool {
+        [row.title, row.sourceTitle, row.author]
+            .compactMap { $0 }
+            .map { $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) }
+            .contains { $0.localizedStandardContains(normalizedQuery) }
+    }
+
+    /// Why the search listed a row that its title, source and author do not match: who sent the Margins on it, "From Sam
+    /// and 2 friends". Nil for a row the search found by title, source or author, with no search, or when senders are
+    /// not searched, so the line appears only where the match would otherwise be a mystery (#4649).
+    public static func matchedSenderLine<Row: LibraryQueryRow>(
+        _ row: Row, query libraryQuery: LibraryQuery, includingSenders: Bool = true, spoken: Bool = false
+    ) -> String? {
+        let normalizedQuery = libraryQuery.query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard includingSenders, !normalizedQuery.isEmpty,
+              !titleSourceOrAuthorMatches(row, normalizedQuery: normalizedQuery) else { return nil }
+        return row.sharedMargins.senderMatchLine(libraryQuery.query, spoken: spoken)
     }
 
     /// How many finished items the listening filter hides, for the "N finished hidden · Show" line at the end of the

@@ -105,6 +105,32 @@ class StatusTests(unittest.TestCase):
             'runner fault: The cloned simulator did not boot'))
         self.assertIn('no test result', M.description('failure', {'failed': []}, ['Build before simulator boot: x']))
 
+    def test_the_status_line_names_the_fault_not_the_build_time(self):
+        # 846e7e5 (2026-11-21): 1899 app tests passed, the adapters plan could not fetch a licence text, and the status
+        # said "runner fault: shared build before simulator boot took 7m44s".
+        details = ['shared build before simulator boot took 7m44s (reused: False); evidence: /w/verify-build/manifest.json',
+                   'boot of the cloned simulator took 2m25s (memory pressure at boot: normal)',
+                   'app: passed on retry: none',
+                   'adapters: Process exit 2 (see /w/verify-adapters/supertonic-model.log).',
+                   'template preparation and simulator clone took 11m02s']
+        self.assertEqual(M.description('error', {'passed': 1899, 'failed': []}, details),
+                         'runner fault: adapters: Process exit 2 (see /w/verify-adapters/supertonic-model.log).')
+        self.assertTrue(M.description('failure', {'failed': []}, details).startswith(
+            'failed, no test result: adapters: Process exit 2'))
+        for neutral in details[:3] + details[4:]:  # all neutral: the first still shows, as before
+            with self.subTest(neutral=neutral[:30]):
+                self.assertEqual(M.first_problem([neutral], 'none'), neutral)
+        self.assertEqual(M.first_problem(['', ''], 'none'), 'none')
+        # Recovered-stall lines (lane-runner.py 2699, 3020, 3023) are also information, found by the review of this change.
+        for recovered in ('boot stall on the first clone (A), so it was deleted and one fresh clone (B) booted in 40s',
+                          "tolerated one SpringBoard change in the first 30 s of the first boot (owner's rule)",
+                          'app: recovered after 1 startup stall (xcode-tests printed no test output) and counts as a PASS'):
+            with self.subTest(recovered=recovered[:30]):
+                self.assertEqual(M.first_problem([recovered, 'adapters: Process exit 2'], 'none'), 'adapters: Process exit 2')
+        self.assertEqual(M.first_problem(['app: passed on retry: Foo/testBar', 'x failed'], 'none'), 'x failed')
+        self.assertEqual(M.first_problem(['Build before simulator boot: Process exit 74'], 'none'),
+                         'Build before simulator boot: Process exit 74')
+
     def test_every_description_fits_githubs_limit(self):
         many = [(f'SpokenMarginsAppTests/Class{i}/testSomethingLong{i}', []) for i in range(40)]
         for state, results, details in (('failure', {'failed': many}, []), ('error', {}, ['x ' * 200]),
@@ -179,17 +205,17 @@ class IssueTests(unittest.TestCase):
 
 
 class LaneRunnerCouplingTests(unittest.TestCase):
-    """main_t3.py drives lane-runner.py's T3 machinery; a rename there must fail here, not on the hosted Mac."""
+    """main_t3.py drives lane_t3.py's T3 machinery; a rename there must fail here, not on the hosted Mac."""
 
     def test_the_lane_runner_still_has_what_the_main_run_calls(self):
-        lane = M.load_lane_runner()
+        lane = M.load_lane_t3()
         for name in ('_run_t3_grouped', 'log_retry_passes', 'RepoTally', 'T3_TIMEOUT'):
             with self.subTest(name=name):
                 self.assertTrue(hasattr(lane, name))
         self.assertEqual(sorted(lane.PLANS), sorted(M.PLANS))
 
     def test_an_empty_selector_list_runs_the_whole_plan(self):
-        lane = M.load_lane_runner()
+        lane = M.load_lane_t3()
         _, _, ran, _ = lane.run_plans({'app': []}, lambda plan, selectors, output: manifest(passed=['T/A/test1']),
                                       Path('/nonexistent'))
         self.assertEqual(len(ran), 1)

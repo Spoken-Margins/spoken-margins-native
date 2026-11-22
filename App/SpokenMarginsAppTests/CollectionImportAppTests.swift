@@ -178,13 +178,12 @@ final class CollectionImportAppTests: XCTestCase {
         XCTAssertEqual(stored.name, "Week three")
         XCTAssertEqual(stored.itemIDs, older.itemIDs + [extra], "the rename kept the item the import added")
 
-        // And an edit from the older copy that leaves `extra` unticked only because the sheet never showed it.
-        let edited = await model.libraryCollections.setItems(
-            Set(older.itemIDs.dropLast()), in: older, choosable: older.itemIDs, store: store)
-        guard case .saved = edited else { return XCTFail("edit should save, got \(edited)") }
-        let afterEdit = try XCTUnwrap(try store.loadItemCollections().first { $0.id == older.id })
-        XCTAssertTrue(afterEdit.itemIDs.contains(extra), "an item the sheet couldn't choose stays")
-        XCTAssertEqual(afterEdit.name, "Week three")
+        // And Select's Remove from Collection, picked on a screen drawn before that file landed (#4720).
+        let removed = await model.libraryCollections.remove([older.itemIDs[0]], fromCollectionID: older.id, store: store)
+        XCTAssertEqual(try removed.get(), 1)
+        let afterRemove = try XCTUnwrap(try store.loadItemCollections().first { $0.id == older.id })
+        XCTAssertEqual(afterRemove.itemIDs, Array(older.itemIDs.dropFirst()) + [extra], "only the picked item left")
+        XCTAssertEqual(afterRemove.name, "Week three")
     }
 
     /// The Add to Collection sheet's tick and rename land on the stored copy (#3769 audit): the sheet drew the row before

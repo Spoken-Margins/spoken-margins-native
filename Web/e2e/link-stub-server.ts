@@ -10,6 +10,8 @@
 //                  only how far through the post it sits (what the iPhone app writes for an article; #4421)
 //   vectorarticle1 an article on an ordinary site (not Substack) with Margins that carry only how far through they sit:
 //                  no audio of its own and no voice to look up, so a browser can't play it (#4454)
+//   vectorapple01  an Apple Podcasts episode with only its page: the owner's 2026-11-20 share, whose packet held the episode
+//                  page and no audio address and no GUID (#4767, #4783). Two timed Margins, as vectorvoice01's
 //   expired00001   answers 410, as an expired link does
 //   switchedoff1   answers 503 `disabled`, as the server does while links are switched off
 // Run: node e2e/link-stub-server.ts (Node 24 strips the types). Port 4174, or SM_LINK_STUB_PORT.
@@ -89,6 +91,26 @@ const essayPacket = await withLayer(
 links.set('vectorarticle1', {
   preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
   packet: await sealPart(essayPacket, PART.packet, vectorKey),
+});
+
+const APPLE_EPISODE = 'https://podcasts.apple.com/us/podcast/people-parks-and-policy-with-rffs-margaret-walls/id1445582279?i=1000427709574';
+const applePacket = await withLayer(
+  voicePacket,
+  () => {},
+  (manifest) => {
+    manifest.item = {
+      canonicalURL: APPLE_EPISODE,
+      originalURL: APPLE_EPISODE,
+      itemType: 'podcast',
+      title: 'People, Parks, and Policy with RFF’s Margaret Walls',
+      showTitle: 'Resources Radio',
+      durationMs: 1_800_000,
+    };
+  },
+);
+links.set('vectorapple01', {
+  preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
+  packet: await sealPart(applePacket, PART.packet, vectorKey),
 });
 
 const TYPES: Record<string, string> = {

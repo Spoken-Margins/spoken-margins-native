@@ -171,7 +171,7 @@ def pacing_hold(gate, now: dt.datetime, dial: dict, usage_info: dict, free_bytes
     holds exactly when the Dial would not wake the project, plus the Mac's disk and memory."""
     if dial['mode'] == 'off' or dial['threads'] == 0:
         return 'the Dial is Off or allows 0 Claude threads'
-    if usage_info['halted']:
+    if gate.breaker_holds(dial, usage_info):   # Cloud max ignores it, as the Dial says
         return 'the Mac tick says HALT (usage breaker: Claude)'
     if free_bytes is not None and free_bytes < MIN_FREE_GIB * 2**30:
         return f'only {free_bytes / 2**30:.0f} GiB free disk (needs {MIN_FREE_GIB})'

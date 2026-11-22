@@ -163,6 +163,8 @@ backup_server "${stamp}"
 id smserver >/dev/null 2>&1 || useradd --system --home-dir /var/lib/smserver --no-create-home --shell /usr/sbin/nologin smserver
 install -d -o smserver -g smserver -m 0755 "${server_root}" "${server_root}/api" "${server_root}/api/v1" "${server_root}/bridge" "${server_root}/bridge/v1"
 install -d -m 0755 "${web_root}"
+# A deploy run through sudo hands the web folder to the login, so deploy-web.sh can write it without root (#2478).
+if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != root ]]; then chown "${SUDO_USER}:$(id -gn "${SUDO_USER}")" "${web_root}"; fi
 install -m 0755 "${stage}/smserver" "${bin}.new" && mv -f "${bin}.new" "${bin}"
 install -m 0644 "${stage}/smserver.service.rendered" "${unit}"
 install -m 0644 "${stage}/journald@smserver.conf" "${jconf}"

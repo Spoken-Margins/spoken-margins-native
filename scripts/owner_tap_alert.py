@@ -70,11 +70,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import comment_trust  # noqa: E402
 
-# The runner's owner-tap paths (scripts/lane-runner.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). A test keeps them equal.
+# The owner-tap paths (scripts/lane_merge_rules.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). A test keeps them equal.
 OWNER_LOGIN = 'uncomposed'  # who to @mention; the repo's owner is the org after #2169
-OWNER_TAP_FILES = {'scripts/lane-runner.py'}
+OWNER_TAP_FILES = {'scripts/lane-runner.py', 'scripts/lane_merge_rules.py'}
 OWNER_TAP_PREFIXES = ('.github/',)
-# The runner's audit formats (scripts/lane-runner.py AUDITS, AUDIT_SHA, CLEAN_AUDIT). A test keeps them equal.
+# The audit formats (scripts/lane_merge_rules.py AUDITS, AUDIT_SHA, CLEAN_AUDIT). A test keeps them equal.
 AUDITS = ('**Codex audit (Astra)', '## Codex audit', '**Claude audit on `')
 AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
 CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)

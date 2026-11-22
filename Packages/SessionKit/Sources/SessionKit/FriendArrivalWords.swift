@@ -95,18 +95,33 @@ public enum FriendArrivalWords {
         }
     }
 
+    /// Whether the imported-layer card drops its own "From Sam" line (#3855). While the friend's intro shows, its sender
+    /// line already says who sent the Margins, so with exactly one layer the card's line would be the same fact again.
+    /// With two or more layers each card keeps its name, because the name tells the cards apart; with the intro gone
+    /// (every friend Margin heard) the card says "From Sam" again, as it always did.
+    public static func hidesLayerSenderLine(introShowing: Bool, layerCount: Int) -> Bool {
+        introShowing && layerCount == 1
+    }
+
     /// What VoiceOver says for one friend's layer, in the friend's words and without a passing integrity check.
+    /// `includesSender: false` drops the leading "From Sam." sentence for a card that hides its sender line (#3855);
+    /// `leadingTitle` then starts the label with the card's title, which the element now sits on.
     public static func layerAccessibilityLabel(
         senderLabel: String, isEnabled: Bool, isMuted: Bool, mode: ImportedCommentaryRevealMode,
-        placementProblem: String?
+        placementProblem: String?, includesSender: Bool = true, leadingTitle: String? = nil
     ) -> String {
-        var parts = [
-            fromLine(senderLabel: senderLabel),
+        var parts = includesSender ? [fromLine(senderLabel: senderLabel)] : []
+        if let title = leadingTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty { parts.append(title) }
+        parts += [
             isEnabled ? "\(possessiveMargins(senderLabel: senderLabel)) are on" : "\(possessiveMargins(senderLabel: senderLabel)) are off",
             isMuted ? "Muted" : "Not muted",
             "\(playModeTitle): \(playModeLabel(mode))"
         ]
         if let placementProblem { parts.append(placementProblem) }
-        return parts.joined(separator: ". ")
+        // A sentence that already ends in punctuation ("Why?") is not given a second full stop.
+        return parts.reduce("") { text, part in
+            if text.isEmpty { return part }
+            return text + (".!?…".contains(text.last!) ? " " : ". ") + part
+        }
     }
 }

@@ -74,7 +74,8 @@ public enum LibraryCollectionEntry: Identifiable, Equatable, Sendable {
 
 /// Which rows the Library list shows, and in what order, in either view (#3769).
 ///
-/// **All Items** is exactly `LibraryQueryEngine` and `LibraryListRows`, as before collections had rows.
+/// **All Items** lists exactly the rows `LibraryQueryEngine` and `LibraryListRows` give, as before collections had rows;
+/// each row in a collection carries its collections' names for "· in Daily Brief".
 ///
 /// **Collections**, while **browsing** (no search text; content type, offline and shared-Margins filters at their
 /// defaults): every collection is one row, and an item in any collection is not listed on its own. An item in two
@@ -103,12 +104,17 @@ public enum LibraryCollectionListEngine {
         mode: LibraryViewMode,
         currentItemID: String?
     ) -> [LibraryCollectionEntry] {
-        let collectionRows = mode == .collections ? self.collectionRows(rows: rows, collections: collections, imported: imported) : []
-        guard !collectionRows.isEmpty else {
-            return LibraryListRows.entries(visible: LibraryQueryEngine.visibleLibraryItems(rows, query: query), currentId: currentItemID)
-                .map { .item($0.row, isCurrent: $0.isCurrent) }
-        }
+        let collectionRows = collections.isEmpty ? [] : self.collectionRows(rows: rows, collections: collections, imported: imported)
         let namesByItem = collectionNames(collectionRows)
+        guard mode == .collections, !collectionRows.isEmpty else {
+            // The same rows in the same order as before collections had rows; each one only gains "· in X" (#3769).
+            return LibraryListRows.entries(visible: LibraryQueryEngine.visibleLibraryItems(rows, query: query), currentId: currentItemID)
+                .map { entry in
+                    var row = entry.row
+                    row.collectionNames = namesByItem[row.id] ?? []
+                    return .item(row, isCurrent: entry.isCurrent)
+                }
+        }
         let browsing = isBrowsing(query)
         var listedCollections: [LibraryCollectionRow] = []
         var items: [LibraryItemRow]

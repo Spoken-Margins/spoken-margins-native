@@ -670,6 +670,33 @@ class StatusBreaker(unittest.TestCase):
         self.assertIn('HALT (usage breaker: Claude)', text)
 
 
+class CloudMaxIgnoresBreaker(unittest.TestCase):
+    """2026-11-21: the owner set Cloud max for the week; the Mac tick still posted HALT (U > E + 10) and every
+    reader of the HALT stopped. Cloud max is the Dial's "ignore usage", so a HALT holds nothing under it."""
+    CLOUD = BODY.replace('- [x] Paced', '- [ ] Paced').replace('- [ ] Cloud max', '- [x] Cloud max')
+
+    def usage(self):
+        return g.parse_usage([tick(15, NOW - dt.timedelta(minutes=30)),
+                              {'body': '**HALT (usage breaker)**\n- U = 15%', 'author_association': 'OWNER', 'created_at': ts(NOW)}])
+
+    def test_breaker_holds_only_outside_cloud_max(self):
+        usage = self.usage()
+        self.assertTrue(usage['halted'])
+        self.assertFalse(g.breaker_holds(g.parse_dial(self.CLOUD), usage))
+        self.assertTrue(g.breaker_holds(g.parse_dial(BODY), usage))   # Paced still holds
+        off = BODY.replace('- [x] Paced', '- [ ] Paced').replace('- [ ] Off', '- [x] Off')
+        self.assertTrue(g.breaker_holds(g.parse_dial(off), usage))
+        self.assertFalse(g.breaker_holds(g.parse_dial(BODY), {'halted': False}))
+
+    def test_status_says_the_halt_is_ignored_not_that_the_gate_holds(self):
+        dial, usage = g.parse_dial(self.CLOUD), self.usage()
+        decision = g.decide(NOW, dial, usage, 10, None, {}, 0)
+        text = g.status_text(NOW, dial, usage, 10, None, {}, decision, [])
+        self.assertTrue(decision['fire'])
+        self.assertIn('Cloud max ignores usage, so this gate is unaffected', text)
+        self.assertNotIn('so this gate holds', text)
+
+
 class Status(unittest.TestCase):
     def test_lists_active_threads_by_title_and_quiet_ones_separately(self):
         threads = g.parse_threads([claim('Podcast anchors', 592, ago(minutes=30)),
