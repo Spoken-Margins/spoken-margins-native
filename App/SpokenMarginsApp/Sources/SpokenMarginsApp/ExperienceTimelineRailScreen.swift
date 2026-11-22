@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import SessionKitPersistence
 
 struct ExperienceTimelineRailScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
@@ -119,6 +120,17 @@ struct ExperienceTimelineRailScreen: View {
             }
             .onReceive(model.$selectedItem) { item in
                 refreshEntries(from: item)
+            }
+            // A listing that just arrived: the rows of figures with a picture can now be made (#4587).
+            .onChange(of: clipSource) { _, _ in
+                rebuildRows(from: model.selectedItem)
+            }
+            // Pictures saved while this Timeline is open (an import just finished): list the folder again.
+            .onReceive(NotificationCenter.default.publisher(for: PDFClipStore.didSaveClipsNotification)
+                .receive(on: DispatchQueue.main)) { notice in
+                if notice.userInfo?[PDFClipStore.itemIdKey] as? String == model.selectedItem.id {
+                    refreshClips(for: model.selectedItem)
+                }
             }
             .onChange(of: model.selectedItem.id) { _, _ in
                 // A new item starts again: only its playing chapter open, no hand toggles carried over (#4586).
@@ -293,7 +305,8 @@ struct ExperienceTimelineRailScreen: View {
         }
     }
 
-    static func makeEntries(from item: ItemDetailState, sessionID: String?, playbackDurationMs: Int? = nil) -> [TimelineRailEntry] {
+    static func makeEntries(from item: ItemDetailState, sessionID: String?, playbackDurationMs: Int? = nil,
+                            clips: TimelineClipSource = .none) -> [TimelineRailEntry] {
         var result: [TimelineRailEntry] = []
         let sourceLength = item.timelineSource.characterCount > 0 ? item.timelineSource.characterCount : item.text.count
         // A podcast or audio file speaks in clock time, like its scrubber; an article or PDF speaks in percent (#3862).
@@ -307,6 +320,20 @@ struct ExperienceTimelineRailScreen: View {
             result.append(TimelineRailEntry(
                 id: entry.id, position: Int(position.rounded()), rank: 0, provenance: .source,
                 title: entry.label ?? entry.role.timelineTitle,
+                detail: TimelineTextPresentation.excerpt(entry.text, characterLimit: TimelineTextPresentation.supportingCharacterLimit),
+                action: .sourceText(entry), precisePosition: position))
+        }
+
+        // A figure with no printed text of its own (a photo, a micrograph) has a row only when its picture was cut: the
+        // row is the picture and its caption's first sentence (#4587). Ids like `float-p1-c1` repeat across PDFs, and the
+        // rows can be rebuilt before the listing of the item just left is cleared, so a listing that isn't this item's
+        // counts as none.
+        let figureClips = clips.itemId == item.id ? clips : TimelineClipSource.none
+        for entry in item.timelineSource.figures where figureClips.has(floatId: entry.floatId) {
+            let position = Double(entry.start) / Double(max(1, item.timelineSource.characterCount)) * 100
+            result.append(TimelineRailEntry(
+                id: entry.id, position: Int(position.rounded()), rank: 0, provenance: .source,
+                title: entry.label ?? "Figure",
                 detail: TimelineTextPresentation.excerpt(entry.text, characterLimit: TimelineTextPresentation.supportingCharacterLimit),
                 action: .sourceText(entry), precisePosition: position))
         }
@@ -505,17 +532,25 @@ struct ExperienceTimelineRailScreen: View {
     }
 
     private func refreshEntries(from item: ItemDetailState) {
-        entries = Self.makeEntries(from: item, sessionID: model.snapshot.sessionId, playbackDurationMs: model.snapshot.currentPlaybackDurationMs)
+        rebuildRows(from: item)
+        refreshClips(for: item)
+    }
+
+    /// The rows from the item as it is and the pictures listed so far. Also runs when a listing arrives, so a figure's
+    /// row appears then without another listing being started (#4587).
+    private func rebuildRows(from item: ItemDetailState) {
+        entries = Self.makeEntries(from: item, sessionID: model.snapshot.sessionId,
+                                   playbackDurationMs: model.snapshot.currentPlaybackDurationMs, clips: clipSource)
         // Applies the starting state the first time the rail has chapters, and keeps folds in step with rows.
         folding.sync(rows: foldingRows, currentIDs: currentEntryIDs)
-        refreshClips(for: item)
     }
 
     /// Which of the item's tables and figures have a picture: one listing of its folder, read off the main thread, and
     /// only for an item whose document located any, so a page or a podcast does no disk work here (#3895). Until the
     /// listing arrives the rows are their text, as they were before pictures existed.
     private func refreshClips(for item: ItemDetailState) {
-        guard item.timelineSource.entries.contains(where: { $0.floatId != nil }), let store = model.pdfClipStore() else {
+        guard item.timelineSource.entries.contains(where: { $0.floatId != nil }) || !item.timelineSource.figures.isEmpty,
+              let store = model.pdfClipStore() else {
             if clipSource != .none { clipSource = .none }
             return
         }
