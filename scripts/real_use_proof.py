@@ -56,7 +56,8 @@ WAIVER = re.compile(r'^[ \t#*_-]*real[- ]use proof[ \t*_]+(?:waived|not needed)[
 FIELD = re.compile(r'^[ \t*_-]*(real input|path|steps|result|commit|issue)[ \t*_]*:[ \t*_]*(.*?)[ \t*_]*$', re.I)
 REPRO_START = re.compile(r'^[ \t#*_-]*repro attempt[ \t*_]*:?[ \t*_]*$', re.I)
 REPRO_FIELD = re.compile(r'^[ \t*_-]*(tried|result|needs from owner)[ \t*_]*:[ \t*_]*(.*?)[ \t*_]*$', re.I)
-HEADING = re.compile(r'^[ \t]*#{1,6}[ \t]')
+HEADING = re.compile(r'^[ \t]*(?:#{1,6}[ \t]|\*\*[^*\n:]+\*\*[ \t]*$)')   # a # heading, or a line that is only bold text
+LIST_ITEM = re.compile(r'^[ \t]*(?:[-*+]|\d+[.)])[ \t]')
 OWNER_CHECK = re.compile(r'^[ \t>#*_-]*owner check(?![ \t*_:]*(?:not|none|n/a)\b)\b', re.I | re.M)
 PLACEHOLDER = re.compile(r'^(?:tbd|todo|n/?a|none|nothing|-+|\.{2,}|…)$', re.I)
 ANGLE = re.compile(r'<[^<>\n]+>')   # an unfilled template slot such as <what you observed>
@@ -103,7 +104,11 @@ def parse(text: Optional[str], pr_side: bool = False) -> list[Entry]:
     entries: list[Entry] = []
     current: Optional[Entry] = None
     last = ''
+    blank = False
     for line in visible(text).splitlines():
+        if not line.strip():
+            blank = True
+            continue
         waiver = WAIVER.match(line)
         if waiver:
             current = None
@@ -113,6 +118,7 @@ def parse(text: Optional[str], pr_side: bool = False) -> list[Entry]:
             current = Entry('proof', pr_side=pr_side)
             entries.append(current)
             last = ''
+            blank = False
             continue
         if current is None:
             continue
@@ -121,10 +127,17 @@ def parse(text: Optional[str], pr_side: bool = False) -> list[Entry]:
             continue
         field = FIELD.match(line)
         if field:
-            last = field.group(1).lower()
-            current.fields[last] = field.group(2)
-        elif line.strip() and last:
+            name = field.group(1).lower()
+            if name in current.fields:
+                last = ''   # a repeated field (prose that happens to start with "Result:") never overwrites the first
+            else:
+                last = name
+                current.fields[name] = field.group(2)
+        elif last and (not blank or LIST_ITEM.match(line)):
             current.fields[last] = (current.fields[last] + '\n' + line.strip()).strip()
+        else:
+            last = ''   # a paragraph after a blank line is not part of the field above it
+        blank = False
     return entries
 
 
@@ -198,18 +211,26 @@ def judge(entries: list[Entry]) -> Verdict:
     return Verdict('proved', commit=commit_of(last.fields['commit']))
 
 
+HUMAN_REPORT_LABELS = {'bug', 'found-on-phone', 'owner-asked', 'priority', 'needs-human-validation', 'agent-verify', 'validate-by-use'}
+
+
 def listener_facing(labels) -> bool:
-    """An issue is a listener's unless its only area label is `area: groundwork`. No area label, or two, counts as a
-    listener's: the safe reading, because a missing label must not switch the rule off."""
+    """Whether an issue is a listener's. Any area label but `area: groundwork` says yes, and so does a groundwork label
+    beside a product one. With no area label it depends on who wrote it: a `bug`, `found-on-phone`, `owner-asked` or
+    validation label is a person's report about the app, so yes; an issue with none of those is a pipeline alarm that
+    scripts open and close themselves (the "Main T3 failed" regression issue, "Merging has stalled"), so no. Triage
+    sets the area within a day, and a listener's bug carries `bug` from the start."""
     names = {(label.get('name') if isinstance(label, dict) else label or '').lower() for label in labels or []}
     areas = {n for n in names if n.startswith('area:')}
-    return areas != {NOT_LISTENER_AREA}
+    if areas:
+        return areas != {NOT_LISTENER_AREA}
+    return bool(names & HUMAN_REPORT_LABELS)
 
 
 def area_of(labels) -> str:
     names = sorted({(label.get('name') if isinstance(label, dict) else label or '') for label in labels or []})
     areas = [n for n in names if n.lower().startswith('area:')]
-    return ', '.join(areas) if areas else 'no area label'
+    return ', '.join(areas) if areas else 'no area label, but a bug or owner label'
 
 
 def closing_issues(body: Optional[str], own_number: int, repo: str) -> list[int]:
@@ -354,15 +375,28 @@ def issue_items(comments: list) -> list[tuple]:
 
 
 def closing_items(gh, number: int) -> list[tuple]:
-    """The records on the PR(s) that closed issue <number>: its last `closed` event's commit, and the PRs of that commit
-    whose own text says they close it. Returns (time, text, pr_side) items, and the count of issues each PR closes."""
-    events = [e for e in gh.api(f'issues/{number}/timeline?per_page=100', paginate=True) if e.get('event') == 'closed']
-    sha = (events[-1].get('commit_id') if events else None) or ''
-    if not sha:
-        return []
+    """The records on the PR(s) that closed issue <number>, as (time, text, pr_side) items. A PR counts when its body or
+    the closing commit's message carries a closing keyword for the issue (the text merge policy reads). PRs come from the
+    last `closed` event's commit and, when that has none, from merged PRs the timeline shows referencing the issue."""
+    events = gh.api(f'issues/{number}/timeline?per_page=100', paginate=True)
+    closed = [e for e in events if e.get('event') == 'closed']
+    sha = (closed[-1].get('commit_id') if closed else None) or ''
+    pulls: dict[int, dict] = {}
+    message = ''
+    if sha:
+        message = ((gh.api(f'commits/{sha}') or {}).get('commit') or {}).get('message') or ''
+        for pull in gh.api(f'commits/{sha}/pulls?per_page=20', paginate=True):
+            pulls[pull['number']] = pull
+    for event in events:
+        source = (event.get('source') or {}).get('issue') or {}
+        if event.get('event') == 'cross-referenced' and 'pull_request' in source and source.get('number') not in pulls:
+            pull = gh.api(f'pulls/{source["number"]}')
+            if pull.get('merged_at'):
+                pulls[pull['number']] = pull
     found: list[tuple] = []
-    for pull in gh.api(f'commits/{sha}/pulls?per_page=20', paginate=True):
-        if number not in closing_issues(pull.get('body'), pull['number'], gh.repo):
+    for pull in pulls.values():
+        text = (pull.get('body') or '') + '\n' + message
+        if number not in closing_issues(text, pull['number'], gh.repo):
             continue
         comments = comment_trust.trusted_only(gh.api(f'issues/{pull["number"]}/comments?per_page=100', paginate=True))
         found.extend(timed_items(pull, comments))

@@ -134,6 +134,20 @@ class ParseTests(unittest.TestCase):
         quoted_pass_after_fail = re.sub(r'PASS - .*', 'FAIL - broke', GOOD) + '\n' + ''.join('> ' + l + '\n' for l in GOOD.splitlines())
         self.assertEqual(entries_verdict(quoted_pass_after_fail).status, 'invalid')
 
+    def test_prose_after_a_record_does_not_leak_into_it(self):
+        cases = {
+            'bold pseudo-heading': GOOD + '\n**How you checked it**\nResult: FAIL in the old build\nCommit: nothing\n',
+            'paragraph after a blank line': GOOD + '\nThe run was fine, but the old build fails.\nIssue: 99 times\n',
+            'repeated Result': GOOD + 'Result: FAIL - later prose\n',
+        }
+        for name, text in cases.items():
+            with self.subTest(name):
+                verdict = entries_verdict(text)
+                self.assertEqual(verdict.status, 'proved', (name, verdict.problems))
+        self.assertNotIn('but the old build', proof.parse(cases['paragraph after a blank line'])[0].fields['result'])
+        listed = GOOD.replace('2. Tapped Open in Spoken Margins\n', '\n2. Tapped Open in Spoken Margins\n')
+        self.assertIn('Tapped Open', proof.parse(listed)[0].fields['steps'])   # a numbered list may have blank lines
+
     def test_a_record_ends_at_the_next_heading(self):
         text = GOOD + '\n## Notes\nPath: somewhere else\nResult: FAIL\n'
         self.assertEqual(entries_verdict(text).status, 'proved')
@@ -143,7 +157,10 @@ class IssueRuleTests(unittest.TestCase):
     def test_which_issues_are_listener_facing(self):
         table = [
             (['area: pass it on'], True), (['area: get it in', 'bug'], True), (['area: hear it well'], True),
-            (['area: answer it'], True), (['area: housekeeping'], True), ([], True), (['bug'], True),
+            (['area: answer it'], True), (['area: housekeeping'], True), (['bug'], True),
+            # No area label: a person's report is a listener's, a script's pipeline alarm is not.
+            ([], False), (['regression'], False), (['bug', 'regression'], True), (['found-on-phone'], True),
+            (['owner-asked'], True), (['priority'], True), (['ready'], False),
             (['area: groundwork'], False), (['Area: Groundwork', 'bug'], False),
             (['area: groundwork', 'area: pass it on'], True),
         ]
@@ -240,6 +257,9 @@ class PrBlockerTests(unittest.TestCase):
         self.assertEqual(self.blockers('Part of #4783', self.LISTENER), [])
         groundwork = {4979: {'labels': [{'name': 'area: groundwork'}, {'name': 'bug'}]}}
         self.assertEqual(self.blockers('Closes #4979', groundwork), [])
+        # The "Main T3 failed" alarm (label `regression`, no area) and "Merging has stalled" (no labels): a test-fix PR may close them.
+        alarms = {7: {'labels': [{'name': 'regression'}]}, 8: {'labels': []}}
+        self.assertEqual(self.blockers('Closes #7\nCloses #8', alarms), [])
         # A stranger's PR body and the comments the lane does not trust (filtered before they get here) carry no weight.
         self.assertEqual(len(self.blockers('Closes #4783\n\n' + GOOD, self.LISTENER, association='CONTRIBUTOR')), 1)
         self.assertEqual(self.blockers('Closes #4783\n\n' + GOOD, self.LISTENER, association='COLLABORATOR'), [])
@@ -300,6 +320,12 @@ class SweepTests(unittest.TestCase):
             m = re.match(r'issues/(\d+)/timeline', path)
             if m:
                 return self.timeline.get(int(m.group(1)), [])
+            m = re.match(r'commits/(\w+)$', path)
+            if m:
+                return getattr(self, 'commits', {}).get(m.group(1), {})
+            m = re.match(r'pulls/(\d+)$', path)
+            if m:
+                return getattr(self, 'pull_by_number', {}).get(int(m.group(1)), {})
             m = re.match(r'commits/(\w+)/pulls', path)
             if m:
                 return self.pulls.get(m.group(1), [])
@@ -360,6 +386,24 @@ class SweepTests(unittest.TestCase):
         gh = self.Gh([self.closed(13)], {13: [comment(proof.MARKER + '\nReopened')]})
         report = self.run_sweep(gh, apply=True)
         self.assertEqual((report['again'], report['reopened'], gh.writes), ([13], [], []))
+
+    def test_a_pr_whose_body_says_part_of_but_whose_commit_says_closes_still_counts(self):
+        # merge policy reads body plus commit messages; the sweep reads the same text, or it would reopen what merge policy passed.
+        gh = self.Gh([self.closed(14)], {}, timeline={14: [{'event': 'closed', 'commit_id': 'deadbee'}]},
+                     pulls={'deadbee': [{'number': 32, 'body': 'Part of #14\n\n' + GOOD, 'created_at': '2026-11-22T09:00:00Z',
+                                         'author_association': 'OWNER', 'user': {'login': 'x'}}]})
+        gh.commits = {'deadbee': {'commit': {'message': 'Fix it\n\nCloses #14'}}}
+        report = self.run_sweep(gh, apply=True)
+        self.assertEqual((report['proved'], report['flagged'], gh.writes), (1, [], []))
+
+    def test_the_closing_pr_is_found_by_the_timeline_when_the_closed_event_has_no_commit(self):
+        gh = self.Gh([self.closed(15)], {}, timeline={15: [
+            {'event': 'closed', 'commit_id': None},
+            {'event': 'cross-referenced', 'source': {'issue': {'number': 33, 'pull_request': {}}}}]})
+        gh.pull_by_number = {33: {'number': 33, 'merged_at': '2026-11-22T10:00:00Z', 'body': 'Closes #15\n\n' + GOOD,
+                                  'created_at': '2026-11-22T09:00:00Z', 'author_association': 'OWNER', 'user': {'login': 'x'}}}
+        report = self.run_sweep(gh, apply=True)
+        self.assertEqual((report['proved'], report['flagged']), (1, []))
 
     def test_a_read_failure_is_reported_and_reopens_nothing(self):
         gh = self.Gh([self.closed(10)], {})

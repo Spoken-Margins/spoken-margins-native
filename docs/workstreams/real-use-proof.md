@@ -8,7 +8,7 @@ Apple Podcasts share links (#4783) were the maintainer's top priority for two da
 
 ## Which issues
 
-A listener-facing issue is any issue whose only area label is not `area: groundwork`. That is the four product areas, `area: housekeeping` (settings, onboarding and accessibility are a listener's), and an issue with no area label or two. Groundwork (pipeline, test lane, tooling) is exempt.
+A listener-facing issue is any issue with an area label other than `area: groundwork`: the four product areas and `area: housekeeping` (settings, onboarding and accessibility are a listener's). An issue with no area label counts only if a person reported it: it carries `bug`, `found-on-phone`, `owner-asked`, `priority` or a validation label. A bare `regression` or no labels at all is a pipeline alarm that scripts open and close themselves ("Main T3 failed on <sha7>", "Merging has stalled"), so a test-fix PR may close one with no proof. Groundwork (pipeline, test lane, tooling) is exempt.
 
 ## The record
 
