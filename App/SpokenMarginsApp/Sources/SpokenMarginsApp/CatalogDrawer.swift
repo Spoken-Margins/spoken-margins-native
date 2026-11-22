@@ -99,7 +99,7 @@ final class CatalogDrawerModel: ObservableObject {
         self.subscriptions = subscriptions
         self.follow = follow
         self.makeOPMLImport = makeOPMLImport
-        packetOpenFailures?.onFriendItemOpened = { [weak self] in self?.welcomeOrder.friendItemOpened() }
+        packetOpenFailures?.onFriendItemOpened = { [weak self] in self?.friendItemOpened($0) }
     }
 
     /// The app's drawer: the bundled snapshot plus a cache in Application Support.
@@ -188,6 +188,16 @@ final class CatalogDrawerModel: ObservableObject {
         showsFriendLinkCard = false
         if isPresented, isFirstRunOpening { friendFileOpenedUnderneath = true }
         recordFriendFileArrival()
+    }
+
+    /// The import says a friend's item opened. If that is the first one of this first launch, it is remembered as the
+    /// arrival item, so its end can offer to follow its show (#4672). An item the listener opened themselves never is.
+    func friendItemOpened(_ itemId: String) {
+        let hadReached = welcomeOrder.reachedFriendItem
+        welcomeOrder.friendItemOpened()
+        guard !hadReached, welcomeOrder.reachedFriendItem else { return }
+        var arrival = FirstLaunchArrival(defaults: defaults)
+        arrival.recordItem(itemId)
     }
 
     /// The sheet that said a friend's link or file could not be opened has closed. The drawer that file withdrew comes

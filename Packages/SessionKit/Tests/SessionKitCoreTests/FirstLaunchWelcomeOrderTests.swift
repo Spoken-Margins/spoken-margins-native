@@ -311,4 +311,33 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
         showing.friendItemOpened()
         XCTAssertEqual(showing.phase, .drawerShowing)
     }
+
+    /// #4672 PR 3: the Follow card needs to know a friend's item opened in this launch, from the import's own signal.
+    func testReachedFriendItemComesFromTheImportsSignalAndNotFromTheListenersPlace() {
+        enum Event { case arrived, item, elsewhere, library, friendItemOpened }
+        let rows: [(String, Bool, [Event], Bool)] = [
+            ("no file", true, [], false),
+            ("file arrived, nothing opened", true, [.arrived], false),
+            ("own item while a file waits", true, [.arrived, .item], false),
+            ("the friend's item opened", true, [.arrived, .friendItemOpened], true),
+            ("review sheet then the friend's item", true, [.arrived, .elsewhere, .friendItemOpened, .item], true),
+            ("own item, then the friend's import", true, [.arrived, .item, .friendItemOpened], true),
+            ("import signal with no file waiting", true, [.friendItemOpened], false),
+            ("returning launch (drawer not owed)", false, [.arrived, .friendItemOpened], false),
+        ]
+        for (name, owed, events, expected) in rows {
+            var order = Order(drawerOwed: owed)
+            XCTAssertFalse(order.reachedFriendItem, name)
+            for event in events {
+                switch event {
+                case .arrived: _ = order.friendFileArrived(drawerHasPicks: false)
+                case .item: _ = order.moved(to: .item)
+                case .elsewhere: _ = order.moved(to: .elsewhere)
+                case .library: _ = order.moved(to: .library)
+                case .friendItemOpened: order.friendItemOpened()
+                }
+            }
+            XCTAssertEqual(order.reachedFriendItem, expected, name)
+        }
+    }
 }

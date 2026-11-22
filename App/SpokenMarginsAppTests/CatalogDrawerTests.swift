@@ -511,6 +511,24 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertEqual(started.map(\.allowsWelcome), [true])
     }
 
+    /// #4672 PR 3: the item a friend's file opened on a first launch is remembered as the arrival item, once; an
+    /// item opened with no friend's file waiting, or a second friend's item, never replaces it.
+    func testOnlyTheFirstFriendItemOfAFirstLaunchIsRememberedAsTheArrivalItem() throws {
+        let defaults = try freshDefaults()
+        let drawer = try makeDrawer(defaults: defaults, log: FollowLog())
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.didDismiss()
+        drawer.friendItemOpened("friend-episode")
+        drawer.friendItemOpened("second-friend-item")
+        XCTAssertEqual(FirstLaunchArrival(defaults: defaults).itemId, "friend-episode")
+
+        let returning = try freshDefaults()
+        let notFirstLaunch = try makeDrawer(defaults: returning, log: FollowLog())
+        notFirstLaunch.friendItemOpened("friend-episode")
+        XCTAssertNil(FirstLaunchArrival(defaults: returning).itemId, "no first-launch drawer was owed, so this is not an arrival")
+    }
+
     // MARK: The first-launch "Got a link from a friend?" card (#3782)
 
     private var friendLink: String { "https://\(ShareLinkURL.shareHosts[0])/l/\(String(repeating: "ab12", count: 8))#\(ShareLinkSealing.Key.random().fragment)" }
