@@ -414,7 +414,14 @@ extension Gate1AppModel {
         marginCapture.screenAppeared(at: Date())
     }
 
-    func finishInterjection(endedByPhrase: Bool = false) {
+    /// The tap on Save and every other route that hands this method over by name (`action: model.finishInterjection`).
+    func finishInterjection() {
+        finishInterjection(endedByPhrase: false)
+    }
+
+    /// `endedByPhrase` is true only on the spoken phrase's own finish (#3940). It has no default so that no route can
+    /// mark a Margin by leaving it out.
+    func finishInterjection(endedByPhrase: Bool) {
         guard snapshot.isRecording, let verdict = verdictForSavingRecording() else { return }
         let held = heldMarginVoice // a Margin recorded over a voice leaves the source paused for it to play on (#1672)
         let labels = hangTelemetry.labels

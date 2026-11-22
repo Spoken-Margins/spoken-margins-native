@@ -87,8 +87,10 @@ final class MarginEndPhraseGuardTests: XCTestCase {
         XCTAssertLessThan(mark.lowerBound, schedule.lowerBound,
                           "the Margin is marked before its transcription job asks the ledger")
         XCTAssertEqual(signals.components(separatedBy: "markEndedByPhrase").count - 1, 1)
-        XCTAssertTrue(signals.contains("func transcribeAndRecordSavedSpokenMargin(endedByPhrase: Bool = false)"),
-                      "every other save route defaults to unmarked, which keeps everything")
+        XCTAssertTrue(signals.contains("transcribeAndRecordSavedSpokenMargin(endedByPhrase: false)"),
+                      "every other save route is unmarked, which keeps everything")
+        XCTAssertFalse(signals.contains("endedByPhrase: Bool = false") || capture.contains("endedByPhrase: Bool = false"),
+                       "a default value would change the type of `action: model.finishInterjection` and break the build")
 
         // No other source marks a Margin: the ledger's answer is true only for a phrase-ended save.
         for file in ["Gate1AppModel.swift", "Gate1AppModel+MarginInterruption.swift", "Gate1AppModel+SourceWindowContext.swift",
