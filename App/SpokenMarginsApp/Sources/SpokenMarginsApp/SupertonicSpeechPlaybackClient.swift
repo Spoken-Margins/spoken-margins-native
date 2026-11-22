@@ -796,6 +796,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         applyFootnoteSilencing(targetId: targetId)
         let requestedSpokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
+        // A skip that left a note while paused marks it (`noteLeftChunk`); this play must not bring the note back, so it
+        // is read before `spokenOffsetBeforeNote` consumes the mark (#3777).
+        let noteWasLeft = lock.withLock { noteLeftChunk != nil && noteLeftChunk == currentChunk }
         let spokenOffset = lock.withLock {
             spokenOffsetBeforeNote(requested: requestedSpokenOffset, targetId: targetId, isSeek: isSeek)
         }
@@ -834,7 +837,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         case .none:
             break
         }
-        guard let request = nextRequest(targetId: targetId, fromSpokenOffset: spokenOffset) else {
+        guard let request = nextRequest(targetId: targetId, fromSpokenOffset: spokenOffset, restoresNote: !isSeek && !noteWasLeft) else {
             throw SessionKitError.invalidCommandForState("supertonic_playback_text_empty")
         }
         enqueueRender(request, shouldPlayWhenReady: false)
@@ -1461,7 +1464,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             resourceFallbackTargetIds.remove(target)
             fallbackIsActive = false
         }
-        guard let request = nextRequest(targetId: target, fromSpokenOffset: spokenOffset(forSourceOffset: offset)) else { return false }
+        // A retry is not the listener's move: a place where a note is cited gets its note again (#3777).
+        guard let request = nextRequest(
+            targetId: target, fromSpokenOffset: spokenOffset(forSourceOffset: offset), restoresNote: true) else { return false }
         enqueueRender(request, shouldPlayWhenReady: false)
         if wasPaused { try pause() }
         return true
@@ -1601,7 +1606,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    private func nextRequest(targetId: String, fromSpokenOffset spokenOffset: Int) -> RenderRequest? {
+    /// `restoresNote`: the play is not the listener's own move (a relaunch, or a resume of an item this client does not
+    /// hold), so a place where a note is cited starts at the citing sentence and the note then plays (#3777). A seek,
+    /// skip or restart passes false: landing on that offset means the text after the note.
+    private func nextRequest(
+        targetId: String,
+        fromSpokenOffset requestedOffset: Int,
+        restoresNote: Bool = false
+    ) -> RenderRequest? {
         removePlaybackEndObserver()
         let snapshot = lock.withLock { () -> (
             source: String,
@@ -1641,7 +1653,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
             currentTargetId = targetId
             activeSourceText = preparedSourceText
-            currentStartOffset = max(0, min(spokenOffset, source.count))
+            currentStartOffset = max(0, min(requestedOffset, source.count))
             currentChunkLength = 0
             transportIntent = .playing
             generationPlan.removeAll()
@@ -1677,6 +1689,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
         }
         let canonicalPlan = requests(spokenPlan.chunks)
+        let spokenOffset = restoresNote ? restoredOffsetBeforeNote(requestedOffset, plan: canonicalPlan) : requestedOffset
         // Starting on the bundled voice (Supertonic isn't allowed): a short first chunk, so audio starts in about
         // a second. The article's own plan is unchanged (#849). The split is used only when the playhead is in its
         // first half, and the whole chunk is kept: when it has saved Supertonic audio, that plays instead (#849 audit).
@@ -3573,6 +3586,19 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 forChunkAt: index, tags: generationPlan.map(\.footnote), startOffsets: generationPlan.map(\.startOffset))
         else { return requested }
         return held
+    }
+
+    /// Where a fresh generation that is not the listener's own move starts, given the offset asked for and the plan it
+    /// will play: the citing sentence's last chunk when a note is cited there and was not heard in this session. The
+    /// engine saved the citing sentence's end while the note read, and a start at it would play the next body chunk and
+    /// drop the note without a word (#3777, Design `relaunch`). The rule is `FootnoteNoteControls.restoredStartOffset`.
+    private func restoredOffsetBeforeNote(_ requested: Int, plan: [RenderRequest]) -> Int {
+        guard plan.contains(where: \.isAside) else { return requested }
+        let identity = lock.withLock { articleIdentity }
+        let heard = lock.withLock { heardNotes }
+        return FootnoteNoteControls.restoredStartOffset(
+            atOffset: requested, tags: plan.map(\.footnote), startOffsets: plan.map(\.startOffset),
+            isHeard: { label in identity.map { heard.hasHeardNote(label, itemId: $0) } ?? false })
     }
 
     /// Where playback goes when the chunk now playing ends. The plan's own order when an aside is on either side of
