@@ -11,6 +11,7 @@ import { findEpisode } from './import.ts';
 import { listenState } from './library.ts';
 import { senderNameOrNone } from './reply-words.ts';
 import { firesByItself } from './margin-autoplay.ts';
+import { copyLengthNote } from './copy-length.ts';
 
 /** How far before a Margin the first Skip lands, so the friend hears the episode's own lead-in (2026-10-31 call). */
 export const LEAD_IN_SECONDS = 20;
@@ -52,6 +53,21 @@ export function senderName(sender: string | undefined): string {
 /** A Margin's own author, or the packet's sender when the author is blank or only stands in for a missing name (#4107). */
 function namedAuthor(author: string | undefined, sender: string | undefined): string | undefined {
   return senderNameOrNone(author) ?? sender;
+}
+
+/** The name a friend's Margin is credited to: its own author, else the packet's sender, else "your friend" (#4107). */
+export function marginSenderName(margin: Margin, sender: string | undefined): string {
+  return senderName(namedAuthor(margin.author, sender));
+}
+
+/**
+ * The copy-length note under a friend's Margin while it plays (#4614): `undefined` for the listener's own Margin (it has
+ * no author), for one with no sender length, while the player has no length yet, and within 10 seconds.
+ */
+export function arrivedLengthNote(margin: Margin, margins: readonly Margin[], measuredLengthSeconds: number | undefined): string | undefined {
+  if (!margin.author) return undefined;
+  const who = marginSenderName(margin, friendMargins(margins)[0]?.author);
+  return copyLengthNote(margin.copyLengthSeconds, measuredLengthSeconds, possessive(who));
 }
 
 /** A name at the start of a sentence: "your friend" becomes "Your friend"; a name is left as the sender wrote it. */
@@ -198,6 +214,12 @@ export type MarginCue =
        * episode (#4171). Absent outside the lead-in, and when the playhead is too near the start to go back.
        */
       startEarlier?: { to: number };
+      /**
+       * Last line of the card, when this load's length differs from the length of the copy the sender made the Margin on
+       * (#4614): "Your copy is about 35 seconds shorter than Cole’s, so Margins may be that far off." Absent while the
+       * player has no length yet, when either length is missing, and when they are within 10 seconds.
+       */
+      lengthNote?: string;
     }
   | { kind: 'after-last'; who: string; /** The name at the start of a sentence. */ lead: string }
   /** The episode failed to load: no countdown, no Skip; one sentence and one button that plays the Margins without it. */
@@ -211,6 +233,8 @@ export interface EpisodeState {
   failed: boolean;
   /** The sender's Margins have all been heard without the episode. */
   heardWithoutEpisode: boolean;
+  /** The first length the audio reported for this load, in seconds; undefined until it reports one (`PlayerApi.measuredLengthSeconds`). */
+  measuredLengthSeconds?: number;
 }
 
 /** Margins closer than this to the playhead are "now", not upcoming: the one just crossed has fired already. */
@@ -245,6 +269,7 @@ export function cueFor(margins: readonly Margin[], time: number, sender: string 
   const run = leadInSecondsFor(next);
   const leadIn = away <= run + 1;
   const earlierTo = Math.max(0, time - START_EARLIER_SECONDS);
+  const lengthNote = copyLengthNote(next.copyLengthSeconds, episode?.measuredLengthSeconds, possessive(who));
   return {
     kind: 'countdown',
     label: `${leading(possessive(who))} ${ordinal}Margin in`,
@@ -257,6 +282,7 @@ export function cueFor(margins: readonly Margin[], time: number, sender: string 
     leadInLeft: leadIn ? (run > 0 ? Math.min(1, Math.max(0, away / run)) : 0) : 1,
     // Not offered when there is no minute to go back (a hair from the episode's start): no dead button.
     ...(leadIn && time - earlierTo >= 1 && { startEarlier: { to: earlierTo } }),
+    ...(lengthNote !== undefined && { lengthNote }),
   };
 }
 
