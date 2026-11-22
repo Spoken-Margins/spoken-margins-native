@@ -139,16 +139,16 @@ public struct LaunchHistory: Codable, Sendable, Equatable {
         let samplesText = (samples ?? "").isEmpty ? nil : Self.plainSamples(samples ?? "")
         launch.hangCount = (launch.hangCount ?? 0) + 1
         launch.hangTotalMs = (launch.hangTotalMs ?? 0) + durationMs
-        var kept = launch.hangs ?? []
-        kept.append(Hang(atMs: max(0, elapsedMs - durationMs), durationMs: durationMs,
+        var stalls = launch.hangs ?? []
+        stalls.append(Hang(atMs: max(0, elapsedMs - durationMs), durationMs: durationMs,
                          operation: Self.plainOperation(label), samples: samplesText))
-        if kept.count > Self.maxHangsPerLaunch {
+        if stalls.count > Self.maxHangsPerLaunch {
             // The shortest goes; of equal lengths, the one that began later.
-            if let shortest = kept.indices.min(by: { (kept[$0].durationMs, -$0) < (kept[$1].durationMs, -$1) }) {
-                kept.remove(at: shortest)
+            if let shortest = stalls.indices.min(by: { (stalls[$0].durationMs, -$0) < (stalls[$1].durationMs, -$1) }) {
+                stalls.remove(at: shortest)
             }
         }
-        launch.hangs = kept.sorted { $0.atMs < $1.atMs }
+        launch.hangs = stalls.sorted { $0.atMs < $1.atMs }
         launches[launches.count - 1] = launch
         return true
     }
@@ -254,15 +254,15 @@ public struct LaunchHistory: Codable, Sendable, Equatable {
     static func plainSamples(_ text: String) -> String {
         let cleaned = labelText(text)
         guard cleaned.count > maxHangLabelLength else { return cleaned }
-        var kept: [Substring] = []
+        var pairs: [Substring] = []
         var length = 0
         for pair in cleaned.split(separator: ";") {
-            let added = pair.count + (kept.isEmpty ? 0 : 1)
+            let added = pair.count + (pairs.isEmpty ? 0 : 1)
             if length + added > maxHangLabelLength { break }
-            kept.append(pair)
+            pairs.append(pair)
             length += added
         }
-        return kept.joined(separator: ";")
+        return pairs.joined(separator: ";")
     }
 
     static func timeLabel(_ time: Date) -> String {
