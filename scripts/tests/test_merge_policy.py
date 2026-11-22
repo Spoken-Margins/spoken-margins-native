@@ -60,13 +60,22 @@ class Repo:
 class FakeGitHub:
     repo = 'o/r'
 
-    def __init__(self, labels=(), comments=(), association='OWNER', login='owner'):
+    def __init__(self, labels=(), comments=(), association='OWNER', login='owner', body='', issues=None):
         self.labels, self._comments = labels, list(comments)
-        self.association, self.login = association, login
+        self.association, self.login, self.body, self.issues = association, login, body, issues or {}
 
     def pull(self, number):
         return {'labels': [{'name': name} for name in self.labels], 'author_association': self.association,
-                'user': {'login': self.login}}
+                'user': {'login': self.login}, 'body': self.body, 'created_at': '2026-11-22T09:00:00Z'}
+
+    def issue(self, number):
+        return self.issues[number]
+
+    def issue_comments(self, number):
+        return []
+
+    def issue_timeline(self, number):
+        return []
 
     def comments(self, number):
         return self._comments
@@ -174,6 +183,62 @@ class BlockerTests(unittest.TestCase):
             with self.subTest(path=path):
                 reasons, _ = self.check({path: 'x\n'}, FakeGitHub())
                 self.assertEqual(reasons, [])
+
+    def test_closing_a_listener_issue_needs_real_use_proof_and_part_of_does_not(self):
+        # #4979 (#4783): two fixture-tested web fixes closed a listener issue the owner's real link still failed.
+        issues = {4783: {'labels': [{'name': 'area: pass it on'}]}, 4979: {'labels': [{'name': 'area: groundwork'}]}}
+        files = {'web/share.js': 'x\n'}
+        reasons, _ = self.check(files, FakeGitHub(body='Closes #4783', issues=issues))
+        self.assertEqual(len(reasons), 1, reasons)
+        self.assertIn('real-use proof', reasons[0])
+        self.assertIn('`Part of #4783`', reasons[0])
+        for body in ('Part of #4783', 'Closes #4979', 'No issue'):
+            with self.subTest(body=body):
+                reasons, _ = self.check(files, FakeGitHub(body=body, issues=issues))
+                self.assertEqual(reasons, [])
+
+    def test_a_closing_keyword_in_a_commit_message_counts_like_one_in_the_body(self):
+        issues = {4783: {'labels': [{'name': 'area: pass it on'}]}}
+        reasons, _ = self.check({'web/share.js': 'x\n'}, FakeGitHub(body='Part of #4783', issues=issues),
+                                message=f'Fix share links\n\nCloses #4783\n\n{SIGNED}')
+        self.assertEqual(len(reasons), 1, reasons)
+        self.assertIn('`Closes #4783`', reasons[0])
+
+    def test_a_proof_must_name_one_of_the_prs_own_commits_and_cover_its_code(self):
+        issues = {4783: {'labels': [{'name': 'area: pass it on'}]}}
+        record = ('Closes #4783\n\n**Real-use proof**\nReal input: a real Apple Podcasts link\nPath: link to playback\n'
+                  'Steps: opened it\nResult: PASS - played\nCommit: {sha}\n')
+        repo = Repo({'web/share.js': 'x\n'})
+        self.addCleanup(repo.close)
+        def run(sha):
+            return policy.blockers(FakeGitHub(body=record.format(sha=sha), issues=issues), repo.tree, 'main', 7, repo.head,
+                                   classify=scope_of, inherited=lambda c: [])
+        self.assertEqual(run(repo.head), [])
+        self.assertEqual(run(repo.head[:7]), [])
+        self.assertIn('not one of this PR', run('1234567')[0])
+        # A later code change makes the proof stale; a later note or test does not.
+        git(repo.tree, 'checkout', '-q', 'pr')
+        (repo.tree / 'web/share.js').write_text('y\n')
+        git(repo.tree, 'commit', '-qam', f'Fix\n\n{SIGNED}')
+        later = git(repo.tree, 'rev-parse', 'HEAD')
+        git(repo.tree, 'checkout', '-q', 'main')
+        stale = policy.blockers(FakeGitHub(body=record.format(sha=repo.head), issues=issues), repo.tree, 'main', 7, later,
+                                classify=scope_of, inherited=lambda c: [])
+        self.assertTrue(stale and 'run it again on the head' in stale[0], stale)
+
+    def test_a_failure_inside_the_proof_check_holds_that_pr_and_a_read_failure_holds_the_merge(self):
+        repo = Repo({'web/share.js': 'x\n'})
+        self.addCleanup(repo.close)
+        broken = FakeGitHub(body='Closes #4783')   # no such issue: the fake raises KeyError
+        reasons = policy.blockers(broken, repo.tree, 'main', 7, repo.head, classify=scope_of, inherited=lambda c: [])
+        self.assertTrue(reasons and 'real-use proof check failed' in reasons[0], reasons)
+        def unreadable(number):
+            raise policy.ReadFailed('gh api issues failed 3 times')
+        broken.issue = unreadable
+        out = io.StringIO()
+        code = policy.judge(broken, repo.tree, 'main', [(7, repo.head)], out=out, classify=scope_of, inherited=lambda c: [])
+        self.assertEqual(code, 1)
+        self.assertIn('could not read what it needs', out.getvalue())
 
     def test_a_head_that_is_not_in_the_tree_and_cannot_be_fetched_holds(self):
         repo = Repo({'scripts/tool.py': 'x\n'})
