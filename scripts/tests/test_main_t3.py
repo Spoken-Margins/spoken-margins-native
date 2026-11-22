@@ -279,174 +279,48 @@ class PushFloorTests(unittest.TestCase):
         self.assertIsNotNone(self.start([run(1, 0.2, queued)]))
 
 
-class DecideClaimTests(unittest.TestCase):
-    """Audit of c75ffb7: push runs and ticks are in separate concurrency groups, so a tick can decide while a push run
-    is still in Mac setup. Without a status on the commit it started a second whole-suite run, and the two raced to
-    write the result. decide now leaves `pending` the moment it says run."""
+class KickTests(unittest.TestCase):
+    """A push to main dispatches main-t3.yml unless a run did simulator work inside the floor. The Mac runs stay in
+    main-t3.yml's one concurrency group. (Four audits of an earlier design, where push runs sat in a group of their own
+    beside the ticks, each found a new way two concurrent runs could write the wrong result; one group, in order,
+    removes the class, and a dispatched run decides from the head's own status like a tick.)"""
 
-    def decide(self, store, calls, run_id, during=None, **over):
-        """One `decide` against an in-memory commit. `during` runs inside recent_runs (the slow call before the claim)
-        and `before_claim` is how a test lets another decision write in the gap after this one read the statuses."""
+    def kick(self, runs, floor_minutes=M.FLOOR_MINUTES):
         import argparse
-        import os
         from unittest import mock
-        args = argparse.Namespace(**{'sha': SHA, 'force': False, 'floor_minutes': 0,
-                                     'run_url': f'https://x/runs/{run_id}', **over})
-        outputs = {}
+        dispatched = []
 
-        class FixedNow(datetime.datetime):  # decide reads the clock; the statuses above are dated NOW
+        class FixedNow(datetime.datetime):
             @classmethod
             def now(cls, tz=None):
                 return NOW
         clock = type('clock', (), {'datetime': FixedNow, 'timezone': datetime.timezone, 'timedelta': datetime.timedelta})
-
-        def set_status(sha, payload):
-            if self.before_claim and payload['state'] == 'pending':
-                hook, self.before_claim = self.before_claim, None
-                hook()
-            self.tick += 1  # each write is a second later than the last
-            when = NOW + datetime.timedelta(seconds=self.tick)
-            store.insert(0, {'context': payload['context'], 'state': payload['state'],
-                             'target_url': payload['target_url'], 'created_at': when.strftime('%Y-%m-%dT%H:%M:%SZ')})
-            calls.append(payload)
-
-        def recent_runs(now, floor):
-            if during:
-                during()
-            return []
-        with mock.patch.object(M, 'statuses', lambda sha: list(store)), \
-                mock.patch.object(M, 'set_status', set_status), \
-                mock.patch.object(M, 'recent_runs', recent_runs), \
-                mock.patch.object(M, 'write_outputs', lambda **kw: outputs.update(kw)), \
+        with mock.patch.object(M, 'recent_runs', lambda now, floor: runs), \
+                mock.patch.object(M, 'gh', lambda *args, **kw: dispatched.append(args) or ''), \
+                mock.patch.object(M, 'repo', lambda: 'o/r'), \
                 mock.patch.object(M, 'write_summary', lambda text: None), \
-                mock.patch.object(M, 'datetime', clock), \
-                mock.patch.dict(os.environ, {'GITHUB_RUN_ID': str(run_id)}):
-            M.command_decide(args)
-        return outputs['run']
+                mock.patch.object(M, 'datetime', clock):
+            M.command_kick(argparse.Namespace(floor_minutes=floor_minutes, ref='main'))
+        return dispatched
 
-    def setUp(self):
-        self.tick = 0
-        self.before_claim = None
+    def test_with_no_run_inside_the_floor_it_dispatches_main_t3_on_the_trunk(self):
+        self.assertEqual(self.kick([]), [('workflow', 'run', 'main-t3.yml', '-R', 'o/r', '--ref', 'main')])
 
-    def test_a_tick_deciding_beside_a_push_run_still_in_setup_skips(self):
-        store, calls = [], []
-        self.assertEqual(self.decide(store, calls, 1, floor_minutes=M.FLOOR_MINUTES), 'true')   # the push run
-        self.assertEqual(self.decide(store, calls, 2), 'false')                               # the 12:17 tick
-        self.assertEqual(len(calls), 1)
+    def test_a_simulator_run_inside_the_floor_holds_the_push(self):
+        self.assertEqual(self.kick([run(1, 2.5, job(DECIDE), job(T3, hours_ago=2.4))]), [])
 
-    def test_a_decision_made_while_the_other_is_in_its_slow_check_still_leaves_one_run(self):
-        # Audit of e086b40: the push run read the statuses, then spent tens of seconds listing runs, then claimed. The
-        # tick decided in that gap. The slow check now comes first, so the push run reads and claims one call apart.
-        store, calls = [], []
-        ticks = []
-        first = self.decide(store, calls, 1, floor_minutes=M.FLOOR_MINUTES,
-                            during=lambda: ticks.append(self.decide(store, calls, 2)))
-        self.assertEqual(ticks, ['true'])    # the tick ran its whole decision inside the push run's slow check
-        self.assertEqual(first, 'false')     # and the push run then read its claim and skipped
-        self.assertEqual(len(calls), 1)
+    def test_a_run_that_only_decided_to_skip_does_not_hold_the_push(self):
+        self.assertEqual(len(self.kick([run(1, 0.5, job(DECIDE), job(T3, conclusion='skipped'))])), 1)
 
-    def test_two_decisions_that_both_read_no_status_leave_one_run(self):
-        # The one-round-trip gap left: both read "no status", both claim. The earlier claim goes on.
-        store, calls = [], []
-        results = {}
+    def test_a_run_older_than_the_floor_does_not(self):
+        self.assertEqual(len(self.kick([run(1, 3.5, job(T3, hours_ago=3.4))])), 1)
 
-        def other():
-            results['b'] = self.decide(store, calls, 'b')  # B reads (nothing yet), claims and finishes first
-        self.before_claim = other
-        results['a'] = self.decide(store, calls, 'a')      # A had already read "no status"
-        self.assertEqual(results['b'], 'true')
-        self.assertEqual(results['a'], 'false')
-        self.assertEqual(len([c for c in calls if c['state'] == 'pending']), 2)
-
-    def test_the_run_that_claimed_first_wins_whichever_it_is(self):
-        store, calls = [], []
-        results = {}
-
-        def other():
-            results['a'] = self.decide(store, calls, 'a')
-        self.before_claim = other
-        results['z'] = self.decide(store, calls, 'z')
-        self.assertEqual((results['a'], results['z']), ('true', 'false'))
-
-    def test_a_forced_dispatch_does_not_step_back(self):
-        store, calls = [], []
-        self.before_claim = lambda: self.decide(store, calls, 'b')
-        self.assertEqual(self.decide(store, calls, 'a', force=True), 'true')
-
-    def test_the_claim_is_a_pending_main_t3_status_with_the_run_url(self):
-        store, calls = [], []
-        self.decide(store, calls, 7)
-        self.assertEqual([(c['context'], c['state'], c['target_url']) for c in calls],
-                         [(M.CONTEXT, 'pending', 'https://x/runs/7')])
-
-    def test_a_decision_not_to_run_claims_nothing(self):
-        store, calls = [status('success')], []
-        self.assertEqual(self.decide(store, calls, 3), 'false')
-        self.assertEqual(calls, [])
-
-    def test_a_dispatch_with_force_claims_and_runs_beside_anything(self):
-        store, calls = [status('pending', 0.1)], []
-        self.assertEqual(self.decide(store, calls, 4, force=True), 'true')
-        self.assertEqual(len(calls), 1)
-
-
-class ClaimWinsTests(unittest.TestCase):
-    def claim(self, state, url, hours_ago=0.0, seconds=0):
-        when = NOW - datetime.timedelta(hours=hours_ago) + datetime.timedelta(seconds=seconds)
-        return {'context': M.CONTEXT, 'state': state, 'target_url': url, 'created_at': when.strftime('%Y-%m-%dT%H:%M:%SZ')}
-
-    def test_the_only_claim_wins(self):
-        self.assertTrue(M.claim_wins([self.claim('pending', 'u1')], 'u1', NOW))
-
-    def test_the_earlier_claim_wins_and_the_later_steps_back(self):
-        listing = [self.claim('pending', 'u2', seconds=3), self.claim('pending', 'u1', seconds=1)]
-        self.assertTrue(M.claim_wins(listing, 'u1', NOW))
-        self.assertFalse(M.claim_wins(listing, 'u2', NOW))
-
-    def test_a_tie_on_the_second_breaks_by_url_the_same_way_for_both(self):
-        listing = [self.claim('pending', 'u2'), self.claim('pending', 'u1')]
-        self.assertEqual([M.claim_wins(listing, 'u1', NOW), M.claim_wins(listing, 'u2', NOW)], [True, False])
-
-    def test_a_run_that_has_reported_no_longer_holds_a_claim(self):
-        listing = [self.claim('success', 'u1', seconds=5), self.claim('pending', 'u1', seconds=1),
-                   self.claim('pending', 'u2', seconds=9)]
-        self.assertTrue(M.claim_wins(listing, 'u2', NOW))
-
-    def test_a_lost_claim_older_than_the_stale_limit_does_not_hold_the_commit(self):
-        listing = [self.claim('pending', 'old', hours_ago=6), self.claim('pending', 'u2')]
-        self.assertTrue(M.claim_wins(listing, 'u2', NOW))
-
-    def test_other_contexts_are_ignored(self):
-        other = {**self.claim('pending', 'u1'), 'context': 'merge policy'}
-        self.assertTrue(M.claim_wins([other, self.claim('pending', 'u2', seconds=4)], 'u2', NOW))
-
-
-class LostScopeTests(unittest.TestCase):
-    """Audit of e086b40: `settle` runs after every run that said run, so `lost` must not turn another run's claim, made
-    in the seconds after this run finished, into a runner fault that eats the commit's one retry."""
-
-    def lost(self, listing, url):
-        import argparse
-        from unittest import mock
-        written = []
-        with mock.patch.object(M, 'statuses', lambda sha: list(listing)), \
-                mock.patch.object(M, 'set_status', lambda sha, payload: written.append(payload)):
-            M.command_lost(argparse.Namespace(sha=SHA, run_url=url))
-        return written
-
-    def entry(self, state, url, seconds):
-        when = NOW + datetime.timedelta(seconds=seconds)
-        return {'context': M.CONTEXT, 'state': state, 'target_url': url, 'created_at': when.strftime('%Y-%m-%dT%H:%M:%SZ')}
-
-    def test_its_own_stranded_pending_becomes_an_error(self):
-        written = self.lost([self.entry('pending', 'u1', 1)], 'u1')
-        self.assertEqual([(w['state'], w['target_url']) for w in written], [('error', 'u1')])
-
-    def test_another_runs_pending_is_left_alone(self):
-        self.assertEqual(self.lost([self.entry('pending', 'u2', 9), self.entry('success', 'u1', 5)], 'u1'), [])
-
-    def test_a_finished_run_is_left_alone(self):
-        self.assertEqual(self.lost([self.entry('success', 'u1', 5), self.entry('pending', 'u1', 1)], 'u1'), [])
+    def test_it_reads_and_writes_no_commit_status(self):
+        # it must not claim, settle or touch the head's status: that is main-t3.yml's, one run at a time
+        import inspect
+        source = inspect.getsource(M.command_kick)
+        self.assertNotIn('set_status', source)
+        self.assertNotIn('statuses(', source)
 
 
 class WorkflowTests(unittest.TestCase):
@@ -462,39 +336,27 @@ class WorkflowTests(unittest.TestCase):
         crons = [c['cron'] for c in self.load('main-t3.yml')['schedule']]
         self.assertEqual(crons, ['17 */3 * * *', '30 13 * * *', '30 22 * * *'])  # 6:30 and 15:30 America/Phoenix
 
-    def test_it_also_starts_on_a_push_to_main_and_only_a_push_waits_for_the_floor(self):
-        self.assertEqual(self.load('main-t3.yml')['push'], {'branches': ['main']})
-        text = (self.ROOT / '.github/workflows/main-t3.yml').read_text()
-        self.assertIn("github.event_name == 'push' && '--floor-minutes %d'" % M.FLOOR_MINUTES, text)
-        self.assertIn('actions: read', text)  # the floor reads this workflow's runs
-
-    def test_a_push_run_cannot_replace_a_waiting_tick_or_dispatch(self):
-        # A concurrency group keeps one pending run and a newer pending run replaces it. In one shared group, a merge's
-        # push run replaced a waiting release-cut dispatch or fixed tick, then skipped on the floor, leaving the head
-        # untested (audit of 30f4499). Pushes get a group of their own, and nothing in progress is ever cancelled.
+    def test_main_t3_itself_has_no_push_trigger_and_one_concurrency_group_for_every_run(self):
+        # Push-started runs in a group of their own ran beside the ticks and raced them (four audits of 4844). Every
+        # Mac run is in this one group, and the push only dispatches.
         import yaml
         data = yaml.safe_load((self.ROOT / '.github/workflows/main-t3.yml').read_text())
-        group = data['concurrency']['group']
-        self.assertIs(data['concurrency']['cancel-in-progress'], False)
+        self.assertNotIn('push', self.load('main-t3.yml'))
+        self.assertEqual(data['concurrency'], {'group': 'main-t3', 'cancel-in-progress': False})
+        self.assertEqual(sorted(data['jobs']), ['decide', 't3'])
+        self.assertEqual(data['jobs']['decide']['permissions'], {'contents': 'read', 'statuses': 'read'})
 
-        def resolve(event):  # the one expression the group uses, evaluated for an event
-            return group.replace("${{ github.event_name == 'push' && 'push' || 'run' }}",
-                                 'push' if event == 'push' else 'run')
-        self.assertNotIn('${{', resolve('push'))
-        self.assertNotEqual(resolve('push'), resolve('schedule'))
-        self.assertEqual(resolve('schedule'), resolve('workflow_dispatch'))
-
-    def test_decide_can_claim_the_commit_and_a_settle_job_clears_a_claim_the_mac_never_reported(self):
+    def test_a_push_to_main_dispatches_main_t3_through_its_own_small_workflow(self):
         import yaml
-        jobs = yaml.safe_load((self.ROOT / '.github/workflows/main-t3.yml').read_text())['jobs']
-        self.assertEqual(jobs['decide']['permissions']['statuses'], 'write')
-        self.assertIn('--run-url', jobs['decide']['steps'][-1]['run'])
-        settle = jobs['settle']
-        self.assertEqual(sorted(settle['needs']), ['decide', 't3'])
-        self.assertIn('always()', settle['if'])
-        self.assertIn('needs.decide.outputs.run', settle['if'])
-        self.assertIn('main_t3.py lost', settle['steps'][-1]['run'])
-        self.assertFalse(jobs['settle']['name'].startswith(M.RUN_JOB_PREFIX))
+        text = (self.ROOT / '.github/workflows/main-t3-push.yml').read_text()
+        data = yaml.safe_load(text)
+        self.assertEqual(self.load('main-t3-push.yml'), {'push': {'branches': ['main']}})
+        (job,) = data['jobs'].values()
+        self.assertEqual(job['runs-on'], 'ubuntu-latest')
+        self.assertEqual(job['permissions'], {'contents': 'read', 'actions': 'write'})
+        self.assertEqual(data['concurrency']['cancel-in-progress'], False)
+        self.assertIn('main_t3.py kick', job['steps'][-1]['run'])
+        self.assertNotIn('statuses', text.split('permissions:', 2)[-1].split('jobs:')[0])
 
     def test_the_floor_names_the_simulator_job_the_workflow_has(self):
         import yaml

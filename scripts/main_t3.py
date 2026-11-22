@@ -17,15 +17,16 @@ The contract other tools read (#4575's release gate):
   run again on the same commit (owner, 2026-11-18): verify-tests.py's in-run retries already tell a flake from a real
   failure. A manual dispatch with `force` always runs.
 
-- A push to main also starts the workflow (#4839), so a merge is tested soon after it lands instead of at the next
-  tick. A push-started run skips when a main-t3 run did work in the last FLOOR_MINUTES (3 hours), so a busy day costs
-  one run in 3 hours, as the schedule did. Skipped pushes are not queued: the next tick finds the head with no status.
+- A push to main also starts a run (#4839), through .github/workflows/main-t3-push.yml: `kick` dispatches main-t3.yml
+  unless a main-t3 run did simulator work in the last FLOOR_MINUTES (3 hours), so a busy day costs one run in 3
+  hours, as the schedule did. A skipped push is not queued: the next tick finds the head with no status. Every Mac run
+  stays in main-t3.yml's one concurrency group, so runs are one at a time and in order, and a dispatched run decides
+  like a tick, so it never loses a tick or a release cut it replaces in the queue.
 
 Subcommands:
-- decide --sha SHA [--floor-minutes N] [--run-url URL]: print and write `run=true|false` to $GITHUB_OUTPUT. With a
-  floor, skip when a main-t3 run other than this one (GITHUB_RUN_ID) started its simulator job in the last N minutes.
-  With a URL, a decision to run leaves a `pending` status on the commit at once, so a second run deciding a minute
-  later (a tick beside a push run, which have separate concurrency groups) skips instead of racing the first.
+- decide --sha SHA: print and write `run=true|false` to $GITHUB_OUTPUT.
+- kick [--floor-minutes N] [--ref REF]: dispatch main-t3.yml unless a run did simulator work inside the floor. Reads
+  this workflow's recent runs and jobs; reads and writes no commit status.
 - run --sha SHA --run-url URL: set `pending`, run both app plans (AppBehavior and AudioAdapters, every test in them)
   through scripts/lane_t3.py's T3 machinery (moved out of lane-runner.py, #4769) on a fresh simulator clone, set the final status, and on `failure` open or
   update the one open "Main T3 failed on <sha7>" issue (label `regression`, marker MARKER). On `success` it closes
@@ -57,7 +58,6 @@ ERROR_RETRIES = 1
 FLOOR_MINUTES = 180  # #4839: the least time between two push-started runs
 RUN_JOB_PREFIX = 'main-t3:'  # the simulator job's name in main-t3.yml; the decide job is not work
 RUNS_LOOKED_AT = 40
-CLAIM_TEXT = 'queued for a hosted Mac'  # the `pending` decide leaves before the Mac job starts
 MARKER = '<!-- main-t3-failure -->'
 STATE_MARKER = re.compile(r'<!-- main-t3-state: (\{.*?\}) -->')
 ISSUE_LABEL = 'regression'
@@ -475,45 +475,29 @@ def write_summary(text: str) -> None:
             out.write(text + '\n')
 
 
-def claim_wins(listing: list, own_url: str, now: datetime.datetime) -> bool:
-    """True when this run's `pending` claim is the earliest of the live claims on the commit, so two runs that read
-    "no status" at the same moment cannot both go on. A run's claim is live while its newest status is `pending` and
-    is younger than STALE_PENDING; ties on the second break by run URL, so both runs reach the same answer."""
-    newest = {}
-    for entry in listing:
-        if entry.get('context') != CONTEXT:
-            continue
-        url = entry.get('target_url') or ''
-        if url not in newest or (entry.get('created_at') or '') > (newest[url].get('created_at') or ''):
-            newest[url] = entry
-    live = sorted(((e.get('created_at') or '', url) for url, e in newest.items()
-                   if e.get('state') == 'pending' and e.get('created_at')
-                   and now - parse_time(e['created_at']) <= STALE_PENDING))
-    return not live or live[0][1] == own_url
-
-
 def command_decide(args) -> int:
     now = datetime.datetime.now(datetime.timezone.utc)
-    # The slow check first (up to about 40 API calls), so the status read and the claim below sit one round trip apart.
-    started = None
-    if args.floor_minutes and not args.force:
-        floor = datetime.timedelta(minutes=args.floor_minutes)
-        started = recent_work_start(recent_runs(now, floor), now, floor, os.environ.get('GITHUB_RUN_ID', ''))
     run, why = should_run(statuses(args.sha), now, args.force)
-    if run and started:
-        run, why = False, f'a {CONTEXT} run started at {started:%H:%M}Z, inside the {args.floor_minutes}-minute floor'
-    if run and args.run_url:
-        # #4839: claim the commit now. Push runs have their own concurrency group, so a tick can decide beside a push
-        # run still doing minutes of Mac setup; without a status on the commit it would start a second whole-suite run
-        # and the two would race to write the result. `pending` is what should_run reads as "in progress".
-        set_status(args.sha, status_payload('pending', args.run_url, CLAIM_TEXT))
-        # Two decisions can read "no status" in the same second and both claim. Read back: the earlier claim goes on,
-        # the other steps back. A forced dispatch runs beside anything, so it does not step back.
-        if not args.force and not claim_wins(statuses(args.sha), args.run_url, now):
-            run, why = False, f'another {CONTEXT} run claimed this commit first'
     print(f'{CONTEXT} on {args.sha[:7]}: {"run" if run else "skip"} ({why})')
     write_outputs(run=str(run).lower())
     write_summary(f'{CONTEXT} on `{args.sha[:7]}`: {"run" if run else "skip"}, {why}.')
+    return 0
+
+
+def command_kick(args) -> int:
+    """A push to main (main-t3-push.yml): dispatch main-t3.yml unless a run did simulator work inside the floor. The
+    dispatched run decides like a tick, from the head's own status. Never reads or writes a commit status."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    floor = datetime.timedelta(minutes=args.floor_minutes)
+    started = recent_work_start(recent_runs(now, floor), now, floor)
+    if started:
+        why = f'a {CONTEXT} run started at {started:%H:%M}Z, inside the {args.floor_minutes}-minute floor; the next tick tests the head'
+        print(f'{CONTEXT} push: skip ({why})')
+        write_summary(f'{CONTEXT} push: skip, {why}.')
+        return 0
+    gh('workflow', 'run', 'main-t3.yml', '-R', repo(), '--ref', args.ref)
+    print(f'{CONTEXT} push: dispatched main-t3.yml on {args.ref}')
+    write_summary(f'{CONTEXT} push: dispatched main-t3.yml on `{args.ref}`; no run in the last {args.floor_minutes} minutes.')
     return 0
 
 
@@ -550,9 +534,7 @@ def command_run(args) -> int:
 def command_lost(args) -> int:
     ours = [s for s in statuses(args.sha) if s.get('context') == CONTEXT]
     newest = max(ours, key=lambda s: s.get('created_at') or '', default=None)
-    # Only this run's own pending: another run's claim on the commit (a forced dispatch right after this run finished)
-    # is not ours to turn into a fault, and an error written over it would count against the commit's one retry.
-    if newest and newest.get('state') == 'pending' and newest.get('target_url') == args.run_url:
+    if newest and newest.get('state') == 'pending':
         set_status(args.sha, status_payload('error', args.run_url, 'runner fault: the job stopped before it reported'))
     return 0
 
@@ -563,8 +545,9 @@ def main(argv=None) -> int:
     decide = sub.add_parser('decide')
     decide.add_argument('--sha', required=True)
     decide.add_argument('--force', action='store_true')
-    decide.add_argument('--floor-minutes', type=int, default=0)
-    decide.add_argument('--run-url', default='', help='claim the commit with a pending status when deciding to run')
+    kick = sub.add_parser('kick')
+    kick.add_argument('--floor-minutes', type=int, default=FLOOR_MINUTES)
+    kick.add_argument('--ref', default='main')
     run = sub.add_parser('run')
     run.add_argument('--sha', required=True)
     run.add_argument('--run-url', required=True)
@@ -574,9 +557,9 @@ def main(argv=None) -> int:
     lost.add_argument('--sha', required=True)
     lost.add_argument('--run-url', required=True)
     args = parser.parse_args(argv)
-    if not re.fullmatch(r'[0-9a-f]{40}', args.sha):
+    if args.command != 'kick' and not re.fullmatch(r'[0-9a-f]{40}', args.sha):
         parser.error('--sha must be a full 40-character commit SHA')
-    return {'decide': command_decide, 'run': command_run, 'lost': command_lost}[args.command](args)
+    return {'decide': command_decide, 'kick': command_kick, 'run': command_run, 'lost': command_lost}[args.command](args)
 
 
 if __name__ == '__main__':
