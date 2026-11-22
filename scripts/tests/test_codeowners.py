@@ -71,18 +71,21 @@ class CodeownersTests(unittest.TestCase):
         for path in held:
             self.assertEqual(owners_of(path, rules), [OWNER], f'{path} is held for the owner but CODEOWNERS misses it')
 
-    def test_trust_and_gate_scripts_are_covered(self):
+    def test_ci_and_deploy_paths_are_covered(self):
         rules = entries()
-        for path in ('scripts/comment_trust.py', 'scripts/lane_sender.py', 'scripts/merge_policy.py',
-                     'scripts/signoff_check.py', 'AGENTS.md', 'CLAUDE.md', '.claude/skills/lane-request/SKILL.md',
-                     '.github/CODEOWNERS', 'ops/runner-guard/refuse-fork-jobs.sh', 'SECURITY.md'):
+        for path in ('.github/CODEOWNERS', '.github/workflows/deploy-web.yml', 'ops/runner-guard/refuse-fork-jobs.sh',
+                     'ops/server-deploy/sm_deploy.py', 'ops/dial/deploy.sh', 'research/B4/deploy/deploy.sh',
+                     'Config/ExportOptions-TestFlight.plist'):
             self.assertEqual(owners_of(path, rules), [OWNER], f'{path} must stay covered')
 
     def test_ordinary_code_is_not_held(self):
         # The file must not turn every PR into a review request: that would hide the paths that matter.
         rules = entries()
+        # Owner, 2026-11-22: instructions, contribution docs and the trust helpers are not held (#4915).
         for path in ('App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift', 'docs/areas.md',
-                     'Packages/SessionKit/Package.swift'):
+                     'Packages/SessionKit/Package.swift', 'AGENTS.md', 'CLAUDE.md', '.claude/skills/lane-request/SKILL.md',
+                     'CONTRIBUTING.md', 'SECURITY.md', 'scripts/comment_trust.py', 'scripts/merge_policy.py',
+                     'ops/claude/sm_claude_worker.py'):
             self.assertIsNone(owners_of(path, rules), f'{path} should not need the owner')
 
 
