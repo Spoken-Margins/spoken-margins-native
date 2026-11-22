@@ -311,6 +311,21 @@ class NotifyTests(unittest.TestCase):
         self.assertIn('conflicts with main', body)
         self.assertIn(mq.MARKER.format(head=OTHER), body)
 
+    def test_an_invalid_merge_commit_is_a_conflict_not_a_retry(self):
+        # #4942, 2026-11-22: dequeued with INVALID_MERGE_COMMIT after #4941 and #4930 merged ahead of it. The comment
+        # said "No failed check found" and told an unlabelled PR to add `automerge`; merging main in was the fix.
+        for armed in (True, False):
+            with self.subTest(armed=armed):
+                github = self.github(check_conclusion='in_progress')
+                self.assertEqual(mq.notify(github, event(reason='INVALID_MERGE_COMMIT', armed=armed),
+                                           out=io.StringIO()), 'told')
+                self.assertEqual(github.requeued, 0)
+                body = github.posts[0][1]['body']
+                self.assertIn('Merge main into the branch', body)
+                self.assertNotIn('No failed check found', body)
+                self.assertNotIn(mq.RETRY_MARKER, body)
+                self.assertIn('add `automerge` again' if armed else 'tap Merge again', body)
+
     def test_a_failed_read_posts_nothing_and_does_not_raise(self):
         github = self.github()
         github.gets['issues/7/comments'] = mq.ReadFailed('comments')

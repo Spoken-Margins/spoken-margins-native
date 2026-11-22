@@ -49,6 +49,10 @@ FAILED = ('failure', 'timed_out', 'action_required', 'startup_failure')
 # Event reasons that mean the PR itself needs work; anything else (merged, removed by hand) gets no label.
 MANUAL_REASONS = ('MANUAL', 'DEQUEUED_MANUALLY')
 NO_LABEL_REASONS = ('MERGE', 'MERGED', 'ALREADY_MERGED', *MANUAL_REASONS)
+# The group's merge commit could not be built: the PR conflicts with main or with a PR ahead of it in the queue (#4942
+# was dequeued with INVALID_MERGE_COMMIT on 2026-11-22 after #4941 and #4930 merged ahead of it). Merging main in fixes
+# it, so it is a conflict, never a check that failed.
+CONFLICT_REASONS = ('CONFLICT', 'INVALID_MERGE_COMMIT')
 TRIES = 3
 
 ENTRIES_QUERY = '''query($owner: String!, $name: String!) {
@@ -160,7 +164,12 @@ def nothing_failed(reason, check):
     """A removal in which no check failed and that is not a conflict, a merge or a removal by hand: a cancelled
     check, or one that never reported before the queue's timeout. Nothing in the PR needs fixing."""
     upper = (reason or '').upper()
-    return not check and upper not in NO_LABEL_REASONS and 'CONFLICT' not in upper
+    return not check and upper not in NO_LABEL_REASONS and not is_conflict(reason)
+
+
+def is_conflict(reason):
+    upper = (reason or '').upper()
+    return any(word in upper for word in CONFLICT_REASONS)
 
 
 def comment_body(number, reason, head, check, armed=True, cancelled=None, retry=False, requeued=None):
@@ -199,11 +208,13 @@ def comment_body(number, reason, head, check, armed=True, cancelled=None, retry=
         return '\n\n'.join(lines)
     if check:
         lines.append(f'Failed check: "{check.get("name", "?")}" on the merge group `{head[:7]}`: {check.get("html_url", "")}')
-    elif reason and 'CONFLICT' in reason.upper():
-        lines.append('The PR conflicts with main. Merge main into the branch and resolve it.')
+    elif is_conflict(reason):
+        lines.append('The merge queue could not merge it onto main as it stands: it conflicts with main or with a PR '
+                     'ahead of it in the queue. Merge main into the branch and resolve it.')
     else:
         lines.append(f'No failed check found on the merge group `{head[:7]}`.')
-    lines.append(f'To get back in: fix it, push, then add `{ARM_LABEL}` again.')
+    again = f'add `{ARM_LABEL}` again' if armed else f'tap Merge again (or add `{ARM_LABEL}`)'
+    lines.append(f'To get back in: fix it, push, then {again}.')
     return '\n\n'.join(lines)
 
 
