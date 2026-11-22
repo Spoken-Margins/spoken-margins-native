@@ -267,7 +267,8 @@ final class PlaybackNowClipsTests: XCTestCase {
         XCTAssertEqual(height([fragment("one\ntwo\nthree")]), 3 * 22 + 20 + 10, "each line break starts a line")
         XCTAssertEqual(height([fragment(String(repeating: "x", count: 30), role: .table)]), 2 * 22 + 20 + 10)
         XCTAssertEqual(height([fragment(String(repeating: "x", count: 30), role: .body)]), 44 + 10)
-        XCTAssertEqual(height([fragment("a\nb", label: "Table 2"), fragment("c")]), 4 * 22 + 20 + 10, "a label is one more line")
+        XCTAssertEqual(height([fragment("a\nb", label: "Table 2"), fragment("c")]), 4 * 22 + 20 + 4 + 10,
+                       "a label is one more line, and a second fragment adds the 4 point gap between fragments")
     }
 
     func testAtTheLargestTextSizeNoHoldFits() {
@@ -305,5 +306,32 @@ final class PlaybackNowClipsTests: XCTestCase {
         }
         XCTAssertEqual(Layout.height(width: 0, aspect: 1.5, visibleHeight: 800), 44)
         XCTAssertEqual(Layout.height(width: -5, aspect: 1.5, visibleHeight: 800), 44)
+    }
+
+    // MARK: A hold that failed is not tried again
+
+    func testACardWhoseHoldWasDroppedDoesNotHoldAtTheNextSentenceEither() {
+        let scene = holdScene(count: 12)
+        let clips = [(id: -1, holdStart: scene.sentences[3].start, height: 150.0)]
+        let hold = { (lit: Int, dropped: Set<Int>) in
+            PlaybackLivePassage.ClipHold.target(
+                scene: scene, lit: lit, clips: clips, visibleHeight: 450, dropped: dropped, sentenceHeight: { _ in 60 })
+        }
+        XCTAssertEqual(hold(4, []), .clip(id: -1), "the estimate says it fits")
+        // The view found sentence 4 off screen and dropped the card: sentences 4, 5 and 6 follow the usual way, so the text
+        // does not move up and down once per sentence.
+        for lit in 4...6 { XCTAssertEqual(hold(lit, [-1]), .sentence, "sentence \(lit)") }
+    }
+
+    func testADroppedCardHoldsAgainOnlyOnceTheListenerIsBeforeIt() {
+        let scene = holdScene(count: 12)
+        let starts = [-1: scene.sentences[3].start, -2: scene.sentences[8].start]
+        typealias Hold = PlaybackLivePassage.ClipHold
+        XCTAssertEqual(Hold.stillDropped([-1, -2], holdStarts: starts, litStart: scene.sentences[5].start), [-1],
+                       "the card not reached yet was never dropped for this reading; the reached one stays dropped")
+        XCTAssertEqual(Hold.stillDropped([-1], holdStarts: starts, litStart: scene.sentences[3].start), [-1], "at its own sentence")
+        XCTAssertEqual(Hold.stillDropped([-1], holdStarts: starts, litStart: scene.sentences[1].start), [],
+                       "a rewind to before the card gives it its hold again")
+        XCTAssertEqual(Hold.stillDropped([-9], holdStarts: starts, litStart: 0), [], "a card that is gone")
     }
 }
