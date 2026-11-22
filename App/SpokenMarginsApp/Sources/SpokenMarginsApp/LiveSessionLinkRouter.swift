@@ -20,6 +20,8 @@ final class LiveSessionLinkRouter: ObservableObject {
         /// The window whose Live row asked (`liveSessionWindow`); only that window presents it. Nil (a link) is every
         /// window's.
         var window: UUID?
+        /// Shows the recording screen for Record a Margin with nothing running (#4927), not a live session.
+        var quickRecording = false
     }
 
     /// How long a link waits for a screen to load before it is dropped.
@@ -35,6 +37,8 @@ final class LiveSessionLinkRouter: ObservableObject {
     @Published private(set) var pendingAction: LiveSessionDeepLink.Action?
     private var pendingSince = Date.distantPast
     private var screensOpen = 0
+    /// The Record a Margin recording screen (`QuickMarginRecordingView`) is on screen (#4927).
+    private var quickScreenShowing = false
 
     /// Takes a live-session link from `onOpenURL`; false for any other URL, which the model handles.
     func handle(_ url: URL) -> Bool {
@@ -46,7 +50,8 @@ final class LiveSessionLinkRouter: ObservableObject {
     func open(_ action: LiveSessionDeepLink.Action, now: Date = Date()) {
         pendingAction = action
         pendingSince = now
-        guard screensOpen == 0 else { return }
+        // A quick recording's screen is up: a link has nothing to start and must not replace the only Finish and Cancel.
+        guard screensOpen == 0, cover?.quickRecording != true else { return }
         let presented = Cover()
         cover = presented
         Task { [weak self] in
@@ -64,13 +69,29 @@ final class LiveSessionLinkRouter: ObservableObject {
         cover = Cover(sessionId: sessionId, window: window)
     }
 
-    /// Opens the live session screen on its start card, for Record a Margin with nothing running (#4923). No link waits
-    /// on it, so nothing closes it but the screen: `open` would drop the cover after `presentationGrace`, because a
-    /// start card never registers as a running screen.
-    func openStartCard() {
+    /// Opens the recording screen for Record a Margin with nothing running (#4927), over the root and in every window.
+    /// No link waits on it, so nothing closes it but the screen: `open` would drop the cover after `presentationGrace`,
+    /// because this screen never registers as a running session screen.
+    ///
+    /// The recording is already going when this is called, so a screen that does not appear (another sheet or cover holds
+    /// the root, or the app is still starting) must not leave it running with no Finish or Cancel: after the grace the
+    /// recording is stopped and filed as it is, and the listener is told.
+    func openQuickRecording(capture: LiveSessionSpokenCapture = .shared) {
         pendingAction = nil
-        cover = Cover(sessionId: nil, window: nil)
+        let presented = Cover(sessionId: nil, window: nil, quickRecording: true)
+        cover = presented
+        Task { [weak self] in
+            try? await Task.sleep(for: Self.presentationGrace)
+            guard let self, capture.isRecordingQuick, !quickScreenShowing else { return }
+            if cover?.id == presented.id { cover = nil }
+            capture.notice = "Record a Margin couldn't open its screen, so what you said up to now was saved."
+            capture.stopAndFile()
+        }
     }
+
+    func quickScreenAppeared() { quickScreenShowing = true }
+
+    func quickScreenDisappeared() { quickScreenShowing = false }
 
     /// A screen showing the running session appeared or went away.
     func runningScreenAppeared() { screensOpen += 1 }
@@ -100,8 +121,12 @@ private struct LiveSessionLinkCover: ViewModifier {
         content
             .environment(\.liveSessionWindow, window)
             .trackedFullScreenCover(item: windowsCover) { cover in
-                // `.equatable()` so the root's redraw on each model publish stops here (#4091).
-                LiveSessionView(model: model, sessionId: cover.sessionId).equatable()
+                if cover.quickRecording {
+                    QuickMarginRecordingView().environmentObject(model)
+                } else {
+                    // `.equatable()` so the root's redraw on each model publish stops here (#4091).
+                    LiveSessionView(model: model, sessionId: cover.sessionId).equatable()
+                }
             }
     }
 

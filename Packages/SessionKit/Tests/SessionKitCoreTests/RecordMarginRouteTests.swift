@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SessionKit
 
-/// #4923: "Record a Margin" starts the recording on the running live session, else the player's item, else the start card.
+/// #4923: "Record a Margin" starts the recording on the running live session, else the player's item, else a quick session (#4927).
 final class RecordMarginRouteTests: XCTestCase {
     private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
 
@@ -26,8 +26,8 @@ final class RecordMarginRouteTests: XCTestCase {
         XCTAssertEqual(decide(player: true), .playerItem)
     }
 
-    func testNothingRunningOpensTheSessionStartCard() {
-        XCTAssertEqual(decide(), .sessionStartCard)
+    func testNothingRunningRecordsIntoAQuickSession() {
+        XCTAssertEqual(decide(), .quickSession)
     }
 
     func testAMarginAlreadyRecordingStartsNoSecondOneWhateverElseRuns() {
@@ -43,7 +43,7 @@ final class RecordMarginRouteTests: XCTestCase {
 
     func testEachRouteHasItsOwnDiagnosticName() {
         let names = [decide(recording: true), decide(session: session()), decide(player: true), decide()].map(\.diagnosticName)
-        XCTAssertEqual(names, ["already_recording", "live_session", "player_item", "session_start_card"])
+        XCTAssertEqual(names, ["already_recording", "live_session", "player_item", "quick_session"])
         XCTAssertEqual(Set(names).count, names.count)
     }
 }

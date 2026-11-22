@@ -40,15 +40,24 @@ final class LiveSessionLinkTests: XCTestCase {
         XCTAssertNil(router.takeAction())
     }
 
-    /// #4923: Record a Margin with nothing running shows the start card with no action waiting on it, and no grace
-    /// task that closes it (`open` starts one, because a start card never registers as a running screen).
-    func testTheStartCardOpensWithNoActionWaitingOnIt() {
+    /// #4927: Record a Margin with nothing running shows the recording screen with no action waiting on it, and no
+    /// grace task that closes it (`open` starts one, because that screen never registers as a running session screen).
+    func testTheQuickRecordingScreenOpensWithNoActionWaitingOnIt() {
         let router = LiveSessionLinkRouter()
-        router.openStartCard()
+        router.openQuickRecording()
         XCTAssertNotNil(router.cover)
+        XCTAssertEqual(router.cover?.quickRecording, true)
         XCTAssertNil(router.cover?.sessionId)
         XCTAssertNil(router.cover?.window)
         XCTAssertNil(router.takeAction())
+    }
+
+    func testALinkOrALiveRowNeverOpensTheQuickRecordingScreen() {
+        let router = LiveSessionLinkRouter()
+        router.open(.speak)
+        XCTAssertEqual(router.cover?.quickRecording, false)
+        router.openScreen(sessionId: "live", window: nil)
+        XCTAssertEqual(router.cover?.quickRecording, false)
     }
 
     func testALinkWithAScreenAlreadyOpenPresentsNothingElse() {

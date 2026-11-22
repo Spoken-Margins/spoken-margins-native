@@ -36,6 +36,9 @@ struct MarginRecordingScreenState: Equatable {
     var canRetry = false
     /// What the hint under the timer says about ending by voice (#3940). `.none` leaves the screen as it was.
     var endPhraseHint: MarginEndPhraseHint = .none
+    /// Whether the screen offers Write instead. A recording with nowhere to write the Margin instead (Record a Margin
+    /// with nothing running, #4927) hides it, so no button leads to a screen that doesn't exist.
+    var offersWriteInstead = true
 
     var isPreparing: Bool { phase == .preparing || phase == .primer }
     var showsMicrophonePrimer: Bool { phase == .primer }
@@ -334,7 +337,7 @@ struct MarginRecordingScreen: View {
                 .disabled(state.isFinishing)
                 .accessibilityIdentifier("recording.retryMicrophone.button")
             }
-            if isPreparing || state.isRecording {
+            if state.offersWriteInstead, isPreparing || state.isRecording {
                 Button(action: writeInstead) {
                     Label("Write instead", systemImage: "square.and.pencil").frame(minHeight: 44).contentShape(Rectangle())
                 }

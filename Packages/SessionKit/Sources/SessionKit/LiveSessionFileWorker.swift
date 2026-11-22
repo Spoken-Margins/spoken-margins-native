@@ -446,10 +446,33 @@ public actor LiveSessionFileWorker {
     public func fileWrittenMarginAsQuick(text: String, markedAt: Date, now: Date = Date()) -> LiveSession? {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !words.isEmpty else { return nil }
+        return fileIntoQuickSession(LiveSessionMargin(id: "siri-\(makeId())", text: words, markedAt: markedAt), now: now)
+    }
+
+    /// Files a spoken Margin recorded on the phone when nothing runs (Record a Margin with no live session and no item
+    /// in the player, #4927): by the same rule as `fileWrittenMarginAsQuick`, so it joins a quick session that holds
+    /// this moment, else starts one, and never goes to a Library item. `markedAt` is when the recording began. Returns
+    /// the session it went into, or nil when the Margin was deleted meanwhile, is already filed or the save failed.
+    /// Like a written one, a screen save that hasn't seen it keeps it (`keepingUnseen`).
+    @discardableResult
+    public func fileSpokenMarginAsQuick(
+        marginId: String, audioPath: String, markedAt: Date, durationMs: Int?, spokenOn: String, now: Date = Date()
+    ) -> LiveSession? {
         sessions() // loads the deletions too
-        let margin = LiveSessionMargin(id: "siri-\(makeId())", text: words, markedAt: markedAt)
+        guard !deletions.marginIds.contains(marginId),
+              !sessions().values.contains(where: { $0.margins.contains { $0.id == marginId } }) else { return nil }
+        var margin = LiveSessionMargin(id: marginId, text: "", markedAt: markedAt)
+        margin.audioPath = audioPath
+        margin.durationMs = durationMs
+        margin.spokenOn = spokenOn
+        return fileIntoQuickSession(margin, now: now)
+    }
+
+    /// The one rule for a Margin that goes to a quick session with the player left out.
+    private func fileIntoQuickSession(_ margin: LiveSessionMargin, now: Date) -> LiveSession? {
+        sessions() // loads the deletions too
         let decision = LiveSessionFiling.decide(
-            .init(marginId: margin.id, markedAt: markedAt, allowsPlayerItem: false),
+            .init(marginId: margin.id, markedAt: margin.markedAt, allowsPlayerItem: false),
             sessions: candidates(), deletions: deletions, playerRuns: [], now: now
         )
         guard let placed = (try? place(margin, by: decision)) ?? nil else { return nil }

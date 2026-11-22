@@ -6,14 +6,17 @@ import SessionKit
 /// Where "Record a Margin" sends the recording (#4923). The route is `RecordMarginRoute`'s; this applies it. A live
 /// session's spoken Margin starts through the live-session link the Live Activity's "Speak a Margin" button uses, so
 /// the session's own screen shows the recording. The player's item starts through the same compact command as the
-/// on-screen Add a Margin, so the microphone prompt, the audio-session switch and the Live Activity follow it.
+/// on-screen Add a Margin, so the microphone prompt, the audio-session switch and the Live Activity follow it. With
+/// nothing running, the recording starts here, on the app-lifetime capture, and its own screen (`QuickMarginRecordingView`)
+/// opens over the root; the Margin goes to a quick session when it is finished.
 @MainActor
 enum RecordMarginShortcutAction {
     static let origin = "record_margin_intent"
 
     @discardableResult
     static func perform(
-        in model: Gate1AppModel, files: LiveSessionFileWorker = .shared, router: LiveSessionLinkRouter = .shared
+        in model: Gate1AppModel, files: LiveSessionFileWorker = .shared, router: LiveSessionLinkRouter = .shared,
+        capture: LiveSessionSpokenCapture = .shared
     ) async -> RecordMarginRoute {
         let route = RecordMarginRoute.decide(.init(
             runningSession: await files.runningSession(),
@@ -25,11 +28,16 @@ enum RecordMarginShortcutAction {
         let navigationLocked = model.recordingNavigationIsLocked
         switch route {
         case .alreadyRecording:
-            break
+            // A quick recording whose screen was left (the app was backgrounded, say) shows it again, so Finish and
+            // Cancel are in reach. One that is showing is left alone: replacing it would close and reopen it.
+            if capture.isRecordingQuick, router.cover?.quickRecording != true { router.openQuickRecording() }
         case .liveSession:
             router.open(.speak)
-        case .sessionStartCard:
-            router.openStartCard()
+        case .quickSession:
+            // Nothing runs, so the Margin belongs to no session yet: it is filed into a quick session when the recording
+            // stops (#4927). The recording starts before its screen opens, as the live session's does.
+            capture.start(sessionId: LiveSessionSpokenCapture.quickDestination)
+            router.openQuickRecording()
         case .playerItem:
             model.dispatchGate2CompactCommand(.beginInterjection, origin: origin)
         }
@@ -50,7 +58,7 @@ enum RecordMarginShortcutAction {
 struct RecordMarginShortcutIntent: AppIntent {
     static let title: LocalizedStringResource = "Record a Margin"
     static let description = IntentDescription(
-        "Opens Spoken Margins and starts recording a spoken Margin: on your running live session if there is one, else on whatever is playing. Use Add Margin instead to dictate a text Margin without opening the app."
+        "Opens Spoken Margins and starts recording a spoken Margin: on your running live session if there is one, else on whatever is playing, else in a quick session in your Library. Use Add Margin instead to dictate a text Margin without opening the app."
     )
     static let openAppWhenRun = true
 
