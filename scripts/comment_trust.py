@@ -17,20 +17,20 @@ author is marked as a bot (`__typename: Bot` or `is_bot: true`).
 
 A GitHub App the agents act as (#4915) is trusted the same way as the workflows' bot, but only once its slug is in
 `TRUSTED_APP_SLUGS`. GitHub reports an App's comments and pull requests as `<slug>[bot]` with association NONE (as it
-does for `github-actions[bot]`), so without that entry the App reads as a stranger. The list is empty until the
-owner creates the App; the change that moves the first job to it adds the slug exactly as the App's settings page
-shows it. A slug in the list trusts only that exact App: no case folding, no prefix match.
+does for `github-actions[bot]`), so without that entry the App reads as a stranger. The owner created
+`spoken-margins-agent` on 2026-11-22; the first job to act as it is `.github/workflows/package-watch.yml` (#4915
+step 3). A slug in the list trusts only that exact App: no case folding, no prefix match.
 
-`ops/dial/dial_gate.py` is deployed to the VPS as a single file and keeps a copy of these two constants;
-`ops/dial/test_dial_gate.py` fails if they drift.
+`ops/dial/dial_gate.py` (deployed to the VPS as a single file), `scripts/lane_inherited_holds.py` and
+`scripts/merge_audit.py` keep a copy of these constants; `scripts/tests/test_comment_trust.py` fails if they drift.
 """
 from __future__ import annotations
 
 TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
 TRUSTED_BOTS = ('github-actions[bot]',)
 GRAPHQL_BOT_LOGINS = ('github-actions', 'app/github-actions')
-# GitHub Apps the agents act as (#4915), by slug. Empty until the App exists; see the module note.
-TRUSTED_APP_SLUGS: tuple[str, ...] = ()
+# GitHub Apps the agents act as (#4915), by slug, exactly as the App's settings page shows it; see the module note.
+TRUSTED_APP_SLUGS: tuple[str, ...] = ('spoken-margins-agent',)
 
 
 def _trusted_rest_bot_logins() -> tuple[str, ...]:
