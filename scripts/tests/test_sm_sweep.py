@@ -768,6 +768,60 @@ class Output(unittest.TestCase):
         self.assertIn('ERROR', err.getvalue())
 
 
+class ScheduleGapTests(unittest.TestCase):
+    """Rule 15 (#4937): a backstopped workflow that neither GitHub's schedule nor the VPS backstop started."""
+
+    def router(self, runs):
+        router = world()
+        router.on(r'^actions/workflows/([\w.-]+)/runs',
+                  lambda path: {'workflow_runs': runs.get(re.search(r'workflows/([\w.-]+)/', path).group(1), [])})
+        return router
+
+    def fresh(self, minutes=5, event='schedule'):
+        return {name: [{'created_at': at(minutes=minutes), 'event': event, 'conclusion': 'success'}]
+                for name in sweep.backstop.WORKFLOWS}
+
+    def test_all_running_on_time_is_quiet(self):
+        actions, _ = sweep.decide(facts_of(self.router(self.fresh())))
+        self.assertNotIn('schedule-gap', rules(actions))
+
+    def test_a_dropped_workflow_is_reported_once_with_each_gap(self):
+        runs = self.fresh()
+        runs['merge-stall.yml'] = [{'created_at': at(minutes=47), 'event': 'schedule', 'conclusion': 'success'}]
+        runs['main-t3.yml'] = []
+        actions, _ = sweep.decide(facts_of(self.router(runs)))
+        gaps = [a for a in actions if a['rule'] == 'schedule-gap']
+        self.assertEqual(len(gaps), 1)
+        self.assertIn('merge-stall.yml last ran 47m ago (schedule), due every 15m', gaps[0]['detail'])
+        self.assertIn('main-t3.yml has no run', gaps[0]['detail'])
+        self.assertIn('journalctl -u sm-dispatch-backstop', gaps[0]['detail'])
+        self.assertNotIn('claude-audit.yml', gaps[0]['detail'])
+
+    def test_it_counts_runs_the_way_the_backstop_does(self):
+        # Skipped runs and the bridge's one-PR runs do not count as runs (sm_dispatch_backstop.pick).
+        runs = self.fresh()
+        runs['merge-stall.yml'] = [{'created_at': at(minutes=2), 'event': 'workflow_run', 'conclusion': 'skipped'},
+                                   {'created_at': at(minutes=90), 'event': 'schedule', 'conclusion': 'success'}]
+        runs['merge-queue-label-bridge.yml'] = [
+            {'created_at': at(minutes=3), 'event': 'pull_request_target', 'conclusion': 'success'},
+            {'created_at': at(minutes=50), 'event': 'workflow_dispatch', 'conclusion': 'success'}]
+        detail = next(a['detail'] for a in sweep.decide(facts_of(self.router(runs)))[0] if a['rule'] == 'schedule-gap')
+        self.assertIn('merge-stall.yml last ran 90m ago', detail)
+        self.assertIn('merge-queue-label-bridge.yml last ran 50m ago (workflow_dispatch)', detail)
+
+    def test_an_hourly_workflow_gets_two_hours(self):
+        runs = self.fresh()
+        runs['lane-conflicts.yml'] = [{'created_at': at(minutes=100), 'event': 'pull_request', 'conclusion': 'success'}]
+        self.assertNotIn('schedule-gap', rules(sweep.decide(facts_of(self.router(runs)))[0]))
+        runs['lane-conflicts.yml'] = [{'created_at': at(minutes=121), 'event': 'pull_request', 'conclusion': 'success'}]
+        self.assertIn('schedule-gap', rules(sweep.decide(facts_of(self.router(runs)))[0]))
+
+    def test_an_unreadable_runs_list_is_not_reported_as_a_gap(self):
+        facts = facts_of(world())    # no rule for actions/: every read raises
+        self.assertIsNone(facts['schedule_gaps'])
+        self.assertNotIn('schedule-gap', rules(sweep.decide(facts)[0]))
+
+
 if __name__ == '__main__':
     unittest.main()
 

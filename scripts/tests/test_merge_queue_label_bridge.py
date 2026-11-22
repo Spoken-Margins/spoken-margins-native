@@ -1,5 +1,6 @@
 """scripts/merge_queue_label_bridge.py: the `automerge` label queues a PR, never a draft or throwaway one (#4693)."""
 import io
+import json
 import re
 import sys
 import unittest
@@ -329,6 +330,127 @@ class SweepTests(unittest.TestCase):
         code, out = run(github, '--sweep')
         self.assertEqual((code, github.merged), (1, [1, 2, 3]))
         self.assertIn('#2: could not queue', out)
+
+
+class CouldNotQueueTests(unittest.TestCase):
+    """#4937: with MERGE_QUEUE_TOKEN refused every armed PR sat unqueued, and only the bridge's own red run said so."""
+
+    def test_a_refused_merge_leaves_one_comment_naming_the_token(self):
+        github = FakeGitHub({7: pr(7)}, merge_answer=(1, 'HTTP 403: Resource not accessible by personal access token'))
+        self.assertEqual(run(github, '--pr', '7', '--action', 'labeled')[0], 1)
+        (number, body), = github.posted
+        self.assertEqual(number, 7)
+        self.assertIn(bridge.QUEUE_FAILED_MARKER, body)
+        self.assertIn('MERGE_QUEUE_TOKEN', body)
+
+    def test_a_plain_failure_says_so_without_blaming_the_token(self):
+        github = FakeGitHub({7: pr(7)}, merge_answer=(1, 'HTTP 502'))
+        run(github, '--pr', '7', '--action', 'labeled')
+        self.assertNotIn('MERGE_QUEUE_TOKEN', github.posted[0][1])
+
+    def test_the_next_sweep_does_not_say_it_again(self):
+        github = FakeGitHub({7: pr(7)}, merge_answer=(1, 'HTTP 403'), comments=bridge.QUEUE_FAILED_MARKER)
+        run(github, '--sweep')
+        self.assertEqual(github.posted, [])
+
+    def test_a_refused_comment_does_not_hide_the_red_run(self):
+        github = FakeGitHub({7: pr(7)}, merge_answer=(1, 'HTTP 403'))
+
+        def refuse(number, body):
+            raise bridge.Failed('HTTP 403')
+        github.comment = refuse
+        code, out = run(github, '--pr', '7', '--action', 'labeled')
+        self.assertEqual(code, 1)
+        self.assertIn('could not say so on the PR either', out)
+
+    def test_a_comment_the_main_token_cannot_post_is_tried_with_the_fallback_token(self):
+        github = bridge.GitHub('o/r', sleep=lambda _: None)
+        seen = []
+
+        def fake_run(args, **kwargs):
+            token = (kwargs.get('env') or {}).get('GH_TOKEN', 'main')
+            seen.append(token)
+
+            class Done:
+                returncode = 0 if token == 'fallback' else 1
+                stdout, stderr = '', '' if token == 'fallback' else 'HTTP 403'
+            return Done
+        original, env = bridge.subprocess.run, dict(bridge.os.environ)
+        bridge.subprocess.run = fake_run
+        bridge.os.environ.update({'GH_TOKEN': 'main', 'FALLBACK_GH_TOKEN': 'fallback'})
+        try:
+            github.comment(7, 'hello')
+        finally:
+            bridge.subprocess.run = original
+            bridge.os.environ.clear()
+            bridge.os.environ.update(env)
+        self.assertEqual(seen[-1], 'fallback')
+
+    def test_an_expired_queue_token_still_reaches_the_pr_with_a_comment(self):
+        # #4942 audit: with MERGE_QUEUE_TOKEN expired, the first read (the PR itself) got 401 and the bridge exited
+        # before it tried to queue or comment. Every read now falls back; setting the PR to merge never does.
+        calls = []
+
+        def fake_run(args, **kwargs):
+            token = (kwargs.get('env') or {}).get('GH_TOKEN', 'dead')
+            what = 'merge' if args[1:3] == ['pr', 'merge'] else 'comment' if args[1:3] == ['pr', 'comment'] \
+                else 'graphql' if 'graphql' in args else 'comments'
+            calls.append((what, token))
+
+            class Done:
+                returncode, stdout, stderr = 1, '', 'HTTP 401: Bad credentials (https://api.github.com/graphql)'
+            if token == 'fallback':
+                Done.returncode, Done.stderr = 0, ''
+                Done.stdout = json.dumps({'data': {'repository': {'pullRequest': pr(7, auto=False)}}}) \
+                    if what == 'graphql' else ''
+            return Done
+        original, env = bridge.subprocess.run, dict(bridge.os.environ)
+        bridge.subprocess.run = fake_run
+        bridge.os.environ.update({'GH_TOKEN': 'dead', 'FALLBACK_GH_TOKEN': 'fallback'})
+        try:
+            code, out = run(bridge.GitHub('o/r', sleep=lambda _: None), '--pr', '7', '--action', 'labeled')
+        finally:
+            bridge.subprocess.run = original
+            bridge.os.environ.clear()
+            bridge.os.environ.update(env)
+        self.assertEqual(code, 1)
+        self.assertNotIn(('merge', 'fallback'), calls)
+        self.assertIn(('merge', 'dead'), calls)
+        self.assertIn(('comment', 'fallback'), calls)
+        self.assertIn('could not queue', out)
+
+    def test_a_failure_that_is_not_a_refusal_does_not_switch_tokens_for_a_read(self):
+        github = bridge.GitHub('o/r', sleep=lambda _: None)
+        seen = []
+
+        def fake_run(args, **kwargs):
+            seen.append((kwargs.get('env') or {}).get('GH_TOKEN', 'main'))
+
+            class Done:
+                returncode, stdout, stderr = 1, '', 'HTTP 502: Bad Gateway'
+            return Done
+        original, env = bridge.subprocess.run, dict(bridge.os.environ)
+        bridge.subprocess.run = fake_run
+        bridge.os.environ.update({'GH_TOKEN': 'main', 'FALLBACK_GH_TOKEN': 'fallback'})
+        try:
+            with self.assertRaises(bridge.Failed):
+                github.comments(7)
+        finally:
+            bridge.subprocess.run = original
+            bridge.os.environ.clear()
+            bridge.os.environ.update(env)
+        self.assertNotIn('fallback', seen)
+
+    def test_a_merge_refused_for_the_prs_own_reason_does_not_say_nothing_needs_doing(self):
+        github = FakeGitHub({7: pr(7)}, merge_answer=(1, 'Pull request #7 has merge conflicts'))
+        run(github, '--pr', '7', '--action', 'labeled')
+        body = github.posted[0][1]
+        self.assertNotIn('nothing in the PR needs changing', body)
+        self.assertIn('fix it and push', body)
+
+    def test_the_workflow_passes_the_fallback_token(self):
+        text = (ROOT / '.github/workflows/merge-queue-label-bridge.yml').read_text()
+        self.assertIn('FALLBACK_GH_TOKEN: ${{ github.token }}', text)
 
 
 class GhRetryTests(unittest.TestCase):

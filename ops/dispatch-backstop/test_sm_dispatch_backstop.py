@@ -1,6 +1,8 @@
 """Host tests for the dispatch backstop (#4866). Run: python3 -m unittest ops/dispatch-backstop/test_sm_dispatch_backstop.py"""
 import datetime as dt
+import http.client
 import io
+import json
 import sys
 import unittest
 import urllib.error
@@ -139,6 +141,102 @@ class TickTests(unittest.TestCase):
         failures = b.tick('tok', NOW, out=out, get=lambda *a, **k: {'unexpected': 1}, workflows={'merge-stall.yml': 15})
         self.assertEqual(failures, 1)
         self.assertIn('FAILED', out.getvalue())
+
+
+def refused(code=403, message='Resource not accessible by personal access token'):
+    return urllib.error.HTTPError('https://api.github.com/x', code, 'Forbidden', {},
+                                  io.BytesIO(json.dumps({'message': message}).encode()))
+
+
+class FailureTests(unittest.TestCase):
+    """#4937: the backstop failed in ways nobody could see or that stopped the whole tick."""
+
+    def test_a_refused_token_falls_back_to_the_next(self):
+        posts = []
+
+        def get(method, path, token, body=None):
+            if token == 'read-only':
+                raise refused()
+            if method == 'POST':
+                posts.append(token)
+                return None
+            return {'workflow_runs': []}
+        out = io.StringIO()
+        failures = b.tick(['read-only', 'dial'], NOW, out=out, get=get, workflows={'merge-stall.yml': 15})
+        self.assertEqual((failures, posts), (0, ['dial']))
+        self.assertIn('dispatched', out.getvalue())
+
+    def test_a_refusal_with_no_other_token_says_what_the_token_needs(self):
+        def get(method, path, token, body=None):
+            if method == 'POST':
+                raise refused()
+            return {'workflow_runs': []}
+        out = io.StringIO()
+        self.assertEqual(b.tick(['only'], NOW, out=out, get=get, workflows={'merge-stall.yml': 15}), 1)
+        line = out.getvalue()
+        self.assertIn('HTTP 403 Resource not accessible by personal access token', line)
+        self.assertIn('actions: write', line)
+
+    def test_other_http_errors_are_not_retried_with_another_token(self):
+        seen = []
+
+        def get(method, path, token, body=None):
+            seen.append(token)
+            raise refused(422, 'Workflow does not have workflow_dispatch trigger')
+        out = io.StringIO()
+        self.assertEqual(b.tick(['a', 'b'], NOW, out=out, get=get, workflows={'merge-stall.yml': 15}), 1)
+        self.assertEqual(seen, ['a'])
+        self.assertIn('HTTP 422 Workflow does not have workflow_dispatch trigger', out.getvalue())
+        self.assertNotIn('actions: write', out.getvalue())
+
+    def test_a_dropped_connection_is_a_failure_and_the_other_workflows_still_run(self):
+        calls = []
+
+        def get(method, path, token, body=None):
+            calls.append(path)
+            if 'claude-audit' in path:
+                raise http.client.RemoteDisconnected('Remote end closed connection without response')
+            if 'merge-stall' in path:
+                raise http.client.IncompleteRead(b'')
+            return None if method == 'POST' else {'workflow_runs': []}
+        out = io.StringIO()
+        self.assertEqual(b.tick('tok', NOW, out=out, get=get), 2)
+        self.assertEqual(sum('/dispatches' in c for c in calls), len(b.WORKFLOWS) - 2)
+
+    def test_a_run_still_going_is_not_dispatched_over(self):
+        for status in ('queued', 'in_progress', 'waiting'):
+            with self.subTest(status):
+                run = {'created_at': ago(40), 'event': 'schedule', 'status': status, 'conclusion': None}
+                go, why = b.decide(NOW, 15, run)
+                self.assertFalse(go)
+                self.assertIn(f'still {status}', why)
+        done = {'created_at': ago(40), 'event': 'schedule', 'status': 'completed', 'conclusion': 'success'}
+        self.assertTrue(b.decide(NOW, 15, done)[0])
+
+    def test_every_distinct_token_is_read_in_order(self):
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            first, second = Path(tmp) / 'a', Path(tmp) / 'b'
+            first.write_text('dispatch\n')
+            second.write_text('dial\n')
+            saved = b.TOKEN_FILES, os.environ.pop('SM_DISPATCH_GITHUB_TOKEN', None)
+            try:
+                b.TOKEN_FILES = (first, second, Path(tmp) / 'missing')
+                self.assertEqual(b.read_tokens(), ['dispatch', 'dial'])
+                second.write_text('dispatch')
+                self.assertEqual(b.read_tokens(), ['dispatch'])
+                os.environ['SM_DISPATCH_GITHUB_TOKEN'] = 'env'
+                self.assertEqual(b.read_tokens(), ['env', 'dispatch'])
+                b.TOKEN_FILES = (Path(tmp) / 'missing',)
+                os.environ.pop('SM_DISPATCH_GITHUB_TOKEN')
+                with self.assertRaises(SystemExit):
+                    b.read_tokens()
+            finally:
+                b.TOKEN_FILES = saved[0]
+                os.environ.pop('SM_DISPATCH_GITHUB_TOKEN', None)
+                if saved[1] is not None:
+                    os.environ['SM_DISPATCH_GITHUB_TOKEN'] = saved[1]
 
 
 if __name__ == '__main__':

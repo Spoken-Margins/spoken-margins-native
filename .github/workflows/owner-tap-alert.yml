@@ -58,12 +58,13 @@ permissions:
   checks: read
   statuses: read
 
-concurrency:
-  group: owner-tap-alert-${{ inputs.pr || github.event.pull_request.number || 'sweep' }}
-  cancel-in-progress: false
-
 jobs:
   alert:
+    # On the job, not the workflow (#4937): a run whose job is skipped (another label, an unarmed PR) never joins
+    # the group, where it would replace a pending run that does the work (a group keeps only its newest pending run).
+    concurrency:
+      group: owner-tap-alert-${{ inputs.pr || github.event.pull_request.number || 'sweep' }}
+      cancel-in-progress: false
     # The script ignores its own job by this name (the same in linux-t1.yml and shipped-build-compat.yml).
     name: owner-tap-alert
     # A label event counts only for owner-tap-check and owner-tap; lane labels come and go on these PRs all day.

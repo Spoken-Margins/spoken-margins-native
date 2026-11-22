@@ -86,8 +86,10 @@ jobs:
     # Same-repo PRs only, as in every other workflow. Always true for workflow_dispatch.
     name: 'hosted web: build and Playwright'
     needs: changes
+    # When `changes` does not succeed (a checkout or runner fault), run anyway: a skipped job reports success, and
+    # `changes` is not a required check, so skipping would let a web change merge untested (#4937).
     if: >-
-      !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.web == 'true' &&
+      !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.web == 'true') &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     # The image the other hosted Mac jobs use (hosted-app-macos.yml), with Google Chrome installed.
     runs-on: xcode-27

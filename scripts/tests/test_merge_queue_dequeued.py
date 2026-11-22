@@ -43,6 +43,13 @@ class FakeGitHub:
             raise self.post_error
         self.posts.append((path, body))
 
+    requeue_ok = True
+    requeued = 0
+
+    def requeue(self, number):
+        self.requeued += 1
+        return self.requeue_ok
+
     def delete(self, path):
         if self.post_error:
             raise self.post_error
@@ -184,6 +191,61 @@ class NotifyTests(unittest.TestCase):
         self.assertIn('cancelled, not failed', body)
         self.assertIn(mq.RETRY_MARKER, body)
 
+    def test_a_cancelled_group_is_set_to_merge_again_here_not_left_for_the_sweep(self):
+        # #4937: the retry used to wait for the bridge's sweep, which runs only when the VPS backstop or a schedule
+        # GitHub mostly drops starts it; with the backstop's token refused the PR sat armed and unqueued, its comment
+        # promising "within 15 minutes".
+        github = self.github(check_conclusion='cancelled')
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told: retry')
+        self.assertEqual(github.requeued, 1)
+        self.assertIn('set to merge again now', github.posts[0][1]['body'])
+        self.assertEqual(github.deletes, [])
+
+    def test_a_failed_requeue_says_the_sweep_will_do_it(self):
+        github = self.github(check_conclusion='cancelled')
+        github.requeue_ok = False
+        mq.notify(github, event(), out=io.StringIO())
+        self.assertIn("label bridge's sweep will queue it", github.posts[0][1]['body'])
+
+    def test_a_queue_timeout_with_no_check_reported_is_retried_once(self):
+        # A merge group whose Mac check never started (no runner free for 120 minutes) times out with no failed and
+        # no cancelled check. Nothing in the PR failed, yet it got needs-fix and lost automerge (#4937 harness:
+        # */mac-slow-once).
+        for reason in ('CI_TIMEOUT', 'CHECKS_TIMED_OUT'):
+            with self.subTest(reason=reason):
+                github = self.github(check_conclusion='in_progress')
+                self.assertEqual(mq.notify(github, event(reason=reason), out=io.StringIO()), 'told: retry')
+                self.assertEqual(github.requeued, 1)
+                self.assertEqual(github.deletes, [])
+                self.assertNotIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
+                self.assertIn('did not report before the queue', github.posts[0][1]['body'])
+
+    def test_a_second_queue_timeout_is_held_as_a_failure(self):
+        earlier = {'body': f'{mq.MARKER.format(head="0" * 40)}\n{mq.RETRY_MARKER}'}
+        github = self.github(check_conclusion='in_progress', comments=[earlier])
+        self.assertEqual(mq.notify(github, event(reason='CI_TIMEOUT'), out=io.StringIO()), 'told')
+        self.assertEqual(github.requeued, 0)
+        self.assertIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
+
+    def test_an_unlabelled_pr_that_times_out_is_told_to_tap_merge_again(self):
+        # #4942 audit: the owner's own Merge tap carries no `automerge`. Its retry comment promised the bridge's sweep,
+        # which only queues labelled PRs, so the PR sat out of the queue while its comment said it would be retried.
+        for reason, conclusion in (('CI_TIMEOUT', 'in_progress'), ('CI_FAILURE', 'cancelled')):
+            with self.subTest(reason=reason):
+                github = self.github(check_conclusion=conclusion)
+                self.assertEqual(mq.notify(github, event(reason=reason, armed=False), out=io.StringIO()), 'told: retry')
+                self.assertEqual((github.requeued, github.deletes), (0, []))
+                body = github.posts[0][1]['body']
+                self.assertIn('tap Merge again', body)
+                self.assertNotIn('sweep', body)
+                self.assertNotIn('It keeps', body)
+
+    def test_a_failure_with_no_failed_check_found_still_needs_a_fix(self):
+        # Not a timeout and nothing cancelled: the reason says the group failed, so the PR is held as before.
+        github = self.github(check_conclusion='in_progress')
+        self.assertEqual(mq.notify(github, event(reason='CI_FAILURE'), out=io.StringIO()), 'told')
+        self.assertEqual(github.requeued, 0)
+
     def test_a_second_cancelled_group_is_held_as_a_failure(self):
         earlier = {'body': mq.MARKER.format(head=DEAD) + '\n' + mq.RETRY_MARKER}
         github = self.github(check_conclusion='cancelled', comments=[earlier])
@@ -248,6 +310,21 @@ class NotifyTests(unittest.TestCase):
         body = github.posts[0][1]['body']
         self.assertIn('conflicts with main', body)
         self.assertIn(mq.MARKER.format(head=OTHER), body)
+
+    def test_an_invalid_merge_commit_is_a_conflict_not_a_retry(self):
+        # #4942, 2026-11-22: dequeued with INVALID_MERGE_COMMIT after #4941 and #4930 merged ahead of it. The comment
+        # said "No failed check found" and told an unlabelled PR to add `automerge`; merging main in was the fix.
+        for armed in (True, False):
+            with self.subTest(armed=armed):
+                github = self.github(check_conclusion='in_progress')
+                self.assertEqual(mq.notify(github, event(reason='INVALID_MERGE_COMMIT', armed=armed),
+                                           out=io.StringIO()), 'told')
+                self.assertEqual(github.requeued, 0)
+                body = github.posts[0][1]['body']
+                self.assertIn('Merge main into the branch', body)
+                self.assertNotIn('No failed check found', body)
+                self.assertNotIn(mq.RETRY_MARKER, body)
+                self.assertIn('add `automerge` again' if armed else 'tap Merge again', body)
 
     def test_a_failed_read_posts_nothing_and_does_not_raise(self):
         github = self.github()

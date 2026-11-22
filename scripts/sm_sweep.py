@@ -11,7 +11,7 @@ act on what it prints, then reply:
   scripts/sm_sweep.py --json           the same facts for scripts
   scripts/sm_sweep.py --status-json F  use a saved `scripts/sm_status.py --json` output (F or - for stdin)
 
-It looks for fourteen things:
+It looks for fifteen things:
   1. free Claude slots against the Dial (#589): its Threads box less the Claude threads active from their claim
      and stop notes (ops/dial/dial_gate.py's own reading), with the ready issues to start; Codex workers are
      counted against Codex's box and never against Claude's
@@ -42,6 +42,9 @@ It looks for fourteen things:
   14. `needs-design` issues whose label is over 3 days old with no Design comment, while no design pass has posted
      its stop note in 24 hours (#3866: on 2026-11-12, 56 waited and none had ever been designed), and issues that
      have a Design comment but still carry the label
+  15. a workflow the VPS dispatch backstop keeps alive (ops/dispatch-backstop) with no run for twice its interval
+     (#4937): GitHub's schedule dropped it and the backstop did not start it either. The backstop only logs to the
+     VPS's journald, which nobody reads; a missing token, a 403 or a stopped timer showed nowhere else
   Silent `in-progress` claims (#3247, #1507) are rule 3.
 
 --apply also closes those (rule 8), commenting once and removing only `ready` and `in-progress`. Every other label,
@@ -77,8 +80,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / 'ops' / 'dial'))
+sys.path.insert(0, str(HERE.parent / 'ops' / 'dispatch-backstop'))
 import comment_trust  # noqa: E402  (#1822: only the owner's, collaborators' and the bot's comments are believed)
 import dial_gate  # noqa: E402  (the Dial's own reading of the tick boxes, claim notes and usage breaker)
+import sm_dispatch_backstop as backstop  # noqa: E402  (rule 15: which workflows it keeps alive, and what counts as a run)
 import sm_status  # noqa: E402
 from trunk import trunk_branch  # noqa: E402
 
@@ -114,6 +119,7 @@ DESIGN_WAIT = dt.timedelta(days=3)             # rule 14: a `needs-design` label
 DESIGN_QUIET = dt.timedelta(hours=24)          # rule 14: no design-pass stop note this long while issues wait = stopped
 DESIGN_HELD = {'blocked', 'deferred', 'in-progress', 'needs-owner', 'parked', 'tracker'}   # as design_queue.py
 DESIGN_STOP = re.compile(r'Thread "Claude Mac worker \d+" stopping: design pass, \d+ of \d+ designed')
+SCHEDULE_GAP = 2                               # rule 15: no run for this many intervals = schedule and backstop both missed
 DRIFT_READ_CAP = 10                            # REST comment reads for rule 10; past it a revert is listed as unchecked
 LOOKUP_CAP = 100                               # PR numbers one GraphQL lookup may ask about
 REVERT = re.compile(r'\breverts?\s+(?:PR\s+)?(?:[\w.-]+/[\w.-]+)?#(\d+)', re.I)
@@ -562,6 +568,21 @@ def drift(api, now, pulls, skip=(), recent=None):
     return out
 
 
+def schedule_gaps(api, now, workflows=None):
+    """Rule 15 (#4937): the backstopped workflows whose newest counted run (the backstop's own `pick`) is older than
+    SCHEDULE_GAP intervals, as rows {workflow, interval, minutes, event}; minutes is None when there is no run at all.
+    Raises GitHubError when a read fails, so a failure is unreadable, never clean."""
+    gaps = []
+    for workflow, interval in (workflows or backstop.WORKFLOWS).items():
+        runs = (api.get(f'actions/workflows/{workflow}/runs?per_page=30') or {}).get('workflow_runs') or []
+        run = backstop.pick(workflow, runs)
+        minutes = None if run is None else int((now - when(run['created_at'])).total_seconds() // 60)
+        if minutes is None or minutes >= SCHEDULE_GAP * interval:
+            gaps.append({'workflow': workflow, 'interval': interval, 'minutes': minutes,
+                         'event': run and run.get('event')})
+    return gaps
+
+
 def release(api, issue, why, now, window=STALE_AFTER):
     """Release one stale claim. Re-reads the issue's comments first; returns what happened, never raises."""
     number = issue['number']
@@ -652,6 +673,10 @@ def collect(api, now, snapshot=None):
     merged = merged_fixes(trunk_pulls, ready, ctx)
     drifted = drift(api, now, pulls, skip={row['number'] for row in merged or []},
                     recent=comments if comments_complete else None)
+    try:
+        gaps = schedule_gaps(api, now)
+    except (sm_status.GitHubError, KeyError, TypeError, ValueError):
+        gaps = None
     claims = []
     for issue in in_progress:
         evidence = gather_claim(api, issue['number'], now, ctx)
@@ -661,7 +686,7 @@ def collect(api, now, snapshot=None):
     return {'now': now, 'snapshot': snapshot, 'dial': dial, 'dial_now': dial_now(status_comments), 'usage': usage,
             'tick': latest_tick(tick_comments), 'ready': ready, 'in_progress': claims, 'untriaged': untriaged, 'outside': outside, 'merged_fixes': merged, 'drift': drifted,
             'claude_active': [t['title'] for t in active], 'codex_active': [t['title'] for t in codex_active],
-            'desk_seen': desk_seen, 'comments_complete': comments_complete}
+            'desk_seen': desk_seen, 'comments_complete': comments_complete, 'schedule_gaps': gaps}
 
 
 # ---- Deciding what to do ----------------------------------------------------------------------------------------
@@ -819,6 +844,16 @@ def decide(facts, window=STALE_AFTER):
             act('needs-mac-stuck', LOOK, f'#{row["number"]} went to the Mac finisher {ago(now, when(mac["since"]))} ago '
                 'and has no finisher comment or commit since: ask the finisher\'s thread why it hasn\'t taken it '
                 '(a pause explains an idle finisher, not a skipped PR).', prs=[row['number']])
+
+    gaps = facts.get('schedule_gaps')
+    if gaps:
+        each = '; '.join(f'{g["workflow"]} ' + (f'last ran {g["minutes"]}m ago ({g["event"]})' if g['minutes'] is not None
+                                                else 'has no run in its last 30') + f', due every {g["interval"]}m'
+                         for g in gaps)
+        act('schedule-gap', LOOK, f'{each}. GitHub\'s schedule dropped these and the VPS dispatch backstop did not start '
+            'them: ask the Mac finisher\'s thread to read `journalctl -u sm-dispatch-backstop -n 20` on the VPS (a '
+            'FAILED line names the cause; no lines means the timer is off), and dispatch the workflow by hand meanwhile '
+            '(#4866, #4937).', issues=[4866])
     return actions, slot
 
 

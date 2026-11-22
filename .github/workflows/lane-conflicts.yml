@@ -30,7 +30,7 @@
 # workflow file from the PR's merge ref, so a same-repo PR that edits this file runs its own copy; only
 # collaborators can open those (forks are skipped below), and pull_request_target is no help because main carries no
 # workflows. One check at a time; a newer waiting one replaces an older waiting one, which is safe because every run
-# sweeps all armed PRs.
+# that reaches the group sweeps all armed PRs (the group is on the job, so a skipped run never reaches it).
 name: lane-conflicts
 
 on:
@@ -55,12 +55,13 @@ permissions:
   # write: cancelling the conflicting PR's queued lane runs (scripts/lane_dedupe.py helpers).
   actions: write
 
-concurrency:
-  group: lane-conflicts
-  cancel-in-progress: false
-
 jobs:
   check:
+    # On the job, not the workflow (#4937): a run whose job is skipped (another label, an unarmed PR) never joins
+    # the group, where it would replace a pending run that does the work (a group keeps only its newest pending run).
+    concurrency:
+      group: lane-conflicts
+      cancel-in-progress: false
     # Only same-repo PRs that carry a lane label (and, on a label event, only when it is one of the two).
     if: >-
       (github.event_name != 'push' || github.ref_name == (vars.SM_TRUNK || 'main')) &&

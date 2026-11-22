@@ -21,6 +21,7 @@ REQUIRED_CHECKS = {
     'hosted fast: Mac rest': 'hosted-portable.yml',
     'hosted web: build and Playwright': 'hosted-web.yml',
     'merge policy': 'merge-policy.yml',
+    'hosted app: build (no tests)': 'hosted-portable.yml',
 }
 
 # A dispatchable workflow -> the dispatch inputs the dispatcher fills (`base` = the PR's base branch, so the run
