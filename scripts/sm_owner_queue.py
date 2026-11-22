@@ -43,6 +43,8 @@ import sm_status
 NEEDS_OWNER = 'needs-owner'
 NEEDS_DESIGN = 'needs-design'
 TAP_LABEL = 'needs-owner-tap'
+TAP_LIST_URL = ('https://github.com/Spoken-Margins/spoken-margins-native/pulls'
+                '?q=is%3Apr+is%3Aopen+label%3Aneeds-owner-tap')  # the owner's bookmark for the same list (#4939)
 VALIDATION_LABELS = ('status: needs-human-validation', 'needs-human-validation')
 ANSWERED = '<!-- owner-answered -->'
 HEADING = re.compile(r'^[ \t]*\*\*(Decision|Step) for Cole\*\*', re.I)
@@ -81,10 +83,10 @@ def fetch_issues(api: sm_status.GitHub) -> list[dict]:
 
 
 def fetch_taps(api: sm_status.GitHub) -> list[dict]:
-    """Open PRs labelled `needs-owner-tap` (scripts/owner_tap_alert.py sets it)."""
+    """Open PRs labelled `needs-owner-tap` (scripts/owner_tap_alert.py sets it) that do not carry his `owner-tap` yet."""
     items = api.pages(f'issues?state=open&labels={TAP_LABEL}')
     return [{'number': i['number'], 'title': i['title'], 'url': i['html_url'], 'createdAt': i['created_at']}
-            for i in items if 'pull_request' in i]
+            for i in items if 'pull_request' in i and 'owner-tap' not in {x['name'] for x in i.get('labels') or []}]
 
 
 def cards_in(text: str | None, heading: re.Pattern = HEADING) -> list[dict]:
@@ -190,7 +192,7 @@ def render(queue: dict) -> str:
         for item in queue[key]:
             note = '' if item['has_label'] else '  [no needs-owner label yet]'
             out += ['', f"#{item['number']} {item['title']}{_age(item)}{note}", item['url'], '', item['card']]
-    out += ['', f"== Merge taps ({len(queue['merge_taps'])}) =="]
+    out += ['', f"== Merge taps ({len(queue['merge_taps'])}) ==", f'The same list on GitHub: {TAP_LIST_URL}']
     out += [f"#{p['number']} {p['title']}{_age(p)}  {p['url']}" for p in queue['merge_taps']]
     out += ['', f"== Phone checks ({len(queue['phone_checks'])}) =="]
     out += [f"#{p['number']} {p['title']}{_age(p)}  {p['url']}" for p in queue['phone_checks']]
