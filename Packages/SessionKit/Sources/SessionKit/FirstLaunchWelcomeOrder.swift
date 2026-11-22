@@ -52,6 +52,33 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     public private(set) var wasHeldBack: Bool
     /// An earlier launch's friend's file held the drawer back; a failure in this launch doesn't undo that.
     private let wasHeldBackBeforeThisLaunch: Bool
+    /// The drawer is owed although the Library will not be empty at the next launch: a friend's file failed, and the
+    /// drawer it withdrew has not shown since.
+    private var isOwedAfterFailure: Bool
+
+    /// What the app keeps for the next launch, in case this one ends now.
+    public enum Carry: Equatable, Sendable {
+        case nothing
+        /// The drawer is owed, and Done with nothing picked plays the Welcome sample: no friend's item came of it.
+        case drawerOwed
+        /// The drawer is owed and held back: a friend's item is in the Library, so Done with nothing picked plays nothing.
+        case drawerHeldBack
+    }
+
+    /// Before the drawer has shown, a friend's file that is waiting (or that came in an earlier launch) carries it held
+    /// back; one that failed carries it owed but not held back (the audit on PR #4597). Once it shows, nothing is carried.
+    public var carry: Carry {
+        switch phase {
+        case .waitingForFriendItem, .waitingForLibrary:
+            return .drawerHeldBack
+        case .owed where wasHeldBack:
+            return .drawerHeldBack
+        case .owed where isOwedAfterFailure:
+            return .drawerOwed
+        case .owed, .notOwed, .drawerShowing:
+            return .nothing
+        }
+    }
 
     /// Whether Done with nothing picked (or a pick that couldn't start) may play the Welcome sample. It may not
     /// when a friend's file held the drawer back (#3796).
@@ -72,12 +99,16 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
         )
     }
 
-    /// - Parameter owedFromEarlierLaunch: an earlier launch's friend's file kept the drawer waiting and the app was
-    ///   left before it showed; the drawer is owed now and counts as held back.
-    public init(drawerOwed: Bool, owedFromEarlierLaunch: Bool = false) {
+    /// - Parameters:
+    ///   - owedFromEarlierLaunch: an earlier launch's friend's file kept the drawer waiting and the app was left before
+    ///     it showed; the drawer is owed now and counts as held back.
+    ///   - owedAfterEarlierFailure: an earlier launch's friend's file failed and the app was left before the drawer it
+    ///     withdrew came back; the drawer is owed now and is not held back.
+    public init(drawerOwed: Bool, owedFromEarlierLaunch: Bool = false, owedAfterEarlierFailure: Bool = false) {
         phase = drawerOwed ? .owed : .notOwed
         wasHeldBack = drawerOwed && owedFromEarlierLaunch
         wasHeldBackBeforeThisLaunch = wasHeldBack
+        isOwedAfterFailure = drawerOwed && owedAfterEarlierFailure
     }
 
     /// The drawer is still owed while a friend's file holds it back; the app keeps that for the next launch.
@@ -118,6 +149,7 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     public mutating func friendFileFailed(place: Place) -> Action {
         guard phase == .waitingForFriendItem else { return .none }
         wasHeldBack = wasHeldBackBeforeThisLaunch
+        isOwedAfterFailure = true
         phase = .owed
         return moved(to: place)
     }
