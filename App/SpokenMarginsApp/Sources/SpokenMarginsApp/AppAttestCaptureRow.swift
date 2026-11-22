@@ -39,7 +39,8 @@ struct AppAttestCaptureRow: View {
                     Label("Capture App Attest for the Server Test", systemImage: "checkmark.shield")
                 }
             }
-            .fullRowTapTarget()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
         .disabled(isCapturing)

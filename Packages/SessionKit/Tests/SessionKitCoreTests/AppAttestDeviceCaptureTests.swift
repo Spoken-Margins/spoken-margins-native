@@ -215,6 +215,7 @@ final class AppAttestDeviceCaptureTests: XCTestCase {
             (AppAttestFailure.needsConsent, "Agree to the sender check first"),
             (AppAttestFailure.unsupported, "can't use App Attest"),
             (AppAttestCaptureFailure.buildDescriptionMissing("appId"), "doesn't know its appId"),
+            (AppAttestFailure.keyUnusable, "not usable"),
             (URLError(.cancelled), "switched on for the App ID"),
         ]
         for (error, expected) in table {

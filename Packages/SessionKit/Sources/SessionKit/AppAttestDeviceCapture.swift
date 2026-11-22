@@ -170,6 +170,8 @@ public struct AppAttestDeviceCaptureRunner: Sendable {
         case AppAttestCaptureFailure.buildDescriptionMissing(let field):
             return "This build doesn't know its \(field), so a capture would not be one the verifier accepts. "
                 + "Build with your signing team set in Config/Local.xcconfig."
+        case AppAttestFailure.keyUnusable:
+            return "Apple made the key and then said it was not usable. Try once more; if it repeats, this device or its App ID has a problem."
         default:
             return "Apple's App Attest failed: \(error.localizedDescription) "
                 + "If this is the first build with the App Attest entitlement, check that App Attest is switched on "
