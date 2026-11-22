@@ -49,7 +49,8 @@ class ScheduleTests(unittest.TestCase):
     def test_launchd_runs_lightweight_tick_not_an_extra_build(self):
         data = plistlib.loads((SCRIPTS / 'com.spokenmargins.daily-phone-plan.plist').read_bytes())
         self.assertEqual(data['StartInterval'], 300)
-        self.assertTrue(data['ProgramArguments'][1].endswith('/daily-phone-plan'))
+        arguments = data['ProgramArguments']
+        self.assertTrue(arguments[arguments.index('/usr/bin/python3') + 1].endswith('/daily-phone-plan'))
         self.assertNotIn('--if-changed', data['ProgramArguments'])
 
     def test_backlog_query_does_not_silently_truncate(self):
