@@ -34,7 +34,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/Spoken-Margins/onnxruntime-swift-package-manager.git",
-            exact: "1.24.2"
+            exact: "1.24.3"
         ),
         .package(
             url: "https://github.com/weichsel/ZIPFoundation.git",
