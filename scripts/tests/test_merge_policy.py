@@ -436,16 +436,65 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn('${{', run)  # event data reaches the shell only through env
         self.assertNotIn('pull_request_target', (ROOT / '.github/workflows/merge-policy.yml').read_text())
 
-    def test_pull_requests_and_the_queue_report_the_check_and_a_dispatch_does_not(self):
+    def run_step(self, event, *, knows_report_flag, exit_code=0):
+        """Run the workflow's real shell step with a fake script and a fake `gh`; return (exit code, script args, gh calls)."""
         run = self.workflow['jobs']['policy']['steps'][1]['run']
-        group = next(l for l in run.splitlines() if '--group-head' in l)
-        pull = next(l for l in run.splitlines() if '--head "$HEAD_SHA"' in l and '--report-sha' in l)
-        hand = next(l for l in run.splitlines() if '--head "$HEAD_SHA"' in l and '--report-sha' not in l)
-        self.assertIn('--report-sha "$GROUP_HEAD"', group)
-        self.assertIn('--report-sha "$HEAD_SHA"', pull)
-        self.assertNotIn('--details-url', hand)
-        self.assertIn('elif [ "$EVENT" = pull_request ]', run)  # a dispatched run writes no check run
-        self.assertTrue(run.rstrip().endswith('exit "${PIPESTATUS[0]}"'))
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / 'scripts').mkdir()
+            help_text = 'usage: merge_policy.py [--report-sha SHA]' if knows_report_flag else 'usage: merge_policy.py [--pr PR]'
+            (tmp / 'scripts/merge_policy.py').write_text(
+                'import sys\n'
+                f'if "--help" in sys.argv: print({help_text!r}); sys.exit(0)\n'
+                'open("args.txt", "a").write(" ".join(sys.argv[1:]) + "\\n")\n'
+                'print("verdict line")\n'
+                f'sys.exit({exit_code})\n')
+            (tmp / 'bin').mkdir()
+            gh = tmp / 'bin/gh'
+            gh.write_text('#!/bin/sh\necho "$@" >> "' + str(tmp / 'gh.txt') + '"\n')
+            gh.chmod(0o755)
+            env = {'PATH': f'{tmp / "bin"}:/usr/bin:/bin', 'GITHUB_STEP_SUMMARY': str(tmp / 'summary.md'),
+                   'GH_REPO': 'o/r', 'EVENT': event, 'PR': '7', 'HEAD_SHA': 'a' * 40 if event != 'merge_group' else '',
+                   'GROUP_HEAD': 'b' * 40 if event == 'merge_group' else '', 'DETAILS_URL': 'https://example.test/run/1'}
+            done = subprocess.run(['bash', '-e', '-c', run], cwd=tmp, env=env, capture_output=True, text=True)
+            read = lambda name: (tmp / name).read_text().splitlines() if (tmp / name).exists() else []  # noqa: E731
+            return done.returncode, read('args.txt'), read('gh.txt')
+
+    def test_with_the_new_script_a_pull_request_and_the_queue_report_and_a_dispatch_does_not(self):
+        code, args, gh = self.run_step('pull_request', knows_report_flag=True)
+        self.assertEqual((code, gh), (0, []))  # the script writes the check run, not the workflow
+        self.assertIn('--pr 7 --head ' + 'a' * 40, args[0])
+        self.assertIn('--report-sha ' + 'a' * 40, args[0])
+        self.assertIn('--details-url https://example.test/run/1', args[0])
+        _, args, _ = self.run_step('merge_group', knows_report_flag=True)
+        self.assertIn('--group-head ' + 'b' * 40, args[0])
+        self.assertIn('--report-sha ' + 'b' * 40, args[0])
+        code, args, gh = self.run_step('workflow_dispatch', knows_report_flag=True)
+        self.assertNotIn('--report-sha', args[0])
+        self.assertEqual(gh, [])
+
+    def test_the_script_failing_fails_the_step_whichever_way_it_reports(self):
+        for knows in (True, False):
+            with self.subTest(knows_report_flag=knows):
+                code, _, _ = self.run_step('pull_request', knows_report_flag=knows, exit_code=1)
+                self.assertEqual(code, 1)
+
+    def test_before_main_has_the_flag_the_workflow_writes_the_check_run_itself(self):
+        # The PR that adds --report-sha runs main's script (checkout ref: main) under its own workflow file, so the
+        # first run saw "unrecognized arguments" and no `merge policy` check was ever written (#5011, 2026-11-22).
+        for event, sha in (('pull_request', 'a' * 40), ('merge_group', 'b' * 40)):
+            for exit_code, conclusion in ((0, 'success'), (1, 'failure')):
+                with self.subTest(event=event, exit_code=exit_code):
+                    code, args, gh = self.run_step(event, knows_report_flag=False, exit_code=exit_code)
+                    self.assertEqual(code, exit_code)
+                    self.assertNotIn('--report-sha', args[0])
+                    self.assertEqual(len(gh), 1, gh)
+                    self.assertIn('repos/o/r/check-runs', gh[0])
+                    self.assertIn('name=merge policy', gh[0])
+                    self.assertIn(f'head_sha={sha}', gh[0])
+                    self.assertIn(f'conclusion={conclusion}', gh[0])
+        code, args, gh = self.run_step('workflow_dispatch', knows_report_flag=False)
+        self.assertEqual((code, gh), (0, []))  # a dispatched run never writes a check run
 
 
 class FakeChecksGitHub:

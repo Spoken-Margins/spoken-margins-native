@@ -90,11 +90,30 @@ jobs:
           DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           # The PR heads are fetched with a token-less remote: the repository is public.
+          if [ "$EVENT" = merge_group ]; then SHA="$GROUP_HEAD"; else SHA="$HEAD_SHA"; fi
           if [ "$EVENT" = merge_group ]; then
-            python3 scripts/merge_policy.py --repo "$GH_REPO" --group-head "$GROUP_HEAD" --report-sha "$GROUP_HEAD" --details-url "$DETAILS_URL" | tee -a "$GITHUB_STEP_SUMMARY"
-          elif [ "$EVENT" = pull_request ]; then
-            python3 scripts/merge_policy.py --repo "$GH_REPO" --pr "$PR" --head "$HEAD_SHA" --report-sha "$HEAD_SHA" --details-url "$DETAILS_URL" | tee -a "$GITHUB_STEP_SUMMARY"
+            set -- --repo "$GH_REPO" --group-head "$GROUP_HEAD"
           else
-            python3 scripts/merge_policy.py --repo "$GH_REPO" --pr "$PR" --head "$HEAD_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+            set -- --repo "$GH_REPO" --pr "$PR" --head "$HEAD_SHA"
           fi
-          exit "${PIPESTATUS[0]}"
+          if [ "$EVENT" = workflow_dispatch ]; then
+            python3 scripts/merge_policy.py "$@" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit "${PIPESTATUS[0]}"
+          fi
+          if python3 scripts/merge_policy.py --help | grep -q -e --report-sha; then
+            # The script writes the `merge policy` check run itself, and may leave it pending (#4986).
+            python3 scripts/merge_policy.py "$@" --report-sha "$SHA" --details-url "$DETAILS_URL" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit "${PIPESTATUS[0]}"
+          fi
+          # Bootstrap, until main's script has --report-sha: the script is main's, the workflow file is the PR's or the
+          # group's, so the PR that adds the flag runs with a script that doesn't know it. Write the check run here,
+          # pass or fail only, as the job's own name used to. Remove this branch once #4986's script is on main.
+          set +e
+          python3 scripts/merge_policy.py "$@" | tee -a "$GITHUB_STEP_SUMMARY"
+          code="${PIPESTATUS[0]}"
+          set -e
+          if [ "$code" = 0 ]; then conclusion=success; title='May merge'; else conclusion=failure; title='May not merge'; fi
+          gh api -X POST "repos/$GH_REPO/check-runs" -f name='merge policy' -f head_sha="$SHA" -f status=completed \
+            -f conclusion="$conclusion" -f details_url="$DETAILS_URL" -f "output[title]=$title" \
+            -f "output[summary]=See the run's log (bootstrap: the check is written by the workflow, #4986)."
+          exit "$code"
