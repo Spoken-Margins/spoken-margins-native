@@ -52,6 +52,33 @@ final class TimelineSourceContentTests: XCTestCase {
         XCTAssertEqual(entries[1].label, "Table 1", "the caption still carries the label, and no picture")
     }
 
+    func testABodySegmentNamedByAPictureOnlyFiguresCaptionFloatKeepsNoLabel() {
+        // A picture-only figure's caption is a line inside a body segment (#4587). The float names that segment, but
+        // Now draws an entry's label above its fragments, so the body text around the caption must not read "Figure 3".
+        let text = "Intro\n\nFigure 3. Cells.\nMore body text.\n\nFigure 4. A caption segment.\n\nAfter"
+        let parts: [(String, StructuredDocument.Role)] = [
+            ("Intro", .body), ("Figure 3. Cells.\nMore body text.", .body), ("Figure 4. A caption segment.", .caption), ("After", .body),
+        ]
+        var start = 0
+        var segments: [StructuredDocument.Segment] = []
+        for (index, part) in parts.enumerated() {
+            segments.append(.init(id: "s\(index)", role: part.1, range: .init(start: start, length: part.0.count), pageIndex: 0))
+            start += part.0.count + 2
+        }
+        var document = document(text, segments: segments)
+        document.floats = [
+            .init(id: "float-p1-c1", kind: .figure, label: "Figure 3", pageIndex: 0,
+                  bounds: .init(x: 0.1, y: 0.4, width: 0.5, height: 0.2), captionSegmentId: "s1", textSegmentId: nil),
+            .init(id: "float-p1-c2", kind: .figure, label: "Figure 4", pageIndex: 0,
+                  bounds: .init(x: 0.1, y: 0.1, width: 0.5, height: 0.2), captionSegmentId: "s2", textSegmentId: nil),
+        ]
+
+        let entries = TimelineSourceContent(text: text, document: document).entries
+
+        XCTAssertEqual(entries.map(\.label), [nil, nil, "Figure 4", nil], "a .caption segment still gets its float's label")
+        XCTAssertEqual(entries.map(\.floatId), [nil, nil, nil, nil], "neither is the float's own text")
+    }
+
     func testASegmentNamingAFloatTheDocumentLacksHasNoPicture() {
         let text = "Cell A | Cell B"
         let segment = StructuredDocument.Segment(id: "s0", role: .table, range: .init(start: 0, length: text.count), floatId: "gone")

@@ -62,8 +62,12 @@ public struct TimelineSourceContent: Equatable, Sendable {
                 let end = start + segment.range.length
                 // Incomplete structure must never hide retained source text.
                 if coveredEnd < start { append(coveredEnd..<start) }
+                // A float lends its label to the segment of its own text, or to its caption's segment when that is a
+                // caption. A picture-only figure names the body segment its caption sits in (#4587), and that must
+                // not be labelled "Figure 3".
                 let label = document.floats.first {
-                    (segment.floatId != nil && $0.id == segment.floatId) || $0.captionSegmentId == segment.id
+                    (segment.floatId != nil && $0.id == segment.floatId)
+                        || ($0.captionSegmentId == segment.id && segment.role == .caption)
                 }?.label
                 let page = segment.pageIndex.flatMap {
                     $0 >= 0 && $0 < document.extraction.pageCount ? $0 : nil

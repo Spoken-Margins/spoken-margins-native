@@ -73,24 +73,76 @@ public enum PDFFigureCaptionLocator {
     /// Figure text this close to a caption is the caption's own figure (it already has a clip).
     static let ownFigureDistance = 0.04
 
+    /// The text area of a document: the top and bottom the body text reaches on a typical page (#4587).
+    public struct TextArea: Equatable, Sendable {
+        public var top: Double
+        public var bottom: Double
+
+        public init(top: Double, bottom: Double) {
+            self.top = top
+            self.bottom = bottom
+        }
+    }
+
+    /// A page needs this many bounded lines to say where the text area is.
+    static let minimumLinesForTextArea = 5
+    /// A document needs this many such pages to have a text area at all.
+    static let minimumPagesForTextArea = 3
+
+    /// Where the body text of this document starts and ends on its pages, from the lines of each page (running heads
+    /// and page numbers left out by the caller, caption lines kept). A figure at the very top or bottom of a page has
+    /// no text beside it to measure from, so the locator measures from this instead.
+    ///
+    /// `top` is the 75th percentile of the pages' tops and `bottom` the 25th percentile of their bottoms, nearest rank
+    /// (sort ascending, take index `ceil(p * N) - 1`): a median would be pulled in by pages that are mostly figures, and
+    /// a maximum would be moved by one stray line. Pages with fewer than `minimumLinesForTextArea` lines are skipped,
+    /// and with fewer than `minimumPagesForTextArea` pages left there is no text area.
+    public static func textArea(pages: [[PDFNormalizedRect]]) -> TextArea? {
+        var tops: [Double] = []
+        var bottoms: [Double] = []
+        for lines in pages {
+            let usable = lines.filter(PDFClipLocator.isUsable)
+            guard usable.count >= minimumLinesForTextArea,
+                  let top = usable.map({ $0.y + $0.height }).max(), let bottom = usable.map(\.y).min() else { continue }
+            tops.append(top)
+            bottoms.append(bottom)
+        }
+        guard tops.count >= minimumPagesForTextArea else { return nil }
+        func nearestRank(_ values: [Double], _ p: Double) -> Double {
+            let sorted = values.sorted()
+            return sorted[max(0, min(sorted.count - 1, Int((p * Double(sorted.count)).rounded(.up)) - 1))]
+        }
+        return TextArea(top: nearestRank(tops, 0.75), bottom: nearestRank(bottoms, 0.25))
+    }
+
     /// The regions for one page, in the order of `captions`; a caption that gives no clear region has none.
     /// - Parameters:
     ///   - captions: every "Figure N" caption on the page.
-    ///   - textBlocks: every other line of text on the page that can bound a figure: body, headings, footnotes, tables,
-    ///     figure text. Running heads and page numbers are left out by the caller, so a figure under the running head
-    ///     is not bounded by it.
-    ///   - figureRegions: the regions `PDFClipLocator` already made for figure text on this page.
+    ///   - textBlocks: every other line of text on the page that can bound a figure: body, headings, footnotes, tables.
+    ///     Running heads, page numbers and text inside figures are left out by the caller, so a figure under the running
+    ///     head is not bounded by it.
+    ///   - figureRegions: the regions `PDFClipLocator` already made for figure text on this page. A band that meets one
+    ///     gives no region, so one figure never shows twice.
+    ///   - furniture: the running heads and page numbers of this page. They never bound a band, but a band is kept
+    ///     clear of them.
+    ///   - textArea: where the document's text starts and ends on a page. With it, a caption with nothing above (or
+    ///     below) it in its column measures its band to the text area's top (or bottom). Without it such a caption has
+    ///     no band on that side.
     public static func regions(
-        captions: [Caption], textBlocks: [PDFNormalizedRect], figureRegions: [PDFNormalizedRect] = []
+        captions: [Caption], textBlocks: [PDFNormalizedRect], figureRegions: [PDFNormalizedRect] = [],
+        furniture: [PDFNormalizedRect] = [], textArea: TextArea? = nil
     ) -> [Region] {
         let captions = captions.filter { PDFClipLocator.isUsable($0.bounds) }
         let text = textBlocks.filter(PDFClipLocator.isUsable)
         let figures = figureRegions.filter(PDFClipLocator.isUsable)
+        let furniture = furniture.filter(PDFClipLocator.isUsable)
         let everything = text + captions.map(\.bounds)
         var result: [Region] = []
         for caption in captions {
             guard !hasOwnFigureText(caption.bounds, figures: figures),
-                  let region = region(for: caption, text: text, others: captions.filter { $0.id != caption.id }, everything: everything)
+                  let region = region(
+                    for: caption, text: text, others: captions.filter { $0.id != caption.id }, everything: everything,
+                    figures: figures, furniture: furniture, textArea: textArea)
             else { continue }
             result.append(Region(captionId: caption.id, bounds: region))
         }
@@ -102,9 +154,12 @@ public enum PDFFigureCaptionLocator {
         var farEndIsCaption: Bool
     }
 
-    private static func region(for caption: Caption, text: [PDFNormalizedRect], others: [Caption], everything: [PDFNormalizedRect]) -> PDFNormalizedRect? {
+    private static func region(
+        for caption: Caption, text: [PDFNormalizedRect], others: [Caption], everything: [PDFNormalizedRect],
+        figures: [PDFNormalizedRect], furniture: [PDFNormalizedRect], textArea: TextArea?
+    ) -> PDFNormalizedRect? {
         let box = caption.bounds
-        let (left, right) = span(of: box, everything: everything)
+        let (left, right) = span(of: box, text: text, everything: everything)
         guard right - left >= PDFClipLocator.minimumWidth else { return nil }
 
         struct Obstacle { var bounds: PDFNormalizedRect; var isCaption: Bool }
@@ -112,25 +167,44 @@ public enum PDFFigureCaptionLocator {
             + others.map { Obstacle(bounds: $0.bounds, isCaption: true) }
         let inColumn = obstacles.filter { overlapsColumn($0.bounds, left: left, right: right) }
 
+        func clipped(bottom: Double, top: Double) -> PDFNormalizedRect? {
+            var bottom = bottom, top = top
+            // Running heads and page numbers never bound a band, but the band stops short of them: a head is in the
+            // top half of the page and a page number in the bottom half.
+            for rect in furniture where min(rect.x + rect.width, right) - max(rect.x, left) > 0 {
+                guard bottom < rect.y + rect.height, rect.y < top else { continue }
+                if rect.y + rect.height / 2 >= 0.5 { top = min(top, rect.y - edgeInset) } else { bottom = max(bottom, rect.y + rect.height + edgeInset) }
+            }
+            return band(left: left, right: right, bottom: bottom, top: top)
+        }
+
         var candidates: [Candidate] = []
         let above = inColumn.filter { $0.bounds.y >= box.y + box.height - touching }
+        let aboveBottom = box.y + box.height + edgeInset
         if let far = above.min(by: { $0.bounds.y < $1.bounds.y }) {
-            let bottom = box.y + box.height + edgeInset, top = far.bounds.y - edgeInset
-            if let band = band(left: left, right: right, bottom: bottom, top: top) {
+            if let band = clipped(bottom: aboveBottom, top: far.bounds.y - edgeInset) {
                 candidates.append(Candidate(bounds: band, farEndIsCaption: far.isCaption))
             }
+        } else if let textArea, let band = clipped(bottom: aboveBottom, top: textArea.top) {
+            candidates.append(Candidate(bounds: band, farEndIsCaption: false))
         }
         let below = inColumn.filter { $0.bounds.y + $0.bounds.height <= box.y + touching }
+        let belowTop = box.y - edgeInset
         if let far = below.max(by: { $0.bounds.y + $0.bounds.height < $1.bounds.y + $1.bounds.height }) {
-            let bottom = far.bounds.y + far.bounds.height + edgeInset, top = box.y - edgeInset
-            if let band = band(left: left, right: right, bottom: bottom, top: top) {
+            if let band = clipped(bottom: far.bounds.y + far.bounds.height + edgeInset, top: belowTop) {
                 candidates.append(Candidate(bounds: band, farEndIsCaption: far.isCaption))
             }
+        } else if let textArea, let band = clipped(bottom: textArea.bottom, top: belowTop) {
+            candidates.append(Candidate(bounds: band, farEndIsCaption: false))
         }
         // The box must be clear of every piece of text, whatever the column or side tests above decided: a line that
         // straddles the caption's edge or only partly overlaps the column is no neighbour to measure from, but it
         // must never end up inside a clip. A band with any text in it is not trusted, and neither is its caption.
-        guard !candidates.contains(where: { band in obstacles.contains { intersects($0.bounds, band.bounds) } }) else { return nil }
+        // Running heads and page numbers count as text here, and a band that meets a figure that already has a clip
+        // (made from its printed text) is that figure's, not this caption's.
+        let clearOf = obstacles.map(\.bounds) + furniture
+        guard !candidates.contains(where: { band in clearOf.contains { intersects($0, band.bounds) } }) else { return nil }
+        guard !candidates.contains(where: { band in figures.contains { intersects($0, band.bounds) } }) else { return nil }
         guard candidates.count == 1, let only = candidates.first, !only.farEndIsCaption else { return nil }
         return only.bounds
     }
@@ -141,13 +215,22 @@ public enum PDFFigureCaptionLocator {
             && min(a.y + a.height, b.y + b.height) - max(a.y, b.y) > 1e-9
     }
 
-    /// The horizontal extent of the caption's figure: the caption's own width for a column caption, the whole text
-    /// area for a full-width one.
-    private static func span(of box: PDFNormalizedRect, everything: [PDFNormalizedRect]) -> (Double, Double) {
-        guard box.width >= fullWidthCaption,
-              let minX = everything.map(\.x).min(), let maxX = everything.map({ $0.x + $0.width }).max()
-        else { return (max(0, box.x), min(1, box.x + box.width)) }
-        return (max(0, min(minX, box.x)), min(1, max(maxX, box.x + box.width)))
+    /// The horizontal extent of the caption's figure: the whole text area for a full-width caption, else the caption's
+    /// own width widened to the column's text. A short centred caption under a wide figure then still spans the figure's
+    /// column. Only blocks narrower than a full-width caption widen it (a title, an abstract or a full-width caption
+    /// never does), and only when they overlap the caption's column.
+    private static func span(of box: PDFNormalizedRect, text: [PDFNormalizedRect], everything: [PDFNormalizedRect]) -> (Double, Double) {
+        if box.width >= fullWidthCaption {
+            guard let minX = everything.map(\.x).min(), let maxX = everything.map({ $0.x + $0.width }).max()
+            else { return (max(0, box.x), min(1, box.x + box.width)) }
+            return (max(0, min(minX, box.x)), min(1, max(maxX, box.x + box.width)))
+        }
+        var left = box.x, right = box.x + box.width
+        for block in text where block.width < fullWidthCaption && overlapsColumn(block, left: box.x, right: box.x + box.width) {
+            left = min(left, block.x)
+            right = max(right, block.x + block.width)
+        }
+        return (max(0, left), min(1, right))
     }
 
     private static func overlapsColumn(_ rect: PDFNormalizedRect, left: Double, right: Double) -> Bool {
