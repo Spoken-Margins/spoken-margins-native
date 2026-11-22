@@ -208,4 +208,31 @@ final class SiriMarginRouteTests: XCTestCase {
         let stored = await worker.session(id: "live")
         XCTAssertEqual(stored?.margins, [])
     }
+
+    // MARK: A picture handed to Add Margin (#4925)
+
+    func testWithNoPictureTheConfirmationLineIsUnchanged() {
+        XCTAssertEqual(
+            SiriMarginRoute.confirmation(named: "Night read", picture: .noneGiven),
+            SiriMarginRoute.confirmation(named: "Night read")
+        )
+    }
+
+    func testEveryPictureOutcomeThatIsNotKeptSaysSoInOnePlainSentence() {
+        let outcomes: [SiriMarginRoute.PictureOutcome] = [.notKeptOnItem, .unreadable, .couldNotKeep]
+        for outcome in outcomes {
+            let line = SiriMarginRoute.confirmation(named: "Night read", picture: outcome)
+            XCTAssertTrue(line.hasPrefix("Margin added to Night read. "), "\(outcome)")
+            let sentence = line.dropFirst("Margin added to Night read. ".count)
+            XCTAssertTrue(sentence.localizedCaseInsensitiveContains("not kept"), "\(outcome): \(sentence)")
+            XCTAssertEqual(sentence.filter { $0 == "." }.count, 1, "one sentence: \(sentence)")
+        }
+    }
+
+    func testAKeptPictureIsToldToo() {
+        XCTAssertEqual(
+            SiriMarginRoute.confirmation(named: "Night read", picture: .kept),
+            "Margin added to Night read. The picture is kept with it on this phone."
+        )
+    }
 }
