@@ -59,13 +59,42 @@ final class MarginEndPhraseGuardTests: XCTestCase {
 
     func testThePhraseReachesSaveOnlyThroughTheEndSignal() throws {
         let coordinator = try coordinatorSource()
-        XCTAssertEqual(coordinator.components(separatedBy: "requestFinishInterjection()").count - 1, 1,
+        XCTAssertEqual(coordinator.components(separatedBy: "requestFinishInterjectionFromPhrase()").count - 1, 1,
                        "the coordinator ends a Margin in exactly one place")
+        XCTAssertFalse(coordinator.contains("requestFinishInterjection()"),
+                       "the coordinator never finishes through the unmarked path: the phrase must mark its Margin")
         let end = try XCTUnwrap(coordinator.range(of: "case .end:"))
         let next = try XCTUnwrap(coordinator.range(of: "case .couldNotStart", range: end.upperBound..<coordinator.endIndex))
         XCTAssertTrue(coordinator[end.upperBound..<next.lowerBound].contains("finish()"), "…and it is the `.end` signal's")
         let others = coordinator[next.lowerBound...]
         XCTAssertFalse(others.contains("finish()"), "a failure to listen never finishes the recording")
+    }
+
+    /// PR 4's cut runs only on a Margin the ledger marks as ended by the phrase. The audit of #4830 found nothing
+    /// marked it, so the cut never ran. The mark must come from the phrase's own finish and from nothing else.
+    func testOnlyAPhraseEndedSaveMarksItsMarginForTheCut() throws {
+        let capture = try appSource("Gate1AppModel+MarginCapture.swift")
+        XCTAssertEqual(capture.components(separatedBy: "requestFinish(endedByPhrase: true)").count - 1, 1,
+                       "one entry point marks a Margin as ended by the phrase")
+        XCTAssertEqual(capture.components(separatedBy: "requestFinish(endedByPhrase: false)").count - 1, 1,
+                       "a tap, the Lock Screen and a headset press never mark one")
+        XCTAssertTrue(capture.contains("transcribeAndRecordSavedSpokenMargin(endedByPhrase: endedByPhrase)"),
+                      "the save passes the phrase's flag on to the transcription it schedules")
+
+        let signals = try appSource("Gate1AppModel+ListeningSignals.swift")
+        let mark = try XCTUnwrap(signals.range(of: "if endedByPhrase { MarginEndPhraseEndLedger.shared.markEndedByPhrase(interjectionId: interjection.id) }"))
+        let schedule = try XCTUnwrap(signals.range(of: "scheduleTranscription(for: interjection)"))
+        XCTAssertLessThan(mark.lowerBound, schedule.lowerBound,
+                          "the Margin is marked before its transcription job asks the ledger")
+        XCTAssertEqual(signals.components(separatedBy: "markEndedByPhrase").count - 1, 1)
+        XCTAssertTrue(signals.contains("func transcribeAndRecordSavedSpokenMargin(endedByPhrase: Bool = false)"),
+                      "every other save route defaults to unmarked, which keeps everything")
+
+        // No other source marks a Margin: the ledger's answer is true only for a phrase-ended save.
+        for file in ["Gate1AppModel.swift", "Gate1AppModel+MarginInterruption.swift", "Gate1AppModel+SourceWindowContext.swift",
+                     "ExperienceRecordingScreen.swift", "MarginRecordingScreen.swift"] {
+            XCTAssertFalse(try appSource(file).contains("markEndedByPhrase"), "\(file) must not mark a Margin as phrase-ended")
+        }
     }
 
     func testListeningNeverAsksForPermission() throws {

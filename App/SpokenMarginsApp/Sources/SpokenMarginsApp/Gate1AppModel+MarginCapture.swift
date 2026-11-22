@@ -387,12 +387,23 @@ extension Gate1AppModel {
     /// The save and the draw of the listening screen that follows can outlast any timer started when the save
     /// returns, and the queued second tap arrives after the draw, so the shield waits for `listeningScreenAppeared`.
     func requestFinishInterjection() {
+        requestFinish(endedByPhrase: false)
+    }
+
+    /// The spoken "stop margin" ended this Margin (#3940). It finishes the way a tap on Save does, and the save marks
+    /// the Margin so its transcription cuts the phrase out (PR 4). A tap, the Lock Screen and a headset press use
+    /// `requestFinishInterjection()`, which never marks a Margin.
+    func requestFinishInterjectionFromPhrase() {
+        requestFinish(endedByPhrase: true)
+    }
+
+    private func requestFinish(endedByPhrase: Bool) {
         guard snapshot.isRecording, marginCapture.requestFinish() else { return }
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 50_000_000)
             guard let self else { return }
             self.hangTelemetry.labels.scoped("marginSaveFinish") {
-                self.finishInterjection()
+                self.finishInterjection(endedByPhrase: endedByPhrase)
                 self.marginCapture.finalizeFinish(at: Date(), stillRecording: self.snapshot.isRecording)
             }
         }
@@ -403,7 +414,7 @@ extension Gate1AppModel {
         marginCapture.screenAppeared(at: Date())
     }
 
-    func finishInterjection() {
+    func finishInterjection(endedByPhrase: Bool = false) {
         guard snapshot.isRecording, let verdict = verdictForSavingRecording() else { return }
         let held = heldMarginVoice // a Margin recorded over a voice leaves the source paused for it to play on (#1672)
         let labels = hangTelemetry.labels
@@ -415,7 +426,7 @@ extension Gate1AppModel {
             // a long item, and every Margin save waited for it (#2967). The new Margin shows when the read lands.
             refreshSelectedItemInBackground()
             labels.scoped("marginSave.onboarding") { recordSavedInterjectionForOnboarding() }
-            labels.scoped("marginSave.transcription") { transcribeAndRecordSavedSpokenMargin() }
+            labels.scoped("marginSave.transcription") { transcribeAndRecordSavedSpokenMargin(endedByPhrase: endedByPhrase) }
             labels.scoped("marginSave.report") { reportMarginSaved(verdict) }
         }
         if !snapshot.isRecording {
@@ -697,7 +708,7 @@ final class MarginEndPhraseCoordinator {
 extension Gate1AppModel {
     func beginMarginEndPhraseListening() {
         MarginEndPhraseCoordinator.shared.begin(
-            finish: { [weak self] in self?.requestFinishInterjection() },
+            finish: { [weak self] in self?.requestFinishInterjectionFromPhrase() },
             record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) }
         )
     }
