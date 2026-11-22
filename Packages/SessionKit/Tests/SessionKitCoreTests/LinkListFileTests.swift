@@ -170,6 +170,99 @@ final class LinkListFileTests: XCTestCase {
         XCTAssertEqual(LinkListFile.recognize(other), .notALinkList)
     }
 
+    // MARK: - Follow entries (#4683)
+
+    private func entries(follow values: [String?]) -> String {
+        let rows = values.enumerated().map { index, value -> String in
+            let flag = value.map { #", "follow": \#($0)"# } ?? ""
+            return #"{"url": "https://example.com/\#(index + 1)"\#(flag)}"#
+        }
+        return #"{"schemaVersion": "\#(version)", "entries": [\#(rows.joined(separator: ","))]}"#
+    }
+
+    func testOnlyTheJSONValueTrueMarksAFollow() {
+        let found = list(entries(follow: ["true", "false", #""true""#, "1", "0", "null", "[]", nil]))
+        XCTAssertEqual(found?.entries.map(\.follow), [true, false, false, false, false, false, false, false])
+    }
+
+    func testAnEntryThatIsNotAnObjectDoesNotShiftTheFollowFlagsOfTheOthers() {
+        let found = list("""
+        {"schemaVersion": "\(version)", "entries": [
+          "https://example.com/bare", 7, null,
+          {"url": "https://example.com/a", "follow": true},
+          {"url": "http://example.com/skipped", "follow": true},
+          {"url": "https://example.com/b"}
+        ]}
+        """)
+        XCTAssertEqual(found?.entries.map(\.url), ["https://example.com/a", "https://example.com/b"])
+        XCTAssertEqual(found?.entries.map(\.follow), [true, false])
+    }
+
+    func testAListWhoseOnlyUsableEntriesAreFollowsIsAccepted() {
+        let found = list(entries(follow: ["true", "true"]))
+        XCTAssertEqual(found?.entries.count, 2)
+        XCTAssertEqual(found?.entries.allSatisfy(\.follow), true)
+    }
+
+    func testTenFollowsComeInAndElevenRefuseTheWholeList() {
+        XCTAssertEqual(list(entries(follow: Array(repeating: "true", count: LinkListFile.maxFollows)))?.entries.count, 10)
+        let result = recognize(entries(follow: Array(repeating: "true", count: LinkListFile.maxFollows + 1)))
+        XCTAssertEqual(result, .rejected("This list suggests more than 10 shows to follow. Ask for 10 or fewer."))
+    }
+
+    func testNonHTTPSFollowsAreSkippedBeforeTheyCountTowardTheCap() {
+        var rows = (1...10).map { #"{"url": "https://example.com/\#($0)", "follow": true}"# }
+        rows.append(#"{"url": "http://example.com/eleventh", "follow": true}"#)
+        let found = list(#"{"schemaVersion": "\#(version)", "entries": [\#(rows.joined(separator: ","))]}"#)
+        XCTAssertEqual(found?.entries.count, 10)
+        XCTAssertEqual(found?.skipped.map(\.position), [11])
+    }
+
+    func testFollowsBeyondTheCapMixedWithItemsStillCountOnlyTheFollows() {
+        var rows = (1...30).map { #"{"url": "https://example.com/item\#($0)"}"# }
+        rows += (1...10).map { #"{"url": "https://example.com/show\#($0)", "follow": true}"# }
+        let found = list(#"{"schemaVersion": "\#(version)", "entries": [\#(rows.joined(separator: ","))]}"#)
+        XCTAssertEqual(found?.entries.filter(\.follow).count, 10)
+        XCTAssertEqual(found?.entries.filter { !$0.follow }.count, 30)
+    }
+
+    func testTheSameLinkAsAnEntryAndAsAFollowKeepsTheFirstOne() {
+        let first = list("""
+        {"schemaVersion": "\(version)", "entries": [
+          {"url": "https://example.com/a"}, {"url": "https://example.com/a", "follow": true}]}
+        """)
+        XCTAssertEqual(first?.entries, [LinkListFile.Entry(url: "https://example.com/a", follow: false)])
+        let second = list("""
+        {"schemaVersion": "\(version)", "entries": [
+          {"url": "https://example.com/a", "follow": true}, {"url": "https://example.com/a"}]}
+        """)
+        XCTAssertEqual(second?.entries, [LinkListFile.Entry(url: "https://example.com/a", follow: true)])
+    }
+
+    func testTheSameKeyTwiceCantHideAFollowFromTheCap() {
+        // Two "entries" lists. Foundation's two JSON readers pick the same one on Apple platforms and different ones on
+        // Linux, so the list is either read consistently or refused; an item that was meant as a follow never slips by.
+        let text = #"{"schemaVersion": "\#(version)", "entries": [{"url": "https://example.com/a"}], "entries": [{"url": "https://example.com/b", "follow": true}]}"#
+        switch recognize(text) {
+        case .linkList(let value):
+            let pairs = value.entries.map { "\($0.url) \($0.follow)" }
+            XCTAssertTrue(pairs == ["https://example.com/a false"] || pairs == ["https://example.com/b true"], "\(pairs)")
+        case .rejected(let message): XCTAssertEqual(message, LinkListFile.unreadableMessage)
+        case .notALinkList: XCTFail("A list that names its schema is read or refused")
+        }
+        let twiceFollow = #"{"schemaVersion": "\#(version)", "entries": [{"url": "https://example.com/a", "follow": true, "follow": false}]}"#
+        switch recognize(twiceFollow) {
+        case .linkList(let value): XCTAssertEqual(value.entries.count, 1)
+        case .rejected, .notALinkList: break // either is fine; what matters is that nothing crashes
+        }
+    }
+
+    func testADuplicateFollowIsNotCountedTwiceTowardTheCap() {
+        let rows = (1...12).map { #"{"url": "https://example.com/\#(($0 - 1) % 10 + 1)", "follow": true}"# }
+        let found = list(#"{"schemaVersion": "\#(version)", "entries": [\#(rows.joined(separator: ","))]}"#)
+        XCTAssertEqual(found?.entries.count, 10)
+    }
+
     // MARK: - The note about what was left out
 
     func testTheSkippedNoteNamesUpToThreeAndCountsTheRest() {
