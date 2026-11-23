@@ -6,7 +6,8 @@ final class AIFollowSuggestionsTests: XCTestCase {
     private func makeStore() -> (AIFollowSuggestions, UserDefaults) {
         let suite = "AIFollowSuggestionsTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        // The block captures the suite name (a String), not the defaults object, which Swift 6.4 refuses to send.
+        addTeardownBlock { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
         return (AIFollowSuggestions(defaults: defaults), defaults)
     }
 

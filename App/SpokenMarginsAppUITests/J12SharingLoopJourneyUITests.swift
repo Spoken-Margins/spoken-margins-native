@@ -76,12 +76,16 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             let share = element("build23.sender.review.share")
             XCTAssertTrue(share.waitForExistence(timeout: 5) && share.isHittable, "Share is not reachable on the review step without scrolling")
             // The package details are built without opening the iOS share sheet, which a script can't dismiss, so
-            // this tap stands in for Share and counts as the second.
-            tap("build23.sender.preview.build")
+            // this tap stands in for Share and counts as the second. The pinned share buttons cover it at rest (#5008).
+            tapClearOfPinnedShare("build23.sender.preview.build")
             XCTAssertLessThanOrEqual(taps - tapsAtStepStart, 2, "Sharing from the playback screen took more than two taps")
-            let size = element("build23.sender.preview.packetSize")
+            XCTAssertTrue(element("build23.sender.stage.recipient-preview").waitForExistence(timeout: 10), "The recipient preview did not open")
+            // The size sits below the fold, so this waits on its existence, not on it being on screen. Its identifier
+            // is on both the icon and the text of a Label, so read the text, which names the packet and its size.
+            let size = app.staticTexts.matching(identifier: "build23.sender.preview.packetSize").firstMatch
             let builtAt = Date()
             XCTAssertTrue(size.waitForExistence(timeout: 60), "The packet was not built, or its size is not shown")
+            XCTAssertTrue(size.label.contains(".spokenmargins"), "The packet size line does not name the packet: \(size.label)")
             note(String(format: "packet built in %.1fs, %@", Date().timeIntervalSince(builtAt), size.label))
             endStep("packet ready (the system share sheet is not scripted)")
             tap("build23.sender.cancel")
@@ -299,6 +303,30 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
         let control = element(identifier)
         XCTAssertTrue(control.waitForExistence(timeout: 8), "Missing control: \(identifier)")
         for _ in 0..<4 where !control.isHittable { app.swipeUp() }
+        XCTAssertTrue(control.isHittable, "Control can't be tapped: \(identifier)")
+        control.tap()
+        taps += 1
+    }
+
+    /// Taps a control the pinned share buttons (`build23.sender.review.share`) can cover. `isHittable` doesn't see that
+    /// overlap, so the centre tap lands on nothing or on a share button, which opens the iOS share sheet (#5008). Scrolls
+    /// from mid-screen until the control's bottom is above the top of every share button, then taps it.
+    private func tapClearOfPinnedShare(_ identifier: String) {
+        let control = element(identifier)
+        XCTAssertTrue(control.waitForExistence(timeout: 8), "Missing control: \(identifier)")
+        let pinned = app.descendants(matching: .any).matching(identifier: "build23.sender.review.share")
+        func clear() -> Bool {
+            let shareTop = pinned.allElementsBoundByIndex.filter { $0.exists && !$0.frame.isEmpty }.map { $0.frame.minY }.min()
+            return shareTop.map { control.frame.maxY <= $0 } ?? true
+        }
+        for _ in 0..<6 where !clear() {
+            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
+            from.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)))
+        }
+        guard clear() else {
+            XCTFail("\(identifier) stays under the pinned share buttons after 6 swipes (its frame \(control.frame))")
+            return
+        }
         XCTAssertTrue(control.isHittable, "Control can't be tapped: \(identifier)")
         control.tap()
         taps += 1

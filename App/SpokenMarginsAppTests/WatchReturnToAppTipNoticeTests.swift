@@ -8,7 +8,7 @@ import XCTest
 /// relaunch behaviour, the Settings route and the scripted-UI switch.
 @MainActor
 final class WatchReturnToAppTipNoticeTests: XCTestCase {
-    private let pairedWithApp = WatchPairingState(supported: true, activated: true, paired: true, appInstalled: true)
+    private static let pairedWithApp = WatchPairingState(supported: true, activated: true, paired: true, appInstalled: true)
 
     private func defaults() -> UserDefaults {
         let name = "WatchReturnToAppTipNoticeTests-\(UUID().uuidString)"
@@ -20,12 +20,12 @@ final class WatchReturnToAppTipNoticeTests: XCTestCase {
     /// A notice that has everything it needs except the thing a case changes.
     private func notice(
         _ store: UserDefaults,
-        pairing: WatchPairingState? = nil,
+        pairing: WatchPairingState = WatchReturnToAppTipNoticeTests.pairedWithApp,
         hadMargin: Bool? = true,
         forcesNoWatch: Bool = false
     ) -> WatchReturnToAppTipNotice {
         let notice = WatchReturnToAppTipNotice(defaults: store, forcesNoWatch: forcesNoWatch)
-        notice.updatePairing(pairing ?? pairedWithApp)
+        notice.updatePairing(pairing)
         if let hadMargin { notice.noteLibraryLoaded(hadMargin: hadMargin) }
         return notice
     }
@@ -140,7 +140,7 @@ final class WatchReturnToAppTipNoticeTests: XCTestCase {
         let notice = notice(defaults(), pairing: .none)
         offer(notice)
         XCTAssertFalse(notice.isPresented)
-        notice.updatePairing(pairedWithApp)
+        notice.updatePairing(Self.pairedWithApp)
         offer(notice)
         XCTAssertTrue(notice.isPresented)
     }

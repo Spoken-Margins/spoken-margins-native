@@ -60,6 +60,8 @@ PATH_SCHEMA_RULES = [
     ("fixtures/podcast-search/itunes-responses/*.json", "itunes-search-response.schema.json"),
     ("fixtures/feeds/zotero-*.json", "zotero-library-item.schema.json", "array"),
     ("fixtures/copy-length-note/cases.json", "copy-length-note-cases.schema.json", "array"),
+    ("quiz/find-something.v1.json", "find-something-quiz.schema.json"),
+    ("fixtures/find-something/*.json", "find-something-prompt-fixture.schema.json"),
     ("traces/*.json", "session-trace.schema.json"),
 ]
 
@@ -70,6 +72,7 @@ NEGATIVE_PATH_SCHEMA_RULES = [
     ("fixtures/invalid/voice-model-catalog/*.json", "voice-model-catalog-envelope.schema.json"),
     ("fixtures/invalid/voice-model-catalog-payload/*.json", "voice-model-catalog.schema.json"),
     ("fixtures/invalid/listening-signals/*.json", "i4-engagement.schema.json"),
+    ("fixtures/invalid/find-something-quiz/*.json", "find-something-quiz.schema.json"),
 ]
 
 # Remote source catalogs (seam I2): the published catalog and its manifest, and each
