@@ -27,7 +27,9 @@ code (label bridge, dequeue notifier, merge policy, audit eligibility, dispatch 
    - `needs-person`: a fault that was not the PR's own (a runner hang, an outage that ended) left a clean PR needing a
      person to re-arm it;
    - `slow`: a clean PR with no fault, or a fault that clears, took longer than SLOW_MINUTES to merge;
-   - `loop`: the PR went round the merge queue MAX_GROUPS times.
+   - `loop`: the PR went round the merge queue MAX_GROUPS times;
+   - `retried-test`: a job failed a test for the PR's own reasons and the PR merged anyway, so the pipeline re-ran or
+     re-queued a real test failure (#5057).
    KNOWN lists each violation the current tree is known to have, with its issue; `--check` fails on any violation not
    in it, and on a KNOWN entry that no longer happens (so the list cannot rot).
 
@@ -839,6 +841,10 @@ def violations(c: Case, result: dict, tree) -> list[str]:
         out.append('merged-broken')
     if result['merge_groups'] >= M.MAX_GROUPS:
         out.append('loop')
+    if result['merged'] and c.expect == 'told' and c.fail_in == 'test':
+        # A job failed a test for the PR's own reasons, and nothing in the model is a person: a merge means the
+        # pipeline re-ran or re-queued a real test failure (#5057 Must not break; the third audit of #5070).
+        out.append('retried-test')
     if result['merged']:
         if c.expect == 'merge' and result['merged_at_minute'] > SLOW_MINUTES + (c.owner_tap_at or 0):
             out.append('slow')

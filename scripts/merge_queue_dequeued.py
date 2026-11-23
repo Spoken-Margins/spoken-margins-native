@@ -104,13 +104,17 @@ NETWORK_ERROR = re.compile(
 # A failed test in the step's log tail makes the failure the PR's, whatever network words other lines carry: a test
 # whose assertion message quotes a certificate error next to a github.com URL is still a failed test (#5070 audit).
 # Only the forms a test runner prints for one failed test count, never a wrapper's word for a failed step: verify-tests
-# ends every failed step with `<step>: 41s — FAILED`, a network failure included (second audit of #5070). The forms:
-# verify-tests.py's `Failed: <test> at <file:line>` (report_unittest_failures, also inside its `Process exit 1; ...`
-# error), unittest's `FAIL:`/`ERROR: test (module.Class)`, pytest's `FAILED path::test`, Go's `--- FAIL: Test`,
-# XCTest's `Test Case '-[...]' failed` and `error: -[...] : XCTAssert`, Swift Testing's `✘ Test ... failed` and a
-# raised `AssertionError`. They are read after the Actions timestamp that starts every job-log line.
+# ends every failed step with `<step>: 41s — FAILED`, a network failure included (second audit of #5070).
+# verify-tests keeps each runner's raw output in the step's log file, so the job log shows only its own lines, and it
+# prints the prefix `Failed: ` for a failed test and nothing else (verify-tests.py: `Failed: <unittest header> at
+# <file:line>` from report_unittest_failures, `Failed: Module/Class/testX` from reconcile, `Failed: and N more`), at
+# a line's start or inside its `Process exit 1; ...` error (third audit of #5070). The other forms are the runners'
+# own, for a plan step that runs one directly: unittest's `FAIL:`/`ERROR: test (module.Class)`, pytest's
+# `FAILED path::test`, Go's `--- FAIL: Test`, XCTest's `Test Case '-[...]' failed` and `error: -[...] : XCTAssert`,
+# Swift Testing's `✘ Test ... failed` and a raised `AssertionError`. They are read after the Actions timestamp that
+# starts every job-log line. test_merge_queue_dequeued builds verify-tests' lines with its own functions.
 TEST_FAILURE = re.compile(
-    r'(?:^|; |\s)Failed: \S+ at (?:\S+:\d+|no traceback)|^(?:FAIL|ERROR): \w+ \([\w.]+\)|^FAILED \S+::|'
+    r'(?:^|; )Failed: |^(?:FAIL|ERROR): \w+ \([\w.]+\)|^FAILED \S+::|'
     r"^\s*--- FAIL: \w|Test Case '-\[.+\]' failed|error: -\[.+\] : XCTAssert|✘ Test .+ (?:failed|recorded an issue)|"
     r'^\s*AssertionError\b')
 LOG_TIMESTAMP = re.compile(r'^\ufeff?\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ?')

@@ -152,7 +152,7 @@ class TableTests(unittest.TestCase):
     def test_every_known_entry_gives_its_issue_or_reason(self):
         for pattern, why in H.KNOWN.items():
             with self.subTest(pattern):
-                self.assertRegex(pattern, r': (merged-broken|silent-stuck|needs-person|slow|loop)$')
+                self.assertRegex(pattern, r': (merged-broken|silent-stuck|needs-person|slow|loop|retried-test)$')
                 self.assertTrue(why.strip())
 
     def test_the_portable_job_runs_the_whole_sweep(self):

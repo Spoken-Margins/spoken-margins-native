@@ -485,6 +485,27 @@ class SetupFailureTests(unittest.TestCase):
         'certificate has expired (see artifacts/verification/fast-mac-rest/tools.log)',
         'Evidence: artifacts/verification/fast-mac-rest/manifest.json')))
 
+    def test_verify_tests_real_failure_lines_stay_the_prs(self):
+        # Third audit of #5070: verify-tests prints its own lines, not the runners'. Build them with its functions.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('verify_tests', ROOT / 'scripts/verify-tests.py')
+        vt = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(vt)
+        quoted = "AssertionError: \"fatal: unable to access 'https://github.com/x/y': SSL certificate problem\""
+        unittest_lines = vt.report_unittest_failures('ops', [(
+            'test_equal (test_main_t3.Sample.test_equal)', '/home/runner/work/r/r/scripts/tests/test_main_t3.py:380',
+            quoted)])
+        xctest = 'Failed: SessionKitTests/FetchTests/testCert' + vt.failure_reason(
+            {'retry_failures': ["GET https://github.com/a/b: HTTP 502 Bad Gateway"]})
+        stamp = '2026-11-23T07:20:00.1234567Z '
+        for first in (*unittest_lines, xctest):
+            for log in (first, f'{first}\nops: 30s — FAILED\nProcess exit 1; {first}',
+                        f'{stamp}ops: 30s — FAILED\n{stamp}Process exit 1; {first}'):
+                with self.subTest(log=log):
+                    self.assertFalse(mq.outside_network_error(log))
+                    github = self.github({'hosted fast: Mac rest': self.PLAN}, logs={100: log})
+                    self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+
     def test_verify_tests_own_failed_line_does_not_hide_an_outside_outage(self):
         github = self.github({'hosted fast: Mac rest': self.PLAN}, logs={100: self.VERIFY_TESTS_OUTAGE})
         self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told: setup retry')

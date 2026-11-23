@@ -1184,8 +1184,8 @@ class FakeDequeueGitHub:
         if row and getattr(self.w.c, 'fail_in', '') == 'download':
             return ("tools: 41s — FAILED\nProcess exit 1; fatal: unable to access 'https://download.onnxruntime.ai/pod.zip': "
                     'SSL certificate problem: certificate has expired')
-        return ('tools: 41s — FAILED\nProcess exit 1; Failed: testSomething at /w/SomethingTests.swift:12 — '
-                'XCTAssertEqual failed')
+        return ('ops: 30s — FAILED\nProcess exit 1; Failed: test_something (test_x.T.test_something) at '
+                "/w/scripts/tests/test_x.py:12 — AssertionError: GET https://github.com/a: HTTP 502")
 
     def queue_heads(self):
         return set()
