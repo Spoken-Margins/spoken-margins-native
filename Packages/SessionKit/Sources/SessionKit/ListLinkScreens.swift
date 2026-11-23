@@ -48,6 +48,19 @@ public enum ListLinkWords {
         return host(url)
     }
 
+    /// The web address a pasted or typed link names, for the list probe: http or https with a host that has a dot. A link
+    /// with no scheme is read as https. Anything else (another scheme, words, a bare name) is nil, and the follow path
+    /// handles it as before.
+    public static func webURL(_ text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains(where: \.isWhitespace) else { return nil }
+        let withScheme = trimmed.contains("://") ? trimmed : "https://" + trimmed
+        guard let components = URLComponents(string: withScheme),
+              let scheme = components.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              let host = components.host, host.contains("."), let url = components.url else { return nil }
+        return url
+    }
+
     /// The address's host without a leading `www.`, or the text itself when it has none.
     public static func host(_ url: String) -> String {
         guard let host = URLComponents(string: url)?.host, !host.isEmpty else { return url }
@@ -400,5 +413,15 @@ public enum ListLinkScreens {
         ListLink(
             id: id, listId: listID, url: url, title: title, role: role, etag: etag, lastModified: lastModified,
             lastCheckedAt: now, status: .ok, statusAt: now, acceptedMembers: accepted, rejectedMembers: rejected)
+    }
+}
+
+/// Which opened files are lists of shows (#4046 PR 5). The app declares `org.opml.opml` (`.opml`), so Files, Mail and
+/// AirDrop offer Spoken Margins for one; such a file opens the import preview, never the Library.
+public enum OPMLOpenRouter {
+    public static let fileExtension = "opml"
+
+    public static func opens(_ url: URL) -> Bool {
+        url.isFileURL && url.pathExtension.lowercased() == fileExtension
     }
 }

@@ -18,6 +18,8 @@ struct ExperienceItemDetailScreen: View {
     /// Saved live-session photos for Recent Margins (#4180), observed directly so they appear once the launch load finishes.
     @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
 
+    /// The followed show this item came from, for **Show less like this** (#4046 PR 12); nil for an item from no followed show.
+    @State private var showLessTarget: ShowLessTarget?
     @State private var confirmsTrash = false
     /// Why Share has nothing to send, when it has none (#4229).
     @State private var shareExplanation: ItemShareStart.Explanation?
@@ -191,6 +193,20 @@ struct ExperienceItemDetailScreen: View {
                                 .accessibilityIdentifier("item.menu.exportWord.button")
                         }
                         quickActionButtons
+                        // An episode or post from a followed show (#4046 PR 12): the same mark the Show screen writes.
+                        if let target = showLessTarget {
+                            let marked = model.showLessMark(entryId: target.entryId, itemId: target.item.id) != nil
+                            Button(ShowLessWords.menuTitle(isMarked: marked), systemImage: ShowLessWords.symbol) {
+                                Task {
+                                    if marked {
+                                        await model.unmarkShowLess(entryId: target.entryId, itemId: target.item.id)
+                                    } else {
+                                        await model.markShowLess(target.mark)
+                                    }
+                                }
+                            }
+                            .accessibilityIdentifier("item.menu.showLess.button")
+                        }
                         if episodeLinkStatus.canLink && !episodeLinkStatus.canChange {
                             Button("Episode can't change: friends' Margins are on it", systemImage: "link") {}
                                 .disabled(true)
@@ -232,6 +248,9 @@ struct ExperienceItemDetailScreen: View {
                 }
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
+            .task(id: "\(model.selectedItem.id)|\(model.feedSubscriptions.count)") {
+                showLessTarget = await model.showLessTarget(itemId: model.selectedItem.id)
+            }
             // Runs again when the item's Library row arrives, so the entry is not missed on a screen opened before the row.
             .task(id: "\(model.selectedItem.id)|\(model.libraryItems.contains { $0.id == model.selectedItem.id })") {
                 await refreshKeptOriginal()

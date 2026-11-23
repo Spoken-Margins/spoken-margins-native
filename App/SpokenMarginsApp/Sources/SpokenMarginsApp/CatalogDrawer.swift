@@ -300,6 +300,19 @@ final class CatalogDrawerModel: ObservableObject {
         return true
     }
 
+    /// The listener opened an `.opml` file from Files, Mail or another app (#4046 PR 5): the drawer opens on its import
+    /// preview, as for a Shortcut's list. Nothing is followed or saved until they tap the import button. False when there
+    /// is no import, or one is still following.
+    @discardableResult
+    func openFileImport(_ url: URL) -> Bool {
+        guard let makeOPMLImport, shortcutImport?.isFollowing != true else { return false }
+        let importer = makeOPMLImport()
+        importer.load(fileAt: url)
+        shortcutImport = importer
+        if !isPresented { present() }
+        return true
+    }
+
     /// Done. On the first-run opening the sheet closes and the listener's first pick starts playing as it
     /// goes (#2851). A swipe down closes it without playing.
     func finish() {
@@ -809,12 +822,16 @@ private struct CatalogSearchResultRow: View {
 struct CatalogSubjectChipLabel: View {
     let title: String
     let isSelected: Bool
+    /// A symbol after the title: Following's chip for a list that updates from a link shows `link` (#4046 PR 7a). The
+    /// chip's own label says it to VoiceOver.
+    var trailingSymbol: String? = nil
 
     var body: some View {
         HStack(spacing: 4) {
             // The chip's selected trait says it; the glyph would read "checkmark" on top (#4639).
             if isSelected { Image(systemName: "checkmark").font(.caption.weight(.bold)).accessibilityHidden(true) }
             Text(title).font(.subheadline.weight(isSelected ? .semibold : .regular))
+            if let trailingSymbol { Image(systemName: trailingSymbol).font(.caption).accessibilityHidden(true) }
         }
         .padding(.horizontal, 12)
         .frame(minHeight: 36)

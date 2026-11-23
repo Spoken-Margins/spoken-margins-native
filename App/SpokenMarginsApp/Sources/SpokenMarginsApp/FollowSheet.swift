@@ -3,7 +3,8 @@ import SwiftUI
 
 /// Following's plus (#3205): one sheet that does one job, following a show. Paste follows a copied link at once and
 /// the banner offers Undo; Browse opens the catalog; Import from another app opens the file picker. Read Later and
-/// Listening Edition imports live in Settings, Import & Export.
+/// Listening Edition imports live in Settings, Import & Export. A link to a list of shows opens its "Add <list>" preview
+/// instead (#4046 PR 7a).
 struct FollowSheet: View {
     @EnvironmentObject private var model: Gate1AppModel
     @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
@@ -12,7 +13,12 @@ struct FollowSheet: View {
 
     /// Closes this sheet and opens the catalog, which is presented from the root view.
     let browse: () -> Void
+    /// The Lists screen's **Add a list by link** opens the sheet with the field focused.
+    var focusesField = false
     @State private var isFollowing = false
+    /// A list's address the last paste or Follow found: its preview is pushed.
+    @State private var listURL: URL?
+    @FocusState private var fieldFocused: Bool
     /// Why nothing was followed. The app's banner sits behind a sheet, so the line shows here.
     @State private var problem: String?
 
@@ -23,11 +29,11 @@ struct FollowSheet: View {
                     Button {
                         run { await model.followFromClipboard() }
                     } label: {
-                        Label("Paste a show link", systemImage: "doc.on.clipboard")
+                        Label(ListLinkWords.pasteLabel, systemImage: "doc.on.clipboard")
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     }
                     .disabled(isFollowing)
-                    .accessibilityHint("Follows the show link you copied. You can undo it.")
+                    .accessibilityHint(ListLinkWords.pasteHint)
                     .accessibilityIdentifier("sources.follow.paste")
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 10) {
@@ -48,7 +54,7 @@ struct FollowSheet: View {
                             .foregroundStyle(AppColors.text)
                             .accessibilityIdentifier("sources.follow.problem")
                     } else {
-                        Text("Or type a link to a show’s feed.")
+                        Text(ListLinkWords.fieldFooter)
                     }
                 }
                 Section {
@@ -74,6 +80,17 @@ struct FollowSheet: View {
             .accessibilityIdentifier("sources.manageFeeds.screen")
             .navigationTitle(FollowPasteDecision.sheetTitle)
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(isPresented: Binding(get: { listURL != nil }, set: { if !$0 { listURL = nil } })) {
+                if let listURL {
+                    ListLinkPreviewScreen(model: model, url: listURL, includeInto: nil) { _ in dismiss() }
+                        .id(listURL)
+                }
+            }
+            .task {
+                guard focusesField else { return }
+                try? await Task.sleep(for: .milliseconds(450))
+                fieldFocused = true
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") { dismiss() }
@@ -90,6 +107,7 @@ struct FollowSheet: View {
             .textContentType(.URL)
             .keyboardType(.URL)
             .submitLabel(.go)
+            .focused($fieldFocused)
             .onSubmit { run { await model.followTypedLink() } }
             .padding(.horizontal, 14)
             .frame(maxWidth: .infinity, minHeight: 48)
@@ -119,6 +137,7 @@ struct FollowSheet: View {
             case .followed: dismiss()
             case .needsChoice: problem = Gate1AppModel.chooseFeedMessage
             case .stopped(let line): problem = line
+            case .list(let url): listURL = url
             }
         }
     }

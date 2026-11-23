@@ -276,3 +276,14 @@ extension OPMLExporter {
         OPMLListNames.normalizedGUID(ShareableLinkPolicy.shareableEpisodeGUID(OPMLListNames.normalizedGUID(podcastGUIDs[subscription.id])))
     }
 }
+
+extension OPMLExporter {
+    /// The shared file's name: the list's name with the characters a file name can't hold replaced, then `.opml`, so the
+    /// friend sees "Commute.opml" in Messages or Files.
+    public static func fileName(for title: String) -> String {
+        let unsafe = CharacterSet(charactersIn: "/\\:?%*|\"<>").union(.controlCharacters).union(.newlines)
+        let cleaned = title.unicodeScalars.map { unsafe.contains($0) ? "-" : String($0) }.joined()
+            .trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ".")))
+        return (cleaned.isEmpty ? "Spoken Margins follows" : String(cleaned.prefix(80))) + ".opml"
+    }
+}

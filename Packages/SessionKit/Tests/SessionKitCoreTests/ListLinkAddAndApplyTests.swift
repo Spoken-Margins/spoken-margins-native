@@ -236,3 +236,16 @@ final class ListLinkAddAndApplyTests: XCTestCase {
         XCTAssertNil(ListLinkScreens.viaTitle(for: member(1), listID: "mine", links: result.links))
     }
 }
+
+final class ListLinkWebURLTests: XCTestCase {
+    func testWhichPastedTextIsProbedAsAWebAddress() {
+        XCTAssertEqual(ListLinkWords.webURL(" https://friend.example/l.opml\n")?.absoluteString, "https://friend.example/l.opml")
+        XCTAssertEqual(ListLinkWords.webURL("friend.example/l.opml")?.absoluteString, "https://friend.example/l.opml")
+        XCTAssertEqual(ListLinkWords.webURL("HTTP://Friend.example/x")?.host, "Friend.example")
+        XCTAssertNil(ListLinkWords.webURL(""))
+        XCTAssertNil(ListLinkWords.webURL("planet money"))
+        XCTAssertNil(ListLinkWords.webURL("localhost/feed"))
+        XCTAssertNil(ListLinkWords.webURL("podcast://friend.example/feed"))
+        XCTAssertNil(ListLinkWords.webURL("ftp://friend.example/l.opml"))
+    }
+}

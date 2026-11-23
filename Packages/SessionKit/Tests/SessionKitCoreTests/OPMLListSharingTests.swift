@@ -126,3 +126,23 @@ final class OPMLListSharingTests: XCTestCase {
         XCTAssertEqual(OPMLImportListWords.resultLine(result(2, 1)), "Added 2 lists, and shows to 1 list you had.")
     }
 }
+
+final class OPMLOpenRouterTests: XCTestCase {
+    func testOnlyOPMLFilesOpenTheImport() {
+        XCTAssertTrue(OPMLOpenRouter.opens(URL(fileURLWithPath: "/tmp/Inbox/Commute.opml")))
+        XCTAssertTrue(OPMLOpenRouter.opens(URL(fileURLWithPath: "/tmp/Commute.OPML")))
+        XCTAssertFalse(OPMLOpenRouter.opens(URL(fileURLWithPath: "/tmp/Commute.xml")))
+        XCTAssertFalse(OPMLOpenRouter.opens(URL(fileURLWithPath: "/tmp/a.spokenmargins")))
+        XCTAssertFalse(OPMLOpenRouter.opens(URL(string: "https://friend.example/list.opml")!), "a web address goes through Follow")
+    }
+}
+
+final class OPMLShareFileNameTests: XCTestCase {
+    func testFileNames() {
+        XCTAssertEqual(OPMLExporter.fileName(for: "Commute"), "Commute.opml")
+        XCTAssertEqual(OPMLExporter.fileName(for: "News/Tech: AI"), "News-Tech- AI.opml")
+        XCTAssertEqual(OPMLExporter.fileName(for: "  "), "Spoken Margins follows.opml")
+        XCTAssertEqual(OPMLExporter.fileName(for: "..hidden"), "hidden.opml", "never a hidden file")
+        XCTAssertEqual(OPMLExporter.fileName(for: "Café"), "Café.opml")
+    }
+}

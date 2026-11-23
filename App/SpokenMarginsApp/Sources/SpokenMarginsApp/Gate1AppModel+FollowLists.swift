@@ -97,9 +97,12 @@ extension Gate1AppModel {
     /// Ticks or unticks `subscription` in one list. Each tick is saved as it is made.
     func setFollowListMembership(of subscription: FeedSubscription, inList listID: String, isMember: Bool) async {
         guard let service = followListsService() else { return }
+        let member = FollowListEditing.member(for: subscription)
         do {
-            let lists = try await service.setMembership(of: FollowListEditing.member(for: subscription), inList: listID, isMember: isMember)
+            let lists = try await service.setMembership(of: member, inList: listID, isMember: isMember)
             FollowListsState.shared.publish(lists)
+            // Taken out by hand: a list's address never offers it back (#4046 PR 7a).
+            if !isMember { await rejectFromListLinks(member, listID: listID) }
         } catch {
             reportFailure(error, context: "Changing a list failed")
         }
@@ -111,6 +114,7 @@ extension Gate1AppModel {
         let state = FollowListsState.shared
         guard let removed = try? await state.service(for: store).removeFromAllLists(feedKey: member.feedKey, podcastGUID: member.podcastGUID) else { return }
         state.publish(removed.lists)
+        await rejectFromListLinks(member, listID: nil)
     }
 
     /// Undo after an unfollow: the show goes back into the lists it left.

@@ -453,6 +453,13 @@ public struct OPMLImportResult: Equatable, Sendable {
     public var failed: [Failure] = []
     /// Ticked feeds not tried because the import was cancelled part way.
     public var notTried: [SourceCandidate] = []
+
+    /// Empty, for an import that only adds lists (#4046 PR 5: every show in them is already followed).
+    public init(followed: [SourceCandidate] = [], failed: [Failure] = [], notTried: [SourceCandidate] = []) {
+        self.followed = followed
+        self.failed = failed
+        self.notTried = notTried
+    }
 }
 
 public enum OPMLImportRunner {

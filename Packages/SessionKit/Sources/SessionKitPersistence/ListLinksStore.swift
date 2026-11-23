@@ -53,7 +53,7 @@ public actor ListLinksStore: ListLinkStoring {
     }
 
     /// Links that arrived in a friend's file (#4046 PR 8), saved as they are.
-    public func save(_ links: [ListLink]) throws -> [ListLink] {
+    public func saveLinks(_ links: [ListLink]) throws -> [ListLink] {
         try store.withTransaction {
             for link in links { try store.saveListLink(link) }
         }
