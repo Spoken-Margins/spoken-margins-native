@@ -1,13 +1,24 @@
 import Foundation
 
-/// #4715: a piece of transcription work that met the hold on iOS's Speech Recognition prompt
-/// (`speech_recognition_not_yet_asked`). Every caller of the transcription clients that can meet the hold names itself
-/// here, so the rule "held work makes the ask owed (or not) and is retried after Allow" covers each one by name.
+/// #4715: what a transcription that goes through the Speech Recognition gate is for. The gate
+/// (`SpeechAuthorizationAsk.requireAuthorized(for:)`) takes one with no default, and so does every transcription client
+/// method that reaches it, so a new caller that doesn't say what it is for doesn't compile. When the gate holds the work
+/// (`speech_recognition_not_yet_asked`) it reports the purpose to one sink, the app's speech ask, which decides from the
+/// purpose alone whether the card is owed and how the work starts again after Allow. No caller has to remember to arm the
+/// card (the audit on #5124 found three that didn't, one after another).
 ///
-/// Only a friend's packet placement makes the ask owed (director's Default taken on #4715, 2026-11-23): a listener who
-/// has never recorded has no other way to reach Allow, and their friend's Margins would otherwise stay at the sender's
-/// time. The other kinds wait quietly and are retried whenever the listener does allow.
+/// The card is owed for a spoken Margin from any surface (the #4715 Design ties it to saving one) and for a friend's packet
+/// placement (director's Default taken on #4715, 2026-11-23). The other purposes wait quietly and are retried whenever
+/// the listener does allow.
 public enum HeldTranscription: String, Sendable, CaseIterable {
+    /// A spoken Margin saved in the player, or by a Shortcut onto a Library item (`Gate1AppModel` transcription).
+    case playerMargin
+    /// A spoken Margin recorded on the phone in a live session or with Record a Margin (`LiveSessionSpokenCapture`).
+    case liveSessionMargin
+    /// A spoken Margin recorded on the Apple Watch (`WatchMarginReceiver`).
+    case watchMargin
+    /// A spoken Margin from the "Add voice Margin" Shortcut, filed into a live or quick session (`AddVoiceMarginAction`).
+    case shortcutMargin
     /// A friend's podcast packet: a transient transcript of the listener's copy places the Margins acoustic evidence
     /// could not (`ImportedPodcastPlacementCoordinator.scheduleTransientTranscript`).
     case friendPacketPlacement
@@ -18,9 +29,44 @@ public enum HeldTranscription: String, Sendable, CaseIterable {
     /// The text-to-time map for an article's publisher audio (`PublisherAudioTextMapper`), which checks iOS's answer
     /// before it transcribes and so waits rather than throws.
     case publisherTextMap
+    /// The few words the Just Heard peek shows (`Gate1AppModel+JustHeardPeek`). Transient: the listener peeks again.
+    case justHeardPeek
+    /// A take of a spoken note (`SystemSpokenNoteTranscriber`). Not a Margin; the note asks again for a take with no
+    /// words when it is opened.
+    case spokenNote
+
+    /// How held work of this purpose starts again after Allow.
+    public enum Retry: Equatable, Sendable {
+        /// The caller registers its own retry (`HeldTranscriptionRetries.hold`), because only it knows the item or key.
+        case callerRegisters
+        /// The Margin is put on the stored waiting list (`SpeechAskWaitingList`) by the player's failure path.
+        case waitingList
+        /// One sweep of the live sessions' spoken Margins that have no words yet, registered by the sink itself
+        /// (`HeldTranscriptionRetries.reported`), so `try?` at the caller loses nothing.
+        case liveSessionSweep
+        /// Nothing to retry: the work was transient, or its owner asks again on its own.
+        case none
+    }
+
+    /// A spoken Margin, from whichever surface saved it.
+    public var isSpokenMargin: Bool {
+        switch self {
+        case .playerMargin, .liveSessionMargin, .watchMargin, .shortcutMargin: true
+        case .friendPacketPlacement, .episodeMap, .sourceWindow, .publisherTextMap, .justHeardPeek, .spokenNote: false
+        }
+    }
 
     /// Whether this held work makes the in-app card owed.
-    public var makesAskOwed: Bool { self == .friendPacketPlacement }
+    public var makesAskOwed: Bool { isSpokenMargin || self == .friendPacketPlacement }
+
+    public var retry: Retry {
+        switch self {
+        case .playerMargin: .waitingList
+        case .liveSessionMargin, .watchMargin, .shortcutMargin: .liveSessionSweep
+        case .friendPacketPlacement, .episodeMap, .sourceWindow, .publisherTextMap: .callerRegisters
+        case .justHeardPeek, .spokenNote: .none
+        }
+    }
 
     /// The error a transcription client throws while the ask has not been made.
     public static func isHold(_ error: Error) -> Bool {
@@ -41,8 +87,16 @@ public final class HeldTranscriptionRetries {
     }
 
     private var entries: [Entry] = []
+    private let liveSessionSweep: @MainActor () -> Void
 
-    public init() {}
+    /// The key the live-session sweep is held under: one sweep covers every live-session, Watch and Shortcut Margin.
+    public static let liveSessionSweepKey = "live-session-spoken-margins"
+
+    /// `liveSessionSweep` transcribes every live-session spoken Margin that has no words yet
+    /// (`LiveSessionSpokenMarginSweep`); it runs once on Allow however many of them were held.
+    public init(liveSessionSweep: @escaping @MainActor () -> Void = {}) {
+        self.liveSessionSweep = liveSessionSweep
+    }
 
     public var isEmpty: Bool { entries.isEmpty }
 
@@ -61,6 +115,13 @@ public final class HeldTranscriptionRetries {
         } else {
             entries.append(entry)
         }
+    }
+
+    /// The gate held work for `purpose`. Registers the retry the sink owns: the live-session sweep for a live-session,
+    /// Watch or Shortcut spoken Margin. Every other purpose's retry is the caller's or the waiting list's.
+    public func reported(_ purpose: HeldTranscription) {
+        guard purpose.retry == .liveSessionSweep else { return }
+        hold(.liveSessionMargin, key: Self.liveSessionSweepKey, retry: liveSessionSweep)
     }
 
     /// Forgets the held work of `kind` under `keys`, because another retry already covers it. A spoken Margin on the

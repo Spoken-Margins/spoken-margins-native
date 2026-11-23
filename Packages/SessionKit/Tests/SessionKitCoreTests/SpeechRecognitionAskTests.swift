@@ -250,12 +250,24 @@ final class SpeechAskWaitingListTests: XCTestCase {
 
 /// Held transcription (director's Default taken on #4715, 2026-11-23).
 final class SpeechAskHeldTranscriptionTests: XCTestCase {
-    /// The audit on #5124: a listener who has never recorded opens a friend's podcast packet whose placement needs a
-    /// transcript. Only that hold makes the card owed, in the friend's words; the other held paths wait quietly.
-    func testHeldTranscriptionOwesTheCardOnlyForAFriendsPacketTable() {
+    /// The audits on #5124: a listener who has never recorded in the player opens a friend's podcast packet whose
+    /// placement needs a transcript (17:14Z), or records spoken Margins only in a live session, on the Watch or by the
+    /// Shortcut (18:59Z). Those holds make the card owed: a spoken Margin from any surface in the Margins words, a
+    /// friend's packet in its own. The other held paths wait quietly.
+    func testHeldTranscriptionOwesTheCardForASpokenMarginOrAFriendsPacketTable() {
         typealias Row = (name: String, answer: SpeechRecognitionAsk.Answer, spokenMargin: Bool, held: [HeldTranscription],
                          owed: Bool, wording: SpeechRecognitionAsk.CardWording)
         let rows: [Row] = [
+            ("never recorded in the player, live-session Margin held", .unanswered, false, [.liveSessionMargin], true, .margins),
+            ("never recorded in the player, Watch Margin held", .unanswered, false, [.watchMargin], true, .margins),
+            ("never recorded in the player, Shortcut Margin held", .unanswered, false, [.shortcutMargin], true, .margins),
+            ("player Margin held", .unanswered, false, [.playerMargin], true, .margins),
+            ("friend's packet then a Watch Margin held", .unanswered, false, [.friendPacketPlacement, .watchMargin], true, .margins),
+            ("episode map then a live-session Margin held", .unanswered, false, [.episodeMap, .liveSessionMargin], true, .margins),
+            ("answered Not now, live-session Margin held", .notNow, false, [.liveSessionMargin], false, .margins),
+            ("answered Yes, Shortcut Margin held", .yes, false, [.shortcutMargin], false, .margins),
+            ("never recorded, Just Heard peek held", .unanswered, false, [.justHeardPeek], false, .margins),
+            ("never recorded, spoken note held", .unanswered, false, [.spokenNote], false, .margins),
             ("never recorded, friend's packet held", .unanswered, false, [.friendPacketPlacement], true, .friendPlacement),
             ("never recorded, episode map held", .unanswered, false, [.episodeMap], false, .margins),
             ("never recorded, source window held", .unanswered, false, [.sourceWindow], false, .margins),
@@ -290,6 +302,48 @@ final class SpeechAskHeldTranscriptionTests: XCTestCase {
         XCTAssertEqual(ask.cardWording, .friendPlacement)
         _ = ask.cardDue(at: .spokenMarginSaved(hearItLandWillRun: false), access: .notDetermined, shownThisLaunchForReAsk: false)
         XCTAssertEqual(ask.cardWording, .margins)
+    }
+
+    /// Each purpose, by name: whether it owes the card and how it starts again after Allow. A new purpose must be added
+    /// here, so its answer is a decision, not a default.
+    func testEveryPurposeSaysWhetherItIsOwedAndHowItRetries() {
+        let table: [HeldTranscription: (owed: Bool, retry: HeldTranscription.Retry)] = [
+            .playerMargin: (true, .waitingList),
+            .liveSessionMargin: (true, .liveSessionSweep),
+            .watchMargin: (true, .liveSessionSweep),
+            .shortcutMargin: (true, .liveSessionSweep),
+            .friendPacketPlacement: (true, .callerRegisters),
+            .episodeMap: (false, .callerRegisters),
+            .sourceWindow: (false, .callerRegisters),
+            .publisherTextMap: (false, .callerRegisters),
+            .justHeardPeek: (false, .none),
+            .spokenNote: (false, .none),
+        ]
+        XCTAssertEqual(Set(table.keys), Set(HeldTranscription.allCases), "every purpose is in the table")
+        for (purpose, expected) in table {
+            XCTAssertEqual(purpose.makesAskOwed, expected.owed, purpose.rawValue)
+            XCTAssertEqual(purpose.retry, expected.retry, purpose.rawValue)
+        }
+    }
+
+    /// The sink registers the live-session sweep itself for a live-session, Watch or Shortcut Margin, once however many
+    /// were held, so a `try?` at the caller loses none of them. Other purposes register nothing here.
+    @MainActor
+    func testAHeldLiveSessionWatchOrShortcutMarginRegistersOneSweep() {
+        var sweeps = 0
+        let retries = HeldTranscriptionRetries(liveSessionSweep: { sweeps += 1 })
+        for purpose in HeldTranscription.allCases where purpose.retry != .liveSessionSweep { retries.reported(purpose) }
+        XCTAssertTrue(retries.isEmpty, "the caller or the waiting list retries the rest")
+        retries.reported(.liveSessionMargin)
+        retries.reported(.watchMargin)
+        retries.reported(.shortcutMargin)
+        XCTAssertEqual(retries.settle(access: .notDetermined), 0)
+        XCTAssertEqual(sweeps, 0)
+        XCTAssertEqual(retries.settle(access: .authorized), 1)
+        XCTAssertEqual(sweeps, 1, "one sweep covers every held live-session Margin")
+        retries.reported(.watchMargin)
+        XCTAssertEqual(retries.settle(access: .denied), 0)
+        XCTAssertEqual(sweeps, 1, "a decided no drops it")
     }
 
     /// Every held path retries after Allow, whatever bookkeeping it kept (round 1 retried a friend's packet only when

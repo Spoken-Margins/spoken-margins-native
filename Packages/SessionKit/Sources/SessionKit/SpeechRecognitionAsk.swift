@@ -28,9 +28,15 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
 
     /// UserDefaults key. Older builds ignore it.
     public static let storageKey = "speechRecognitionAskV1"
+    /// UserDefaults key, a Bool: a live-session, Watch or Shortcut spoken Margin met the hold and the listener has not
+    /// answered. Those Margins live in the live-session files, not the waiting list, and the Watch and the Shortcut can
+    /// meet the hold while the app runs in the background, so the next launch reads this to owe the card and to sweep
+    /// them after Allow. Older builds ignore it.
+    public static let liveSessionMarginHeldKey = "speechAskLiveSessionMarginHeldV1"
 
     public private(set) var answer: Answer
-    /// A spoken Margin has been saved, so the card is owed until answered. Survives a relaunch through the waiting list.
+    /// A spoken Margin has been saved, so the card is owed until answered. Survives a relaunch through the waiting list
+    /// (a player Margin) or `liveSessionMarginHeldKey` (a live-session, Watch or Shortcut Margin).
     private var hasSavedSpokenMargin: Bool
     /// A friend's packet placement met the hold. In memory: after a relaunch it is set again only when placement meets the
     /// hold again.
@@ -81,10 +87,15 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
 
     private var hasReasonToAsk: Bool { hasSavedSpokenMargin || friendPlacementHeld }
 
-    /// Transcription work met the hold. Only a friend's packet placement gives the card a reason; the rest wait quietly
-    /// for whatever answer the listener gives.
+    /// Transcription work met the hold. A spoken Margin from any surface (the player, a live session, the Watch, the
+    /// Shortcut) is a saved spoken Margin, so the card is owed in the Margins words; a friend's packet placement gives it
+    /// its own reason. The rest wait quietly for whatever answer the listener gives.
     public mutating func transcriptionHeld(_ kind: HeldTranscription) {
-        if kind.makesAskOwed { friendPlacementHeld = true }
+        if kind.isSpokenMargin {
+            hasSavedSpokenMargin = true
+        } else if kind.makesAskOwed {
+            friendPlacementHeld = true
+        }
     }
 
     /// What the card says. The Margins words fit anyone who has saved a spoken Margin; a listener whose only reason is a

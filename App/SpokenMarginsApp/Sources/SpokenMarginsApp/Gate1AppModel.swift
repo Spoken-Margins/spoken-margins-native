@@ -629,10 +629,10 @@ final class Gate1AppModel: ObservableObject {
         } else {
             let transcriptionClient = SystemSpeechTranscriptionClient()
             self.interjectionTranscriptionHandler = { audioPath in
-                try await transcriptionClient.transcribe(audioPath: audioPath)
+                try await transcriptionClient.transcribe(audioPath: audioPath, for: .playerMargin)
             }
             self.alignedInterjectionTranscriptionHandler = alignedInterjectionTranscriptionHandler ?? { audioPath in
-                try await transcriptionClient.transcribeAligned(audioPath: audioPath)
+                try await transcriptionClient.transcribeAligned(audioPath: audioPath, for: .playerMargin)
             }
         }
         self.preparedTextAudioPrewarmHandler = preparedTextAudioPrewarmHandler

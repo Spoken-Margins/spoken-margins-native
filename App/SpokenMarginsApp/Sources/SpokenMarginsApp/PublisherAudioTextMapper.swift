@@ -142,7 +142,7 @@ enum PublisherAudioTextMapper {
         // old one's chunks; the chunks are removed afterwards.
         let cacheKey = "publisher-audio-\(UUID().uuidString)"
         defer { removeTranscriptionCaches(cacheKey) }
-        return try await transcriber.transcribeSourceAudio(url: localURL, itemId: cacheKey, durationMs: durationMs)
+        return try await transcriber.transcribeSourceAudio(url: localURL, itemId: cacheKey, durationMs: durationMs, for: .publisherTextMap)
     }
 
     /// Clear each transcriber cache independently, even if another folder cannot be removed.

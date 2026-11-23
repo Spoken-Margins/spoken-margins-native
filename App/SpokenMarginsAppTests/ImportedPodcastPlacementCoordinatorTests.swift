@@ -561,7 +561,7 @@ private final class PlacementGatedTranscriber: SourceTranscriptionClient, @unche
         for continuation in toResume { continuation.resume() }
     }
 
-    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription) async throws -> TranscriptTimeline {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let resumeNow = lock.withLock { () -> Bool in
                 if isOpen { return true }

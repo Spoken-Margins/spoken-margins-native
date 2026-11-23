@@ -132,7 +132,8 @@ final class ImportedPodcastPlacementCoordinator {
                 let timeline = try await self.deps.transcriber.transcribeSourceAudio(
                     url: localSourceURL,
                     itemId: itemId,
-                    durationMs: durationMs
+                    durationMs: durationMs,
+                    for: .friendPacketPlacement
                 )
                 MainThreadOperationLabels.shared.scoped("transientTranscriptResolve") {
                     self.admission[itemId] = nil
