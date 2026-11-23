@@ -2271,6 +2271,12 @@ class Run:
             return
         if sys.platform != 'darwin':
             raise RuntimeError('--plan slow runs SessionKit tests with the Swift toolchain on macOS')
+        # KittenRendererTests renders real audio: a Mac whose output won't start is a runner fault, not main (#909, #1956).
+        audio = self.manifest['audio_output'] = host_audio.audio_output()
+        if audio.get('stuck') and not in_codex_sandbox():
+            self.manifest['lane_fault'] = f'no audio output: {audio["why"]}'
+            self.save()
+            raise RuntimeError(f'lane fault, not the code: {self.manifest["lane_fault"]}')
         self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
         self.command('slow-swift', [*PACKAGE_RUNNER, '--only', slow_tier.swift_regex(tests)],
                      timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,

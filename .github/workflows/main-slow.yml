@@ -168,9 +168,11 @@ jobs:
         env:
           CODE: ${{ steps.run.outputs.code }}
         run: python3 scripts/main_slow.py report --sha "$SHA" --run-url "$RUN_URL" --manifest "$RUNNER_TEMP/slow-run/manifest.json" --exit-code "$CODE"
-      # A job killed after `pending` (cancel, timeout, a dead step) records `error`, so the next tick retries.
+      # A job killed after `pending` (cancel, timeout, a dead step, or a report that could not reach GitHub) records
+      # `error`, so the next tick retries. After a report that set its status, the newest status is not `pending` and
+      # this changes nothing.
       - name: Record a lost run
-        if: (failure() || cancelled()) && steps.run.outputs.code == ''
+        if: (failure() || cancelled()) && steps.report.outcome != 'success'
         run: python3 scripts/main_slow.py lost --sha "$SHA" --run-url "$RUN_URL"
       - name: Keep the evidence
         if: always()

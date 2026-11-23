@@ -67,6 +67,8 @@ def results_from_manifest(manifest: dict, exit_code: int) -> tuple:
     if manifest.get('error'):
         details.append(str(manifest['error']))
     failed = list(dict.fromkeys(failed))
+    if manifest.get('lane_fault'):
+        return 'error', failed, [f'runner fault: {manifest["lane_fault"]}', *details]
     if exit_code == 0 and manifest.get('status', '').startswith('verified'):
         return 'success', [], details
     if failed or any('FAILED' in d or 'Failed' in d for d in details):

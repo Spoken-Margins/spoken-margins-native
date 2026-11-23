@@ -138,6 +138,8 @@ class MainSlowTests(unittest.TestCase):
         self.assertEqual(state, 'failure')
         self.assertEqual(sorted(failed), ['SessionKitCoreTests/K/testA', 'test_sm_status.T.test_x'])
         self.assertEqual(main_slow.results_from_manifest({}, 1)[0], 'error')  # never started: a runner fault
+        fault = {'status': 'failed_or_incomplete', 'lane_fault': 'no audio output: stuck', 'steps': [{'name': 'x'}]}
+        self.assertEqual(main_slow.results_from_manifest(fault, 1)[0], 'error')  # a stuck output is not main's
 
     def test_the_failure_issue_names_the_merges_since_the_last_green(self):
         merges = ['abc1234 Merge pull request #5001 from x/y', 'def5678 Merge pull request #5002 from x/z']
@@ -162,6 +164,8 @@ class MainSlowTests(unittest.TestCase):
         self.assertIn('verify-tests.py --plan slow', workflow)
         self.assertIn('scripts/main_slow.py report', workflow)
         self.assertIn('scripts/main_slow.py lost', workflow)
+        lost = workflow[workflow.index('- name: Record a lost run'):]
+        self.assertIn("steps.report.outcome != 'success'", lost[:lost.index('run:')])  # a failed report still clears pending
         self.assertIn('fetch-depth: 0', workflow)  # the merges since the last green need history
 
 
