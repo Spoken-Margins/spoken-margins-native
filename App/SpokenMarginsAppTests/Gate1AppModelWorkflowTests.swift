@@ -1725,6 +1725,64 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(relaunched.exportSpokenNoteFootnote)
     }
 
+    /// A played spoken note's Export preview holds its whole transcript with each Margin under its sentence by default,
+    /// and two quick flips of its Source Text leave the preview and the footnote matching the last one (#4782).
+    func testASpokenNoteExportsItsWholeTranscriptByDefaultAndFollowsTheLastFlip() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let store = try model.requireStore()
+        let takeA = SpokenNoteTake(id: "take-a", audioFileName: "take-a.m4a", durationMs: 5_000, createdAt: Date(timeIntervalSince1970: 10),
+                                   sentences: [SpokenNoteSentence(text: "One.", startMs: 0, endMs: 1_000),
+                                               SpokenNoteSentence(text: "Two.", startMs: 2_000, endMs: 3_000)])
+        let takeB = SpokenNoteTake(id: "take-b", audioFileName: "take-b.m4a", durationMs: 2_000, createdAt: Date(timeIntervalSince1970: 20))
+        let note = SpokenNote(id: "export-note", takes: [takeA, takeB])
+        let whole = SpokenNoteWholeTimeline(note: note, layout: SpokenNoteWholeAudioLayout(
+            requested: [.init(id: "take-a", audioFileName: "take-a.m4a", durationMs: 5_000),
+                        .init(id: "take-b", audioFileName: "take-b.m4a", durationMs: 2_000)],
+            placed: [.init(takeId: "take-a", startMs: 0, durationMs: 5_000), .init(takeId: "take-b", startMs: 5_000, durationMs: 2_000)],
+            durationMs: 7_000))
+        var item = SpokenNoteItem.makeItem(note: note, title: "Export note", createdAt: Date())
+        item.media = ItemMedia(sourceType: .nativeMediaFile, url: "file:///whole-note.m4a", durationMs: 7_000)
+        try store.saveItem(item)
+        try store.saveTranscriptTimeline(SourceTranscriptTimeline(id: "transcript-\(item.id)", itemId: item.id, createdAt: Date(), timeline: whole.mediaTimeline))
+        let session = Session(id: "session-export-note", itemId: item.id, status: "in_progress", phase: .itemPlayback,
+                              currentTargetType: .transcriptBackedMedia, currentTargetId: item.id,
+                              position: Position(mediaTimeMs: 6_000), completionPercent: 90, playbackRate: 1)
+        try store.saveSession(session)
+        for (index, timeMs) in [500, 2_100, 2_600].enumerated() {
+            try store.saveInterjection(Interjection(
+                id: "note-margin-\(index)", itemId: item.id, sessionId: session.id, targetType: .item, targetId: item.id,
+                createdAt: Date(timeIntervalSince1970: 100 + Double(index)), roughPercent: 10,
+                anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: timeMs),
+                audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "Thought \(index).",
+                cleanedTranscript: nil, displayText: nil, status: "active", captureKind: .written))
+        }
+        _ = model.run { _ in }
+        model.engine?.spokenNoteLoader = { _ in SpokenNoteExportInput(note: note, wholeTimeline: whole) }
+        model.selectedItem = ItemDetailState(id: item.id, title: item.title, isNativeAudio: true, isSpokenNote: true)
+        model.exportSessionId = session.id
+        model.exportFormat = "markdown"
+        model.exportScope = "full_session"
+        model.exportIncludesSpokenNoteText = true
+
+        await model.refreshExportPreview(reportStatus: false)?.value
+
+        XCTAssertTrue(model.exportSourceTextAvailable)
+        XCTAssertTrue(model.exportPreview.contains("## Spoken Note Transcript with Margins"), model.exportPreview)
+        XCTAssertEqual(model.exportPreview.components(separatedBy: "— Listener interjection").count - 1, 3)
+        XCTAssertEqual(model.exportSpokenNoteFootnote, "1 of 2 recordings has no words yet. The file says which.")
+
+        model.exportIncludesSpokenNoteText = false
+        let first = model.refreshExportPreview(reportStatus: false)
+        model.exportIncludesSpokenNoteText = true
+        let last = model.refreshExportPreview(reportStatus: false)
+        await first?.value
+        await last?.value
+
+        XCTAssertTrue(model.exportPreview.contains("## Spoken Note Transcript with Margins"), "the preview follows the last flip")
+        XCTAssertEqual(model.exportSpokenNoteFootnote, "1 of 2 recordings has no words yet. The file says which.")
+    }
+
     func testDeletedInterjectionsAreNeverEligibleForAnotherSummary() {
         let active = Interjection(
             id: "active",

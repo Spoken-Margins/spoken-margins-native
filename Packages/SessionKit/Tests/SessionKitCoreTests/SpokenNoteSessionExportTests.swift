@@ -160,6 +160,14 @@ final class SpokenNoteSessionExportTests: XCTestCase {
         XCTAssertEqual(export.item.noteTranscript?.source, "last_playback")
     }
 
+    func testWithNoLoaderTheOffMainExportIsTheSyncExportForBothSwitchValues() async throws {
+        for noteText in [false, true] {
+            let engine = engine(repository(), loader: nil)
+            let offMain = try await engine.buildExportReadingOffMain(options: options(noteText))
+            XCTAssertEqual(offMain, try engine.buildExport(options: options(noteText)), "noteText \(noteText)")
+        }
+    }
+
     func testACorruptNoteFileFallsBackWithoutChangingIt() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("note-export-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }

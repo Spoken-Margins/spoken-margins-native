@@ -11,15 +11,15 @@ public struct SpokenNoteExportInput: Equatable, Sendable {
         self.wholeTimeline = wholeTimeline
     }
 
-    /// Reads a note's file and joined timeline from its folder under `applicationSupport`, only ever reading (`peek()`
-    /// leaves an unreadable file where it is). Nil when the item isn't a note, its id isn't safe, or its file is
-    /// missing, unreadable or from a newer build: the export then uses the row's own words.
     /// The engine's `spokenNoteLoader` for notes under `applicationSupport` (nil when that folder couldn't be found:
     /// every note then exports from its row). Making it reads nothing; the engine calls it off the main thread.
     public static func loader(applicationSupport: URL?) -> @Sendable (Item) -> SpokenNoteExportInput? {
         { item in applicationSupport.flatMap { load(item: item, applicationSupport: $0) } }
     }
 
+    /// Reads a note's file and joined timeline from its folder under `applicationSupport`, only ever reading (`peek()`
+    /// leaves an unreadable file where it is). Nil when the item isn't a note, its id isn't safe, or its file is
+    /// missing, unreadable or from a newer build: the export then uses the row's own words.
     public static func load(item: Item, applicationSupport: URL) -> SpokenNoteExportInput? {
         guard let store = SpokenNoteStarter.store(for: item, in: applicationSupport), let note = store.peek() else { return nil }
         return SpokenNoteExportInput(note: note, wholeTimeline: SpokenNoteWholePlayback.timeline(of: note, inFolder: store.folderURL))
