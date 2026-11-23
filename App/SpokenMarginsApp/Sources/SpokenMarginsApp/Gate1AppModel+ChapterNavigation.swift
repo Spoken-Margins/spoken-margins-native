@@ -68,10 +68,24 @@ extension Gate1AppModel {
             message: "Playing \(note.title)."
         ) { engine in
             let startedSelectedItem = try ensureSessionForSelectedItem(engine)
+            // A prepared article playing as one file reads the note from its own place in the file (#3777).
+            if !startedSelectedItem, let start = footnoteMediaHearingStart(label: label, itemId: itemId) {
+                do {
+                    snapshot = try seekOrStageMedia(engine, toMediaTimeMs: start)
+                } catch {
+                    footnoteMediaChime.session?.playerMovedOnItsOwn()
+                    throw error
+                }
+                if !snapshot.status.isPlaybackActive { snapshot = try engine.resumePlayback() }
+                return
+            }
             // A session just started has no plan to ask: the client learns the article when its first play begins.
             let hearing = startedSelectedItem ? nil : client?.beginHearingFootnote(label: label, targetId: itemId)
             let requested = hearing == nil && mode == .chime
-            if requested { client?.requestFootnoteHearing(label: label, targetId: itemId) }
+            if requested {
+                client?.requestFootnoteHearing(label: label, targetId: itemId)
+                holdFootnoteNoteForMediaSession(label: label, itemId: itemId) // a prepared file not playing yet
+            }
             synchronizeStreamingSpeechAnchorIfNeeded()
             do {
                 snapshot = try engine.seekText(toCharOffset: hearing ?? note.sentenceStart)

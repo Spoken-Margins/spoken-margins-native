@@ -485,6 +485,7 @@ final class Gate1AppModel: ObservableObject {
     var activeItemId = "item-pill"
     private var playbackProgressTask: Task<Void, Never>?
     let sleepTimerFade = SleepTimerFadeController() // the timer's ticker, fade and cue; its functions are in Gate1AppModel+SleepTimer.swift (#1979)
+    let footnoteMediaChime = FootnoteMediaChimeController() // a prepared file's footnotes; Gate1AppModel+FootnoteMediaChime.swift (#3777)
     var onDeviceSpeechGenerationDelayTask: Task<Void, Never>?
     var trashUndoDismissTask: Task<Void, Never>?
     /// Background time while on-device narration starts, on every path into "starting" (#854).
@@ -809,8 +810,7 @@ final class Gate1AppModel: ObservableObject {
             }
         case .playSourceFromBeginning(let fromTimeline):
             playSourceFromBeginning(fromTimeline: fromTimeline)
-        case .playFootnote(let label, let fromTimeline):
-            playFootnote(label: label, fromTimeline: fromTimeline)
+        case .playFootnote(let label, let fromTimeline): playFootnote(label: label, fromTimeline: fromTimeline)
         }
     }
 
@@ -931,7 +931,7 @@ final class Gate1AppModel: ObservableObject {
                 self.offerFollowSuggestionIfEligible(itemId: itemId, store: store)
             }
             self.reconcileImportedCommentary(previous: previousSnapshot, current: updated)
-            self.observeMarginMoment(updated)
+            self.observeMarginMoment(updated); self.observeFootnoteMediaChime(updated) // a prepared file's footnote chime (#3777)
             let playedPendingTurn = self.playPendingTurnIfReady(completedCurrentAudio: completedCurrentAudio)
             if completedCurrentAudio && !playedPendingTurn {
                 self.closeCompletedSessionIfReady()
