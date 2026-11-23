@@ -42,6 +42,10 @@
 # then `mac-rest`, or `sessionkit` with the variable off) stop or leave the queue (#2596): a PR the cheap job
 # already fails has no use for a hosted-Mac slot, and the org has five of them.
 #
+# The slow tier (#5145, owner 2026-11-23): every plan here runs with --leave-out-slow, which leaves out the tests in
+# scripts/slow_tier.py (slow on these runners, no failure in 30 days, none a packet, database or owner-data guard) and
+# names them in the log. main-slow.yml runs exactly those on main nightly and before the phone builds.
+#
 # Dispatch it by hand on any branch with `gh workflow run hosted-portable.yml --ref <branch>`.
 #
 # No secrets, a read-only token, no pull_request_target, no Git LFS (the voice models stay pointers; the
@@ -170,7 +174,7 @@ jobs:
       - name: Portable fast plan
         env:
           PR_QUICK: ${{ github.event_name == 'pull_request' && '--pr-quick' || '' }}
-        run: .venv/bin/python scripts/verify-tests.py --plan fast-portable $PR_QUICK
+        run: .venv/bin/python scripts/verify-tests.py --plan fast-portable $PR_QUICK --leave-out-slow
       # #4937: the pipeline harness. It runs this tree's workflows, queue scripts, merge policy and VPS backstop through
       # about 400 timed combinations (black-box Mac jobs that pass, fail, hang or never start; same-second label bursts in
       # both orders; download outages; token refusals; dropped schedules) and fails on a stuck, silent, looping or
@@ -375,7 +379,7 @@ jobs:
       - name: SessionKit build and SessionKitCoreTests
         run: |
           swift --version
-          .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit
+          .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit --leave-out-slow
       - name: Keep the step logs
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -575,7 +579,7 @@ jobs:
       - name: SessionKit build and SessionKitCoreTests
         run: |
           swift --version
-          .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit
+          .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit --leave-out-slow
       - name: Keep the Mac test list
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -622,7 +626,7 @@ jobs:
       - name: Mac rest of the fast plan
         run: |
           swift --version
-          .venv/bin/python scripts/verify-tests.py --plan fast-mac-rest $CHANGED_ARGS
+          .venv/bin/python scripts/verify-tests.py --plan fast-mac-rest $CHANGED_ARGS --leave-out-slow
       - name: Keep the step logs
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

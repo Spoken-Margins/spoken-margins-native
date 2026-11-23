@@ -598,7 +598,7 @@ MAC_PREFIXES = MAC_READS + ('Packages/', 'Config/', 'TestPlans/', 'SpokenMargins
 # missing here, so a new Mac workflow can't slip out of the rule.
 MAC_WORKFLOWS = frozenset('.github/workflows/' + name for name in (
     'hosted-app-macos.yml', 'hosted-integration.yml', 'hosted-portable.yml', 'hosted-web.yml',
-    'branch-t3.yml', 'main-t3.yml', 'phone-build.yml', 'shipped-build-compat.yml', 'testflight-upload.yml'))
+    'branch-t3.yml', 'main-t3.yml', 'main-slow.yml', 'phone-build.yml', 'shipped-build-compat.yml', 'testflight-upload.yml'))
 MAC_FILES = {'project.yml', 'Package.swift', 'Package.resolved', 'requirements-dev.txt', '.nvmrc'} | MAC_WORKFLOWS
 # scripts/ files that drive the Mac jobs, or that the Apple-tool runner tests (verify-tests.py
 # PORTABLE_RUNNER_TESTS_LEFT_OUT) exercise: matched on the file name, in scripts/ and scripts/tests/.
@@ -610,6 +610,7 @@ MAC_SCRIPT_FILES = {'sm_paths.py', 'sm_build_cache.py', 'comment_trust.py', 'set
                     'simctl_preflight.py', 'test_inventory.py', 'third_party_notices.py', 'node_modules_drift.py',
                     'check_posterboard_repair.py', 'ops_checkout.py', 'workflow_yaml.py', 'test_workflow_files.py',
                     'parallel_unittest.py', 'runner_test_seconds.json',
+                    'slow_tier.py', 'main_slow.py',  # verify-tests.py --leave-out-slow and --plan slow, main-slow.yml (#5145)
                     'ci_step_budgets.json'}  # verify-tests.py's step ceilings, which bound Mac-only steps too
 # Web/ (#3535): no Mac check reads it. Its tests run in --plan fast-portable and in hosted web's Playwright job, which the
 # runner waits for (web_check_required). A Swift file under Web/ still needs the Mac, by the suffix test below.
