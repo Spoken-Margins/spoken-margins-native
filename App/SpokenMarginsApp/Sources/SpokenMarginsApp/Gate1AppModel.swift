@@ -303,6 +303,7 @@ final class Gate1AppModel: ObservableObject {
     let libraryCollections = LibraryCollectionModel() // the Library's collection chips; relayed in init (#4343)
     let linkListArrival = LinkListArrivalState() // Paste & go's wait on a pasted link list and the Quick Folder's retries (#4683)
     let aiFollowSuggestionsModel = AIFollowSuggestionsModel() // shows the listener's AI suggested following (#4683)
+    let notForMe = NotForMeHolder() // what the listener said Not for me to, kept on the phone (#4285)
     @Published var sourceImportProgressMessage: String?
     @Published var importInbox: [ImportInboxEntry] = []
     @Published var sourceLinksWaitingForNetwork = 0 // shared links left pending while offline (#1546)
@@ -2900,7 +2901,8 @@ final class Gate1AppModel: ObservableObject {
             ledger: ledger,
             applicationSupportDirectory: support
         )
-        followedSourceCoordinator = FollowedSourceCoordinator(repository: store, artworkFile: support.appending(path: FollowingArtworkCache.fileName), itemArtworkFile: support.appending(path: ItemArtworkStore.fileName), setAside: FollowingRuleInputs.setAside(store: store), signals: .app)
+        followedSourceCoordinator = FollowedSourceCoordinator(repository: store, artworkFile: support.appending(path: FollowingArtworkCache.fileName), itemArtworkFile: support.appending(path: ItemArtworkStore.fileName), setAside: FollowingRuleInputs.setAside(store: store), signals: .app, suppressedEntry: notForMeSuppressedEntry)
+        Task { [weak self] in await self?.loadNotForMe() } // read early; a refresh round still awaits it (#4285)
         guidedOnboardingCoordinator = GuidedOnboardingCoordinator(
             directory: support.appending(path: "GuidedOnboarding", directoryHint: .isDirectory),
             ledger: ledger
