@@ -29,7 +29,9 @@ final class SpokenNoteNowTranscript: ObservableObject {
     /// entry is replaced by the read that always follows.
     private static var lastResult: [String: Result] = [:]
 
-    private var noteId: String?
+    /// The note `availability` and `words` belong to. The screen shows them only for the note it has selected, so a
+    /// change of item never draws the last note's words for a pass.
+    private(set) var noteId: String?
     private var requests = 0
 
     /// Reads the note named by an item's reference. A reference that is no note clears to `.loading` with no words.
@@ -71,9 +73,10 @@ final class SpokenNoteNowTranscript: ObservableObject {
     }
 
     private func finish(_ result: Result, noteId: String, request: Int) {
-        Self.lastResult[noteId] = result
-        // Reads can finish out of order, or for a note no longer shown: only the newest request's answer is kept.
+        // Reads can finish out of order, or for a note no longer shown: only the newest request's answer is kept, in the
+        // cache too, so an older read finishing last never replaces a newer one.
         guard request == requests, self.noteId == noteId else { return }
+        Self.lastResult[noteId] = result
         publish(result)
     }
 

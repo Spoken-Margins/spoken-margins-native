@@ -202,6 +202,8 @@ struct PlaybackLivePassageView: View {
     @State private var noteFollow = NoteFollow()
     @State private var noteMarginItems: [SpokenNoteNowPassage.MarginItem] = []
     @State private var noteMarginPreviews: [String] = []
+    /// Each Margin row's preview text, by Margin id, so a row draws without searching the model's Margins.
+    @State private var noteMarginPreviewByID: [String: String] = [:]
     @State private var marginRevision = 0
 
     /// The row offset last fed to the scene, the clock's last media time, and whether the next change is the listener's
@@ -235,7 +237,9 @@ struct PlaybackLivePassageView: View {
         return model.playbackClock.position.mediaTimeMs
     }
     private var noteTapState: SpokenNoteNowPassage.RowTap {
-        SpokenNoteNowPassage.RowTap.rowTap(
+        // While a Margin is recorded or written, the listener's place is held: no row moves it.
+        if model.recordingNavigationIsLocked { return .inert }
+        return SpokenNoteNowPassage.RowTap.rowTap(
             hasActiveSession: model.hasActiveSession, isSessionItem: isNoteSessionItem,
             targetIsSource: model.snapshot.targetType.flatMap(TargetType.init(rawValue:)) == .transcriptBackedMedia,
             phase: model.snapshot.phase, hasAudio: true)
@@ -266,7 +270,8 @@ struct PlaybackLivePassageView: View {
     /// its last sentence lit). Hidden for another item or before anything starts, as before.
     private var isShowing: Bool {
         // A note's words show whenever there are any, lit or not (#4780).
-        if noteWords != nil { return !(scene.state?.isEmpty ?? true) }
+        // Only a scene built for this note: the shared controller may still hold the last item's for one pass.
+        if noteWords != nil { return builtInput == input && !(scene.state?.isEmpty ?? true) }
         guard let state = scene.state, !state.isEmpty, model.snapshot.itemId == model.selectedItem.id else { return false }
         return sourceOffset != nil || state.litSentence != nil
     }
@@ -277,7 +282,7 @@ struct PlaybackLivePassageView: View {
         noteWords.map { words in
             NowSceneList.Note(
                 showsLit: scene.showsLit, tapState: noteTapState, tappableIds: words.rowIdsWithAudio,
-                revision: noteRevision, marginRevision: marginRevision,
+                revision: noteRevision, marginRevision: marginRevision, marginPreviews: noteMarginPreviewByID,
                 playFrom: playNote(fromRow:), openMargin: openMargin)
         }
     }
@@ -419,15 +424,19 @@ struct PlaybackLivePassageView: View {
     /// A tap on a note's sentence: play from its start. The next move of the lit row is the listener's own, so following
     /// starts again at the tapped row and Back to playing goes away.
     private func playNote(fromRow id: Int) {
-        guard let words = noteWords, noteTapState == .seeks, let row = words.row(id: id), let startMs = row.startMs else { return }
+        guard let words = noteWords, noteTapState == .seeks, let row = words.row(id: id), let startMs = row.startMs,
+              !model.rejectNavigationOrSessionMutationWhileRecording("play_note_sentence") else { return }
+        let moved = MainThreadOperationLabels.shared.scoped("spokenNote.nowJump") { () -> Bool in
+            guard model.seekMedia(toMediaTimeMs: startMs) else { return false }
+            if !model.snapshot.status.isPlaybackActive { model.resumePlayback() }
+            return true
+        }
+        // Only a seek that happened makes the next move the listener's; a refused one must not later pull a reader back.
+        guard moved else { return }
         if row.start == noteFollow.offset {
             scene.backToPlaying()
         } else {
             noteFollow.pendingListenerMove = true
-        }
-        MainThreadOperationLabels.shared.scoped("spokenNote.nowJump") {
-            model.seekMedia(toMediaTimeMs: startMs)
-            if !model.snapshot.status.isPlaybackActive { model.resumePlayback() }
         }
         if voiceOverEnabled { focusedSentence = id }
     }
@@ -437,11 +446,12 @@ struct PlaybackLivePassageView: View {
             // A note's Margins are rows after their sentences, placed by segment id; no diamonds (#4780).
             let items = words.marginItems(model.marginRows.map(\.interjection), itemId: input.itemID)
             let previews = items.map { item in
-                model.marginRows.first { $0.interjection.id == item.marginId }.map { NowSceneMarginRow.preview($0.interjection) } ?? ""
+                model.marginRows.first { $0.interjection.id == item.marginId }.map { NowSceneMarginRow.previewText($0.interjection) } ?? ""
             }
             if items != noteMarginItems || previews != noteMarginPreviews {
                 noteMarginItems = items
                 noteMarginPreviews = previews
+                noteMarginPreviewByID = Dictionary(zip(items.map(\.marginId), previews), uniquingKeysWith: { first, _ in first })
                 marginRevision &+= 1
                 scene.setNoteMargins(items)
             }
@@ -549,6 +559,8 @@ private struct NowSceneList: View, Equatable {
         let revision: Int
         /// Moves when the Margin rows or any of their previews change.
         let marginRevision: Int
+        /// Each Margin row's preview text, by Margin id.
+        let marginPreviews: [String: String]
         let playFrom: (Int) -> Void
         let openMargin: (String) -> Void
 
@@ -603,7 +615,9 @@ private struct NowSceneList: View, Equatable {
                             NowClipCard(anchor: anchor, cards: cards, open: openClip)
                         }
                     case .margin(let margin, _):
-                        NowSceneMarginRow(item: margin, open: { note?.openMargin(margin.marginId) })
+                        if let preview = note?.marginPreviews[margin.marginId] {
+                            NowSceneMarginRow(item: margin, preview: preview, open: { note?.openMargin(margin.marginId) })
+                        }
                     }
                 }
             }
@@ -706,38 +720,35 @@ private struct NowSceneRow: View {
 /// One of the listener's Margins on a spoken note, as a one-line row after the sentence it sits on (#4780): the Recent
 /// Margins row's look, indented under the text, never lit and never a place following scrolls to. A tap opens it.
 private struct NowSceneMarginRow: View {
-    @EnvironmentObject private var model: Gate1AppModel
     let item: SpokenNoteNowPassage.MarginItem
+    let preview: String
     let open: () -> Void
 
-    static func preview(_ note: Interjection) -> String {
+    static func previewText(_ note: Interjection) -> String {
         PlaybackMarginPreview.text(displayText: note.displayText, cleanedTranscript: note.cleanedTranscript,
                                    transcript: note.transcript, transcriptionStatus: note.transcriptionStatus,
                                    captureKind: note.captureKind)
     }
 
     var body: some View {
-        if let margin = model.marginRows.first(where: { $0.interjection.id == item.marginId })?.interjection {
-            let preview = Self.preview(margin)
-            Button(action: open) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Your Margin").font(.caption).foregroundStyle(AppColors.watchSecondary)
-                    Text(preview).font(.body).foregroundStyle(Color.white).lineLimit(1)
-                }
-                .padding(.leading, 12)
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .overlay(alignment: .leading) { Rectangle().fill(AppColors.captureBackground).frame(width: 2) }
-                .contentShape(Rectangle())
+        Button(action: open) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Your Margin").font(.caption).foregroundStyle(AppColors.watchSecondary)
+                Text(preview).font(.body).foregroundStyle(Color.white).lineLimit(1)
             }
-            .buttonStyle(.plain)
-            // Under the text, not the gutter: the gutter (18) and the spacing after it (10).
-            .padding(.leading, PlaybackLivePassage.ClipCardLayout.leadingInset)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Your Margin: \(preview)")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityIdentifier("playback.now.passage.margin.\(item.key)")
+            .padding(.leading, 12)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .overlay(alignment: .leading) { Rectangle().fill(AppColors.captureBackground).frame(width: 2) }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        // Under the text, not the gutter: the gutter (18) and the spacing after it (10).
+        .padding(.leading, PlaybackLivePassage.ClipCardLayout.leadingInset)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Your Margin: \(preview)")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("playback.now.passage.margin.\(item.key)")
     }
 }
 

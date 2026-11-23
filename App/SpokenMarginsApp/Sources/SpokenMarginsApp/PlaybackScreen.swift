@@ -80,13 +80,16 @@ struct PlaybackScreen: View {
     }
 
     /// The selected item is a spoken note (#4780). A note whose reference can't be read keeps the audio layout.
-    private var isSpokenNote: Bool { SpokenNoteItem.noteId(fromReference: model.selectedItem.externalReference) != nil }
+    private var isSpokenNote: Bool { selectedNoteId != nil }
+    private var selectedNoteId: String? { SpokenNoteItem.noteId(fromReference: model.selectedItem.externalReference) }
+    /// The loaded words, only when they are the selected note's: a change of item never shows the last note's for a pass.
+    private var noteIsLoaded: Bool { selectedNoteId != nil && noteTranscript.noteId == selectedNoteId }
 
     /// Which layout Now draws: a choice tested on the host (`SpokenNoteNowPassage.NowLayout.choose`).
     private var nowLayout: SpokenNoteNowPassage.NowLayout {
         SpokenNoteNowPassage.NowLayout.choose(
             isNativeAudio: model.selectedItem.isNativeAudio, isSpokenNote: isSpokenNote,
-            availability: isSpokenNote ? noteTranscript.availability : .loading)
+            availability: noteIsLoaded ? noteTranscript.availability : .loading)
     }
 
     private func reloadNoteWords() {
@@ -191,13 +194,14 @@ struct PlaybackScreen: View {
                                         recentMarginPreview
                                         guidedCoach
                                     case .noteWords:
-                                        if case .partial = noteTranscript.availability { notePartialWordsLine }
+                                        if noteIsLoaded, case .partial = noteTranscript.availability { notePartialWordsLine }
                                         recentMarginPreview
                                         guidedCoach
                                         PlaybackLivePassageView(
                                             scene: nowScene, proxy: proxy,
                                             openReader: { _ in }, // a note has no reader: its rows play
-                                            noteWords: noteTranscript.words, noteRevision: noteTranscript.revision,
+                                            noteWords: noteIsLoaded ? noteTranscript.words : nil,
+                                            noteRevision: noteTranscript.revision,
                                             openMargin: { id in
                                                 selectedInterjection = model.marginRows.first { $0.interjection.id == id }?.interjection
                                                     ?? model.selectedItem.interjections.first { $0.id == id }
