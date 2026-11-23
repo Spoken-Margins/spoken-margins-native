@@ -131,6 +131,7 @@ struct ReadCostReport {
             ("loadFeedRefreshState(subscriptionId:)", { _ = try store.loadFeedRefreshState(subscriptionId: "feed-1") }),
             ("loadSourceSuggestionDecision(sourceId:)", { _ = try store.loadSourceSuggestionDecision(sourceId: "source-0") }),
             ("loadPublisherAudio(itemId:)", { _ = try store.loadPublisherAudio(itemId: LibraryFixture.podcastItemId(1)) }),
+            ("loadPublisherAudioChoice(itemId:)", { _ = try store.loadPublisherAudioChoice(itemId: article) }),
             ("loadCommunityMapUpload(episodeKey:)", { _ = try store.loadCommunityMapUpload(episodeKey: "upload-1") }),
             ("loadCommunityMapUploads()", { _ = try store.loadCommunityMapUploads() }),
             ("loadInterjectionShareRevisions(interjectionId:)", { _ = try store.loadInterjectionShareRevisions(interjectionId: "note-1") }),
