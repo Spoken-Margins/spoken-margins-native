@@ -25,6 +25,9 @@ struct ExperienceMarginsScreen: View, Equatable {
     @StateObject private var feed: ScreenInputsFeed<Inputs>
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// Saved live-session photos, keyed by saved Margin id (#4180). Observed directly, not through the feed's `Inputs`:
+    /// it publishes about once per launch plus once per save or purge, and redraws this view through `.equatable()`.
+    @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
 
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
@@ -463,8 +466,12 @@ struct ExperienceMarginsScreen: View, Equatable {
     }
 
     private func marginRowBody(_ row: MarginRow, itemTitle: String, repair: MarginRowRepair) -> some View {
+        // A live-session photo sits after the text at standard sizes and under it at accessibility sizes, inside the
+        // row's tap area, so the leading icon keeps its meaning (#4180). No photo, no slot. The key is the Margin's own
+        // id; `row.id` is the composite "session::interjection" id.
+        let photo = photoIndex.photo(forMarginId: row.interjection.id)
         // The row plays the Margin's moment; the chevron beside it opens details (#1866).
-        Button { tapOwnRow(row) } label: {
+        return Button { tapOwnRow(row) } label: {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: row.interjection.isStarredForSharing == true ? "star.fill" : (row.needsAttention ? "exclamationmark.bubble.fill" : (row.isWritten ? "square.and.pencil" : "quote.bubble")))
                     .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.evergreen)
@@ -499,8 +506,14 @@ struct ExperienceMarginsScreen: View, Equatable {
                             .multilineTextAlignment(.leading)
                             .lineLimit(2)
                     }
+                    if let photo, dynamicTypeSize.isAccessibilitySize {
+                        LiveSessionPhotoThumbnail(source: .kept(photo.photo), surface: .page)
+                    }
                 }
                 Spacer(minLength: 8)
+                if let photo, !dynamicTypeSize.isAccessibilitySize {
+                    LiveSessionPhotoThumbnail(source: .kept(photo.photo), surface: .page)
+                }
             }
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -508,8 +521,11 @@ struct ExperienceMarginsScreen: View, Equatable {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(row.interjection.replyTo == nil ? "My Margin" : "My reply to a shared Margin"). \(row.captionDescription().trimmingCharacters(in: CharacterSet(charactersIn: "."))). \(row.needsAttention && row.preview == row.attentionDescription ? "" : "\(row.preview). ")\(itemTitle).")
-        // The star on the row is a picture; the listener hears it as the row's value.
-        .accessibilityValue(row.interjection.isStarredForSharing == true ? "Starred for sharing" : "")
+        // The star and the photo on the row are pictures; the listener hears them as the row's value.
+        .accessibilityValue(MarginRowAccessibility.value(
+            starred: row.interjection.isStarredForSharing == true,
+            hasPhoto: photo != nil
+        ))
         .accessibilityIdentifier("margins.row.\(row.id)")
         .contextMenu { ownMarginActions(row, repair: repair) }
         // The same actions for VoiceOver and Switch Control, which can't long-press (#1917).
