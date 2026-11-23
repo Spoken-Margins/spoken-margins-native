@@ -424,7 +424,7 @@ final class AppColorUsageGuardTests: XCTestCase {
         "LiveActivityTourPreview.swift": 1, "LiveSessionActivityWidget.swift": 8, "MiniPlayer.swift": 1,
         "PinnedMarginCardView.swift": 4, "PlaybackFeedbackTagView.swift": 3, "PlaybackLivePassageView.swift": 1,
         "PlaybackMarginRowView.swift": 1, "PlaybackMarginTranscriptionStatusView.swift": 1, "PlaybackPositionSlider.swift": 1,
-        "PlaybackScreen.swift": 6, "WatchUntetheredView.swift": 28
+        "PlaybackScreen.swift": 6, "SpeechAskCardView.swift": 3, "WatchUntetheredView.swift": 28
     ]
 
     private func systemColorUses() throws -> [String: Int] {

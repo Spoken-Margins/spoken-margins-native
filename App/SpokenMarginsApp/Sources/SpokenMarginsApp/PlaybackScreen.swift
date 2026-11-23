@@ -193,6 +193,8 @@ struct PlaybackScreen: View {
                             if selectedPane == .now { PinnedMarginCardView() }
                             // A note read where it is cited: the same slot, never beside a friend's card (#3777).
                             if selectedPane == .now { FootnoteCardPinnedView() }
+                            // The app's line before iOS asks about Speech Recognition; a friend's card keeps the slot first (#4715).
+                            if selectedPane == .now { SpeechAskCardSlot() }
                             if !model.recordingNavigationIsLocked, let feedback = model.playbackFeedbackTag {
                                 PlaybackFeedbackTagView(event: feedback.event, tag: feedback.tag)
                                     .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
@@ -2017,7 +2019,7 @@ private func interjectionPreview(_ interjection: Interjection) -> String {
        !transcript.isEmpty {
         return transcript
     }
-    return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff) ?? interjection.transcriptionStatus
+    return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff, speechRecognitionNotYetAsked: SpeechAskController.marginIsWaitingForAnswer(MarginIdentity.make(sessionId: interjection.sessionId, interjectionId: interjection.id))) ?? interjection.transcriptionStatus
 }
 
 private struct LightButtonStyle: ButtonStyle {

@@ -416,6 +416,7 @@ extension Gate1AppModel {
                     let failure = String(describing: error)
                     let diagnostic = SafeErrorText.describe(error)
                     let wasRetry = retryingInterjectionTranscriptionIds.contains(Self.marginIdentity(interjection))
+                    noteTranscriptionWaitsForAnswer(interjection, failure: failure) // before the row refreshes: it reads "No transcript yet."
                     if wasRetry {
                         recordFailedRetry(of: interjection, failure: failure, diagnostic: diagnostic)
                         presentTranscriptionFailure(TranscriptionFailureWording.notice(error: failure, isRetry: true), for: interjection)
