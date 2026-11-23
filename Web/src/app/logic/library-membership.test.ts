@@ -11,6 +11,8 @@ import {
   libraryEpisodes,
   membershipRow,
   prepareLibrary,
+  removedRow,
+  restoredRow,
   stillMovedOut,
   type PrepareInput,
 } from './library-membership.ts';
@@ -234,4 +236,47 @@ test('membershipRow writes the key and a plain value that readMembership reads b
   const row = membershipRow('feed:x#1', { in: true, at: NOW });
   assert.deepEqual(row, { key: 'library:feed:x#1', value: { in: true, at: NOW } });
   assert.deepEqual({ ...readMembership([row]) }, { 'feed:x#1': { in: true, at: NOW } });
+});
+
+// #4424: Remove writes an "out" row and Undo writes the old row back.
+test('remove then restore gives the original row', () => {
+  const before: Membership = { in: true, at: NOW };
+  const out = removedRow(LATER);
+  assert.deepEqual(out, { in: false, at: LATER });
+  const library: LibraryMembership = { a: out };
+  assert.equal(inLibrary('a', library), false);
+  const restored = restoredRow(library.a, before);
+  assert.deepEqual(restored, before);
+  assert.equal(inLibrary('a', { a: restored }), true);
+  assert.deepEqual(membershipRow('a', restored), membershipRow('a', before));
+});
+
+test('restore after a re-add keeps the newer row', () => {
+  const before: Membership = { in: true, at: NOW };
+  const readded: Membership = { in: true, at: '2026-11-25T00:00:00.000Z' };
+  assert.deepEqual(restoredRow(readded, before), readded);
+});
+
+test('restore when the row is gone writes the old row back', () => {
+  const before: Membership = { in: true, at: NOW };
+  assert.deepEqual(restoredRow(undefined, before), before);
+});
+
+test('removing twice is the same as once', () => {
+  assert.deepEqual(removedRow(LATER), removedRow(LATER));
+  assert.equal(removedRow(LATER).in, false);
+});
+
+test('prepareLibrary keep pass leaves an out row alone', () => {
+  const library: LibraryMembership = { a: removedRow(LATER) };
+  const input: PrepareInput = {
+    episodes: [episode('a')],
+    margins: [margin('a')],
+    positions: [place('a', 30)],
+    library,
+    settings: { libraryModel: 'added', libraryMovedOut: [] },
+  };
+  const prepared = prepareLibrary(input, '2026-11-26T00:00:00.000Z');
+  assert.deepEqual(prepared.rows, []);
+  assert.equal(inLibrary('a', prepared.library), false);
 });
