@@ -188,6 +188,17 @@ public enum PlayRule {
         return .startNew
     }
 
+    /// Where a catch-up run starts (#4785): it resumes only a re-listen the listener left short of the end (under
+    /// `ItemFinishedRule.listenedPercent`), and otherwise begins a new session. A finished session, or one at 99% or
+    /// more, is never moved, so every fact that made the item finished survives the run.
+    public static func catchUpStart(sessions: [Session], addedAgainAt: Date?) -> StartAction {
+        if case .resume(let session) = startAction(sessions: sessions, addedAgainAt: addedAgainAt),
+           session.completionPercent < ItemFinishedRule.listenedPercent {
+            return .resume(session)
+        }
+        return .startNew
+    }
+
     static func start(for context: Context) -> Start {
         if let now = context.nowPlaying, now.itemId == context.itemId { return .savedPlace(mediaTimeMs: now.mediaTimeMs ?? 0) }
         if let open = context.openItem, open.id == context.itemId {
