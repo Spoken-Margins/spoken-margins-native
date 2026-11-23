@@ -63,6 +63,13 @@ def run_of(check: dict) -> int | None:
     return None
 
 
+def abandoned(check: dict) -> bool:
+    """A check run still `in_progress` or `queued` in a run that has ended cancelled: it can never finish, so it blocks
+    the merge like a cancelled one. `merge policy` writes its own check run, and a runner that is cancelled, times out or
+    is lost kills the script before it can mark it (#4986, the audit of #5011); GitHub only marks job checks itself."""
+    return check.get('conclusion') is None and check.get('status') in ('in_progress', 'queued', 'waiting', 'pending')
+
+
 def decide(run: dict, pulls: list[dict], checks: list[dict]) -> tuple[bool, str]:
     """(re-run?, why) for one cancelled workflow run, the PRs it ran for and every check run on its head commit."""
     if run.get('event') != 'pull_request':
@@ -85,7 +92,7 @@ def decide(run: dict, pulls: list[dict], checks: list[dict]) -> tuple[bool, str]
     blocked = []
     for name in sorted({c['name'] for c in mine}):
         newest = max((c for c in checks if c.get('name') == name), key=lambda c: int(c.get('id') or 0))
-        if run_of(newest) == run_id and newest.get('conclusion') == 'cancelled':
+        if run_of(newest) == run_id and (newest.get('conclusion') == 'cancelled' or abandoned(newest)):
             blocked.append(name)
     if not blocked:
         return False, 'a newer run of each of its required checks is on the head'

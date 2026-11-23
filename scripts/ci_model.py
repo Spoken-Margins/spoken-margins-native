@@ -281,6 +281,8 @@ def extract(root: Path = ROOT) -> dict:
                 # A job that posts its own check run under another name says so in `SM_REPORTS_CHECK` (merge-policy.yml,
                 # #4986): the job is named `merge policy run`, the check the ruleset requires is `merge policy`.
                 'check': str((job.get('env') or {}).get('SM_REPORTS_CHECK') or job.get('name') or job_id),
+                # The job writes that check run itself, so a cancel kills it before it can mark it (#4986).
+                'own_check': bool((job.get('env') or {}).get('SM_REPORTS_CHECK')),
                 'if': None if job.get('if') is None else str(job['if']).strip(),
                 'needs': [needs] if isinstance(needs, str) else list(needs),
                 'concurrency': job.get('concurrency'),
