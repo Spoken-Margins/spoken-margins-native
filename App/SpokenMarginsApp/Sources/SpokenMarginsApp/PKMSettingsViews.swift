@@ -70,7 +70,7 @@ struct MarginOutputDestinationsSection: View {
             if coordinator.destinations.contains(where: \.isEnabled) {
                 Button("Retry Delivery") { Task { await coordinator.retry() } }
             }
-            Text("Writes each text Margin as a Markdown note in a folder you choose, such as an Obsidian vault. Add more than one to send different Margins to different places. It doesn’t change how Margins play. Notes are written while the app is active and retried when you return. Existing Margins are included. Audio recordings and full source text are not part of Margin notes. A spoken note you mark complete is saved here as an audio file and a text file. Your folder provider may sync files to its cloud.").font(.footnote).foregroundStyle(AppColors.secondaryText)
+            Text(MarginNoteCoverage.notesFolderSentence + " Add more than one to send different Margins to different places. It doesn’t change how Margins play. Notes are written while the app is active and retried when you return. Existing Margins are included. Audio recordings and full source text are not part of Margin notes. A spoken note you mark complete is saved here as an audio file and a text file. Your folder provider may sync files to its cloud.").font(.footnote).foregroundStyle(AppColors.secondaryText)
         }
         .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
             switch result {
@@ -445,7 +445,7 @@ struct ReadwiseHighlightSection: View {
             Toggle("Send Margins to Readwise", isOn: $sync.enabled)
                 .onChange(of: sync.enabled) { _, _ in sync.enabledChanged() }
             if !sync.status.isEmpty { StatusMessageText(message: sync.status, isFailure: sync.statusIsFailure) }
-            Text("Each Margin with text becomes a Readwise highlight: the passage around it, your Margin as the note, filed under the article or episode. Margins are checked once a minute while the app is open. Private feed links are never sent.")
+            Text(MarginNoteCoverage.readwiseSentence + " the passage around it, your Margin as the note, filed under the article or episode. Margins are checked once a minute while the app is open. Private feed links are never sent.")
                 .font(.footnote).foregroundStyle(AppColors.secondaryText)
         }
     }
