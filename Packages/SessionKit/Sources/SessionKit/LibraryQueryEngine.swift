@@ -188,6 +188,20 @@ public enum LibraryQueryEngine {
         [.unfinished, .unplayed, .inProgress].contains(libraryQuery.listeningState)
     }
 
+    /// Whether the "N finished hidden" footer reads "Include in search" (a search is typed) or "Show" (none is). A search
+    /// of only spaces finds nothing by itself, so it counts as no search, the same as the filtering above (#5006).
+    public static func revealsFinishedWithinSearch(query libraryQuery: LibraryQuery) -> Bool {
+        !libraryQuery.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The query after the footer's tap. With a search typed, Listening goes to Everything so the finished matches join
+    /// the unfinished ones and the search stays; with none, it goes to Completed, which is what "Show" has always opened.
+    public static func queryRevealingFinished(_ libraryQuery: LibraryQuery) -> LibraryQuery {
+        var revealed = libraryQuery
+        revealed.listeningState = revealsFinishedWithinSearch(query: libraryQuery) ? .all : .completed
+        return revealed
+    }
+
     public static func libraryFilterDescription(query libraryQuery: LibraryQuery) -> String {
         var selections: [String] = []
         if libraryQuery.contentType != .all {

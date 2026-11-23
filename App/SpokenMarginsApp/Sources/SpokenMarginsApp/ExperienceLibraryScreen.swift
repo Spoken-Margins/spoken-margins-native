@@ -378,10 +378,10 @@ struct ExperienceLibraryScreen: View {
     /// 44 pt without moving the row's layout (#2899).
     private var completedVisibilityButton: some View {
         Button {
-            if model.libraryQuery.query.isEmpty { model.showCompletedLibraryItems() }
-            else { model.libraryQuery.listeningState = .all }
+            // The rule is in SessionKit (#5006); the screen's onChange of the query saves the new Listening choice.
+            model.libraryQuery = LibraryQueryEngine.queryRevealingFinished(model.libraryQuery)
         } label: {
-            Text(model.libraryQuery.query.isEmpty ? "Show" : "Include in search")
+            Text(LibraryQueryEngine.revealsFinishedWithinSearch(query: model.libraryQuery) ? "Include in search" : "Show")
                 .expandedHitArea(horizontal: 8, vertical: 12)
         }
     }
@@ -517,6 +517,10 @@ struct ExperienceLibraryScreen: View {
             ) { model.showCompletedLibraryItems() }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
         case .noMatches:
+            // Above the empty card, not after it: with the keyboard up the end of this short list sat against the
+            // keyboard's top edge and the "Include in search" tap was lost there (#5006). A search that only finished
+            // items match says so here, with the way to include them.
+            completedHiddenFooter
             SMExperienceEmptyState(
                 systemImage: "magnifyingglass",
                 title: "No matches",
@@ -527,8 +531,6 @@ struct ExperienceLibraryScreen: View {
                 model.libraryQueryChanged()
             }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-            // A search that only finished items match says so here, with the way to include them.
-            completedHiddenFooter
         case .list:
             ForEach(listEntries) { entry in
                 listRow(entry)
