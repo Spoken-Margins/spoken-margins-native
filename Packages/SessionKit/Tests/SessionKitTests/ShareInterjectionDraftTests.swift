@@ -141,6 +141,9 @@ final class ShareInterjectionDraftTests: XCTestCase {
                 draft.isPreparingCleanup = true
                 draft.preparationMessage = "Preparing"
                 draft.renderGeneration = 7
+                // From As recorded; a Words only draft stays Words only (#4647, ShareVoiceWaitTests and
+                // BulkShareDraftPreparationTests on Linux).
+                draft.representationChoice = .original
                 draft.restoreOriginal(hasOriginalAudio: hasAudio)
                 XCTAssertEqual(draft.editHistory, [.original])
                 XCTAssertEqual(draft.editHistoryIndex, 0)
@@ -157,7 +160,7 @@ final class ShareInterjectionDraftTests: XCTestCase {
                     ? "No transcript yet, so this Margin can't be shared. Retry its transcription in Margin detail."
                     : nil)
                 XCTAssertEqual(draft.acousticPauseDecisions, [acousticPause])
-                XCTAssertEqual(draft.renderGeneration, 7)
+                XCTAssertEqual(draft.renderGeneration, 8, "Undo all edits makes a render still out stale (#4647)")
             }
         }
     }
@@ -231,6 +234,7 @@ final class ShareInterjectionDraftTests: XCTestCase {
     func testBulkUndoSuppressesRenderAndClearsCleanedAudio() {
         for hasAudio in [false, true] {
             var draft = makeDraft()
+            draft.representationChoice = .original // a Words only draft would stay Words only (#4647)
             _ = draft.toggleWord(segmentID: "keep", hasOriginalAudio: hasAudio)
             _ = draft.recordEdit(hasOriginalAudio: hasAudio) { $0.automaticCleanupEnabled = true }
             draft.cleanedAudioURL = URL(fileURLWithPath: "/test/cleaned.m4a")
