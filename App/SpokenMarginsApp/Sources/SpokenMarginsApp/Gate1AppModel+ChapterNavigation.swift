@@ -57,7 +57,7 @@ extension Gate1AppModel {
     /// the tone and card instead, because the player has no plan yet to ask for the note by.
     func playFootnote(label: String, fromTimeline: Bool = false) {
         let mode = FootnoteMode(storedValue: UserDefaults.standard.string(forKey: FootnoteMode.storageKey))
-        guard let note = FootnoteTimelineEntries.entry(label: label, for: selectedItem, mode: mode) else {
+        guard let note = FootnoteTimelineEntries.entry(label: label, for: selectedItem, readsWhereCited: mode.plansAsides) else {
             reportFailure("That footnote can't be found any more.")
             return
         }

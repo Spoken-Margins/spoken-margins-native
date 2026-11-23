@@ -1,8 +1,9 @@
 import XCTest
 @testable import SessionKit
+import SessionKitPersistence
 
-/// #3777 Design PR 7: the Timeline lists a matched note as "Footnote 3" at its citation, in both inline modes, and lists
-/// nothing in "Read at the end", for a PDF or for audio.
+/// #3777 Design PR 7: the Timeline lists a matched note as "Footnote 3" at its citation when the item's narration reads
+/// the notes where they are cited, and lists nothing where it keeps them at the end, for a PDF or for audio.
 final class FootnoteTimelineEntriesTests: XCTestCase {
     private let article = """
     The tide turns twice a day.[^1] Then it rests for a while.
@@ -19,36 +20,67 @@ final class FootnoteTimelineEntriesTests: XCTestCase {
 
     // MARK: - Which rows
 
-    func testEveryMatchedNoteIsARowAtItsFirstCitationInBothInlineModes() throws {
-        for mode in [FootnoteMode.whereCited, .chime] {
-            let rows = FootnoteTimelineEntries.entries(in: article, mode: mode)
-            XCTAssertEqual(rows.map(\.label), ["1", "b"], "\(mode)")
-            XCTAssertEqual(rows.map(\.title), ["Footnote 1", "Footnote b"], "\(mode)")
-            let characters = Array(article)
-            let first = try XCTUnwrap(rows.first)
-            XCTAssertEqual(String(characters[first.citationStart..<(first.citationStart + 4)]), "[^1]")
-            XCTAssertEqual(first.citationStart, article.distance(from: article.startIndex, to: try XCTUnwrap(article.range(of: "[^1]")).lowerBound),
-                           "the first citation, not the later one in the second paragraph")
-        }
+    func testEveryMatchedNoteIsARowAtItsFirstCitation() throws {
+        let rows = FootnoteTimelineEntries.entries(in: article, readsWhereCited: true)
+        XCTAssertEqual(rows.map(\.label), ["1", "b"])
+        XCTAssertEqual(rows.map(\.title), ["Footnote 1", "Footnote b"])
+        let characters = Array(article)
+        let first = try XCTUnwrap(rows.first)
+        XCTAssertEqual(String(characters[first.citationStart..<(first.citationStart + 4)]), "[^1]")
+        XCTAssertEqual(first.citationStart, article.distance(from: article.startIndex, to: try XCTUnwrap(article.range(of: "[^1]")).lowerBound),
+                       "the first citation, not the later one in the second paragraph")
     }
 
-    func testReadAtTheEndHasNoRows() {
-        XCTAssertEqual(FootnoteTimelineEntries.entries(in: article, mode: .atEnd), [])
+    func testNoRowsWhereTheNotesStayAtTheEnd() {
+        XCTAssertEqual(FootnoteTimelineEntries.entries(in: article, readsWhereCited: false), [])
     }
 
-    func testAPdfOrAudioHasNoRowsInAnyMode() {
-        for mode in FootnoteMode.allCases {
-            XCTAssertEqual(FootnoteTimelineEntries.entries(in: article, mode: mode, isNarratedFromText: false), [], "\(mode)")
+    func testAPdfOrAudioHasNoRows() {
+        XCTAssertEqual(FootnoteTimelineEntries.entries(in: article, readsWhereCited: true, isNarratedFromText: false), [])
+        var item = ItemDetailState()
+        item.text = article
+        XCTAssertFalse(FootnoteTimelineEntries.entries(for: item, readsWhereCited: true).isEmpty)
+        item.isNativeAudio = true
+        XCTAssertEqual(FootnoteTimelineEntries.entries(for: item, readsWhereCited: true), [])
+        item.isNativeAudio = false
+        item.documentStructure = PDFDocumentStructure(extractionEngine: .pdfKit, analysisStatus: .partial, pageCount: 2, analyzedPageCount: 0)
+        XCTAssertEqual(FootnoteTimelineEntries.entries(for: item, readsWhereCited: true), [])
+    }
+
+    /// The audit on #5062: the setting alone is not the plan. An article already prepared with the notes at the end keeps
+    /// that plan, says "footnote 1" at the marker and reads the notes in their chapter, so a row's tap could not play the
+    /// note. The rows follow the one decision the player and every preparation share.
+    func testRowsFollowThePlanDecisionNotTheSettingAlone() {
+        let plain = NarrationChunkPlanner.identity(ofArticle: article)
+        var prepared = PreparedAudioManifest(
+            id: "prepared-a", itemId: "a", sourcePackageId: "source",
+            signature: .init(engine: "supertonic", modelRevision: "3", assetManifestHash: "a", voiceStyleHash: "v",
+                             synthesisParametersHash: "p", normalizationVersion: "n", chunkingVersion: "c", digest: "prepared-a"),
+            state: .readyOffline, plannedChunkCount: 3, articleIdentity: plain)
+        prepared.artifact = PreparedAudioArtifact(relativePath: "a.m4a", byteCount: 1, checksumSHA256: "x", durationMs: 1)
+        func rows(_ mode: FootnoteMode, pdf: Bool = false, _ manifests: [PreparedAudioManifest] = []) -> [String] {
+            let reads = FootnotePlanDecision.asides(mode: mode, isPDF: pdf, articleText: article, manifests: manifests)
+            return FootnoteTimelineEntries.entries(in: article, readsWhereCited: reads).map(\.label)
         }
+        XCTAssertEqual(rows(.whereCited), ["1", "b"])
+        XCTAssertEqual(rows(.chime), ["1", "b"])
+        XCTAssertEqual(rows(.atEnd), [])
+        XCTAssertEqual(rows(.whereCited, pdf: true), [], "a PDF keeps its footnotes as they are")
+        XCTAssertEqual(rows(.whereCited, [prepared]), [], "audio prepared with the notes at the end keeps them there")
+        XCTAssertEqual(rows(.chime, [prepared]), [])
+        prepared.state = .failed
+        prepared.artifact = nil
+        prepared.chunks = []
+        XCTAssertEqual(rows(.whereCited, [prepared]), ["1", "b"], "a failed preparation holds nothing")
     }
 
     func testACitationWithNoDefinitionIsNotARow() {
-        XCTAssertFalse(FootnoteTimelineEntries.entries(in: article, mode: .whereCited).contains { $0.label == "missing" })
+        XCTAssertFalse(FootnoteTimelineEntries.entries(in: article, readsWhereCited: true).contains { $0.label == "missing" })
     }
 
     func testTextWithoutNotesHasNoRows() {
         for text in ["", "Plain text with no notes.", "A [link] and a [^ broken marker and [^3] with no note."] {
-            XCTAssertEqual(FootnoteTimelineEntries.entries(in: text, mode: .whereCited), [], text)
+            XCTAssertEqual(FootnoteTimelineEntries.entries(in: text, readsWhereCited: true), [], text)
         }
     }
 
@@ -59,26 +91,26 @@ final class FootnoteTimelineEntriesTests: XCTestCase {
         var planned: [String] = []
         for case .aside(let label)? in plan.chunks.map(\.footnote) where !planned.contains(label) { planned.append(label) }
         XCTAssertFalse(planned.isEmpty)
-        XCTAssertEqual(FootnoteTimelineEntries.entries(in: article, mode: .whereCited).map(\.label), planned)
+        XCTAssertEqual(FootnoteTimelineEntries.entries(in: article, readsWhereCited: true).map(\.label), planned)
     }
 
     // MARK: - What a row says
 
     func testTheDetailIsTheNotesFirstWordsCutAtAWord() throws {
-        let row = try XCTUnwrap(FootnoteTimelineEntries.entries(in: article, mode: .whereCited).first)
+        let row = try XCTUnwrap(FootnoteTimelineEntries.entries(in: article, readsWhereCited: true).first)
         XCTAssertTrue(row.noteText.hasPrefix("Smith, Tides, 2020."))
         XCTAssertTrue(row.detail.hasPrefix("Smith, Tides, 2020."))
         XCTAssertTrue(row.detail.hasSuffix("…"))
         XCTAssertLessThanOrEqual(row.detail.count, FootnoteTimelineEntries.detailCharacterLimit + 1)
         XCTAssertFalse(row.detail.contains("\n"))
-        let short = try XCTUnwrap(FootnoteTimelineEntries.entries(in: article, mode: .whereCited).last)
+        let short = try XCTUnwrap(FootnoteTimelineEntries.entries(in: article, readsWhereCited: true).last)
         XCTAssertEqual(short.detail, "Moon note.", "a short note is shown whole")
     }
 
     func testTheRowIdIsStablePerLabel() {
-        let ids = FootnoteTimelineEntries.entries(in: article, mode: .chime).map(\.id)
+        let ids = FootnoteTimelineEntries.entries(in: article, readsWhereCited: true).map(\.id)
         XCTAssertEqual(ids, ["footnote.1", "footnote.b"])
-        XCTAssertEqual(ids, FootnoteTimelineEntries.entries(in: article, mode: .whereCited).map(\.id),
+        XCTAssertEqual(ids, FootnoteTimelineEntries.entries(in: article, readsWhereCited: true).map(\.id),
                        "switching modes does not change which row is which")
     }
 
@@ -109,7 +141,7 @@ final class FootnoteTimelineEntriesTests: XCTestCase {
     func testTheSentenceStartNeverLeavesTheTextOrReachesTheCitation() {
         XCTAssertEqual(FootnoteTimelineEntries.sentenceStart(citedAt: 0, in: Array("[^1] A note first.\n\n[^1]: N.")), 0)
         XCTAssertEqual(FootnoteTimelineEntries.sentenceStart(citedAt: 99, in: Array("short")), 0)
-        for row in FootnoteTimelineEntries.entries(in: article, mode: .whereCited) {
+        for row in FootnoteTimelineEntries.entries(in: article, readsWhereCited: true) {
             XCTAssertLessThan(row.sentenceStart, row.citationStart)
             XCTAssertGreaterThanOrEqual(row.sentenceStart, 0)
         }
@@ -120,13 +152,16 @@ final class FootnoteTimelineEntriesTests: XCTestCase {
         let plan = NarrationChunkPlanner.articlePlan(text, asides: true)
         var planned: [String] = []
         for case .aside(let label)? in plan.chunks.map(\.footnote) where !planned.contains(label) { planned.append(label) }
-        XCTAssertEqual(FootnoteTimelineEntries.entries(in: text, mode: .whereCited).map(\.label), planned)
+        XCTAssertEqual(FootnoteTimelineEntries.entries(in: text, readsWhereCited: true).map(\.label), planned)
     }
 
     func testEntryByLabelFindsTheRowOrNothing() {
-        XCTAssertEqual(FootnoteTimelineEntries.entry(label: "b", in: article, mode: .chime)?.noteText, "Moon note.")
-        XCTAssertNil(FootnoteTimelineEntries.entry(label: "zzz", in: article, mode: .chime))
-        XCTAssertNil(FootnoteTimelineEntries.entry(label: "b", in: article, mode: .atEnd), "the mode changed under a pending tap")
-        XCTAssertNil(FootnoteTimelineEntries.entry(label: "b", in: "The text changed.", mode: .chime))
+        var item = ItemDetailState()
+        item.text = article
+        XCTAssertEqual(FootnoteTimelineEntries.entry(label: "b", for: item, readsWhereCited: true)?.noteText, "Moon note.")
+        XCTAssertNil(FootnoteTimelineEntries.entry(label: "zzz", for: item, readsWhereCited: true))
+        XCTAssertNil(FootnoteTimelineEntries.entry(label: "b", for: item, readsWhereCited: false), "the setting changed under a pending tap")
+        item.text = "The text changed."
+        XCTAssertNil(FootnoteTimelineEntries.entry(label: "b", for: item, readsWhereCited: true))
     }
 }

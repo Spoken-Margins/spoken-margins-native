@@ -169,8 +169,8 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(orphan.first { $0.id == "session::second-25" }).detail.contains("Response unavailable"))
     }
 
-    /// #3777, Design PR 7: a note the narrator reads where it is cited has a row at its citation, in both inline modes, and
-    /// the notes stay in their chapter alone in "Read at the end", for a PDF and for audio.
+    /// #3777, Design PR 7: a note the narrator reads where it is cited has a row at its citation. Where the plan keeps the
+    /// notes at the end (the screen's `FootnotePlanDecision` answer is false) and for audio, there are no rows.
     @MainActor
     func testTimelineListsAFootnoteAtItsCitationOnlyWhenNotesAreReadWhereCited() throws {
         var item = ItemDetailState()
@@ -180,11 +180,11 @@ final class ExperiencePresentationTests: XCTestCase {
         let withoutMode = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
         XCTAssertFalse(withoutMode.contains { if case .footnote = $0.action { true } else { false } },
                        "a caller that does not pass the setting gets the rail it always had")
-        for mode in [FootnoteMode.whereCited, .chime] {
-            let notes = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil, footnoteMode: mode)
+        do {
+            let notes = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil, footnotesReadWhereCited: true)
                 .filter { if case .footnote = $0.action { true } else { false } }
-            XCTAssertEqual(notes.map(\.title), ["Footnote 1", "Footnote 2"], "\(mode)")
-            XCTAssertEqual(notes.map(\.detail), ["Smith, Tides, 2020.", "Lee, Boats, 2021."], "\(mode)")
+            XCTAssertEqual(notes.map(\.title), ["Footnote 1", "Footnote 2"])
+            XCTAssertEqual(notes.map(\.detail), ["Smith, Tides, 2020.", "Lee, Boats, 2021."])
             XCTAssertEqual(notes.map(\.provenanceLabel), ["Footnote", "Footnote"])
             XCTAssertEqual(notes.map(\.provenanceSystemImage), ["text.append", "text.append"])
             XCTAssertEqual(notes.map(\.accessibilityIdentifier), ["timeline.footnote.play.1", "timeline.footnote.play.2"])
@@ -194,12 +194,12 @@ final class ExperiencePresentationTests: XCTestCase {
             guard case .footnote(let note) = first.action else { return XCTFail("a footnote row plays the note") }
             XCTAssertEqual(note.label, "1")
         }
-        let atEnd = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil, footnoteMode: .atEnd)
+        let atEnd = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil, footnotesReadWhereCited: false)
         XCTAssertFalse(atEnd.contains { if case .footnote = $0.action { true } else { false } })
 
         var audio = item
         audio.isNativeAudio = true
-        XCTAssertFalse(ExperienceTimelineRailScreen.makeEntries(from: audio, sessionID: nil, footnoteMode: .whereCited)
+        XCTAssertFalse(ExperienceTimelineRailScreen.makeEntries(from: audio, sessionID: nil, footnotesReadWhereCited: true)
             .contains { if case .footnote = $0.action { true } else { false } }, "a podcast has no footnote rows")
     }
 

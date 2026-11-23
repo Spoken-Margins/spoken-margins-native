@@ -3,8 +3,9 @@ import Foundation
 /// One footnote as the Timeline shows it (#3777, Design PR 7): "Footnote 3" at its citation's place, with the note's
 /// first words under it. A tap goes to the note and reads it.
 ///
-/// The rows are the notes `NarrationChunkPlanner` plans as asides (`FootnoteAnchors`, matched only when certain), so a
-/// row never names a note the narrator cannot read where it is cited.
+/// The rows are the notes `NarrationChunkPlanner` plans as asides (`FootnoteAnchors`, matched only when certain), and only
+/// for an item whose narration is planned that way (`FootnotePlanDecision.asides`: the setting, PDFs, and audio already
+/// prepared with the notes at the end all count), so a row never names a note the narrator will not read where it is cited.
 public struct FootnoteTimelineEntry: Equatable, Sendable, Identifiable {
     /// The label as the definition writes it (`3`, `a`), the same one the plan's aside chunks carry.
     public let label: String
@@ -44,15 +45,16 @@ public enum FootnoteTimelineEntries {
     ///
     /// - Parameters:
     ///   - articleText: the item's stored text, the text the notes were matched in.
-    ///   - mode: the listener's Footnotes setting. In "Read at the end" the notes are in their own chapter, as before,
-    ///     so there are no rows (Design, Screens: "These only appear when the mode is not Read at the end").
-    ///   - isNarratedFromText: false for a podcast or other audio, and for a PDF or other structured document. A PDF's
-    ///     footnote blocks are skipped where they sit and its markers are silent, so it has no note to hear where it is
-    ///     cited (Design, Defaults taken 4); a podcast's text is not narrated.
+    ///   - readsWhereCited: whether this item's narration is planned with note chunks, which is
+    ///     `FootnotePlanDecision.asides(mode:isPDF:articleText:manifests:)`. It is the one answer the player and the
+    ///     rows share: not the setting alone, because an article whose audio was prepared with the notes at the end keeps
+    ///     that plan, says "footnote 3" at the marker and reads the notes in their chapter, so a row's tap could not play
+    ///     the note. False gives no rows (Design, Screens: "These only appear when the mode is not Read at the end").
+    ///   - isNarratedFromText: false for a podcast or other audio, and for a PDF or other structured document.
     public static func entries(
-        in articleText: String, mode: FootnoteMode, isNarratedFromText: Bool = true
+        in articleText: String, readsWhereCited: Bool, isNarratedFromText: Bool = true
     ) -> [FootnoteTimelineEntry] {
-        guard mode.plansAsides, isNarratedFromText else { return [] }
+        guard readsWhereCited, isNarratedFromText else { return [] }
         let anchors = NarrationChunkPlanner.matchedFootnotes(in: articleText).filter {
             // A note with nothing left to say once normalised has no aside in the plan (`asidePlan`), so it gets no row.
             !SpeechTextNormalizer.normalize($0.text).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -64,6 +66,18 @@ public enum FootnoteTimelineEntries {
                 label: $0.label, citationStart: $0.citationRange.lowerBound,
                 sentenceStart: sentenceStart(citedAt: $0.citationRange.lowerBound, in: characters), noteText: $0.text)
         }
+    }
+
+    /// The rows for an open item: only an item whose text is narrated as it is stored. A podcast or audio file, and a PDF
+    /// (the item carries its document structure), have none.
+    public static func entries(for item: ItemDetailState, readsWhereCited: Bool) -> [FootnoteTimelineEntry] {
+        entries(in: item.text, readsWhereCited: readsWhereCited,
+                isNarratedFromText: !item.isNativeAudio && item.documentStructure == nil)
+    }
+
+    /// The row of `item` for `label`, or nil when it has no such matched note.
+    public static func entry(label: String, for item: ItemDetailState, readsWhereCited: Bool) -> FootnoteTimelineEntry? {
+        entries(for: item, readsWhereCited: readsWhereCited).first { $0.label == label }
     }
 
     private static let sentenceEnders: Set<Character> = [".", "!", "?"]
@@ -126,23 +140,5 @@ public enum FootnoteTimelineEntries {
         }
         while index < scan, characters[index].isWhitespace { index += 1 }
         return min(index, citation - 1)
-    }
-
-    /// The rows for an open item: only an item whose text is narrated as it is stored. A podcast or audio file, and a PDF
-    /// (the item carries its document structure), have none.
-    public static func entries(for item: ItemDetailState, mode: FootnoteMode) -> [FootnoteTimelineEntry] {
-        entries(in: item.text, mode: mode, isNarratedFromText: !item.isNativeAudio && item.documentStructure == nil)
-    }
-
-    /// The row for `label`, or nil when the article has no such matched note (the text changed, or the mode did).
-    public static func entry(
-        label: String, in articleText: String, mode: FootnoteMode, isNarratedFromText: Bool = true
-    ) -> FootnoteTimelineEntry? {
-        entries(in: articleText, mode: mode, isNarratedFromText: isNarratedFromText).first { $0.label == label }
-    }
-
-    /// The row of `item` for `label`, or nil.
-    public static func entry(label: String, for item: ItemDetailState, mode: FootnoteMode) -> FootnoteTimelineEntry? {
-        entries(for: item, mode: mode).first { $0.label == label }
     }
 }
