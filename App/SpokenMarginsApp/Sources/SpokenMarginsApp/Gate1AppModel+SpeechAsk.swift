@@ -20,6 +20,12 @@ extension Gate1AppModel {
         }
     }
 
+    /// Allow: places again the imported podcasts whose source transcription met the hold. They have no Margin on the waiting
+    /// list, so `SpeechAuthorizationAsk` remembered their item ids.
+    func retryHeldSourceTranscriptions(itemIds: [String]) {
+        for itemId in itemIds { importedPodcastPlacement.retryAfterSpeechAllowed(itemId: itemId) }
+    }
+
     /// The inverse of `marginIdentity`. Nil for anything that isn't one.
     static func splitMarginIdentity(_ identity: String) -> (sessionId: String, interjectionId: String)? {
         guard let separator = identity.range(of: "::") else { return nil }

@@ -22,7 +22,22 @@ public enum SpeechAuthorizationAsk {
         }
     }
 
+    /// Episodes whose source transcription met the hold. Placement of an imported podcast Margin and the episode map both
+    /// transcribe the listener's copy with no Margin on the waiting list, so this is how the app knows what to start again
+    /// when the listener allows. In memory only: a relaunch places the episode again on its own.
+    private final class HeldSources: @unchecked Sendable {
+        private let lock = NSLock()
+        private var ids: [String] = []
+        func add(_ id: String) { lock.withLock { if !ids.contains(id) { ids.append(id) } } }
+        func take() -> [String] { lock.withLock { defer { ids.removeAll() }; return ids } }
+    }
+
     private static let gate = Gate()
+    private static let heldSources = HeldSources()
+
+    /// The episodes held since the last call, oldest first, each once. The app calls it when iOS has decided: on Allow it
+    /// places them again, on a no it drops them.
+    public static func takeHeldSourceItems() -> [String] { heldSources.take() }
 
     /// Whether iOS may be asked now. True only after the listener's Yes in the app.
     public static var mayAskSystem: @Sendable () -> Bool { gate.current }
@@ -39,8 +54,11 @@ public enum SpeechAuthorizationAsk {
     }
 
     /// Returns when Speech Recognition is allowed. Throws `speech_recognition_not_yet_asked` when the answer is open and
-    /// the app hasn't asked yet, and `speech_recognition_not_authorized` for any decided no.
+    /// the app hasn't asked yet, and `speech_recognition_not_authorized` for any decided no. An allowed answer is never held,
+    /// so source transcription is not blocked by the ask. `sourceItemId` names the episode a source transcription is for, so
+    /// the app can place it again after Allow.
     public static func requireAuthorized(
+        forSourceItem sourceItemId: String? = nil,
         current: SFSpeechRecognizerAuthorizationStatus = SFSpeechRecognizer.authorizationStatus(),
         mayAskSystem: Bool = SpeechAuthorizationAsk.mayAskSystem(),
         request: () async -> SFSpeechRecognizerAuthorizationStatus = { await SpeechAuthorizationAsk.requestFromSystem() }
@@ -53,6 +71,7 @@ public enum SpeechAuthorizationAsk {
         case .authorized:
             return
         case .notDetermined:
+            if let sourceItemId, !sourceItemId.isEmpty { heldSources.add(sourceItemId) }
             throw SessionKitError.persistenceFailed(TranscriptionFailureWording.speechRecognitionNotYetAskedError)
         default:
             throw SessionKitError.persistenceFailed(TranscriptionFailureWording.speechRecognitionOffError)

@@ -150,6 +150,15 @@ final class ImportedPodcastPlacementCoordinator {
         return true
     }
 
+    /// The listener allowed Speech Recognition after this episode's transcript was held back by the ask (#4715): place it
+    /// again now. The failed attempt's cooldown is cleared, since the attempt never reached iOS. Nothing happens for an
+    /// episode that was never asked to place.
+    func retryAfterSpeechAllowed(itemId: String) {
+        guard let localURL = requestedURL[itemId] else { return }
+        lastTransientStart[itemId] = nil
+        resolve(itemId: itemId, localURL: localURL)
+    }
+
     // MARK: Placement
 
     /// The last `resolve` call still running. Requests run one after the other, in the order they were made.

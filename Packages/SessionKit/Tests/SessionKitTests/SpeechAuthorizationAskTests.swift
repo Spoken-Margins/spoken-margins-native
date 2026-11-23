@@ -67,6 +67,37 @@ final class SpeechAuthorizationAskTests: XCTestCase {
         }
     }
 
+    private func sourceOutcome(
+        item: String, current: SFSpeechRecognizerAuthorizationStatus, mayAsk: Bool
+    ) async -> String? {
+        do {
+            try await SpeechAuthorizationAsk.requireAuthorized(forSourceItem: item, current: current, mayAskSystem: mayAsk) { .authorized }
+            return nil
+        } catch {
+            return String(describing: error)
+        }
+    }
+
+    /// An imported podcast's placement that met the hold has no Margin to wait on the list, so the gate remembers the
+    /// episode and hands it back on Allow; the app then places it again (#4715). iOS already allowing is never held.
+    func testASourceTranscriptionThatMetTheHoldIsRememberedOnceAndHandedBackOnce() async {
+        _ = SpeechAuthorizationAsk.takeHeldSourceItems()
+        let allowed = await sourceOutcome(item: "ep-allowed", current: .authorized, mayAsk: false)
+        XCTAssertNil(allowed, "iOS already authorizes: source transcription is not blocked by the ask")
+        for denied in [SFSpeechRecognizerAuthorizationStatus.denied, .restricted] {
+            let error = await sourceOutcome(item: "ep-denied", current: denied, mayAsk: false)
+            XCTAssertTrue(TranscriptionFailureWording.isSpeechRecognitionOff(error: error ?? ""))
+        }
+        XCTAssertEqual(SpeechAuthorizationAsk.takeHeldSourceItems(), [], "only the open-and-unasked case is held")
+
+        let first = await sourceOutcome(item: "ep-1", current: .notDetermined, mayAsk: false)
+        XCTAssertTrue(TranscriptionFailureWording.isSpeechRecognitionNotYetAsked(error: first ?? ""))
+        _ = await sourceOutcome(item: "ep-2", current: .notDetermined, mayAsk: false)
+        _ = await sourceOutcome(item: "ep-1", current: .notDetermined, mayAsk: false)
+        XCTAssertEqual(SpeechAuthorizationAsk.takeHeldSourceItems(), ["ep-1", "ep-2"], "oldest first, no repeats")
+        XCTAssertEqual(SpeechAuthorizationAsk.takeHeldSourceItems(), [], "handed back once")
+    }
+
     /// Nothing in this process closes the gate, so a macOS tool or test that has no card still asks iOS as it always did.
     func testTheGateIsOpenUntilTheAppClosesIt() {
         XCTAssertTrue(SpeechAuthorizationAsk.mayAskSystem())

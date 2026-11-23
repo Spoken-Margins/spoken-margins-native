@@ -165,10 +165,13 @@ final class SpeechAskController: ObservableObject {
             return
         case .authorized:
             let identities = waiting.ids
-            guard !identities.isEmpty else { return }
+            let heldSources = SpeechAuthorizationAsk.takeHeldSourceItems()
+            guard !identities.isEmpty || !heldSources.isEmpty else { return }
             clearWaiting()
-            model?.retryWaitingTranscriptions(identities: identities)
+            if !identities.isEmpty { model?.retryWaitingTranscriptions(identities: identities) }
+            if !heldSources.isEmpty { model?.retryHeldSourceTranscriptions(itemIds: heldSources) }
         case .denied, .restricted:
+            _ = SpeechAuthorizationAsk.takeHeldSourceItems()
             guard waiting.hasWaitingMargin else { return }
             clearWaiting()
             model?.refreshMarginRowsInBackground()

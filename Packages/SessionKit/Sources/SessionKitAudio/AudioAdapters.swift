@@ -4611,7 +4611,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
 
     public func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
         #if canImport(Speech) && canImport(AVFoundation)
-        try await SpeechAuthorizationAsk.requireAuthorized()
+        try await SpeechAuthorizationAsk.requireAuthorized(forSourceItem: itemId)
         guard url.isFileURL, FileManager.default.fileExists(atPath: url.path) else {
             throw SessionKitError.persistenceFailed("source_audio_file_missing")
         }
@@ -4670,7 +4670,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         windowAfterMs: Int
     ) async throws -> TranscriptTimeline {
         #if canImport(Speech) && canImport(AVFoundation)
-        try await SpeechAuthorizationAsk.requireAuthorized()
+        try await SpeechAuthorizationAsk.requireAuthorized(forSourceItem: itemId)
         guard url.isFileURL || ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
             throw SessionKitError.persistenceFailed("source_audio_url_unsupported")
         }
