@@ -76,7 +76,7 @@ public struct PaperNoteSlots: Equatable, Sendable {
     public init(paper: Paper) {
         let own = paper.margins
             .filter { PaperNoteOrder.isOwnOnPaper($0, itemId: paper.itemId) }
-            .map { Answer(margin: $0, page: paper.document?.pageNumber(atCharacter: $0.anchor.startChar)) }
+            .map { Answer(margin: $0, page: PaperNoteOrder.page(of: $0, in: paper.document)) }
             .sorted { PaperNoteOrder.precedes(
                 .init(page: $0.page, startChar: $0.margin.anchor.startChar, createdAt: $0.margin.createdAt, id: $0.margin.id),
                 .init(page: $1.page, startChar: $1.margin.anchor.startChar, createdAt: $1.margin.createdAt, id: $1.margin.id)
@@ -104,8 +104,30 @@ public struct PaperNoteSlots: Equatable, Sendable {
 
     public static let heading = "Paper note"
     public static let subheading = "Purpose, findings and evidence, each tied to its page"
-    /// The footnote while the paper has no Margin of the listener's own to choose (PR 5 brings Write it and its own wording).
-    public static let noMarginsFootnote = "Make a Margin while you listen, then choose it here."
+    /// The section's footnote: shown only while Write it can't place an answer, because the listener hasn't started the
+    /// paper (Default 6 of the Design: Write it needs a listening session). Nil once they have.
+    public static func footnote(canWrite: Bool) -> String? {
+        canWrite ? nil : "Start listening to place your answers where you are in the paper."
+    }
+
+    /// Whether an item gets a Paper note: a PDF by the Library's rule, except a file whose own extension says it is
+    /// another kind of document. The Library's rule finds ".pdf" anywhere in the source reference, so "x.pdf.docx" reads
+    /// as a PDF there; the item screen's export already corrects that with the kept file's kind (#4595), and this does the
+    /// same from the name alone, so the details screen, which has no kept file to hand, agrees.
+    public static func isPaper(mediaType: String, sourceReference: String?, sourceReferenceType: String?) -> Bool {
+        guard LibraryRowWording.isPDF(mediaType: mediaType, sourceReference: sourceReference, sourceReferenceType: sourceReferenceType) else {
+            return false
+        }
+        guard let reference = sourceReference?.trimmingCharacters(in: .whitespacesAndNewlines), !reference.isEmpty else { return true }
+        // The last path component's extension: a URL's query and fragment are not part of it.
+        let path = URL(string: reference)?.path.nilIfEmpty ?? reference
+        let fileExtension = (path as NSString).pathExtension.lowercased()
+        return !otherDocumentExtensions.contains(fileExtension)
+    }
+
+    static let otherDocumentExtensions: Set<String> = [
+        "doc", "docx", "odt", "pages", "rtf", "txt", "md", "markdown", "epub", "html", "htm",
+    ]
     public static let addMoreEvidence = "Add more evidence"
 
     /// The slot's name on the item screen: "Purpose", "Key findings", "Evidence".
@@ -155,6 +177,10 @@ public struct PaperNoteSlots: Equatable, Sendable {
     }
 }
 
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
 /// The one rule for which Margins answer a paper and in what order, shared by the Paper note section and the table.
 enum PaperNoteOrder {
     struct Key {
@@ -162,6 +188,14 @@ enum PaperNoteOrder {
         var startChar: Int
         var createdAt: Date
         var id: String
+    }
+
+    /// The page an answer sits on, one-based, or nil when the paper has no structure, the page isn't certain, or the
+    /// Margin has no place (#4233), whose anchor is zeros and would otherwise read "p. 1". The section and the table both
+    /// read pages here, so the two never disagree.
+    static func page(of margin: Interjection, in document: StructuredDocument?) -> Int? {
+        guard margin.hasPlace else { return nil }
+        return document?.pageNumber(atCharacter: margin.anchor.startChar)
     }
 
     /// The listener's own, active, item-level Margin on this paper.
