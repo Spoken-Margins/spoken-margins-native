@@ -576,7 +576,12 @@ def bot_comment(body):
 with open(os.environ["FAKE_LOG"], "a") as log:
     log.write("gh " + " ".join(args) + "\n")
 tip = os.environ["FAKE_TIP"]
-if args[:1] == ["api"] and args[1].endswith("/issues/12/comments"):
+if args[:1] == ["api"] and "/statuses" in args[1]:
+    # #5145: the commit's main-slow status, from FAKE_SLOW_STATE: green unless a test says otherwise ("none": no status).
+    state = os.environ.get("FAKE_SLOW_STATE", "success")
+    print(json.dumps([] if state == "none" else
+                     [{"context": "main-slow", "state": state, "created_at": "2026-11-23T08:00:00Z"}]))
+elif args[:1] == ["api"] and args[1].endswith("/issues/12/comments"):
     if os.environ.get("FAKE_SAFE_REMERGE"):
         print(bot_comment("**Merge check (triage desk) on `1234567`: PASS, re-merged onto the newest next without re-testing.**\n"
               "- Tested this PR merged with next at `7654321`. Ran: host tests (--plan fast).\n"
@@ -834,6 +839,25 @@ class PhoneBuildTests(unittest.TestCase):
 
     def test_a_merge_check_that_passed_and_pushed_this_commit_skips_the_host_checks(self):
         self.build_the_merge_commit(runs_checks=False)
+
+    def test_a_lane_tested_commit_without_a_green_slow_tier_runs_it_first(self):
+        # #5145: PRs leave the slow tier out, so a lane-tested commit main-slow hasn't passed gets it before the build.
+        self.build_the_merge_commit(runs_checks=False, FAKE_SLOW_STATE='none')
+        calls = self.log.read_text()
+        self.assertIn('fast scripts/verify-tests.py --plan slow', calls)
+        checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
+        self.assertIn('slow tier (--plan slow) ran on this exact commit', checks)
+
+    def test_a_green_slow_tier_on_the_commit_is_not_run_again(self):
+        self.build_the_merge_commit(runs_checks=False, FAKE_SLOW_STATE='success')
+        self.assertNotIn('--plan slow', self.log.read_text())
+        checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
+        self.assertIn('main-slow passed on this exact commit', checks)
+
+    def test_a_red_slow_tier_stops_the_build(self):
+        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing')
+        done = self.run_build(FAKE_TIP=self.tip, FAKE_SLOW_STATE='failure', FAKE_FAST_EXIT='1')
+        self.assert_build_stopped(done, 'the slow tier (--plan slow) failed', builds_after=False)
 
     def test_a_safe_remerge_builds_release_without_repeating_host_or_simulator_checks(self):
         self.build_the_merge_commit(runs_checks=False, FAKE_SAFE_REMERGE='1')

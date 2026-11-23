@@ -383,6 +383,18 @@ def trusted_comment_lines(raw: str | None) -> list[dict]:
     return comment_trust.trusted_only(found)
 
 
+def slow_tier_green(sha: str) -> bool:
+    """Whether main-slow.yml recorded a green `main-slow` status on this commit (#5145). Unreadable counts as no."""
+    raw = gh('api', f'repos/{REPO}/commits/{sha}/statuses?per_page=100')
+    try:
+        statuses = json.loads(raw) if raw else []
+    except ValueError:
+        return False
+    ours = sorted((s for s in statuses if isinstance(s, dict) and s.get('context') == 'main-slow'),
+                  key=lambda s: s.get('created_at') or '', reverse=True)
+    return bool(ours) and ours[0].get('state') == 'success'
+
+
 def runner_tested(sha: str) -> str | None:
     """Evidence that the lane's host-test gate covers this commit, or None (runner_evidence says why not)."""
     return runner_evidence(sha)[0]
@@ -2137,6 +2149,16 @@ def build(sha: str) -> int:
                 raise BuildFailed('the simulator build failed')
             shutil.rmtree(work / 'dd-sim', ignore_errors=True)
             checks = 'host tests (--plan fast) and the simulator build passed here, on this exact commit'
+        elif not slow_tier_green(sha):
+            # #5145: PR and merge-group runs leave the slow tier out; main-slow.yml runs it nightly and before builds.
+            # A commit it hasn't passed on gets it here, before the build (the full --plan fast above includes it).
+            say('no green main-slow status for this commit; running the slow tier (--plan slow) here first')
+            if run_logged([str(src / '.venv/bin/python'), 'scripts/verify-tests.py', '--plan', 'slow',
+                           '--output', str(work / 'slow')], src, log) != 0:
+                raise BuildFailed('the slow tier (--plan slow) failed')
+            checks += '; the slow tier (--plan slow) ran on this exact commit before the build and passed'
+        else:
+            checks += '; main-slow passed on this exact commit'
         say(f'checks: {checks}')
         # The phone-only settings are the commit's own list, the same file the hosted build passes (#3354). A
         # commit from before the file gets this checkout's list, and its app isn't checked for keys it predates.
