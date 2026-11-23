@@ -109,6 +109,8 @@ extension Gate1AppModel {
         }
         let id = start.collection.id
         var name = start.collection.name
+        // What a re-pick's collection already held, so a retry that only loses links says what it holds (#5071).
+        let held = start.isNew ? 0 : start.collection.itemIDs.count
         // Every write carries the jobs settled since the last good one, so a failed write never leaves the stored record
         // saying `added` for an item its collection lacks (#3769 audit).
         var settling = LibraryCollectionImport.Settling(record: start.record)
@@ -151,11 +153,13 @@ extension Gate1AppModel {
         guard !deleted else {
             return CollectionImportResult(
                 summary: LibraryCollectionImport.summary(
-                    name: name, isNew: start.isNew, added: added, failed: failed, notAdded: settling.record.notAdded.count),
+                    name: name, isNew: start.isNew, added: added, failed: failed, notAdded: settling.record.notAdded.count,
+                    held: held),
                 collectionID: id, isNew: start.isNew, addedItemIDs: addedItemIDs, failed: failed, deleted: true)
         }
         let summary = LibraryCollectionImport.summary(
-            name: name, isNew: start.isNew, added: added, failed: failed, notAdded: settling.record.notAdded.count)
+            name: name, isNew: start.isNew, added: added, failed: failed, notAdded: settling.record.notAdded.count,
+            held: held)
         if reportsBanner { reportPastImportCapture { present(summary) } }
         return CollectionImportResult(
             summary: summary, collectionID: id, isNew: start.isNew, addedItemIDs: addedItemIDs, failed: failed)
