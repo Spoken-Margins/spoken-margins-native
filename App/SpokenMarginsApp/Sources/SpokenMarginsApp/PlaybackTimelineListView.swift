@@ -341,9 +341,10 @@ struct TimelineRailRow: View, Equatable {
 
     /// A child's first line: its kind ("Link · x.com") and its place.
     private var kindLine: some View {
-        (dynamicTypeSize.isAccessibilitySize
+        let layout = dynamicTypeSize.isAccessibilitySize
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))) {
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+        return layout {
             Label(lines.kindLine ?? entry.provenanceLabel, systemImage: lines.kindSystemImage ?? entry.provenanceSystemImage)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(provenanceColor)
