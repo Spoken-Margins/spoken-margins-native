@@ -189,6 +189,57 @@ final class ReplyReceiptTests: XCTestCase {
         XCTAssertEqual(newest([ben], decoded), newest([ben], margins))
     }
 
+    // MARK: The item screen's offers (Design E2)
+
+    /// The item screen asks once per item: each replying card gets its own offer, the intro gets the newest, and a
+    /// friend's first share on the same item gets none.
+    func testAnItemOffersOnEachReplyingCardAndTheNewestInTheIntro() throws {
+        var item = ItemDetailState()
+        item.interjections = [own("mine-1", scoped: "a-1"), own("mine-2", scoped: "a-2")]
+        item.importedCommentaryLayers = [
+            layer("ben", digest: digestBen, label: "Ben", importedAt: 10),
+            layer("cy", digest: digestCy, label: "Cy", importedAt: 20),
+            layer("dee", digest: String(repeating: "d", count: 64), label: "Dee", importedAt: 30),
+        ]
+        item.importedCommentaryInterjections = [
+            "ben": [friendMargin("b1", layer: "ben", answering: identity(digestMine, "a-1"))],
+            "cy": [
+                friendMargin("c1", layer: "cy", answering: identity(digestMine, "a-1")),
+                friendMargin("c2", layer: "cy", answering: identity(digestMine, "a-2")),
+            ],
+            "dee": [friendMargin("first", layer: "dee")],
+        ]
+        let offers = ReplyReceipt.offers(on: item)
+        XCTAssertEqual(Set(offers.byLayer.keys), ["ben", "cy"], "Dee's first share is not an answer")
+        XCTAssertEqual(offers.byLayer["ben"]?.replyCount, 1)
+        XCTAssertEqual(offers.byLayer["cy"]?.replyCount, 2)
+        XCTAssertEqual(offers.newest?.layerId, "cy", "the newer replying packet, not Dee's even newer first share")
+        XCTAssertEqual(offers.newest?.buttonTitle, "Tell Cy you got it")
+    }
+
+    func testAnItemWithNoReplyLinksOffersNothing() {
+        var item = ItemDetailState()
+        item.interjections = [own("mine", scoped: "a-1")]
+        item.importedCommentaryLayers = [layer("ben", digest: digestBen, label: "Ben")]
+        item.importedCommentaryInterjections = ["ben": [friendMargin("first", layer: "ben")]]
+        XCTAssertEqual(ReplyReceipt.offers(on: item), .empty)
+        XCTAssertEqual(ReplyReceipt.offers(on: ItemDetailState()), .empty, "an item with no friends' packets")
+    }
+
+    func testAnItemsDeletedPacketAndADeletedOwnMarginOfferNothing() {
+        var item = ItemDetailState()
+        item.importedCommentaryLayers = [layer("ben", digest: digestBen, label: "Ben", deleted: true)]
+        item.importedCommentaryInterjections = ["ben": [friendMargin("r1", layer: "ben", answering: identity(digestMine, "a-1"))]]
+        item.interjections = [own("mine", scoped: "a-1")]
+        XCTAssertEqual(ReplyReceipt.offers(on: item), .empty, "a deleted packet")
+
+        item.importedCommentaryLayers = [layer("ben", digest: digestBen, label: "Ben")]
+        var deleted = own("mine", scoped: "a-1")
+        deleted.status = "deleted"
+        item.interjections = [deleted]
+        XCTAssertEqual(ReplyReceipt.offers(on: item).byLayer, [:], "the Margin it answered was deleted")
+    }
+
     // MARK: The words
 
     func testTheButtonNamesTheFriendOrSaysYourFriend() {

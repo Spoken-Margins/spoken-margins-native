@@ -120,6 +120,13 @@ private struct Build23ImportedLayerList: View, Equatable {
         ExperienceSurface(tint: AppColors.plum.opacity(0.08)) {
             VStack(alignment: .leading, spacing: 16) {
                 provenanceHeader(layer)
+                // Stays after the Margins are heard and the intro is gone, so the listener can still say it arrived (#3902).
+                if let offer = layer.receipt {
+                    ReplyReceiptButton(
+                        content: .init(offer: offer, itemTitle: layer.itemTitle),
+                        identifier: "build23.imported.layer.\(layer.id).tellReceived"
+                    )
+                }
                 if showsMargins { marginRail(layer) }
 
                 // The honest note and the controls a listener may still want sit behind one plain title (#3247).
