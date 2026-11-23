@@ -48,7 +48,7 @@ struct SenderCollectionOfferRow: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel(offer.accessibilityLabel)
             .accessibilityIdentifier("item.senderCollection.row")
-            .sheet(isPresented: $presenter.isSheetPresented) {
+            .trackedSheet(isPresented: $presenter.isSheetPresented) {
                 SenderCollectionSheet(presenter: presenter, offer: offer)
                     .environmentObject(model)
             }
