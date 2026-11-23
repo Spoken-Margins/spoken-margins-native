@@ -65,7 +65,11 @@ final class SupertonicClientHarness {
         pressureRenderer: (any BundledVoiceRendering)? = nil,
         queuedPlayerReader: SupertonicSpeechPlaybackClient.QueuedPlayerReader? = nil,
         postFirstAudio: @escaping FirstAudioPoster = { _ in }, // never the shared hub: other tests' cues listen to it
-        startsPlayers: Bool = true // false: the starter only records players, so none reaches `.playing` by itself
+        startsPlayers: Bool = true, // false: the starter only records players, so none reaches `.playing` by itself
+        // true: `text` is the target's article, and the app's rule plans it with its notes read where cited (#3777).
+        footnoteAsides: Bool = false,
+        footnoteMode: (@Sendable () -> FootnoteMode)? = nil,
+        footnoteCue: (@Sendable () -> Void)? = nil
     ) throws {
         root = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-harness-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -81,6 +85,13 @@ final class SupertonicClientHarness {
         let fallbackReasons = fallbackReasons
         let stallEvents = stallEvents
         let sessionActivations = sessionActivations
+        var articleLookup: SupertonicSpeechPlaybackClient.ArticleTextLookup?
+        var asidesLookup: SupertonicSpeechPlaybackClient.FootnoteAsidesLookup?
+        if footnoteAsides {
+            let article = text
+            articleLookup = { _ in article }
+            asidesLookup = { _ in true }
+        }
         client = SupertonicSpeechPlaybackClient(
             renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionNotificationCenter: notificationCenter,
@@ -96,6 +107,10 @@ final class SupertonicClientHarness {
             pressureRenderer: pressureRenderer,
             fallbackClient: systemVoice,
             postFirstAudio: postFirstAudio,
+            articleText: articleLookup,
+            footnoteAsides: asidesLookup,
+            footnoteMode: footnoteMode,
+            footnoteCue: footnoteCue,
             onFallback: { reason, _, _ in fallbackReasons.add(reason) },
             // The activation timing is a diagnostic, not a stall; a slow simulator must not add it to the lists tests compare.
             onStall: { kind, _ in if kind != "supertonic.session_activate" { stallEvents.add(kind) } },
@@ -119,6 +134,14 @@ final class SupertonicClientHarness {
     }
 
     func play(from offset: Int) throws { try client.play(targetId: targetId, from: offset) }
+
+    /// Ends the playing chunk and waits until the client has started the player of the chunk it chose next; true when it
+    /// has. A chunk the client passes over (a note in "Chime where cited") never gets a player of its own.
+    func finishPlayingChunkAndWaitForTheNext() async -> Bool {
+        let before = players.count
+        await finishPlayingChunkAndWaitUntilHandled()
+        return await waitForPlayerStarts(before + 1)
+    }
 
     /// The player of the newest chunk the client started.
     var newestPlayer: AVPlayer? { players.newest }
