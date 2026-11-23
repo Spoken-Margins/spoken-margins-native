@@ -490,7 +490,7 @@ class Ctx:
 
 def evaluate(expression, github, merge_queue='on', pr_input=''):
     """Evaluate the small subset of GitHub expressions this workflow uses (||, &&, ==, parentheses, paths)."""
-    python = expression.replace('||', ' or ').replace('&&', ' and ')
+    python = re.sub(r'!(?!=)', ' not ', expression.replace('||', ' or ').replace('&&', ' and '))
     # contains(github.event.pull_request.labels.*.name, 'x'): the one `.*` filter this workflow uses
     python = re.sub(r"contains\(github\.event\.pull_request\.labels\.\*\.name,\s*'([^']+)'\)", r"has_label('\1')", python)
     names = [label.get('name') for label in ((github.get('event') or {}).get('pull_request') or {}).get('labels') or []]
@@ -543,6 +543,26 @@ class WorkflowExpressionTests(unittest.TestCase):
                 self.assertTrue(self.runs(event(action, armed=True)))
                 self.assertFalse(self.runs(event(action, armed=False)))
                 self.assertFalse(self.runs(event(action)))
+
+    def test_a_new_head_always_gets_a_job_that_runs(self):
+        # #5162: GitHub files merge_policy.py's `merge policy` check run in the first Actions suite of the head SHA. If
+        # that is this workflow's suite with every job skipped, the suite reads "skipped" and GitHub refuses to queue
+        # the PR ("merge policy is expected"). So on every event that brings a new head, exactly one job runs.
+        import yaml
+        jobs = yaml.safe_load((ROOT / '.github/workflows/merge-queue-label-bridge.yml').read_text())['jobs']
+        for action in ('opened', 'reopened', 'synchronize', 'ready_for_review'):
+            for armed in (True, False, None):
+                with self.subTest(action=action, armed=armed):
+                    ran = [name for name, job in jobs.items() if evaluate(job['if'], event(action, armed=armed))]
+                    self.assertEqual(len(ran), 1, ran)
+        # Label events and edits never start it: they bring no new head, and a no-op job there would only cost minutes.
+        for github in (event('labeled', label={'name': 'docs'}), event('unlabeled', label={'name': 'automerge'}),
+                       event('edited', changes={'body': {'from': 'x'}}), {'event_name': 'schedule', 'event': {}}):
+            with self.subTest(github=github['event'].get('action', github['event_name'])):
+                self.assertFalse(evaluate(jobs['new-head']['if'], github))
+        self.assertFalse(evaluate(jobs['new-head']['if'], event('opened', armed=False), merge_queue=''))
+        self.assertEqual(jobs['new-head'].get('permissions'), {})
+        self.assertNotIn('uses', str(jobs['new-head']['steps']))
 
     def test_no_check_finishing_starts_a_sweep(self):
         # A sweep when a check finishes would queue a PR whose merge group just failed (or that was taken out by hand)
