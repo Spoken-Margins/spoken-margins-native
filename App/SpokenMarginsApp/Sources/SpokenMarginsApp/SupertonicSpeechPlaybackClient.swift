@@ -717,9 +717,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     func prepareSpeechText(_ text: String) throws -> String {
         let projection = SpeechTextNormalizer.normalizeWithSourceOffsets(text)
         lock.withLock {
+            // The engine re-prepares the same text before every play, so only a different text clears what the chime
+            // offered or is reading; another item is caught by `play` (#3777).
+            if preparedSourceText != text { chimeSequencer.reset() }
             preparedSourceText = text
             preparedSpeechProjection = projection
-            chimeSequencer.reset()
             // The plain projection until a play of an article with notes silences their citations (#3777).
             projectionHasAsides = false
         }
