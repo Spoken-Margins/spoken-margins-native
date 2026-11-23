@@ -142,6 +142,9 @@ struct Build23SharingSnapshot: Equatable {
     let needsAutoCleanDecision: Bool
     /// The sheet was opened as "Share replies with <friend>" (#3792, #3906): its review is a receipt, not an editor.
     let isReplyBack: Bool
+    /// The sheet opened with only the starred Margins selected (#4173 PR 4). It holds for the whole sheet, even after the
+    /// listener changes the selection or goes back to Choose; a reply sheet or a one-Margin share never sets it.
+    let startedFromStars: Bool
     let previewState: Build23SharingPreviewState
     let verifiedPreview: Build23VerifiedRecipientPreview?
     let errorMessage: String?
@@ -152,6 +155,14 @@ struct Build23SharingSnapshot: Equatable {
 }
 
 extension Build23SharingSnapshot {
+    static let starredReviewCaption = "Starting with the Margins you starred."
+
+    /// The line under the Review heading (#4173 PR 4), so a listener who sees "Margin 1 of 2" knows why. Nil unless the
+    /// sheet started from stars.
+    var reviewCaption: String? {
+        startedFromStars ? Self.starredReviewCaption : nil
+    }
+
     /// Whether the first-run cleanup question shows when the sheet opens (#3792): only when it can be true.
     var asksAutoCleanQuestion: Bool {
         ShareAutoCleanQuestion.asks(
@@ -474,6 +485,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             autoCleanSelectedEnabled: state.autoCleanSelectedEnabled,
             needsAutoCleanDecision: state.needsAutoCleanDecision,
             isReplyBack: state.replyBackTitle != nil,
+            startedFromStars: state.openedFrom == .starred,
             previewState: previewState,
             verifiedPreview: verifiedPreview,
             errorMessage: state.errorMessage,
