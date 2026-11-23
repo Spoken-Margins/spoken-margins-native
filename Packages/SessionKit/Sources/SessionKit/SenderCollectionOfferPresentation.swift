@@ -8,14 +8,23 @@ public enum SenderCollectionOfferPresentation {
         /// "Keep Sam’s readings together"
         public static func title(sender: String) -> String { "Keep \(sender)’s readings together" }
 
-        /// "Put the 2 items from Sam in one collection."
-        public static func detail(count: Int, sender: String) -> String {
-            "Put the \(count) items from \(sender) in one collection."
+        /// "Put the 2 articles from Sam in one collection." The noun is the listener's word, never the app's own (#3599).
+        public static func detail(count: Int, sender: String, noun: String) -> String {
+            "Put the \(count) \(noun) from \(sender) in one collection."
         }
 
         /// One container for VoiceOver: the title, then the detail.
-        public static func accessibilityLabel(count: Int, sender: String) -> String {
-            "\(title(sender: sender)). \(detail(count: count, sender: sender))"
+        public static func accessibilityLabel(count: Int, sender: String, noun: String) -> String {
+            "\(title(sender: sender)). \(detail(count: count, sender: sender, noun: noun))"
+        }
+
+        /// What a listener calls these sources: "episodes", "articles", "PDFs", "books"; "sources" when they differ or
+        /// are plain text.
+        public static func noun(for nouns: [SourceNoun]) -> String {
+            guard let first = nouns.first, first != .text, nouns.allSatisfy({ $0 == first }) else {
+                return nouns.count == 1 ? "source" : "sources"
+            }
+            return nouns.count == 1 ? first.inSentence : first.inSentence + "s"
         }
 
         public static let makeButton = "Make a Collection"
@@ -27,8 +36,8 @@ public enum SenderCollectionOfferPresentation {
         /// The sheet's name field starts as "From Sam".
         public static func defaultName(sender: String) -> String { "From \(sender)" }
 
-        /// "2 items from Sam", under the name field.
-        public static func sheetLine(count: Int, sender: String) -> String { "\(count) items from \(sender)" }
+        /// "2 articles from Sam", under the name field.
+        public static func sheetLine(count: Int, sender: String, noun: String) -> String { "\(count) \(noun) from \(sender)" }
 
         /// "Added to From Sam."
         public static func banner(collectionName: String) -> String { "Added to \(collectionName)." }
@@ -41,18 +50,23 @@ public enum SenderCollectionOfferPresentation {
         public let senderName: String
         /// The items a new collection would hold, in the Library's order.
         public let itemIds: [String]
+        /// What the listener calls them: "articles", "episodes", "sources".
+        public let noun: String
 
-        public init(senderId: String, senderName: String, itemIds: [String]) {
+        public init(senderId: String, senderName: String, itemIds: [String], noun: String = "sources") {
             self.senderId = senderId
             self.senderName = senderName
             self.itemIds = itemIds
+            self.noun = noun
         }
 
         public var title: String { Words.title(sender: senderName) }
-        public var detail: String { Words.detail(count: itemIds.count, sender: senderName) }
-        public var accessibilityLabel: String { Words.accessibilityLabel(count: itemIds.count, sender: senderName) }
+        public var detail: String { Words.detail(count: itemIds.count, sender: senderName, noun: noun) }
+        public var accessibilityLabel: String {
+            Words.accessibilityLabel(count: itemIds.count, sender: senderName, noun: noun)
+        }
         public var defaultCollectionName: String { Words.defaultName(sender: senderName) }
-        public var sheetLine: String { Words.sheetLine(count: itemIds.count, sender: senderName) }
+        public var sheetLine: String { Words.sheetLine(count: itemIds.count, sender: senderName, noun: noun) }
     }
 
     public enum Result: Equatable, Sendable {
@@ -101,7 +115,12 @@ public enum SenderCollectionOfferPresentation {
                 return .join(senderId: senderId, collectionId: collectionId, itemId: itemId)
             case .offer(let itemIds):
                 guard let name = SharedPacketArrival.senderName(layer.displayLabel) else { continue }
-                return .offer(Offer(senderId: senderId, senderName: name, itemIds: itemIds))
+                let rowsById = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                let nouns = itemIds.compactMap { rowsById[$0] }.map {
+                    SourceNoun(mediaType: $0.mediaType, sourceReference: $0.sourceReference,
+                               sourceReferenceType: $0.sourceReferenceType)
+                }
+                return .offer(Offer(senderId: senderId, senderName: name, itemIds: itemIds, noun: Words.noun(for: nouns)))
             }
         }
         return .none

@@ -41,18 +41,50 @@ final class SenderCollectionOfferPresentationTests: XCTestCase {
     // MARK: words (Design section 1 and 2, character for character)
 
     func testWordsMatchTheDesign() {
-        let offer = Presentation.Offer(senderId: sam, senderName: "Sam", itemIds: ["a", "b"])
+        let offer = Presentation.Offer(senderId: sam, senderName: "Sam", itemIds: ["a", "b"], noun: "articles")
         XCTAssertEqual(offer.title, "Keep Sam’s readings together")
-        XCTAssertEqual(offer.detail, "Put the 2 items from Sam in one collection.")
-        XCTAssertEqual(offer.accessibilityLabel, "Keep Sam’s readings together. Put the 2 items from Sam in one collection.")
+        XCTAssertEqual(offer.detail, "Put the 2 articles from Sam in one collection.")
+        XCTAssertEqual(offer.accessibilityLabel, "Keep Sam’s readings together. Put the 2 articles from Sam in one collection.")
         XCTAssertEqual(offer.defaultCollectionName, "From Sam")
-        XCTAssertEqual(offer.sheetLine, "2 items from Sam")
+        XCTAssertEqual(offer.sheetLine, "2 articles from Sam")
         XCTAssertEqual(Presentation.Words.banner(collectionName: "From Sam"), "Added to From Sam.")
         XCTAssertEqual(Presentation.Words.makeButton, "Make a Collection")
         XCTAssertEqual(Presentation.Words.notNowButton, "Not now")
         XCTAssertEqual(Presentation.Words.sheetTitle, "New Collection")
         XCTAssertEqual(Presentation.Words.namePlaceholder, "Name, such as HIST 210")
         XCTAssertEqual(Presentation.Words.createButton, "Create")
+    }
+
+    /// #3599: the offer names what the listener knows (episodes, articles, PDFs), never the app's word "items".
+    func testTheOfferNamesTheSourcesTheWayTheListenerDoes() {
+        let cases: [([String], String)] = [
+            (["podcast", "podcast"], "episodes"),
+            (["article", "article"], "articles"),
+            (["pdf", "pdf"], "PDFs"),
+            (["epub", "epub"], "books"),
+            (["podcast", "article"], "sources"),
+            (["text", "text"], "sources"),
+            (["pdf"], "PDF"),
+            (["podcast", "pdf", "pdf"], "sources"),
+        ]
+        for (types, expected) in cases {
+            let ids = types.indices.map { "i\($0)" }
+            let rows = zip(ids, types).map { id, type -> LibraryItemRow in
+                var row = LibraryItemRow(id: id, title: id, status: "", canDelete: true, mediaType: type)
+                row.sharedMargins = SharedMarginTally(
+                    total: 1, new: 0, senders: [SharedMarginTally.Sender(key: "id:\(sam)", name: "Sam", count: 1)])
+                return row
+            }
+            let nouns = rows.map {
+                SourceNoun(mediaType: $0.mediaType, sourceReference: $0.sourceReference,
+                           sourceReferenceType: $0.sourceReferenceType)
+            }
+            XCTAssertEqual(Presentation.Words.noun(for: nouns), expected, "\(types)")
+        }
+        XCTAssertEqual(Presentation.Words.noun(for: []), "sources")
+        let mixed = Presentation.Offer(senderId: sam, senderName: "Sam", itemIds: ["a", "b"])
+        XCTAssertFalse(mixed.detail.contains("item"), mixed.detail)
+        XCTAssertFalse(mixed.sheetLine.contains("item"), mixed.sheetLine)
     }
 
     // MARK: facts
