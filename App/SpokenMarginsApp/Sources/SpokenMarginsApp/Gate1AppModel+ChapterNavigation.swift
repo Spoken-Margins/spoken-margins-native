@@ -58,7 +58,7 @@ extension Gate1AppModel {
     func playFootnote(label: String, fromTimeline: Bool = false) {
         let mode = FootnoteMode(storedValue: UserDefaults.standard.string(forKey: FootnoteMode.storageKey))
         guard let note = FootnoteTimelineEntries.entry(label: label, for: selectedItem, mode: mode) else {
-            reportFailure("That footnote is no longer in this item.")
+            reportFailure("That footnote can't be found any more.")
             return
         }
         let itemId = activeItemId
