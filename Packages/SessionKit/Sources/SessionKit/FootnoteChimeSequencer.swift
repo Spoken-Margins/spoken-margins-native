@@ -94,6 +94,7 @@ public struct FootnoteChimeSequencer: Equatable, Sendable {
             if hearing != nil || offered != nil { reset() }
             return .play
         }
+        rebaseRuns(onto: tags)
         if let hearing {
             if hearing.chunks.contains(index) { return .play }
             // The note was read to its end, or the player moved on past it: the card has done its job.
@@ -134,6 +135,7 @@ public struct FootnoteChimeSequencer: Equatable, Sendable {
 
     /// The card's Hear note button: reads the run the card is offering. Nil when no card is offered.
     public mutating func hearOfferedNote(tags: [Tag?]) -> Int? {
+        rebaseRuns(onto: tags)
         guard case .offered = card, let run = offered else { return nil }
         let label = offeredLabel
         let start = beginHearing(chunkAt: run.chunks.lowerBound, tags: tags)
@@ -144,6 +146,7 @@ public struct FootnoteChimeSequencer: Equatable, Sendable {
     /// The card's Stop note button: ends the reading and goes on with the main text. `continueAt` is the first chunk
     /// to play after the run, nil at the end of the text. Nil when no note is being read.
     public mutating func stopHearing(tags: [Tag?], itemId: String, heard: FootnoteHeardSet) -> Resume? {
+        rebaseRuns(onto: tags)
         guard let hearing else { return nil }
         let next = heard.firstPlayableIndex(from: hearing.chunks.upperBound, tags: tags, itemId: itemId)
         self.hearing = nil
@@ -170,6 +173,22 @@ public struct FootnoteChimeSequencer: Equatable, Sendable {
     public mutating func reset() {
         hearing = nil
         clearCard()
+    }
+
+    /// The player rebuilds its plan (a seek past a split chunk, a stand-in voice that cuts the first chunk in two, a split chunk put
+    /// back together), and the notes then sit at other chunk numbers. The run being read or offered is found again by its
+    /// notes' labels in the plan now in force, so what was offered or requested is still what the player is asked about.
+    /// A note the new plan does not carry is dropped, and its card with it.
+    private mutating func rebaseRuns(onto tags: [Tag?]) {
+        if let run = hearing { hearing = Self.rebased(run, onto: tags) }
+        if let run = offered { offered = Self.rebased(run, onto: tags) }
+        if hearing == nil, card.isReading { clearCard() }
+        if offered == nil, hearing == nil, card != .hidden { clearCard() }
+    }
+
+    private static func rebased(_ run: Run, onto tags: [Tag?]) -> Run? {
+        guard let index = tags.firstIndex(where: { $0 == .aside(run.firstLabel) }) else { return nil }
+        return Self.run(containing: index, tags: tags)
     }
 
     private mutating func clearCard() {

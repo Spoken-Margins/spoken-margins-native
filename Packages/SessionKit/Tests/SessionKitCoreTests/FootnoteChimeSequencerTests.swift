@@ -370,4 +370,47 @@ final class FootnoteChimeSequencerTests: XCTestCase {
             XCTAssertFalse(played.contains { plannedTags[$0] == .definition(label) }, "heard note \(label) is not read again")
         }
     }
+
+    // MARK: - A rebuilt plan (audit of #5059)
+
+    /// The plan with the citing sentence's chunk cut in two, as the player does at a seek or on a stand-in voice: every
+    /// chunk from the cut on is one number later, so the note "1" is at 3, not 2.
+    private var rebuilt: [Tag?] {
+        var plan = tags
+        plan.insert(nil, at: 1)
+        return plan
+    }
+
+    func testANoteBeingReadIsStillReadWhenThePlanIsRebuiltBeforeIt() {
+        var sequencer = Sequencer()
+        _ = step(&sequencer, 2)
+        XCTAssertEqual(sequencer.hearOfferedNote(tags: tags), 2)
+        XCTAssertEqual(step(&sequencer, 3, tags: rebuilt), .play, "the note's chunk is read, not cued again")
+        XCTAssertEqual(sequencer.card, .reading(label: "1"))
+        XCTAssertEqual(step(&sequencer, 4, tags: rebuilt), .play)
+        XCTAssertEqual(sequencer.card, .hidden, "the text after the note clears the card, as it does in an unchanged plan")
+    }
+
+    func testHearNoteFindsTheOfferedNoteInARebuiltPlan() {
+        var sequencer = Sequencer()
+        _ = step(&sequencer, 2)
+        XCTAssertEqual(sequencer.hearOfferedNote(tags: rebuilt), 3)
+        XCTAssertEqual(sequencer.card, .reading(label: "1"))
+    }
+
+    func testStopNoteGoesOnAfterTheNoteInARebuiltPlan() {
+        var sequencer = Sequencer()
+        _ = step(&sequencer, 2)
+        _ = sequencer.hearOfferedNote(tags: tags)
+        let resume = sequencer.stopHearing(tags: rebuilt, itemId: item, heard: FootnoteHeardSet())
+        XCTAssertEqual(resume, Sequencer.Resume(continueAt: 4))
+        XCTAssertEqual(sequencer.card, .hidden)
+    }
+
+    func testANotePlanThatNoLongerCarriesTheNoteDropsItsCard() {
+        var sequencer = Sequencer()
+        _ = step(&sequencer, 2)
+        XCTAssertNil(sequencer.hearOfferedNote(tags: [nil, nil, nil]))
+        XCTAssertEqual(sequencer.card, .hidden)
+    }
 }
