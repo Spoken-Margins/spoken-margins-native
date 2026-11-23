@@ -1,0 +1,333 @@
+# Upload main to TestFlight from a GitHub-hosted Mac, after the owner approves (#4915).
+#
+# Until now every upload ran on the owner's Mac (the owner overlay's "Releasing a build"), so with the Mac lost or
+# asleep nothing could reach testers. This run does the same steps on GitHub:
+#   1. `check` (environment `phone-build`, GET requests only): the build number from project.yml, refused if a
+#      `testflight/*` tag or App Store Connect already has it, and the merged PRs since the last upload tag.
+#   2. `notice` (no environment, no secrets): one comment as github-actions[bot] that @mentions the owner on the PR
+#      behind the commit, saying what would ship and linking this run (scripts/testflight_upload.py notice).
+#   3. `approve` (environment `testflight-upload`: required reviewer uncomposed, prevent self-review, main only). It
+#      holds no secret and waits for his tap. It then checks the environment's rules and this run's approval itself
+#      (scripts/testflight_upload.py gate), since GitHub would create a missing environment with no rules and let
+#      the job straight through. Every later job needs it.
+#   4. `upload` (environment `phone-build`): archive the Release app with a placeholder signature, check the archive,
+#      then export with the App Store Connect method and upload in one xcodebuild call, the way the Mac does, with
+#      scripts/TestFlightUploadOptions.plist. Apple's cloud-managed distribution certificate signs it through the
+#      team API key, as in phone-build.yml, so no certificate lives on GitHub. Then wait until App Store Connect lists
+#      the build, because "EXPORT SUCCEEDED" alone is not proof.
+#   5. `tag` (environment `agent-identity`): as the spoken-margins-agent App, the annotated tag
+#      testflight/<version>-build-N on the commit, carrying the archive's flags line (scripts/sm_live.py reads it).
+#
+# This run never assigns tester groups, submits for review or releases anything. Those stay the owner's own steps in
+# App Store Connect (and scripts/release_gate.py before an external group).
+#
+# The archive is a plain Release build, as on the Mac: no phone-build settings. Share-link creation is the one
+# setting a run may turn on, through the `share_link_creation` input, and the notice says which it is before the tap.
+#
+# Why the key stays in `phone-build` instead of a copy in `testflight-upload`: a job has exactly one environment, so
+# the approval job and the upload job are separate, and `upload` cannot start unless `approve` succeeded, which only
+# the owner's tap does. A copy would not narrow anything: the same Admin key already sits in `phone-build`, which any
+# workflow on main may use, and changing a workflow on main already needs the owner's review (.github/CODEOWNERS).
+# One copy also means one place to rotate. Re-running only the failed `upload` or `tag` job of an approved run does
+# not ask again; it re-tries the same approved commit and build number, and both checks run again.
+#
+# Trust: workflow_dispatch only, main only. Every job refuses any other ref, and all three environments admit main
+# only. There is no schedule, pull_request, pull_request_target, issue_comment or workflow_run trigger, and there
+# must never be: that would hand the signing key to code nobody reviewed. Nothing is restored from a cache, so the
+# upload builds only what is in this commit.
+#
+# Cost and catch: about 15 to 25 hosted macOS minutes per upload (a cold Release archive took 465 s in phone-build's
+# dry run, plus the upload and App Store Connect's first listing), two short Linux jobs, and one owner tap. Uploads
+# happen a few times a month. It catches an upload that cannot happen because the Mac is gone (#4915), a reused or
+# lower build number before anyone taps, a phone-build setting leaking into an upload, and an upload Xcode called
+# a success that App Store Connect never listed. Waste signal: uploads keep going out from the Mac anyway, or runs
+# sit unapproved for weeks.
+name: testflight-upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      share_link_creation:
+        description: 'Share-link creation in this build (Builds 35 and 36 had it on; external groups need the release gate)'
+        required: true
+        type: choice
+        options: ['off', 'on']
+        default: 'off'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight-upload
+  cancel-in-progress: false
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+  SHARE_LINKS: ${{ inputs.share_link_creation }}
+
+jobs:
+  check:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: phone-build
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      version: ${{ steps.plan.outputs.version }}
+      last_tag: ${{ steps.plan.outputs.last_tag }}
+    steps:
+      - name: Check the ref
+        run: '[ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+      - name: Build number and what would ship
+        id: plan
+        env:
+          SHA: ${{ github.sha }}
+        run: python3 scripts/testflight_upload.py plan --sha "$SHA" --share-links "$SHARE_LINKS"
+      - name: Refuse a build number App Store Connect already has
+        env:
+          BUILD: ${{ steps.plan.outputs.build }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: python3 scripts/testflight_upload.py asc-check --build "$BUILD"
+
+  notice:
+    needs: check
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write       # the commit comment, when no PR is behind the commit
+      pull-requests: write  # the PR comment
+      issues: write         # PR comments go through the issues API
+    steps:
+      - name: Check the ref
+        run: '[ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+      - name: Tell the owner what would ship and where to approve it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          BUILD: ${{ needs.check.outputs.build }}
+          VERSION: ${{ needs.check.outputs.version }}
+          LAST_TAG: ${{ needs.check.outputs.last_tag }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          python3 scripts/testflight_upload.py notice --sha "$SHA" --build "$BUILD" --version "$VERSION"
+          --last-tag "$LAST_TAG" --share-links "$SHARE_LINKS" --run-url "$RUN_URL"
+
+  approve:
+    needs: [check, notice]
+    # A failed notice still leaves the run for the owner to find; a failed check never reaches him.
+    if: ${{ !cancelled() && needs.check.result == 'success' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: testflight-upload
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read  # this run's approvals, for the gate check
+    steps:
+      - name: Check the ref
+        run: '[ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # GitHub creates a missing environment with no rules on first use, so this job alone proves nothing.
+      - name: Check that the owner approved this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          BUILD: ${{ needs.check.outputs.build }}
+        run: |
+          python3 scripts/testflight_upload.py gate --run-id "$RUN_ID"
+          echo "The owner approved uploading Build $BUILD from ${GITHUB_SHA:0:9}." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  upload:
+    name: Archive, sign and upload
+    needs: [check, approve]
+    if: ${{ !cancelled() && needs.approve.result == 'success' && github.ref == 'refs/heads/main' }}
+    runs-on: xcode-27
+    environment: phone-build
+    timeout-minutes: 90
+    outputs:
+      tag_message: ${{ steps.message.outputs.text }}
+    env:
+      BUILD: ${{ needs.check.outputs.build }}
+      DERIVED: ${{ github.workspace }}/.build/upload-dd
+      SPM: ${{ github.workspace }}/.build/spm
+      OUT: ${{ github.workspace }}/.build/upload-out
+      APP_NAME: SpokenMarginsApp.app
+    steps:
+      - name: Check the ref
+        run: |
+          [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }
+          echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Another approved run may have uploaded this number while this one waited.
+      - name: Refuse a build number App Store Connect already has
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: python3 scripts/testflight_upload.py asc-check --build "$BUILD"
+
+      # Kitten's model files are LFS objects the app bundles. No cache: an upload builds only this commit.
+      - name: Fetch LFS files
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+
+      - name: Signing team
+        run: |
+          team=$(/usr/libexec/PlistBuddy -c 'Print :teamID' scripts/TestFlightUploadOptions.plist)
+          [[ "$team" =~ ^[A-Z0-9]{10}$ ]] || { echo "::error::No team ID in scripts/TestFlightUploadOptions.plist"; exit 1; }
+          printf 'DEVELOPMENT_TEAM = %s\n' "$team" > Config/Local.xcconfig
+
+      - name: Resolve the Swift packages
+        run: |
+          mkdir -p "$OUT"
+          set -o pipefail
+          xcodebuild -resolvePackageDependencies -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp \
+            -derivedDataPath "$DERIVED" -clonedSourcePackagesDirPath "$SPM" 2>&1 | tee "$OUT/resolve.log"
+
+      # A plain Release archive, as on the Mac. Signed with `-` (no certificate, no profile), which still embeds each
+      # target's entitlements, so the cloud-signed export keeps the app group and associated domains.
+      - name: Archive the Release app
+        id: archive
+        run: |
+          extra=()
+          [ "$SHARE_LINKS" = "on" ] && extra+=(SM_SHARE_LINK_CREATION=YES)
+          started=$(date +%s)
+          set -o pipefail
+          xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath "$DERIVED" -clonedSourcePackagesDirPath "$SPM" \
+            -archivePath "$OUT/SpokenMargins.xcarchive" \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES PROVISIONING_PROFILE_SPECIFIER= \
+            "SM_BUILD_COMMIT=$GITHUB_SHA" "${extra[@]}" archive 2>&1 | tee "$OUT/archive.log" | grep -aE 'error:|ARCHIVE' || true
+          if ! grep -q 'ARCHIVE SUCCEEDED' "$OUT/archive.log"; then
+            echo "::group::Full error block from archive.log"
+            grep -aE -B2 -A40 'error:' "$OUT/archive.log" | head -400 || true
+            echo "::endgroup::"
+            echo "::error::The archive failed; archive.log is attached to this run."
+            exit 1
+          fi
+          echo "Archived in $(( $(date +%s) - started )) s." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Check the archive
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          python3 scripts/testflight_upload.py archive --archive "$OUT/SpokenMargins.xcarchive" --build "$BUILD" \
+            --sha "$SHA" --share-links "$SHARE_LINKS"
+          app="$OUT/SpokenMargins.xcarchive/Products/Applications/$APP_NAME"
+          codesign -d --entitlements :- "$app" 2>/dev/null | grep -q 'group.com.spokenmargins.native' \
+            || { echo "::error::The archived app lost its app group entitlement."; exit 1; }
+          for appex in "$app"/PlugIns/*.appex; do
+            codesign -d --entitlements :- "$appex" 2>/dev/null | grep -q 'group.com.spokenmargins.native' \
+              || { echo "::error::$(basename "$appex") lost its app group entitlement."; exit 1; }
+          done
+
+      - name: Tag message from the archive
+        id: message
+        run: |
+          python3 scripts/sm_live.py --tag-message "$OUT/SpokenMargins.xcarchive" > "$OUT/tag-message.txt"
+          {
+            echo 'text<<SM_TAG_MESSAGE_END'
+            cat "$OUT/tag-message.txt"
+            echo 'SM_TAG_MESSAGE_END'
+          } >> "$GITHUB_OUTPUT"
+
+      # The Mac's own upload command (owner overlay, "Releasing a build"), with the team API key instead of a signed-in
+      # Xcode account: method app-store-connect, destination upload, not Internal Only.
+      - name: Export for App Store Connect and upload, cloud-signed
+        env:
+          P8: ${{ secrets.ASC_KEY_P8 }}
+          KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          umask 077
+          printf '%s\n' "$P8" > "$RUNNER_TEMP/AuthKey.p8"
+          set -o pipefail
+          # Homebrew's rsync breaks Xcode's packaging step.
+          PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" xcodebuild -exportArchive \
+            -archivePath "$OUT/SpokenMargins.xcarchive" -exportOptionsPlist scripts/TestFlightUploadOptions.plist \
+            -exportPath "$OUT/export" -allowProvisioningUpdates -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" \
+            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER" > "$OUT/upload.log" 2>&1 || true
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+          grep -aE 'error:|EXPORT|[Uu]pload' "$OUT/upload.log" | head -60 || true
+          grep -q 'EXPORT SUCCEEDED' "$OUT/upload.log" || { echo "::error::The export or upload failed."; exit 1; }
+
+      - name: Wait until App Store Connect lists the build
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: python3 scripts/testflight_upload.py asc-wait --build "$BUILD" --timeout 1200
+
+      # Only archive.log: upload.log names the signing key's ID.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: testflight-upload-log-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .build/upload-out/archive.log
+            .build/upload-out/resolve.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Remove the signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8" Config/Local.xcconfig
+
+      - name: Report time
+        if: always()
+        run: |
+          [ -n "${STARTED:-}" ] || exit 0
+          echo "testflight-upload took $(( $(date +%s) - STARTED ))s on xcode-27 (Xcode 27.0)." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  tag:
+    needs: [check, upload]
+    if: ${{ !cancelled() && needs.upload.result == 'success' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: agent-identity
+    timeout-minutes: 5
+    steps:
+      - name: Check the ref
+        run: '[ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Act as the spoken-margins-agent App
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.SM_APP_ID }}
+          private-key: ${{ secrets.SM_APP_PRIVATE_KEY }}
+          # No owner or repositories: the action then scopes the token to this repository alone.
+      - name: Tag the uploaded commit
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SHA: ${{ github.sha }}
+          BUILD: ${{ needs.check.outputs.build }}
+          VERSION: ${{ needs.check.outputs.version }}
+          MESSAGE: ${{ needs.upload.outputs.tag_message }}
+        run: |
+          printf '%s\n' "$MESSAGE" > "$RUNNER_TEMP/tag-message.txt"
+          python3 scripts/testflight_upload.py tag --build "$BUILD" --version "$VERSION" --sha "$SHA" \
+            --message-file "$RUNNER_TEMP/tag-message.txt"
+          echo "Tagged ${SHA:0:9} as testflight/$VERSION-build-$BUILD." >> "$GITHUB_STEP_SUMMARY"
