@@ -9,8 +9,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCES = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
+# One Margin's "Prepare All Included" steps moved into SessionKitSharing (#969); the guard follows them there.
+BULK_STEPS = ROOT / "Packages" / "SessionKit" / "Sources" / "SessionKitSharing" / "BulkShareDraftPreparation.swift"
 FILES = ["Build23SenderSharingExperience.swift", "Build23SenderSharingComponents.swift", "Gate1AppModel+ShareDrafts.swift",
-         "Gate1AppModel+BulkSharePreparation.swift"]
+         BULK_STEPS]
 RETIRED = [
     "Clean selected", "Clean this Margin", "Pause analysis was unavailable", "Cleaned voice could not",
     "Cleaned voice storage", "The cleaned audio preview", "Cleaned audio could not", "Cleanup applied",
@@ -18,7 +20,7 @@ RETIRED = [
 ]
 
 
-def _code(name: str) -> str:
+def _code(name) -> str:
     return re.sub(r"//[^\n]*", "", (SOURCES / name).read_text())
 
 
@@ -34,7 +36,8 @@ class ShareCleanupWordsGuard(unittest.TestCase):
             self.assertIn("ShareCleanupWords.", _code(name), name)
 
     def test_a_cleanup_failure_never_puts_its_reason_on_the_screen(self):
-        text = _code("Gate1AppModel+ShareDrafts.swift") + _code("Gate1AppModel+BulkSharePreparation.swift")
+        text = (_code("Gate1AppModel+ShareDrafts.swift") + _code("Gate1AppModel+BulkSharePreparation.swift")
+                + _code(BULK_STEPS))
         for line in text.splitlines():
             if "preparationMessage" in line or ".warning" in line:
                 self.assertNotRegex(line, r"\\\((reason|failure|result\.failure|analysisFailure)", line.strip())

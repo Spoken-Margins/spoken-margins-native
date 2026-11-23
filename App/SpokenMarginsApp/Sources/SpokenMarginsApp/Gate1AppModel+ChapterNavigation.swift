@@ -53,8 +53,8 @@ extension Gate1AppModel {
     /// the move is that plan's own (`beginHearingFootnote`): the citing sentence's last chunk, then the note. Otherwise (the
     /// item was not playing, or its audio was prepared with the notes at the end) it goes to the start of the citing
     /// sentence, never to the citation itself: a seek at the place a note is cited means the text after the note. The
-    /// narrator then reads the sentence and, in "Read where cited", the note after it; "Chime where cited" offers it with
-    /// the tone and card instead, because the player has no plan yet to ask for the note by.
+    /// narrator then reads the sentence and the note after it: in "Chime where cited" the client is told which note was
+    /// asked for (`requestFootnoteHearing`), so the player reads it when it reaches it instead of offering it.
     func playFootnote(label: String, fromTimeline: Bool = false) {
         let mode = FootnoteMode(storedValue: UserDefaults.standard.string(forKey: FootnoteMode.storageKey))
         guard let note = FootnoteTimelineEntries.entry(label: label, for: selectedItem, readsWhereCited: mode.plansAsides) else {
@@ -70,11 +70,13 @@ extension Gate1AppModel {
             let startedSelectedItem = try ensureSessionForSelectedItem(engine)
             // A session just started has no plan to ask: the client learns the article when its first play begins.
             let hearing = startedSelectedItem ? nil : client?.beginHearingFootnote(label: label, targetId: itemId)
+            let requested = hearing == nil && mode == .chime
+            if requested { client?.requestFootnoteHearing(label: label, targetId: itemId) }
             synchronizeStreamingSpeechAnchorIfNeeded()
             do {
                 snapshot = try engine.seekText(toCharOffset: hearing ?? note.sentenceStart)
             } catch {
-                if hearing != nil { client?.footnoteMoveFailed() }
+                if hearing != nil || requested { client?.footnoteMoveFailed() }
                 throw error
             }
             streamingSpeechQueue.relinquishToCanonicalPlayback()
