@@ -47,7 +47,7 @@ public enum ShareReviewSteps {
         }
 
         /// The Margin's moment is still being found.
-        var waitsOnMoment: Bool {
+        public var waitsOnMoment: Bool {
             isNativeAudio && !hasEvidence && evidenceStatus == .pendingPostResumeSample
         }
 

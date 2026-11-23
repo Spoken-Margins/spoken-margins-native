@@ -174,7 +174,7 @@ struct RuleScreen: View {
                     .accessibilityIdentifier("rule.sentence")
             }
             Section {
-                TextField("crypto, bitcoin*", text: $wordsField)
+                AppTextField("crypto, bitcoin*", text: $wordsField)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .submitLabel(.done)
@@ -291,7 +291,7 @@ struct NewRuleSheet: View {
                     .accessibilityIdentifier("newRule.action")
                 }
                 Section {
-                    TextField("crypto, bitcoin*", text: $wordsField)
+                    AppTextField("crypto, bitcoin*", text: $wordsField)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityLabel("Episodes that mention")

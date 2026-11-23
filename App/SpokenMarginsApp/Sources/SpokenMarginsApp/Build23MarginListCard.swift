@@ -151,6 +151,12 @@ struct Build23MarginListCard: View {
         )
         .disabled(isInert)
 
+        // Directly under Listen, only for a placed Margin on an episode or audio file (#4171, the Design on #4647).
+        if let leadIn = margin.leadIn {
+            Build23LeadInRow(marginID: margin.id, leadIn: leadIn, send: send)
+                .disabled(isInert)
+        }
+
         Build23MarginFailureLines(margin: margin)
 
         DisclosureGroup(ShareReviewCardWords.moreForThisMargin, isExpanded: $showsMore) {

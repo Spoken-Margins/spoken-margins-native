@@ -154,12 +154,6 @@ extension Gate1AppModel {
                 ))
             }
 
-            // The revisions are saved in one background step, before the packet is built, as they were one by one (#2509).
-            let revisionsToSave = revisions
-            try await StoreReader(store).read { store in
-                for revision in revisionsToSave { try store.saveInterjectionShareRevision(revision) }
-            }
-
             let mapProposals = SharedMarginExport.mapProposals(
                 source.mapProposals,
                 currentProposalID: source.currentMapProposalId,
@@ -220,6 +214,21 @@ extension Gate1AppModel {
                 throw error
             }
             await Self.removeOffMain(audioStaging)
+            // The revisions are saved in one background step (#2509), only once the packet is written: they are what the
+            // next share of each Margin starts from (`sentLeadInMs`, `sentReadAloud`), so a failed write must not leave
+            // one behind saying a length or a reading choice went out when it never did (#4171, the 4a audit).
+            let revisionsToSave = revisions
+            do {
+                // One transaction, so a save that fails part way leaves none behind for the deleted packet.
+                try await StoreReader(store).read { store in
+                    try store.withSessionTransaction {
+                        for revision in revisionsToSave { try store.saveInterjectionShareRevision(revision) }
+                    }
+                }
+            } catch {
+                await Self.removeOffMain(destination) // a packet with no saved revisions would be a share with no record
+                throw error
+            }
             diagnostics["lastSharedPackageAudio"] = "reencoded=\(audioReport.compressedCount);as_recorded=\(audioReport.keptOriginalCount);failed=\(audioReport.failedCount);bytes=\(audioReport.originalBytes)->\(audioReport.sentBytes)"
             let exportedSelections = selections
             // The export is recorded in one background transaction (#2509).
