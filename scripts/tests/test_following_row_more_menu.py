@@ -30,8 +30,16 @@ class FollowingRowMoreMenuTests(unittest.TestCase):
         row = _row()
         self.assertIn(".contextMenu { rowActions }", row)
         actions = row[row.index("private var rowActions"):row.index("private var moreMenu")]
-        for title in ("Add to Library", "Play now", "Dismiss", "FollowingRowActions.muteTitle", "FollowingRowActions.unfollowTitle"):
+        for title in ("Add to Library", "Play now", "dismissTitle", "FollowingRowActions.muteTitle", "FollowingRowActions.unfollowTitle"):
             self.assertIn(title, actions)
+
+    def test_a_followed_episode_says_not_for_me_and_a_file_says_dismiss(self):
+        """#4285: the swipe, both menus and the VoiceOver action all take the one title, and it depends on the row."""
+        row = _row()
+        self.assertNotIn('"Dismiss"', row, "a literal Dismiss would drift from the Not for me rows")
+        self.assertRegex(row, r"dismissTitle: String \{ FollowingDismissMessages\.actionTitle\(isFollowedEntry: isFeedEntry\) \}")
+        self.assertRegex(row, r"\.swipeActions\(edge: \.trailing, allowsFullSwipe: true\) \{\s*Button\(action: dismiss\) \{\s*Label\(dismissTitle")
+        self.assertIn(".accessibilityAction(named: Text(dismissTitle), dismiss)", row)
 
     def test_the_swipes_stay(self):
         row = _row()

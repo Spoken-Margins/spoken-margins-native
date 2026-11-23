@@ -125,8 +125,8 @@ struct ShowUpNextCard: View {
                 Button { model.addEntryToQueue(entry) } label: {
                     Label(QueueRowAction.add.title, systemImage: QueueRowAction.add.systemImage)
                 }
-                Button { model.dismissFollowedSourceEntry(id: entry.id) } label: {
-                    Label("Dismiss", systemImage: "xmark")
+                Button { model.dismissFollowedSourceEntry(entry) } label: {
+                    Label(FollowingDismissMessages.notForMeTitle, systemImage: FollowingDismissMessages.notForMeSystemImage)
                 }
             }
         } label: {

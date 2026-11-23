@@ -792,7 +792,7 @@ struct SourceInboxRow: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(action: dismiss) {
-                Label("Dismiss", systemImage: "xmark")
+                Label(dismissTitle, systemImage: dismissSystemImage)
             }
             .tint(AppColors.swipePlum)
             // Second and not a full swipe: the first button above is the one a long swipe takes.
@@ -849,7 +849,7 @@ struct SourceInboxRow: View {
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint("Adds this entry to Library and opens it.")
         .accessibilityAction(named: "Add to Library", addAndOpen)
-        .accessibilityAction(named: "Dismiss", dismiss)
+        .accessibilityAction(named: Text(dismissTitle), dismiss)
         .accessibilityActions {
             if canQueue { Button(QueueRowAction.add.title, action: addToQueue) }
             // A Quick Folder file has no show to play from, mute or unfollow.
@@ -871,7 +871,7 @@ struct SourceInboxRow: View {
         if isFeedEntry {
             Button(action: playNow) { Label("Play now", systemImage: "play.fill") }
         }
-        Button(action: dismiss) { Label("Dismiss", systemImage: "xmark") }
+        Button(action: dismiss) { Label(dismissTitle, systemImage: dismissSystemImage) }
         if let subscription {
             Button { model.toggleMuteSource(id: subscription.id) } label: {
                 Label(FollowingRowActions.muteTitle(showTitle: subscriptionTitle), systemImage: "speaker.slash")
@@ -1081,10 +1081,14 @@ struct SourceInboxRow: View {
         }
     }
 
+    /// "Not for me" on a followed show's episode, "Dismiss" on a Quick Folder file (#4285).
+    private var dismissTitle: String { FollowingDismissMessages.actionTitle(isFollowedEntry: isFeedEntry) }
+    private var dismissSystemImage: String { FollowingDismissMessages.actionSystemImage(isFollowedEntry: isFeedEntry) }
+
     private func dismiss() {
         switch candidate {
         case .localFile(let file): model.dismissQuickAccessFileWithUndo(file)
-        case .followedSource(let entry): model.dismissFollowedSourceEntry(id: entry.id)
+        case .followedSource(let entry): model.dismissFollowedSourceEntry(entry)
         }
     }
 }
