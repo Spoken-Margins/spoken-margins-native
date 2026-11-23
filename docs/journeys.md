@@ -310,6 +310,41 @@ Not testable in a simulator: AirDrop from a Mac and a real iCloud download (step
 
 Airplane Mode changes nothing (J10): the whole flow is local. The script for this journey is not written: scripts follow breaks found on the phone.
 
+## J16 — Move a misfiled Margin from a live session to an item
+
+A listener made Margins in a live session (a quick session from the Watch or the Action button, or a named one) that belong on a Library item (#4233, Design 7a). Move to an Item puts them on the item: at the place the item was playing when each was made, when that place was saved, and otherwise on the item without a place. The move can be undone from its banner.
+
+**Starting state:** a podcast with a known length that has been played (J1), and a quick live session holding three Margins: one spoken while that podcast played, one spoken with nothing playing, and one Mark. A written Margin may stand in for a spoken one.
+
+1. Open the live session, then its Margins pane.
+   - Pass: the pane's header has **Move…** (`liveSession.margins.move.button`). Each Margin row offers the VoiceOver action "Move to an Item".
+2. Tap **Move…**.
+   - Pass: the "Move to an Item" sheet reads "Moving 2 Margins" (the Mark is not counted), with **Choose…** beside it. Under "Playing when you made it" the podcast reads "Was playing then"; other started items are under "Recently played". The search field reads "Search your Library".
+3. Tap **Choose…**.
+   - Pass: "Choose Margins" lists all three in the pane's order. The two that can move show a filled circle and VoiceOver reads them as Selected. The Mark is dimmed with "A Mark has no words or recording to move." and can't be ticked. Untick both: **Done** dims. Tick both again and tap **Done**.
+4. Type part of the podcast's title in the search, in another case or without its accents.
+   - Pass: the podcast is still listed. Type a word no title has: "No started item matches “<word>”."
+5. Clear the search and tap the podcast.
+   - Pass: the dialog asks "Move 2 Margins to “<title>”?" and says 1 will sit where it was playing and 1 had no playback place saved. The button reads "Move 2 Margins".
+6. Tap **Move 2 Margins**.
+   - Pass: the sheet closes. A banner says "Moved 2 Margins to “<title>”." with **Undo**. The live session now shows only the Mark.
+7. Open the podcast's Margins tab and its Timeline.
+   - Pass: the placed Margin sits at the time it was made (not at the podcast's resume point) and plays from there. The other reads "No place" and sorts after every placed entry. Neither is listed twice. The spoken Margin that had no words gains them once transcription finishes.
+8. Back in the live session, tap **Undo** on the banner while it shows (or repeat steps 2 to 6 and then Undo).
+   - Pass: "Margins put back." Both are in the live session again, with any words found meanwhile. The podcast no longer lists them.
+9. Move one Margin from its own sheet: open a spoken Margin in the pane, tap **Move to an Item…** (`marginDetail.move.button`).
+   - Pass: the sheet reads "Moving this Margin", with no **Choose…**; the back button returns to the Margin.
+10. In a quick session that was never renamed, move every Margin it has (no Mark).
+    - Pass: the session closes after the move and is gone from the list of sessions. Undo brings it back with its Margins.
+11. Move a Margin, then star or edit it on the item, then tap Undo.
+    - Pass: nothing changes; the banner says "Couldn't put the Margins back. They've changed on “<title>”."
+12. On the finish card of a live session with Margins, tap **Move Margins to an Item…** (`liveSession.finish.move.button`).
+    - Pass: the same sheet, with a **Cancel** button. With no Margins left, Line Up and Save as Notes are dimmed.
+
+Not testable in a simulator: a Margin spoken on the Watch while the phone played, and a move interrupted by force-quitting the app (the next launch removes the moved Margins from the session before the Watch inbox is filed). The owner's check is on the issue.
+
+The script for this journey is not written: scripts follow breaks found on the phone.
+
 ## Writing scripted journeys
 
 The Test Desk keeps this guide. Threads writing a first pass follow it, and the desk corrects it when a script teaches it something.

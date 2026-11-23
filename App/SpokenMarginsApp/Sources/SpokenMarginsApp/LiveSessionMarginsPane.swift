@@ -9,6 +9,9 @@ struct LiveSessionMarginsPane: View {
     let select: (LiveSessionMargin) -> Void
     /// Pauses whatever the app is playing before a recording starts.
     let pauseOtherAudio: () -> Void
+    /// Opens Move to an Item for these Margins, or for every Margin that can move when nil (#4233 Design 2.2). Nil hides
+    /// Move.
+    var move: ((Set<String>?) -> Void)? = nil
     @StateObject private var audio = LiveSessionMarginAudioModel()
 
     var body: some View {
@@ -21,12 +24,29 @@ struct LiveSessionMarginsPane: View {
                     .foregroundStyle(AppColors.watchSecondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Text("Margins: \(session.margins.count)")
-                    .font(.caption)
-                    .foregroundStyle(AppColors.watchSecondary)
-                    .accessibilityIdentifier("liveSession.margins.count")
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Margins: \(session.margins.count)")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.watchSecondary)
+                        .accessibilityIdentifier("liveSession.margins.count")
+                    Spacer()
+                    if let move, LiveMarginMove.offersMove(in: session) {
+                        Button("Move…") {
+                            audio.stop() // a chosen Margin's recording stops before it moves
+                            move(nil)
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.listeningAccent)
+                        .frame(minHeight: 44)
+                        .accessibilityLabel("Move Margins to an item")
+                        .accessibilityIdentifier("liveSession.margins.move.button")
+                    }
+                }
                 if rows.isEmpty {
-                    Text("No Margins yet. Record or write one using the controls below.")
+                    // A renamed or named session the listener emptied stays, so the ended screen says so plainly.
+                    Text(session.endedAt == nil
+                         ? "No Margins yet. Record or write one using the controls below."
+                         : "No Margins in this session.")
                         .foregroundStyle(AppColors.watchSecondary)
                 }
                 ForEach(rows) { entry in
@@ -46,6 +66,19 @@ struct LiveSessionMarginsPane: View {
     }
 
     private func row(_ margin: LiveSessionMargin) -> some View {
+        let movesAlone = move != nil && LiveMarginMove.movability(margin: margin, in: session) == nil
+        return rowView(margin)
+            .accessibilityActions {
+                if movesAlone, let move {
+                    Button("Move to an Item") {
+                        audio.stop()
+                        move([margin.id])
+                    }
+                }
+            }
+    }
+
+    private func rowView(_ margin: LiveSessionMargin) -> some View {
         var detail = LiveSessionMarginsList.positionLabel(for: margin, in: session)
         if let note = margin.filingNote { detail += " · Filed \(note)" }
         return PlaybackMarginRowView(

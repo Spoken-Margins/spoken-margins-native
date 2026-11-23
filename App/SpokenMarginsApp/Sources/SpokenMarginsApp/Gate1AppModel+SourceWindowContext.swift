@@ -345,10 +345,12 @@ extension Gate1AppModel {
         }
     }
 
-    func scheduleTranscription(for interjection: Interjection) {
+    /// `capturesAnchorEvidence` is false for a Margin moved from a live session (#4233): its recording was not made while
+    /// the item played, so no fingerprint of the item is taken for it, and a friend places it by time alone.
+    func scheduleTranscription(for interjection: Interjection, capturesAnchorEvidence: Bool = true) {
         guard let audioPath = interjection.audioPath else { return }
         recordAnchorCaptureDiagnostics(for: interjection)
-        switch interjection.podcastAnchorEvidenceCaptureStatus {
+        switch capturesAnchorEvidence ? interjection.podcastAnchorEvidenceCaptureStatus : .ready {
         case .pendingPostResumeSample:
             diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", interjection)] = "sampling:decoded_playback_post_resume"
         case .pendingExactLocalCapture:
