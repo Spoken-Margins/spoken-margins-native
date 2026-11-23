@@ -306,6 +306,20 @@ class WorkflowScopeTests(unittest.TestCase):
         self.assertTrue(job['if'].startswith("!cancelled() && needs.scope.result == 'success' && "), job['if'])
         self.assertIn('docs_only', self.jobs['scope']['outputs'])
 
+    def test_a_merge_group_always_runs_the_portable_job(self):
+        # #5179: the queue merges every entry ahead of a green head on that head's result (HEADGREEN), so a docs-only
+        # head that skipped `portable` merged #5087 and #5102 untested and left main red for about 3 hours (2026-11-23).
+        # On merge_group the docs_only skip must not apply: evaluate the condition as GitHub would.
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import ci_model
+        condition = self.jobs['portable']['if']
+        needs = {'scope': {'result': 'success', 'outputs': {'docs_only': 'true', 'mac': 'false'}}}
+        for event, runs in (('merge_group', True), ('workflow_dispatch', False)):
+            with self.subTest(event=event):
+                ctx = {'github': {'event_name': event, 'repository': 'o/r', 'event': {}},
+                       'vars': {'LANE_HOSTED_FAST': 'on'}, 'needs': needs, 'inputs': {}}
+                self.assertEqual(ci_model.condition(condition, ctx, ['success']), runs, condition)
+
     def test_the_docs_only_check_skips_docs_but_not_the_quiz_scripts(self):
         # #5048: Site/quiz/ holds the quiz's code (page.js, quiz.js), tested by scripts/tests/quiz_* and test_quiz_page.
         # Counted as docs, a PR that edited only Site/quiz/page.js skipped the portable plan in the PR and the merge
@@ -351,7 +365,8 @@ class WorkflowScopeTests(unittest.TestCase):
 
     def scope_says(self, layout, *, base_has_script=True, base_rule=None):
         """The scope step, run for real: a base whose rule needs the Mac for a Swift file, and a PR that changes that
-        rule so its own copy says Mac-free. <layout>: 'pr' (GitHub's merge commit) or 'dispatch' (the PR's branch, with a base).
+        rule so its own copy says Mac-free. <layout>: 'pr' (GitHub's merge commit), 'dispatch' (the PR's branch, with a base) or 'merge_group' (a
+        queue entry behind another: main, then the PR's entry, then a docs-only entry on top, as GitHub builds it).
         <base_rule>: the text of the base's scripts/test-scope.py, the real one by default."""
         step = next(step for step in self.jobs['scope']['steps'] if step.get('id') == 'scope')['run']
 
@@ -377,13 +392,22 @@ class WorkflowScopeTests(unittest.TestCase):
             git('switch', '--quiet', 'main', cwd=origin)
             git('clone', '--quiet', str(origin), str(work), cwd=temp)
             git('switch', '--quiet', 'pr', cwd=work)
-            if layout == 'pr':
+            output = temp / 'output'
+            env = {'PATH': '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin', 'RUNNER_TEMP': str(temp),
+                   'GITHUB_OUTPUT': str(output), 'BASE': 'main' if layout == 'dispatch' else ''}
+            if layout in ('pr', 'merge_group'):
                 git('switch', '--quiet', '--detach', 'origin/main', cwd=work)
                 git('merge', '--quiet', '--no-ff', '--no-edit', 'origin/pr', cwd=work)
-            output = temp / 'output'
-            ran = subprocess.run(['bash', '-e', '-c', step], cwd=work, capture_output=True, text=True,
-                                 env={'PATH': '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin', 'RUNNER_TEMP': str(temp),
-                                      'GITHUB_OUTPUT': str(output), 'BASE': 'main' if layout == 'dispatch' else ''})
+            if layout == 'merge_group':
+                previous_entry = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=work, capture_output=True,
+                                                text=True, check=True).stdout.strip()
+                (work / 'docs').mkdir()
+                (work / 'docs/note.md').write_text('a docs-only entry\n')
+                git('add', '.', cwd=work)
+                git('commit', '--quiet', '-m', 'docs-only entry', cwd=work)
+                # What GitHub sends: base_sha is the previous entry's queue commit, base_ref the trunk.
+                env.update(EVENT='merge_group', QUEUE_BASE=previous_entry, QUEUE_TRUNK='refs/heads/main')
+            ran = subprocess.run(['bash', '-e', '-c', step], cwd=work, capture_output=True, text=True, env=env)
             self.assertEqual(ran.returncode, 0, ran.stderr)
             return dict(line.split('=', 1) for line in output.read_text().splitlines() if '=' in line)
 
@@ -394,6 +418,21 @@ class WorkflowScopeTests(unittest.TestCase):
         for layout in ('pr', 'dispatch'):
             with self.subTest(layout=layout):
                 self.assertEqual(self.scope_says(layout)['mac'], 'true')
+
+    def test_a_merge_group_scopes_against_main_not_the_previous_queue_entry(self):
+        # #5179: the step diffed against merge_group.base_sha, the previous entry's queue commit, so a docs-only entry
+        # behind a Swift PR saw only its own docs change and said mac=false, docs_only=true. The group must be scoped
+        # by everything it adds to main, with main's rule.
+        said = self.scope_says('merge_group')
+        self.assertEqual(said['mac'], 'true', said)
+        self.assertEqual(said['docs_only'], 'false', said)
+
+    def test_no_workflow_scopes_a_merge_group_by_its_base_sha(self):
+        # #5179: base_sha is the previous queue entry's commit, not main's tip, so a diff from it misses every entry
+        # ahead. The scope, Mac rest and web change steps all used it; none may decide what a queue entry tests by it.
+        for path in sorted((ROOT / '.github/workflows').glob('*.yml')):
+            with self.subTest(path.name):
+                self.assertNotIn('github.event.merge_group.base_sha', path.read_text())
 
     def test_a_rule_that_crashes_or_says_nothing_runs_the_mac_checks(self):
         # #4303: the step's last line is the fail-safe. A rule that raises, exits 1 or prints no `mac=` line must leave
