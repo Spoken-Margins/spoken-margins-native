@@ -23,9 +23,20 @@ final class MarginNoteCoverageTests: XCTestCase {
         }
     }
 
-    func testReadwiseRuleTable() {
+    func testReadwiseRuleTableAgreesWithTheRealHighlightBuilder() throws {
         for row in table {
             XCTAssertEqual(MarginNoteCoverage.sendsReadwiseHighlight(text: row.text), row.readwise, row.name)
+            let words = row.text.map { #""\#($0.replacingOccurrences(of: "\n", with: " "))""# } ?? "null"
+            let json = """
+            {"schemaVersion": "spoken-margins.export.v1", "item": {"id": "item-a", "title": "T", "externalReference": null, "includedFullText": false},
+             "session": {"id": "session-a", "status": "in_progress", "completionPercent": 10},
+             "turns": [], "timeline": [],
+             "interjections": [{"id": "m1", "sessionId": "session-a", "targetType": "item", "targetId": "item-a",
+               "roughPercent": 10, "anchorBefore": "Before.", "anchorAfter": "After.", "mediaTimeMs": 5000,
+               "transcriptionStatus": "transcribed", "transcript": \(words), "audioPath": null}]}
+            """
+            let export = try JSONDecoder().decode(SessionExport.self, from: Data(json.utf8))
+            XCTAssertEqual(ReadwiseHighlight(export: export, createdAt: Date(timeIntervalSince1970: 0)) != nil, row.readwise, row.name)
         }
     }
 

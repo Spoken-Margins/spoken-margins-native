@@ -10,7 +10,7 @@ public enum MarginNoteCoverage {
 
     /// Readwise gets a Margin once it has words, spoken or written (`ReadwiseHighlightClient.init(export:createdAt:)`).
     public static func sendsReadwiseHighlight(text: String?) -> Bool {
-        !(text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ReadwiseHighlight.hasWords(text)
     }
 
     public static let notesFolderSentence =
