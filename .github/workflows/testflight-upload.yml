@@ -33,8 +33,8 @@
 #
 # Trust: workflow_dispatch only, main only. Every job refuses any other ref, and all three environments admit main
 # only. There is no schedule, pull_request, pull_request_target, issue_comment or workflow_run trigger, and there
-# must never be: that would hand the signing key to code nobody reviewed. Nothing is restored from a cache, so the
-# upload builds only what is in this commit.
+# must never be: that would hand the signing key to code nobody reviewed. The only cache read is phone-build's
+# Swift package sources (main-only key, pins and checksums still checked); no compiled code comes from a cache.
 #
 # Cost and catch: about 15 to 25 hosted macOS minutes per upload (a cold Release archive took 465 s in phone-build's
 # dry run, plus the upload and App Store Connect's first listing), two short Linux jobs, and one owner tap. Uploads
@@ -184,7 +184,18 @@ jobs:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: python3 scripts/testflight_upload.py asc-check --build "$BUILD"
 
-      # Kitten's model files are LFS objects the app bundles. No cache: an upload builds only this commit.
+      # Swift package sources, restored read-only from phone-build's cache (only main runs write `phone-spm-`), so an
+      # outage at a binary-target host can't stop an upload (#4664). SwiftPM still checks every pin and binary
+      # checksum in Package.resolved. This job saves no cache, and the compilation cache is not restored: the code
+      # compiled into an upload comes from this commit alone.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ env.SPM }}
+          key: phone-spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: phone-spm-
+
+      # Kitten's model files are LFS objects the app bundles, fetched fresh.
       - name: Fetch LFS files
         env:
           TOKEN: ${{ github.token }}

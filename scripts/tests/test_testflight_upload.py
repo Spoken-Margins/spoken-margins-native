@@ -349,7 +349,12 @@ class Workflow(unittest.TestCase):
                         self.assertRegex(uses, r'@[0-9a-f]{40}$', f'{uses} is not pinned to a commit')
                     if 'checkout' in uses:
                         self.assertFalse(step['with']['persist-credentials'])
-                    self.assertNotIn('actions/cache', uses, 'an upload builds only its own commit')
+                    if 'actions/cache' in uses:
+                        # Only phone-build's main-only Swift package sources, read-only (#4664); never compiled code.
+                        self.assertEqual(name, 'upload')
+                        self.assertIn('actions/cache/restore@', uses)
+                        self.assertEqual(step['with']['path'], '${{ env.SPM }}')
+                        self.assertTrue(step['with']['key'].startswith('phone-spm-'))
 
     def test_the_gate_holds_no_secret_and_everything_with_the_key_after_it_needs_it(self):
         self.assertEqual(self.jobs['approve']['environment'], 'testflight-upload')
