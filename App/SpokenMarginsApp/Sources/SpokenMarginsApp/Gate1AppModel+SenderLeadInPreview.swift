@@ -8,9 +8,12 @@ import SessionKitPersistence
 extension Gate1AppModel {
     /// The episode the preview plays from: its downloaded file, else its stream. Nil when neither is there, which the
     /// preview reports as "needs the episode downloaded, or a connection".
-    func senderPreviewEpisodeURL(itemId: String) -> URL? {
+    /// The item is read off the main thread, as every tap-time read is (#2257).
+    func senderPreviewEpisodeURL(itemId: String) async -> URL? {
         if let local = podcastDownloadCoordinator?.validatedLocalURL(for: itemId) { return local }
-        guard let item = try? store?.loadItemSummary(id: itemId) else { return nil }
+        guard let store else { return nil }
+        let read = try? await StoreReader(store).read(priority: .userInitiated, { try $0.loadItemSummary(id: itemId) })
+        guard let item = read else { return nil }
         if item.mediaType == "audiobook" { return resolvedOwnedAudiobookURL(for: item) }
         if SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) {
             return (try? applicationSupportDirectory()).flatMap { SpokenNoteWholePlayback.playbackURL(for: item, applicationSupport: $0) }

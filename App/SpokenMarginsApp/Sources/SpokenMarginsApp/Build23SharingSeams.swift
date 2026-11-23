@@ -337,6 +337,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     private let model: Gate1AppModel
     /// Plays "Hear it as your friend will" (#4171). One for the sheet, so only one Margin's preview plays.
     private let leadInPreview = LeadInPreviewPlayer()
+    /// The item read before a preview starts; a Stop or another start cancels it.
+    private var leadInPreviewStart: Task<Void, Never>?
+    private var leadInPreviewStartID: String?
     /// The sheet's heading: "Share replies with Ana" (or "Share your Margins with Ana" when none is a reply) when it was opened to share replies back (#3221, #3906).
     var senderHeading: String { model.sharingState.replyBackTitle ?? "Share Margins" }
     /// Recovers a private-feed packet's episode from the recipient's own feed (#454).
@@ -685,20 +688,24 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         case .setRepresentation(let id, let choice):
             // The preview was playing the version just replaced.
             if leadInPreview.playingMarginID == id { leadInPreview.stop() }
+            leadInPreview.clearFailure(marginID: id)
             mutatePackage { model.setShareDraftRepresentation(id, choice: choice) }
         case .setReadAloud(let id, let readAloud):
             mutatePackage { model.setShareDraftReadAloud(id, readAloud: readAloud) }
         case .setLeadIn(let id, let ms):
             // The preview was playing the length just replaced.
             if leadInPreview.playingMarginID == id { leadInPreview.stop() }
+            leadInPreview.clearFailure(marginID: id)
             mutatePackage { model.setShareDraftLeadIn(id, ms: ms) }
         case .toggleLeadInPreview(let id):
             if leadInPreview.playingMarginID == id {
+                leadInPreviewStart?.cancel()
                 leadInPreview.stop()
             } else {
                 startLeadInPreview(id)
             }
         case .stopLeadInPreview(let id):
+            if leadInPreviewStartID == id { leadInPreviewStart?.cancel() }
             if leadInPreview.playingMarginID == id { leadInPreview.stop() }
         case .setAnchorBefore(let id, let text):
             mutatePackage { model.setShareDraftAnchorBefore(id, value: text) }
@@ -744,6 +751,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         case .returnFromSystemShare:
             stage = .review
         case .cancel:
+            leadInPreviewStart?.cancel()
             leadInPreview.stop()
             model.cancelBulkSharePreparation()
             model.isSharingInterjectionsPresented = false
@@ -949,9 +957,19 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         case .cleaned: draft.cleanedAudioURL
         case .textOnly: nil
         }
-        let episodeURL = model.senderPreviewEpisodeURL(itemId: model.selectedItem.id)
-        if episodeURL != nil { model.pauseForSenderPreview() }
-        leadInPreview.start(marginID: id, episodeURL: episodeURL, plan: plan, voiceURL: voiceURL)
+        let itemID = model.selectedItem.id
+        leadInPreviewStart?.cancel()
+        leadInPreviewStartID = id
+        leadInPreviewStart = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let episodeURL = await self.model.senderPreviewEpisodeURL(itemId: itemID)
+            // The sheet moved on while the item was read: a Stop, another Margin's preview, another item, or closing.
+            guard !Task.isCancelled, self.model.selectedItem.id == itemID else { return }
+            self.model.hangTelemetry.labels.scoped("leadInPreviewStart") {
+                if episodeURL != nil { self.model.pauseForSenderPreview() }
+                self.leadInPreview.start(marginID: id, episodeURL: episodeURL, plan: plan, voiceURL: voiceURL)
+            }
+        }
     }
 
     private func currentDraftFingerprint() -> String {

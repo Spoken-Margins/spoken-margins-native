@@ -217,8 +217,11 @@ extension Gate1AppModel {
             // one behind saying a length or a reading choice went out when it never did (#4171, the 4a audit).
             let revisionsToSave = revisions
             do {
+                // One transaction, so a save that fails part way leaves none behind for the deleted packet.
                 try await StoreReader(store).read { store in
-                    for revision in revisionsToSave { try store.saveInterjectionShareRevision(revision) }
+                    try store.withSessionTransaction {
+                        for revision in revisionsToSave { try store.saveInterjectionShareRevision(revision) }
+                    }
                 }
             } catch {
                 await Self.removeOffMain(destination) // a packet with no saved revisions would be a share with no record

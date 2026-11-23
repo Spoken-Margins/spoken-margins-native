@@ -1149,11 +1149,9 @@ struct Build23InlineTranscriptEditor: View {
     }
 }
 
-/// One button that plays the version the sender has selected (#3839). Switching the picker is how they compare; there
-/// is no button with Words only.
-@MainActor
 /// "Before your Margin" (#4171, PR 4b of the Design): how much of the episode the friend hears first, and a preview
 /// that plays it the way the friend will. The words and the rules are `SenderLeadInPreview`'s.
+@MainActor
 struct Build23LeadInRow: View {
     let marginID: String
     let leadIn: Build23LeadInSnapshot
@@ -1210,6 +1208,9 @@ struct Build23LeadInRow: View {
     }
 }
 
+/// One button that plays the version the sender has selected (#3839). Switching the picker is how they compare; there
+/// is no button with Words only.
+@MainActor
 struct Build23AudioPreviewControls: View {
     let representation: ShareMarginRepresentationChoice
     let originalURL: URL?

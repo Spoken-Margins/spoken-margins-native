@@ -94,7 +94,10 @@ final class LeadInPreviewPlayer: NSObject, ObservableObject, AVAudioPlayerDelega
         // The output went away, or the system paused it: a stopped run-up is a stopped preview.
         timeControlObservation = player.observe(\.timeControlStatus, options: [.old, .new]) { [weak self] _, change in
             guard change.oldValue == .playing, change.newValue == .paused else { return }
-            Task { @MainActor in self?.runUpWasPaused(run) }
+            Task { @MainActor in
+                MainThreadOperationLabels.shared.scoped("leadInPreview.runUpPaused") { self?.runUpWasPaused(run) }
+            }
+            // Reaching the end of this copy also pauses it; `runUpWasPaused` tells that apart from a stop.
         }
         let marginTime = CMTime(value: CMTimeValue(plan.marginMs), timescale: 1_000)
         boundaryObserver = player.addBoundaryTimeObserver(forTimes: [NSValue(time: marginTime)], queue: .main) { [weak self] in
@@ -137,7 +140,18 @@ final class LeadInPreviewPlayer: NSObject, ObservableObject, AVAudioPlayerDelega
 
     private func runUpWasPaused(_ run: Int) {
         guard generation == run, phase == .runUp else { return }
+        // A Margin past the end of this copy: the episode ran out, so the run-up is over, not stopped. This may arrive
+        // before the end-of-item notification.
+        if let item = episodePlayer?.currentItem, item.duration.isNumeric, item.currentTime() >= item.duration {
+            runUpEnded(run)
+            return
+        }
         stop()
+    }
+
+    /// The sender changed what the preview would play: the old failure no longer says anything about it.
+    func clearFailure(marginID: String) {
+        if failedMarginID == marginID { failedMarginID = nil }
     }
 
     private func playChime(_ run: Int) {
@@ -196,7 +210,7 @@ final class LeadInPreviewPlayer: NSObject, ObservableObject, AVAudioPlayerDelega
         Task { @MainActor [weak self] in
             guard let self else { return }
             if let cue = self.cuePlayer, ObjectIdentifier(cue) == finished, self.phase == .chime {
-                self.playVoice(self.generation)
+                MainThreadOperationLabels.shared.scoped("leadInPreview.voiceStart") { self.playVoice(self.generation) }
             } else if let voice = self.voicePlayer, ObjectIdentifier(voice) == finished {
                 self.stop()
             }
