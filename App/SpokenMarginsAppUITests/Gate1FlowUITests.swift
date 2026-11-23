@@ -177,7 +177,8 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(scrollToElement("playback.timeline.button").exists)
         openTimelineExperience()
         XCTAssertTrue(element("timeline.rail").exists)
-        XCTAssertTrue(scrollToButton(containingLabel: "Chapter").exists)
+        // A chapter or the Beginning, found by identifier: the compact Beginning row no longer says "Chapter" (#4778).
+        XCTAssertTrue(scrollToChapterOrBeginningRow().exists)
         XCTAssertTrue(scrollToButton(containingLabel: "Assistant response").exists)
         returnToNowPlayingFromTimelineIfNeeded()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
@@ -1324,6 +1325,18 @@ final class Gate1FlowUITests: XCTestCase {
             app.swipeUp()
         }
         XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing button containing \(text)")
+        return candidate
+    }
+
+    /// The first Timeline chapter row or the Beginning row. Chapter rows carry the heading trait as well as the button
+    /// trait (#4778), so this looks through every element, not only buttons.
+    private func scrollToChapterOrBeginningRow() -> XCUIElement {
+        let predicate = NSPredicate(format: "identifier BEGINSWITH 'timeline.chapter.jump.' OR identifier == 'timeline.source.beginning'")
+        let candidate = app.descendants(matching: .any).matching(predicate).firstMatch
+        for _ in 0..<12 where !isReadyToTap(candidate) {
+            app.swipeUp()
+        }
+        XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing a Timeline chapter or Beginning row")
         return candidate
     }
 
