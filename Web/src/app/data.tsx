@@ -9,6 +9,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { formatClock } from '../shared/clock.ts';
 import type { Episode, Margin, PlaybackPosition, Show } from '../shared/model.ts';
 import { browserStorage, forgetMirrored, mergeMirror, pruneMirror, readMirror } from './logic/position-mirror.ts';
+import { addedRow, inLibrary, isMigrated, membershipRow, stillMovedOut } from './logic/library-membership.ts';
 import { mergeRefresh } from './logic/refresh.ts';
 import { keepingSharedAs, withSharedAs, type WrittenFacts } from './logic/shared-as.ts';
 import { keepingHeard, keepingStar, withStar } from './logic/star.ts';
@@ -43,9 +44,22 @@ export interface DataApi extends Snapshot {
   deleteMargin(id: string): Promise<void>;
   savePosition(position: PlaybackPosition): Promise<void>;
   setSetting<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void>;
+  /** Whether the Library follows membership rows (the one-time move has run, #4425). False until then. */
+  migrated: boolean;
+  /**
+   * Puts an episode in the Library (#4425): writes its "in" row, then updates the mirror at once, so a second call in
+   * the same tick sees it. An episode already in is left alone (its first `at` stays). Failures are always shown
+   * (never a quiet repeat). Without `quiet` it throws a `NotSavedError`, so an Add button can reset; with `quiet` (a
+   * play, an import) it only logs, since nobody waits on it.
+   */
+  addToLibrary(episodeId: string, options?: { quiet?: boolean }): Promise<void>;
+  /** The Library notice's Put them back: an "in" row for each moved-out episode still without a row. Returns how many. */
+  putBackMovedOut(): Promise<number>;
+  /** The Library notice's Got it: forgets the moved-out list. */
+  dismissLibraryNotice(): Promise<void>;
 }
 
-const empty: Snapshot = { shows: [], episodes: [], margins: [], positions: [], settings: DEFAULT_SETTINGS };
+const empty: Snapshot = { shows: [], episodes: [], margins: [], positions: [], settings: DEFAULT_SETTINGS, library: {} };
 const DataContext = createContext<DataApi | null>(null);
 
 function upsert<T>(list: T[], items: readonly T[], key: (t: T) => string): T[] {
@@ -266,9 +280,49 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [run],
   );
 
+  const addToLibrary = useCallback(
+    async (episodeId: string, options: { quiet?: boolean } = {}) => {
+      const current = dataRef.current;
+      if (inLibrary(episodeId, current.library)) return;
+      const title = current.episodes.find((e) => e.id === episodeId)?.title ?? 'that episode';
+      const row = addedRow(current.library[episodeId], new Date().toISOString());
+      const failed = await run('library', `Adding “${title}” to your Library wasn’t saved.`, () => putMany('settings', [membershipRow(episodeId, row)]));
+      if (failed) {
+        if (options.quiet) return;
+        throw failed;
+      }
+      // Several adds can land one after another (an import, then a play): each must see the last without a render.
+      const next = (d: Snapshot): Snapshot => ({ ...d, library: { ...d.library, [episodeId]: inLibrary(episodeId, d.library) ? d.library[episodeId]! : row } });
+      setData(next);
+      dataRef.current = next(dataRef.current);
+    },
+    [run],
+  );
+
+  const putBackMovedOut = useCallback(async () => {
+    const current = dataRef.current;
+    const ids = stillMovedOut(current.settings.libraryMovedOut, current.episodes, current.library);
+    const now = new Date().toISOString();
+    const rows = [...ids.map((id) => membershipRow(id, { in: true, at: now })), { key: 'libraryMovedOut', value: [] as string[] }];
+    const failed = await run('library', 'Your Library wasn’t updated.', () => putMany('settings', rows));
+    if (failed) throw failed;
+    const next = (d: Snapshot): Snapshot => {
+      const library = { ...d.library };
+      for (const id of ids) if (!Object.hasOwn(library, id)) library[id] = { in: true, at: now };
+      return { ...d, library, settings: { ...d.settings, libraryMovedOut: [] } };
+    };
+    setData(next);
+    dataRef.current = next(dataRef.current);
+    return ids.length;
+  }, [run]);
+
+  const dismissLibraryNotice = useCallback(() => setSetting('libraryMovedOut', []), [setSetting]);
+
+  const migrated = isMigrated(data.settings);
+
   const api = useMemo<DataApi>(
-    () => ({ ...data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting }),
-    [data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting],
+    () => ({ ...data, ready, persist, migrated, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, putBackMovedOut, dismissLibraryNotice }),
+    [data, ready, persist, migrated, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, putBackMovedOut, dismissLibraryNotice],
   );
   return <DataContext.Provider value={api}>{children}</DataContext.Provider>;
 }

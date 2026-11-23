@@ -5,6 +5,7 @@ import { useData } from '../data.tsx';
 import { minutes, shortDate } from '../format.ts';
 import { ChevronIcon, CloseIcon, PlayIcon, PlusIcon, RefreshIcon } from '../icons.tsx';
 import { followingRows, libraryRows, newestFirst } from '../logic/library.ts';
+import { inLibrary } from '../logic/library-membership.ts';
 import { plainError } from '../logic/messages.ts';
 import { checkedLabel, needsRelayLine } from '../logic/refresh.ts';
 import { suggestionsToShow } from '../logic/suggestions.ts';
@@ -218,7 +219,7 @@ function ShowScreen({ show, onBack, onPlay }: { show: Show; onBack: () => void; 
       </div>
       <ul className="rows" aria-label={`Episodes of ${show.title}`}>
         {rows.map((row) => (
-          <li key={row.episode.id}>
+          <li key={row.episode.id} className={data.migrated ? 'show-episode' : undefined}>
             <button
               type="button"
               className="row episode-row"
@@ -238,10 +239,36 @@ function ShowScreen({ show, onBack, onPlay }: { show: Show; onBack: () => void; 
                 </span>
               </span>
             </button>
+            {data.migrated && <LibraryControl episodeId={row.episode.id} title={row.episode.title} />}
           </li>
         ))}
       </ul>
     </div>
+  );
+}
+
+/** The show screen's Add, or the words "In Library" once the episode is in (#4425). Only drawn once the store is migrated. */
+function LibraryControl({ episodeId, title }: { episodeId: string; title: string }) {
+  const data = useData();
+  const { toast } = useUi();
+  const [writing, setWriting] = useState(false);
+  if (inLibrary(episodeId, data.library)) return <span className="library-state muted">In Library</span>;
+  return (
+    <button
+      type="button"
+      className="button library-add"
+      aria-label={`Add ${title} to your Library`}
+      disabled={writing}
+      onClick={() => {
+        setWriting(true);
+        data.addToLibrary(episodeId).then(
+          () => toast(`Added “${title}” to your Library.`),
+          () => setWriting(false), // Already shown, and the button goes back to Add.
+        );
+      }}
+    >
+      Add
+    </button>
   );
 }
 

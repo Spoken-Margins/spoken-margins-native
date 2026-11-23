@@ -272,6 +272,27 @@ button:disabled {
   border-top: 1px solid var(--rule);
 }
 
+.rows > li.show-episode {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.show-episode .row {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.library-state {
+  flex: none;
+  white-space: nowrap;
+}
+
+.library-add {
+  flex: none;
+}
+
 .row {
   display: flex;
   align-items: center;
