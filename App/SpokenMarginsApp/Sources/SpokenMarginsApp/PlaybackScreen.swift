@@ -1564,7 +1564,13 @@ struct PlaybackScreen: View {
                    lhsTime != rhsTime {
                     return lhsTime < rhsTime
                 }
-                return lhs.sortRank < rhs.sortRank
+                if lhs.sortRank != rhs.sortRank { return lhs.sortRank < rhs.sortRank }
+                // Several Margins with no place (#4233) share one position and no time: oldest first, then by id, so
+                // the order is the same on every draw.
+                if case .interjection(let left) = lhs, case .interjection(let right) = rhs, !left.hasPlace, !right.hasPlace {
+                    return left.createdAt != right.createdAt ? left.createdAt < right.createdAt : left.id < right.id
+                }
+                return false
             }
             return lhsPercent < rhsPercent
         }
@@ -1861,7 +1867,10 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .chapter(let chapter): return chapter.percent
         case .mediaChapter(_, let percent): return percent
         case .listeningMapScene(_, let percent): return percent
-        case .interjection(let interjection): return interjection.targetType == .item ? interjection.roughPercent : 101
+        case .interjection(let interjection):
+            guard interjection.targetType == .item else { return 101 }
+            // A Margin with no place (#4233) has zeros, not a position: it sorts after every placed entry.
+            return interjection.hasPlace ? interjection.roughPercent : MarginPlacePresentation.timelineSortPosition
         case .importedCommentary(_, _, let percent): return percent
         case .turn: return 101
         case .turnChapter: return 101
@@ -1883,7 +1892,7 @@ private enum PlaybackTimelineEntry: Identifiable {
 
     var interjectionMediaTimeMs: Int? {
         switch self {
-        case .interjection(let interjection): return interjection.anchor.mediaTimeMs
+        case .interjection(let interjection): return interjection.hasPlace ? interjection.anchor.mediaTimeMs : nil
         case .importedCommentary(_, let margin, _): return margin.resolution.localMediaTimeMs
         default: return nil
         }

@@ -56,7 +56,8 @@ extension Gate1AppModel {
     /// passes the artwork file; this fallback never does, as before (#1003).
     func requireFollowedSourceCoordinator(store: SQLiteSessionStore) -> FollowedSourceCoordinator {
         if let followedSourceCoordinator { return followedSourceCoordinator }
-        let coordinator = FollowedSourceCoordinator(repository: store, setAside: FollowingRuleInputs.setAside(store: store), signals: .app)
+        let coordinator = FollowedSourceCoordinator(repository: store, setAside: FollowingRuleInputs.setAside(store: store), signals: .app, suppressedEntry: notForMeSuppressedEntry)
+        Task { [weak self] in await self?.loadNotForMe() } // read early; a refresh round still awaits it (#4285)
         followedSourceCoordinator = coordinator
         return coordinator
     }

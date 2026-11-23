@@ -34,8 +34,11 @@ enum InterjectionPositionPresentation {
         return timestamp
     }
 
+    /// The coordinate the Timeline and Now Playing sort by. A Margin with no place sorts after every placed entry
+    /// (#4233, PR 3c), never at the 0 its stored zeros would give.
     static func sortPercent(for interjection: Interjection, durationMs: Int?) -> Int {
-        percent(for: interjection, durationMs: durationMs) ?? interjection.roughPercent
+        if interjection.targetType == .item, !interjection.hasPlace { return MarginPlacePresentation.timelineSortPosition }
+        return percent(for: interjection, durationMs: durationMs) ?? interjection.roughPercent
     }
 
     private static func mediaTime(_ milliseconds: Int) -> String {

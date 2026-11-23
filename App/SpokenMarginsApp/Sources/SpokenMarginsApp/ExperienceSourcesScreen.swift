@@ -69,12 +69,21 @@ struct ExperienceSourcesScreen: View, Equatable {
         var hasFollowCandidates: Bool
         var isOfflineSnapshot: Bool
         var quickFolderFileCount: Int
+        /// The folder's name, location and problem (#3770), so the row redraws when it is renamed, moved or can't be opened.
+        var quickFolderName: String?
+        var quickFolderPath: String?
+        var quickFolderProblem: QuickFolderStatus.Problem?
         var isRefreshingQuickAddFeed: Bool
         var importingEntryIds: Set<String>
         var subscriptionIDs: [String]
         /// What `FollowingByList` needs to tell which rows are in a list.
         var subscriptions: [FeedSubscription]
         var isRefreshingFollowedSources: Bool
+
+        /// The words for the Quick Folder row. It shows no check time, so the clock doesn't matter here.
+        var quickFolderStatus: QuickFolderStatus {
+            QuickFolderStatus(name: quickFolderName, path: quickFolderPath, problem: quickFolderProblem, newCount: quickFolderFileCount)
+        }
 
         @MainActor init(_ model: Gate1AppModel) {
             let friends = model.followingFriends
@@ -84,7 +93,11 @@ struct ExperienceSourcesScreen: View, Equatable {
             hasFollowCandidates = !model.followedSourceCandidates.isEmpty
             isOfflineSnapshot = model.selectedProfileId.contains("offline")
             // New files in the Quick Folder. They used to arrive in Following's stream; the folder is a place to open now.
-            quickFolderFileCount = model.quickAddCandidates.filter { if case .localFile = $0 { true } else { false } }.count
+            quickFolderFileCount = model.quickFolderNewFiles.count
+            let folder = model.quickAccess.status()
+            quickFolderName = folder.name
+            quickFolderPath = folder.path
+            quickFolderProblem = folder.problem
             isRefreshingQuickAddFeed = model.isRefreshingQuickAddFeed
             importingEntryIds = model.importingFollowedSourceEntryIds
             subscriptionIDs = model.feedSubscriptions.map(\.id)
@@ -126,8 +139,10 @@ struct ExperienceSourcesScreen: View, Equatable {
                     aiSuggestionsRow(suggestionsRow)
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
-                if inputs.quickFolderFileCount > 0 {
-                    quickFolderRow(count: inputs.quickFolderFileCount)
+                // Listed with new files, and also when the folder can't be opened: a silent broken folder is what #3770 answers.
+                let quickFolder = inputs.quickFolderStatus
+                if quickFolder.isListedOnFollowing {
+                    quickFolderRow(quickFolder)
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
                 if inputs.showsEmptyState {
@@ -496,15 +511,27 @@ struct ExperienceSourcesScreen: View, Equatable {
         }
     }
 
-    private func quickFolderRow(count: Int) -> some View {
+    /// The folder's name, with "Quick Folder · 3 new" (or "· can't open this folder", with its icon) under it (#3770).
+    private func quickFolderRow(_ status: QuickFolderStatus) -> some View {
         Button { isShowingQuickFolder = true } label: {
             HStack(spacing: 10) {
                 Image(systemName: "folder")
                     .foregroundStyle(AppColors.evergreen)
                     .accessibilityHidden(true)
-                Text("Quick Folder · \(count) new")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppColors.text)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(status.followingTitle)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppColors.text)
+                    if let symbol = status.followingSymbol {
+                        Label(status.followingSubtitle, systemImage: symbol)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.text)
+                    } else {
+                        Text(status.followingSubtitle)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                }
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.subheadline.weight(.semibold))
@@ -515,6 +542,9 @@ struct ExperienceSourcesScreen: View, Equatable {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(status.followingAccessibilityLabel)
+        .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("sources.quickFolder")
     }
 
@@ -598,7 +628,7 @@ private struct FollowingShowRowView: View {
                                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                         }
                         HStack(spacing: 8) {
-                            if let label = row.newLabel {
+                            if let label = row.countLabel {
                                 Text(label)
                                     .font(.caption.weight(.bold))
                                     .foregroundStyle(AppColors.onEvergreen)
@@ -701,15 +731,28 @@ struct ShowArtworkView: View {
     }
 }
 
-/// New files in the Quick Folder, which used to arrive in Following's stream. Each keeps its row actions.
+/// New files in the Quick Folder, which used to arrive in Following's stream. Each keeps its row actions. Titled with the
+/// folder's name, with where it is under it; when the folder can't be opened, the same section and buttons as Settings (#3770).
 private struct QuickFolderFilesScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let artwork: FollowingArtworkCache
 
     var body: some View {
+        let files = model.quickFolderNewFiles
+        let status = model.quickAccess.status(newCount: files.count)
         List {
-            ForEach(model.quickAddCandidates.filter { if case .localFile = $0 { true } else { false } }) { candidate in
+            Text(status.followingScreenFirstLine)
+                .font(.subheadline)
+                .foregroundStyle(AppColors.secondaryText)
+                .listRowSeparator(.hidden)
+                .listRowBackground(AppColors.bone)
+                .accessibilityIdentifier("sources.quickFolder.location")
+            if status.cantOpen {
+                QuickFolderCantOpenSection(model: model, isChecking: model.quickAccess.isRefreshing)
+                    .listRowBackground(AppColors.bone)
+            }
+            ForEach(files) { candidate in
                 SourceInboxRow(candidate: candidate, artwork: artwork)
                     .listRowInsets(EdgeInsets(top: 0, leading: horizontalSizeClass == .regular ? 28 : 16, bottom: 0, trailing: horizontalSizeClass == .regular ? 28 : 16))
                     .listRowSeparator(.hidden)
@@ -719,7 +762,7 @@ private struct QuickFolderFilesScreen: View {
         .background(AppColors.bone)
         .scrollContentBackground(.hidden)
         .listStyle(.plain)
-        .navigationTitle("Quick Folder")
+        .navigationTitle(status.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("sources.quickFolder.screen")
     }
@@ -759,6 +802,11 @@ struct SourceInboxRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let candidate: QuickAddCandidate
     let artwork: FollowingArtworkCache
+    /// The rule word that skipped this episode, on the Show screen's "Skipped by your rules" group (#4046 PR 10b): the row
+    /// says so and its menu offers **Hear it anyway**. Nil everywhere else.
+    var skippedWord: String? = nil
+    /// A pick rule matched it: the star and the word "Pick" sit after the date.
+    var isPick = false
     @State private var confirmsUnfollow = false
 
     /// A Quick Folder link list adds many links, so there is no one item to queue (#4044).
@@ -792,7 +840,7 @@ struct SourceInboxRow: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(action: dismiss) {
-                Label("Dismiss", systemImage: "xmark")
+                Label(dismissTitle, systemImage: dismissSystemImage)
             }
             .tint(AppColors.swipePlum)
             // Second and not a full swipe: the first button above is the one a long swipe takes.
@@ -849,7 +897,7 @@ struct SourceInboxRow: View {
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint("Adds this entry to Library and opens it.")
         .accessibilityAction(named: "Add to Library", addAndOpen)
-        .accessibilityAction(named: "Dismiss", dismiss)
+        .accessibilityAction(named: Text(dismissTitle), dismiss)
         .accessibilityActions {
             if canQueue { Button(QueueRowAction.add.title, action: addToQueue) }
             // A Quick Folder file has no show to play from, mute or unfollow.
@@ -864,6 +912,10 @@ struct SourceInboxRow: View {
     /// Every action the swipes and the long press offer, so the More menu and the context menu stay the same list.
     @ViewBuilder
     private var rowActions: some View {
+        // Does what tapping the row does; the rule stays as it is.
+        if skippedWord != nil {
+            Button(action: addAndOpen) { Label("Hear it anyway", systemImage: "headphones") }
+        }
         Button(action: addInPlace) { Label("Add to Library", systemImage: "plus.circle") }
         if canQueue {
             Button(action: addToQueue) { Label(QueueRowAction.add.title, systemImage: QueueRowAction.add.systemImage) }
@@ -871,7 +923,7 @@ struct SourceInboxRow: View {
         if isFeedEntry {
             Button(action: playNow) { Label("Play now", systemImage: "play.fill") }
         }
-        Button(action: dismiss) { Label("Dismiss", systemImage: "xmark") }
+        Button(action: dismiss) { Label(dismissTitle, systemImage: dismissSystemImage) }
         if let subscription {
             Button { model.toggleMuteSource(id: subscription.id) } label: {
                 Label(FollowingRowActions.muteTitle(showTitle: subscriptionTitle), systemImage: "speaker.slash")
@@ -920,7 +972,7 @@ struct SourceInboxRow: View {
 
     private var provenanceLead: String {
         switch candidate {
-        case .localFile(let file): "Quick Folder · \(file.modifiedAtDescription)"
+        case .localFile(let file): model.quickAccess.status().fileCaption(dateText: file.modifiedAtDescription)
         case .followedSource(let entry): showTitle(of: entry) ?? "Followed feed"
         }
     }
@@ -949,8 +1001,9 @@ struct SourceInboxRow: View {
     }
 
     private var accessibilityLabel: String {
-        if let row { return row.accessibilityLabel }
-        return "\(title). \(provenance)"
+        let base = row?.accessibilityLabel ?? "\(title). \(provenance)"
+        let extras = [isPick ? "Pick." : nil, skippedWord.map { ListeningRuleScreens.skippedLine(word: $0) + "." }].compactMap { $0 }
+        return ([base] + extras).joined(separator: " ")
     }
 
     /// The row's text. At accessibility sizes the title and the show name wrap fully; the row grows with them (#1936).
@@ -978,9 +1031,25 @@ struct SourceInboxRow: View {
                         .lineLimit(1)
                         .layoutPriority(1)
                 }
+                // A symbol and the word, never colour alone (#4046 PR 10b).
+                if isPick {
+                    Label("Pick", systemImage: "star.fill")
+                        .labelStyle(.titleAndIcon)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                        .padding(.leading, dynamicTypeSize.isAccessibilitySize ? 0 : 6)
+                        .accessibilityIdentifier("\(identifier).pick")
+                }
             }
             .font(.caption)
             .foregroundStyle(AppColors.secondaryText)
+            if let skippedWord {
+                Text(ListeningRuleScreens.skippedLine(word: skippedWord))
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .accessibilityIdentifier("\(identifier).skipped")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1081,10 +1150,14 @@ struct SourceInboxRow: View {
         }
     }
 
+    /// "Not for me" on a followed show's episode, "Dismiss" on a Quick Folder file (#4285).
+    private var dismissTitle: String { FollowingDismissMessages.actionTitle(isFollowedEntry: isFeedEntry) }
+    private var dismissSystemImage: String { FollowingDismissMessages.actionSystemImage(isFollowedEntry: isFeedEntry) }
+
     private func dismiss() {
         switch candidate {
         case .localFile(let file): model.dismissQuickAccessFileWithUndo(file)
-        case .followedSource(let entry): model.dismissFollowedSourceEntry(id: entry.id)
+        case .followedSource(let entry): model.dismissFollowedSourceEntry(entry)
         }
     }
 }
