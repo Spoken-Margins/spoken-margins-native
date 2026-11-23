@@ -63,6 +63,25 @@ extension Gate1AppModel {
         presentDismissUndo(title: file.name) { [weak self] in self?.restoreQuickAccessFile(file) }
     }
 
+    /// Dismiss on Following's "Suggested by your AI" row (#4683): every pending suggestion goes, with one Undo that puts
+    /// them back whole (and keeps any that arrived in between).
+    func dismissAIFollowSuggestionsWithUndo() {
+        let suggestions = aiFollowSuggestionsModel
+        let previous = suggestions.dismissAll()
+        guard !previous.isEmpty else { return }
+        presentDismissUndo(title: AIFollowSuggestionsRow.title) { suggestions.restore(previous) }
+    }
+
+    /// Following's "Suggested by your AI" row was tapped (#4683): its shows open in the follow preview, titled for the AI.
+    /// Nothing is followed until the listener taps Follow there.
+    func openAIFollowSuggestions(_ row: AIFollowSuggestionsRow, in drawer: CatalogDrawerModel) {
+        if drawer.shortcutImport?.isFollowing == true {
+            reportWarning(AIFollowSuggestionsRow.stillFollowingMessage)
+            return
+        }
+        drawer.openShortcutImport(feedLinks: row.feedLinks, origin: .assistant)
+    }
+
     private func presentDismissUndo(title: String, undo: @escaping @MainActor () -> Void) {
         // A later dismissal replaces this banner, so the Undo on screen is always the newest one.
         let action = UserFeedbackEvent.Action(

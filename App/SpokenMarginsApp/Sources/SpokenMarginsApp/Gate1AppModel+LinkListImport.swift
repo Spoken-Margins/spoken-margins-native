@@ -44,7 +44,7 @@ extension Gate1AppModel {
         if problems.isEmpty, added == 0, sawFollows {
             // Only shows to follow: nothing was added, and the empty line a confirmation would show is never right.
             reportConfirmation(LinkListArrivalPlan.banner(
-                base: nil, suggested: suggested, madeItems: false, isTitled: false, collectionIsNew: false, mentionsFollowing: false).message)
+                base: nil, suggested: suggested, madeItems: false, isTitled: false, collectionIsNew: false, mentionsFollowing: true).message)
             return (true, nil)
         }
         if problems.isEmpty {
