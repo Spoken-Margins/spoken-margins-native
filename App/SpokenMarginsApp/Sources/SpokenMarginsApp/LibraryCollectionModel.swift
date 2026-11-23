@@ -47,12 +47,19 @@ final class LibraryCollectionModel: ObservableObject {
 
     /// Makes a collection holding `itemIDs`, in that order (Select's Add to Collection, a new name typed inline).
     func create(name: String, itemIDs: [String], store: SQLiteSessionStore, now: Date = Date()) async -> Outcome {
-        guard ItemCollectionEditing.normalizedName(name) != nil else { return .needsName }
+        await createCollection(name: name, itemIDs: itemIDs, store: store, now: now).outcome
+    }
+
+    /// `create`, and the collection it made, for a caller that links it to something by id (#5033).
+    func createCollection(
+        name: String, itemIDs: [String], store: SQLiteSessionStore, now: Date = Date()
+    ) async -> (outcome: Outcome, collection: ItemCollection?) {
+        guard ItemCollectionEditing.normalizedName(name) != nil else { return (.needsName, nil) }
         guard let created = LibraryCollectionAdding.creating(
             name: name, with: itemIDs, id: "collection-\(UUID().uuidString)", now: now, in: collections
-        ) else { return .nameTaken }
-        if let failure = await save(created.collection, store: store) { return .failed(failure) }
-        return .saved
+        ) else { return (.nameTaken, nil) }
+        if let failure = await save(created.collection, store: store) { return (.failed(failure), nil) }
+        return (.saved, created.collection)
     }
 
     /// Select's Add to Collection on an existing collection (#4720): the items join at the end in the order given.
