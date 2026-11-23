@@ -676,7 +676,7 @@ struct ExperienceMarginsScreen: View, Equatable {
         let visibleIDs = Set(visible.map(\.interjection.id))
         let visibleByID = Dictionary(visible.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let sharedByID = Dictionary(model.sharedMarginRows.map { ($0.interjection.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let ownByID = Dictionary(model.marginRows.map { ($0.interjection.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let ownByID = Dictionary(model.marginRows.map { ($0.interjection.sessionScopedId, $0) }, uniquingKeysWith: { first, _ in first })
         // A layer with an item id has its item: `MarginCollection.build` drops the layers of deleted items.
         let libraryIDs = Set(visible.compactMap(\.layer.itemId))
         let groups = SharedMarginGroups.groups(
