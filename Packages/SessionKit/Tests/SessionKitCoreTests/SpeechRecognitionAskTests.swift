@@ -250,12 +250,26 @@ final class SpeechAskWaitingListTests: XCTestCase {
 
 /// Held transcription (director's Default taken on #4715, 2026-11-23).
 final class SpeechAskHeldTranscriptionTests: XCTestCase {
-    /// The audit on #5124: a listener who has never recorded opens a friend's podcast packet whose placement needs a
-    /// transcript. Only that hold makes the card owed, in the friend's words; the other held paths wait quietly.
-    func testHeldTranscriptionOwesTheCardOnlyForAFriendsPacketTable() {
+    /// The audits on #5124: a listener who has never recorded in the player opens a friend's podcast packet whose
+    /// placement needs a transcript (17:14Z), or records spoken Margins only in a live session, on the Watch or by the
+    /// Shortcut (18:59Z). Those holds make the card owed: a spoken Margin from any surface in the Margins words, a
+    /// friend's packet in its own. The other held paths wait quietly.
+    func testHeldTranscriptionOwesTheCardForASpokenMarginOrAFriendsPacketTable() {
         typealias Row = (name: String, answer: SpeechRecognitionAsk.Answer, spokenMargin: Bool, held: [HeldTranscription],
                          owed: Bool, wording: SpeechRecognitionAsk.CardWording)
         let rows: [Row] = [
+            ("never recorded in the player, live-session Margin held", .unanswered, false, [.liveSessionMargin], true, .margins),
+            ("never recorded in the player, Watch Margin held", .unanswered, false, [.watchMargin], true, .margins),
+            ("never recorded in the player, Shortcut Margin held", .unanswered, false, [.shortcutMargin], true, .margins),
+            ("player Margin held", .unanswered, false, [.playerMargin], true, .margins),
+            ("friend's packet then a Watch Margin held", .unanswered, false, [.friendPacketPlacement, .watchMargin], true, .margins),
+            ("episode map then a live-session Margin held", .unanswered, false, [.episodeMap, .liveSessionMargin], true, .margins),
+            ("answered Not now, live-session Margin held", .notNow, false, [.liveSessionMargin], false, .margins),
+            ("answered Yes, Shortcut Margin held", .yes, false, [.shortcutMargin], false, .margins),
+            ("never recorded, Just Heard peek held", .unanswered, false, [.justHeardPeek], false, .margins),
+            ("never recorded, spoken note held", .unanswered, false, [.spokenNote], true, .margins),
+            ("friend's packet then a spoken note held", .unanswered, false, [.friendPacketPlacement, .spokenNote], true, .margins),
+            ("answered Not now, spoken note held", .notNow, false, [.spokenNote], false, .margins),
             ("never recorded, friend's packet held", .unanswered, false, [.friendPacketPlacement], true, .friendPlacement),
             ("never recorded, episode map held", .unanswered, false, [.episodeMap], false, .margins),
             ("never recorded, source window held", .unanswered, false, [.sourceWindow], false, .margins),
@@ -290,6 +304,99 @@ final class SpeechAskHeldTranscriptionTests: XCTestCase {
         XCTAssertEqual(ask.cardWording, .friendPlacement)
         _ = ask.cardDue(at: .spokenMarginSaved(hearItLandWillRun: false), access: .notDetermined, shownThisLaunchForReAsk: false)
         XCTAssertEqual(ask.cardWording, .margins)
+    }
+
+    /// Each purpose, by name: whether it owes the card and how it starts again after Allow. A new purpose must be added
+    /// here, so its answer is a decision, not a default.
+    func testEveryPurposeSaysWhetherItIsOwedAndHowItRetries() {
+        let table: [HeldTranscription: (owed: Bool, retry: HeldTranscription.Retry)] = [
+            .playerMargin: (true, .waitingList),
+            .liveSessionMargin: (true, .liveSessionSweep),
+            .watchMargin: (true, .liveSessionSweep),
+            .shortcutMargin: (true, .liveSessionSweep),
+            .friendPacketPlacement: (true, .callerRegisters),
+            .episodeMap: (false, .callerRegisters),
+            .sourceWindow: (false, .callerRegisters),
+            .publisherTextMap: (false, .callerRegisters),
+            .justHeardPeek: (false, .none),
+            .spokenNote: (true, .spokenNoteSweep),
+        ]
+        XCTAssertEqual(Set(table.keys), Set(HeldTranscription.allCases), "every purpose is in the table")
+        for (purpose, expected) in table {
+            XCTAssertEqual(purpose.makesAskOwed, expected.owed, purpose.rawValue)
+            XCTAssertEqual(purpose.retry, expected.retry, purpose.rawValue)
+        }
+    }
+
+    /// The sink registers the live-session sweep itself for a live-session, Watch or Shortcut Margin, once however many
+    /// were held, so a `try?` at the caller loses none of them. Other purposes register nothing here.
+    @MainActor
+    func testAHeldLiveSessionWatchOrShortcutMarginRegistersOneSweep() {
+        var sweeps = 0
+        let retries = HeldTranscriptionRetries(liveSessionSweep: { sweeps += 1 })
+        for purpose in HeldTranscription.allCases where purpose.retry != .liveSessionSweep && purpose.retry != .spokenNoteSweep {
+            retries.reported(purpose)
+        }
+        XCTAssertTrue(retries.isEmpty, "the caller or the waiting list retries the rest")
+        retries.reported(.liveSessionMargin)
+        retries.reported(.watchMargin)
+        retries.reported(.shortcutMargin)
+        XCTAssertEqual(retries.settle(access: .notDetermined), 0)
+        XCTAssertEqual(sweeps, 0)
+        XCTAssertEqual(retries.settle(access: .authorized), 1)
+        XCTAssertEqual(sweeps, 1, "one sweep covers every held live-session Margin")
+        retries.reported(.watchMargin)
+        XCTAssertEqual(retries.settle(access: .denied), 0)
+        XCTAssertEqual(sweeps, 1, "a decided no drops it")
+    }
+
+    /// Director's Default taken on #4715, 2026-11-23: the listener's own recordings make the card due. A listener whose
+    /// first recording is a spoken note (the Add source tile), with no spoken Margin anywhere, is owed the card in the
+    /// existing Margins words once the note's take meets the hold.
+    func testAListenerWhoseFirstRecordingIsASpokenNoteIsOwedTheCardInTheMarginsWords() {
+        var ask = SpeechRecognitionAsk(storedAnswer: nil, hasSavedSpokenMargin: false)
+        XCTAssertFalse(ask.isOwed(access: .notDetermined), "nothing recorded yet")
+        ask.transcriptionHeld(.spokenNote)
+        XCTAssertTrue(ask.isOwed(access: .notDetermined), "a held spoken note is the listener's own recording")
+        XCTAssertEqual(ask.cardWording, .margins)
+        XCTAssertEqual(ask.cardWording.headline, "Want your Margins as text too?")
+        XCTAssertTrue(ask.cardDue(at: .reachedForText, access: .notDetermined, shownThisLaunchForReAsk: false))
+    }
+
+    /// A held spoken note registers one spoken-note sweep, however many takes were held, and no live-session sweep; the
+    /// sweep runs once on Allow and is dropped on a no.
+    @MainActor
+    func testAHeldSpokenNoteRegistersOneSpokenNoteSweep() {
+        var noteSweeps = 0
+        var liveSweeps = 0
+        let retries = HeldTranscriptionRetries(liveSessionSweep: { liveSweeps += 1 }, spokenNoteSweep: { noteSweeps += 1 })
+        retries.reported(.spokenNote)
+        retries.reported(.spokenNote)
+        XCTAssertEqual(retries.heldKinds, [.spokenNote])
+        XCTAssertEqual(retries.settle(access: .notDetermined), 0)
+        XCTAssertEqual(retries.settle(access: .authorized), 1)
+        XCTAssertEqual(noteSweeps, 1, "one sweep covers every held take")
+        XCTAssertEqual(liveSweeps, 0)
+        retries.reported(.spokenNote)
+        XCTAssertEqual(retries.settle(access: .denied), 0)
+        XCTAssertEqual(noteSweeps, 1, "a decided no drops it")
+    }
+
+    /// A held sweep is carried into the next launch under its own key, one purpose per key, so a relaunch owes the card
+    /// again and sweeps after Allow: the live sessions' Margins and the spoken notes, each once.
+    func testEachSweepIsCarriedAcrossALaunchUnderItsOwnKey() {
+        let carried = HeldTranscription.heldAcrossLaunch
+        XCTAssertEqual(carried.map(\.key), [SpeechRecognitionAsk.liveSessionMarginHeldKey, SpeechRecognitionAsk.spokenNoteHeldKey])
+        XCTAssertEqual(carried.map(\.purpose), [.liveSessionMargin, .spokenNote])
+        for (_, purpose) in carried {
+            var ask = SpeechRecognitionAsk(storedAnswer: nil)
+            ask.transcriptionHeld(purpose)
+            XCTAssertTrue(ask.isOwed(access: .notDetermined), purpose.rawValue)
+            XCTAssertEqual(ask.cardWording, .margins, purpose.rawValue)
+        }
+        XCTAssertNil(HeldTranscription.Retry.waitingList.heldAcrossLaunchKey)
+        XCTAssertNil(HeldTranscription.Retry.callerRegisters.heldAcrossLaunchKey)
+        XCTAssertNil(HeldTranscription.Retry.none.heldAcrossLaunchKey)
     }
 
     /// Every held path retries after Allow, whatever bookkeeping it kept (round 1 retried a friend's packet only when

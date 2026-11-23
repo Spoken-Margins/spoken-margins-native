@@ -1583,7 +1583,7 @@ private final class FailFastNetworkURLProtocol: URLProtocol, @unchecked Sendable
 private actor PackageAnchorTranscriptionClient: SourceTranscriptionClient {
     private var requestCount = 0
 
-    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription) async throws -> TranscriptTimeline {
         requestCount += 1
         return Self.recipientTimeline(durationMs: durationMs)
     }

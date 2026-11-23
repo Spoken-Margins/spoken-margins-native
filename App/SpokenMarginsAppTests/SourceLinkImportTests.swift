@@ -3011,7 +3011,7 @@ private final class CountingAppLinkResolver: LinkResolutionClient {
 }
 
 private struct ThrowingSourceTranscriptionClient: SourceTranscriptionClient {
-    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription) async throws -> TranscriptTimeline {
         throw SessionKitError.persistenceFailed("source_transcription_disabled_for_test")
     }
 }
@@ -3123,7 +3123,7 @@ private actor RecordingSourceWindowTranscriptionClient: SourceTranscriptionClien
         self.timeline = timeline
     }
 
-    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription) async throws -> TranscriptTimeline {
         throw SessionKitError.persistenceFailed("source_transcription_disabled_for_test")
     }
 
@@ -3133,7 +3133,8 @@ private actor RecordingSourceWindowTranscriptionClient: SourceTranscriptionClien
         anchorMediaTimeMs: Int,
         durationMs: Int?,
         windowBeforeMs: Int,
-        windowAfterMs: Int
+        windowAfterMs: Int,
+        for purpose: HeldTranscription
     ) async throws -> TranscriptTimeline {
         let request = WindowRequest(
             url: url,
@@ -3174,18 +3175,20 @@ private final class GatedSourceWindowTranscriptionClient: SourceTranscriptionCli
     private(set) var startedAnchors: [Int] = []
     private var waiting: [CheckedContinuation<Void, Never>] = []
 
-    nonisolated func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    nonisolated func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription) async throws -> TranscriptTimeline {
         throw SessionKitError.persistenceFailed("source_transcription_disabled_for_test")
     }
 
     nonisolated func transcribeSourceAudioWindow(
-        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?, windowBeforeMs: Int, windowAfterMs: Int
+        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?, windowBeforeMs: Int, windowAfterMs: Int,
+        for purpose: HeldTranscription
     ) async throws -> TranscriptTimeline {
         throw SessionKitError.persistenceFailed("source_window_without_evidence_disabled_for_test")
     }
 
     func transcribeSourceAudioWindowWithEvidence(
-        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?, windowBeforeMs: Int, windowAfterMs: Int
+        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?, windowBeforeMs: Int, windowAfterMs: Int,
+        for purpose: HeldTranscription
     ) async throws -> SourceAudioWindowTranscription {
         runningNow += 1
         peakRunning = max(peakRunning, runningNow)
@@ -3224,7 +3227,7 @@ private actor RecordingFullSourceTranscriptionClient: SourceTranscriptionClient 
     private var requests: [FullRequest] = []
     private var continuations: [CheckedContinuation<FullRequest, Never>] = []
 
-    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription) async throws -> TranscriptTimeline {
         let request = FullRequest(url: url, itemId: itemId, durationMs: durationMs)
         requests.append(request)
         for continuation in continuations {

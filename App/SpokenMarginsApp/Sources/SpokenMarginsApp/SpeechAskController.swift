@@ -22,8 +22,13 @@ final class SpeechAskController: ObservableObject {
     private let askSystem: @Sendable () async -> Void
     private(set) var ask: SpeechRecognitionAsk
     private(set) var waiting: SpeechAskWaitingList
-    /// Transcription work other than a spoken Margin's that met the hold. Allow runs each retry; a no drops them.
-    let heldRetries = HeldTranscriptionRetries()
+    /// Transcription work that met the hold, other than a player Margin's (the waiting list has those). Allow runs each
+    /// retry; a no drops them. The live-session sweep covers every live-session, Watch and Shortcut Margin at once; the
+    /// spoken-note sweep every note's takes with no words.
+    let heldRetries = HeldTranscriptionRetries(
+        liveSessionSweep: { Task { @MainActor in await LiveSessionSpokenMargins.transcribeMissing() } },
+        spokenNoteSweep: { SpokenNoteHeldTranscripts.transcribeMissing() }
+    )
     private var reAskShownThisLaunch = false
     private var announcedForThisAsk = false
     /// Nil while no card is due. The slot and the list draw it only on their own surface.
@@ -45,6 +50,12 @@ final class SpeechAskController: ObservableObject {
         let carried = SpeechRecognitionAsk.answerToCarryIntoLaunch(stored: stored, access: access())
         if carried != stored { defaults.removeObject(forKey: SpeechRecognitionAsk.storageKey) }
         ask = SpeechRecognitionAsk(storedAnswer: carried, hasSavedSpokenMargin: waiting.hasWaitingMargin)
+        // A live-session, Watch or Shortcut Margin, or a spoken note, held in an earlier run (perhaps in the
+        // background): owed again, and swept after Allow.
+        for (key, purpose) in HeldTranscription.heldAcrossLaunch where defaults.bool(forKey: key) {
+            ask.transcriptionHeld(purpose)
+            heldRetries.reported(purpose)
+        }
         // An unanswered card comes back when the slot is free, including after a relaunch.
         if ask.isOwed(access: access()) { cardSurface = .now }
     }
@@ -62,6 +73,12 @@ final class SpeechAskController: ObservableObject {
         SpeechAuthorizationAsk.setMayAskSystem {
             SpeechRecognitionAsk(storedAnswer: UserDefaults.standard.string(forKey: SpeechRecognitionAsk.storageKey))
                 .mayAskSystem(access: .notDetermined)
+        }
+        // Every hold comes here with what it held, from whichever caller and thread met it (#4715).
+        SpeechAuthorizationAsk.setHoldSink { purpose in
+            Task { @MainActor in
+                MainThreadOperationLabels.shared.scoped("speechAsk.holdReported") { SpeechAskController.shared.holdReported(purpose) }
+            }
         }
     }
 
@@ -113,8 +130,22 @@ final class SpeechAskController: ObservableObject {
         }
     }
 
+    /// The gate held work for `purpose` (`SpeechAuthorizationAsk.setHoldSink`, installed with the gate). The one place a
+    /// hold arms the card: a spoken Margin from any surface, a spoken note or a friend's packet makes it owed
+    /// (`HeldTranscription`), and a live-session, Watch or Shortcut Margin or a spoken note is recorded for the next
+    /// launch and swept after Allow, so the `try?` that met the hold loses nothing.
+    func holdReported(_ purpose: HeldTranscription) {
+        ask.transcriptionHeld(purpose)
+        heldRetries.reported(purpose)
+        if let key = purpose.retry.heldAcrossLaunchKey, access() == .notDetermined {
+            defaults.set(true, forKey: key)
+        }
+        if cardSurface == nil, ask.isOwed(access: access()) { cardSurface = .now }
+    }
+
     /// Transcription work met the hold (`HeldTranscription`): `retry` runs on Allow, whatever bookkeeping the caller kept.
-    /// A friend's packet also makes the card owed, so a listener who has never recorded can still reach Allow (#4715).
+    /// The card itself is armed by the gate's report (`holdReported`); this keeps the caller's retry, and arms the card
+    /// too for a caller that waits without reaching the gate (the publisher text map).
     func transcriptionHeld(_ kind: HeldTranscription, key: String, retry: @escaping @MainActor () -> Void) {
         heldRetries.hold(kind, key: key, retry: retry)
         ask.transcriptionHeld(kind)
@@ -197,6 +228,7 @@ final class SpeechAskController: ObservableObject {
             heldRetries.settle(access: .authorized)
         case .denied, .restricted:
             heldRetries.settle(access: access())
+            forgetHeldAcrossLaunch()
             guard waiting.hasWaitingMargin else { return }
             clearWaiting()
             model?.refreshMarginRowsInBackground()
@@ -204,8 +236,14 @@ final class SpeechAskController: ObservableObject {
         cardSurface = nil
     }
 
+    /// Either answer settles the waiting list and the sweeps' records: their retries ran or were dropped together.
     private func clearWaiting() {
         waiting.clear()
         defaults.removeObject(forKey: SpeechAskWaitingList.storageKey)
+        forgetHeldAcrossLaunch()
+    }
+
+    private func forgetHeldAcrossLaunch() {
+        for (key, _) in HeldTranscription.heldAcrossLaunch { defaults.removeObject(forKey: key) }
     }
 }
