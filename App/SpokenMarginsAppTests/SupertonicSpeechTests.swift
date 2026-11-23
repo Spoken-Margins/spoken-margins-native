@@ -192,6 +192,32 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(log.sampleCount, wanted, "the stall monitor kept sampling")
     }
 
+    // #288: the player says it's playing but its clock doesn't move. It must be noticed, logged
+    // with the session's and player's state, and re-seated, at most once per 30 s.
+    func testAPlayerWhoseClockStopsIsLoggedAndReseated() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: false)
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "stall", from: 0)
+        try await pollUntil { log.startCount >= 2 }
+        XCTAssertEqual(log.values.first, "supertonic.stall")
+        XCTAssertEqual(log.lastFields["recovery"], "reseat_player")
+        XCTAssertNotNil(log.lastFields["playerRate"])
+        XCTAssertNotNil(log.lastFields["sessionCategory"], "the session's state is recorded")
+        // #540: what the next export needs to say why the player never made sound.
+        XCTAssertEqual(log.lastFields["chunkEngine"], "supertonic")
+        XCTAssertNotNil(log.lastFields["appState"])
+        XCTAssertNotNil(log.lastFields["conditions"])
+        XCTAssertNotNil(log.lastFields["playerAgeMs"])
+        XCTAssertNotEqual(log.lastFields["startRequestedAgoMs"], "never", "the start had been asked for")
+        XCTAssertGreaterThanOrEqual(log.startCount, 2, "the player was re-seated")
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertEqual(log.values.filter { $0 == "supertonic.stall" }.count, 1, "at most one re-seat per 30 s")
+        try client.stop()
+    }
+
     /// A client whose render times out, so the iOS voice (`fallback`) takes over at offset 17.
     private func systemVoiceStallClient(_ log: StallEventLog, fallback: RecordingFallbackAudioClient) throws -> SupertonicSpeechPlaybackClient {
         let template = try makeTestWAV(duration: 0.5)
