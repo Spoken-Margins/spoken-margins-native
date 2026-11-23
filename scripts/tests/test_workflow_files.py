@@ -87,6 +87,12 @@ def is_cache_restore_only(step):
     return str(step.get('uses', '')).startswith('actions/cache/') and 'run' not in step
 
 
+def is_app_token_mint_only(step):
+    """A step that only mints a GitHub App token (`uses: actions/create-github-app-token`, no `run:`). A failed mint
+    must fall back to the next token, never fail the job (merge-queue-label-bridge.yml, #4915); it runs no test."""
+    return str(step.get('uses', '')).startswith('actions/create-github-app-token') and 'run' not in step
+
+
 def continue_on_error_violations(documents):
     """Messages for each job or step in `documents` ({workflow file name: parsed workflow}) that carries
     `continue-on-error: true` where it could turn a failed test into a green check."""
@@ -96,7 +102,8 @@ def continue_on_error_violations(documents):
             where = (name, job_id)
             steps = job.get('steps', [])
             flagged = job.get('continue-on-error') is True or any(
-                step.get('continue-on-error') is True and not is_cache_restore_only(step) for step in steps)
+                step.get('continue-on-error') is True and not is_cache_restore_only(step) and not is_app_token_mint_only(step)
+                for step in steps)
             if flagged and where not in CONTINUE_ON_ERROR_ALLOWED:
                 found.append(f'{where}: continue-on-error: true can turn a failed test into a green check')
             if flagged:
@@ -151,6 +158,13 @@ class WorkflowHonesty(unittest.TestCase):
                 {'run': 'python3 scripts/verify-tests.py --plan fast', 'continue-on-error': True}]}}}}
             self.assertTrue(continue_on_error_violations(tests))
 
+    def test_a_mint_only_step_may_continue_on_error_but_a_run_beside_it_may_not(self):
+        mint = {'x.yml': {'jobs': {'job': {'steps': [
+            {'uses': 'actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc', 'continue-on-error': True}]}}}}
+        self.assertEqual(continue_on_error_violations(mint), [])
+        mint['x.yml']['jobs']['job']['steps'][0]['run'] = 'python3 scripts/verify-tests.py --plan fast'
+        self.assertTrue(continue_on_error_violations(mint))
+
     def test_a_build_or_test_command_that_ignores_its_exit_status_is_checked_after_it(self):
         # `xcodebuild ... | tee | grep ... || true` keeps a build from dying in the pipe, but the step must then
         # prove the success marker itself (`grep -q 'BUILD SUCCEEDED' log`), or a failed build passes.
@@ -194,3 +208,30 @@ class WorkflowHonesty(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class QueueActsAsTheApp(unittest.TestCase):
+    """#4915: the queue's PAT (MERGE_QUEUE_TOKEN) had no `workflow` scope, so GitHub refused to queue PRs that edit a
+    workflow file (#5189, #5106, #5151), and its merges showed as the owner. The jobs that set PRs to merge mint the
+    spoken-margins-agent App token first, with `workflows: write`, and fall back to the PAT, then GITHUB_TOKEN."""
+
+    CASES = {
+        'merge-queue-label-bridge.yml': ('bridge', 'Queue or unqueue', 'GH_TOKEN'),
+        'merge-queue-dequeued.yml': ('dequeued', 'Tell the author, cancel dead group runs', 'QUEUE_TOKEN'),
+    }
+
+    def test_each_queueing_job_mints_the_app_token_before_it_queues(self):
+        for name, (job_id, step_name, var) in self.CASES.items():
+            with self.subTest(workflow=name):
+                job = parse(ROOT / '.github/workflows' / name)['jobs'][job_id]
+                self.assertEqual(job['environment'], {'name': 'agent-identity', 'deployment': False})
+                steps = job['steps']
+                mint = next(i for i, s in enumerate(steps) if is_app_token_mint_only(s))
+                queue = next(i for i, s in enumerate(steps) if s.get('name') == step_name)
+                self.assertLess(mint, queue, 'the App token must be minted before the step that queues')
+                self.assertEqual(steps[mint].get('id'), 'app-token')
+                self.assertIs(steps[mint].get('continue-on-error'), True, 'a failed mint must fall back, not fail')
+                self.assertEqual(steps[mint]['with'].get('permission-workflows'), 'write')
+                token = steps[queue]['env'][var].replace(' ', '')
+                self.assertTrue(token.startswith('${{steps.app-token.outputs.token||secrets.MERGE_QUEUE_TOKEN'),
+                                token)
