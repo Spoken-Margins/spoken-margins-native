@@ -184,6 +184,8 @@ async function copyPrompt(ctx) {
     if (!env.clipboard || typeof env.clipboard.writeText !== "function") throw new Error("no clipboard");
     await env.clipboard.writeText(page.text.value);
   } catch {
+    cancelCopyTimer(ctx);
+    page.copy.textContent = "Copy prompt";
     env.selectAll(page.text);
     page.copyStatus.textContent = COPY_FAILED;
     return;

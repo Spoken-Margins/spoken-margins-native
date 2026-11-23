@@ -129,6 +129,24 @@ test("switching to Me relabels in place, keeps typed text and drops the friend-o
   assert.equal(page.legend("length"), quiz.questions.find((question) => question.id === "length").label);
 });
 
+test("an option dropped by switching to Me stays dropped when switching back", async () => {
+  const page = await loaded();
+  page.choose("expert", "me");
+  page.type("now", "Cable news");
+  page.choose("who", "self");
+  page.choose("who", "friend");
+  page.make();
+  assert.ok(!page.prompt().includes("the one sending it"), "the dropped answer is gone, not just hidden");
+  assert.equal(page.radio("expert", "me").checked, false);
+});
+
+test("Make stops the browser's own form submit", async () => {
+  const page = await loaded();
+  const submit = new page.window.Event("submit", { cancelable: true });
+  page.form.dispatchEvent(submit);
+  assert.equal(submit.defaultPrevented, true);
+});
+
 test("a fill sets the situation and leaves focus alone", async () => {
   const page = await loaded();
   page.type("situation", "typed first");
@@ -283,6 +301,31 @@ for (const [name, fetchResult] of [
     assert.equal(page.$("prompt").hidden, true);
   });
 }
+
+test("a failed load hides a prompt that was showing", async () => {
+  const page = await loaded();
+  page.type("now", "Cable news");
+  page.make();
+  assert.equal(page.$("prompt").hidden, false);
+  page.env.fetch = async () => { throw new Error("offline"); };
+  await page.load();
+  assert.equal(page.$("prompt").hidden, true);
+  assert.equal(page.document.querySelector(".reset").hidden, true);
+  assert.equal(page.form.children.length, 0);
+});
+
+test("a refused copy right after a good one puts the button back", async () => {
+  let refuse = false;
+  const page = await loaded({ clipboard: async () => { if (refuse) throw new Error("denied"); } });
+  page.type("now", "Cable news");
+  page.make();
+  await page.copy();
+  assert.equal(page.$("copy").textContent, "Copied");
+  refuse = true;
+  await page.copy();
+  assert.equal(page.$("copy").textContent, "Copy prompt");
+  assert.deepEqual(page.calls.cleared, [page.calls.timers[0].id]);
+});
 
 test("Try again draws the form and focuses A friend; a second failure focuses the new button", async () => {
   let online = false;

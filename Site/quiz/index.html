@@ -29,10 +29,11 @@ input[type=text]{display:block;width:100%;min-height:48px;margin-top:8px;padding
 #make,#copy{display:flex;align-items:center;justify-content:center;width:100%;min-height:56px;margin-top:12px;padding:12px 16px;border:0;border-radius:14px;background:var(--blue);color:var(--blueink);font:inherit;font-weight:700;cursor:pointer}
 #start-over,#retry{min-height:44px;padding:8px 18px;font:inherit;color:var(--ink);background:transparent;border:2px solid var(--ink);border-radius:12px;cursor:pointer}
 #retry{display:block;margin-top:12px}
-#quiz-message:empty,#copy-status:empty,#quiz-status:empty{display:none}
 #quiz-message,#quiz-status{margin:16px 0 0;padding:14px 16px;border-left:6px solid var(--orange);background:var(--tile);border-radius:0 14px 14px 0;font-size:18px}
 #prompt-text{display:block;width:100%;font:16px/1.4 ui-monospace,Menlo,monospace;color:var(--ink);background:var(--tile);border:2px solid var(--muted);border-radius:10px;padding:12px;resize:vertical}
 #copy-status{margin:8px 0 0;font-size:16px;color:var(--muted)}
+#quiz-message:empty,#quiz-status:empty{margin:0;padding:0;border:0}
+#copy-status:empty{margin:0}
 .reset{margin:24px 0 0}
 .pitch{margin:24px 0 0;padding-top:16px;border-top:1px solid var(--line)}
 .pitch a{color:var(--blue);font-weight:700;text-decoration:underline;text-underline-offset:3px;display:inline-block;min-height:44px;padding:10px 0}
@@ -54,7 +55,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,a:focus-visible,
 </section>
 <p class="reset" hidden><button type="button" id="start-over">Start over</button></p>
 <p class="pitch">Have the conversation in Spoken Margins: pause the episode and leave a spoken note, a Margin, at the moment you want to talk about. It's in private beta. <a href="/join/">Try Spoken Margins</a></p>
-<footer>The questions and the prompt are <a href="https://github.com/Spoken-Margins/spoken-margins-native/blob/main/Contracts/quiz/find-something.v1.json">open source</a>. · <a href="/privacy/">Privacy Policy</a></footer>
+<footer>The questions and the prompt are <a href="https://github.com/Spoken-Margins/spoken-margins-native/blob/main/Contracts/quiz/find-something.v1.json">open source</a>. · <a href="/privacy/">Privacy Policy</a> · <a href="/copyright/">Copyright and DMCA</a> · <a href="/content-policy/">Content policy</a></footer>
 </main>
 <script>
 window.addEventListener("load", function () {

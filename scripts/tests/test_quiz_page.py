@@ -91,9 +91,16 @@ class QuizHtmlTests(unittest.TestCase):
         for banned in ("share link", "friend's answer", "hear their answer"):
             self.assertNotIn(banned, pitch.lower())
 
-    def test_the_footer_links_the_open_data_and_the_privacy_policy(self):
+    def test_the_footer_links_the_open_data_and_the_site_policies(self):
+        # The copyright and content-policy links are on every static footer (test_designated_agent_links,
+        # test_share_link_policy_pages), a departure from the Design's footer that the PR names.
         footer = re.search(r"<footer>(.*?)</footer>", html(), re.S).group(1)
-        self.assertEqual(re.findall(r'href="([^"]+)"', footer), [GITHUB_JSON, "/privacy/"])
+        self.assertEqual(re.findall(r'href="([^"]+)"', footer),
+                         [GITHUB_JSON, "/privacy/", "/copyright/", "/content-policy/"])
+
+    def test_the_empty_live_regions_stay_rendered_so_a_screen_reader_announces_them(self):
+        style = re.search(r"<style>(.*?)</style>", html(), re.S).group(1)
+        self.assertNotIn("display:none", style.replace("display:none !important", ""))
 
     def test_the_page_names_every_part_the_script_and_later_work_rely_on(self):
         page = html()
@@ -105,7 +112,8 @@ class QuizHtmlTests(unittest.TestCase):
     def test_nothing_on_the_page_comes_from_another_origin(self):
         page = html()
         for url in re.findall(r'(?:src|href)="([^"]+)"', page):
-            self.assertTrue(url.startswith(("/", "./")) or url == GITHUB_JSON, f"{url} is another origin")
+            same_origin = (url.startswith("/") and not url.startswith("//")) or url.startswith("./")
+            self.assertTrue(same_origin or url == GITHUB_JSON, f"{url} is another origin")
         self.assertNotIn("<link", page, "the page carries its own style")
 
 
