@@ -305,7 +305,8 @@ final class EpisodeMapPreparer {
                     timeline = try await host.sourceTranscriptionClient.transcribeSourceAudio(
                         url: localURL,
                         itemId: item.id,
-                        durationMs: durationMs
+                        durationMs: durationMs,
+                        for: .episodeMap
                     )
                     let transcriptData = try JSONEncoder().encode(timeline)
                     let safeItemID = host.safePodcastEvidenceComponent(item.id)

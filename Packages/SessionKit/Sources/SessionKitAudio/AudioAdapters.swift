@@ -4354,13 +4354,14 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
         self.fileManager = fileManager
     }
 
-    public func transcribe(audioPath: String) async throws -> String {
-        try await transcribeAligned(audioPath: audioPath).text
+    /// `purpose` has no default: it is what the Speech Recognition gate reports if it holds the work (#4715).
+    public func transcribe(audioPath: String, for purpose: HeldTranscription) async throws -> String {
+        try await transcribeAligned(audioPath: audioPath, for: purpose).text
     }
 
-    public func transcribeAligned(audioPath: String) async throws -> AlignedInterjectionTranscript {
+    public func transcribeAligned(audioPath: String, for purpose: HeldTranscription) async throws -> AlignedInterjectionTranscript {
         #if canImport(Speech)
-        try await SpeechAuthorizationAsk.requireAuthorized()
+        try await SpeechAuthorizationAsk.requireAuthorized(for: purpose)
         let url = try audioURL(for: audioPath)
         guard fileManager.fileExists(atPath: url.path) else {
             throw SessionKitError.persistenceFailed("audio_file_missing")
@@ -4609,9 +4610,11 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
 
     public init() {}
 
-    public func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    public func transcribeSourceAudio(
+        url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription
+    ) async throws -> TranscriptTimeline {
         #if canImport(Speech) && canImport(AVFoundation)
-        try await SpeechAuthorizationAsk.requireAuthorized()
+        try await SpeechAuthorizationAsk.requireAuthorized(for: purpose)
         guard url.isFileURL, FileManager.default.fileExists(atPath: url.path) else {
             throw SessionKitError.persistenceFailed("source_audio_file_missing")
         }
@@ -4667,10 +4670,11 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         anchorMediaTimeMs: Int,
         durationMs: Int?,
         windowBeforeMs: Int,
-        windowAfterMs: Int
+        windowAfterMs: Int,
+        for purpose: HeldTranscription
     ) async throws -> TranscriptTimeline {
         #if canImport(Speech) && canImport(AVFoundation)
-        try await SpeechAuthorizationAsk.requireAuthorized()
+        try await SpeechAuthorizationAsk.requireAuthorized(for: purpose)
         guard url.isFileURL || ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
             throw SessionKitError.persistenceFailed("source_audio_url_unsupported")
         }
@@ -4774,7 +4778,8 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         anchorMediaTimeMs: Int,
         durationMs: Int?,
         windowBeforeMs: Int,
-        windowAfterMs: Int
+        windowAfterMs: Int,
+        for purpose: HeldTranscription
     ) async throws -> SourceAudioWindowTranscription {
         let timeline = try await transcribeSourceAudioWindow(
             url: url,
@@ -4782,7 +4787,8 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             anchorMediaTimeMs: anchorMediaTimeMs,
             durationMs: durationMs,
             windowBeforeMs: windowBeforeMs,
-            windowAfterMs: windowAfterMs
+            windowAfterMs: windowAfterMs,
+            for: purpose
         )
         #if canImport(AVFoundation)
         let caches = try FileManager.default.url(

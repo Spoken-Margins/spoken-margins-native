@@ -105,7 +105,7 @@ extension Gate1AppModel {
                 do {
                     let analysis = try await self.sourceTranscriptionClient.transcribeSourceAudioWindowWithEvidence(
                         url: file.url, itemId: scratchID, anchorMediaTimeMs: 0, durationMs: file.durationMs,
-                        windowBeforeMs: 0, windowAfterMs: file.durationMs
+                        windowBeforeMs: 0, windowAfterMs: file.durationMs, for: .sourceWindow
                     )
                     parts.append((file.startMediaTimeMs, analysis.timeline))
                 } catch {
@@ -274,7 +274,7 @@ extension Gate1AppModel {
                     anchorMediaTimeMs: anchorMediaTimeMs,
                     durationMs: durationMs,
                     windowBeforeMs: windowBeforeMs,
-                    windowAfterMs: windowAfterMs
+                    windowAfterMs: windowAfterMs, for: .sourceWindow
                 )
                 let reference = await SourceWindowReferenceEvidence.generate(
                     from: analysis,
