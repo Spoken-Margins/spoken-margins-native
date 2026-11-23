@@ -139,16 +139,22 @@ final class SpokenNoteSessionExportTests: XCTestCase {
     }
 
     func testANilLoaderOrAnUnreadableNoteFileGivesTheLastPlaybackFallback() async throws {
-        for loader: (@Sendable (Item) -> SpokenNoteExportInput?)? in [nil, { _ in nil }] {
-            let export = try await export(true, loader: loader)
-            let transcript = try XCTUnwrap(export.item.noteTranscript)
-            XCTAssertEqual(transcript.source, "last_playback")
-            XCTAssertNil(transcript.recordingCount)
-            XCTAssertNil(transcript.complete)
-            XCTAssertEqual(transcript.recordings?.count, 1)
-            XCTAssertEqual(export.item.text, "One. Two. Three. Four. Five.")
-            XCTAssertEqual(export.interjections.first?.sourceSegmentId, "note-take-a-1-1")
-        }
+        // Two calls, not a loop over an array literal of an optional closure type: Swift 6.4 crashes its
+        // diagnostics on `[nil, { _ in nil }]` ("failed to produce diagnostic for expression").
+        try await assertLastPlaybackFallback(loader: nil)
+        let unreadable: @Sendable (Item) -> SpokenNoteExportInput? = { _ in nil }
+        try await assertLastPlaybackFallback(loader: unreadable)
+    }
+
+    private func assertLastPlaybackFallback(loader: (@Sendable (Item) -> SpokenNoteExportInput?)?) async throws {
+        let result = try await export(true, loader: loader)
+        let transcript = try XCTUnwrap(result.item.noteTranscript)
+        XCTAssertEqual(transcript.source, "last_playback")
+        XCTAssertNil(transcript.recordingCount)
+        XCTAssertNil(transcript.complete)
+        XCTAssertEqual(transcript.recordings?.count, 1)
+        XCTAssertEqual(result.item.text, "One. Two. Three. Four. Five.")
+        XCTAssertEqual(result.interjections.first?.sourceSegmentId, "note-take-a-1-1")
     }
 
     func testTheSyncExportNeverCallsTheLoader() throws {
