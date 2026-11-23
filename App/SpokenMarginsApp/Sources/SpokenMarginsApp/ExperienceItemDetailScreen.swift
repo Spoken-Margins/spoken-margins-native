@@ -14,6 +14,9 @@ struct ExperienceItemDetailScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @EnvironmentObject private var sharingCoordinator: Build23SharingCoordinator
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// Saved live-session photos for Recent Margins (#4180), observed directly so they appear once the launch load finishes.
+    @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
 
     @State private var confirmsTrash = false
     /// Why Share has nothing to send, when it has none (#4229).
@@ -799,6 +802,9 @@ struct ExperienceItemDetailScreen: View {
                     VStack(spacing: 0) {
                         ForEach(Array(itemMargins.prefix(3).enumerated()), id: \.element.id) { index, row in
                             if index > 0 { Divider() }
+                            // A live-session photo sits on the right at standard sizes and under the words at
+                            // accessibility sizes, so the words keep the row's width (#4180). No photo, no slot.
+                            let photo = photoIndex.photo(forMarginId: row.interjection.id)
                             Button { openRecentMargin(row) } label: {
                                 HStack(alignment: .top, spacing: 12) {
                                     Image(systemName: "quote.bubble.fill")
@@ -813,8 +819,14 @@ struct ExperienceItemDetailScreen: View {
                                         Text(MarginPlacePresentation.itemScreenLine(for: row.interjection))
                                             .font(.caption.monospacedDigit())
                                             .foregroundStyle(AppColors.secondaryText)
+                                        if let photo, dynamicTypeSize.isAccessibilitySize {
+                                            LiveSessionPhotoThumbnail(source: .kept(photo.photo), surface: .page)
+                                        }
                                     }
                                     Spacer()
+                                    if let photo, !dynamicTypeSize.isAccessibilitySize {
+                                        LiveSessionPhotoThumbnail(source: .kept(photo.photo), surface: .page)
+                                    }
                                     Image(systemName: "chevron.right")
                                         .foregroundStyle(AppColors.secondaryText)
                                         .accessibilityHidden(true)
@@ -822,6 +834,9 @@ struct ExperienceItemDetailScreen: View {
                                 .padding(.vertical, 12)
                             }
                             .buttonStyle(.plain)
+                            .modifier(OptionalAccessibilityValue(
+                                value: photo == nil ? nil : LiveSessionPhotoMargin.rowAccessibilityValue
+                            ))
                         }
                     }
                 }

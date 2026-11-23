@@ -16,6 +16,10 @@ struct ExperienceMarginDetailView: View {
     @State private var showsRecordingLeftOut = false
     @State private var isPreparingMarkdown = false
     @StateObject private var tidy = MarginTidyCardModel()
+    /// Saved live-session photos (#4180), observed directly so the photo appears once the launch load finishes.
+    @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
+    /// 40% of this screen, for the photo's height, as on the live session's Margin screen; measured, not read from the device.
+    @State private var photoMaxHeight: CGFloat = 320
     let row: MarginRow
 
     private enum NavigationIntent { case moment, item, share }
@@ -137,6 +141,13 @@ struct ExperienceMarginDetailView: View {
         NavigationStack {
             List {
                 Section {
+                    // The live session's photo comes first, above the words (#4180). No lookup entry (any other Margin,
+                    // or before the lookup loads) shows nothing, never the missing-file line.
+                    if let photo = photoIndex.photo(forMarginId: current.interjection.id) {
+                        LiveSessionPhotoDetail(
+                            photo: photo.photo, altText: photo.altText(for: current.interjection), maxHeight: photoMaxHeight
+                        )
+                    }
                     Text(current.fullText)
                         .font(.system(.title3, design: .serif))
                         .textSelection(.enabled)
@@ -226,6 +237,7 @@ struct ExperienceMarginDetailView: View {
                 }
             }
             .buttonStyle(MarginDetailActionButtonStyle())
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { photoMaxHeight = max(160, $0 * 0.4) }
             .task(id: MarginTidyCardModel.key(for: current.interjection)) {
                 await tidy.refresh(for: current.interjection, using: model)
             }
