@@ -7,7 +7,8 @@ author approve it, so the owner could not approve cloud PRs that touch the files
 cloud session only pushes, and .github/workflows/open-cloud-prs.yml, which runs from `main` only, opens the PR as
 `spoken-margins-agent[bot]`.
 
-How a session asks: the newest commits of its branch include a *request commit* whose message is
+How a session asks: the newest commits of its branch include a *request commit*: an empty commit (it changes no file;
+`git commit --allow-empty` with nothing staged) whose message is
 
     PR: <the PR title>
 
@@ -70,23 +71,23 @@ def parse_request(message: str | None) -> Request | None:
         return None
     title = match.group('title')[:TITLE_MAX]
     rest = lines[1:]
-    # The trailer block: the last paragraph, when every line in it is a known trailer.
+    # Trailers: known-key lines peeled off the bottom of the message. Peeling line by line, not by paragraph, also
+    # removes a `Signed-off-by` that `git commit -s` glued onto a body paragraph ending in a `Key: value` line.
     labels: list[str] = []
     end = len(rest)
-    while end and not rest[end - 1].strip():
-        end -= 1
-    start = end
-    while start and rest[start - 1].strip():
-        start -= 1
-    block = rest[start:end]
-    if block and all((m := TRAILER_RE.match(line)) and m.group('key').lower() in TRAILER_KEYS for line in block):
-        for line in block:
-            m = TRAILER_RE.match(line)
+    while end:
+        line = rest[end - 1]
+        m = TRAILER_RE.match(line)
+        if not line.strip():
+            end -= 1
+        elif m and m.group('key').lower() in TRAILER_KEYS:
             if m.group('key').lower() == 'pr-labels':
                 for label in re.split(r'[,\s]+', m.group('value')):
                     if label in ALLOWED_LABELS and label not in labels:
                         labels.append(label)
-        end = start
+            end -= 1
+        else:
+            break
     body = '\n'.join(rest[:end]).strip('\n')
     if not body.strip():
         return None
@@ -115,9 +116,17 @@ def recent_without_pr(refs: list[dict], now: dt.datetime, max_age_days: int = MA
     return sorted(names)
 
 
+def is_empty(commit: dict) -> bool:
+    """A request commit changes no file (`git commit --allow-empty`), so an ordinary commit that happens to start with
+    `PR:` (say "PR: tidy review notes" plus a paragraph) never opens a PR nobody asked for. Missing counts as not empty."""
+    return commit.get('additions') == 0 and commit.get('deletions') == 0 and not commit.get('changedFilesIfAvailable')
+
+
 def find_request(history: list[dict]) -> tuple[str, Request] | None:
     """(oid, request) for the newest request commit among a branch's newest commits ahead of `main` (newest first)."""
     for commit in history:
+        if not is_empty(commit):
+            continue
         request = parse_request(commit.get('message'))
         if request:
             return commit.get('oid') or '', request
@@ -150,7 +159,7 @@ REFS_QUERY = '''query($owner: String!, $name: String!, $after: String) {
 
 def branches_query(names: list[str], full: bool = True) -> str:
     """For each branch: the ref (PR count, commit date) and its newest HISTORY commits ahead of `main`."""
-    fields = 'oid message' if full else 'oid messageHeadline'
+    fields = ('oid message' if full else 'oid messageHeadline') + ' additions deletions changedFilesIfAvailable'
     refs, compares = [], []
     for i, name in enumerate(names):
         qualified = json.dumps('refs/heads/' + name)
@@ -180,7 +189,10 @@ class GitHub:
     def _gh(self, args: list[str], payload: dict | None = None):
         done, answer = self._call(args, payload)
         if done.returncode != 0:
-            raise RuntimeError(f"gh api {args[0]} failed: {(done.stderr or done.stdout).strip()[:300]}")
+            # gh prints only "gh: Validation Failed (HTTP 422)" on stderr; GitHub's detail ("A pull request already
+            # exists for ...") is in the JSON it prints on stdout. Keep both.
+            detail = ' '.join(part.strip() for part in (done.stderr, done.stdout) if part and part.strip())
+            raise RuntimeError(f"gh api {args[0]} failed: {detail[:600]}")
         return answer
 
     def graphql(self, query: str, allow_missing: bool = False, **variables):
@@ -234,13 +246,16 @@ class GitHub:
 
 def has_request_headline(history: list[dict]) -> bool:
     """Cheap first pass: does any of these commits' first line look like `PR: <title>`?"""
-    return any(HEADLINE_RE.match(c.get('messageHeadline') or '') for c in history)
+    return any(HEADLINE_RE.match(c.get('messageHeadline') or '') and is_empty(c) for c in history)
 
 
-def find(gh: GitHub, now: dt.datetime, only: list[str] | None = None) -> list[str]:
+def find(gh: GitHub, now: dt.datetime, extra: list[str] | None = None) -> list[str]:
     """Most recent `claude/` branches have no PR and never ask for one (188 of 338 on 2026-11-23), so first read only
-    first lines, then full messages for the few branches whose first lines include a request."""
-    names = recent_without_pr(gh.claude_refs(), now) if only is None else sorted(set(only))
+    first lines, then full messages for the few branches whose first lines include a request.
+
+    Every run is a full sweep, a dispatch for one branch included (`extra` only adds names): the VPS backstop and the
+    sweep's rule 15 count any run as one, so a branch-only run must not leave another session's failed dispatch behind."""
+    names = sorted(set(recent_without_pr(gh.claude_refs(), now)) | set(extra or []))
     if not names:
         return []
     _, headlines = gh.branches(names, full=False)

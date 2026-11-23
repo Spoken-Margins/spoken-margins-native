@@ -39,7 +39,7 @@ on:
   workflow_dispatch:
     inputs:
       branch:
-        description: 'One claude/ branch to look at (empty: every recent claude/ branch)'
+        description: 'A claude/ branch to include (every run also sweeps all recent claude/ branches)'
         required: false
         default: ''
 

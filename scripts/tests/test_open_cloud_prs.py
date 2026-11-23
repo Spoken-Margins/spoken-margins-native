@@ -16,6 +16,15 @@ REQUEST = ('PR: Fix the stuck timeline\n\nThe timeline froze after a thermal pau
            'PR-Labels: automerge\nSigned-off-by: Cole <c@example.com>\n')
 
 
+def empty(oid, message):
+    """A commit as GraphQL gives it; request commits change no file."""
+    return {'oid': oid, 'message': message, 'additions': 0, 'deletions': 0, 'changedFilesIfAvailable': 0}
+
+
+def work(oid, message):
+    return {'oid': oid, 'message': message, 'additions': 5, 'deletions': 1, 'changedFilesIfAvailable': 1}
+
+
 def ref(name, when=FRESH, prs=0):
     return {'name': name, 'associatedPullRequests': {'totalCount': prs}, 'target': {'committedDate': when}}
 
@@ -72,10 +81,17 @@ class ParseRequestTests(unittest.TestCase):
         request = ocp.parse_request('PR: t\n\nbody\n\nPR-Labels: owner-tap, automerge automerge, needs-owner-tap\n')
         self.assertEqual(request.labels, ('automerge',))
 
-    def test_a_last_paragraph_that_is_not_all_trailers_stays_in_the_body(self):
-        request = ocp.parse_request('PR: t\n\nbody\n\nNote: this is prose\nPR-Labels: automerge\n')
-        self.assertIn('PR-Labels: automerge', request.body)
+    def test_trailers_are_peeled_line_by_line_from_the_bottom(self):
+        # `git commit -s` glues Signed-off-by onto a last paragraph that ends in a `Key: value` line.
+        request = ocp.parse_request('PR: t\n\nbody\n\nNote: this is prose\nPR-Labels: automerge\n'
+                                    'Signed-off-by: A <a@b>\n')
+        self.assertEqual(request.body, 'body\n\nNote: this is prose')
+        self.assertEqual(request.labels, ('automerge',))
+
+    def test_a_known_key_above_body_text_stays_in_the_body(self):
+        request = ocp.parse_request('PR: t\n\nPR-Labels: automerge\nthen prose\n')
         self.assertEqual(request.labels, ())
+        self.assertIn('PR-Labels: automerge', request.body)
 
 
 class SelectionTests(unittest.TestCase):
@@ -94,17 +110,23 @@ class SelectionTests(unittest.TestCase):
     def test_only_branches_with_a_request_commit_are_picked(self):
         refs = [ref('asks'), ref('asks-older'), ref('silent'), ref('has-pr', prs=1)]
         histories = {
-            'claude/asks': [{'oid': 'a1', 'message': REQUEST}],
-            'claude/asks-older': [{'oid': 'b2', 'message': 'Fix typo'}, {'oid': 'b1', 'message': REQUEST}],
-            'claude/silent': [{'oid': 'c1', 'message': 'Work in progress\n\nCloses #9'}],
-            'claude/has-pr': [{'oid': 'd1', 'message': REQUEST}],
+            'claude/asks': [empty('a1', REQUEST)],
+            'claude/asks-older': [work('b2', 'Fix typo'), empty('b1', REQUEST)],
+            'claude/silent': [work('c1', 'Work in progress\n\nCloses #9')],
+            'claude/has-pr': [empty('d1', REQUEST)],
         }
         self.assertEqual(ocp.pick(refs, histories, NOW), ['claude/asks', 'claude/asks-older'])
 
     def test_newest_request_wins(self):
-        oid, request = ocp.find_request([{'oid': 'n', 'message': 'PR: new\n\nbody'},
-                                         {'oid': 'o', 'message': 'PR: old\n\nbody'}])
+        oid, request = ocp.find_request([empty('n', 'PR: new\n\nbody'), empty('o', 'PR: old\n\nbody')])
         self.assertEqual((oid, request.title), ('n', 'new'))
+
+    def test_a_commit_that_changes_files_is_never_a_request(self):
+        # "PR: tidy review notes" plus a paragraph is ordinary work, not an ask for a PR.
+        self.assertIsNone(ocp.find_request([work('w', 'PR: tidy review notes\n\nMoved the notes.')]))
+        self.assertIsNone(ocp.find_request([{'oid': 'x', 'message': 'PR: t\n\nbody'}]))  # fields missing
+        rename_only = {**empty('r', 'PR: t\n\nbody'), 'changedFilesIfAvailable': 1}
+        self.assertIsNone(ocp.find_request([rename_only]))
 
     def test_branch_names_held_to_the_claude_prefix(self):
         for name, ok in {'claude/x': True, 'claude/a/b-c_d.e': True, 'claude/': False, 'main': False,
@@ -113,7 +135,7 @@ class SelectionTests(unittest.TestCase):
                 self.assertEqual(bool(ocp.BRANCH_RE.match(name)), ok)
 
 
-def fake_github(branches, ahead=None, fail_open=False, fail_label=False):
+def fake_github(branches, ahead=None, fail_open=False, fail_label=False, fail_open_other=False):
     """A GitHub whose `gh api` answers from `branches` ({name: (ref node, history newest first)}); `ahead` names, per
     branch, the oids not on main (default: all of them). Returns (gh, calls)."""
     calls = []
@@ -135,7 +157,8 @@ def fake_github(branches, ahead=None, fail_open=False, fail_label=False):
                     if name in branches:
                         node, history = branches[name]
                         keep = set((ahead or {}).get(name, [c['oid'] for c in history]))
-                        commits = [{'oid': c['oid'], 'message' if full else 'messageHeadline':
+                        commits = [{**{k: v for k, v in c.items() if k != 'message'},
+                                    'message' if full else 'messageHeadline':
                                     c['message'] if full else c['message'].split('\n')[0]}
                                    for c in history if c['oid'] in keep]
                         repo[f'r{i}'] = node
@@ -150,11 +173,21 @@ def fake_github(branches, ahead=None, fail_open=False, fail_label=False):
                     return subprocess.CompletedProcess(cmd, 1, json.dumps(answer), 'gh: Could not resolve head ref')
         elif args[0].endswith('/pulls'):
             if fail_open:
-                return subprocess.CompletedProcess(cmd, 1, '', 'HTTP 422: A pull request already exists')
+                # As real gh prints a 422 (checked 2026-11-23): the short message on stderr, GitHub's JSON on stdout.
+                body = {'message': 'Validation Failed', 'status': '422',
+                        'errors': [{'resource': 'PullRequest', 'code': 'custom',
+                                    'message': f"A pull request already exists for o:{payload['head']}."}]}
+                return subprocess.CompletedProcess(cmd, 1, json.dumps(body), 'gh: Validation Failed (HTTP 422)\n')
+            if fail_open_other:
+                body = {'message': 'Resource not accessible by integration', 'status': '403'}
+                return subprocess.CompletedProcess(cmd, 1, json.dumps(body),
+                                                   'gh: Resource not accessible by integration (HTTP 403)\n')
             answer = {'number': 900}
         elif args[0].endswith('/labels'):
             if fail_label:
-                return subprocess.CompletedProcess(cmd, 1, '', 'HTTP 403: Resource not accessible by integration')
+                body = {'message': 'Resource not accessible by integration', 'status': '403'}
+                return subprocess.CompletedProcess(cmd, 1, json.dumps(body),
+                                                   'gh: Resource not accessible by integration (HTTP 403)\n')
             answer = []
         else:
             answer = []
@@ -164,8 +197,8 @@ def fake_github(branches, ahead=None, fail_open=False, fail_label=False):
 
 class EndToEndTests(unittest.TestCase):
     BRANCHES = {
-        'claude/asks': (ref('asks'), [{'oid': 'a1', 'message': REQUEST}]),
-        'claude/silent': (ref('silent'), [{'oid': 's1', 'message': 'wip'}]),
+        'claude/asks': (ref('asks'), [empty('a1', REQUEST)]),
+        'claude/silent': (ref('silent'), [work('s1', 'wip')]),
     }
 
     def test_find_reads_full_messages_only_for_branches_that_ask(self):
@@ -178,16 +211,16 @@ class EndToEndTests(unittest.TestCase):
 
     def test_a_request_commit_already_on_main_does_not_count(self):
         # Merged PRs leave their request commits on main; a branch cut from main must not look like it asks.
-        branches = {'claude/new-work': (ref('new-work'), [{'oid': 'n1', 'message': 'Start the work'},
-                                                          {'oid': 'm1', 'message': REQUEST}])}
+        branches = {'claude/new-work': (ref('new-work'), [work('n1', 'Start the work'),
+                                                          empty('m1', REQUEST)])}
         gh, _ = fake_github(branches, ahead={'claude/new-work': ['n1']})
         self.assertEqual(ocp.find(gh, NOW), [])
         self.assertEqual(ocp.open_prs(gh, ['claude/new-work'], NOW, log=lambda _: None), ([], 0))
 
     def test_the_branch_own_request_wins_over_an_older_one_merged_in_from_main(self):
-        branches = {'claude/b': (ref('b'), [{'oid': 'merge', 'message': 'Merge main'},
-                                            {'oid': 'old', 'message': 'PR: someone else\n\nPart of #1'},
-                                            {'oid': 'mine', 'message': REQUEST}])}
+        branches = {'claude/b': (ref('b'), [work('merge', 'Merge main'),
+                                            empty('old', 'PR: someone else\n\nPart of #1'),
+                                            empty('mine', REQUEST)])}
         gh, calls = fake_github(branches, ahead={'claude/b': ['merge', 'mine']})
         self.assertEqual(ocp.open_prs(gh, ['claude/b'], NOW, log=lambda _: None), ([('claude/b', 900)], 0))
         post = [p for a, p in calls if a[0].endswith('/pulls')][0]
@@ -207,7 +240,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(posts[1], ('repos/o/r/issues/900/labels', {'labels': ['automerge']}))
 
     def test_open_rechecks_and_ignores_names_it_was_handed_that_do_not_qualify(self):
-        branches = {**self.BRANCHES, 'claude/has-pr': (ref('has-pr', prs=1), [{'oid': 'h', 'message': REQUEST}])}
+        branches = {**self.BRANCHES, 'claude/has-pr': (ref('has-pr', prs=1), [empty('h', REQUEST)])}
         gh, calls = fake_github(branches)
         self.assertEqual(ocp.open_prs(gh, ['claude/has-pr', 'main', 'claude/gone', 'claude/silent'], NOW,
                                       log=lambda _: None), ([], 0))
@@ -223,6 +256,18 @@ class EndToEndTests(unittest.TestCase):
         lines = []
         self.assertEqual(ocp.open_prs(gh, ['claude/asks'], NOW, log=lines.append), ([], 0))
         self.assertIn('already has a PR', lines[0])
+
+    def test_a_refused_pr_is_a_failure(self):
+        gh, _ = fake_github(self.BRANCHES, fail_open_other=True)
+        lines = []
+        self.assertEqual(ocp.open_prs(gh, ['claude/asks'], NOW, log=lines.append), ([], 1))
+        self.assertIn('not opened', lines[0])
+
+    def test_a_dispatch_for_one_branch_still_sweeps_every_branch(self):
+        # The backstop counts any run; a branch-only run must not leave another session's failed dispatch behind.
+        branches = {**self.BRANCHES, 'claude/other': (ref('other'), [empty('o1', REQUEST)])}
+        gh, _ = fake_github(branches)
+        self.assertEqual(ocp.find(gh, NOW, ['claude/asks']), ['claude/asks', 'claude/other'])
 
     def test_a_refused_label_is_a_failure_and_the_pr_still_counts_as_opened(self):
         gh, _ = fake_github(self.BRANCHES, fail_label=True)
