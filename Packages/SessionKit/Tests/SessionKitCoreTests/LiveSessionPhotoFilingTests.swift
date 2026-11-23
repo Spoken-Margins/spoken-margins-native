@@ -170,6 +170,28 @@ final class LiveSessionPhotoFilingTests: XCTestCase {
         XCTAssertFalse(exists(try XCTUnwrap(store.fileURL(for: orphan))))
     }
 
+    /// #4180: a saved item shows its live-session photos, and the sweep keeps their files only because the saved
+    /// session stays in the session store and the sweep reads every session. A characterization test: it passes on
+    /// `main` as it stands, and fails if saved sessions are filtered out of the sweep's `readable` list.
+    func testTheLaunchSweepKeepsTheFilesOfASavedSession() async throws {
+        let worker = LiveSessionFileWorker(root: root)
+        var session = LiveSession(id: "live", kind: .paper, title: "Book", startedAt: start)
+        let kept = try await commit(worker, margin: "m1")
+        var margin = session.margin(id: "m1", text: "words", markedAt: start.addingTimeInterval(5))
+        margin.photo = kept
+        session.margins = [margin]
+        session.endedAt = start.addingTimeInterval(60)
+        session.savedItemId = "item-1"
+        try await worker.save(session, generation: 1)
+
+        let result = await worker.sweepPhotos()
+
+        XCTAssertEqual(result?.removedFiles, [])
+        // Kept because the saved session read and names the photo, not because its folder was off limits as unreadable.
+        XCTAssertEqual(result?.protectedFolders, [])
+        XCTAssertTrue(exists(try XCTUnwrap(LiveSessionPhotoStore(root: root).fileURL(for: kept))), "a saved session's photo stays")
+    }
+
     func testAWorkerWithNoRootHasNothingToSweepOrKeep() async throws {
         let worker = LiveSessionFileWorker(root: nil)
         let sweep = await worker.sweepPhotos()

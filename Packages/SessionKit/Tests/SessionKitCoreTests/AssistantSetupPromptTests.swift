@@ -142,4 +142,13 @@ final class AssistantSetupPromptTests: XCTestCase {
         XCTAssertTrue(text.contains("Spoken Margins asks me before following anything"))
         XCTAssertTrue(text.contains("You can't change my settings"))
     }
+
+    /// The Quick Folder queue switch is being removed (owner, 2026-11-17, #4274), so the prompt must not send the listener
+    /// looking for it. It points at the Your AI screen, which holds the folder.
+    func testSettingsGuidanceNamesNoRemovedSetting() {
+        let text = prompt()
+        XCTAssertFalse(text.contains("Queue New Quick Folder Files"))
+        XCTAssertTrue(text.contains("your Quick Folder is in Settings > Import & Export > Your AI"))
+        XCTAssertEqual(AssistantSetupPrompt.notesDefaultsKey, "aiBriefNotesV1")
+    }
 }

@@ -16,6 +16,9 @@ struct FriendMarginsSenderLine: View {
 /// "3 Margins · about 2 min" and what a Margin is (not for replies), under the item's title while a friend's Margins wait (#3219).
 struct FriendMarginsSummary: View {
     let intro: FriendMarginsIntro
+    /// "Tell Sam you got it", when the newest friend's packet on this item answers one of the listener's own Margins
+    /// (#3902). Nil for a first share.
+    var receipt: ReplyReceiptButton.Content? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -41,6 +44,9 @@ struct FriendMarginsSummary: View {
                     .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .accessibilityIdentifier("item.friendIntro.explanation")
             }
+            if let receipt {
+                ReplyReceiptButton(content: receipt, identifier: "itemDetail.friendIntro.tellReceived")
+            }
             // What the old Import sheet said honestly, one tap away (#3291).
             DisclosureGroup(SharedPacketArrival.aboutTitle) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -56,5 +62,39 @@ struct FriendMarginsSummary: View {
             .tint(AppColors.text)
             .accessibilityIdentifier("item.friendIntro.aboutFile")
         }
+    }
+}
+
+/// The one tap that tells a friend their reply arrived (#3902, Design E2). Nothing can see a reply arrive, so the
+/// listener sends the text themselves, through the chat the reply came in. The offer and its words come from
+/// `ReplyReceipt`. iOS doesn't say whether the message was sent, so the button stays and can be used again; a cancelled
+/// sheet changes nothing.
+struct ReplyReceiptButton: View {
+    /// What one button offers: the friend's packet and the title its message names.
+    struct Content: Equatable {
+        let offer: ReplyReceipt.Offer
+        let itemTitle: String
+
+        var title: String { offer.buttonTitle }
+        var message: String { offer.message(itemTitle: itemTitle) }
+    }
+
+    let content: Content
+    let identifier: String
+
+    var body: some View {
+        ShareLink(item: content.message) {
+            Label(content.title, systemImage: "paperplane")
+                .font(.body.weight(.semibold))
+                .multilineTextAlignment(.leading)
+                // Wraps at the largest text sizes instead of being cut short.
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .tint(AppColors.evergreen)
+        .accessibilityLabel(Text(content.title))
+        .accessibilityHint(Text("Opens the share sheet with a message."))
+        .accessibilityIdentifier(identifier)
     }
 }
