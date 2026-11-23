@@ -425,4 +425,31 @@ final class PlayRuleTests: XCTestCase {
         let sessions = [session("a", percent: 99, mediaTimeMs: end)]
         assertDecision(context(row: try row(sessions)), ask([0, 1, 2]), "row only, left at the end")
     }
+
+    // MARK: Catch-up (#4785)
+
+    /// On a finished item, the Library row's Play asks about every new Margin in catch-up, at 100% and on the mark too,
+    /// where it used to replay from 0 with no question. Without catch-up nothing changes.
+    func testTheLibraryRowAsksInCatchUpAtTheEndAndOnTheMark() throws {
+        let entries = margins()
+        let catchUp = try XCTUnwrap(ConversationCatchUp.make(isFinished: true, waiting: [
+            ItemListeningChoices.WaitingMargin(senderName: "Ana", audioDurationMs: 4_000, transcript: "", replyToYouParentId: "mine")]))
+        for sessions in [[finished()], [Session]()] {
+            let asked = PlayRule.Context(
+                itemId: "item", surface: .libraryRow, openItem: PlayRule.OpenItem(id: "item", sessions: sessions, addedAgainAt: nil),
+                newMargins: entries, catchUp: catchUp)
+            XCTAssertEqual(PlayRule.decide(asked), .askFirst(marginsBehind: entries), "\(sessions.count) sessions")
+            var plain = asked
+            plain.catchUp = nil
+            XCTAssertFalse(PlayRule.decide(plain).isAsk, "without catch-up a finished item replays, as today")
+            var screen = asked
+            screen.surface = .itemScreen
+            XCTAssertFalse(PlayRule.decide(screen).isAsk, "the item screen never asks: its buttons are the choice")
+            var declined = NewMarginsOfferMemory()
+            declined.decline(itemId: "item", margins: entries.map(\.marginId))
+            var turnedDown = asked
+            turnedDown.declined = declined
+            XCTAssertFalse(PlayRule.decide(turnedDown).isAsk, "a question turned down isn't asked again")
+        }
+    }
 }

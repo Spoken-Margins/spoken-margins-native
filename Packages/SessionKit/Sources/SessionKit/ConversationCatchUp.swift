@@ -63,6 +63,20 @@ public struct ConversationCatchUp: Equatable, Sendable {
     public func minutes(ownParentDurationsMs: [Int] = []) -> Int {
         ItemListeningChoices.marginsOnlyMinutes(margins, ownParentDurationsMs: ownParentDurationsMs)
     }
+
+    /// The length of each distinct own Margin the run plays before a reply, for `minutes`. Only a spoken parent whose
+    /// recording is on this phone plays (`hasVoice`), as in the review's playlist. A Margin keeps no recording length,
+    /// so it is the aligned transcript's last word, else the words at the on-device voice's pace.
+    public func ownParentLengthsMs(ownMargins: [Interjection], hasVoice: (Interjection) -> Bool) -> [Int] {
+        var seen = Set<String>()
+        return margins.compactMap(\.replyToYouParentId).filter { seen.insert($0).inserted }.compactMap { parentId in
+            guard let parent = ownMargins.first(where: { $0.id == parentId }), parent.audioPath != nil, hasVoice(parent) else {
+                return nil
+            }
+            if let lastEndMs = parent.alignedTranscript?.segments.map(\.endMs).max(), lastEndMs > 0 { return lastEndMs }
+            return ItemListeningChoices.spokenLengthMs(of: parent.displayText ?? parent.transcript ?? "")
+        }
+    }
 }
 
 /// One catch-up run's life, from the tap to the caught-up card (#4785). A value: the app feeds it events and draws

@@ -86,6 +86,24 @@ final class ConversationCatchUpTests: XCTestCase {
         XCTAssertEqual(ItemListeningChoices.marginsOnlyMinutes([reply(40)]), 1, "the default is unchanged")
     }
 
+    func testOwnParentLengthsCountEachSpokenParentOnceAndSkipWrittenOrMissingOnes() throws {
+        func own(_ id: String, words: Int, voice: Bool = true) -> Interjection {
+            Interjection(
+                id: id, itemId: "item", sessionId: "s", targetType: .item, targetId: "item", createdAt: Date(timeIntervalSince1970: 1),
+                roughPercent: 10,
+                anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 60_000),
+                audioPath: voice ? "Interjections/\(id).m4a" : nil, audioStatus: "ready", transcriptionStatus: "complete",
+                transcript: Array(repeating: "word", count: words).joined(separator: " "), cleanedTranscript: nil, displayText: nil,
+                status: "active")
+        }
+        let catchUp = try XCTUnwrap(ConversationCatchUp.make(
+            isFinished: true,
+            waiting: [reply(parent: "spoken"), reply(parent: "spoken"), reply(parent: "written"), reply(parent: "gone"), reply(parent: "elsewhere")]))
+        let mine = [own("spoken", words: 100), own("written", words: 50, voice: false), own("gone", words: 10)]
+        XCTAssertEqual(catchUp.ownParentLengthsMs(ownMargins: mine, hasVoice: { $0.id != "gone" }), [40_000],
+                       "one spoken parent with its file, counted once; written, missing-file and unknown parents left out")
+    }
+
     // MARK: The item screen's buttons
 
     func testCatchUpOutranksEveryOtherStateOnTheItemScreen() throws {

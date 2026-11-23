@@ -79,12 +79,16 @@ public enum PlayRule {
         /// The friend's Margins the listener hasn't heard and can hear, with their places in this copy.
         public var newMargins: [SharedMarginReview.Entry]
         public var declined: NewMarginsOfferMemory
+        /// The item is finished and a new Margin answers one of the listener's own (#4785): a surface that asks asks
+        /// about every new Margin, whatever the place, because Play would replay the episode from 0 or not at all.
+        public var catchUp: ConversationCatchUp?
 
         public init(
             itemId: String, surface: Surface, nowPlaying: NowPlaying? = nil, openItem: OpenItem? = nil,
             libraryRow: LibraryItemRow? = nil, newMargins: [SharedMarginReview.Entry] = [],
-            declined: NewMarginsOfferMemory = NewMarginsOfferMemory()
+            declined: NewMarginsOfferMemory = NewMarginsOfferMemory(), catchUp: ConversationCatchUp? = nil
         ) {
+            self.catchUp = catchUp
             self.itemId = itemId
             self.surface = surface
             self.nowPlaying = nowPlaying
@@ -104,6 +108,10 @@ public enum PlayRule {
     public static func decide(_ context: Context) -> Outcome {
         let start = start(for: context)
         guard context.surface.asksAboutMarginsBehind else { return .play(start) }
+        if context.catchUp != nil, !context.newMargins.isEmpty,
+           !context.declined.isDeclined(itemId: context.itemId, margins: context.newMargins.map(\.marginId)) {
+            return .askFirst(marginsBehind: context.newMargins)
+        }
         let behind = FriendMarginsPlan.behind(context.newMargins, place: place(of: start, in: context))
         if behind.isEmpty || context.declined.isDeclined(itemId: context.itemId, margins: behind.map(\.marginId)) {
             return .play(start)
