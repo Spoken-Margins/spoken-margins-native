@@ -281,6 +281,7 @@ struct PDFCommentTidyReviewSheet: View {
             }
             .navigationTitle("Tidy version")
             .navigationBarTitleDisplayMode(.inline)
+            .miniPlayerKeepOut()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
