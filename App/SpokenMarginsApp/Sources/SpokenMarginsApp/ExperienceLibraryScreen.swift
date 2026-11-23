@@ -380,6 +380,9 @@ struct ExperienceLibraryScreen: View {
         Button {
             // The rule is in SessionKit (#5006); the screen's onChange of the query saves the new Listening choice.
             model.libraryQuery = LibraryQueryEngine.queryRevealingFinished(model.libraryQuery)
+            // Keyboard down too, so the finished rows aren't left under it: the same resign the Done bar sends
+            // (ExperienceDesignSystem.swift:417). The search text and filters stay.
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         } label: {
             Text(LibraryQueryEngine.revealsFinishedWithinSearch(query: model.libraryQuery) ? "Include in search" : "Show")
                 .expandedHitArea(horizontal: 8, vertical: 12)
