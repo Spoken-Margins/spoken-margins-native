@@ -517,7 +517,7 @@ private struct FollowingShowRowsReload: View {
 /// One show on Following: artwork with its "N new" tag, name, the newest episode, date, status, ▶ and › (#4723).
 /// At accessibility text sizes the row stacks: the picture, ▶ and › on a top line, and the text at the row's full width
 /// below, so a title never breaks inside a word. The picture stays 56 pt at every size.
-private struct FollowingShowRowView: View {
+struct FollowingShowRowView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let row: FollowingShowRow
     let artworkURL: URL?

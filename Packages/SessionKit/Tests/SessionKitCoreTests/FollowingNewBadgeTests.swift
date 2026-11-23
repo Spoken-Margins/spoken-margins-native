@@ -12,7 +12,7 @@ final class FollowingNewBadgeTests: XCTestCase {
         }
     }
 
-    func testAShowRowWithOneHundredFiftyNewShowsTheCappedTagButSpeaksTheExactCount() {
+    func testAShowRowWithOneHundredFiftyNewShowsTheCappedTagButSpeaksTheExactCount() throws {
         let followed = Date(timeIntervalSince1970: 1_700_000_000)
         let subscription = FeedSubscription(
             id: "noisy",
@@ -30,7 +30,7 @@ final class FollowingNewBadgeTests: XCTestCase {
         let list = FollowingShowRows.build(
             subscriptions: [subscription], entries: entries, lookedAt: [:], libraryEpisodes: [:],
             now: followed.addingTimeInterval(30 * 86_400), calendar: Calendar(identifier: .gregorian), locale: Locale(identifier: "en_US"))
-        let row = try! XCTUnwrap(list.rows.first)
+        let row = try XCTUnwrap(list.rows.first)
         XCTAssertEqual(row.newCount, 150)
         XCTAssertEqual(row.newBadgeText, "99+ new")
         XCTAssertEqual(row.newLabel, "150 new")
