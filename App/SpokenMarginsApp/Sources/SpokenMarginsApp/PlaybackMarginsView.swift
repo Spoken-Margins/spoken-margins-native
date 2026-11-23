@@ -8,6 +8,8 @@ struct PlaybackMarginsView: View {
     @State private var filter: PlaybackMarginsList.Filter = .all
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
+    /// Saved live-session photos on own rows (#4180), observed so they appear once the launch load finishes.
+    @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
 
     var body: some View {
         let own = model.marginRows
@@ -43,6 +45,7 @@ struct PlaybackMarginsView: View {
                         PlaybackMarginRowView(title: row.preview, detail: row.placeDescription(),
                             isShared: false, identifier: "margins.row.\(row.id)",
                             goesTo: SilentMarginWords.ownWrittenGoesTo(row.interjection), sourceNoun: model.sourceNoun,
+                            thumbnail: photoThumbnail(photoIndex, for: row),
                             star: .ownMargin(row.interjection, place: .playerMargins, model: model),
                             showDetails: { selectedMargin = row }, play: { MarginMomentTap.start(row, model: model) })
                     } else if entry.origin == .shared, let row = sharedByID[entry.id] {

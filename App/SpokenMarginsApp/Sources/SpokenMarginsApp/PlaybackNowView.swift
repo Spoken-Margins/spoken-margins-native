@@ -7,6 +7,8 @@ struct PlaybackNowView: View {
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var playbackTick = 0 // bumped by each progress tick: the rows count down on the playhead (#2074)
+    /// Saved live-session photos on own rows (#4180), for a session saved with its recording.
+    @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
 
     var body: some View {
         let _ = playbackTick
@@ -57,6 +59,7 @@ struct PlaybackNowView: View {
                         detail: row.placeDescription(), countdown: entry.countdown,
                         isShared: false, identifier: "playback.now.margin.\(row.id)",
                         goesTo: SilentMarginWords.ownWrittenGoesTo(row.interjection), sourceNoun: model.sourceNoun,
+                        thumbnail: photoThumbnail(photoIndex, for: row),
                         star: .ownMargin(row.interjection, place: .now, model: model),
                         showDetails: { selectedMargin = row }, play: { MarginMomentTap.start(row, model: model) })
                 } else if let row = shared.first(where: { $0.id == entry.id }), entry.origin == .shared {

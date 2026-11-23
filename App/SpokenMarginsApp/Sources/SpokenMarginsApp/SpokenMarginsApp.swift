@@ -38,6 +38,9 @@ final class SpokenMarginsAppDelegate: NSObject, UIApplicationDelegate {
         // serialized with every filing; a screen can't open in the milliseconds before it. Unit tests have no launch to clean up after.
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
             Task.detached(priority: .utility) { await LiveSessionFileWorker.shared.sweepPhotos() }
+            // Saved live-session photos, keyed by saved Margin id, for the item's screens (#4180). The records are
+            // read off the main thread; app tests drive the lookup themselves.
+            Task { @MainActor in SavedMarginPhotoIndex.shared.load(from: Gate1AppModel.liveSessionDirectory) }
         }
         return true
     }
