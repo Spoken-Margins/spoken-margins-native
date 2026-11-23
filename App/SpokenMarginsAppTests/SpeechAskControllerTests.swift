@@ -48,8 +48,14 @@ final class SpeechAskControllerTests: XCTestCase {
     func testCardWaitsWhileTheSlotIsHeld() {
         let controller = makeController()
         controller.spokenMarginSaved(isWritten: false)
-        XCTAssertFalse(controller.isCardShowing(slotIsFree: false))
-        XCTAssertTrue(controller.isCardShowing(slotIsFree: true))
+        let friends = NowPinnedSlot(friendsMarginCardShowing: true, footnoteCardShowing: false, recordingIsLocked: false)
+        let footnote = NowPinnedSlot(friendsMarginCardShowing: false, footnoteCardShowing: true, recordingIsLocked: false)
+        let locked = NowPinnedSlot(friendsMarginCardShowing: false, footnoteCardShowing: false, recordingIsLocked: true)
+        let free = NowPinnedSlot(friendsMarginCardShowing: false, footnoteCardShowing: false, recordingIsLocked: false)
+        for held in [friends, footnote, locked] {
+            XCTAssertFalse(controller.isCardShowing(slotIsFree: held.isFreeForSpeechAsk))
+        }
+        XCTAssertTrue(controller.isCardShowing(slotIsFree: free.isFreeForSpeechAsk))
         XCTAssertFalse(controller.isCardShowing(on: .margins, slotIsFree: true), "it shows only on its own surface")
     }
 

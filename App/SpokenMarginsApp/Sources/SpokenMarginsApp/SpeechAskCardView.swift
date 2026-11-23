@@ -16,7 +16,11 @@ struct SpeechAskCardSlot: View {
 
     /// One slot rule: a friend's Margin card, a footnote card and a locked recording all keep the slot.
     private var slotIsFree: Bool {
-        model.pinnedMarginCard == nil && model.footnoteCard == nil && !model.recordingNavigationIsLocked
+        NowPinnedSlot(
+            friendsMarginCardShowing: model.pinnedMarginCard != nil,
+            footnoteCardShowing: model.footnoteCard != nil,
+            recordingIsLocked: model.recordingNavigationIsLocked
+        ).isFreeForSpeechAsk
     }
 }
 
