@@ -72,6 +72,14 @@ final class EpisodeMapPreparer {
     /// Why the running task was cancelled, when it was a pause rather than the listener (#2092).
     private var stopReason: EpisodeMapRunStop?
     private var heatWatch: Task<Void, Never>?
+    /// Held maps Allow retried while another map ran: each starts when the one before it ends (#4715).
+    private var heldRetryStarts = OneAtATimeStarts<HeldMapRetry>()
+
+    private struct HeldMapRetry {
+        let itemId: String
+        let policy: PreparationJobPolicy
+        let trigger: EpisodeMapPreparationTrigger
+    }
 
     private weak var host: (any EpisodeMapPreparerHost)?
 
@@ -96,14 +104,20 @@ final class EpisodeMapPreparer {
         task.cancel()
     }
 
-    /// Starts preparing the private map for `itemId`, or waits for its download.
+    /// Starts preparing the private map for `itemId`, or waits for its download. While another map runs, the listener's
+    /// own request is refused with a warning; a held retry (`isHeldRetry`) waits quietly and starts when that map ends.
     func prepare(
         itemId requestedItemId: String,
         policy: PreparationJobPolicy = .explicit,
-        trigger: EpisodeMapPreparationTrigger = .listenerRequest
+        trigger: EpisodeMapPreparationTrigger = .listenerRequest,
+        isHeldRetry: Bool = false
     ) {
         guard let host else { return }
-        guard task == nil else {
+        let retry = HeldMapRetry(itemId: requestedItemId, policy: policy, trigger: trigger)
+        switch heldRetryStarts.offer(retry, key: requestedItemId, isHeldRetry: isHeldRetry, busy: task != nil) {
+        case .start: break
+        case .waitsItsTurn: return
+        case .refuseBusy:
             host.episodeMapWarn("An episode map is already being prepared.")
             return
         }
@@ -192,6 +206,7 @@ final class EpisodeMapPreparer {
                 self.stopReason = nil
                 self.task = nil
                 self.itemId = nil
+                self.startNextHeldRetry()
             }
             do {
                 let store = try host.requireStore()
@@ -454,7 +469,7 @@ final class EpisodeMapPreparer {
                     // #4715: the map waits quietly for the listener's answer and starts again on Allow.
                     SpeechAskController.shared.transcriptionHeld(.episodeMap, key: item.id) { [weak self] in
                         MainThreadOperationLabels.shared.scoped("episodeMap.heldRetry") {
-                            self?.prepare(itemId: item.id, policy: initialJob.policy, trigger: trigger)
+                            self?.prepare(itemId: item.id, policy: initialJob.policy, trigger: trigger, isHeldRetry: true)
                         }
                     }
                 }
@@ -468,6 +483,14 @@ final class EpisodeMapPreparer {
             }
         }
         watchHeat(policy: initialJob.policy)
+    }
+
+    /// The map that ran has ended: start the held retries that waited for it, one run at a time. One that waits for its
+    /// download or fails to start leaves the preparer free, so the next one starts too.
+    private func startNextHeldRetry() {
+        while let next = heldRetryStarts.next(busy: task != nil) {
+            prepare(itemId: next.itemId, policy: next.policy, trigger: next.trigger, isHeldRetry: true)
+        }
     }
 
     /// Saves the job on a background thread. It is not tied to the run's cancellation: a cancelled run still records
