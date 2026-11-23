@@ -148,11 +148,11 @@ test('follow a show, play, write a Margin, find it in Margins, and resume after 
   // The written Margin came back from storage, not from memory.
   await expect(page.getByText('The guest’s point about tides is the one to send Sam.')).toBeVisible();
   await tab(page, 'Library');
-  const resume = page.getByRole('button', { name: /Episode 3/ }).getByText(/Resume at/);
+  const resume = page.getByRole('button', { name: /^(?!More for ).*Episode 3/ }).getByText(/Resume at/);
   await expect(resume).toBeVisible();
   expect(Math.abs(seconds((await resume.textContent())!.replace('Resume at ', '')) - pausedAt)).toBeLessThanOrEqual(1);
   await shot(page, info, '08-library-resume');
-  await page.getByRole('button', { name: /Episode 3/ }).click();
+  await page.getByRole('button', { name: /^(?!More for ).*Episode 3/ }).click();
   // The audio itself, not just the clock label, must start from the saved place and play on from it.
   await expect.poll(audioTime, { timeout: 10_000 }).toBeGreaterThanOrEqual(pausedAt + 1);
   expect(await audioTime()).toBeLessThan(pausedAt + 6);
