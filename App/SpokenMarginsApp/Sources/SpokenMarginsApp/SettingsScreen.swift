@@ -414,7 +414,9 @@ struct SettingsScreen: View, Equatable {
                 }
                 MarginOutputSettingsSection()
                 HiddenSendersSettingsSection(hidden: model.hiddenSenders, showAgain: { model.showSender($0) }, showMarginAgain: { model.showMargin($0) })
-                Section("Import & Export") {
+                Section {
+                    // Which folder files come in from (#3770): first in the section, drawn from the folder's own state.
+                    QuickFolderSettingsRow(model: model)
                     NavigationLink {
                         YourAISettingsScreen(model: model).miniPlayerKeepOut()
                     } label: {
@@ -472,6 +474,10 @@ struct SettingsScreen: View, Equatable {
                             }
                         }
                     }
+                } header: {
+                    Text("Import & Export")
+                } footer: {
+                    Text(QuickFolderStatus.sectionFooter)
                 }
                 Section("Help & Privacy") {
                     if watchTip.pairing.hasWatchApp {

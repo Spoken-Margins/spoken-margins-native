@@ -58,6 +58,21 @@ extension Gate1AppModel {
         }
     }
 
+    /// Settings' "Choose Folder Again" (#3770): the same folder keeps what the last scan learned and its dismissed files;
+    /// any other folder is a fresh baseline, as `configureQuickAccessFolder`. The confirmation is the same.
+    func reconnectQuickAccessFolder(url: URL) {
+        do {
+            try quickAccess.reconnect(url: url) {
+                reportSuccess("Quick folder set to \(url.lastPathComponent).")
+            }
+        } catch {
+            reportFailure(error, context: "Quick folder setup failed")
+        }
+    }
+
+    /// Settings' "Remove Folder" (#3770). Nothing in the Library or the play queue is touched.
+    func removeQuickAccessFolder() { quickAccess.remove() }
+
     func refreshQuickAccessFolder() { quickAccess.refresh() }
 
     func importQuickAccessFile(_ file: QuickAccessFile, openWhenFinished: Bool = false) {
