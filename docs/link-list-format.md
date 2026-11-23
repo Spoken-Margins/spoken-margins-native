@@ -22,7 +22,7 @@ The app knows a link list only by its `schemaVersion`. A `.txt`, `.md` or `.mark
 
 1. `schemaVersion` must be exactly `spoken-margins.link-list.v1`. A different version of this format (`spoken-margins.link-list.v2`, say) is refused with a message that names it.
 2. `entries` is required and holds at least one entry whose `url` starts with `https://` and has a host. Entry order is playing order. One link is a list with one entry.
-3. `title` is optional on the list and on each entry. On the list, a title makes a list picked in Files become a Library collection with that name (#3769); the Quick Folder still adds the links as loose items. On an entry it is read but not used: each link is named by the page it resolves to.
+3. `title` is optional on the list and on each entry. On the list, a title makes the list a Library collection with that name, whichever way it arrives: picked in Files (#3769), found in the Quick Folder, or pasted (#4683). Without a title the links are added as loose items. On an entry it is read but not used: each link is named by the page it resolves to.
 4. Unknown fields are ignored, so later versions can add them.
 5. A link that is not `https`, or an entry with no `url`, is skipped and named; the other entries still arrive. A list with no usable link is refused.
 6. A link listed twice in one file is added once, at its first place. That includes an entry and a `"follow": true` entry with the same link: the first one wins.
@@ -31,6 +31,8 @@ The app knows a link list only by its `schemaVersion`. A `.txt`, `.md` or `.mark
 9. An entry with `"follow": true` is a show the assistant suggests the listener follow, not an item to add (#4683). Only the JSON value `true` counts: `"true"`, `1`, `false` and a missing field mean an ordinary entry. A list whose only usable entries are follows is accepted. More than 10 usable follow entries (after skipping the ones that aren't `https`) refuses the whole list: "This list suggests more than 10 shows to follow. Ask for 10 or fewer."
 
 In a picked folder, the app reads every `.json` file it finds (up to 4 levels deep, 200 files) and adds the link lists; it recognizes them by `schemaVersion` alone, so the file can have any name. Other `.json` files in the folder go to the Listening Edition import as before.
+
+A `"follow": true` entry is never added as an item, on any route. It waits with the shows the listener's assistant suggested; nothing is followed until the listener says so. (A link list inside a picked folder skips its follow entries without suggesting them.)
 
 A build that doesn't know `follow` ignores it and adds the link as if pasted. A link list is not a packet, so that is acceptable.
 
@@ -43,11 +45,25 @@ A listener can paste the whole reply from their own assistant, which is prose ar
 3. With no list, the first refusal is shown (a newer version, too many links or follows, no usable link). If an object holds the marker but isn't valid JSON, or the reply is cut off inside the object (the marker is in a JSON string and the object never closes): "Your AI's reply has a link list that couldn't be read. Ask it for the JSON block again."
 4. The marker in prose only, with no object around it, is not a list.
 5. The same limits apply as to a file: at most 50 entries, and a reply over 1 MB (1,000,000 UTF-8 bytes) that holds the marker is refused with the size message. Without the marker it is not a list.
+6. Paste & go in the Add sheet reads a pasted list before it looks at links, so a friend's share link inside a brief doesn't take over. The sheet closes when the list has arrived; a refusal shows under the bar. Text that holds the marker but no list goes the way pasted text always did.
+7. The prompt the app gives the listener to copy into their AI holds the marker and an example list. If the listener pastes the prompt itself, Paste & go says so and adds nothing (`AssistantSetupPrompt.isPrompt`).
+
+## Arrival
+
+Every route (Quick Folder, Paste & go; the handoff folder comes later) runs one arrival (`LinkListArrivalPlan`, #4683):
+
+1. One arrival at a time. If another import is running, a Quick Folder list stays where it is and is tried at the next refresh; Paste & go says the app is busy.
+2. Offline, nothing is tried and no try is counted. The Quick Folder list stays; Paste & go asks the listener to paste it again online.
+3. The key is `linklist:` plus the SHA-256 of the title and the entries' links in file order, so the same list by two routes, or twice, is one collection, and the second arrival adds only what failed before. A file saved under the same name each day with new links is a new collection.
+4. A titled list is a collection; an untitled one is loose items. Nothing starts playing and the play queue is not changed.
+5. The banner is the collection's usual line, with an Undo when the arrival made items (for a titled list, when it made the collection). Undo moves only the items the arrival made to Recently Deleted, never an item that was already in the Library or the one now playing, then removes the collection and that list's suggestions. It is refused while a Margin is recording.
 
 ## Quick Folder
 
 A link list saved in the Quick Folder shows in the Quick Add list like any other file, and adding it adds its links. The scan offers a `.json` file there only when the file itself says it is a link list (the same `schemaVersion` rule, read off the main thread); a Listening Edition or any other `.json` file never shows. A list the app refuses (a newer version, say) does show, so tapping it names the reason. The scan reads at most 40 `.json` files newest first, each at most 1 MB; a bigger file is read only as far as its first 512 bytes and shows only if it announces the link-list format, so adding it can say why it is refused.
 
-With the Quick Folder feeding the play queue, a new link list is added to the Library the same way, ahead of the text files that arrived with it. Its links are not queued yet.
+With the Quick Folder feeding the play queue, a new link list arrives the same way, ahead of the text files that arrived with it. Its links are not queued.
+
+A list that didn't fully land while the phone was online is counted and tried again at the next refresh once the app comes forward, up to three tries; then it waits in the Quick Add list for a tap. Offline opens don't count. The count is kept over relaunches (`quickFolderLinkListRetryV1`).
 
 Not yet: a batch of more than eight new files arriving whole, and a list becoming a Library folder (#3769).

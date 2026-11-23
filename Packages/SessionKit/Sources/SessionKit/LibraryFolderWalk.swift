@@ -214,8 +214,9 @@ public enum LibraryFolderWalk {
                 key: linkKey(path, position: skipped.position), name: skipped.text ?? "Entry \(skipped.position)",
                 reason: skipped.text == nil ? skipped.reason : "is not added: \(skipped.reason)"))
         }
-        // Entries keep the list's own order. The numbers count the entries that were kept, from 001.
-        return list.entries.enumerated().map { index, entry in
+        // Entries keep the list's own order. The numbers count the entries that were kept, from 001. A follow entry (#4683)
+        // is a show to suggest, not an item, so it is never a member.
+        return list.entries.filter { !$0.follow }.enumerated().map { index, entry in
             Member(key: linkKey(path, position: index + 1), kind: .link, size: 0, sha256: nil, url: nil,
                    address: entry.url, title: entry.title, isNotDownloaded: false)
         }

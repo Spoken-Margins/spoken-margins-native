@@ -12,6 +12,15 @@ public enum AssistantSetupPrompt {
     /// How many things the prompt asks a daily brief to hold. A prompt constant, not a `LinkListFile` limit.
     public static let briefItemCount = 8
 
+    /// The prompt's opening sentence. Paste & go recognises the prompt by it, so the prompt's own example list (two
+    /// example.com links) is never added as a brief when a listener taps Paste after copying the prompt.
+    static let firstSentence = "I use Spoken Margins, an iPhone app that reads articles aloud and plays podcasts."
+
+    /// Whether `text` is this prompt (or holds it, as a chat app's copy can with a line around it).
+    public static func isPrompt(_ text: String) -> Bool {
+        text.contains(firstSentence)
+    }
+
     /// - Parameters:
     ///   - date: the day the prompt is copied; it names the example title ("Morning brief, November 23").
     ///   - locale: the phone's locale, which writes the month and day.
@@ -26,7 +35,7 @@ public enum AssistantSetupPrompt {
         quickFolderName: String? = nil
     ) -> String {
         var lines: [String] = []
-        lines.append("I use Spoken Margins, an iPhone app that reads articles aloud and plays podcasts. Please help me with two things.")
+        lines.append("\(firstSentence) Please help me with two things.")
         lines.append("")
         lines.append("1. A daily brief. When I ask, or on a schedule I set up with you, pick up to \(briefItemCount) things worth my time today: articles, newsletter posts, podcast episodes or PDFs. Use each one's own page; for a podcast episode, an Apple Podcasts episode link if you can. Open each link if you can browse, and leave out any that don't load.")
         if let notes = cleanedNotes(notes) {

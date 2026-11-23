@@ -28,25 +28,68 @@ extension Gate1AppModel {
             bookmark: try? folder.bookmarkData(), name: folder.lastPathComponent,
             folders: libraryCollections.folders, collections: libraryCollections.collections, now: Date(),
             collectionID: "collection-\(UUID().uuidString)", makeItemID: Self.collectionImportItemID)
-        return await runCollectionImport(start, capture: capture, store: store)
+        let result = await runCollectionImport(start, capture: capture, store: store)
+        return result?.deleted == true ? nil : result?.summary
+    }
+
+    /// What a finished collection import tells its caller (#4683): the line to show, which collection it filled, whether
+    /// the pick made it, the items it saved, and how many links or files failed.
+    struct CollectionImportResult {
+        var summary: LibraryCollectionImport.Summary
+        var collectionID: String
+        var isNew: Bool
+        var addedItemIDs: [String]
+        var failed: Int
+        /// The listener deleted the collection while it filled. The items that landed are in the Library, and the
+        /// collection stays deleted; this is not a failure, so nothing is retried.
+        var deleted = false
     }
 
     /// A link list with a title, picked in Files: a collection of its links in the list's order. Picking the same list
-    /// again adds only its new links.
+    /// again adds only its new links. Follow entries are never members: they go to the shows the listener's AI suggested.
     @discardableResult
     func importLinkListAsCollection(_ url: URL, list: LinkListFile, title: String) async -> LibraryCollectionImport.Summary? {
+        let suggested = suggestShows(from: list)
+        let itemList = LinkListFile(title: list.title, entries: list.entries.filter { !$0.follow }, skipped: list.skipped)
+        guard !itemList.entries.isEmpty else {
+            // Only shows to follow: no collection to make.
+            let banner = LinkListArrivalPlan.banner(
+                base: nil, suggested: suggested, madeItems: false, isTitled: true, collectionIsNew: false, mentionsFollowing: false)
+            reportConfirmation(banner.message)
+            return LibraryCollectionImport.Summary(message: banner.message, kind: banner.kind)
+        }
+        let result = await importLinkListAsCollection(
+            pickedPath: LibraryFolderRecord.standardizedPath(of: url), walkName: url.lastPathComponent, list: itemList, title: title,
+            reportsBanner: true, onboarding: [.addedOwnSource, .addedFromFiles])
+        return result?.deleted == true ? nil : result?.summary
+    }
+
+    /// A link list that arrived (#4683): the same collection whichever way it came, because its path is the list's
+    /// own key (`LinkListArrivalPlan.key`) and not a file's. With `reportsBanner` false the arrival says it itself.
+    @discardableResult
+    func importLinkListAsCollection(
+        key: String, list: LinkListFile, title: String, reportsBanner: Bool, onboarding: Set<OnboardingStep>
+    ) async -> CollectionImportResult? {
+        await importLinkListAsCollection(
+            pickedPath: key, walkName: key, list: list, title: title, reportsBanner: reportsBanner, onboarding: onboarding)
+    }
+
+    private func importLinkListAsCollection(
+        pickedPath: String, walkName: String, list: LinkListFile, title: String, reportsBanner: Bool, onboarding: Set<OnboardingStep>
+    ) async -> CollectionImportResult? {
         guard libraryCollections.importCapture == nil else { reportPastImportCapture { reportFailure(Self.collectionImportBusyMessage) }; return nil }
         let store: SQLiteSessionStore
         do { store = try requireStore() } catch { reportFailure(error, context: "Couldn't add the list"); return nil }
-        let capture = CollectionImportCapture()
+        // Only this list's own link imports report to it: a share that drains meanwhile keeps its item and banner (#4683).
+        let capture = CollectionImportCapture(membersOnly: true)
         libraryCollections.importCapture = capture
         defer { libraryCollections.importCapture = nil }
         let start = LibraryCollectionImport.start(
-            walk: LibraryFolderWalk.linkList(list, named: url.lastPathComponent),
-            pickedPath: LibraryFolderRecord.standardizedPath(of: url), bookmark: nil, name: title,
+            walk: LibraryFolderWalk.linkList(list, named: walkName),
+            pickedPath: pickedPath, bookmark: nil, name: title,
             folders: libraryCollections.folders, collections: libraryCollections.collections, now: Date(),
             collectionID: "collection-\(UUID().uuidString)", makeItemID: Self.collectionImportItemID)
-        return await runCollectionImport(start, capture: capture, store: store)
+        return await runCollectionImport(start, capture: capture, store: store, reportsBanner: reportsBanner, onboarding: onboarding)
     }
 
     nonisolated static func collectionImportItemID() -> String { "item-collection-\(UUID().uuidString.lowercased())" }
@@ -55,13 +98,14 @@ extension Gate1AppModel {
     /// written to the collection as it is stored at that moment (`LibraryCollectionModel.update`), so a rename, an edit or
     /// a delete made while the import runs is kept; a deleted collection ends the import (#3769).
     private func runCollectionImport(
-        _ start: LibraryCollectionImport.Start, capture: CollectionImportCapture, store: SQLiteSessionStore
-    ) async -> LibraryCollectionImport.Summary? {
+        _ start: LibraryCollectionImport.Start, capture: CollectionImportCapture, store: SQLiteSessionStore,
+        reportsBanner: Bool = true, onboarding: Set<OnboardingStep> = [.addedOwnSource, .addedFromFiles]
+    ) async -> CollectionImportResult? {
         guard LibraryCollectionImport.savesCollection(start) else {
             let summary = LibraryCollectionImport.summary(
                 name: start.collection.name, isNew: true, added: 0, failed: 0, notAdded: start.record.notAdded.count)
-            reportPastImportCapture { present(summary) }
-            return summary
+            if reportsBanner { reportPastImportCapture { present(summary) } }
+            return CollectionImportResult(summary: summary, collectionID: start.collection.id, isNew: true, addedItemIDs: [], failed: 0)
         }
         let id = start.collection.id
         var name = start.collection.name
@@ -78,9 +122,10 @@ extension Gate1AppModel {
         var added = 0
         var failed = 0
         var deleted = false
+        var addedItemIDs: [String] = []
         for job in start.jobs {
             let outcome = await importCollectionMember(job, capture: capture, store: store)
-            if case .added = outcome { added += 1 } else { failed += 1 }
+            if case .added(let itemID) = outcome { added += 1; addedItemIDs.append(itemID) } else { failed += 1 }
             settling.settle(job, outcome: outcome, now: Date())
             let record = settling.record
             let pending = settling
@@ -101,13 +146,19 @@ extension Gate1AppModel {
             if deleted { break }
         }
         _ = try? await reloadLibraryRowsOffMain(store: store)
-        if added > 0 { markOnboardingSteps([.addedOwnSource, .addedFromFiles]) }
+        if added > 0 { markOnboardingSteps(onboarding) }
         // Deleted while it filled: the items that landed are in the Library, and the listener chose to drop the collection.
-        guard !deleted else { return nil }
+        guard !deleted else {
+            return CollectionImportResult(
+                summary: LibraryCollectionImport.summary(
+                    name: name, isNew: start.isNew, added: added, failed: failed, notAdded: settling.record.notAdded.count),
+                collectionID: id, isNew: start.isNew, addedItemIDs: addedItemIDs, failed: failed, deleted: true)
+        }
         let summary = LibraryCollectionImport.summary(
             name: name, isNew: start.isNew, added: added, failed: failed, notAdded: settling.record.notAdded.count)
-        reportPastImportCapture { present(summary) }
-        return summary
+        if reportsBanner { reportPastImportCapture { present(summary) } }
+        return CollectionImportResult(
+            summary: summary, collectionID: id, isNew: start.isNew, addedItemIDs: addedItemIDs, failed: failed)
     }
 
     /// Shows what the import itself means the listener to see (#3769 audit). `presentFeedback` hands every event with no
@@ -139,7 +190,9 @@ extension Gate1AppModel {
         if walked.kind == .link {
             guard let address = walked.address else { return .failed(reason: LibraryCollectionImport.noItemReason, retryable: false) }
             _ = capture.take()
-            _ = await importSourceLinkAsync(urlString: address, sourceSurface: "link_list", startSession: false)
+            _ = await CollectionImportMemberContext.$isActive.withValue(true) {
+                await importSourceLinkAsync(urlString: address, sourceSurface: "link_list", startSession: false)
+            }
             let taken = capture.take()
             if let itemID = taken.itemIDs.first { return .added(itemID: itemID) }
             return .failed(reason: taken.problem ?? LibraryCollectionImport.noItemReason, retryable: true)

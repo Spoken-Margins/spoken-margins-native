@@ -81,6 +81,22 @@ final class LibraryCollectionImportTests: XCTestCase {
         XCTAssertEqual(begun.jobs.map(\.itemID), [nil, nil], "a link's item is known once it is added")
     }
 
+    func testAFollowEntryIsNeverAMemberOfAFolderOrListCollection() {
+        // #4683: a show to follow is a suggestion, not an item, in every route that reads a list.
+        let list = LinkListFile(title: "Brief", entries: [
+            .init(url: "https://a.example/1"),
+            .init(url: "https://feeds.example/show.xml", follow: true),
+            .init(url: "https://a.example/2"),
+        ])
+        let result = LibraryFolderWalk.linkList(list, named: "brief.json")
+        XCTAssertEqual(result.members.map(\.address), ["https://a.example/1", "https://a.example/2"])
+        XCTAssertEqual(result.members.map(\.key), ["brief.json#001", "brief.json#002"])
+        // A list of only follows has nothing to make a collection of.
+        let onlyFollows = LinkListFile(title: "Shows", entries: [.init(url: "https://feeds.example/a.xml", follow: true)])
+        XCTAssertTrue(LibraryFolderWalk.linkList(onlyFollows, named: "shows.json").members.isEmpty)
+        XCTAssertFalse(LibraryCollectionImport.savesCollection(start(LibraryFolderWalk.linkList(onlyFollows, named: "shows.json"), name: "Shows")))
+    }
+
     // MARK: Settling
 
     func testItemsLandInFolderOrderWhateverOrderTheImportersFinishIn() {
