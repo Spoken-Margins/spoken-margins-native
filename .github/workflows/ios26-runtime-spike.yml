@@ -1,0 +1,170 @@
+# SPIKE, NOT FOR MAIN (#4842). Measures what it costs to install the iOS 26 simulator runtime on a hosted xcode-27
+# Mac and run a small app test class on it: download size, minutes, free disk before and after. It runs only on pushes
+# to this one branch that touch this file, or by dispatch on the branch. The branch's PR removes this file again.
+name: ios26-runtime-spike
+
+on:
+  push:
+    branches: [claude/project-thread-dpx9ye]
+    paths: [.github/workflows/ios26-runtime-spike.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios26-runtime-spike
+  cancel-in-progress: true
+
+jobs:
+  spike:
+    name: 'iOS 26 runtime on a hosted Mac'
+    runs-on: xcode-27
+    timeout-minutes: 200
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      SM_LANE_GITHUB_HOSTED: '1'
+      SM_PLAN_TIMEOUT_SECONDS: '3600'
+      SM_SPM_DIR: ${{ github.workspace }}/.build/spm
+      TESTS: 'KeychainStoreTests PinnedMarginCardLayoutTests'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+      - name: Before
+        run: |
+          mkdir -p "$RUNNER_TEMP/m"
+          echo "job_start=$(date +%s)" >> "$RUNNER_TEMP/m/times"
+          sw_vers; uname -m; sysctl -n hw.ncpu hw.memsize
+          ls -d /Applications/Xcode*.app
+          xcodebuild -version
+          df -k / | tail -1 | awk '{print $4}' > "$RUNNER_TEMP/m/free_before_kb"
+          df -h /
+          xcrun simctl list runtimes
+          xcrun simctl runtime list || true
+      - name: Download and install the iOS 26 runtime
+        run: |
+          start=$(date +%s)
+          ok=''
+          xcodebuild -help 2>&1 | grep -iE 'downloadPlatform|buildVersion|architectureVariant' || true
+          for v in 26.5 26.4 26.3 26.2 26.1 26.0; do
+            for variant in arm64 ''; do
+              echo "::group::iOS $v ${variant:-default variant}"
+              if [ -n "$variant" ]; then
+                cmd=(xcodebuild -downloadPlatform iOS -buildVersion "$v" -architectureVariant "$variant")
+              else
+                cmd=(xcodebuild -downloadPlatform iOS -buildVersion "$v")
+              fi
+              s=$(date +%s)
+              if "${cmd[@]}"; then ok="$v ${variant:-default}"; fi
+              echo "attempt $v ${variant:-default}: $(( $(date +%s) - s )) s, ok=${ok:-no}"
+              echo "::endgroup::"
+              [ -n "$ok" ] && break 2
+            done
+          done
+          echo "download_seconds=$(( $(date +%s) - start ))" >> "$RUNNER_TEMP/m/times"
+          echo "installed=${ok:-none}" >> "$RUNNER_TEMP/m/times"
+          df -k / | tail -1 | awk '{print $4}' > "$RUNNER_TEMP/m/free_after_install_kb"
+          df -h /
+          xcrun simctl list runtimes
+          xcrun simctl runtime list -j > "$RUNNER_TEMP/m/runtimes.json" || true
+          cat "$RUNNER_TEMP/m/runtimes.json" || true
+          [ -n "$ok" ] || { echo "::error::No iOS 26 runtime could be installed"; exit 1; }
+      - name: Lane folders and the iOS runtime the lane picks
+        run: |
+          {
+            echo "SM_LANE_STATE_DIR=$RUNNER_TEMP/lane-state"
+            echo "SM_LANE_EVIDENCE_DIR=$RUNNER_TEMP/lane-evidence"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/lane-state" "$RUNNER_TEMP/lane-evidence" "$HOME/Library/Logs/DiagnosticReports"
+          runtimes=$(xcrun simctl list runtimes --json)
+          major=$(echo "$runtimes" | /usr/bin/python3 -c 'import json,sys
+          ok=[r["version"].split(".")[0] for r in json.load(sys.stdin)["runtimes"] if r.get("isAvailable") and r.get("platform")=="iOS"]
+          print("26" if "26" in ok else (max(ok, key=int) if ok else "26"))')
+          echo "lane picks iOS $major"
+          [ "$major" = 26 ] || { echo "::error::iOS 26 is not available after the install"; exit 1; }
+          echo "SM_LANE_IOS_MAJOR=$major" >> "$GITHUB_ENV"
+      - name: List LFS objects
+        run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
+      - name: LFS cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
+          restore-keys: lfs-
+      - name: Fetch LFS files
+        env:
+          LFS_TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$LFS_TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+      - name: Restore the Swift packages
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ env.SM_SPM_DIR }}
+          key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: spm-
+      - name: Restore the Xcode compilation cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/cas-pack
+          key: xcode-cas-sparse-27.0-spike-${{ github.run_id }}
+          restore-keys: xcode-cas-sparse-27.0-
+      - name: Unpack the Xcode compilation cache
+        run: CAS="$RUNNER_TEMP/lane-state/compilation-cache" PACK="$RUNNER_TEMP/cas-pack" bash scripts/ci-cas-cache.sh unpack
+      - name: Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: XcodeGen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: command -v xcodegen >/dev/null || brew install xcodegen; xcodegen --version
+      - name: Python tools
+        run: PYTHON=python3 bash scripts/bootstrap-python-tools.sh
+      - name: Run a small app test class on iOS 26
+        run: |
+          start=$(date +%s)
+          set +e
+          python3 scripts/branch_t3.py run --sha "$(git rev-parse HEAD)" --tests "$TESTS" \
+            --out "$RUNNER_TEMP/m/result.json" --evidence "$SM_LANE_EVIDENCE_DIR/spike"
+          rc=$?
+          echo "tests_seconds=$(( $(date +%s) - start ))" >> "$RUNNER_TEMP/m/times"
+          echo "tests_rc=$rc" >> "$RUNNER_TEMP/m/times"
+          exit $rc
+      - name: After
+        if: always()
+        run: |
+          df -k / | tail -1 | awk '{print $4}' > "$RUNNER_TEMP/m/free_after_kb"
+          df -h /
+          echo "job_end=$(date +%s)" >> "$RUNNER_TEMP/m/times"
+          xcrun simctl list devices | grep -i -B1 -A3 'iOS 26' || true
+          {
+            echo '## iOS 26 runtime spike (#4842)'
+            echo '```'
+            cat "$RUNNER_TEMP/m/times"
+            echo "free_before_kb=$(cat "$RUNNER_TEMP/m/free_before_kb" 2>/dev/null)"
+            echo "free_after_install_kb=$(cat "$RUNNER_TEMP/m/free_after_install_kb" 2>/dev/null)"
+            echo "free_after_kb=$(cat "$RUNNER_TEMP/m/free_after_kb" 2>/dev/null)"
+            echo '```'
+            echo '```json'
+            head -c 4000 "$RUNNER_TEMP/m/result.json" 2>/dev/null || echo '{}'
+            echo
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Keep the measurements
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios26-spike
+          path: |
+            ${{ runner.temp }}/m/**
+            ${{ runner.temp }}/lane-evidence/**/*.log
+            ${{ runner.temp }}/lane-evidence/**/*.json
+          if-no-files-found: ignore
+          retention-days: 14
