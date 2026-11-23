@@ -1,0 +1,101 @@
+# Open the PR for a branch a cloud session pushed, as the GitHub App `spoken-margins-agent` (#4915, route 1).
+#
+# A cloud session reaches GitHub only through the cloud's proxy, which puts the owner's credential on every request
+# (probe, 2026-11-23, #4915). A PR it opens is authored by the owner, and GitHub never lets an author approve his own PR,
+# so the owner could not approve cloud PRs that touch the paths he holds in .github/CODEOWNERS. Cloud sessions now push
+# a branch with a request commit (`PR: <title>`, then the body; scripts/open_cloud_prs.py has the format) and stop. This
+# workflow opens the PR as the App, so the owner is not the author and can approve it, from his phone if need be.
+#
+# Safety: it starts only on `schedule` and `workflow_dispatch`, so the workflow and the script always come from `main`.
+# It never checks out or runs a pushed branch: branches are read as API data, and the title and body go to GitHub as
+# JSON strings. The `find` job holds only the workflow's read-only token. Only the `open` job, which runs when `find`
+# picked a branch, enters the `agent-identity` environment (main only) and mints an App token for this repository with
+# pull-requests: write and contents: read, nothing else. A branch asks for a PR only through its own commits, and only
+# collaborators can push branches here.
+#
+# Start: a cloud session fires `workflow_dispatch` (input `branch`) right after its push, through the same proxy, so the
+# PR usually opens within a minute. The 20-minute cron, which GitHub often drops on a busy day (#4866), and the VPS
+# dispatch backstop (ops/dispatch-backstop/, same interval) catch a session whose dispatch failed.
+#
+# Cost and catch:
+#   1. Cost per run: `find` is about 25 s of free hosted Linux (public repository) and about 10 GraphQL points of the
+#      workflow token (one page per 100 `claude/` branches, then first lines of the recent ones with no PR); no REST
+#      calls, so the 1,000-an-hour REST budget that ran out on 2026-11-22 (#4990) is untouched. `open` runs only when a
+#      branch asked: one App token mint, a GraphQL read, and one or two writes per PR, on the App's own
+#      budget. No Mac minutes, no model tokens, no owner clicks.
+#   2. How often: three scheduled ticks an hour at most, plus one dispatch per cloud PR.
+#   3. What it catches: a cloud PR the owner cannot approve because he is its author. 98 of the last 100 PRs before
+#      2026-11-23 were authored by him, cloud sessions included; once code-owner review is required, every one of those
+#      touching .github/ would need a bypass instead of a review.
+#   4. Waste signal: a month in which `open` ran on no tick (no cloud session asked for a PR), or cloud PRs keep being
+#      opened by sessions as the owner anyway.
+#
+# Rollback: disable this workflow in the Actions tab. Cloud sessions can then open their own PRs again as before.
+name: open-cloud-prs
+
+on:
+  schedule:
+    - cron: '4,24,44 * * * *'  # backstop; the session's own dispatch is the start
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'One claude/ branch to look at (empty: every recent claude/ branch)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# One group per dispatched branch, so a session's dispatch is never dropped as the pending run of another; two runs that
+# race on one branch are fine (GitHub refuses the second PR and the script logs it).
+concurrency:
+  group: open-cloud-prs-${{ inputs.branch || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      branches: ${{ steps.find.outputs.branches }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+      - name: Find branches that asked for a PR
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          branches="$(python3 scripts/open_cloud_prs.py find --branch "${BRANCH:-}")"
+          echo "branches=${branches}" >> "$GITHUB_OUTPUT"
+          echo "Picked: ${branches}"
+
+  open:
+    needs: find
+    if: needs.find.outputs.branches != '' && needs.find.outputs.branches != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: agent-identity
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+      - name: Act as the spoken-margins-agent App
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.SM_APP_ID }}
+          private-key: ${{ secrets.SM_APP_PRIVATE_KEY }}
+          # No owner or repositories: the action then scopes the token to this repository alone.
+          permission-contents: read
+          permission-pull-requests: write
+      - name: Open the PRs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCHES: ${{ needs.find.outputs.branches }}
+        run: python3 scripts/open_cloud_prs.py open --only "$BRANCHES"
