@@ -31,6 +31,19 @@ export function addedRow(existing: Membership | undefined, now: string): Members
   return existing?.in === true ? existing : { in: true, at: now };
 }
 
+/** The row Remove writes (#4424): "out", stamped with the time of the removal. Nothing else is deleted. */
+export function removedRow(now: string): Membership {
+  return { in: false, at: now };
+}
+
+/**
+ * The row Undo writes back: `previous`, the row Remove replaced. If the listener has added the episode again in the
+ * meantime (`current` is an "in" row), that newer row stays, so Undo never turns a fresh add back into an older one.
+ */
+export function restoredRow(current: Membership | undefined, previous: Membership): Membership {
+  return current?.in === true ? current : previous;
+}
+
 /** Whether the store's Library follows membership rows (the one-time move has finished). */
 export function isMigrated(settings: Pick<Settings, 'libraryModel'>): boolean {
   return settings.libraryModel === 'added';

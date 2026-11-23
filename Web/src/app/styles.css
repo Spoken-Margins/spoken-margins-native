@@ -1639,6 +1639,22 @@ button:disabled {
   text-decoration: underline;
 }
 
+/* An info toast with a button (Undo) takes taps, so the listener can reach it. */
+.toast-with-action {
+  pointer-events: auto;
+  align-items: center;
+}
+
+.toast-action {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -10px -8px -10px 4px;
+  border-radius: 10px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
 /* Inside Now Playing there is no mini player or tab bar, so toasts sit at the bottom. */
 body:has(.now-playing) .toasts {
   bottom: calc(16px + env(safe-area-inset-bottom));
