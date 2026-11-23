@@ -135,7 +135,7 @@ final class SenderCollectionOfferPresentationTests: XCTestCase {
     private func suite() throws -> UserDefaults {
         let name = "SenderCollectionOfferKeeperTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+        addTeardownBlock { UserDefaults(suiteName: name)?.removePersistentDomain(forName: name) }
         return defaults
     }
 
