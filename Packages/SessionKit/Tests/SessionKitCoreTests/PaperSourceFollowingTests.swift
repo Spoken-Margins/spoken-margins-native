@@ -246,6 +246,10 @@ final class PaperSourceFollowingTests: XCTestCase {
         try following.unfollow(id: record.id)
         _ = await following.refresh(record, apiKey: nil, now: date(10))
         XCTAssertEqual(try store.loadPaperSources(), [])
+        // The read and the save are one step: a change to a list no longer followed saves nothing.
+        XCTAssertNil(try store.updatePaperSource(id: record.id) { $0.isQuiet = true })
+        XCTAssertNil(try following.markOpened(id: record.id, now: date(20)))
+        XCTAssertEqual(try store.loadPaperSources(), [])
     }
 
     func testUnfollowAndUndo() async throws {

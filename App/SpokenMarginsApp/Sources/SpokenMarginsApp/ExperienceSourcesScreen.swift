@@ -119,13 +119,13 @@ struct ExperienceSourcesScreen: View, Equatable {
         #endif
         let inputs = feed.inputs
         // A followed reading list is following something (#4341), so the empty state waits for none.
-        let showsEmptyState = FollowingFeed.showsEmptyState(showsEmpty: inputs.showsEmptyState, followsPapers: !papers.records.isEmpty)
+        let showsEmptyState = FollowingFeed.showsEmptyState(showsEmpty: inputs.showsEmptyState, papersLoaded: papers.loaded, followsPapers: !papers.records.isEmpty)
         let selectedList = showsEmptyState ? nil : FollowingByList.resolvedSelection(selectedListID, in: listsState.lists)
         // Under a list chip only that list's shows are drawn; under All nothing changes (J13). Reading lists sit among
         // friends and shows under All, by the newest date a paper joined them, and are hidden under a chip like friends.
         let byList = FollowingByList.screen(
             selected: selectedList, lists: listsState.lists,
-            feedRows: FollowingFeed.rows(inputs.feedRows, splicingPapers: papers.visibleRows, showsLoaded: inputs.showsLoaded), shows: inputs.list,
+            feedRows: FollowingFeed.rows(inputs.feedRows, splicingPapers: papers.visibleRows, showsLoaded: inputs.showsLoaded && papers.loaded), shows: inputs.list,
             subscriptions: inputs.subscriptions
         )
         let quietPapers = selectedList == nil ? papers.quietRows : []

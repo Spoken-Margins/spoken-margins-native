@@ -67,11 +67,16 @@ public struct PaperSourceFollowing: Sendable {
         } catch {
             return .failure(error)
         }
-        // Re-read the stored copy: the listener may have opened it, set it Quiet or unfollowed it meanwhile.
-        guard var current = (try? store.loadPaperSources())?.first(where: { $0.id == record.id }) else { return .success(record) }
-        current.apply(title: snapshot.title, entries: snapshot.entries, totalCount: snapshot.totalCount, at: now)
-        do { try store.savePaperSource(current) } catch { return .failure(.unreachable) }
-        return .success(current)
+        // Applied to the stored copy in one step: the listener may have opened it, set it Quiet or unfollowed it
+        // meanwhile, and none of that is undone (an unfollowed list stays unfollowed).
+        do {
+            let current = try store.updatePaperSource(id: record.id) {
+                $0.apply(title: snapshot.title, entries: snapshot.entries, totalCount: snapshot.totalCount, at: now)
+            }
+            return .success(current ?? record)
+        } catch {
+            return .failure(.unreachable)
+        }
     }
 
     /// The lists due a refresh: never read, or read longer ago than `refreshInterval`; every list when pulled. A list of
@@ -89,18 +94,12 @@ public struct PaperSourceFollowing: Sendable {
     /// Opening the list's screen: from now on its row counts papers joined after this.
     @discardableResult
     public func markOpened(id: String, now: Date) throws -> PaperSourceRecord? {
-        guard var record = try store.loadPaperSources().first(where: { $0.id == id }) else { return nil }
-        record.lastOpenedAt = now
-        try store.savePaperSource(record)
-        return record
+        try store.updatePaperSource(id: id) { $0.lastOpenedAt = now }
     }
 
     @discardableResult
     public func setQuiet(id: String, _ quiet: Bool) throws -> PaperSourceRecord? {
-        guard var record = try store.loadPaperSources().first(where: { $0.id == id }) else { return nil }
-        record.isQuiet = quiet
-        try store.savePaperSource(record)
-        return record
+        try store.updatePaperSource(id: id) { $0.isQuiet = quiet }
     }
 
     /// Unfollow leaves every paper already added in the Library; it returns the record for Undo.

@@ -1628,6 +1628,17 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try deleteRecord(kind: PaperSourceRecord.recordKind, id: id)
     }
 
+    /// The read and the save in one transaction: a delete waits for it or goes first, never between.
+    @discardableResult
+    public func updatePaperSource(id: String, _ change: (inout PaperSourceRecord) throws -> Void) throws -> PaperSourceRecord? {
+        try withTransaction {
+            guard var record = try loadPaperSources().first(where: { $0.id == id }) else { return nil }
+            try change(&record)
+            try savePaperSource(record)
+            return record
+        }
+    }
+
     /// A Library folder's own details (#3769), beside its `ItemCollection` under the same ID. A new record kind with no
     /// item_id: no table or index changes and schema 5 stays, an older build never queries the kind, and deleting an item
     /// never deletes one.

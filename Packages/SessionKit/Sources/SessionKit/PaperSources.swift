@@ -271,6 +271,10 @@ public protocol PaperSourceStoring: Sendable {
     func loadPaperSources() throws -> [PaperSourceRecord]
     func savePaperSource(_ record: PaperSourceRecord) throws
     func deletePaperSource(id: String) throws
+    /// Reads one list, changes it and saves it as one step, so a refresh, an open, Quiet and Unfollow landing at the
+    /// same moment never undo each other (an unfollowed list is never brought back). Nil when it isn't followed.
+    @discardableResult
+    func updatePaperSource(id: String, _ change: (inout PaperSourceRecord) throws -> Void) throws -> PaperSourceRecord?
 }
 
 /// One followed reading list on Following: "PHIL 330 readings" over "Zotero · 4 new papers", with a chevron and no ▶,

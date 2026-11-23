@@ -86,9 +86,11 @@ final class PaperSourceRowTests: XCTestCase {
 
     func testFollowingAListMeansFollowingSomething() {
         XCTAssertTrue(FollowingFeed.showsEmptyState(friends: [], shows: FollowingShowList(), showsLoaded: true))
-        XCTAssertFalse(FollowingFeed.showsEmptyState(showsEmpty: true, followsPapers: true))
-        XCTAssertTrue(FollowingFeed.showsEmptyState(showsEmpty: true, followsPapers: false))
-        XCTAssertFalse(FollowingFeed.showsEmptyState(showsEmpty: false, followsPapers: false))
+        XCTAssertFalse(FollowingFeed.showsEmptyState(showsEmpty: true, papersLoaded: true, followsPapers: true))
+        XCTAssertTrue(FollowingFeed.showsEmptyState(showsEmpty: true, papersLoaded: true, followsPapers: false))
+        XCTAssertFalse(FollowingFeed.showsEmptyState(showsEmpty: false, papersLoaded: true, followsPapers: false))
+        XCTAssertFalse(FollowingFeed.showsEmptyState(showsEmpty: true, papersLoaded: false, followsPapers: false),
+                       "no empty-state flash before the lists are read")
     }
 
     // MARK: The paper screen

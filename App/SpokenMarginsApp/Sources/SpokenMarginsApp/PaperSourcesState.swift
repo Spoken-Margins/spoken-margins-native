@@ -126,7 +126,8 @@ final class PaperSourcesState: ObservableObject {
 
     /// Reads the stored lists once per store, off the main thread.
     func load(model: Gate1AppModel) async {
-        guard let store = model.store else { return }
+        // No store: there are no lists to read, and Following mustn't wait for them.
+        guard let store = model.store else { loaded = true; return }
         if loaded, storeForRecords === store { return }
         await reload(store: store)
     }
@@ -335,7 +336,7 @@ final class PaperSourcesState: ObservableObject {
                     return
                 }
                 pdfFailedFirst = true
-                route = PaperEntryImportRoute.afterPDFFailed(for: entry)
+                route = PaperEntryImportRoute.afterPDFFailed(for: entry, failed: route)
             case .storedPDF(let attachmentKey):
                 if let itemId = await addStoredPDF(entry: entry, attachmentKey: attachmentKey, citation: citation, model: model) {
                     added[entry.id] = itemId

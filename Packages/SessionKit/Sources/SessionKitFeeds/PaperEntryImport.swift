@@ -32,6 +32,15 @@ public enum PaperEntryImportRoute: Equatable, Sendable {
         hasAbstract(entry) ? .abstract : .open(entry.pageURL)
     }
 
+    /// After one PDF attempt failed: a PDF link that failed falls to the PDF stored in the listener's own library when
+    /// there is one, then to the abstract or Open; a stored PDF that failed goes straight to those.
+    public static func afterPDFFailed(for entry: PaperEntry, failed: Self) -> Self {
+        if case .pdf = failed, entry.storedPDFReachable, let key = entry.storedPDFAttachmentKey {
+            return .storedPDF(attachmentKey: key)
+        }
+        return afterPDFFailed(for: entry)
+    }
+
     /// The same test `AbstractItemBuilder` applies, so `.abstract` always builds an item.
     static func hasAbstract(_ entry: PaperEntry) -> Bool {
         entry.abstract?.contains { !$0.isWhitespace } == true
