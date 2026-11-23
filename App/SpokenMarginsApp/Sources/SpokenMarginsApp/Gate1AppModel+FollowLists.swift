@@ -114,7 +114,8 @@ extension Gate1AppModel {
         let state = FollowListsState.shared
         guard let removed = try? await state.service(for: store).removeFromAllLists(feedKey: member.feedKey, podcastGUID: member.podcastGUID) else { return }
         state.publish(removed.lists)
-        await rejectFromListLinks(member, listID: nil)
+        let turnedDown = await rejectFromListLinks(member, listID: nil)
+        ListLinksState.shared.turnedDownByUnfollow[member.feedKey] = turnedDown.isEmpty ? nil : turnedDown
     }
 
     /// Undo after an unfollow: the show goes back into the lists it left.
@@ -123,6 +124,10 @@ extension Gate1AppModel {
         let state = FollowListsState.shared
         guard let lists = try? await state.service(for: store).restore(member: member, toLists: listIDs) else { return }
         state.publish(lists)
+        // The addresses take it again, so its "via" line comes back and a later drop is offered (#4046 audit of f7eae8d).
+        if let linkIDs = ListLinksState.shared.turnedDownByUnfollow.removeValue(forKey: member.feedKey) {
+            await restoreListLinks(member, linkIDs: linkIDs, listIDs: listIDs)
+        }
     }
 
     private func followListsService() -> FollowListsStore? {

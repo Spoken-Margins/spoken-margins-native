@@ -336,6 +336,36 @@ public enum ListLinkEdits {
         }
     }
 
+    /// A link made from an include (on the preview or from a file) for a list the listener already has: every show the
+    /// address lists that was already in the list stays the listener's own, so it is turned down rather than taken. The
+    /// next check then neither offers it as added nor, once the address drops it, offers to remove it.
+    public static func keepingListenersOwn(_ link: ListLink, in list: FollowList?) -> ListLink {
+        guard let list else { return link }
+        var link = link
+        for member in link.acceptedMembers where list.contains(feedKey: member.feedKey, podcastGUID: member.podcastGUID) {
+            appendOnce(member, to: &link.rejectedMembers)
+        }
+        link.acceptedMembers.removeAll { list.contains(feedKey: $0.feedKey, podcastGUID: $0.podcastGUID) }
+        return link
+    }
+
+    /// Undo after an unfollow: on the links that the unfollow turned the show down in (`linkIDs`), and only for the lists it
+    /// went back into, the show is taken again, so its "via" line returns and the address can offer its removal again.
+    /// Returns only the links that changed.
+    public static func restoringAccepted(
+        _ member: ListMember, in links: [ListLink], linkIDs: Set<String>, listIDs: Set<String>
+    ) -> [ListLink] {
+        links.compactMap { link in
+            guard linkIDs.contains(link.id), listIDs.contains(link.listId),
+                  link.rejectedMembers.contains(where: { $0.matches(feedKey: member.feedKey, podcastGUID: member.podcastGUID) })
+            else { return nil }
+            var changed = link
+            changed.rejectedMembers.removeAll { $0.matches(feedKey: member.feedKey, podcastGUID: member.podcastGUID) }
+            appendOnce(member, to: &changed.acceptedMembers)
+            return changed
+        }
+    }
+
     private static func appendOnce(_ member: ListMember, to members: inout [ListMember]) {
         guard !members.contains(where: { $0.matches(feedKey: member.feedKey, podcastGUID: member.podcastGUID) }) else { return }
         members.append(member)

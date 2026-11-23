@@ -218,7 +218,12 @@ final class ListLinkAddAndApplyTests: XCTestCase {
             followedFeedKeys: [member(3).feedKey, member(4).feedKey])
         XCTAssertEqual(second.lists, first.lists, "a double tap applies once")
         let rejected = try await links.reject(member(3), listID: "list")
-        XCTAssertTrue(rejected[0].rejectedMembers.contains(member(3)))
+        XCTAssertTrue(rejected.links[0].rejectedMembers.contains(member(3)))
+        XCTAssertEqual(rejected.changedIDs, ["link"])
+        let restored = try await links.restoreAccepted(member(3), linkIDs: rejected.changedIDs, listIDs: ["list"])
+        XCTAssertTrue(restored[0].acceptedMembers.contains(member(3)), "Undo after an unfollow takes the show again")
+        XCTAssertFalse(restored[0].rejectedMembers.contains(member(3)))
+        _ = try await links.reject(member(3), listID: "list")
         let remaining = try await links.delete(linkID: "link")
         XCTAssertEqual(remaining, [])
         XCTAssertEqual(try store.loadFollowList(id: "list")?.members.count, 4, "stopping updates keeps every show")
@@ -234,6 +239,36 @@ final class ListLinkAddAndApplyTests: XCTestCase {
         XCTAssertEqual(result.links.map(\.role), [.include])
         XCTAssertEqual(ListLinkScreens.viaTitle(for: member(2), listID: "mine", links: result.links), "Friend")
         XCTAssertNil(ListLinkScreens.viaTitle(for: member(1), listID: "mine", links: result.links))
+    }
+
+    /// Audit of f7eae8d: an include of an address listing a show already in the list must not offer that show as added on
+    /// the next check (and so can never offer to remove it later).
+    func testAnIncludeLeavesShowsAlreadyInYourListAsYourOwn() {
+        let mine = FollowList(id: "mine", name: "Mine", createdAt: now, members: [member(1)])
+        let made = ListLinkScreens.link(listID: "mine", url: "https://friend.example/l.opml", title: "Friend", role: .include,
+                                        etag: nil, lastModified: nil, accepted: [member(1), member(2)], rejected: [], now: now)
+        let link = ListLinkEdits.keepingListenersOwn(made, in: mine)
+        XCTAssertEqual(link.acceptedMembers, [member(2)])
+        XCTAssertEqual(link.rejectedMembers, [member(1)])
+        XCTAssertNil(ListLinkDiff.proposal(
+            resolved: [show(1), show(2)], accepted: link.acceptedMembers, rejected: link.rejectedMembers, checkedAt: now))
+        let dropped = ListLinkDiff.proposal(
+            resolved: [show(2)], accepted: link.acceptedMembers, rejected: link.rejectedMembers, checkedAt: now)
+        XCTAssertNil(dropped, "the address dropping your own show offers no removal")
+        XCTAssertEqual(ListLinkEdits.keepingListenersOwn(made, in: nil), made)
+    }
+
+    func testUndoAfterAnUnfollowTakesTheShowAgainOnlyWhereTheUnfollowTurnedItDown() {
+        func link(_ id: String, list: String) -> ListLink {
+            ListLinkScreens.link(id: id, listID: list, url: "https://\(list).example/l.opml", title: list, role: .own,
+                                 etag: nil, lastModified: nil, accepted: [], rejected: [member(1)], now: now)
+        }
+        let turnedDown = link("a-link", list: "a"), otherList = link("b-link", list: "b"), earlier = link("c-link", list: "a")
+        let changed = ListLinkEdits.restoringAccepted(
+            member(1), in: [turnedDown, otherList, earlier], linkIDs: ["a-link", "b-link"], listIDs: ["a"])
+        XCTAssertEqual(changed.map(\.id), ["a-link"], "a list it didn't go back into, or a link that turned it down earlier, stays")
+        XCTAssertEqual(changed.first?.acceptedMembers, [member(1)])
+        XCTAssertEqual(changed.first?.rejectedMembers, [])
     }
 }
 

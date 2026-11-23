@@ -29,6 +29,9 @@ final class ListLinksState: ObservableObject {
         if stored != links { links = stored }
     }
 
+    /// The links each unfollow turned its show down in, by the show's feed key, so Undo can take it again there.
+    var turnedDownByUnfollow: [String: Set<String>] = [:]
+
     func setChecking(_ id: String, _ isChecking: Bool) {
         if isChecking { checking.insert(id) } else { checking.remove(id) }
     }
@@ -133,10 +136,9 @@ extension Gate1AppModel {
         let followed = await followProposedShows(plan.toFollow.filter { ticked.contains($0.id) }.map(\.show))
         let outcome = plan.outcome(ticked: ticked, followedFeedKeys: followed)
         let own = FollowListsState.shared.lists.first { $0.id == listID }
-        let taken = outcome.accepted.filter { !(own?.contains(feedKey: $0.feedKey, podcastGUID: $0.podcastGUID) ?? false) }
-        let link = ListLinkScreens.link(
+        let link = ListLinkEdits.keepingListenersOwn(ListLinkScreens.link(
             listID: listID, url: fetch.url, title: plan.title, role: .include, etag: fetch.etag, lastModified: fetch.lastModified,
-            accepted: taken, rejected: outcome.rejected, now: Date())
+            accepted: outcome.accepted, rejected: outcome.rejected, now: Date()), in: own)
         do {
             let result = try await ListLinksState.shared.service(for: store).addInclude(link, members: outcome.members)
             FollowListsState.shared.publish(result.lists)
@@ -180,12 +182,22 @@ extension Gate1AppModel {
     }
 
     /// A show taken out of a list by hand (`listID`), or unfollowed (nil): the links that had taken it now have it as turned
-    /// down, so no check offers it back.
-    func rejectFromListLinks(_ member: ListMember, listID: String?) async {
-        guard let store, ListLinksState.shared.links.contains(where: { link in
-            link.acceptedMembers.contains { $0.matches(feedKey: member.feedKey, podcastGUID: member.podcastGUID) }
-        }) else { return }
-        guard let links = try? await ListLinksState.shared.service(for: store).reject(member, listID: listID) else { return }
+    /// down, so no check offers it back. Read from the store, not from `ListLinksState`, which is empty until a screen has
+    /// loaded the links in this launch.
+    /// - Returns: the ids of the links that changed, for an Undo.
+    @discardableResult
+    func rejectFromListLinks(_ member: ListMember, listID: String?) async -> Set<String> {
+        guard let store,
+              let rejected = try? await ListLinksState.shared.service(for: store).reject(member, listID: listID) else { return [] }
+        if !rejected.changedIDs.isEmpty { ListLinksState.shared.publish(rejected.links) }
+        return rejected.changedIDs
+    }
+
+    /// Undo after an unfollow: the links the unfollow turned the show down in take it again, for the lists it went back into.
+    func restoreListLinks(_ member: ListMember, linkIDs: Set<String>, listIDs: [String]) async {
+        guard let store, !linkIDs.isEmpty, !listIDs.isEmpty,
+              let links = try? await ListLinksState.shared.service(for: store).restoreAccepted(
+                member, linkIDs: linkIDs, listIDs: Set(listIDs)) else { return }
         ListLinksState.shared.publish(links)
     }
 
@@ -277,11 +289,7 @@ extension Gate1AppModel {
                 let links = OPMLIncludeImporter.links(
                     extras.preview.includes, switchedOn: extras.includesOn, listID: list.id, followedFeedKeys: followed,
                     existing: ListLinksState.shared.links
-                ).map { link -> ListLink in
-                    var link = link
-                    link.acceptedMembers.removeAll { before?.contains(feedKey: $0.feedKey, podcastGUID: $0.podcastGUID) ?? false }
-                    return link
-                }
+                ).map { ListLinkEdits.keepingListenersOwn($0, in: before) }
                 if !links.isEmpty { ListLinksState.shared.publish(try await ListLinksState.shared.service(for: store).saveLinks(links)) }
             }
 

@@ -85,9 +85,22 @@ public actor ListLinksStore: ListLinkStoring {
 
     /// A show taken out of a list by hand (`listID`), or unfollowed (nil: every link): the links that had accepted it now
     /// have it as turned down, so no check offers it back.
-    public func reject(_ member: ListMember, listID: String? = nil) throws -> [ListLink] {
+    /// - Returns: every link, and the ids of those that changed (what an Undo puts back with `restoreAccepted`).
+    public func reject(_ member: ListMember, listID: String? = nil) throws -> (links: [ListLink], changedIDs: Set<String>) {
+        var changed = Set<String>()
         try store.withTransaction {
             for link in ListLinkEdits.rejecting(member, in: try store.loadListLinks(), listID: listID) {
+                try store.saveListLink(link)
+                changed.insert(link.id)
+            }
+        }
+        return (try store.loadListLinks(), changed)
+    }
+
+    /// Undo after an unfollow (`ListLinkEdits.restoringAccepted`).
+    public func restoreAccepted(_ member: ListMember, linkIDs: Set<String>, listIDs: Set<String>) throws -> [ListLink] {
+        try store.withTransaction {
+            for link in ListLinkEdits.restoringAccepted(member, in: try store.loadListLinks(), linkIDs: linkIDs, listIDs: listIDs) {
                 try store.saveListLink(link)
             }
         }
