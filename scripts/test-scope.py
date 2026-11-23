@@ -59,8 +59,7 @@ LANE_NOTE = ('Lane change: the runner merges it only after a Codex or Claude aud
              'findings". The audit runs by itself once the automerge run passes. A change to scripts/lane_merge_rules.py or '
              '.github/ also needs the owner\'s merge tap: the runner never merges it.')
 
-SESSIONKIT_RISK = {'SessionKitAudio': 'audio', 'SessionKitSupertonic': 'audio',  # the on-device voice's player (#4691)
-                   'SessionKitPersistence': 'persistence', 'SessionKitSharing': 'packet'}
+SESSIONKIT_RISK = {'SessionKitAudio': 'audio', 'SessionKitPersistence': 'persistence', 'SessionKitSharing': 'packet'}
 SESSIONKIT_PACKET_FILES = {'SharingModels.swift', 'ShareableLinkPolicy.swift'}
 PACKET_SCHEMAS = {'spoken-margins-package.schema.json', 'shared-commentary-layer.schema.json',
                   'interjection-share-revision.schema.json', 'portable-listening-map-proposal.schema.json'}

@@ -5496,3 +5496,95 @@ private final class ResourceConditionSwitch: @unchecked Sendable {
         set { lock.withLock { isAllowed = newValue } }
     }
 }
+
+/// A narration player whose clock the test sets: SessionEngine reads the Margin's moment from it.
+private final class NarrationClockAudioClient: AudioPlaybackClient {
+    var mediaTimeMs: Int?
+    private let durationMs: Int
+    private var target: String?
+
+    init(durationMs: Int) { self.durationMs = durationMs }
+
+    func prepareSpeechText(_ text: String) throws -> String { SpeechTextNormalizer.normalize(text) }
+    func play(targetId: String) throws { target = targetId; mediaTimeMs = mediaTimeMs ?? 0 }
+    func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws { target = targetId; self.mediaTimeMs = mediaTimeMs }
+    func pause() throws {}
+    func stop() throws { target = nil }
+    func currentCharOffset() -> Int? { nil }
+    func currentRecoveryCharOffset() -> Int? { nil }
+    func currentMediaTimeMs() -> Int? { mediaTimeMs }
+    func currentPlaybackDurationMs() -> Int? { durationMs }
+    func currentPlaybackPosition() -> PlaybackPosition? {
+        mediaTimeMs.map { PlaybackPosition(targetId: target, mediaTimeMs: $0, durationMs: durationMs, playbackRate: 1, anchorConfidence: .mediaTime) }
+    }
+    func isPlaybackComplete(targetId: String) -> Bool { false }
+    func playbackStartStatus(targetId: String) -> PlaybackStartStatus { .confirmed }
+    func isAwaitingRenderedAudio(targetId: String) -> Bool { false }
+    func playbackTransportState(targetId: String) -> PlaybackTransportState? { nil }
+    func setRemoteCommandHandlingEnabled(_ enabled: Bool) {}
+}
+
+/// A renderer whose first render spends `loadTime` loading its model and says so through `isLoadingModel` (#2856).
+private final class LoadingModelRenderer: SupertonicRendering, @unchecked Sendable {
+    private let inner: CountingAudioSupertonicRenderer
+    private let loadTime: Duration
+    private let lock = NSLock()
+    private var loading = false
+
+    init(inner: CountingAudioSupertonicRenderer, loadTime: Duration) {
+        self.inner = inner
+        self.loadTime = loadTime
+    }
+
+    var isLoadingModel: Bool { lock.withLock { loading } }
+
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        lock.withLock { loading = true }
+        defer { lock.withLock { loading = false } }
+        try await Task.sleep(for: loadTime)
+        return try await inner.render(text: text, voice: voice, language: language, speed: speed, synthesisSteps: synthesisSteps)
+    }
+
+    func discardGeneratedAudio(at url: URL) async { await inner.discardGeneratedAudio(at: url) }
+}
+
+
+/// A renderer that is loading its model from the moment it exists and holds its render until `finishLoading()` (#3437).
+/// It counts how often the client asked whether it was loading, so a test can wait for the wait limit to pass.
+private final class HeldLoadingModelRenderer: SupertonicRendering, @unchecked Sendable {
+    struct NoLoadingChecks: Error {}
+
+    private let inner: CountingAudioSupertonicRenderer
+    private let gate: AsyncStream<Void>
+    private let openGate: AsyncStream<Void>.Continuation
+    private let lock = NSLock()
+    private var checks = 0
+
+    init(inner: CountingAudioSupertonicRenderer) {
+        self.inner = inner
+        let pair = AsyncStream<Void>.makeStream()
+        gate = pair.stream
+        openGate = pair.continuation
+    }
+
+    /// True for as long as the render is held and after it, so the client never sees a gap between load and result.
+    var isLoadingModel: Bool { lock.withLock { checks += 1; return true } }
+
+    func finishLoading() { openGate.finish() }
+
+    func waitForLoadingChecks(_ count: Int, timeout: Duration = .seconds(10)) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while lock.withLock({ checks }) < count {
+            guard ContinuousClock.now < deadline else { throw NoLoadingChecks() }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        for await _ in gate {}
+        try Task.checkCancellation()
+        return try await inner.render(text: text, voice: voice, language: language, speed: speed, synthesisSteps: synthesisSteps)
+    }
+
+    func discardGeneratedAudio(at url: URL) async { await inner.discardGeneratedAudio(at: url) }
+}
