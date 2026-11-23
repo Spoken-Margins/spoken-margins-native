@@ -226,3 +226,37 @@ final class FootnoteMediaChimeSessionTests: XCTestCase {
         XCTAssertEqual(body.filter { !fromStart.contains($0) }, [], "no body segment is dropped")
     }
 }
+
+extension FootnoteMediaChimeSessionTests {
+    func testAClockReportThatMissesOneShortSegmentKeepsTheOffer() throws {
+        // The tick is twice a second and slower under load: a report can step over one short segment without any move.
+        // The sentence after note 1 is cut into three short pieces, as a PDF's skipped text cuts a chunk.
+        let base = timeline(article, silenceMs: 800)
+        let first = try XCTUnwrap(base.segments.firstIndex { $0.startChar != nil && $0.startChar == $0.endChar })
+        let after = base.segments[first + 1]
+        let third = (after.endMs - after.startMs) / 3
+        let pieces = (0..<3).map { part in
+            MediaTimelineSegment(id: "\(after.id)-\(part)", startMs: after.startMs + part * third,
+                                 endMs: part == 2 ? after.endMs : after.startMs + (part + 1) * third,
+                                 startChar: after.startChar, endChar: after.endChar, text: "piece \(part)")
+        }
+        var segments = base.segments
+        segments.replaceSubrange((first + 1)...(first + 1), with: pieces)
+        var session = try XCTUnwrap(Session(
+            itemId: item, mediaKey: file,
+            timeline: TranscriptTimeline(segments: segments, chapters: [], durationMs: base.durationMs), articleText: article))
+        let starts = session.driver.segmentStartsMs
+        _ = session.observe(timeMs: starts[first - 1], mode: .chime, appIsActive: true, now: 0)
+        guard case .cue(let label, let landing) = session.observe(timeMs: starts[first], mode: .chime, appIsActive: true, now: 0) else {
+            return XCTFail("cued")
+        }
+        XCTAssertEqual(label, "1")
+        _ = session.observe(timeMs: landing, mode: .chime, appIsActive: true, now: 0)
+        _ = session.observe(timeMs: starts[first + 1], mode: .chime, appIsActive: true, now: 0)
+        XCTAssertEqual(session.observe(timeMs: starts[first + 3], mode: .chime, appIsActive: true, now: 1), .none, "piece 1 missed")
+        XCTAssertEqual(session.cardState(mode: .chime), .offered(label: "1"))
+        // A real skip back still drops it.
+        _ = session.observe(timeMs: 0, mode: .chime, appIsActive: true, now: 2)
+        XCTAssertEqual(session.cardState(mode: .chime), .hidden)
+    }
+}

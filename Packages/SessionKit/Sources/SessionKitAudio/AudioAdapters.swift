@@ -3172,7 +3172,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
     /// built for the target later (a new play, an item rebuilt before a seek) gets the same times. Main queue only.
     public func setBoundaryTimes(_ timesMs: [Int], targetId: String, handler: (@Sendable () -> Void)?) {
         removeBoundaryObserver()
-        boundaryRequest = handler.map { (targetId, timesMs, $0) }
+        boundaryRequest = handler.map { (targetId: targetId, timesMs: timesMs, handler: $0) }
         installBoundaryObserver()
     }
 

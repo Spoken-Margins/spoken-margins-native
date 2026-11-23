@@ -59,16 +59,18 @@ extension Gate1AppModel {
     /// Every playback tick, after the engine read the player's clock (`tickPlaybackProgress`).
     func observeFootnoteMediaChime(_ updated: SessionSnapshot) {
         let chime = footnoteMediaChime
+        let boundary = chime.boundaryReport
+        chime.boundaryReport = false
         guard let playing = preparedFilePlayback(updated) else {
-            if chime.builtFor != nil { chime.drop(mediaClient: mediaPlaybackClient) }
+            // Only another item ends the session: a friend's Margin or a reply played over this item changes the target
+            // for a while, and the notes heard so far must not be offered again when the file goes on.
+            if let builtFor = chime.builtFor, builtFor.itemId != updated.itemId { chime.drop(mediaClient: mediaPlaybackClient) }
             return
         }
         guard var session = chime.session, session.plays(itemId: playing.itemId, mediaKey: playing.mediaKey) else {
             buildFootnoteMediaChimeIfNeeded(itemId: playing.itemId, mediaKey: playing.mediaKey)
             return
         }
-        let boundary = chime.boundaryReport
-        chime.boundaryReport = false
         guard updated.status.isPlaybackActive else {
             if updated.currentPlaybackProgressPercent >= ItemFinishedRule.atEndPercent { session.playedToEnd() }
             chime.session = session

@@ -124,9 +124,11 @@ public struct FootnoteMediaChimeDriver: Equatable, Sendable {
         }
         let ranOn = current.map { index == $0 + 1 } ?? false
         let landedFromOwnMove = index == expectedEntry
-        // Any other jump is a move the driver did not make: the listener's seek or skip, or a start. Nothing stays
-        // offered or being read, as `playerMovedOnItsOwn()` says, so a card does not outlive the place it was for.
-        if current != nil, !ranOn, !landedFromOwnMove { sequencer.reset() }
+        // A jump back, or forward past more than one segment, is a move the driver did not make: the listener's seek or
+        // skip. Nothing stays offered or being read, as `playerMovedOnItsOwn()` says, so a card does not outlive the
+        // place it was for. A step over one segment is a clock report that missed a short segment (the tick is twice a
+        // second, slower under load), not a move, and leaves the card alone.
+        if let previous = current, !ranOn, !landedFromOwnMove, index < previous || index > previous + 2 { sequencer.reset() }
         // A move the driver made past a note can land on the very next segment; that note was passed over, not heard.
         if ranOn, !landedFromOwnMove { recordCurrentPlayedToEnd() }
         let runOn = ranOn || landedFromOwnMove
