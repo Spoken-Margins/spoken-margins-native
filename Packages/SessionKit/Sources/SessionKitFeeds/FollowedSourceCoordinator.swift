@@ -265,8 +265,10 @@ public actor FollowedSourceCoordinator {
     /// The article feed route (#4640): whether this article's own feed lists it with audio that may play beside it.
     /// It reads what the Follow check's discovery saw for the page, and runs that discovery itself (the same requests,
     /// shared when one is already running) only when nothing is known yet. The rules run on every call, because each
-    /// caller passes its own word count.
-    public func articleFeedAudio(pageURL: URL, bodyWordCount: Int?) async -> ArticleFeedAudioOutcome {
+    /// caller passes its own word count. `requiringItemMembership` should be the one the Follow check uses for the
+    /// same item, so a discovery already running for it is shared rather than repeated; the listing it records is the
+    /// same under either rule.
+    public func articleFeedAudio(pageURL: URL, bodyWordCount: Int?, requiringItemMembership: Bool = true) async -> ArticleFeedAudioOutcome {
         guard let key = ArticleFeedAudioRules.pageKey(pageURL.absoluteString) else { return .none(reason: "invalid_url") }
         func evaluated() -> ArticleFeedAudioOutcome? {
             articleFeedListings[key].map {
@@ -277,7 +279,7 @@ public actor FollowedSourceCoordinator {
         for running in inFlightDiscoveries.values where running.pageKey == key { _ = try? await running.task.value }
         if let known = evaluated() { return known }
         do {
-            _ = try await discover(urlString: pageURL.absoluteString)
+            _ = try await discover(urlString: pageURL.absoluteString, requiringItemMembership: requiringItemMembership)
         } catch {
             if let known = evaluated() { return known }
             return Self.articleFeedOutcome(for: error)

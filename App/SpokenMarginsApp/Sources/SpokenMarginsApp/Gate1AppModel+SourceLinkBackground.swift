@@ -191,9 +191,14 @@ extension Gate1AppModel {
         if articleFeed {
             let coordinator = requireFollowedSourceCoordinator(store: store)
             articleFeedAudio = { page in
-                // The word count is the stored article's, read off the main actor.
-                let words = try? await StoreReader(store).read { try $0.loadItem(id: itemId).text.map(PublisherAudioDetector.wordCount) }
-                return await coordinator.articleFeedAudio(pageURL: page, bodyWordCount: words ?? nil)
+                // The word count is the stored article's, read off the main actor. The membership rule is the Follow
+                // check's for the same item, so the two share one discovery of the page.
+                let read = try? await StoreReader(store).read { store -> (words: Int?, hasSourceURL: Bool) in
+                    let item = try store.loadItem(id: itemId)
+                    return (item.text.map(PublisherAudioDetector.wordCount), item.sourceURL != nil)
+                }
+                return await coordinator.articleFeedAudio(pageURL: page, bodyWordCount: read?.words ?? nil,
+                                                          requiringItemMembership: !(read?.hasSourceURL ?? false))
             }
         }
         Task { [weak self] in

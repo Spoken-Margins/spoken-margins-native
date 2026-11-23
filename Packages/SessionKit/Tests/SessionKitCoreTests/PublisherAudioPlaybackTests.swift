@@ -755,6 +755,22 @@ final class PublisherAudioPlaybackTests: XCTestCase {
         XCTAssertEqual(audio.mediaPlays.count, 2, "asking again changes nothing")
     }
 
+    /// The place comes from the player's live clock, not the last progress tick: no tick runs between the
+    /// recording reaching the third sentence and the tap.
+    func testUseTheAppsVoiceReadsTheLiveClockWithoutAProgressTick() throws {
+        let repository = repository(map: map())
+        let audio = FakePublisherAudioClient()
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: "item-post")
+        audio.mediaTimeMs = 10_500 // in the third sentence, never ticked
+        let thirdSentence = sentences[0].count + sentences[1].count + 2
+
+        try repository.savePublisherAudioChoice(appVoice())
+        _ = try engine.replanVoice(itemId: "item-post", retryNow: false)
+
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(engine.currentSession?.position.charOffset), thirdSentence)
+    }
+
     /// Leaving the recording by choice must not hold it back for ten minutes, as a failure does.
     func testTheAppsVoiceByChoiceLeavesNoHoldOnTheRecording() throws {
         let repository = repository(map: map())

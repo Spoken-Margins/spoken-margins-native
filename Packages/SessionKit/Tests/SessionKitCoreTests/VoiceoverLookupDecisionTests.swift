@@ -52,6 +52,25 @@ final class VoiceoverLookupDecisionTests: XCTestCase {
         XCTAssertEqual(onOpen(openai, trigger: .play), .lookUp(address: openai, route: .articleFeed))
         XCTAssertEqual(onOpen(openai, trigger: .importing), .skip(reason: "not_substack_address"), "never at import")
         XCTAssertEqual(onOpen("https://example.com/articles/one"), .lookUp(address: "https://example.com/articles/one", route: .articleFeed))
+        XCTAssertEqual(onOpen(openai, trigger: .queueAdvance), .skip(reason: "not_substack_address"), "the queue moving on by itself is not the listener's action")
+    }
+
+    /// A `/p/` page on a site that isn't Substack is read as a Substack post first; on the listener's open or play its
+    /// own feed gets a chance when the page has no Substack data (Default 10 of the #4640 Design).
+    func testAPostPathPageOffSubstackMayEndOnItsFeed() {
+        let essay = "https://example.org/p/essay"
+        XCTAssertEqual(onOpen(essay), .lookUp(address: essay, route: .postPageThenArticleFeed))
+        XCTAssertEqual(onOpen(essay, trigger: .play), .lookUp(address: essay, route: .postPageThenArticleFeed))
+        XCTAssertEqual(onOpen("https://www.astralcodexten.com/p/some-post"), .lookUp(address: "https://www.astralcodexten.com/p/some-post", route: .postPageThenArticleFeed))
+        XCTAssertEqual(onOpen(essay, trigger: .importing), .lookUp(address: essay, route: .substack), "never the feed at import")
+        XCTAssertEqual(onOpen(essay, trigger: .queueAdvance), .lookUp(address: essay, route: .substack))
+        XCTAssertEqual(onOpen(essay, followed: true), .lookUp(address: essay, route: .substack), "a followed site's feed already imported its audio")
+        XCTAssertEqual(onOpen("https://thezvi.substack.com/p/gemini-4"), .lookUp(address: "https://thezvi.substack.com/p/gemini-4", route: .substack), "Substack's own pages keep its route")
+        XCTAssertEqual(onOpen("https://SUBSTACK.com/p/x"), .lookUp(address: "https://SUBSTACK.com/p/x", route: .substack))
+        XCTAssertTrue(VoiceoverLookupDecision.Route.postPageThenArticleFeed.mayUseArticleFeed)
+        XCTAssertTrue(VoiceoverLookupDecision.Route.articleFeed.mayUseArticleFeed)
+        XCTAssertFalse(VoiceoverLookupDecision.Route.substack.mayUseArticleFeed)
+        XCTAssertFalse(VoiceoverLookupDecision.Route.typeIII.mayUseArticleFeed)
     }
 
     func testTheArticleFeedRouteSkips() {

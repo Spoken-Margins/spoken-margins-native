@@ -95,8 +95,9 @@ extension Gate1AppModel {
 
     /// For callers that start or resume an item (Library Play, Continue, the play queue): the same voice lookup and
     /// map try as opening its screen (#2789). A page is read only for an item the listener acted on.
-    func listenerStartedItem(itemId: String) {
-        retryVoiceoverLookupIfNeeded(itemId: itemId, trigger: .play)
+    /// `.queueAdvance` when the play queue moved on by itself: it never takes the article feed route.
+    func listenerStartedItem(itemId: String, trigger: VoiceoverLookupDecision.Trigger = .play) {
+        retryVoiceoverLookupIfNeeded(itemId: itemId, trigger: trigger)
         guard let store else { return }
         PublisherAudioTextMapper.resume(itemId: itemId, store: store, transcriber: sourceTranscriptionClient) { [weak self] in
             self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)"
@@ -158,8 +159,6 @@ extension Gate1AppModel {
 
     private func switchPublisherVoice(itemId: String, prefersAppVoice: Bool) async {
         guard let store else { return }
-        PublisherVoiceSwitchTap.pending = true
-        defer { PublisherVoiceSwitchTap.pending = false }
         do {
             let choice = PublisherAudioChoice(itemId: itemId, prefersAppVoice: true, chosenAt: Date())
             try await StoreReader(store).read { store in
@@ -167,8 +166,12 @@ extension Gate1AppModel {
             }
             // The sheet belongs to the playing item; for any other item the choice is kept and nothing plays.
             guard let engine, snapshot.itemId == itemId, hasActiveSession else { return }
-            let switched = try engine.replanVoice(itemId: itemId, retryNow: !prefersAppVoice)
-            snapshot = try applyPreferredPlaybackRate(to: switched, engine: engine)
+            // The engine switches on the main actor, as every play, pause and seek does; labelled for the hang probe.
+            try hangTelemetry.labels.scoped("publisherVoiceSwitch") {
+                let switched = try engine.replanVoice(itemId: itemId, retryNow: !prefersAppVoice)
+                snapshot = try applyPreferredPlaybackRate(to: switched, engine: engine)
+            }
+            PublisherVoiceSwitchTap.expect(snapshot.publisherAudioSource)
             diagnostics["publisherVoiceSwitch"] = "\(itemId): \(prefersAppVoice ? "listener_chose_app_voice" : "listener_chose_publisher_audio")"
         } catch {
             reportFailure(error, context: "Reading voice change failed", itemId: itemId)
@@ -184,15 +187,25 @@ extension Gate1AppModel {
     /// or Type III address is looked up, as before #4640.
     private func lookUpVoiceover(itemId: String, address: String, title: String, route: VoiceoverLookupDecision.Route? = nil) {
         guard let url = URL(string: address),
-              route == .articleFeed || PublisherNarrationEvidence.mayHaveVoiceover(url) || TypeIIIAudioNarration.postURL(for: url) != nil else { return }
+              route?.mayUseArticleFeed == true || PublisherNarrationEvidence.mayHaveVoiceover(url) || TypeIIIAudioNarration.postURL(for: url) != nil else { return }
         let article = BrowserTextHandoff(captureMode: .readablePage, source: BrowserTextSource(url: address, title: title), text: "")
-        rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: FetchedPageMemo(), articleFeed: route == .articleFeed)
+        rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: FetchedPageMemo(), articleFeed: route?.mayUseArticleFeed == true)
     }
 }
 
-/// Set while a Reading voice tap is switching, so the Now pane doesn't announce the switch the listener asked for
-/// (#4640): only the automatic hand-over and the fallback are announced.
+/// The voice a Reading voice tap switched to, so the Now pane doesn't announce the switch the listener asked for
+/// (#4640): only the automatic hand-over and the fallback are announced. SwiftUI's `onChange` runs on a later
+/// render than the tap, so a flag cleared when the tap returns would already be gone; the value it expects is kept
+/// until the next change is seen.
 @MainActor
 enum PublisherVoiceSwitchTap {
-    static var pending = false
+    private static var expected: String??
+
+    static func expect(_ source: String?) { expected = .some(source) }
+
+    /// Whether this change is the one a tap asked for. Any change clears the expectation.
+    static func consume(_ source: String?) -> Bool {
+        defer { expected = nil }
+        return expected == .some(source)
+    }
 }

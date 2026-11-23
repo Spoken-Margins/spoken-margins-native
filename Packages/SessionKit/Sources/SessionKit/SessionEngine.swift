@@ -4266,40 +4266,46 @@ public final class SessionEngine {
         guard let session = currentSession, session.itemId == itemId, session.phase == .itemPlayback else { return snapshot }
         if retryNow { publisherAudioUnavailable[itemId] = nil }
         let playingRecording = isPlayingPublisherAudio(session)
-        let stored = (try? repository.loadItem(id: itemId)).map { publisherPlayback[itemId]?.stored($0) ?? $0 }
+        // The article is already in memory while it plays; it is read from the store only if it isn't.
+        let loaded = currentItem?.id == itemId ? currentItem : try? repository.loadItem(id: itemId)
+        let stored = loaded.map { publisherPlayback[itemId]?.stored($0) ?? $0 }
         let wantsRecording = stored.flatMap { publisherAudioPlan(for: $0) } != nil
         switch (playingRecording, wantsRecording) {
         case (true, false):
             guard let item = item(for: session) else { return snapshot }
+            // The place is read from the player before it stops: a stopped player has no clock to read.
+            let synchronized = try syncCurrentPositionFromAudio(session)
             try audio.stop()
-            let synchronized = syncSessionPositionFromAudio(session, item: item)
             let reading = try readText(instead: synchronized, item: item, recordFailure: false)
             try playCurrentTarget(reading)
             publishPlaybackStart(for: reading, phase: reading.phase)
             return snapshot
         case (false, true):
-            // Rendered narration has a clock of its own: take its text place first, as live speech would read it,
-            // without detaching the render (that is only for a render that failed).
-            var moved: Session?
-            if session.currentTargetType != .itemTextTTS, let item = item(for: session) {
-                try audio.stop()
-                let synchronized = syncSessionPositionFromAudio(session, item: item)
+            var known: Session?
+            if session.currentTargetType != .itemTextTTS {
+                // Rendered narration has a clock of its own: take its text place first, as live speech would read
+                // it, without detaching the render (that is only for a render that failed). If the map doesn't
+                // reach that place, nothing changes: the narration plays on.
+                guard let item = item(for: session), let stored, let plan = publisherAudioPlan(for: stored) else { return snapshot }
+                let synchronized = try syncCurrentPositionFromAudio(session)
                 var asText = PreparedNarrationFallback.liveSpeechSession(
                     from: synchronized, item: item, timeline: sourceTranscriptTimeline(for: synchronized))
                 asText.position.chapterId = chapterId(for: asText.position.charOffset)
+                guard plan.playingSession(from: asText) != nil else { return snapshot }
+                try audio.stop()
                 currentSession = asText
-                moved = asText
+                known = asText
             }
-            if try adoptPublisherAudio() != nil {
+            if try adoptPublisherAudio(from: known) != nil {
                 // From a pause the recording starts too: the tap asked to hear it.
                 if !snapshot.status.isPlaybackActive, let playing = currentSession { publishPlaybackStart(for: playing, phase: playing.phase) }
                 return snapshot
             }
-            // The map doesn't reach the place: go on in the app's voice from where it was.
-            if let moved {
-                try persistSession(moved)
-                try playCurrentTarget(moved)
-                publishPlaybackStart(for: moved, phase: moved.phase)
+            // Only reached if the plan changed between the check and the adoption: go on in the app's voice.
+            if let known {
+                try persistSession(known)
+                try playCurrentTarget(known)
+                publishPlaybackStart(for: known, phase: known.phase)
             }
             return snapshot
         default:
@@ -4308,14 +4314,15 @@ public final class SessionEngine {
     }
 
     /// Moves the current article, read aloud, onto its publisher recording from the place reached. Nil, changing
-    /// nothing, when it has no usable plan or the map doesn't reach the place.
-    private func adoptPublisherAudio() throws -> SessionSnapshot? {
+    /// nothing, when it has no usable plan or the map doesn't reach the place. `known` is a place already read from
+    /// another player (rendered narration): the speech player's offset would be a leftover, so it is not read.
+    private func adoptPublisherAudio(from known: Session? = nil) throws -> SessionSnapshot? {
         guard let session = currentSession,
               session.currentTargetType == .itemTextTTS, session.phase == .itemPlayback,
               let item = currentItem ?? (try? repository.loadItem(id: session.itemId)),
               item.id == session.itemId, publisherPlayback[item.id] == nil,
               let plan = publisherAudioPlan(for: item) else { return nil }
-        let synchronized = syncSessionPositionFromAudio(session, item: item)
+        let synchronized = known ?? syncSessionPositionFromAudio(session, item: item)
         guard let playing = plan.playingSession(from: synchronized) else { return nil }
         publisherPlayback[item.id] = plan
         currentItem = plan.playing(item)

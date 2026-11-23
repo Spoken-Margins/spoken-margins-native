@@ -216,7 +216,7 @@ struct PlaybackScreen: View {
                 .onChange(of: model.showNowRequests) { _, _ in selectedPane = .now }
                 .onChange(of: model.snapshot.publisherAudioSource) { old, new in
                     // VoiceOver hears the automatic switches; a tapped switch is announced by the row's redraw (#4640).
-                    guard UIAccessibility.isVoiceOverRunning, !PublisherVoiceSwitchTap.pending, (old == nil) != (new == nil) else { return }
+                    guard !PublisherVoiceSwitchTap.consume(new), UIAccessibility.isVoiceOverRunning, (old == nil) != (new == nil) else { return }
                     UIAccessibility.post(notification: .announcement, argument: new != nil
                         ? "Playing the publisher's audio."
                         : "The publisher's audio stopped. Reading on with the app's voice.")

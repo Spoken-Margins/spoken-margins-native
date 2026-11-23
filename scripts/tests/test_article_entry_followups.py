@@ -82,7 +82,11 @@ class ArticleEntryFollowUpTests(unittest.TestCase):
         navigation = (SOURCES / 'Gate1AppModel+Navigation.swift').read_text(encoding='utf-8')
         self.assertIn('retryVoiceoverLookupIfNeeded(itemId: id, trigger: .open)', navigation)
         publisher = (SOURCES / 'Gate1AppModel+PublisherAudio.swift').read_text(encoding='utf-8')
-        self.assertIn('retryVoiceoverLookupIfNeeded(itemId: itemId, trigger: .play)', publisher)
+        self.assertIn('func listenerStartedItem(itemId: String, trigger: VoiceoverLookupDecision.Trigger = .play)', publisher)
+        self.assertIn('retryVoiceoverLookupIfNeeded(itemId: itemId, trigger: trigger)', publisher)
+        # The play queue moving on by itself is no listener action, so it may not take the route (the 2026-10-21 rule).
+        queue = (SOURCES / 'Gate1AppModel+PlayQueue.swift').read_text(encoding='utf-8')
+        self.assertIn('startItem(id: next, trigger: .queueAdvance)', queue)
         for name in ('Gate1AppModel+SourceLinkForeground.swift', 'Gate1AppModel+SourceLinkBackground.swift'):
             text = (SOURCES / name).read_text(encoding='utf-8')
             for line in text.splitlines():
@@ -92,6 +96,8 @@ class ArticleEntryFollowUpTests(unittest.TestCase):
             text = path.read_text(encoding='utf-8')
             for match in re.finditer(r'retryVoiceoverLookupIfNeeded\(itemId: [^,]+, trigger: \.(\w+)\)', text):
                 self.assertIn(match.group(1), ('open', 'play'), f'{path.name}: only open and play trigger the lookup')
+            for match in re.finditer(r'(?:listenerStartedItem|prepareToStartItem|startItem)\((?:itemId|id): [^,()]+, trigger: \.(\w+)\)', text):
+                self.assertIn(match.group(1), ('open', 'play', 'queueAdvance'), f'{path.name}: a start names a listener action or the queue')
 
     def test_the_article_feed_audio_call_stays_in_listener_gated_files(self):
         allowed = {

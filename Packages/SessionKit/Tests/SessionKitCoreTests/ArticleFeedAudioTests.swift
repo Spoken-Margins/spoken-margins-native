@@ -224,20 +224,33 @@ final class ArticleFeedAudioTests: XCTestCase {
     // MARK: Requests
 
     func testTheFollowCheckAndTheRouteTogetherFetchThePageOnce() async throws {
-        let url = serve(host: "together.example", entries: [
-            Entry(link: "https://together.example/posts/kettleness", enclosure: "https://cdn.together.example/a.mp3", duration: "6:00"),
-        ])
-        let coordinator = coordinator()
-
-        async let follow = try? coordinator.discover(urlString: url.absoluteString)
-        async let route = coordinator.articleFeedAudio(pageURL: url, bodyWordCount: 900)
-        let (_, found) = await (follow, route)
-
-        guard case .found = found else { return XCTFail("found") }
-        // The same page discovered alone, on its own host, is the baseline: the route adds no page request.
-        let alone = serve(host: "alone.example", entries: [])
-        _ = try? await self.coordinator().discover(urlString: alone.absoluteString)
-        XCTAssertEqual(ArticleFeedStubProtocol.htmlRequests(host: "together.example"), ArticleFeedStubProtocol.htmlRequests(host: "alone.example"))
+        // The route passes the Follow check's membership rule for the item, so whichever starts first, the other shares
+        // it: an article with no source address requires membership, one with a source address doesn't.
+        for (index, membership) in [true, false].enumerated() {
+            for routeFirst in [true, false] {
+                let host = "together\(index)\(routeFirst ? "r" : "f").example"
+                let url = serve(host: host, entries: [
+                    Entry(link: "https://\(host)/posts/kettleness", enclosure: "https://cdn.\(host)/a.mp3", duration: "6:00"),
+                ])
+                let coordinator = coordinator()
+                let found: ArticleFeedAudioOutcome
+                if routeFirst {
+                    async let route = coordinator.articleFeedAudio(pageURL: url, bodyWordCount: 900, requiringItemMembership: membership)
+                    async let follow = try? coordinator.discover(urlString: url.absoluteString, requiringItemMembership: membership)
+                    (found, _) = await (route, follow)
+                } else {
+                    async let follow = try? coordinator.discover(urlString: url.absoluteString, requiringItemMembership: membership)
+                    async let route = coordinator.articleFeedAudio(pageURL: url, bodyWordCount: 900, requiringItemMembership: membership)
+                    (_, found) = await (follow, route)
+                }
+                guard case .found = found else { return XCTFail("found, \(host)") }
+                // The same page discovered alone, on its own host, is the baseline: the route adds no page request.
+                let alone = serve(host: "alone\(index)\(routeFirst ? "r" : "f").example", entries: [])
+                _ = try? await self.coordinator().discover(urlString: alone.absoluteString, requiringItemMembership: membership)
+                XCTAssertEqual(ArticleFeedStubProtocol.htmlRequests(host: host),
+                               ArticleFeedStubProtocol.htmlRequests(host: "alone\(index)\(routeFirst ? "r" : "f").example"), host)
+            }
+        }
     }
 
     func testDiscoverThenTheRouteFetchesThePageOnce() async throws {
