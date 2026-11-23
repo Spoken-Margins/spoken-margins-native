@@ -38,7 +38,7 @@ test('a Substack post that is a podcast episode plays the episode itself (#4433)
   await serveAudio(page, 'https://audio.example/**');
   await followAndOpenLibrary(page);
 
-  await page.getByRole('button', { name: new RegExp(TITLE) }).click();
+  await page.getByRole('button', { name: new RegExp(`^(?!More for ).*${TITLE}`) }).click();
   const nowPlaying = page.getByRole('dialog', { name: TITLE });
   await expect(nowPlaying).toBeVisible();
   await expect(page.getByText(/has no voice to play/)).toHaveCount(0);
@@ -61,7 +61,7 @@ for (const [name, html, notice] of NOTHING_TO_PLAY) {
     await servePostPage(page, html());
     await followAndOpenLibrary(page);
 
-    await page.getByRole('button', { name: new RegExp(TITLE) }).click();
+    await page.getByRole('button', { name: new RegExp(`^(?!More for ).*${TITLE}`) }).click();
     await expect(page.getByText(notice)).toBeVisible();
     await page.getByRole('button', { name: 'Close' }).click();
     await expect(page.getByText(notice)).toHaveCount(0);
@@ -70,7 +70,7 @@ for (const [name, html, notice] of NOTHING_TO_PLAY) {
     await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Settings' }).click({ timeout: 3000 });
     await expect(page.getByRole('heading', { name: 'Settings' }).first()).toBeVisible();
     await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Library' }).click({ timeout: 3000 });
-    await page.getByRole('button', { name: new RegExp(TITLE) }).click({ timeout: 3000 });
+    await page.getByRole('button', { name: new RegExp(`^(?!More for ).*${TITLE}`) }).click({ timeout: 3000 });
     await expect(page.getByText(notice)).toBeVisible();
     expect(errors).toEqual([]);
   });

@@ -52,7 +52,7 @@ for (const scheme of ['light', 'dark'] as const) {
       await shot(page, info, `3040-${scheme}-settings`);
 
       await tab(page, 'Library');
-      await page.getByRole('button', { name: new RegExp(EPISODE) }).click();
+      await page.getByRole('button', { name: new RegExp(`^(?!More for ).*${EPISODE}`) }).click();
       const nowPlaying = page.getByRole('dialog', { name: EPISODE });
       await expect(nowPlaying).toBeVisible();
       expect(await style(page, '.np-title', 'font-family')).toMatch(/^ui-serif/);

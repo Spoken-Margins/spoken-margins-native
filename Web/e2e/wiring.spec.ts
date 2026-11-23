@@ -175,7 +175,7 @@ test('a Substack post with only the automatic voice plays it after a tap, readin
   await expect(page.getByText(/Following .*Open it to pick episodes for your Library/)).toBeVisible();
   await followAndAdd(page, /^Open Don.t Worry About the Vase/, [TITLE]);
   await tab(page, 'Library');
-  const row = page.getByRole('button', { name: new RegExp(TITLE) });
+  const row = page.getByRole('button', { name: new RegExp(`^(?!More for ).*${TITLE}`) });
   await expect(row).toContainText('voice checked when you play');
   // Following the feed read no post page (owner, 2026-10-21: only on a listener's tap).
   expect(pageReads).toHaveLength(0);

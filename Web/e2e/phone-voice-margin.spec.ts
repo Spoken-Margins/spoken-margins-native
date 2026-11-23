@@ -42,7 +42,7 @@ async function openEpisode(page: Page) {
   await expect(page.getByText(/Following Spoken Margins Test Show/)).toBeVisible();
   await followAndAdd(page, 'Spoken Margins Test Show', [EPISODE]);
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Library' }).click();
-  await page.getByRole('button', { name: new RegExp(EPISODE) }).click();
+  await page.getByRole('button', { name: new RegExp(`^(?!More for ).*${EPISODE}`) }).click();
   return page.getByRole('dialog', { name: EPISODE });
 }
 

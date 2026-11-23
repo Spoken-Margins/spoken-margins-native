@@ -1,8 +1,9 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock } from '../../shared/clock.ts';
 import { useData } from '../data.tsx';
+import { useRestoreFocus } from '../focus.ts';
 import { minutes, shortDate } from '../format.ts';
-import { PauseIcon, PlayIcon } from '../icons.tsx';
+import { MoreIcon, PauseIcon, PlayIcon } from '../icons.tsx';
 import { useMarginFilePicker, type OpenMarginFile } from '../import.tsx';
 import { libraryVoiceTag } from '../logic/episode-voice-words.ts';
 import { episodeVoice } from '../logic/playability.ts';
@@ -29,13 +30,66 @@ export function Library({ onPlay, onFindShows, onGoFollowing, onOpenFile }: { on
   const rows = useMemo(() => allRows.filter((row) => libraryRowMatches(query, row, authors)), [allRows, authors, query]);
   // What the one-time move left on Following that the listener hasn't since added, played or removed (#4425).
   const movedOutCount = data.migrated ? stillMovedOut(data.settings.libraryMovedOut, data.episodes, data.library).length : 0;
+  // The ⋯ button of each row, by episode id: after a Remove, focus moves to a neighbour's (#4424).
+  const moreButtons = useRef(new Map<string, HTMLButtonElement>());
+  const screen = useRef<HTMLDivElement>(null);
+  const [removing, setRemoving] = useState<LibraryRow | undefined>(undefined);
+  const removeBusy = useRef(false);
+  const pendingFocus = useRef<{ gone: string; order: string[] } | undefined>(undefined);
+
+  const remove = async (row: LibraryRow) => {
+    if (removeBusy.current) return;
+    removeBusy.current = true;
+    const id = row.episode.id;
+    const title = row.episode.title;
+    const order = rows.map((r) => r.episode.id);
+    const hasMargins = data.margins.some((m) => m.episodeId === id);
+    // Closed first, so a second tap can't write twice and the page behind is live again.
+    setRemoving(undefined);
+    try {
+      const previous = await data.removeFromLibrary(id);
+      pendingFocus.current = { gone: id, order };
+      toast(hasMargins ? `Removed “${title}” from your Library. Its Margins stay in the Margins tab.` : `Removed “${title}” from your Library.`, 'info', {
+        label: 'Undo',
+        run: () =>
+          data.putBackInLibrary(id, previous).then(
+            () => toast(`“${title}” is back in your Library.`),
+            () => undefined, // Already shown as a problem, and the row stays out.
+          ),
+      });
+    } catch {
+      // Already shown as a problem; the row stays.
+    } finally {
+      removeBusy.current = false;
+    }
+  };
+
+  // After a Remove: the next row's ⋯, the previous row's, the search field, then the empty state's button.
+  useEffect(() => {
+    const pending = pendingFocus.current;
+    if (!pending || rows.some((r) => r.episode.id === pending.gone)) return;
+    pendingFocus.current = undefined;
+    const at = pending.order.indexOf(pending.gone);
+    const live = new Set(rows.map((r) => r.episode.id));
+    const next = pending.order.slice(at + 1).find((id) => live.has(id));
+    const before = pending.order.slice(0, at).reverse().find((id) => live.has(id));
+    requestAnimationFrame(() => {
+      const target =
+        (next !== undefined ? moreButtons.current.get(next) : undefined) ??
+        (before !== undefined ? moreButtons.current.get(before) : undefined) ??
+        screen.current?.querySelector<HTMLElement>('.search input') ??
+        screen.current?.querySelector<HTMLElement>('.empty .button-primary');
+      target?.focus();
+    });
+  }, [rows]);
+
   // A query ends when the Library empties, so rows that come back aren't hidden by an old one.
   useEffect(() => {
     if (data.ready && allRows.length === 0 && query.trim() !== '') setQuery('');
   }, [data.ready, allRows.length, query, setQuery]);
 
   return (
-    <div className="screen">
+    <div className="screen" ref={screen}>
       <header className="screen-header">
         <h1 id="library-title" tabIndex={-1}>
           Library
@@ -101,7 +155,7 @@ export function Library({ onPlay, onFindShows, onGoFollowing, onOpenFile }: { on
           {rows.map((row) => {
             const current = player.episode?.id === row.episode.id;
             return (
-            <li key={row.episode.id}>
+            <li key={row.episode.id} className="library-row">
               <button
                 type="button"
                 aria-current={current ? 'true' : undefined}
@@ -128,13 +182,64 @@ export function Library({ onPlay, onFindShows, onGoFollowing, onOpenFile }: { on
                   )}
                 </span>
               </button>
+              {data.migrated && (
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label={`More for ${row.episode.title}`}
+                  aria-haspopup="dialog"
+                  ref={(el) => {
+                    if (el) moreButtons.current.set(row.episode.id, el);
+                    else moreButtons.current.delete(row.episode.id);
+                  }}
+                  onClick={() => setRemoving(row)}
+                >
+                  <MoreIcon />
+                </button>
+              )}
             </li>
             );
           })}
           </ul>
         </>
       )}
+      {removing && <RemoveSheet row={removing} onRemove={() => void remove(removing)} onClose={() => setRemoving(undefined)} />}
     </div>
+  );
+}
+
+/** Remove from Library asks nothing more than this (Undo covers a slip). Escape and Cancel close it with no change. */
+function RemoveSheet({ row, onRemove, onClose }: { row: LibraryRow; onRemove: () => void; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const first = useRef<HTMLButtonElement>(null);
+  useRestoreFocus('#library-title');
+  useEffect(() => {
+    const d = dialog.current;
+    if (d && !d.open) d.showModal();
+    first.current?.focus();
+  }, []);
+  return (
+    <dialog
+      ref={dialog}
+      className="sheet"
+      aria-labelledby="remove-title"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+    >
+      <h2 id="remove-title" className="remove-sheet-title">
+        {row.episode.title}
+      </h2>
+      <div className="remove-sheet-actions">
+        <button ref={first} type="button" className="button button-primary" onClick={onRemove}>
+          Remove from Library
+        </button>
+        <button type="button" className="button" onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+    </dialog>
   );
 }
 

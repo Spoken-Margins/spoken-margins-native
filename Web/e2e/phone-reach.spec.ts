@@ -27,7 +27,7 @@ test('on Now Playing, speed is on the right and nothing to tap sits under the vo
   await expect(page.getByText(/Following Spoken Margins Test Show/)).toBeVisible();
   await followAndAdd(page, 'Spoken Margins Test Show', ['Episode 3: No link, GUID and audio']);
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Library' }).click();
-  await page.getByRole('button', { name: /Episode 3: No link, GUID and audio/ }).click();
+  await page.getByRole('button', { name: /^(?!More for ).*Episode 3: No link, GUID and audio/ }).click();
   const nowPlaying = page.getByRole('dialog', { name: 'Episode 3: No link, GUID and audio' });
   await expect(nowPlaying.getByRole('button', { name: /Speed 1 times/ })).toBeVisible();
   await shot(page, info, '3037-now-playing');

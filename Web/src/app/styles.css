@@ -2601,6 +2601,39 @@ body:not(:has(.mini-player)) .toasts {
   }
 }
 
+/* ---------- Library row's More button and the Remove sheet (#4424) ---------- */
+
+.library-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.library-row > .row {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.library-row > .icon-button {
+  margin-right: -10px;
+}
+
+.remove-sheet-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.remove-sheet-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
 /* Following search (#4427): the Shows and Episodes headings, and a Look for button that wraps a long query. */
 .section-heading {
   font-size: 1.1rem;

@@ -73,8 +73,8 @@ test('the Refresh control adds a new episode once, and opening the app again wit
   await expect(page.getByText('No new episodes.')).toBeVisible();
   await tab(page, 'Library');
   await expect(page.getByRole('button', { name: /Episode 4: Fresh this morning/ })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /Episode 3: No link, GUID and audio/ })).toHaveCount(1);
-  await expect(page.getByRole('button', { name: /Episode 2: No link, no GUID, audio only/ })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: /^(?!More for ).*Episode 3: No link, GUID and audio/ })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: /^(?!More for ).*Episode 2: No link, no GUID, audio only/ })).toHaveCount(1);
 });
 
 test('a feed that needs the server is skipped quietly once that is off, with one line and the way to say yes', async ({ page }, info) => {

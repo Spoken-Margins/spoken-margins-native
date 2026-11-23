@@ -68,7 +68,7 @@ test('a new listener follows a suggested show in one tap, and its episodes play'
   // An episode the listener adds is in the Library and plays, and the clock moves (#4425).
   await followAndAdd(page, 'Spoken Margins Test Show', ['Episode 3: No link, GUID and audio']);
   await tab(page, 'Library');
-  await page.getByRole('button', { name: /Episode 3: No link, GUID and audio/ }).click();
+  await page.getByRole('button', { name: /^(?!More for ).*Episode 3: No link, GUID and audio/ }).click();
   const nowPlaying = page.getByRole('dialog', { name: 'Episode 3: No link, GUID and audio' });
   await expect(nowPlaying.getByRole('button', { name: 'Pause' })).toBeVisible();
   await expect
