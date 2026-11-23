@@ -25,3 +25,39 @@ public enum PlaybackLeadingControl: Equatable, Sendable {
         }
     }
 }
+
+/// Whether the Now header counts as on screen, for the toolbar's Library arrow (#4739).
+///
+/// The toolbar arrow comes and goes with the header. Adding or removing a toolbar item lays the bar out again, and at
+/// the largest text sizes that moved the screen enough to put a header sitting at the edge back on the other side of a
+/// single threshold: the arrow flipped on every layout pass, and the app hung at 100% CPU on first launch. Two
+/// thresholds break that loop: the header is gone only once almost none of it shows, and back only once almost all of
+/// it does. Nothing a bar layout can do moves a header across that whole gap, so one pass can't undo the last.
+public struct NowHeaderVisibility: Equatable, Sendable {
+    /// Below this share of the header on screen, it is gone and the toolbar shows the arrow.
+    public static let goneBelow = 0.01
+    /// At or above this share, it is back and the arrow returns to the header.
+    public static let backAt = 0.9
+
+    public private(set) var isVisible: Bool
+
+    public init(isVisible: Bool = true) {
+        self.isVisible = isVisible
+    }
+
+    /// What the `goneBelow` threshold reports: whether at least that share of the header is on screen.
+    public mutating func reachedGoneThreshold(_ visible: Bool) {
+        if !visible { isVisible = false }
+    }
+
+    /// What the `backAt` threshold reports: whether at least that share of the header is on screen.
+    public mutating func reachedBackThreshold(_ visible: Bool) {
+        if visible { isVisible = true }
+    }
+
+    /// The same rule from one measured share, for callers that know it.
+    public mutating func seen(fraction: Double) {
+        reachedGoneThreshold(fraction >= Self.goneBelow)
+        reachedBackThreshold(fraction >= Self.backAt)
+    }
+}

@@ -100,7 +100,14 @@ struct PlaybackScreen: View {
                                     if model.isFirstMarginPromptShowing { FirstMarginPromptCard() }
                                     playbackHeader
                                         // The Library arrow lives in the header; once following scrolls it away, the toolbar shows it (#4453).
-                                        .onScrollVisibilityChange(threshold: 0.01) { nowScene.headerIsVisible = $0 }
+                                        // Gone below one threshold, back above another, so the toolbar arrow's own bar
+                                        // layout can't flip it on every pass (#4739).
+                                        .onScrollVisibilityChange(threshold: NowHeaderVisibility.goneBelow) {
+                                            nowScene.headerReachedGoneThreshold($0)
+                                        }
+                                        .onScrollVisibilityChange(threshold: NowHeaderVisibility.backAt) {
+                                            nowScene.headerReachedBackThreshold($0)
+                                        }
                                     capturePermissionRecovery
                                     importedCommentaryControl
                                     if model.selectedItem.isNativeAudio {
