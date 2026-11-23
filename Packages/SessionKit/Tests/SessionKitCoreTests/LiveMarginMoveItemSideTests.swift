@@ -253,6 +253,55 @@ final class LiveMarginMoveItemSideTests: XCTestCase {
         XCTAssertFalse(LiveMarginMove.listenerChanged(moved, repository: store))
     }
 
+    // MARK: Undo's order (audit on #5172): the live side first, the item rows last
+
+    /// A moved Margin and the live session it left, on real files beside the store.
+    private func movedWithLiveSide(_ margins: [LiveSessionMargin]) async throws -> (LiveMarginMove.Plan, [Interjection], LiveSessionFileWorker) {
+        try seed(episode(), session(for: "ep"))
+        let live = quick(margins)
+        let root = directory.appending(path: "support", directoryHint: .isDirectory)
+        try LiveSessionCollection(root: root).save(live)
+        let files = LiveSessionFileWorker(root: root)
+        let plan = try LiveMarginMove.plan(margins: margins, session: live, itemId: "ep", repository: store)
+        let moved = try LiveMarginMove.execute(plan: plan, repository: store)
+        _ = try await files.removeMovedMargins(ids: plan.liveMarginIds, fromSession: live.id)
+        return (plan, moved, files)
+    }
+
+    func testUndoPutsTheLiveMarginsBackThenTakesTheItemRows() async throws {
+        let (plan, moved, files) = try await movedWithLiveSide([spoken("a", at: 1), spoken("b", at: 2)])
+        _ = try store.updateInterjection(id: moved[0].id, sessionId: "s-ep") { $0.transcript = "Heard later" }
+        let outcome = await LiveMarginMove.undo(plan: plan, moved: moved, repository: store, files: files)
+        XCTAssertEqual(outcome, .putBack(count: 2))
+        XCTAssertEqual(try store.loadInterjections(sessionId: "s-ep"), [])
+        let back = await files.session(id: "quick-1")
+        XCTAssertEqual(back?.margins.map(\.id).sorted(), ["a", "b"])
+        XCTAssertEqual(back?.margins.first { $0.id == "a" }?.text, "Heard later", "words found meanwhile come back")
+    }
+
+    func testAFailedRestoreLeavesTheItemRows() async throws {
+        let (plan, moved, files) = try await movedWithLiveSide([spoken("a", at: 1), spoken("b", at: 2)])
+        // The session's file can't be written: a non-empty folder sits where it goes.
+        let file = LiveSessionCollection(root: directory.appending(path: "support", directoryHint: .isDirectory)).url(for: "quick-1")
+        try? FileManager.default.removeItem(at: file)
+        try FileManager.default.createDirectory(at: file.appending(path: "blocker", directoryHint: .isDirectory), withIntermediateDirectories: true)
+        let outcome = await LiveMarginMove.undo(plan: plan, moved: moved, repository: store, files: files)
+        XCTAssertEqual(outcome, .failed)
+        XCTAssertEqual(try store.loadInterjections(sessionId: "s-ep").map(\.id).sorted(), moved.map(\.id).sorted(),
+                       "the Margins are still on the item, never in neither place")
+        XCTAssertEqual(try store.loadMovedMarginOrigins().count, 2)
+    }
+
+    func testARefusalOnTheWayLeavesTheItemRows() async throws {
+        let (plan, moved, files) = try await movedWithLiveSide([spoken("a", at: 1), spoken("b", at: 2)])
+        _ = try store.updateInterjection(id: moved[0].id, sessionId: "s-ep") { $0.isStarredForSharing = true }
+        let outcome = await LiveMarginMove.undo(plan: plan, moved: moved, repository: store, files: files)
+        XCTAssertEqual(outcome, .refused(.changedOnItem(title: plan.itemTitle)))
+        XCTAssertEqual(try store.loadInterjections(sessionId: "s-ep").count, 2)
+        let session = await files.session(id: "quick-1")
+        XCTAssertTrue(session?.margins.isEmpty ?? true, "nothing came back to the session")
+    }
+
     func testAWatchWithdrawAfterTheMoveDeletesTheMovedMargin() throws {
         try seed(episode(), session(for: "ep"))
         let margin = spoken("a", at: 1)

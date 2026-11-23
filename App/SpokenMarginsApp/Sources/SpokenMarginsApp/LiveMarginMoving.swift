@@ -60,51 +60,27 @@ enum LiveMarginMoving {
         return Moved(plan: plan, moved: moved, removedSession: removal?.removedSession ?? plan.removesSession)
     }
 
-    /// Undo (Design 2.7): refused, with nothing changed, when the session was discarded or saved as notes meanwhile, or the
-    /// listener changed a moved Margin on the item. Otherwise the item rows go, and the live Margins come back with any
-    /// words a transcription found meanwhile.
+    /// Undo (Design 2.7). The order, live side first and item rows last so a Margin is never in neither place, is
+    /// `LiveMarginMove.undo`'s; this runs it off the main thread and tells the app.
     static func undo(plan: LiveMarginMove.Plan, moved: [Interjection], model: Gate1AppModel, files: LiveSessionFileWorker = .shared) async {
         guard let store = model.store else { return }
         // A second tap on the same banner's Undo: the first already put them back.
         if !moved.isEmpty, moved.allSatisfy({ wasTakenBack($0.id) }) { return }
-        if await files.currentDeletions().deletedSession(plan.session.id) {
-            return model.reportFailure(LiveMarginMove.UndoRefusal.discarded.message)
-        }
-        if await files.session(id: plan.session.id)?.savedItemId != nil {
-            return model.reportFailure(LiveMarginMove.UndoRefusal.savedAsNotes.message)
-        }
-        let words: [String: String]?
-        do {
-            words = try await Task.detached(priority: .userInitiated) { () throws -> [String: String]? in
-                guard !LiveMarginMove.listenerChanged(moved, repository: store) else { return nil }
-                return try LiveMarginMove.undoItemSide(moved, repository: store)
-            }.value
-        } catch {
-            return model.reportFailure(error, context: "Couldn't put the Margins back")
-        }
-        guard let words else { return model.reportFailure(LiveMarginMove.UndoRefusal.changedOnItem(title: plan.itemTitle).message) }
-        takenBackIds.formUnion(moved.map(\.id))
-        let margins = plan.margins.map { planned -> LiveSessionMargin in
-            var margin = planned.margin
-            if margin.isSpoken, margin.spokenTranscript == nil, let found = words[margin.id] { margin.text = found }
-            return margin
-        }
-        let outcome: LiveSessionFileWorker.RestoreOutcome
-        do {
-            outcome = try await files.restoreMovedMargins(margins, into: plan.session)
-        } catch {
-            return model.reportFailure(error, context: "Couldn't put the Margins back")
-        }
-        model.liveMarginsTakenBack(itemId: plan.itemId)
+        let outcome = await Task.detached(priority: .userInitiated) {
+            await LiveMarginMove.undo(plan: plan, moved: moved, repository: store, files: files)
+        }.value
         switch outcome {
-        case .restored:
+        case let .putBack(count):
+            takenBackIds.formUnion(moved.map(\.id))
+            model.liveMarginsTakenBack(itemId: plan.itemId)
             NotificationCenter.default.post(name: LiveSessionSpokenMargins.changedOnDisk, object: nil)
-            model.reportConfirmation(LiveMarginMove.Wording.putBack(count: margins.count))
+            model.reportConfirmation(LiveMarginMove.Wording.putBack(count: count))
             await LiveSessionSpokenMargins.transcribeMissing()
-        case .savedAsNotes:
-            model.reportFailure(LiveMarginMove.UndoRefusal.savedAsNotes.message)
-        case .discarded:
-            model.reportFailure(LiveMarginMove.UndoRefusal.discarded.message)
+        case let .refused(refusal):
+            model.reportFailure(refusal.message)
+        case .failed:
+            NotificationCenter.default.post(name: LiveSessionSpokenMargins.changedOnDisk, object: nil)
+            model.reportFailure(LiveMarginMove.Wording.putBackFailed(title: plan.itemTitle))
         }
     }
 

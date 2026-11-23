@@ -326,20 +326,28 @@ public enum LiveMarginMove {
         return false
     }
 
+    /// The words a transcription found on the item for `moved` since the move, by live Margin id. Reads only.
+    public static func wordsFoundMeanwhile(_ moved: [Interjection], repository: Repository) -> [String: String] {
+        var words: [String: String] = [:]
+        for margin in moved {
+            let current = (try? repository.loadInterjections(sessionId: margin.sessionId))?.first { $0.id == margin.id }
+            if let liveId = current?.movedOrigin?.liveMarginId ?? margin.movedOrigin?.liveMarginId,
+               let found = current?.transcript?.trimmingCharacters(in: .whitespacesAndNewlines), !found.isEmpty,
+               current?.captureKind != .written {
+                words[liveId] = found
+            }
+        }
+        return words
+    }
+
     /// Takes the moved Margins back off the item: each row and its origin outright, with no file cleanup (the live session
-    /// names the recording again). Returns the words a transcription found meanwhile, by live Margin id, for the restored
-    /// live Margins. Run only after `listenerChanged` said no.
+    /// names the recording again). Returns the words a transcription found meanwhile, by live Margin id. Run only after
+    /// `listenerChanged` said no, and only once the live Margins are back (`undo`).
     @discardableResult
     public static func undoItemSide(_ moved: [Interjection], repository: Repository) throws -> [String: String] {
-        var words: [String: String] = [:]
+        let words = wordsFoundMeanwhile(moved, repository: repository)
         func remove() throws {
             for margin in moved {
-                let current = (try? repository.loadInterjections(sessionId: margin.sessionId))?.first { $0.id == margin.id }
-                if let liveId = current?.movedOrigin?.liveMarginId ?? margin.movedOrigin?.liveMarginId,
-                   let found = current?.transcript?.trimmingCharacters(in: .whitespacesAndNewlines), !found.isEmpty,
-                   current?.captureKind != .written {
-                    words[liveId] = found
-                }
                 try repository.deleteMovedMargin(id: margin.id, sessionId: margin.sessionId)
             }
         }
@@ -349,6 +357,59 @@ public enum LiveMarginMove {
             try remove()
         }
         return words
+    }
+
+    /// What an Undo did.
+    public enum UndoOutcome: Equatable, Sendable {
+        case putBack(count: Int)
+        /// Nothing changed anywhere.
+        case refused(UndoRefusal)
+        /// A write failed. Nothing was lost: the Margins are on the item, or back in the session, and never in neither.
+        case failed
+    }
+
+    /// Undo (Design 2.7): the live Margins come back first, with any words a transcription found meanwhile, and only then
+    /// do the item rows go. So a Margin is never in neither place: a failed restore or a refusal found on the way leaves
+    /// the item rows; a failed item delete takes the live Margins out again; and an app stopped in between leaves both
+    /// copies, which `reconcileAtLaunch` settles by taking the live one out (the origin is still active).
+    public static func undo<R: Repository & Sendable>(
+        plan: Plan, moved: [Interjection], repository: R, files: LiveSessionFileWorker
+    ) async -> UndoOutcome {
+        if await files.currentDeletions().deletedSession(plan.session.id) { return .refused(.discarded) }
+        if await files.session(id: plan.session.id)?.savedItemId != nil { return .refused(.savedAsNotes) }
+        let changed = UndoRefusal.changedOnItem(title: plan.itemTitle)
+        guard !listenerChanged(moved, repository: repository) else { return .refused(changed) }
+        let words = wordsFoundMeanwhile(moved, repository: repository)
+        let margins = plan.margins.map { planned -> LiveSessionMargin in
+            var margin = planned.margin
+            if margin.isSpoken, margin.spokenTranscript == nil, let found = words[margin.id] { margin.text = found }
+            return margin
+        }
+        let restored: LiveSessionFileWorker.RestoreOutcome
+        do {
+            restored = try await files.restoreMovedMargins(margins, into: plan.session)
+        } catch {
+            return .failed
+        }
+        switch restored {
+        case .restored: break
+        case .savedAsNotes: return .refused(.savedAsNotes)
+        case .discarded: return .refused(.discarded)
+        }
+        let refusal: UndoRefusal?
+        do {
+            if listenerChanged(moved, repository: repository) {
+                refusal = changed
+            } else {
+                try undoItemSide(moved, repository: repository)
+                return .putBack(count: margins.count)
+            }
+        } catch {
+            refusal = nil
+        }
+        // The item rows stay, so the live copies go out again.
+        _ = try? await files.removeMovedMargins(ids: Set(margins.map(\.id)), fromSession: plan.session.id)
+        return refusal.map { .refused($0) } ?? .failed
     }
 
     // MARK: Words (Design 2.5 to 2.7)
@@ -399,6 +460,7 @@ public enum LiveMarginMove {
             count == 1 ? "Couldn't move the Margin. Nothing was changed." : "Couldn't move the Margins. Nothing was changed."
         }
 
+        public static func putBackFailed(title: String) -> String { "Couldn't put the Margins back. They're still on “\(title)”." }
         public static let marginsGone = "Those Margins are no longer in this session."
         public static let loading = "Loading your Library…"
         public static let loadFailed = "Couldn't load your Library."
