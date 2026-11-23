@@ -27,6 +27,7 @@ import base64
 import contextlib
 import datetime as dt
 import fcntl
+import http.client
 import json
 import os
 import subprocess
@@ -110,8 +111,9 @@ def request_token(jwt: str, opener=urllib.request.urlopen) -> dict:
             answer = json.loads(response.read())
     except urllib.error.HTTPError as error:
         raise TokenError(f'GitHub refused the token request: HTTP {error.code}') from error
-    except (urllib.error.URLError, TimeoutError, ValueError) as error:
-        raise TokenError(f'token request failed: {error}') from error
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as error:
+        # OSError covers a dropped connection (RemoteDisconnected) and timeouts; HTTPException a garbled answer.
+        raise TokenError(f'token request failed: {error!r}') from error
     if not answer.get('token') or not answer.get('expires_at'):
         raise TokenError('GitHub answered without a token')
     return {'token': answer['token'], 'expires_at': answer['expires_at']}
