@@ -371,12 +371,6 @@ def capture(command):
     return subprocess.check_output(command, cwd=ROOT, text=True).strip()
 
 
-def device_state(udid):
-    """The simulator's state now (Booted, Shutdown, ...), or None when it no longer exists."""
-    devices = json.loads(capture(['xcrun', 'simctl', 'list', 'devices', '--json']))['devices']
-    return next((entry.get('state') for group in devices.values() for entry in group if entry.get('udid') == udid), None)
-
-
 def inherited_simulator_slot(fd):
     """Borrow a parent's real locked simulator-slot descriptor; never trust an env flag.
 
@@ -2351,41 +2345,35 @@ class Run:
         if any(test.endswith(SUPERTONIC_APP_MODEL_TEST)
                for test in planned if not selectors or any(selected(test, s) for s in selectors)):
             self.provide_supertonic_model()
-        chosen, created = self.simulator(device, ios)
-        refuse_unsafe(chosen, lane_sim.unsafe_devices())
-        refuse_borrowed(chosen, device, simulator_slot_fd)
-        self.manifest['destination'] = chosen
-        derived, identity = self.xcode_build(plan, chosen['runtime'], rebuild, require_build)
-        base = ['xcodebuild', '-configuration', 'Debug', '-project', 'SpokenMarginsNative.xcodeproj', '-scheme', scheme,
-                '-testPlan', name, '-destination', f'id={chosen["udid"]}', '-derivedDataPath', str(derived)
-                ] + package_cache_settings()  # the build's package folder: xcodebuild resolves packages again here (#4664)
-        booted_here = chosen['state'] != 'Booted'
-        # A run that boots its own simulator holds a Mac-wide simulator slot until it shuts it down
-        # (16 GB Mac: a second simulator job only while memory pressure is normal, #184). A device
-        # someone else booted is theirs, and so is the slot.
-        slot = inherited_simulator_slot(simulator_slot_fd) if simulator_slot_fd is not None else (
-            acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS)
-            if booted_here else None)
-        # Our own Test Runner is shared by every checkout's run without --device, so it is locked Mac-wide from here
-        # until it is shut down (#4736). The lock comes after the slot, and its holder waits for no slot. The device's
-        # state is read again under the lock: the one read before the build may belong to the run that held it.
-        uses_test_runner = device is None and chosen.get('name') == TEST_RUNNER_NAME
-        runner_lock = None
-        if uses_test_runner:
-            booted_here = False  # nothing here boots or shuts it down until the lock is ours
+        # Our own Test Runner is shared by every checkout's run without --device, so such a run locks it Mac-wide
+        # (#4736): from before it chooses, replaces or creates the device until it has shut it down. The integration
+        # job used to guard it by keeping the simulator decision lock for its whole run, which made every Test Desk
+        # boot wait out the job. The slot always comes first and a holder of the lock waits for no slot, so the two
+        # can't deadlock. A device given with --device is the caller's own and never takes the lock.
+        chosen, booted_here, slot, runner_lock, reached_device = None, False, None, None, False
         try:
-            if uses_test_runner:
+            if device is None:
+                slot = inherited_simulator_slot(simulator_slot_fd) if simulator_slot_fd is not None else \
+                    acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS)
                 runner_lock = acquire_test_runner(f'verify-tests {plan}', out=sys.stdout,
                                                   max_wait=max(BUILD_SLOT_WAIT_SECONDS, timeout))
-                state = device_state(chosen['udid'])
-                if state is None:
-                    raise RuntimeError(f'{TEST_RUNNER_NAME} ({chosen["udid"]}) was deleted while this run waited for '
-                                       'it; run again')
-                chosen = dict(chosen, state=state)
-                refuse_borrowed(chosen, device, simulator_slot_fd)
-                booted_here = state != 'Booted'
-                self.manifest['destination'] = chosen
-                self.save()
+            chosen, created = self.simulator(device, ios)
+            refuse_unsafe(chosen, lane_sim.unsafe_devices())
+            refuse_borrowed(chosen, device, simulator_slot_fd)
+            self.manifest['destination'] = chosen
+            derived, identity = self.xcode_build(plan, chosen['runtime'], rebuild, require_build)
+            base = ['xcodebuild', '-configuration', 'Debug', '-project', 'SpokenMarginsNative.xcodeproj', '-scheme',
+                    scheme, '-testPlan', name, '-destination', f'id={chosen["udid"]}', '-derivedDataPath', str(derived)
+                    ] + package_cache_settings()  # the build's package folder: xcodebuild resolves packages again (#4664)
+            # A run that boots its own simulator holds a Mac-wide simulator slot until it shuts it down
+            # (16 GB Mac: a second simulator job only while memory pressure is normal, #184). A given device
+            # someone else booted is theirs, and so is the slot.
+            if device is not None:
+                slot = inherited_simulator_slot(simulator_slot_fd) if simulator_slot_fd is not None else (
+                    acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS)
+                    if chosen['state'] != 'Booted' else None)
+            booted_here = chosen['state'] != 'Booted'  # set only now: the finally shuts down only what this run boots
+            reached_device = True
             if booted_here:
                 # Lane boot rules (scripts/lane_sim.py): one boot at a time, no builds meanwhile, no retry
                 # after a failed boot, stop at the first crash. Two crash floods followed boots (#184).
@@ -2509,7 +2497,7 @@ class Run:
                     if lane_audio_window.record_not_run(self.manifest['steps']):
                         self.save()
         finally:
-            if scheme == 'SpokenMarginsAppBehavior':
+            if reached_device and scheme == 'SpokenMarginsAppBehavior':
                 lane_sim.mark_quiet(chosen['udid'])
             if booted_here:
                 # Don't leave an idle simulator holding memory after the run.
@@ -2521,7 +2509,7 @@ class Run:
                     slot.close()
                 else:
                     release_handle(slot)
-            if plan in SCREENSHOT_PLANS:
+            if reached_device and plan in SCREENSHOT_PLANS:
                 # A tour test that stops partway still hands over what the run took (#3237): from 11-02 the tour failed
                 # at one moved control on every run, and exported nothing at all. The tests' own failure stays the error.
                 self.export_screenshots(tests_failed=sys.exc_info()[1] is not None)

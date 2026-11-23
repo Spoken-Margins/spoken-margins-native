@@ -209,7 +209,10 @@ class VerificationTests(unittest.TestCase):
         for patcher in (patch.object(verification, 'state_dir', return_value=Path(state.name)),
                         patch.object(verification.sessionkit_pass, 'toolchain', return_value=None),
                         patch.object(verification, 'node_modules_installed', return_value=True),
-                        patch.dict(os.environ, {'SM_LANE_IOS_MAJOR': '26'}),
+                        # A run without --device takes a simulator slot and the Test Runner lock (#4736): in this
+                        # folder too, never on the Mac's real lane.
+                        patch.dict(os.environ, {'SM_LANE_IOS_MAJOR': '26', 'SM_LANE_STATE_DIR': state.name,
+                                                'SM_LANE_MEMORY_PRESSURE': '1'}),
                         patch.object(verification.lane_sim, 'IOS_MAJOR', 26),
                         # #705's settle sleeps for real (up to 20 s) whenever a test runs run.xcode twice on one
                         # device: the first call marks it quiet in this shared state folder. Tests of the settle
@@ -2708,7 +2711,6 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification.lane_sim, 'LATE_REPORT_WAIT', 0), \
                     patch.object(verification.lane_sim, 'late_report', return_value=None), \
                     patch.object(verification, 'acquire_simulator_slot', return_value=None), \
-                    patch.object(verification, 'device_state', return_value='Shutdown'), \
                     patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(Path(temporary) / 'lane')}), \
                     patch.object(verification.subprocess, 'run'), \
                     patch.object(run, 'command', side_effect=lambda name, args, **_: commands.append((name, args)) or ''), \
@@ -2773,8 +2775,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(lane_slots, 'POLL_SECONDS', 0.05), \
                     patch.object(verification, 'input_identity', return_value='inputs'), \
                     patch.object(verification, 'capture', return_value='stub'), \
-                    patch.object(run, 'simulator', return_value=(runner, False)), \
-                    patch.object(verification, 'device_state', return_value='Shutdown'), \
+                    patch.object(run, 'simulator', side_effect=lambda *a: order.append('choose') or (runner, False)), \
                     patch.object(verification, 'refuse_unsafe'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.lane_sim, 'boot', side_effect=boot), \
@@ -2799,7 +2800,8 @@ class VerificationTests(unittest.TestCase):
                     time.sleep(0.02)
                 self.assertIn('waiting for a Test Runner lock', out.getvalue())
                 self.assertIn('first run', out.getvalue(), 'the note names the run holding the device')
-                self.assertNotIn('boot', order, 'nothing touches the device while another run holds it')
+                self.assertEqual([step for step in order if step in ('choose', 'boot')], [],
+                                 'nothing chooses, replaces or boots the device while another run holds it')
                 verification.release_handle(first)
                 thread.join(30)
                 self.assertFalse(thread.is_alive())
