@@ -141,11 +141,11 @@ extension Gate1AppModel {
     private func startShareLinkOpen(_ url: URL) {
         guard let link = ShareLinkURL(url: url) else {
             shareLinkOpener.cancel() // the last thing the listener opened is this, so an earlier download says nothing
-            packetOpenFailures.present(PacketOpenFailureSheetContent(unparsedShareHostURL: url), retry: nil)
+            packetOpenFailures.present(PacketOpenFailureSheetContent(unparsedShareHostURL: url), retry: nil, endsOpen: true)
             return
         }
         diagnostics["lastShareLink"] = link.key == nil ? "opening:no_key" : "opening"
-        let sheetWords = packetOpenFailures.generation
+        let sheetWords = packetOpenFailures.openToken
         let tryAgain: @MainActor () -> Void = { [weak self] in self?.startShareLinkOpen(url) }
         shareLinkOpener.open(
             link,
@@ -153,14 +153,13 @@ extension Gate1AppModel {
                 guard let self else { return }
                 let opened = await self.stageSpokenMarginsPackageImport(from: file, shareLinkId: link.id)
                 self.diagnostics["lastShareLink"] = opened ? "opened" : "rejected"
-                // A Try Again that worked: the sheet goes and the arrival begins. A refused file has put its own words up;
-                // any other failure went to the banner, and the sheet's old words go so the banner can be seen.
+                // Opened: the sheet goes. A refused file put its own words up; any other failure was a banner (state decides).
                 self.packetOpenFailures.openEnded(opened: opened, since: sheetWords)
             },
             fail: { [weak self] failure in
                 self?.diagnostics["lastShareLink"] = "failed"
                 let content = PacketOpenFailureSheetContent(failure, linkID: link.id)
-                self?.packetOpenFailures.present(content, retry: content.isRetryable ? tryAgain : nil)
+                self?.packetOpenFailures.present(content, retry: content.isRetryable ? tryAgain : nil, endsOpen: true)
             }
         )
     }
@@ -369,7 +368,7 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
             reportFailureMessage: { [weak model] in model?.reportFailure($0) },
             presentOpenFailure: { [weak model] in model?.packetOpenFailures.present($0, retry: nil) },
             reportFailure: { [weak model] error, context in model?.reportFailure(error, context: context) },
-            openItem: { [weak model] in model?.openItem(id: $0) },
+            openItem: { [weak model] in model?.openItem(id: $0); model?.packetOpenFailures.friendItemOpened() },
             showImportedItem: { [weak model] itemId, store in
                 guard let model else { return }
                 model.activeItemId = itemId
@@ -379,6 +378,7 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
                 // The Margins and Now tabs read these rows, not selectedItem; without this they stay empty until relaunch (#3263).
                 model.refreshMarginRowsInBackground(forItem: itemId)
                 model.screen = .item
+                model.packetOpenFailures.friendItemOpened() // the first-launch order learns the friend's item is open (#4834)
             },
             recordPacketImport: { [weak model] itemId, packetId, marginCount in
                 model?.listeningSignals.packetImport(itemId: itemId, packetId: packetId, marginCount: marginCount)

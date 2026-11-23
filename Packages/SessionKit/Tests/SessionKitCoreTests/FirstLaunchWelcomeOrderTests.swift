@@ -22,6 +22,7 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
         XCTAssertEqual(order.settle(at: .library), .none, "the friend's item hasn't opened yet")
         XCTAssertEqual(order.moved(to: .elsewhere), .none, "the import review is up")
         XCTAssertEqual(order.moved(to: .library), .none)
+        order.friendItemOpened()
         XCTAssertEqual(order.moved(to: .item), .none, "the friend's item opened")
         XCTAssertEqual(order.moved(to: .elsewhere), .none, "playing it")
         XCTAssertEqual(order.moved(to: .item), .none)
@@ -34,6 +35,7 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
         XCTAssertEqual(order.settle(at: .library), .presentDrawer)
         XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .withdrawDrawer)
         XCTAssertEqual(order.phase, .waitingForFriendItem)
+        order.friendItemOpened()
         XCTAssertEqual(order.moved(to: .item), .none)
         XCTAssertEqual(order.moved(to: .library), .presentDrawer)
     }
@@ -75,6 +77,7 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
     func testASecondFileWhileWaitingChangesNothing() {
         var order = Order(drawerOwed: true)
         _ = order.friendFileArrived(drawerHasPicks: false)
+        order.friendItemOpened()
         _ = order.moved(to: .item)
         XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .none)
         XCTAssertEqual(order.phase, .waitingForLibrary)
@@ -102,6 +105,7 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
         _ = order.friendFileArrived(drawerHasPicks: false)
         XCTAssertFalse(order.playsWelcomeSampleOnClose)
         _ = order.settle(at: .library)
+        order.friendItemOpened()
         _ = order.moved(to: .item)
         XCTAssertEqual(order.moved(to: .library), .presentDrawer)
         XCTAssertFalse(order.playsWelcomeSampleOnClose, "same launch: the held-back state survives the drawer opening")
@@ -115,6 +119,7 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
         XCTAssertTrue(order.playsWelcomeSampleOnClose)
         XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .withdrawDrawer)
         XCTAssertFalse(order.playsWelcomeSampleOnClose)
+        order.friendItemOpened()
         XCTAssertEqual(order.moved(to: .item), .none)
         XCTAssertEqual(order.moved(to: .library), .presentDrawer, "the drawer still returns after the friend's item")
     }
@@ -247,6 +252,7 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
     func testAFailureAfterTheFriendsItemOpenedChangesNothing() {
         var order = Order(drawerOwed: true)
         XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .none)
+        order.friendItemOpened()
         XCTAssertEqual(order.moved(to: .item), .none)
         XCTAssertEqual(order.phase, .waitingForLibrary)
 
@@ -254,5 +260,72 @@ final class FirstLaunchWelcomeOrderTests: XCTestCase {
 
         XCTAssertEqual(order.phase, .waitingForLibrary, "the first file's item is the friend's, and the drawer still waits for the Library")
         XCTAssertFalse(order.playsWelcomeSampleOnClose)
+    }
+
+    /// #4834 finding 2: an item the listener opened themselves while a friend's link waited is not the friend's item,
+    /// so that link failing still brings the drawer back and lets Done play the Welcome sample.
+    func testAFailureAfterAnItemTheListenerOpenedThemselvesBringsTheDrawerBack() {
+        var order = Order(drawerOwed: true)
+        XCTAssertEqual(order.settle(at: .library), .presentDrawer)
+        XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .withdrawDrawer)
+        XCTAssertEqual(order.moved(to: .item), .none, "the listener opened this item; no import said it was the friend's")
+
+        XCTAssertEqual(order.moved(to: .elsewhere), .none, "the failure sheet")
+        XCTAssertEqual(order.friendFileFailed(place: .elsewhere), .none)
+        XCTAssertEqual(order.moved(to: .item), .none)
+        XCTAssertEqual(order.moved(to: .library), .presentDrawer)
+        XCTAssertTrue(order.playsWelcomeSampleOnClose)
+    }
+
+    /// Neighbouring sequences for the same predicate: only the import's own signal makes an item the friend's.
+    func testWhichItemVisitsCountAsTheFriendsWhenALinkFails() {
+        enum Event { case item, elsewhere, library, friendItemOpened }
+        // (name, events, drawer shown before any failure, held back after the failure)
+        let rows: [(String, [Event], Bool, Bool)] = [
+            ("own item then failure sheet", [.item, .elsewhere], false, false),
+            ("own item then back to library", [.item, .library], false, false),
+            ("own item, library, own item again", [.item, .library, .item, .library], false, false),
+            ("review sheet then the friend's item", [.elsewhere, .friendItemOpened, .item], false, true),
+            ("a friend import with no review sheet", [.friendItemOpened, .item], false, true),
+            ("friend's item then back to library", [.friendItemOpened, .item, .library], true, true),
+            ("a friend import that opened its item before the place changed", [.friendItemOpened], false, true),
+            ("own item, then the friend's import", [.item, .friendItemOpened], false, true),
+            ("own item, review, then the friend's item", [.item, .elsewhere, .friendItemOpened, .item], false, true),
+            ("review sheet only", [.elsewhere], false, false),
+            ("no movement", [], false, false),
+        ]
+        for (name, events, drawerShownBeforeFailure, heldBackAfterFailure) in rows {
+            var order = Order(drawerOwed: true)
+            XCTAssertEqual(order.settle(at: .library), .presentDrawer, name)
+            XCTAssertEqual(order.friendFileArrived(drawerHasPicks: false), .withdrawDrawer, name)
+            XCTAssertEqual(order.phase, .waitingForFriendItem, name)
+            var shown = false
+            for event in events {
+                let action: Order.Action
+                switch event {
+                case .item: action = order.moved(to: .item)
+                case .elsewhere: action = order.moved(to: .elsewhere)
+                case .library: action = order.moved(to: .library)
+                case .friendItemOpened: order.friendItemOpened(); action = .none
+                }
+                if action == .presentDrawer { shown = true }
+            }
+            XCTAssertEqual(shown, drawerShownBeforeFailure, "\(name): drawer before any failure")
+            _ = order.friendFileFailed(place: .elsewhere)
+            if !shown {
+                XCTAssertEqual(order.phase == .owed, !heldBackAfterFailure, "\(name): the failure owes the drawer unless the friend item opened")
+                XCTAssertEqual(!order.playsWelcomeSampleOnClose, heldBackAfterFailure, "\(name): held back")
+            }
+        }
+    }
+
+    func testAFriendItemOpeningWithNoFileWaitingChangesNothing() {
+        var notOwed = Order(drawerOwed: false)
+        notOwed.friendItemOpened()
+        XCTAssertEqual(notOwed.phase, .notOwed)
+        var showing = Order(drawerOwed: true)
+        _ = showing.settle(at: .library)
+        showing.friendItemOpened()
+        XCTAssertEqual(showing.phase, .drawerShowing)
     }
 }

@@ -147,11 +147,19 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     /// an earlier launch's friend's file held it back (that friend's item is in the Library). A failure with the drawer
     /// never withdrawn (it had picks, or nothing was owed) changes nothing.
     public mutating func friendFileFailed(place: Place) -> Action {
+        // Once the friend's item has opened (`friendItemOpened`) the phase is waitingForLibrary and a failure changes nothing.
         guard phase == .waitingForFriendItem else { return .none }
         wasHeldBack = wasHeldBackBeforeThisLaunch
         isOwedAfterFailure = true
         phase = .owed
         return moved(to: place)
+    }
+
+    /// A friend's file imported and opened its item (the import's own signal, not the listener's place). From now on a
+    /// failure of another link does not undo the hold-back: that item is in the Library (#4834).
+    public mutating func friendItemOpened() {
+        guard phase == .waitingForFriendItem || phase == .waitingForLibrary else { return }
+        phase = .waitingForLibrary
     }
 
     /// The listener's place changed.
@@ -162,7 +170,8 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
             phase = .drawerShowing
             return .presentDrawer
         case .waitingForFriendItem:
-            if place == .item { phase = .waitingForLibrary }
+            // Only the import's own signal (`friendItemOpened`) advances this: an item the listener opened themselves,
+            // or one still downloading, is not the friend's, and going back to the Library must not bring the drawer.
             return .none
         case .notOwed, .drawerShowing:
             return .none

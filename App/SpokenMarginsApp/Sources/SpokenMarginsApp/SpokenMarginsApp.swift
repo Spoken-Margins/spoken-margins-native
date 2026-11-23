@@ -169,6 +169,11 @@ struct SpokenMarginsApp: App {
             packetOpenFailures: model.packetOpenFailures
         )
         _catalogDrawer = StateObject(wrappedValue: drawer)
+        // Where the presenter is wired to the drawer, before any failure can exist (#4834): the one place the drawer is told.
+        model.packetOpenFailures.onCloseNotice = { [weak model, weak drawer] in
+            guard let model, let drawer else { return }
+            drawer.friendFileFailed(at: drawer.isPresented ? .elsewhere : FirstLaunchWelcomeOrder.Place(model))
+        }
         #if !SPOKEN_MARGINS_LEGACY
         FollowPodcastsShortcutBridge.catalogDrawer = drawer
         FollowPodcastsShortcutBridge.prepare = { [weak model] in
