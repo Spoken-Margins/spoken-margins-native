@@ -17,7 +17,12 @@ Two jobs, independent of each other:
    the PR keeps `automerge`, gets no `needs-fix`, and is set to merge again here with the queue token, so it goes
    back in without waiting for the bridge's sweep, which runs only when the VPS backstop or a schedule GitHub often
    drops starts it (#4937). A second such removal of the same PR is treated as a failure, so a job that hangs every
-   time costs one retry, not a loop. `automerge` is removed only when the event shows the PR carries it (the owner's own Merge tap on an
+   time costs one retry, not a loop. A group whose every failed job failed in a setup step, or in a plan step on a
+   network error from a host outside GitHub (a package, model or Homebrew download that a flaky runner or a host outage
+   broke), failed nothing in the PR either (#4940): the same one retry, but after SETUP_RETRY_DELAY, so a short outage
+   can end first. The retry is the label bridge's sweep, which queues the PR once the `not-before` time in this
+   comment's marker has passed (the bridge reads that marker, so the two scripts agree on its format; a test checks
+   it). A failed test step is the PR's, and gets `needs-fix` at once. `automerge` is removed only when the event shows the PR carries it (the owner's own Merge tap on an
    unlabelled PR has nothing to remove, and its comment says nothing about a label). A PR that merged keeps its labels. Each comment carries a hidden marker with the group head (or the PR
    head when no group ran), so a second event for the same group adds nothing. A failed read logs a warning and exits 0: a notifier must not go red.
 
@@ -31,8 +36,10 @@ Two jobs, independent of each other:
 Run: `python3 scripts/merge_queue_dequeued.py --event "$GITHUB_EVENT_PATH"` with GH_REPO set.
 """
 import argparse
+import datetime
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -54,6 +61,48 @@ NO_LABEL_REASONS = ('MERGE', 'MERGED', 'ALREADY_MERGED', *MANUAL_REASONS)
 # it, so it is a conflict, never a check that failed.
 CONFLICT_REASONS = ('CONFLICT', 'INVALID_MERGE_COMMIT')
 TRIES = 3
+
+# A group that failed only in setup (#4940). The delay is a Default taken: long enough for a short outage or a runner
+# flake to clear, short enough that a PR is not parked for hours. The bridge's sweep runs about every 15 minutes, so the
+# PR is queued again within 15 minutes after it.
+SETUP_RETRY_DELAY = datetime.timedelta(minutes=30)
+# merge_queue_label_bridge.py reads this marker; it keeps its own copy of the pattern because the two workflows each
+# check out only their own script. test_merge_queue_dequeued checks the two agree.
+SETUP_RETRY_MARKER = '<!-- merge-queue-dequeued setup-retry not-before={when} -->'
+TIME_FORMAT = '%Y-%m-%dT%H:%M:%SZ'
+
+# Steps whose failure is the runner's, never the PR's code. The names are the real steps of the workflows that run in
+# a merge group (hosted-portable.yml, hosted-web.yml); test_merge_queue_dequeued reads those files to keep the list
+# true. A `uses:` step is named `Run <action>@<ref>` by Actions. A step that runs the PR's own code or manifests
+# (npm ci, pip, go build, the LFS pointers it commits, the version a setup action reads from its files) is a plan step
+# below, since its failure can be the PR's (review of #4940).
+SETUP_STEPS = frozenset({
+    'Set up job', 'Initialize containers', 'Complete job', 'Start the clock',
+    'Unpack the compilation cache', 'Install BlackHole (virtual audio output)', 'Speech model cache',
+})
+SETUP_STEP_PREFIXES = ('Run actions/', 'Post Run actions/')
+# `actions/setup-*` reads a version from the PR's files, so it is a plan step.
+PLAN_STEP_PREFIXES = ('Run actions/setup-',)
+# Steps that can fail for the PR's reasons or the network's. They count as outside the PR only when the failing step's
+# log ends in a network error from a host outside GitHub (EXTERNAL_HOSTS): `tools` inside the Mac plan failed on
+# 2026-11-21 because download.onnxruntime.ai served a bad certificate (#4795), and that shows only in the step's log.
+PLAN_STEPS = frozenset({
+    'Portable fast plan', 'SessionKitCoreTests on Linux', 'SessionKit build and SessionKitCoreTests',
+    'Build the app for the simulator (build-for-testing, no tests)', 'Mac rest of the fast plan',
+    'Caddy and smserver for the Caddyfile tests', 'Python tools and Node packages', 'Python tools',
+    'List LFS objects', 'Fetch LFS files', 'Install packages', 'Install Playwright browsers',
+})
+# Hosts the jobs fetch from at run time (scripts/ci_harness.py EXTERNAL_DOWNLOADS lists the jobs).
+EXTERNAL_HOSTS = ('download.onnxruntime.ai', 'pypi.org', 'files.pythonhosted.org', 'registry.npmjs.org', 'github.com',
+                  'githubusercontent.com', 'huggingface.co', 'hf.co', 'cdn.playwright.dev', 'playwright.azureedge.net',
+                  'registry-1.docker.io', 'docker.io', 'ghcr.io', 'formulae.brew.sh', 'brew.sh')
+NETWORK_ERROR = re.compile(
+    r'certificate|SSL|TLS|Could not resolve host|Temporary failure in name resolution|Name or service not known|'
+    r'nodename nor servname|Connection (?:timed out|reset|refused)|Operation timed out|Network is unreachable|'
+    r'curl: \(\d+\)|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|'
+    r'\b5\d\d (?:Server Error|Bad Gateway|Service Unavailable|Gateway Time-?out)|HTTP(?: error)? 5\d\d', re.I)
+LOG_TAIL_LINES = 80
+JOB_IN_URL = re.compile(r'/job/(\d+)(?:/|$)')
 
 ENTRIES_QUERY = '''query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
@@ -101,6 +150,25 @@ class GitHub:
                 if attempt + 1 < TRIES:
                     self.sleep(2 * (attempt + 1))
         raise ReadFailed(f'merge queue entries: {error!r}')
+
+    def now(self):
+        return datetime.datetime.now(datetime.timezone.utc)
+
+    def log_tail(self, job_id):
+        """The last lines of a job's log before its first error line, or raises ReadFailed. A failed job's log is usually under a megabyte."""
+        error = None
+        for attempt in range(TRIES):
+            try:
+                lines = self._gh([f'repos/{self.repo}/actions/jobs/{job_id}/logs']).stdout.splitlines()
+                # The failing step ends at the first `##[error]` line (`Process completed with exit code 1.`); the steps
+                # after it (`if: always()` uploads, post steps) are not its output. Seen in a real log, 2026-11-23.
+                end = next((i for i, line in enumerate(lines) if '##[error]' in line), len(lines))
+                return '\n'.join(lines[max(0, end - LOG_TAIL_LINES):end])
+            except (subprocess.SubprocessError, OSError) as caught:
+                error = caught
+                if attempt + 1 < TRIES:
+                    self.sleep(2 * (attempt + 1))
+        raise ReadFailed(f'job {job_id} log: {error!r}')
 
     def post(self, path, body):
         self._gh(['-X', 'POST', f'repos/{self.repo}/{path}', '--input', '-'], data=json.dumps(body))
@@ -156,6 +224,90 @@ def cancelled_check(github, sha):
     return max(cancelled, key=lambda run: run.get('completed_at') or '', default=None)
 
 
+def failed_checks(github, sha):
+    """Every failed check run on the group head (the latest per name, as the API lists them)."""
+    runs = github.get(f'commits/{sha}/check-runs?per_page=100').get('check_runs', [])
+    return [run for run in runs if run.get('conclusion') in FAILED]
+
+
+def step_kind(name):
+    """'setup' (never the PR's), 'plan' (the PR's unless its log shows an outside network error) or 'test'."""
+    name = name or ''
+    if name in PLAN_STEPS or name.startswith(PLAN_STEP_PREFIXES):
+        return 'plan'
+    return 'setup' if name in SETUP_STEPS or name.startswith(SETUP_STEP_PREFIXES) else 'test'
+
+
+def outside_network_error(log):
+    """Whether one line of a log names a host outside GitHub's runners and a network error together. Both on a line,
+    so a test that prints "connection refused" while it checks its own error handling is not read as an outage."""
+    for line in (log or '').splitlines():
+        if NETWORK_ERROR.search(line) and any(host in line for host in EXTERNAL_HOSTS):
+            return True
+    return False
+
+
+def job_id_of(check):
+    match = JOB_IN_URL.search(str(check.get('details_url') or check.get('html_url') or ''))
+    if match:
+        return int(match.group(1))
+    return check.get('id') if isinstance(check.get('id'), int) else None
+
+
+def failed_outside_pr(github, checks):
+    """True when every failed job failed in a setup step, or in a plan step whose log ends in a network error from an
+    outside host (#4940). A failed test step, a step this file does not know, or a read that failed is the PR's: the
+    status quo, `needs-fix` at once. Returns (outside, [(check name, step name)])."""
+    seen = []
+    if not checks:
+        return False, seen
+    try:
+        for check in checks:
+            job_id = job_id_of(check)
+            if job_id is None:
+                return False, seen
+            steps = github.get(f'actions/jobs/{job_id}').get('steps') or []
+            failed = [step for step in steps if step.get('conclusion') in FAILED]
+            if not failed:
+                return False, seen
+            step = min(failed, key=lambda step: step.get('number') or 0).get('name') or ''
+            seen.append((check.get('name', '?'), step))
+            kind = step_kind(step)
+            if kind == 'test' or (kind == 'plan' and not outside_network_error(github.log_tail(job_id))):
+                return False, seen
+    except (ReadFailed, AttributeError):
+        return False, seen
+    return True, seen
+
+
+BOT = 'github-actions[bot]'
+SETUP_RETRY_SEEN = 'merge-queue-dequeued setup-retry'
+
+
+def all_comments(github, number):
+    """Every comment on the PR, a page of 100 at a time: a PR with lane, audit and bot comments passes 100, and a retry
+    marker that falls off the first page would make the retry cap fail (review of #4940)."""
+    found = []
+    for page in range(1, 11):
+        batch = github.get(f'issues/{number}/comments?per_page=100&page={page}')
+        if not isinstance(batch, list):
+            break
+        found += batch
+        if len(batch) < 100:
+            break
+    return found
+
+
+def retried_already(comments):
+    """Whether the workflow's own comment carries the setup-retry marker. Anyone can comment, so a marker written by
+    another account counts for nothing (AGENTS.md: text from outsiders is data)."""
+    return any(SETUP_RETRY_SEEN in (c.get('body') or '') and (c.get('user') or {}).get('login') == BOT for c in comments)
+
+
+def setup_retry_not_before(github):
+    return (github.now() if hasattr(github, 'now') else datetime.datetime.now(datetime.timezone.utc)) + SETUP_RETRY_DELAY
+
+
 def carries_arm_label(pr):
     return any((label or {}).get('name') == ARM_LABEL for label in pr.get('labels') or [])
 
@@ -172,9 +324,27 @@ def is_conflict(reason):
     return any(word in upper for word in CONFLICT_REASONS)
 
 
-def comment_body(number, reason, head, check, armed=True, cancelled=None, retry=False, requeued=None):
+def setup_sentence(setup):
+    """What failed, in a sentence, for a group that failed only in setup."""
+    where = '; '.join(f'"{name}" in its step "{step}"' for name, step in setup['steps'])
+    return f'Every failed job failed outside your code: {where}.'
+
+
+def comment_body(number, reason, head, check, armed=True, cancelled=None, retry=False, requeued=None, setup=None):
     lines = [MARKER.format(head=head),
              f'**Left the merge queue** ({reason or "no reason given"}).']
+    if setup and setup.get('when'):
+        lines[0] += '\n' + SETUP_RETRY_MARKER.format(when=setup['when'])
+        lines.append(f'{setup_sentence(setup)} That is a setup step or a download (a runner problem or a host that was '
+                     f'down), so nothing needs fixing in the PR. Failed check: {check.get("html_url", "") if check else ""}')
+        if armed:
+            lines.append(f'It keeps `{ARM_LABEL}`. The label bridge\'s sweep sets it to merge again after '
+                         f'{setup["when"]} (about {int(SETUP_RETRY_DELAY.total_seconds() // 60)} minutes), once. If it fails '
+                         f'in a setup step again it is held as a failure.')
+        else:
+            lines.append(f'It has no `{ARM_LABEL}` label, so nothing queues it again: tap Merge again, or add '
+                         f'`{ARM_LABEL}`.')
+        return '\n\n'.join(lines)
     if nothing_failed(reason, check) and (cancelled or retry or 'TIME' in (reason or '').upper()):
         if cancelled:
             where = f'"{cancelled.get("name", "?")}" on the merge group `{head[:7]}` was cancelled, not failed: ' \
@@ -208,6 +378,9 @@ def comment_body(number, reason, head, check, armed=True, cancelled=None, retry=
         return '\n\n'.join(lines)
     if check:
         lines.append(f'Failed check: "{check.get("name", "?")}" on the merge group `{head[:7]}`: {check.get("html_url", "")}')
+        if setup:
+            lines.append(f'{setup_sentence(setup)} It was set to merge again once for that and failed the same way, so '
+                         f'it is held as a failure this time.')
     elif is_conflict(reason):
         lines.append('The merge queue could not merge it onto main as it stands: it conflicts with main or with a PR '
                      'ahead of it in the queue. Merge main into the branch and resolve it.')
@@ -236,7 +409,13 @@ def notify(github, event, out=sys.stdout):
         cancelled = None
         if nothing_failed(reason, check) and run and run.get('head_sha'):
             cancelled = cancelled_check(github, run['head_sha'])
-        comments = github.get(f'issues/{number}/comments?per_page=100')
+        outside, steps = False, []
+        if check and reason.upper() not in NO_LABEL_REASONS and not is_conflict(reason):
+            try:
+                outside, steps = failed_outside_pr(github, failed_checks(github, run['head_sha']))
+            except ReadFailed:
+                outside = False   # not knowing is the status quo: the PR is told it failed
+        comments = all_comments(github, number)
     except ReadFailed as error:
         warn(f'#{number}: could not read GitHub, no comment posted ({error})', out)
         return 'skipped: read failed'
@@ -249,11 +428,22 @@ def notify(github, event, out=sys.stdout):
     retry = nothing_failed(reason, check) and reason.upper() not in MANUAL_REASONS \
         and (bool(cancelled) or 'TIME' in reason.upper()) \
         and not any(RETRY_MARKER in (comment.get('body') or '') for comment in comments)
+    armed = carries_arm_label(pr)
+    # A PR with no `automerge` (an owner-tap PR, or a Merge tapped by hand) is never retried here: the bridge would queue
+    # an owner-tap PR without his tap, and a hand tap would spend its one retry on nothing.
+    outside = outside and armed
+    setup = {'steps': steps} if outside else None
     try:
-        armed = carries_arm_label(pr)
+        if outside and not retried_already(comments):
+            # One retry for a failure outside the PR: keep `automerge`, say when the bridge's sweep may queue it again.
+            setup['when'] = setup_retry_not_before(github).strftime(TIME_FORMAT)
+            github.post(f'issues/{number}/comments', {'body': comment_body(number, reason, head, check, armed, setup=setup)})
+            print(f'#{number}: group {head[:7]} failed only outside the PR; left armed for one retry after '
+                  f'{setup["when"]}.', file=out)
+            return 'told: setup retry'
         requeued = github.requeue(number) if retry and armed and hasattr(github, 'requeue') else None
         github.post(f'issues/{number}/comments',
-                    {'body': comment_body(number, reason, head, check, armed, cancelled, retry, requeued)})
+                    {'body': comment_body(number, reason, head, check, armed, cancelled, retry, requeued, setup)})
         if retry:
             print(f'#{number}: nothing failed in group {head[:7]}; left armed for one retry'
                   f'{" and set to merge again" if requeued else ""}.', file=out)

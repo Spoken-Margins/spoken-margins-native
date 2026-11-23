@@ -162,6 +162,10 @@ class Case(M.Scenario):
     owner_tap_at: int | None = None   # when the owner adds `owner-tap` (an owner-tap PR)
     expect: str = 'merge'             # 'merge' | 'told': what a correct pipeline does with this case
     transient: bool = False           # the fault clears by itself, so a person should not be needed
+    # Where a failing Mac or `jobs` attempt fails (#4940): 'setup' (a runner or a Homebrew/LFS step), 'download' (the
+    # plan step, whose log ends in a network error from an outside host) or 'test' (the plan step fails for the PR's
+    # own reasons). The dequeue notifier reads the failing step to tell them apart.
+    fail_in: str = 'setup'
 
 
 class TimedWorld(M.World):
@@ -188,7 +192,7 @@ class TimedWorld(M.World):
         for row in sorted(self.rows, key=lambda r: r['id']):
             view.setdefault(row['sha'], {})[(row['name'], row['file'])] = {
                 'name': row['name'], 'conclusion': row['conclusion'], 'run': row['run'], 'event': row['event'],
-                'status': row['status']}
+                'status': row['status'], 'id': row['id']}
         return view
 
     @checks.setter
@@ -428,9 +432,25 @@ class TimedWorld(M.World):
         self.attempts[key] = n + 1
         plan = self.c.jobs.get(key) or (self.c.mac if self.is_mac(file, job_id) else ())
         outcome = plan[n] if n < len(plan) else (plan[-1] if plan and plan[-1] in ('never',) else 'pass')
+        self.outage_hit = False
         if self.c.outage and key in EXTERNAL_DOWNLOADS and self.c.outage[0] <= self.now < self.c.outage[1]:
-            outcome = 'fail'
+            outcome, self.outage_hit = 'fail', True
         return outcome
+
+    # The steps a failing job names: the real workflow's own step names, so the notifier's table is read against them.
+    PLAN_STEP_NAMES = ('Mac rest of the fast plan', 'Portable fast plan', 'SessionKit build and SessionKitCoreTests',
+                       'Build the app for the simulator (build-for-testing, no tests)')
+
+    def failed_step(self, file, job_id, kind):
+        names = [str(step.get('name') or '') for step in self.raw_job(file, job_id).get('steps') or []]
+        plan = next((name for name in names if name in self.PLAN_STEP_NAMES), None)
+        # A job with no plan step that downloads (the web job caches its speech model in a step of its own) fails a
+        # download in setup.
+        if kind == 'setup' or (kind == 'download' and plan is None):
+            # A step that is the runner's, never the PR's (the notifier's SETUP_STEPS).
+            return next((name for name in ('Install BlackHole (virtual audio output)', 'Speech model cache')
+                         if name in names), 'Set up job')
+        return plan or ('Playwright suite' if 'Playwright suite' in names else 'Run the tests')
 
     def begin_job(self, run, job_id):
         if run['status'] == 'cancelled':
@@ -450,7 +470,9 @@ class TimedWorld(M.World):
         minutes = {'hang': self.timeout(file, job_id), 'cancel': base / 2, 'slow': base + SLOW_EXTRA}.get(outcome, base)
         if outcome != 'pass':
             self.note(None, f'{file} {job_id} ({run["event"]}): black box says {outcome}, ends in {minutes:g}m')
-        self.post(self.now + minutes, 'job_end', None, run=run['id'], job=job_id, outcome=outcome)
+        # An outage fails the job where it downloads: in setup. Any other failing attempt fails where the case says.
+        self.post(self.now + minutes, 'job_end', None, run=run['id'], job=job_id, outcome=outcome,
+                  fail_in='setup' if self.outage_hit else self.c.fail_in)
 
     def job_end(self, event):
         run = self.runs[event['run'] - 1]
@@ -465,6 +487,9 @@ class TimedWorld(M.World):
             self.finish_job(run, job_id, 'cancelled', {})
             return
         if outcome == 'fail':
+            row = run['rows'].get(job_id)
+            if row:
+                row['failed_step'] = self.failed_step(file, job_id, event.get('fail_in') or self.c.fail_in)
             self.finish_job(run, job_id, 'failure', {})
             return
         result, outputs = 'success', {}
@@ -712,6 +737,10 @@ ARMINGS = {
 FAULTS = {
     'none': dict(),
     'mac-fail-once': dict(mac=('fail', 'pass'), transient=True),
+    # The plan step fails because an outside host served a bad certificate (#4795): not the PR's.
+    'mac-download-fail-once': dict(mac=('fail', 'pass'), transient=True, fail_in='download'),
+    # A test fails for the PR's own reasons, once: the PR is told at once, and a person re-arms it (#4940 Must not break).
+    'mac-test-fail-once': dict(mac=('fail', 'pass'), expect='told', fail_in='test'),
     'mac-hang-once': dict(mac=('hang', 'pass'), transient=True),
     'mac-cancel-once': dict(mac=('cancel', 'pass'), transient=True),
     'mac-slow-once': dict(mac=('slow', 'pass'), transient=True),
@@ -791,12 +820,14 @@ def violations(c: Case, result: dict, tree) -> list[str]:
 # Violations the current tree has, each with its issue. `--check` fails on one not listed here, and on a listed one
 # that no longer happens. Keys are fnmatch patterns over '<kind>/<arming>/<fault>/<admission>: <violation>'.
 KNOWN = {
-    # A merge group that fails for a reason outside the PR (a Mac job that fails once, a download host down for an
-    # hour) is held as the PR's failure: `needs-fix`, `automerge` off, and a person re-arms each PR. Telling a flake
-    # from a real failure needs the failing step; until then caches remove the outages (EXTERNAL_DOWNLOADS lists the
-    # jobs still exposed).
-    '*/outage-90m/*: needs-person': '#4940',
-    '*/mac-fail-once/*: needs-person': '#4940',
+    # A job that fails for a reason outside the PR is retried once when it fails in a merge group (#4940: the dequeue
+    # notifier reads the failing step, and the label bridge queues the PR again after a delay). The two that remain
+    # fail on the PR itself, where no merge group exists: the check stays red until a person re-runs it, because
+    # rerun-cancelled.yml re-runs only a `cancelled` run (#5057, a `.github/` change). `outage-90m` also outlasts the
+    # notifier's 30-minute delay, so it stays even after #5057 unless the delay grows.
+    '*/outage-90m/*: needs-person': '#4940, #5057',
+    'web/*/mac-fail-once/*: needs-person': '#5057',
+    'web/*/mac-download-fail-once/*: needs-person': '#5057',
     # A hosted Mac job that never gets a runner leaves its check queued; GitHub cancels it after 24 hours and the
     # merge-stall watch (not modelled) opens its issue after an hour. The pool is GitHub's.
     'web/*/mac-no-runner/*: silent-stuck': 'GitHub-hosted runner pool; merge-stall watch',

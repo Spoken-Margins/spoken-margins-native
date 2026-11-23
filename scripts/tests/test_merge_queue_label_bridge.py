@@ -600,5 +600,97 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn(f'`{job}`', self.text)
 
 
+
+class SetupRetryHoldTests(unittest.TestCase):
+    """A PR that left the queue on a failure outside its code is queued again only after the notifier's time (#4940)."""
+
+    NOW = bridge.datetime.datetime(2026, 11, 23, 5, 0, 0, tzinfo=bridge.datetime.timezone.utc)
+
+    def github(self, when, **kwargs):
+        github = FakeGitHub({7: pr(7)}, comments=f'earlier\n<!-- merge-queue-dequeued setup-retry not-before={when} -->\nbody',
+                            **kwargs)
+        github.now = lambda: self.NOW
+        return github
+
+    def test_the_sweep_leaves_it_alone_until_the_time_and_says_so(self):
+        github = self.github('2026-11-23T05:30:00Z')
+        code, text = run(github, '--sweep')
+        self.assertEqual((code, github.merged), (0, []))
+        self.assertIn('set to merge again after 2026-11-23T05:30:00Z', text)
+
+    def test_after_the_time_the_sweep_queues_it(self):
+        github = self.github('2026-11-23T04:59:59Z')
+        code, text = run(github, '--sweep')
+        self.assertEqual((code, github.merged), (0, [7]))
+
+    def test_exactly_at_the_time_it_is_queued(self):
+        github = self.github('2026-11-23T05:00:00Z')
+        run(github, '--sweep')
+        self.assertEqual(github.merged, [7])
+
+    def test_an_edit_event_is_held_the_same_way(self):
+        github = self.github('2026-11-23T05:30:00Z')
+        run(github, '--pr', '7', '--action', 'edited')
+        self.assertEqual(github.merged, [])
+
+    def test_a_person_adding_automerge_again_is_never_held(self):
+        github = self.github('2026-11-23T05:30:00Z')
+        run(github, '--pr', '7', '--action', 'labeled', '--label', 'automerge')
+        self.assertEqual(github.merged, [7])
+
+    def test_the_latest_marker_counts_and_a_garbled_time_counts_for_nothing(self):
+        github = self.github('2026-11-23T04:00:00Z')
+        github.existing_comments += ('\n<!-- merge-queue-dequeued setup-retry not-before=2026-13-45T25:61:61Z -->'
+                                     '\n<!-- merge-queue-dequeued setup-retry not-before=2026-11-23T05:40:00Z -->')
+        run(github, '--sweep')
+        self.assertEqual(github.merged, [])
+        garbled = self.github('2026-13-45T25:61:61Z')
+        run(garbled, '--sweep')
+        self.assertEqual(garbled.merged, [7])
+
+    def test_a_pr_with_no_marker_is_queued_as_before_and_without_a_clock(self):
+        github = FakeGitHub({7: pr(7)})   # this fake has no `now`: the module's own clock is used
+        run(github, '--sweep')
+        self.assertEqual(github.merged, [7])
+
+    def test_a_pr_already_in_the_queue_never_reads_the_comments_for_it(self):
+        github = self.github('2026-11-23T05:30:00Z')
+        github.prs[7] = pr(7, queued=True)
+        github.comments = lambda number: self.fail('read comments for a queued PR')
+        run(github, '--sweep')
+
+    def test_a_marker_that_only_a_stranger_wrote_holds_nothing(self):
+        # The real class reads only the Actions bot's comments (`trusted_comments`); anyone can write the marker text.
+        github = self.github('2099-01-01T00:00:00Z')
+        github.trusted_comments = lambda number: 'a lane report, no marker'
+        run(github, '--sweep')
+        self.assertEqual(github.merged, [7])
+
+    def test_a_marker_far_beyond_the_notifiers_delay_is_not_the_notifiers(self):
+        github = self.github('2099-01-01T00:00:00Z')
+        run(github, '--sweep')
+        self.assertEqual(github.merged, [7])
+        near = self.github('2026-11-23T05:44:00Z')   # inside the 30 minute delay plus 15 minutes of slack: held
+        run(near, '--sweep')
+        self.assertEqual(near.merged, [])
+        past = self.github('2026-11-23T05:46:00Z')
+        run(past, '--sweep')
+        self.assertEqual(past.merged, [7])
+
+    def test_the_real_class_asks_for_the_bots_comments_only(self):
+        seen = []
+        real = bridge.GitHub('o/r', sleep=lambda seconds: None)
+        real.call = lambda kind, args: (seen.append(args), (0, 'body'))[1]
+        self.assertEqual(real.trusted_comments(7), 'body')
+        self.assertIn('--paginate', seen[0])
+        self.assertIn('select(.user.login == "github-actions[bot]")', seen[0][-1])
+
+    def test_needs_fix_still_wins_over_a_marker(self):
+        github = self.github('2026-11-23T04:00:00Z')
+        github.prs[7] = pr(7, extra=['needs-fix'])
+        run(github, '--sweep')
+        self.assertEqual(github.merged, [])
+
+
 if __name__ == '__main__':
     unittest.main()
