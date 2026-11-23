@@ -124,6 +124,79 @@ final class ItemShareEntryTests: XCTestCase {
         XCTAssertEqual(model.sharingState.drafts.map(\.interjection.itemId), [secondID], "the sheet holds the open item's Margin")
     }
 
+    // MARK: Every listening pass (#4688)
+
+    /// A seeded model with a Margin in each of two passes of "item-pill": one before "Replay", one after. Both Margins are
+    /// written, so no recording is involved. Left on the item's screen.
+    private func modelWithTwoPasses() throws -> (model: Gate1AppModel, ids: [String]) {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "From the first listen")
+        let first = try XCTUnwrap(model.snapshot.sessionId)
+        model.startNewSession(id: "item-pill")
+        let second = try XCTUnwrap(model.snapshot.sessionId)
+        XCTAssertNotEqual(first, second)
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "From the replay")
+        model.refreshMarginRows()
+        model.openItem(id: "item-pill")
+        return (model, [first, second])
+    }
+
+    /// The report's case: after "Replay" on a finished episode, the first listen's Margins must still be in Share.
+    func testMarginsFromTwoPassesBothGo() async throws {
+        let (model, passes) = try modelWithTwoPasses()
+
+        let start = await model.itemShareStart()
+        XCTAssertEqual(start, .share)
+        model.openItemShareSheet()
+
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(Set(model.sharingState.drafts.map(\.interjection.sessionId)), Set(passes), "both passes are listed")
+        XCTAssertEqual(model.sharingState.drafts.count, 2)
+        XCTAssertTrue(model.sharingState.drafts.allSatisfy(\.isIncluded), "none starred, so all are picked")
+    }
+
+    /// The player's Share goes through the same function, so the two doors agree.
+    func testThePlayersShareHoldsBothPassesToo() throws {
+        let (model, passes) = try modelWithTwoPasses()
+
+        model.openPlaybackShareStartingWithFriendAnswers()
+
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(Set(model.sharingState.drafts.map(\.interjection.sessionId)), Set(passes))
+        XCTAssertEqual(model.sharingState.drafts.count, 2)
+    }
+
+    /// Item B has two passes while item A is the one playing: B's Share holds both of B's Margins and A keeps playing.
+    func testTwoPassesWithAnotherItemPlaying() async throws {
+        let model = modelWithMargins(0)
+        model.importTitle = "Second Item"
+        model.importText = "A second item with a thought of its own."
+        model.importTextItem()
+        let secondID = model.selectedItem.id
+        model.startItem(id: secondID)
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "Second item, first listen")
+        model.startNewSession(id: secondID)
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "Second item, replay")
+        model.startItem(id: "item-pill")
+        model.refreshMarginRows()
+        model.openItem(id: secondID)
+
+        let start = await model.itemShareStart()
+        XCTAssertEqual(start, .share)
+        model.openItemShareSheet()
+
+        XCTAssertEqual(model.snapshot.itemId, "item-pill", "the first item is still the one playing")
+        XCTAssertEqual(model.selectedItem.id, secondID)
+        XCTAssertEqual(model.sharingState.drafts.count, 2)
+        XCTAssertEqual(Set(model.sharingState.drafts.map(\.interjection.itemId)), [secondID])
+    }
+
     // MARK: A friend's item
 
     /// A friend's packet imported onto `itemId` with one Margin of theirs, stored for real, then the rows re-read.

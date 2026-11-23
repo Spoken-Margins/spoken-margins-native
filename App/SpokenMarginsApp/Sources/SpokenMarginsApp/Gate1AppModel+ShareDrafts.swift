@@ -19,26 +19,33 @@ import PDFKit
 #endif
 
 extension Gate1AppModel {
-    func prepareExportShareInterjections() {
-        do {
-            let store = try requireStore()
-            guard let exportSessionId, let session = try store.loadSession(id: exportSessionId) else {
-                throw SessionKitError.persistenceFailed("export_session_missing")
-            }
-            let candidates = try store.loadInterjections(sessionId: session.id)
-            selectedItem = try loadItemDetail(id: session.itemId, store: store)
-            prepareShareInterjections(candidates: candidates)
-            if isSharingInterjectionsPresented { sharingState.draftsPreparedForExport = true }
-        } catch { reportFailure(error, context: "Prepare session sharing failed") }
-    }
-
+    /// The Share Margins sheet for an item, from the item screen, the player and the Margins tab (#147, #4688). It holds
+    /// the listener's own Margins from every listening pass of the item, so "Replay" on a finished episode doesn't leave
+    /// the first listen's Margins out of reach. `exportSessionId` is still the newest pass with a sendable Margin, so the
+    /// Export screen and `recordSessionExported` read what they always did.
     func openMarginItemExport(itemID: String, entry: ShareSheetEntry = .chooseMargins) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_export") else { return }
         do {
-            selectedItem = try loadItemDetail(id: itemID, store: requireStore())
-            guard let sessionId = try ItemShareSessionSelection.sessionId(newestFirst: selectedItem.sessionRows.map(\.id), margins: { try requireStore().loadInterjections(sessionId: $0) }) else { return reportFailure("Record at least one Margin on it before sharing.") }
-            exportSessionId = sessionId; prepareExportShareInterjections() // #147: straight to the Share Margins sheet, not the Share/Export screen.
-            if isSharingInterjectionsPresented { sharingState.entry = entry }
+            let store = try requireStore()
+            selectedItem = try loadItemDetail(id: itemID, store: store)
+            let sessionIds = selectedItem.sessionRows.map(\.id)
+            var marginsBySession: [String: [Interjection]] = [:]
+            for id in sessionIds { marginsBySession[id] = try store.loadInterjections(sessionId: id) }
+            let picked = ItemShareCandidates.make(
+                sessionIdsNewestFirst: sessionIds,
+                marginsBySession: marginsBySession,
+                // A summary row, not the item: its media says how Margins order, and the article text isn't read (#2506).
+                mediaSourceType: try store.loadItemSummary(id: itemID)?.media?.sourceType.rawValue)
+            guard let sessionId = picked.sessionId, !picked.margins.isEmpty else {
+                return reportFailure("Record at least one Margin on it before sharing.")
+            }
+            exportSessionId = sessionId
+            // #147: straight to the Share Margins sheet, not the Share/Export screen.
+            prepareShareInterjections(candidates: picked.margins)
+            if isSharingInterjectionsPresented {
+                sharingState.draftsPreparedForExport = true
+                sharingState.entry = entry
+            }
         } catch { reportFailure(error, context: "Open export failed") }
     }
 
@@ -109,6 +116,14 @@ extension Gate1AppModel {
                 lastSentReadAloud: lastSentReadAloud[interjection.id],
                 lastSentLeadInMs: lastSentLeadIns[interjection.id]
             )
+        }
+        // A Margin whose recording was made and then lost goes as words; the row says why it has no voice (#4688),
+        // in the words bulk preparation uses.
+        for index in sharingState.drafts.indices {
+            let interjection = sharingState.drafts[index].interjection
+            if let path = interjection.audioPath, resolvedInterjectionAudioURL(for: path) == nil {
+                sharingState.drafts[index].preparationMessage = ShareCleanupWords.Failure.recordingMissing.message
+            }
         }
         sharingState.isPreparing = false
     }
