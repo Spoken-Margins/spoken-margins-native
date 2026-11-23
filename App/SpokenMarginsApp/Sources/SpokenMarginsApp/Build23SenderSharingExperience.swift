@@ -1054,6 +1054,15 @@ struct Build23SenderSharingExperience: View {
 
     private func applyFilter(_ filter: ShareMarginDraftFilter) {
         coordinator.send(.setFilter(filter))
+        // On the list a chip never opens an editor; an editor whose card the chip hides closes (#4647).
+        if coordinator.snapshot.showsList {
+            let refreshed = coordinator.snapshot
+            if let selected = refreshed.selectedMarginID,
+               !Build23SenderPresentation.filteredMargins(in: refreshed).contains(where: { $0.id == selected }) {
+                coordinator.send(.selectMargin(nil))
+            }
+            return
+        }
         let refreshed = coordinator.snapshot
         let visibleMargins = Build23SenderPresentation.filteredMargins(in: refreshed)
         if let selectedMarginID = refreshed.selectedMarginID,

@@ -540,7 +540,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         let canAdvance: Bool
         switch stage {
         case .select:
-            canAdvance = hasReviewedSelection
+            // Only the reply sheet still has a Choose stage, and it keeps its rule (#4647).
+            canAdvance = margins.contains(where: \.isIncluded)
         case .review:
             canAdvance = readiness != .nothingToSend && !state.isExporting
         case .recipientPreview, .share:
@@ -889,6 +890,12 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     /// some didn't come, the alert asks once.
     private func checkSendWait() {
         guard let wait = sendWait else { return }
+        // A sheet swiped away ends its wait: nothing is built for a share nobody can see (#4647 review).
+        guard model.isSharingInterjectionsPresented else {
+            sendWait = nil
+            pendingShare = nil
+            return
+        }
         switch wait.verdict(currentVoiceMargins()) {
         case .waiting:
             return
@@ -904,7 +911,10 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     /// Builds and delivers the share the wait held. A build that is refused leaves no share waiting to fire on a later
     /// Preview.
     private func continueWaitedShare() {
-        guard pendingShare != nil else { return }
+        guard pendingShare != nil, model.isSharingInterjectionsPresented else {
+            pendingShare = nil
+            return
+        }
         buildRecipientPreview()
         if previewState != .building { pendingShare = nil }
     }
