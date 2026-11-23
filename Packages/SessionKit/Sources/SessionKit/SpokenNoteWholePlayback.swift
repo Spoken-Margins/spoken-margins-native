@@ -101,6 +101,16 @@ public struct SpokenNoteWholeTimeline: Equatable, Sendable {
         public let startChar: Int
         public let endChar: Int
         public let text: String
+
+        public init(ref: SpokenNote.SentenceRef, segmentId: String, startMs: Int, endMs: Int, startChar: Int, endChar: Int, text: String) {
+            self.ref = ref
+            self.segmentId = segmentId
+            self.startMs = startMs
+            self.endMs = endMs
+            self.startChar = startChar
+            self.endChar = endChar
+            self.text = text
+        }
     }
 
     /// The sentences that have audio, in note order. A sentence whose take is not in the joined file, or that starts after
@@ -109,6 +119,12 @@ public struct SpokenNoteWholeTimeline: Equatable, Sendable {
     public let durationMs: Int
     /// The note's text, exactly `SpokenNote.text`, which is what the item's text is and what the entries' offsets count in.
     public let text: String
+
+    init(entries: [Entry], durationMs: Int, text: String) {
+        self.entries = entries
+        self.durationMs = durationMs
+        self.text = text
+    }
 
     public init(note: SpokenNote, layout: SpokenNoteWholeAudioLayout) {
         var entries: [Entry] = []
