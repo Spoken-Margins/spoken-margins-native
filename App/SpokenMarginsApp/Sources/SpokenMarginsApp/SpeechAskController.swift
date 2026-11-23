@@ -23,10 +23,12 @@ final class SpeechAskController: ObservableObject {
     private(set) var ask: SpeechRecognitionAsk
     private(set) var waiting: SpeechAskWaitingList
     /// Transcription work that met the hold, other than a player Margin's (the waiting list has those). Allow runs each
-    /// retry; a no drops them. The live-session sweep covers every live-session, Watch and Shortcut Margin at once.
-    let heldRetries = HeldTranscriptionRetries(liveSessionSweep: {
-        Task { @MainActor in await LiveSessionSpokenMargins.transcribeMissing() }
-    })
+    /// retry; a no drops them. The live-session sweep covers every live-session, Watch and Shortcut Margin at once; the
+    /// spoken-note sweep every note's takes with no words.
+    let heldRetries = HeldTranscriptionRetries(
+        liveSessionSweep: { Task { @MainActor in await LiveSessionSpokenMargins.transcribeMissing() } },
+        spokenNoteSweep: { SpokenNoteHeldTranscripts.transcribeMissing() }
+    )
     private var reAskShownThisLaunch = false
     private var announcedForThisAsk = false
     /// Nil while no card is due. The slot and the list draw it only on their own surface.
@@ -48,11 +50,11 @@ final class SpeechAskController: ObservableObject {
         let carried = SpeechRecognitionAsk.answerToCarryIntoLaunch(stored: stored, access: access())
         if carried != stored { defaults.removeObject(forKey: SpeechRecognitionAsk.storageKey) }
         ask = SpeechRecognitionAsk(storedAnswer: carried, hasSavedSpokenMargin: waiting.hasWaitingMargin)
-        // A live-session, Watch or Shortcut Margin held in an earlier run (perhaps in the background): owed again, and
-        // swept after Allow.
-        if defaults.bool(forKey: SpeechRecognitionAsk.liveSessionMarginHeldKey) {
-            ask.transcriptionHeld(.liveSessionMargin)
-            heldRetries.reported(.liveSessionMargin)
+        // A live-session, Watch or Shortcut Margin, or a spoken note, held in an earlier run (perhaps in the
+        // background): owed again, and swept after Allow.
+        for (key, purpose) in HeldTranscription.heldAcrossLaunch where defaults.bool(forKey: key) {
+            ask.transcriptionHeld(purpose)
+            heldRetries.reported(purpose)
         }
         // An unanswered card comes back when the slot is free, including after a relaunch.
         if ask.isOwed(access: access()) { cardSurface = .now }
@@ -129,14 +131,14 @@ final class SpeechAskController: ObservableObject {
     }
 
     /// The gate held work for `purpose` (`SpeechAuthorizationAsk.setHoldSink`, installed with the gate). The one place a
-    /// hold arms the card: a spoken Margin from any surface or a friend's packet makes it owed (`HeldTranscription`), and
-    /// a live-session, Watch or Shortcut Margin is recorded for the next launch and swept after Allow, so the `try?` that
-    /// met the hold loses nothing.
+    /// hold arms the card: a spoken Margin from any surface, a spoken note or a friend's packet makes it owed
+    /// (`HeldTranscription`), and a live-session, Watch or Shortcut Margin or a spoken note is recorded for the next
+    /// launch and swept after Allow, so the `try?` that met the hold loses nothing.
     func holdReported(_ purpose: HeldTranscription) {
         ask.transcriptionHeld(purpose)
         heldRetries.reported(purpose)
-        if purpose.retry == .liveSessionSweep, access() == .notDetermined {
-            defaults.set(true, forKey: SpeechRecognitionAsk.liveSessionMarginHeldKey)
+        if let key = purpose.retry.heldAcrossLaunchKey, access() == .notDetermined {
+            defaults.set(true, forKey: key)
         }
         if cardSurface == nil, ask.isOwed(access: access()) { cardSurface = .now }
     }
@@ -226,7 +228,7 @@ final class SpeechAskController: ObservableObject {
             heldRetries.settle(access: .authorized)
         case .denied, .restricted:
             heldRetries.settle(access: access())
-            defaults.removeObject(forKey: SpeechRecognitionAsk.liveSessionMarginHeldKey)
+            forgetHeldAcrossLaunch()
             guard waiting.hasWaitingMargin else { return }
             clearWaiting()
             model?.refreshMarginRowsInBackground()
@@ -234,10 +236,14 @@ final class SpeechAskController: ObservableObject {
         cardSurface = nil
     }
 
-    /// Either answer settles the waiting list and the live-session record: their retries ran or were dropped together.
+    /// Either answer settles the waiting list and the sweeps' records: their retries ran or were dropped together.
     private func clearWaiting() {
         waiting.clear()
         defaults.removeObject(forKey: SpeechAskWaitingList.storageKey)
-        defaults.removeObject(forKey: SpeechRecognitionAsk.liveSessionMarginHeldKey)
+        forgetHeldAcrossLaunch()
+    }
+
+    private func forgetHeldAcrossLaunch() {
+        for (key, _) in HeldTranscription.heldAcrossLaunch { defaults.removeObject(forKey: key) }
     }
 }

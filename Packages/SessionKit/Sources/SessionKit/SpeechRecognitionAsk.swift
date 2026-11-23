@@ -33,10 +33,15 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
     /// meet the hold while the app runs in the background, so the next launch reads this to owe the card and to sweep
     /// them after Allow. Older builds ignore it.
     public static let liveSessionMarginHeldKey = "speechAskLiveSessionMarginHeldV1"
+    /// UserDefaults key, a Bool: a spoken note take met the hold and the listener has not answered. Like
+    /// `liveSessionMarginHeldKey`: the take is in its note with no words, so the next launch reads this to owe the card
+    /// and to sweep the notes after Allow. Older builds ignore it.
+    public static let spokenNoteHeldKey = "speechAskSpokenNoteHeldV1"
 
     public private(set) var answer: Answer
-    /// A spoken Margin has been saved, so the card is owed until answered. Survives a relaunch through the waiting list
-    /// (a player Margin) or `liveSessionMarginHeldKey` (a live-session, Watch or Shortcut Margin).
+    /// A spoken Margin has been saved (or a spoken note's take held), so the card is owed until answered. Survives a
+    /// relaunch through the waiting list (a player Margin), `liveSessionMarginHeldKey` (a live-session, Watch or Shortcut
+    /// Margin) or `spokenNoteHeldKey` (a spoken note).
     private var hasSavedSpokenMargin: Bool
     /// A friend's packet placement met the hold. In memory: after a relaunch it is set again only when placement meets the
     /// hold again.
@@ -87,11 +92,11 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
 
     private var hasReasonToAsk: Bool { hasSavedSpokenMargin || friendPlacementHeld }
 
-    /// Transcription work met the hold. A spoken Margin from any surface (the player, a live session, the Watch, the
-    /// Shortcut) is a saved spoken Margin, so the card is owed in the Margins words; a friend's packet placement gives it
-    /// its own reason. The rest wait quietly for whatever answer the listener gives.
+    /// Transcription work met the hold. The listener's own recording (a spoken Margin from any surface, or a spoken
+    /// note) owes the card in the Margins words; a friend's packet placement gives it its own reason. The rest wait
+    /// quietly for whatever answer the listener gives.
     public mutating func transcriptionHeld(_ kind: HeldTranscription) {
-        if kind.isSpokenMargin {
+        if kind.isListenersRecording {
             hasSavedSpokenMargin = true
         } else if kind.makesAskOwed {
             friendPlacementHeld = true

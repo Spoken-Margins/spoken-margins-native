@@ -181,6 +181,81 @@ final class SpeechHoldReachesTheAskTests: XCTestCase {
         XCTAssertTrue(stillWaiting.isEmpty)
     }
 
+    /// Director's Default taken on #4715 (2026-11-23): a listener whose first recording is a spoken note dictates a take.
+    /// Its transcription meets the real gate's hold (as `SystemSpokenNoteTranscriber`, which the coordinator calls with
+    /// `try`, keeping the take with no words); the report alone owes the card in the Margins words, and after Allow the
+    /// spoken-note sweep fills the take's words in and brings the Library row's text up to date, with the recorder gone.
+    @MainActor
+    func testAHeldSpokenNoteIsOwedAndTranscribedAfterAllow() async throws {
+        let support = FileManager.default.temporaryDirectory.appending(path: "held-note-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: support) }
+        let started = try SpokenNoteStarter.start(in: support, now: Date(timeIntervalSince1970: 1_000))
+        let audio = "take-t1.m4a"
+        try Data([0]).write(to: started.store.folderURL.appendingPathComponent(audio))
+        try SpokenNoteIntake.addRecordedTake(audioFileName: audio, durationMs: 2_000, to: started.store,
+                                             now: Date(timeIntervalSince1970: 1_000), takeId: "t1")
+
+        let status = Box<SFSpeechRecognizerAuthorizationStatus>(.notDetermined)
+        let reported = Box<[HeldTranscription]>([])
+        let transcriber = GatedNoteTranscriber(status: status, reported: reported)
+        let writer = RecordingItemWriter()
+
+        // The take's transcription as the recorder makes it: it throws, and the take stays with no words.
+        do {
+            _ = try await transcriber.transcribe(fileAt: started.store.folderURL.appendingPathComponent(audio))
+            XCTFail("held: the gate throws")
+        } catch {
+            XCTAssertTrue(HeldTranscription.isHold(error))
+        }
+        XCTAssertEqual(reported.value, [.spokenNote])
+        XCTAssertFalse(started.store.load().takes[0].hasTranscript)
+
+        // The app's sink (`SpeechAskController.holdReported`): the ask decides owed, the retries keep the sweep.
+        var ask = SpeechRecognitionAsk(storedAnswer: nil)
+        let sweep = Box<Task<[String], Never>?>(nil)
+        let retries = HeldTranscriptionRetries(spokenNoteSweep: {
+            sweep.value = Task {
+                await SpokenNoteTranscriptSweep.fillMissingTranscripts(
+                    in: support, transcriber: transcriber, itemWriter: writer, now: Date(timeIntervalSince1970: 2_000), liveNoteIds: [])
+            }
+        })
+        for purpose in reported.value {
+            ask.transcriptionHeld(purpose)
+            retries.reported(purpose)
+        }
+        XCTAssertTrue(ask.isOwed(access: .notDetermined), "no spoken Margin anywhere, but the listener's spoken note met the hold")
+        XCTAssertEqual(ask.cardWording, .margins)
+
+        status.value = .authorized
+        XCTAssertEqual(retries.settle(access: .authorized), 1, "one sweep covers the held takes")
+        let sweepTask = try XCTUnwrap(sweep.value, "Allow starts the sweep")
+        let filled = await sweepTask.value
+        XCTAssertEqual(filled, [started.store.noteId])
+        let take = try XCTUnwrap(started.store.load().takes.first)
+        XCTAssertTrue(take.hasTranscript)
+        XCTAssertEqual(started.store.load().text, "My words.")
+        XCTAssertEqual(writer.written.value.last?.text, "My words.", "the Library row's text follows")
+        XCTAssertEqual(reported.value, [.spokenNote], "no second hold after Allow")
+    }
+
+    private struct GatedNoteTranscriber: SpokenNoteTranscribing {
+        let status: Box<SFSpeechRecognizerAuthorizationStatus>
+        let reported: Box<[HeldTranscription]>
+
+        func transcribe(fileAt url: URL) async throws -> [AlignedTranscriptSegment] {
+            try await SpeechAuthorizationAsk.requireAuthorized(
+                for: .spokenNote, current: status.value, mayAskSystem: false,
+                reportHold: { [reported] purpose in reported.value.append(purpose) }) { .notDetermined }
+            return [AlignedTranscriptSegment(id: "w0", text: "My", startMs: 0, endMs: 300),
+                    AlignedTranscriptSegment(id: "w1", text: "words.", startMs: 400, endMs: 900)]
+        }
+    }
+
+    private final class RecordingItemWriter: SpokenNoteItemWriting, @unchecked Sendable {
+        let written = Box<[Item]>([])
+        func write(_ item: Item, isFirstSave: Bool) throws { written.value.append(item) }
+    }
+
     /// The compile-time guard, kept honest: the gate and every transcription client method that reaches it take a purpose
     /// with no default, and there is no second `requireAuthorized` without one. A purpose with a default would let a new
     /// caller meet the hold unnamed again.
