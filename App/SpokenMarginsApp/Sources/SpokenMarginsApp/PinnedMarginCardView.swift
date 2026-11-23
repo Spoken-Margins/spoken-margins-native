@@ -224,7 +224,7 @@ struct PinnedMarginCardBody: View {
         case .speaking, .reading, .voicePaused, .loading: "waveform"
         case .failed: "exclamationmark.triangle"
         case .comingUp, .waitingForTap, .silentHere, .upNext: "text.bubble"
-        case .answerSaved: "checkmark.circle"
+        case .answerSaved, .savedHere: "checkmark.circle"
         case .lastMargin: "text.bubble"
         }
     }
