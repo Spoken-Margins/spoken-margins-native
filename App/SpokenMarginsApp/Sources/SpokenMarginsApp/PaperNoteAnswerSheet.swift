@@ -149,7 +149,7 @@ struct PaperNoteAnswerSheet: View {
             .accessibilityIdentifier("paperNote.write.change")
         }
         if case .startOfPage(let page) = choice, let pageCount = context.pageCount {
-            Picker(PaperNoteWriteContext.pagePickerTitle, selection: Binding(get: { page }, set: { choose(.startOfPage($0)) })) {
+            Picker(PaperNoteWriteContext.pagePickerTitle, selection: Binding(get: { page }, set: { pickPage($0) })) {
                 ForEach(1...pageCount, id: \.self) { Text("p. \($0)").tag($0) }
             }
             .pickerStyle(.menu)
@@ -157,6 +157,13 @@ struct PaperNoteAnswerSheet: View {
         }
     }
 
+    /// The page picker: any page, p. 1 included. Only the Change menu goes through `choose`.
+    private func pickPage(_ page: Int) {
+        choice = .startOfPage(page)
+        errorLine = nil
+    }
+
+    /// The Change menu. Its "Start of a page…" entry sends p. 1; picked again, it keeps the page already chosen.
     private func choose(_ option: PaperNotePlace.Choice) {
         // "Start of a page…" again keeps the page already picked.
         if case .startOfPage = option, case .startOfPage = choice, option == .startOfPage(1) { return errorLine = nil }

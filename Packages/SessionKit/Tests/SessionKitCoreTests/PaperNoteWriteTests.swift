@@ -152,6 +152,17 @@ final class PaperNoteWriteTests: XCTestCase {
             ("text", "notes.txt", "file", false),
             ("article", "https://example.org/story", "url", false),
             ("pdf", "  ", "file", true),
+            ("text", "x.pdf.pptx", "file", false),
+            ("text", "x.pdf.xlsx", "file", false),
+            ("text", "x.pdf.key", "file", false),
+            ("text", "x.pdf.csv", "file", false),
+            ("text", "Notes #2.pdf.docx", "file", false),
+            ("text", "Notes #2.pdf", "file", true),
+            ("text", "What? Why.pdf", "file", true),
+            ("article", "https://www.pdfx.pdf-host.com/article", "url", false),
+            ("text", "https://www.pdf-host.com/", "url", false),
+            ("text", "paper.PDF ", "file", true),
+            ("text", nil, nil, false),
         ]
         for (media, reference, type, expected) in rows {
             XCTAssertEqual(

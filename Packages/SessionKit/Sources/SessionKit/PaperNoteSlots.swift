@@ -110,24 +110,22 @@ public struct PaperNoteSlots: Equatable, Sendable {
         canWrite ? nil : "Start listening to place your answers where you are in the paper."
     }
 
-    /// Whether an item gets a Paper note: a PDF by the Library's rule, except a file whose own extension says it is
-    /// another kind of document. The Library's rule finds ".pdf" anywhere in the source reference, so "x.pdf.docx" reads
-    /// as a PDF there; the item screen's export already corrects that with the kept file's kind (#4595), and this does the
-    /// same from the name alone, so the details screen, which has no kept file to hand, agrees.
+    /// Whether an item gets a Paper note: an item stored as a PDF, or one whose source names a file ending in ".pdf". The
+    /// Library's rule finds ".pdf" anywhere in the source reference, so "x.pdf.docx", "x.pdf.pptx" or a host named
+    /// "pdf-host.com" read as PDFs there; the item screen's export corrects the first with the kept file's kind (#4595).
+    /// This asks for the last extension itself, an allow-list rather than a list of other kinds, so no name outside a list
+    /// slips through, and the details screen, which has no kept file to hand, agrees. Only a reference with a scheme is
+    /// read as a URL (its query and fragment are not part of the name); a file name is read as it is, "#" and "?" included.
     public static func isPaper(mediaType: String, sourceReference: String?, sourceReferenceType: String?) -> Bool {
         guard LibraryRowWording.isPDF(mediaType: mediaType, sourceReference: sourceReference, sourceReferenceType: sourceReferenceType) else {
             return false
         }
-        guard let reference = sourceReference?.trimmingCharacters(in: .whitespacesAndNewlines), !reference.isEmpty else { return true }
-        // The last path component's extension: a URL's query and fragment are not part of it.
-        let path = URL(string: reference)?.path.nilIfEmpty ?? reference
-        let fileExtension = (path as NSString).pathExtension.lowercased()
-        return !otherDocumentExtensions.contains(fileExtension)
+        if mediaType.lowercased() == "pdf" { return true }
+        guard let reference = sourceReference?.trimmingCharacters(in: .whitespacesAndNewlines), !reference.isEmpty else { return false }
+        let url = URL(string: reference)
+        let path = url?.scheme != nil ? (url?.path ?? "") : reference
+        return (path as NSString).pathExtension.lowercased() == "pdf"
     }
-
-    static let otherDocumentExtensions: Set<String> = [
-        "doc", "docx", "odt", "pages", "rtf", "txt", "md", "markdown", "epub", "html", "htm",
-    ]
     public static let addMoreEvidence = "Add more evidence"
 
     /// The slot's name on the item screen: "Purpose", "Key findings", "Evidence".
@@ -175,10 +173,6 @@ public struct PaperNoteSlots: Equatable, Sendable {
         guard let identifier else { return [cleanTitle, clean(author)].compactMap { $0 }.joined(separator: " · ") }
         return [byline, bibliography?.year.map(String.init), identifier].compactMap { $0 }.joined(separator: " · ")
     }
-}
-
-private extension String {
-    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 /// The one rule for which Margins answer a paper and in what order, shared by the Paper note section and the table.
