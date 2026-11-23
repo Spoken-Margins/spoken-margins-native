@@ -233,6 +233,54 @@ final class PaperNoteAnswerEngineTests: XCTestCase {
         XCTAssertEqual(try rig.store.loadInterjections(sessionId: "s1").count, 1, "taking the role off keeps the Margin")
     }
 
+    // MARK: Change answer (#4340 PR 4)
+
+    func testChangeAnswerMovesTheRoleAndKeepsTheOldMargin() throws {
+        let rig = try makeRig(sessions: [session("s1", at: 0, percent: 0), session("s2", at: 0, percent: 0, updatedAt: 2)])
+        let old = try rig.engine.addWrittenInterjection(id: "a", sessionId: "s1", atCharacter: offset(of: "Abstract"), text: "Aim.", paperRole: .purpose)
+        let new = try rig.engine.addWrittenInterjection(id: "b", sessionId: "s2", atCharacter: offset(of: "Results"), text: "Better aim.")
+
+        try rig.engine.changePaperAnswer(.purpose, interjectionId: new.id, sessionId: "s2", replacing: (old.id, "s1"))
+
+        let reopened = try SQLiteSessionStore(path: rig.path)
+        XCTAssertEqual(try reopened.loadInterjections(sessionId: "s2").first?.paperRole, .purpose)
+        let kept = try XCTUnwrap(reopened.loadInterjections(sessionId: "s1").first)
+        XCTAssertNil(kept.paperRole, "the old answer gives up the role")
+        XCTAssertEqual(kept.status, "active", "the old Margin stays")
+        XCTAssertEqual(kept.displayText, "Aim.")
+    }
+
+    func testChangeAnswerLeavesAnOldMarginThatNoLongerHoldsTheRole() throws {
+        let rig = try makeRig(sessions: [session("s1", at: 0, percent: 0)])
+        let old = try rig.engine.addWrittenInterjection(id: "a", sessionId: "s1", atCharacter: 0, text: "Now evidence.", paperRole: .evidence)
+        let new = try rig.engine.addWrittenInterjection(id: "b", sessionId: "s1", atCharacter: offset(of: "Results"), text: "Aim.")
+
+        try rig.engine.changePaperAnswer(.purpose, interjectionId: new.id, sessionId: "s1", replacing: (old.id, "s1"))
+
+        let margins = try rig.store.loadInterjections(sessionId: "s1")
+        XCTAssertEqual(margins.first { $0.id == old.id }?.paperRole, .evidence, "a role set elsewhere since is not taken off")
+        XCTAssertEqual(margins.first { $0.id == new.id }?.paperRole, .purpose)
+    }
+
+    func testChangeAnswerToTheSameMarginOrAGoneOneKeepsTheRole() throws {
+        let rig = try makeRig(sessions: [session("s1", at: 0, percent: 0)])
+        let answer = try rig.engine.addWrittenInterjection(id: "a", sessionId: "s1", atCharacter: 0, text: "Aim.", paperRole: .purpose)
+
+        try rig.engine.changePaperAnswer(.purpose, interjectionId: answer.id, sessionId: "s1", replacing: (answer.id, "s1"))
+        XCTAssertEqual(try rig.store.loadInterjections(sessionId: "s1").first?.paperRole, .purpose)
+
+        try rig.engine.changePaperAnswer(.purpose, interjectionId: answer.id, sessionId: "s1", replacing: ("gone", "missing-session"))
+        XCTAssertEqual(try rig.store.loadInterjections(sessionId: "s1").first?.paperRole, .purpose)
+    }
+
+    func testChangeAnswerToAMissingMarginWritesNothing() throws {
+        let rig = try makeRig(sessions: [session("s1", at: 0, percent: 0)])
+        let old = try rig.engine.addWrittenInterjection(id: "a", sessionId: "s1", atCharacter: 0, text: "Aim.", paperRole: .purpose)
+
+        XCTAssertThrowsError(try rig.engine.changePaperAnswer(.purpose, interjectionId: "nope", sessionId: "s1", replacing: (old.id, "s1")))
+        XCTAssertEqual(try rig.store.loadInterjections(sessionId: "s1").first?.paperRole, .purpose, "the old answer keeps its role")
+    }
+
     func testSettingARoleOnAMissingMarginOrSessionThrows() throws {
         let rig = try makeRig(sessions: [session("s1", at: 0, percent: 0)])
         XCTAssertThrowsError(try rig.engine.setPaperRole(.purpose, interjectionId: "nope", sessionId: "s1"))
