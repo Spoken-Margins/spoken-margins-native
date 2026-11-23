@@ -687,8 +687,10 @@ def build_issue_prompt(number: int, title: str, body: str, branch: str, run: int
         f'- Work until the PR is open into `{BASE_BRANCH}` with "Closes #{number}", has the `automerge` label and, '
         'if the diff needs simulator tests, its `/lane T3` request with `lane:queued`. Before arming, have a '
         'fresh-context helper agent review your diff against the issue\'s Done when and Must not break, and fix '
-        'what it finds. Run `.venv/bin/python scripts/verify-tests.py --plan fast` before pushing, and write a '
-        'regression test that fails without the fix. Then stop: the next job is chosen by the worker, not you.',
+        'what it finds. Build the whole issue in this one PR, even if the issue plans several steps (Cole, '
+        '2026-11-23). Before pushing, run only the host tests your change touches (`scripts/test-scope.py` names '
+        'them; the lane runs the full suites), and write a regression test that fails without the fix. Then stop: '
+        'the next job is chosen by the worker, not you.',
         '- Do not post stop notes, claim notes or hand-offs: the wrapper does.',
     ]
     return '\n'.join(lines)

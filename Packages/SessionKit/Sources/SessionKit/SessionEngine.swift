@@ -2221,6 +2221,26 @@ public final class SessionEngine {
         try updateInterjection(interjectionId, sessionId: sessionId) { $0.paperRole = role }
     }
 
+    /// "Change answer" on a Paper note slot (#4340): gives `interjectionId` the role and takes it off `replacing`, the
+    /// Margin that answered the slot before, in one transaction, so a crash never leaves both or neither answering. The
+    /// old Margin keeps everything but its role. A `replacing` that is the same Margin, is gone, or no longer carries
+    /// `role` is left alone. Throws, writing nothing, when the session or the new Margin is not found.
+    public func changePaperAnswer(
+        _ role: PaperNoteRole,
+        interjectionId: String,
+        sessionId: String,
+        replacing: (interjectionId: String, sessionId: String)?
+    ) throws {
+        try inRepositoryTransaction {
+            try updateInterjectionUnlocked(interjectionId, sessionId: sessionId) { $0.paperRole = role }
+            guard let replacing, (replacing.interjectionId, replacing.sessionId) != (interjectionId, sessionId),
+                  try repository.loadSession(id: replacing.sessionId) != nil,
+                  let old = try loadInterjection(replacing.interjectionId, inSession: replacing.sessionId),
+                  old.paperRole == role else { return }
+            try updateInterjectionUnlocked(replacing.interjectionId, sessionId: replacing.sessionId) { $0.paperRole = nil }
+        }
+    }
+
     @discardableResult
     public func cancelWrittenInterjection(captureId: String) throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
