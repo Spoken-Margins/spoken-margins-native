@@ -173,6 +173,16 @@ class TokenRequest(unittest.TestCase):
             mint.request_token('j', lambda request, timeout: Empty())
 
 
+    def test_a_dropped_connection_is_a_token_error_not_a_traceback(self):
+        import http.client
+
+        def opener(request, timeout):
+            raise http.client.RemoteDisconnected('Remote end closed connection without response')
+
+        with self.assertRaises(mint.TokenError):
+            mint.request_token('j', opener)
+
+
 class Wrapper(unittest.TestCase):
     """sm-agent-env, run for real with a stand-in minter next to it."""
 
