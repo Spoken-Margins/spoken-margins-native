@@ -1,9 +1,15 @@
 # Upload main to TestFlight from a GitHub-hosted Mac, after the owner approves (#4915).
 #
+# Who starts it: the spoken-margins-agent App, never the owner's login (owner's call, 2026-11-23). The approval
+# environment prevents self-review, so GitHub refuses his approval on a run his login started, and cloud sessions act
+# as his login. He adds the label `upload` to an issue or PR, and testflight-request.yml starts this run as the App.
+# A run his login starts is refused in `check`, before he is asked for an approval he can't give.
+#
 # Until now every upload ran on the owner's Mac (the owner overlay's "Releasing a build"), so with the Mac lost or
 # asleep nothing could reach testers. This run does the same steps on GitHub:
-#   1. `check` (environment `phone-build`, GET requests only): the build number from project.yml, refused if a
-#      `testflight/*` tag or App Store Connect already has it, and the merged PRs since the last upload tag.
+#   1. `check` (environment `phone-build`, GET requests only): refuses a run the owner's login started. Reads the
+#      build number from project.yml, refused if a `testflight/*` tag or App Store Connect already has it, and the
+#      merged PRs since the last upload tag.
 #   2. `notice` (no environment, no secrets): one comment as github-actions[bot] that @mentions the owner on the PR
 #      behind the commit, saying what would ship and linking this run (scripts/testflight_upload.py notice).
 #   3. `approve` (environment `testflight-upload`: required reviewer uncomposed, prevent self-review, main only). It
@@ -89,7 +95,8 @@ jobs:
         id: plan
         env:
           SHA: ${{ github.sha }}
-        run: python3 scripts/testflight_upload.py plan --sha "$SHA" --share-links "$SHARE_LINKS"
+          STARTED_BY: ${{ github.triggering_actor }}
+        run: python3 scripts/testflight_upload.py plan --sha "$SHA" --share-links "$SHARE_LINKS" --started-by "$STARTED_BY"
       - name: Refuse a build number App Store Connect already has
         env:
           BUILD: ${{ steps.plan.outputs.build }}

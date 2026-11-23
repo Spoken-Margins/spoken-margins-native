@@ -5,7 +5,8 @@ Uploads ran only on the owner's Mac, so a lost or sleeping Mac meant no build re
 the Release app from main on a hosted Mac, has Apple's cloud-managed certificate sign it, and uploads it, but only
 after the owner taps Approve. This script is everything in that workflow that is not xcodebuild:
 
-  plan        Before the tap, no secrets: the build number from project.yml (and the generated project, which is
+  plan        Before the tap, no secrets: refuses a run the owner's own login started (he could not approve it); the
+              build number from project.yml (and the generated project, which is
               what xcodebuild reads), refused if a `testflight/*` tag already has it or a higher one, and the commits
               since the last upload tag. Writes the run summary and `build=`, `version=`, `last_tag=` step outputs.
   asc-check   With the App Store Connect key, GET requests only: refuse if App Store Connect already has this build
@@ -13,7 +14,7 @@ after the owner taps Approve. This script is everything in that workflow that is
   notice      As github-actions[bot]: one comment that @mentions the owner on the PR behind the commit (or the
               commit), saying what would ship and linking the run where he taps Approve.
   gate        In the approval job: the environment really requires the owner, prevents self-review and admits main
-              alone, and this run carries his approval. GitHub creates a missing environment with no rules on first
+              alone, this run carries his approval, and his own login did not start it. GitHub creates a missing environment with no rules on first
               use, so without this a run before the environment was set up would upload with no tap at all.
   archive     After the archive: its Info.plist must say this build number, this commit, a Release build (no phone
               build switch) and the share-link setting the run asked for.
@@ -22,7 +23,7 @@ after the owner taps Approve. This script is everything in that workflow that is
   tag         As the spoken-margins-agent App: the annotated tag `testflight/<version>-build-N` on the commit, with
               the archive's flags line (scripts/sm_live.py --tag-message), refused if the tag exists.
 
-  python3 scripts/testflight_upload.py plan --sha SHA --share-links off
+  python3 scripts/testflight_upload.py plan --sha SHA --share-links off --started-by LOGIN
   python3 scripts/testflight_upload.py asc-check --build 37
   python3 scripts/testflight_upload.py notice --sha SHA --build 37 --version 0.1 --last-tag TAG --share-links off --run-url URL
   python3 scripts/testflight_upload.py gate --run-id ID
@@ -157,6 +158,8 @@ def summary_lines(build, version, sha, share_links, tag, lines, total):
 
 
 def plan(args, run=git, root=ROOT):
+    if args.started_by == deploy_check.OWNER_LOGIN:
+        raise Failure(SELF_STARTED.format(env=GATE_ENVIRONMENT, owner=deploy_check.OWNER_LOGIN))
     build, version = project_versions((root / 'project.yml').read_text(),
                                       (root / 'SpokenMarginsNative.xcodeproj/project.pbxproj').read_text())
     refuse_used(build, run('tag', '--list', 'testflight/*').split())
@@ -274,10 +277,22 @@ def notice(args, run=git, api=deploy_check.gh):
 GATE_ENVIRONMENT = 'testflight-upload'
 
 
-def gate_problems(environment, policies, approvals, owner=deploy_check.OWNER_LOGIN):
+SELF_STARTED = ('GitHub prevents self-review in {env}, so {owner} cannot approve a run his own login started. '
+                'Add the label `upload` to an issue instead: testflight-request.yml then starts the run as the App.')
+
+
+def started_by_owner(run, owner=deploy_check.OWNER_LOGIN):
+    """True when the owner's login started this run or this attempt (a cloud session acting as him counts)."""
+    return any((run.get(key) or {}).get('login') == owner for key in ('actor', 'triggering_actor'))
+
+
+def gate_problems(environment, policies, approvals, run=None, owner=deploy_check.OWNER_LOGIN):
     """Why the approval job's own pass is not the owner's tap, or []. GitHub makes a missing environment on first use
-    with no rules at all, so a job in it passes untouched; this refuses that, and any approval not by the owner."""
+    with no rules at all, so a job in it passes untouched; this refuses that, any approval not by the owner, and a run
+    his own login started, which only an admin bypass (no approval entry, no review) could have let through."""
     problems = []
+    if run is not None and started_by_owner(run, owner):
+        problems.append(SELF_STARTED.format(env=GATE_ENVIRONMENT, owner=owner))
     rules = environment.get('protection_rules') or []
     reviewers = [rule for rule in rules if rule.get('type') == 'required_reviewers']
     logins = {(r.get('reviewer') or {}).get('login') for rule in reviewers for r in rule.get('reviewers') or []}
@@ -303,7 +318,8 @@ def gate(args, api=deploy_check.gh):
     policies = (api(f'repos/{repo}/environments/{GATE_ENVIRONMENT}/deployment-branch-policies') or {}).get(
         'branch_policies', [])
     approvals = api(f'repos/{repo}/actions/runs/{args.run_id}/approvals') or []
-    problems = gate_problems(environment, policies, approvals)
+    run = api(f'repos/{repo}/actions/runs/{args.run_id}') or {}
+    problems = gate_problems(environment, policies, approvals, run)
     for line in problems:
         print(f'::error::{line}')
     if problems:
@@ -388,6 +404,7 @@ def main(argv=None):
         parts[name].add_argument('--build', type=int, required=True)
     for name in ('notice', 'tag'):
         parts[name].add_argument('--version', required=True)
+    parts['plan'].add_argument('--started-by', required=True, help='github.triggering_actor')
     parts['notice'].add_argument('--last-tag', default='')
     parts['notice'].add_argument('--run-url', required=True)
     parts['notice'].add_argument('--dry-run', action='store_true')

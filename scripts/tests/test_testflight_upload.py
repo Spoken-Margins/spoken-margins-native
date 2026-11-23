@@ -227,6 +227,22 @@ class Gate(unittest.TestCase):
                 self.assertEqual(len(problems), 1, problems)
                 self.assertIn(words, problems[0])
 
+    def test_a_run_the_owners_login_started_is_refused_even_with_his_approval(self):
+        # Only an admin bypass gets such a run past prevent-self-review; the gate must still say no.
+        app = {'login': 'spoken-margins-agent[bot]'}
+        self.assertEqual(tu.gate_problems(self.ENV, self.MAIN, self.TAP, {'actor': app, 'triggering_actor': app}), [])
+        for run in ({'actor': {'login': 'uncomposed'}, 'triggering_actor': app},
+                    {'actor': app, 'triggering_actor': {'login': 'uncomposed'}}):
+            with self.subTest(run=run):
+                problems = tu.gate_problems(self.ENV, self.MAIN, self.TAP, run)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn('label `upload`', problems[0])
+
+    def test_plan_refuses_a_run_the_owner_started_before_anyone_is_asked_to_approve(self):
+        args = SimpleNamespace(sha=SHA, share_links='off', started_by='uncomposed')
+        with self.assertRaisesRegex(tu.Failure, 'cannot approve a run his own login started'):
+            tu.plan(args, run=lambda *a: self.fail('read git after refusing'))
+
     def test_reads_the_environment_its_branch_rule_and_this_runs_approvals(self):
         seen = []
 
@@ -236,12 +252,16 @@ class Gate(unittest.TestCase):
                 return {'branch_policies': self.MAIN}
             if path.endswith('/approvals'):
                 return self.TAP
+            if path.endswith('/runs/42'):
+                return {'actor': {'login': 'spoken-margins-agent[bot]'},
+                        'triggering_actor': {'login': 'spoken-margins-agent[bot]'}}
             return self.ENV
         with unittest.mock.patch.dict('os.environ', {'GITHUB_REPOSITORY': 'o/r'}):
             code, out = quiet(tu.gate, SimpleNamespace(run_id=42), api=api)
         self.assertEqual(code, 0, out)
         self.assertIn('repos/o/r/actions/runs/42/approvals', seen)
         self.assertIn('repos/o/r/environments/testflight-upload', seen)
+        self.assertIn('repos/o/r/actions/runs/42', seen)
 
 
 class Archive(unittest.TestCase):
@@ -462,6 +482,11 @@ class Workflow(unittest.TestCase):
         self.assertEqual(share['default'], 'off')
         self.assertEqual(share['options'], ['off', 'on'])
 
+    def test_check_refuses_a_run_started_by_the_owners_login(self):
+        plan = next(s for s in self.jobs['check']['steps'] if s.get('id') == 'plan')
+        self.assertEqual(plan['env']['STARTED_BY'], '${{ github.triggering_actor }}')
+        self.assertIn('--started-by "$STARTED_BY"', plan['run'])
+
     def test_the_tag_is_made_as_the_app(self):
         tag = self.jobs['tag']
         self.assertEqual(tag['environment'], 'agent-identity')
@@ -474,3 +499,30 @@ class Workflow(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RequestWorkflow(unittest.TestCase):
+    """The owner's `upload` label starts the upload as the App; nobody else's label does, and no branch code runs."""
+
+    def setUp(self):
+        self.doc = parse(ROOT / '.github/workflows/testflight-request.yml')
+        self.job = self.doc['jobs']['start']
+
+    def test_only_the_owners_upload_label_on_an_issue_or_pr_starts_it(self):
+        triggers = next(self.doc[key] for key in ('on', True, 'true') if key in self.doc)
+        self.assertEqual(triggers, {'issues': {'types': ['labeled']}, 'pull_request_target': {'types': ['labeled']}})
+        self.assertEqual(self.job['if'], "github.event.label.name == 'upload' && github.event.sender.login == 'uncomposed'")
+        self.assertEqual(self.doc['permissions'], {})
+
+    def test_it_runs_no_branch_code_and_starts_main_as_the_app(self):
+        steps = self.job['steps']
+        self.assertFalse([s for s in steps if 'checkout' in s.get('uses', '')], 'no checkout: never branch code')
+        for step in steps:
+            if step.get('uses'):
+                self.assertRegex(step['uses'], r'@[0-9a-f]{40}$')
+        self.assertEqual(self.job['environment'], 'agent-identity')
+        last = steps[-1]
+        self.assertEqual(last['env']['GH_TOKEN'], '${{ steps.app-token.outputs.token }}')
+        self.assertIn('actions/workflows/testflight-upload.yml/dispatches" -f ref=main', last['run'])
+        self.assertIn('[ "$SENDER" = "uncomposed" ]', last['run'])
+        self.assertNotIn('${{ github.event', last['run'], 'event text reaches the shell only through env')
