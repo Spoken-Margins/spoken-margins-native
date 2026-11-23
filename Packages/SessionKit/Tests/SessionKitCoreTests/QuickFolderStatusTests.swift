@@ -15,11 +15,11 @@ final class QuickFolderStatusTests: XCTestCase {
 
     private func status(
         name: String? = "Clippings", path: String? = nil, checked: TimeInterval? = nil, problem: QuickFolderStatus.Problem? = nil,
-        importProblem: QuickFolderStatus.ImportProblem? = nil, mode: QuickFolderStatus.Mode = .waitInFollowing, new: Int = 0
+        new: Int = 0
     ) -> QuickFolderStatus {
         QuickFolderStatus(
             name: name, path: path, lastCheckedAt: checked.map { now.addingTimeInterval(-$0) }, problem: problem,
-            lastImportProblem: importProblem, mode: mode, newCount: new, now: now, calendar: calendar,
+            newCount: new, now: now, calendar: calendar,
             locale: Locale(identifier: "en_US"), relative: .english)
     }
 
@@ -108,44 +108,46 @@ final class QuickFolderStatusTests: XCTestCase {
         XCTAssertFalse(status(name: nil, problem: .cantOpen).cantOpen, "nothing to open")
     }
 
-    func testAWorkingFolderInEachMode() {
+    func testAWorkingFolderSaysNewFilesWaitInFollowing() {
         let waiting = status(path: iCloudPath, checked: 120)
+        XCTAssertEqual(QuickFolderStatus.newFilesPhrase, "New files wait in Following")
         XCTAssertEqual(waiting.settingsStatusLine, "Checked 2 min. ago · New files wait in Following")
         XCTAssertEqual(waiting.settingsLocationLine, "Obsidian › Vault › Clippings")
         XCTAssertNil(waiting.settingsStatusSymbol)
         XCTAssertEqual(waiting.settingsAccessibilityLabel,
                        "Quick Folder, Clippings, in Obsidian, Vault, Clippings, checked 2 minutes ago, new files wait in Following")
-        let queueing = status(path: iCloudPath, checked: 120, mode: .addToPlayQueue)
-        XCTAssertEqual(queueing.settingsStatusLine, "Checked 2 min. ago · New files go to your play queue")
-        XCTAssertTrue(queueing.settingsAccessibilityLabel.hasSuffix("new files go to your play queue"))
     }
 
     func testBeforeTheFirstCheckAndBeforeThePathIsKnown() {
-        let fresh = status(mode: .addToPlayQueue)
-        XCTAssertEqual(fresh.settingsStatusLine, "Not checked yet · New files go to your play queue")
+        let fresh = status()
+        XCTAssertEqual(fresh.settingsStatusLine, "Not checked yet · New files wait in Following")
         XCTAssertNil(fresh.settingsLocationLine, "line 2 is hidden until the app knows the path")
-        XCTAssertEqual(fresh.settingsAccessibilityLabel, "Quick Folder, Clippings, Not checked yet, new files go to your play queue")
+        XCTAssertEqual(fresh.settingsAccessibilityLabel, "Quick Folder, Clippings, Not checked yet, new files wait in Following")
     }
 
     func testAFolderThatCantBeOpenedReplacesTheWholeLine() {
-        let broken = status(path: iCloudPath, checked: 120, problem: .cantOpen,
-                            importProblem: .init(fileName: "a.pdf", reason: "r", date: now))
+        let broken = status(path: iCloudPath, checked: 120, problem: .cantOpen)
         XCTAssertTrue(broken.cantOpen)
-        XCTAssertEqual(broken.settingsStatusLine, "Can't open this folder", "no check part, no mode part, no suffix")
+        XCTAssertEqual(broken.settingsStatusLine, "Can't open this folder", "no check part, no phrase")
         XCTAssertEqual(broken.settingsStatusSymbol, "exclamationmark.triangle")
         XCTAssertEqual(broken.settingsAccessibilityLabel, "Quick Folder, Clippings, can't open this folder")
         XCTAssertEqual(QuickFolderStatus.cantOpenMessage,
                        "It may have been moved, deleted or signed out, or it may be offline. Check again, or choose it again.")
     }
 
-    func testAFileThatFailedToImportAddsASuffix() {
-        let failed = status(path: iCloudPath, checked: 120, importProblem: .init(fileName: "notes.pdf", reason: "No text the app can read", date: now))
-        XCTAssertEqual(failed.settingsStatusLine, "Checked 2 min. ago · New files wait in Following · 1 file couldn't be added")
-        XCTAssertTrue(failed.settingsAccessibilityLabel.hasSuffix("new files wait in Following, 1 file couldn't be added"))
-        XCTAssertEqual(failed.lastProblemLine, "“notes.pdf” couldn't be added: No text the app can read")
-        XCTAssertNotNil(failed.lastProblemDateLine)
-        XCTAssertNil(status().lastProblemLine)
-        XCTAssertNil(status().lastProblemDateLine)
+    /// The words PR 3 puts on screen are fixed here, so no surface can bring the retired queue wording back (#4274).
+    func testTheQuickFolderWordsOfferNoPlayQueueMode() {
+        XCTAssertEqual(QuickFolderStatus.sectionFooter,
+                       "Files you save to a Quick Folder show up in Following, where you choose what to add.")
+        XCTAssertEqual(QuickFolderStatus.newFilesFooter,
+                       "New files are listed on Following for you to add. Files saved on another device appear once they have synced to this iPhone.")
+        XCTAssertEqual(QuickFolderStatus.newFilesPhrase, "New files wait in Following")
+        let clippings = status(checked: 120)
+        XCTAssertEqual(clippings.settingsStatusLine, "Checked 2 min. ago · New files wait in Following")
+        for words in [QuickFolderStatus.sectionFooter, QuickFolderStatus.newFilesFooter, clippings.settingsStatusLine,
+                      clippings.settingsAccessibilityLabel] {
+            XCTAssertFalse(words.localizedCaseInsensitiveContains("play queue"), words)
+        }
     }
 
     // MARK: The screen
@@ -158,8 +160,6 @@ final class QuickFolderStatusTests: XCTestCase {
         XCTAssertEqual(status().removeConfirmationTitle, "Stop importing from “Clippings”?")
         XCTAssertEqual(QuickFolderStatus.removeConfirmationMessage,
                        "Nothing already in your Library or play queue is removed, and the folder's files stay where they are.")
-        XCTAssertEqual(QuickFolderStatus.Mode.waitInFollowing.choiceTitle, "Wait in Following")
-        XCTAssertEqual(QuickFolderStatus.Mode.addToPlayQueue.choiceTitle, "Add to Play Queue")
         XCTAssertEqual(QuickFolderStatus.addSheetFootnote, "You can also see and change it in Settings › Import & Export.")
     }
 
