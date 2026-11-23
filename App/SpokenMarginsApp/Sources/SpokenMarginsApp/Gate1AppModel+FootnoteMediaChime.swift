@@ -177,9 +177,10 @@ extension Gate1AppModel {
         return footnoteMediaChime.session?.hearNote(label: label)
     }
 
-    /// The Timeline tap's request, for a prepared file whose session is not built yet.
+    /// The Timeline tap's request, for a prepared file whose session is not built yet. It is kept for any article: only
+    /// a prepared file's session for this item, built within `pendingLifetime`, reads it (`hearPendingFootnoteNote`).
     func holdFootnoteNoteForMediaSession(label: String, itemId: String) {
-        guard selectedItem.id == itemId, selectedItem.media?.sourceType == .generatedTTSPrerendered else { return }
+        guard selectedItem.id == itemId, !selectedItem.isNativeAudio else { return }
         footnoteMediaChime.pendingNote = (label, itemId, ProcessInfo.processInfo.systemUptime)
     }
 
