@@ -32,31 +32,38 @@ extension Gate1AppModel {
         // The folder is shared with the Shortcuts process, so reading it runs off the main actor.
         let entries = (try? await Self.offMain { folder.pending() }) ?? []
         diagnostics["pendingLinkListHandoffs"] = "\(entries.count)"
-        linkListArrival.handoffRetry.prune(keeping: Set(entries.map(\.id)))
+        // An empty listing can also be a folder that couldn't be listed this time; never wipe the counts on that.
         guard !entries.isEmpty else { return }
+        linkListArrival.handoffRetry.prune(keeping: Set(entries.map(\.id)))
         guard !connectivity.isOffline else { return }
         // Checked once, right before the claim and with no suspension between them: the arrival holds
         // `sourceImportTask` for the whole drain, so its own run never blocks itself.
         guard !linkListArrivalIsBusy else { return }
+        // The task frees the gate itself, as the Quick Folder's does, so no later import sees a finished task as busy.
         let task = Task { [weak self] in
             guard let self else { return }
             await self.arriveHandoffLinkLists(entries, from: folder)
+            self.sourceImportTask = nil
+            // The Quick Folder's own refresh was put off while this held the gate; run it now, as every other import's end does.
+            self.refreshQuickAccessFolder()
         }
         sourceImportTask = task
         await task.value
-        sourceImportTask = nil
     }
 
     private func arriveHandoffLinkLists(_ entries: [LinkListHandoffFolder.Entry], from folder: LinkListHandoffFolder) async {
         let ledger = linkListArrival.handoffRetry
+        var unreadable = 0
         for entry in entries {
             guard !Task.isCancelled else { break }
+            // Failed online earlier this foreground: waits for the next one, so a share or a Retry can't spend its tries.
+            guard !linkListArrival.isHandoffHeld(entry.id) else { continue }
             let recognition = (try? await Self.offMain { folder.read(entry) }) ?? .notALinkList
             guard case .linkList(let list) = recognition else {
                 // Unreadable: removed at once, and the listener is told once.
                 await Self.removeHandoffFile(entry, from: folder)
                 ledger.clear(entry.id)
-                reportFailure(LinkListArrivalPlan.unreadableHandoffMessage)
+                unreadable += 1
                 continue
             }
             let result = await runLinkListArrival(list, route: .handoffFolder)
@@ -70,10 +77,11 @@ extension Gate1AppModel {
                 await Self.removeHandoffFile(entry, from: folder)
                 ledger.clear(entry.id)
             case .keep:
-                break
+                linkListArrival.holdHandoff(entry.id)
             }
         }
-        refreshImportInbox()
+        // Told last, so the next file's banner can't cover it (the share drain's rule for a failure).
+        if unreadable > 0 { reportFailure(LinkListArrivalPlan.unreadableHandoffMessage) }
     }
 
     private nonisolated static func removeHandoffFile(_ entry: LinkListHandoffFolder.Entry, from folder: LinkListHandoffFolder) async {

@@ -273,11 +273,11 @@ final class LinkListArrivalAppTests: XCTestCase {
 
         XCTAssertTrue(handoffFolder.pending().isEmpty)
         XCTAssertEqual(model.feedbackEvent?.message, LinkListArrivalPlan.unreadableHandoffMessage)
-        XCTAssertEqual(model.feedbackEvent?.kind, .failure)
+        XCTAssertEqual(model.feedbackEvent?.kind, .error)
         XCTAssertFalse(model.libraryCollections.collections.contains { $0.name == "Morning brief" })
     }
 
-    func testAHandoffFileWithABadLinkIsCountedAndRemovedOnItsThirdFailedTryOnline() async throws {
+    func testAHandoffFileWithABadLinkIsCountedAndRemovedOnItsThirdFailedForegroundOnline() async throws {
         let model = try makeModel(playable: playable)
         let mixed = LinkListFile(title: "Mixed", entries: [
             .init(url: "https://example.com/one"), .init(url: "https://example.com/broken"),
@@ -287,14 +287,29 @@ final class LinkListArrivalAppTests: XCTestCase {
         await model.drainLinkListHandoffs()
         XCTAssertEqual(model.linkListArrival.handoffRetry.tries(for: entry.id), 1)
         XCTAssertEqual(handoffFolder.pending().map(\.id), [entry.id])
+        model.linkListArrival.releaseHeldHandoffFiles() // the app comes forward
         await model.drainLinkListHandoffs()
         XCTAssertEqual(model.linkListArrival.handoffRetry.tries(for: entry.id), 2)
         XCTAssertEqual(handoffFolder.pending().map(\.id), [entry.id])
+        model.linkListArrival.releaseHeldHandoffFiles()
         await model.drainLinkListHandoffs()
 
         XCTAssertTrue(handoffFolder.pending().isEmpty, "the third failed try removes it")
         XCTAssertEqual(model.linkListArrival.handoffRetry.tries(for: entry.id), 0)
         XCTAssertEqual(model.feedbackEvent?.kind, .warning, "the arrival's banner names what couldn't be added")
+    }
+
+    /// A share, a Retry and the network's return all run the drain: within one foreground a list with a dead link is tried once.
+    func testSeveralDrainsInOneForegroundSpendOnlyOneTry() async throws {
+        let model = try makeModel(playable: playable)
+        let entry = try handoffFolder.save(LinkListFile(title: "Mixed", entries: [
+            .init(url: "https://example.com/one"), .init(url: "https://example.com/broken"),
+        ]))
+
+        for _ in 0..<4 { await model.drainLinkListHandoffs() }
+
+        XCTAssertEqual(model.linkListArrival.handoffRetry.tries(for: entry.id), 1)
+        XCTAssertEqual(handoffFolder.pending().map(\.id), [entry.id])
     }
 
     func testTwoHandoffFilesOnOneForegroundArriveOneAfterTheOther() async throws {

@@ -40,6 +40,15 @@ final class LinkListArrivalState: ObservableObject {
         self.handoffRetry = handoffRetry
     }
 
+    /// Saved handoff files (the Shortcuts action's lists) that failed online this time: not tried again until the app
+    /// next comes forward. The drain also runs for a share, a Retry and the network's return, and without this a list with
+    /// one dead link would spend all three tries in a few seconds. In memory, so a relaunch tries them again.
+    private(set) var heldHandoffFiles: Set<String> = []
+
+    func holdHandoff(_ fileName: String) { heldHandoffFiles.insert(fileName) }
+    func isHandoffHeld(_ fileName: String) -> Bool { heldHandoffFiles.contains(fileName) }
+    func releaseHeldHandoffFiles() { heldHandoffFiles.removeAll() }
+
     func hold(_ fileID: String) { heldQuickFolderFiles.insert(fileID) }
     func isHeld(_ fileID: String) -> Bool { heldQuickFolderFiles.contains(fileID) }
     func releaseHeldFiles() { heldQuickFolderFiles.removeAll() }

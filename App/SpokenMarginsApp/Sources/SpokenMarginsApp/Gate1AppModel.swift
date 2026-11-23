@@ -1022,6 +1022,7 @@ final class Gate1AppModel: ObservableObject {
         }
         syncPlaybackProgressForLifecycle()
         gate2CompactControls.reconcileLiveActivities()
+        linkListArrival.releaseHeldHandoffFiles() // a saved link list that failed online earlier gets its next try now
         importPendingSourceLinkHandoffs()
         backgroundRefresh.requestAnnouncement() // the reload that publishes also announces audio that finished while away and schedules audio and episode-map preparation (they walk the fresh rows)
         refreshLibraryRowsInBackground(mustPublish: true)
