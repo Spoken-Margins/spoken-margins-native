@@ -310,7 +310,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
         XCTAssertNil(model.packetOpenFailures.presented, "a Try Again that worked closes the sheet")
         XCTAssertFalse(model.packetOpenFailures.isRetrying)
-        XCTAssertFalse(model.packetOpenFailures.takeCloseNotice(), "the first-launch drawer is not told of a failure that healed")
+        XCTAssertFalse(model.packetOpenFailures.sheetDismissed(), "the first-launch drawer is not told of a failure that healed")
         model.cancelSpokenMarginsPackageImport()
     }
 
@@ -383,16 +383,22 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     @MainActor
     func testATryAgainThatEndsWithoutOpeningAndWithoutNewWordsClosesTheSheetSoTheBannerShows() async throws {
         let presenter = PacketOpenFailurePresenter()
+        var told = 0
+        presenter.onCloseNotice = { told += 1 }
         presenter.present(PacketOpenFailureSheetContent(row: .offline), retry: {})
-        let wordsWhenTheOpenBegan = presenter.generation
         presenter.tryAgain()
+        let wordsWhenTheOpenBegan = presenter.openToken
         XCTAssertTrue(presenter.isRetrying)
 
         presenter.openEnded(opened: false, since: wordsWhenTheOpenBegan)
 
         XCTAssertNil(presenter.presented, "the stale offline words are gone")
         XCTAssertFalse(presenter.isRetrying, "no spinner is left behind")
-        XCTAssertTrue(presenter.takeCloseNotice(), "the drawer a failed friend's file withdrew comes back")
+        XCTAssertEqual(told, 0, "the sheet is still leaving: the drawer waits for its onDismiss")
+        presenter.sheetDismissed()
+        XCTAssertEqual(told, 1, "the drawer a failed friend's file withdrew comes back once the sheet is gone")
+        presenter.sheetDismissed()
+        XCTAssertEqual(told, 1, "told once")
     }
 
     /// #3801: new words on the sheet mean an earlier open that ends without opening has nothing to take down.
@@ -400,7 +406,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     func testAnOpenThatEndsAfterTheSheetSaidSomethingNewLeavesTheNewWordsUp() async throws {
         let presenter = PacketOpenFailurePresenter()
         presenter.present(PacketOpenFailureSheetContent(row: .offline), retry: {})
-        let before = presenter.generation
+        let before = presenter.openToken
         presenter.present(PacketOpenFailureSheetContent(row: .expired), retry: nil)
 
         presenter.openEnded(opened: false, since: before)
@@ -420,7 +426,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         presenter.close()
 
         XCTAssertEqual(cancelled, 1)
-        XCTAssertTrue(presenter.takeCloseNotice())
+        XCTAssertTrue(presenter.sheetDismissed())
         XCTAssertFalse(presenter.isRetrying)
     }
 
@@ -467,16 +473,16 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
         presenter.tryAgain()
         XCTAssertEqual(retries, 1)
-        XCTAssertFalse(presenter.takeCloseNotice(), "the sheet is still up")
+        XCTAssertFalse(presenter.sheetDismissed(), "the sheet is still up")
         presenter.tryAgain()
         XCTAssertEqual(retries, 1, "a second tap while one runs does nothing")
 
         presenter.close()
-        XCTAssertTrue(presenter.takeCloseNotice())
-        XCTAssertFalse(presenter.takeCloseNotice(), "told once")
+        XCTAssertTrue(presenter.sheetDismissed())
+        XCTAssertFalse(presenter.sheetDismissed(), "told once")
         presenter.present(PacketOpenFailureSheetContent(row: .expired), retry: nil)
         presenter.succeeded()
-        XCTAssertFalse(presenter.takeCloseNotice(), "a failure that healed owes nothing")
+        XCTAssertFalse(presenter.sheetDismissed(), "a failure that healed owes nothing")
     }
 
     @MainActor
