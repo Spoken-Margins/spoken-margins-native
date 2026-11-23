@@ -21,24 +21,40 @@ class BeatKindleJobTableTests(unittest.TestCase):
         cls.table = load_table()
         cls.rows = {r[0]: r for r in cls.table.kindle_rows(cls.table.prop, cls.table.result)}
 
-    def test_back_tap_is_one_action_and_a_later_sitting_pays_back_in_one_margin(self):
-        _, _, taps, _, saved, per_sitting, once_ever = self.rows["L17"]
-        self.assertEqual(taps, 1)
-        self.assertEqual(saved, 2)
-        self.assertEqual(per_sitting, 1)
-        # 6 taps once ever plus the first sitting's 2, over 2 saved per Margin.
-        self.assertEqual(once_ever, 4)
+    def test_back_tap_as_built_ties_kindles_low_count(self):
+        # Back Tap opens the app (#4923), then Save & resume and the move back to the book: 3, as Kindle's low count.
+        _, _, taps, _, saved, per_sitting, once_ever = self.rows["L19"]
+        self.assertEqual((taps, saved, per_sitting, once_ever), (3, 0, None, None))
 
-    def test_island_with_auto_stop_is_two_actions(self):
+    def test_the_as_built_back_tap_route_is_the_one_the_intent_takes(self):
+        # L19 counts the intent as it is: it opens the app and starts the live session's recording. If either line
+        # leaves the intent, the count no longer describes the code and must be redone.
+        intent = (ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp" / "RecordMarginShortcutIntent.swift").read_text(encoding="utf-8")
+        edge = next(e for e in self.table.edges if e["id"] == "ls19")
+        self.assertIn(edge["anchor"], intent)
+        self.assertIn("static let openAppWhenRun = true", intent)
+        edges = [e for e in self.table.edges if e["id"] != "ls19"]
+        self.assertIsNone(self.table.ct.compute_all(edges, self.table.jobs, self.table.start)["L19"])
+
+    def test_back_tap_in_place_is_two_actions_because_a_pause_never_ends_a_margin(self):
+        # Back Tap to start, Back Tap to stop (#3650: silence never ends a Margin).
+        _, _, taps, _, saved, per_sitting, once_ever = self.rows["L17"]
+        self.assertEqual(taps, 2)
+        self.assertEqual(saved, 1)
+        self.assertEqual(per_sitting, 2)
+        # 6 taps once ever plus the first sitting's 2, over 1 saved per Margin.
+        self.assertEqual(once_ever, 8)
+
+    def test_island_without_auto_stop_ties_kindle(self):
         _, _, taps, _, saved, per_sitting, once_ever = self.rows["L18"]
-        self.assertEqual((taps, saved, per_sitting, once_ever), (2, 1, 2, None))
+        self.assertEqual((taps, saved, per_sitting, once_ever), (3, 0, None, None))
 
     def test_a_job_that_does_not_beat_kindles_low_count_has_no_break_even(self):
         prop = dict(self.table.prop)
         prop["reference"] = dict(prop["reference"], taps_low=1)
         rows = {r[0]: r for r in self.table.kindle_rows(prop, self.table.result)}
-        self.assertEqual(rows["L17"][4:], (0, None, None))
-        self.assertEqual(rows["L18"][4:], (-1, None, None))
+        self.assertEqual(rows["L17"][4:], (-1, None, None))
+        self.assertEqual(rows["L18"][4:], (-2, None, None))
 
     def test_the_counts_follow_the_edges(self):
         # Without auto-stop the island costs the Record and the Stop (L05); Back Tap has no edge of its own to lose.
@@ -61,7 +77,8 @@ class BeatKindleJobTableTests(unittest.TestCase):
         text = SITUATIONS.read_text(encoding="utf-8")
         for jid, name, taps, kindle, saved, per_sitting, once in self.table.kindle_rows(self.table.prop, self.table.result):
             line = "| %s | %s | %s, plus typing | %s | %s | %s |" % (
-                name, taps, kindle, saved, per_sitting, once if once is not None else "n/a")
+                name, taps, kindle, saved if saved > 0 else "none",
+                per_sitting if per_sitting is not None else "never", once if once is not None else "n/a")
             self.assertIn(line, text)
 
 
