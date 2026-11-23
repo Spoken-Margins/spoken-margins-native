@@ -78,6 +78,23 @@ struct Build23SharingMarginSnapshot: Identifiable, Equatable {
     var placementNote: String? = nil
     /// False for a moved Margin with no place on its item (#4233): a packet can't carry it, so its switch stays off.
     var hasPlace = true
+    /// Its voice without ums is queued or being made (#4647).
+    var voiceInProgress = false
+    /// A share must wait for its voice (`ShareVoiceWait.Margin.waits`).
+    var waits = false
+    /// The version its header and menu show: Without ums while that voice is coming for edited words.
+    var displayedVersion: ShareMarginRepresentationChoice = .original
+    /// The versions its menu offers, in order.
+    var menuOptions: [ShareMarginRepresentationChoice] = [.textOnly]
+    /// Its place among the cards shown (from 1), and how many are shown, for VoiceOver's "Margin 2 of 5".
+    var position = 1
+    var shownCount = 1
+    /// It has word timing, so the word editor can open on it.
+    var hasWordTiming = false
+    /// Any cleanup or hand edit is accepted: "Your words, with changes".
+    var hasChanges = false
+    var wordsRemoved = 0
+    var pausesShortened = 0
 }
 
 extension Build23SharingMarginSnapshot {
@@ -152,6 +169,12 @@ struct Build23SharingSnapshot: Equatable {
     let canShareVerifiedFile: Bool
     /// The one step above "Share link" while an included Margin's moment is still being found (#3839). Nil otherwise.
     var pinnedStep: ShareReviewSteps.Step? = nil
+    /// Whether Share can go now, or must wait for voices (#4647).
+    var readiness: ShareSendReadiness = .nothingToSend
+    /// How many voices a tapped share still waits for; nil when no share waits. While set, the list is inert.
+    var sendWaitCount: Int? = nil
+    /// How many waited voices didn't come; set once every wait has ended, and it raises the alert.
+    var sendWaitFailedCount: Int? = nil
 }
 
 extension Build23SharingSnapshot {
@@ -176,6 +199,16 @@ extension Build23SharingSnapshot {
     var selectionSummary: SharedMarginSelectionSummary {
         SharedMarginSelectionSummary(margins, isIncluded: { $0.isIncluded }, text: { $0.reviewedText })
     }
+
+    /// A sheet that isn't a reply shows one list instead of Choose and Review (#4647).
+    var showsList: Bool { !isReplyBack }
+
+    /// A tapped share waits for voices: every control on the list is inert until it ends.
+    var isSendWaiting: Bool { sendWaitCount != nil }
+
+    /// "3 of 5 selected": the Margins switched in, of those that can be chosen (a Margin with no place can't, #4233).
+    var includedCount: Int { margins.filter(\.isIncluded).count }
+    var selectableCount: Int { margins.filter(\.hasPlace).count }
 }
 
 struct Build23RecipientImportSnapshot: Equatable {
@@ -265,12 +298,27 @@ enum Build23SenderAction: Equatable {
     case restoreOriginal(id: String)
     case prepareAllIncluded
     case cancelPreparation
+    /// A share tapped while voices are being made (#4647): wait for them, then go on the way it was asked.
+    case beginSendWait(Build23PendingShare)
+    /// "Stop sharing": the wait ends and nothing is sent. The cleanup keeps running.
+    case stopSendWait
+    /// The failure alert's "Share anyway": the share goes on with the fallbacks.
+    case sendWaitShareAnyway
+    /// The failure alert's "Not now": back on the list, nothing sent.
+    case sendWaitNotNow
     case returnToSelect
     case advanceToReview
     case buildRecipientPreview
     case presentSystemShare
     case returnFromSystemShare
     case cancel
+}
+
+/// What one pass over the stored Margins changed in the drafts (#3839, #4647).
+struct Build23DraftRefresh {
+    var changed = false
+    /// Drafts that adopted words which arrived while the sheet was open.
+    var wordsArrived: [String] = []
 }
 
 enum Build23RecipientAction: Equatable {
@@ -311,6 +359,13 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     @Published private(set) var previewState: Build23SharingPreviewState = .notBuilt
     @Published private(set) var verifiedPreview: Build23VerifiedRecipientPreview?
     @Published private(set) var pendingRecipientSourceRequest: Build23RecipientSourceRequest?
+    /// What the sender asked for while the packet was still being made, or while voices were (#3750, #4647); delivered
+    /// once the packet is ready. The view delivers it; the coordinator holds it so the wait can start the build.
+    @Published var pendingShare: Build23PendingShare?
+    /// A share tapped while voices were being made (#4647): which Margins it waits on. Nil when no share waits.
+    @Published private(set) var sendWait: ShareSendWait?
+    /// Set once every wait ended with voices that didn't come; it raises the failure alert.
+    @Published private(set) var sendWaitFailedCount: Int?
 
     private let model: Gate1AppModel
     /// The sheet's heading: "Share replies with Ana" (or "Share your Margins with Ana" when none is a reply) when it was opened to share replies back (#3221, #3906).
@@ -414,17 +469,28 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         let isNativeAudio = model.selectedItem.isNativeAudio
         let playing = Self.isPlaying(itemID: model.selectedItem.id, in: model.snapshot)
         var waiting: [ShareReviewSteps.Margin] = []
+        var voiceMargins: [String: ShareVoiceWait.Margin] = [:]
+        // "Margin 2 of 5" counts the cards the chips show (#4647).
+        let shownIDs = state.drafts
+            .filter { state.draftFilter == .all || $0.interjection.isStarredForSharing == true }
+            .map(\.id)
+        let shownPositions = Dictionary(shownIDs.enumerated().map { ($1, $0 + 1) }, uniquingKeysWith: { first, _ in first })
         let margins = state.drafts.map { draft in
             let originalVoiceURL = model.originalAudioURL(forShareDraft: draft.id)
             let reviewMargin = ShareReviewSteps.Margin(
                 stored[draft.id] ?? draft.interjection, isNativeAudio: isNativeAudio, playingThisItem: playing,
                 hasVoice: originalVoiceURL != nil)
             if draft.isIncluded { waiting.append(reviewMargin) }
+            let voice = voiceMargin(for: draft, hasRecording: originalVoiceURL != nil)
+            voiceMargins[draft.id] = voice
+            let tokens = reviewTokens(for: draft)
+            let wordsRemoved = tokens.filter { $0.kind == .word && $0.isRemoved }.count
+            let pausesShortened = tokens.filter { $0.kind == .pause && $0.isRemoved }.count
             return Build23SharingMarginSnapshot(
                 id: draft.id,
                 reviewedText: draft.approvedTranscript,
                 representation: draft.representationChoice,
-                reviewTokens: reviewTokens(for: draft),
+                reviewTokens: tokens,
                 isIncluded: draft.isIncluded,
                 isStarred: draft.interjection.isStarredForSharing == true,
                 privateNote: draft.interjection.privateSharingNote?.nilIfEmpty,
@@ -449,21 +515,34 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 steps: ShareReviewSteps.cardSteps(reviewMargin),
                 waitingBadge: ShareReviewSteps.waitingBadge(reviewMargin),
                 placementNote: ShareReviewSteps.cardNote(reviewMargin),
-                hasPlace: draft.interjection.hasPlace
+                hasPlace: draft.interjection.hasPlace,
+                voiceInProgress: voice.voiceInProgress,
+                waits: voice.waits,
+                displayedVersion: voice.displayedVersion,
+                menuOptions: voice.menuOptions,
+                position: shownPositions[draft.id] ?? 1,
+                shownCount: max(shownIDs.count, 1),
+                hasWordTiming: draft.interjection.alignedTranscript != nil,
+                hasChanges: wordsRemoved > 0 || pausesShortened > 0,
+                wordsRemoved: wordsRemoved,
+                pausesShortened: pausesShortened
             )
         }
+        let readiness = ShareSendReadiness(state.drafts.compactMap { voiceMargins[$0.id] })
         let hasReviewedSelection = margins.contains {
             $0.isIncluded && !$0.reviewedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         let previewIsCurrent = verifiedPreview != nil
             && previewFingerprint == currentDraftFingerprint()
             && verifiedPreview.map { FileManager.default.fileExists(atPath: $0.fileURL.path) } == true
+        // Nothing a sender chooses waits on cleanup (#4647): Review needs an included Margin with words, and Share needs
+        // that and no packet being written. A share tapped while voices are made waits for them instead.
         let canAdvance: Bool
         switch stage {
         case .select:
-            canAdvance = margins.contains(where: \.isIncluded)
+            canAdvance = hasReviewedSelection
         case .review:
-            canAdvance = hasReviewedSelection && !state.isBulkPreparing && !state.isExporting
+            canAdvance = readiness != .nothingToSend && !state.isExporting
         case .recipientPreview, .share:
             canAdvance = previewIsCurrent
         }
@@ -491,7 +570,13 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             errorMessage: state.errorMessage,
             canAdvance: canAdvance,
             canShareVerifiedFile: previewIsCurrent,
-            pinnedStep: stage == .review ? ShareReviewSteps.pinnedStep(waiting) : nil
+            pinnedStep: stage == .review ? ShareReviewSteps.pinnedStep(waiting) : nil,
+            readiness: readiness,
+            sendWaitCount: sendWait.map { wait in
+                // At least 1 while the wait is set: the pass that ends it runs on the next change.
+                max(wait.waitingIDs.filter { voiceMargins[$0]?.waits == true }.count, 1)
+            },
+            sendWaitFailedCount: sendWaitFailedCount
         )
     }
 
@@ -609,14 +694,20 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             } else {
                 model.prepareShareInterjections()
             }
-            // The reply sheet's review is a receipt: no editor is open until the listener taps a row (#3792).
-            selectedMarginID = model.sharingState.replyBackTitle != nil
-                ? nil : model.sharingState.drafts.first(where: \.isIncluded)?.id
+            // The reply sheet's review is a receipt: no editor is open until the listener taps a row (#3792). On the list
+            // (#4647) no editor is open until the sender taps a card's editor button.
+            selectedMarginID = nil
+            sendWait = nil
+            sendWaitFailedCount = nil
+            pendingShare = nil
             model.prepareAutomaticallyCleanedShareDraftsIfEnabled()
-            // The playback screen's Share opens on the review, where Share is pinned (#1507).
             let entry = model.sharingState.entry
             model.sharingState.entry = .chooseMargins
-            if entry.startsOnReview(includedCount: model.sharingState.drafts.filter(\.isIncluded).count) {
+            if model.sharingState.replyBackTitle == nil {
+                // Every entry that isn't a reply opens the one list, even with nothing included (#4647).
+                stage = .review
+            } else if entry.startsOnReview(includedCount: model.sharingState.drafts.filter(\.isIncluded).count) {
+                // The playback screen's Share opens on the review, where Share is pinned (#1507).
                 send(.advanceToReview)
             }
         case .setFilter(let filter):
@@ -628,15 +719,12 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         case .setPrivateSharingRightsConfirmed(let confirmed):
             mutatePackage { model.sharingState.confirmsPrivateSharingRights = confirmed }
         case .setIncluded(let id, let included):
+            // With the switch on, only this Margin is cleaned and joins the run; the model does it (#4647).
+            guard sendWait == nil else { break }
             mutatePackage { model.setShareDraftIncluded(id, included: included) }
-            if included, model.sharingState.autoCleanSelectedEnabled {
-                model.prepareAllIncludedShareDrafts()
-            }
         case .setVisibleIncluded(let ids, let included):
+            guard sendWait == nil else { break }
             mutatePackage { model.setShareDraftsIncluded(ids, included: included) }
-            if included, model.sharingState.autoCleanSelectedEnabled {
-                model.prepareAllIncludedShareDrafts()
-            }
         case .setAutoCleanSelectedEnabled(let enabled):
             mutatePackage { model.setShareAutoCleanSelectedEnabled(enabled) }
         case .selectMargin(let id):
@@ -672,15 +760,26 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         case .prepareAllIncluded:
             mutatePackage { model.prepareAllIncludedShareDrafts() }
         case .cancelPreparation:
+            guard sendWait == nil else { break }
             mutatePackage { model.cancelBulkSharePreparation() }
+        case .beginSendWait(let kind):
+            beginSendWait(kind)
+        case .stopSendWait:
+            // The wait ends and nothing is sent; the cleanup keeps running.
+            sendWait = nil
+            pendingShare = nil
+        case .sendWaitShareAnyway:
+            sendWaitFailedCount = nil
+            continueWaitedShare()
+        case .sendWaitNotNow:
+            sendWaitFailedCount = nil
+            pendingShare = nil
         case .returnToSelect:
-            stage = .select
+            // A sheet that isn't a reply has no Choose stage: its preview's back returns to the list (#4647).
+            stage = model.sharingState.replyBackTitle == nil ? .review : .select
         case .advanceToReview:
-            guard snapshot.margins.contains(where: \.isIncluded) else { return }
+            guard snapshot.isReplyBack == false || snapshot.margins.contains(where: \.isIncluded) else { return }
             stage = .review
-            if selectedMarginID == nil, !snapshot.isReplyBack {
-                selectedMarginID = snapshot.margins.first(where: \.isIncluded)?.id
-            }
         case .buildRecipientPreview:
             buildRecipientPreview()
         case .presentSystemShare:
@@ -689,6 +788,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         case .returnFromSystemShare:
             stage = .review
         case .cancel:
+            sendWait = nil
+            sendWaitFailedCount = nil
+            pendingShare = nil
             model.cancelBulkSharePreparation()
             model.isSharingInterjectionsPresented = false
             discardPreview(resetTo: .select)
@@ -749,6 +851,62 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             return .embeddedText
         }
         return .recipientSupplied
+    }
+
+    /// One draft as the wait rules read it (#4647), with what only the app knows: its recording and the run's queue.
+    private func voiceMargin(for draft: ShareInterjectionDraft, hasRecording: Bool) -> ShareVoiceWait.Margin {
+        ShareVoiceWait.Margin(draft, hasRecording: hasRecording, isQueued: model.sharingState.queuedVoiceIDs.contains(draft.id))
+    }
+
+    private func currentVoiceMargins() -> [String: ShareVoiceWait.Margin] {
+        var margins: [String: ShareVoiceWait.Margin] = [:]
+        for draft in model.sharingState.drafts {
+            margins[draft.id] = voiceMargin(for: draft, hasRecording: model.originalAudioURL(forShareDraft: draft.id) != nil)
+        }
+        return margins
+    }
+
+    /// A share tapped while voices are made starts here (#4647): any packet already built is dropped, so a stale one is
+    /// never delivered, and nothing is built until the voices it waits on are done. A second tap while it waits does
+    /// nothing, so a double tap gives one wait and one export.
+    private func beginSendWait(_ kind: Build23PendingShare) {
+        guard sendWait == nil else { return }
+        let margins = currentVoiceMargins()
+        let ids = Set(margins.filter { $0.value.waits }.map(\.key))
+        guard !ids.isEmpty else {
+            pendingShare = kind
+            buildRecipientPreview()
+            if previewState != .building { pendingShare = nil }
+            return
+        }
+        if verifiedPreview != nil || previewState != .notBuilt { discardPreview(resetTo: .review) }
+        pendingShare = kind
+        sendWaitFailedCount = nil
+        sendWait = ShareSendWait(waitingIDs: ids)
+    }
+
+    /// Each change reads the wait (#4647). When every waited voice is done it ends: the share goes on by itself, or, when
+    /// some didn't come, the alert asks once.
+    private func checkSendWait() {
+        guard let wait = sendWait else { return }
+        switch wait.verdict(currentVoiceMargins()) {
+        case .waiting:
+            return
+        case .ready:
+            sendWait = nil
+            continueWaitedShare()
+        case .failed(let count):
+            sendWait = nil
+            sendWaitFailedCount = count
+        }
+    }
+
+    /// Builds and delivers the share the wait held. A build that is refused leaves no share waiting to fire on a later
+    /// Preview.
+    private func continueWaitedShare() {
+        guard pendingShare != nil else { return }
+        buildRecipientPreview()
+        if previewState != .building { pendingShare = nil }
     }
 
     private func mutatePackage(_ mutation: () -> Void) {
@@ -839,40 +997,50 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     /// What the stored Margin gained since the sheet opened goes into the draft, so the packet carries what the card says
     /// is ready (#3839): its anchor evidence, and, when its words have arrived and the sender has changed nothing, the
     /// words themselves (the draft is rebuilt from the stored Margin; see `ShareInterjectionDraft.adoptArrivedWords`).
-    /// A sender's edits are never taken away. Nothing here starts a cleanup: a Margin whose words land late is cleaned
-    /// with its own "Remove ums and pauses" button, because the bulk "Clean automatically" pass touches every included
-    /// draft, Words-only and already-undone ones too, and the audit found it overriding both. A change reaches
-    /// `sharingState` once and the next pass sees none.
+    /// A sender's edits are never taken away. Nothing here starts a cleanup: it returns which drafts adopted words, and
+    /// `modelDidChange` cleans only those, with the switch on, one Margin at a time (#4647), never the bulk pass that once
+    /// overrode Words-only and already-undone drafts. A change reaches `sharingState` once and the next pass sees none.
     ///
     /// None of this is something the sender chose, so it never reports as a change of the selection (twice the audit
     /// found a path where it did): while a packet is being built or the system share sheet is open the draft is frozen,
     /// and where the packet is kept (back on review or selection) a packet built without the new content is dropped
     /// quietly, with no "Your selection changed" and no change of stage, so the next Share builds one that carries it.
-    /// Returns whether a draft changed.
+    /// Returns what changed: whether any draft did, and which drafts adopted words that arrived, so the caller can clean
+    /// those with the switch on (#4647).
     @discardableResult
-    private func refreshDraftsFromStoredMargins() -> Bool {
-        guard stage == .select || stage == .review else { return false }
+    private func refreshDraftsFromStoredMargins() -> Build23DraftRefresh {
+        guard stage == .select || stage == .review else { return Build23DraftRefresh() }
         let stored = Dictionary(model.selectedItem.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var drafts = model.sharingState.drafts
-        var changed = false
+        var refresh = Build23DraftRefresh()
         for index in drafts.indices {
             guard let margin = stored[drafts[index].id] else { continue }
-            if drafts[index].refreshAnchorEvidence(from: margin) { changed = true }
+            if drafts[index].refreshAnchorEvidence(from: margin) { refresh.changed = true }
             if margin.transcriptionStatus != "pending", drafts[index].interjection.transcriptionStatus != margin.transcriptionStatus,
                drafts[index].adoptArrivedWords(
                 from: margin, hasVoice: model.originalAudioURL(forShareDraft: drafts[index].id) != nil,
                 itemTitle: model.selectedItem.title) {
-                changed = true
+                refresh.changed = true
+                refresh.wordsArrived.append(drafts[index].id)
             }
         }
-        if changed { model.sharingState.drafts = drafts }
-        return changed
+        if refresh.changed { model.sharingState.drafts = drafts }
+        return refresh
     }
 
     private func modelDidChange() {
-        if refreshDraftsFromStoredMargins(), verifiedPreview != nil {
+        // Words that land while a share waits or builds are adopted as they are, neither cleaned nor queued (#4647).
+        let mayClean = sendWait == nil && sendWaitFailedCount == nil && (stage == .select || stage == .review)
+        let arrived = refreshDraftsFromStoredMargins()
+        if arrived.changed, verifiedPreview != nil {
             discardPreview(resetTo: stage)
         }
+        if mayClean {
+            for id in arrived.wordsArrived where model.sharingState.drafts.first(where: { $0.id == id })?.isIncluded == true {
+                model.prepareIncludedShareDraftIfEnabled(id)
+            }
+        }
+        checkSendWait()
         if verifiedPreview != nil,
            previewFingerprint != currentDraftFingerprint() {
             discardPreview(resetTo: .review)
@@ -890,26 +1058,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             String(state.isAppAuthoredItem),
             String(state.confirmsPrivateSharingRights)
         ]
-        for draft in state.drafts.sorted(by: { $0.id < $1.id }) {
-            fields.append(contentsOf: [
-                draft.id,
-                String(draft.isIncluded),
-                draft.approvedTranscript,
-                draft.representationChoice.rawValue,
-                String(draft.readAloud),
-                draft.anchorBefore,
-                draft.anchorAfter,
-                draft.cleanedAudioURL?.path ?? "",
-                String(draft.cleanedAudioDurationMs ?? -1),
-                String(draft.renderGeneration),
-                draft.cleanup?.decisions.map {
-                    "\($0.id):\($0.accepted):\($0.startMs):\($0.endMs)"
-                }.joined(separator: ",") ?? "",
-                draft.interjection.podcastAnchorEvidence?.map {
-                    "\($0.id):\($0.localPath):\($0.provenance?.rawValue ?? "")"
-                }.joined(separator: ",") ?? ""
-            ])
-        }
+        // Only what the packet carries (#4647): a voice landing on a left-out or As recorded Margin leaves it current.
+        fields.append(contentsOf: ShareDraftFingerprint.fields(for: state.drafts))
         let digest = SHA256.hash(data: Data(fields.joined(separator: "\u{1F}").utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }

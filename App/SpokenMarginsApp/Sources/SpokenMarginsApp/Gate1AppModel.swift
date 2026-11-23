@@ -1330,6 +1330,7 @@ final class Gate1AppModel: ObservableObject {
             snapshot = try hangTelemetry.labels.scoped("start.playbackRate") { try applyPreferredPlaybackRate(to: started, engine: engine) }
             if let store, let sessionId = snapshot.sessionId {
                 try seedUITestingSummaryInterjectionIfNeeded(sessionId: sessionId, engine: engine, store: store)
+                try seedUITestingShareBatchIfNeeded(sessionId: sessionId, engine: engine, store: store)
                 try seedUITestingGeneratedTimelineIfNeeded(sessionId: sessionId, engine: engine, store: store)
             }
             if let store {

@@ -124,6 +124,12 @@ enum UITestingHooks {
         return environment("SPOKEN_MARGINS_UI_TEST_INTERJECTION")
     }
 
+    /// Five spoken Margins with fillers and long pauses for the Share Margins list (#4647 PR 0), added to the first
+    /// session of a summary route, so the Test Desk can show and time the cleanup and the wait.
+    static var seedsShareBatch: Bool {
+        isActive && environment("SPOKEN_MARGINS_UI_TEST_SHARE_BATCH") == "1"
+    }
+
     /// A keep-library relaunch marks the listener's Margin as sent in the packet Sam's reply fixture answers (#3237).
     static var marksListenerMarginShared: Bool {
         UITestingLaunchSeed.marksListenerMarginShared(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
@@ -185,6 +191,7 @@ enum UITestingHooks {
     static var usesSupertonic: Bool { false }
     static var libraryFillerCount: Int { 0 }
     static var summaryInterjectionNote: String? { nil }
+    static var seedsShareBatch: Bool { false }
     static var liveActivityPreviewTextSize: String? { nil }
     static var appearanceRequest: String? { nil }
     static var marksListenerMarginShared: Bool { false }

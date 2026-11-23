@@ -49,22 +49,24 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         XCTAssertTrue(coordinator.snapshot.margins.allSatisfy(\.isIncluded))
     }
 
-    func testStageGatingKeepsSenderInSelectWithoutAnIncludedMargin() {
+    /// #4647: a sheet that isn't a reply opens the list even with nothing included; Share is disabled until a Margin is.
+    func testASheetThatIsNotAReplyOpensTheListWithNothingIncludedAndShareDisabled() {
         let coordinator = makeCoordinator()
         coordinator.send(.begin)
         coordinator.send(.setPrivateSharingRightsConfirmed(true))
+        XCTAssertEqual(coordinator.snapshot.stage, .review)
+        XCTAssertTrue(coordinator.snapshot.showsList)
 
         let marginID = coordinator.snapshot.margins[0].id
         coordinator.send(.setIncluded(id: marginID, included: false))
 
+        XCTAssertEqual(coordinator.snapshot.stage, .review, "the list stays open with nothing included")
         XCTAssertFalse(coordinator.snapshot.canAdvance)
-        coordinator.send(.advanceToReview)
-        XCTAssertEqual(coordinator.snapshot.stage, .select)
+        XCTAssertEqual(coordinator.snapshot.readiness, .nothingToSend)
 
         coordinator.send(.setIncluded(id: marginID, included: true))
         XCTAssertTrue(coordinator.snapshot.canAdvance)
-        coordinator.send(.advanceToReview)
-        XCTAssertEqual(coordinator.snapshot.stage, .review)
+        XCTAssertEqual(coordinator.snapshot.readiness, .ready(count: 1))
     }
 
     /// #536: a failed share offers "Share without episode matching" while matching data is included.
@@ -102,6 +104,9 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         }
         for state in [Build23SharingPreviewState.building, .ready, .failed("x")] {
             XCTAssertEqual(id(.review, state, verified: false), "build23.sender.review.back")
+            // The Share Margins list is the review step itself: it has no back (#4647).
+            XCTAssertNil(Build23SenderPresentation.topBackToSelectionIdentifier(
+                stage: .review, previewState: state, hasVerifiedPreview: false, showsList: true))
         }
         XCTAssertNil(id(.select, .ready, verified: true))
         XCTAssertNil(id(.share, .ready, verified: true))
@@ -111,7 +116,8 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         let coordinator = makeCoordinator(marginCount: 2)
         coordinator.send(.begin)
 
-        XCTAssertEqual(Build23SenderPresentation.expandedMargins(in: coordinator.snapshot).count, 1)
+        // On the list no editor is open until a card's editor button is tapped (#4647).
+        XCTAssertTrue(Build23SenderPresentation.expandedMargins(in: coordinator.snapshot).isEmpty)
 
         let secondMarginID = coordinator.snapshot.margins[1].id
         coordinator.send(.selectMargin(secondMarginID))
@@ -161,9 +167,10 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         }
         XCTAssertTrue(keepsLink(), "the packet is ready on screen: a link for it may open")
 
+        // On the list (#4647) the preview's back returns to the list, and the packet still matches what it shows.
         coordinator.send(.returnToSelect)
-        XCTAssertEqual(coordinator.snapshot.stage, .select)
-        XCTAssertFalse(keepsLink(), "back on the selection, a link finishing now must not open its sheet")
+        XCTAssertEqual(coordinator.snapshot.stage, .review)
+        XCTAssertTrue(keepsLink(), "nothing changed: the link is still for the Margins on screen")
 
         coordinator.send(.setAnchorBefore(id: coordinator.snapshot.margins[0].id, text: "Changed context"))
         XCTAssertNil(coordinator.verifiedShareFileURL)
@@ -196,10 +203,9 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
 
         XCTAssertNil(coordinator.verifiedShareFileURL)
         coordinator.send(.presentSystemShare)
-        XCTAssertEqual(coordinator.snapshot.stage, .select)
+        XCTAssertEqual(coordinator.snapshot.stage, .review, "the list: no share stage without a verified packet")
 
         coordinator.send(.setPrivateSharingRightsConfirmed(true))
-        coordinator.send(.advanceToReview)
         XCTAssertNil(coordinator.verifiedShareFileURL)
         XCTAssertFalse(coordinator.snapshot.canShareVerifiedFile)
 
@@ -344,12 +350,12 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         XCTAssertEqual(coordinator.snapshot.margins.count, 2)
     }
 
-    /// #1507: Share on the playback screen opens the sheet on its review, where Share is pinned, so it is two taps.
-    /// The Margins tab and the Export screen still open on the choice of Margins.
-    func testPlaybackShareOpensOnTheReviewAndOthersOpenOnTheChoice() {
+    /// #1507, #4647: every entry that isn't a reply opens the one list, where Share is pinned, so the player's Share is
+    /// still two taps. A reply sheet still opens on its receipt.
+    func testEveryEntryThatIsNotAReplyOpensTheListAndAReplySheetStillOpensOnItsReceipt() {
         let (model, coordinator) = makeModelAndCoordinator(marginCount: 2)
         coordinator.send(.begin)
-        XCTAssertEqual(coordinator.snapshot.stage, .select, "Opened without the playback entry, the sheet starts on the choice")
+        XCTAssertEqual(coordinator.snapshot.stage, .review, "opened from the Margins tab or Export: the list")
         // What `openMarginItemExport(entry:)` leaves behind: drafts prepared, the sheet up, the entry set after.
         model.sharingState.draftsPreparedForExport = true
         model.isSharingInterjectionsPresented = true
@@ -357,17 +363,22 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         coordinator.send(.begin)
         XCTAssertEqual(coordinator.snapshot.stage, .review)
         XCTAssertEqual(coordinator.snapshot.margins.filter(\.isIncluded).count, 2)
-        XCTAssertNotNil(coordinator.snapshot.selectedMarginID)
+        XCTAssertNil(coordinator.snapshot.selectedMarginID, "no editor is open on the list until one is asked for")
         XCTAssertEqual(model.sharingState.entry, .chooseMargins, "The entry applies once")
 
         coordinator.send(.returnToSelect)
-        XCTAssertEqual(coordinator.snapshot.stage, .select, "Choosing Margins stays one tap away")
+        XCTAssertEqual(coordinator.snapshot.stage, .review, "there is no Choose stage to go back to")
 
+        model.presentReplyBackShare(ReplyBackOffer(replies: model.selectedItem.interjections, others: [], friendLabels: ["Cole"]))
         coordinator.send(.begin)
-        XCTAssertEqual(coordinator.snapshot.stage, .select, "The next opening starts on the choice again")
+        XCTAssertEqual(coordinator.snapshot.stage, .review)
+        XCTAssertFalse(coordinator.snapshot.showsList, "the reply sheet keeps its receipt")
+        coordinator.send(.returnToSelect)
+        XCTAssertEqual(coordinator.snapshot.stage, .select, "the reply sheet keeps Back to selection")
     }
 
-    func testPlaybackShareStartsOnTheChoiceWhenNothingIsSelected() {
+    /// #4647: opened from the player with nothing selected, the list opens anyway with Share disabled.
+    func testPlaybackShareWithNothingSelectedOpensTheListWithShareDisabled() {
         let (model, coordinator) = makeModelAndCoordinator(marginCount: 2)
         coordinator.send(.begin)
         for draft in model.sharingState.drafts { model.setShareDraftIncluded(draft.id, included: false) }
@@ -375,7 +386,21 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         model.sharingState.draftsPreparedForExport = true
         model.isSharingInterjectionsPresented = true
         coordinator.send(.begin)
-        XCTAssertEqual(coordinator.snapshot.stage, .select)
+        XCTAssertEqual(coordinator.snapshot.stage, .review)
+        XCTAssertFalse(coordinator.snapshot.canAdvance)
+    }
+
+    /// #4647: the list is the Choose step for VoiceOver, so coming back from the preview says "Choose Margins" and
+    /// opening says nothing; the reply sheet keeps its Review step.
+    func testTheListAnnouncesAsChooseMargins() {
+        XCTAssertEqual(Build23SenderSharingExperience.step(for: .review, showsList: true), .select)
+        XCTAssertEqual(Build23SenderSharingExperience.step(for: .review, showsList: false), .review)
+        XCTAssertNil(VoiceOverAnnouncements.sharingStage(from: .select, to: Build23SenderSharingExperience.step(for: .review, showsList: true)))
+        XCTAssertEqual(
+            VoiceOverAnnouncements.sharingStage(
+                from: Build23SenderSharingExperience.step(for: .recipientPreview, showsList: true),
+                to: Build23SenderSharingExperience.step(for: .review, showsList: true)),
+            "Choose Margins")
     }
 
     private func makeCoordinator(marginCount: Int = 1, marginsWithoutTranscript: Set<Int> = []) -> Build23SharingCoordinator {

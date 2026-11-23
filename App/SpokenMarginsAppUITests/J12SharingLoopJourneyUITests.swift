@@ -71,7 +71,8 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The Share Margins sheet did not open")
             let cleanUpQuestion = app.alerts["Remove ums and long pauses?"]
             if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
-            XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 8), "Share did not open on the review step")
+            // One list for every share that isn't a reply (#4647), with Share pinned.
+            XCTAssertTrue(element("build23.sender.stage.list").waitForExistence(timeout: 8), "Share did not open on the Share Margins list")
             // Tap 2 is Share here, which opens the iOS share sheet. It has to be on screen without scrolling.
             let share = element("build23.sender.review.share")
             XCTAssertTrue(share.waitForExistence(timeout: 5) && share.isHittable, "Share is not reachable on the review step without scrolling")
@@ -212,7 +213,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The Share Margins sheet did not open")
             let cleanUpQuestion = app.alerts["Remove ums and long pauses?"]
             if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
-            XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 8), "Share did not open on the review step")
+            XCTAssertTrue(element("build23.sender.stage.list").waitForExistence(timeout: 8), "Share did not open on the Share Margins list")
             let sheetShare = element("build23.sender.review.share")
             XCTAssertTrue(sheetShare.waitForExistence(timeout: 5) && sheetShare.isHittable, "Share is not reachable on the review step without scrolling")
             // As step 3 of the first test: building the package details stands in for Share, the second tap.

@@ -218,7 +218,7 @@ final class Build23SharingSeamsTests: XCTestCase {
     }
 
     /// #3839 second audit: the same landing after the system share sheet closed (stage back on review, packet kept) or
-    /// after "Back to selection" must not show "Your selection changed" or move the sender. The old packet is dropped
+    /// after "Back to your Margins" (#4647) must not show "Your selection changed" or move the sender. The old packet is dropped
     /// quietly, so the next Share builds one that carries the evidence.
     func testEvidenceLandingAfterSharingOrGoingBackIsNotAChangedSelection() async throws {
         for returning in [Build23SenderAction.returnFromSystemShare, .returnToSelect] {
@@ -378,7 +378,7 @@ final class Build23SharingSeamsTests: XCTestCase {
         let coordinator = Build23SharingCoordinator(model: model)
 
         coordinator.send(.begin)
-        XCTAssertEqual(coordinator.snapshot.stage, .select)
+        XCTAssertEqual(coordinator.snapshot.stage, .review, "a sheet that isn't a reply opens the list (#4647)")
         XCTAssertEqual(coordinator.snapshot.margins.map(\.id), ["margin-build-23-seam"])
         coordinator.send(.advanceToReview)
         XCTAssertEqual(coordinator.snapshot.stage, .review)
@@ -444,7 +444,7 @@ final class Build23SharingSeamsTests: XCTestCase {
         let coordinator = Build23SharingCoordinator(model: model)
 
         coordinator.send(.begin)
-        XCTAssertEqual(coordinator.snapshot.stage, .select)
+        XCTAssertEqual(coordinator.snapshot.stage, .review, "a sheet that isn't a reply opens the list (#4647)")
         XCTAssertEqual(coordinator.snapshot.margins.map(\.id), ["margin-build-23-seam"])
         coordinator.send(.advanceToReview)
         XCTAssertEqual(coordinator.snapshot.stage, .review)
