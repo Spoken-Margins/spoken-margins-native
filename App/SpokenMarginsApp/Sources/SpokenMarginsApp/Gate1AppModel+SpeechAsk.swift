@@ -14,7 +14,7 @@ extension Gate1AppModel {
         return Task { [weak self] in
             // Every read, `currentMargin`'s included, runs off the main thread (#2256); only the retry bookkeeping and
             // scheduling come back here.
-            guard let due = try? await Self.offMain({ () -> [Interjection] in
+            let due = try? await Self.offMain { () -> [Interjection] in
                 identities.compactMap { identity in
                     guard let (sessionId, interjectionId) = MarginIdentity.split(identity),
                           let margin = try? store.loadInterjection(id: interjectionId, sessionId: sessionId) else { return nil }
@@ -23,7 +23,8 @@ extension Gate1AppModel {
                     guard MarginTranscriptionRetry.verdict(current: current, itemDeletedAt: itemDeletedAt) == .retry else { return nil }
                     return current
                 }
-            }), let self else { return false }
+            }
+            guard let due, let self else { return false }
             hangTelemetry.labels.scoped("speechAskRetryWaiting") { scheduleWaitingRetries(due) }
             return true
         }
