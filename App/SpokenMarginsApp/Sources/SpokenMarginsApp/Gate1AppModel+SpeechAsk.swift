@@ -34,10 +34,13 @@ extension Gate1AppModel {
         }
     }
 
-    /// Allow: places again the imported podcasts whose source transcription met the hold. They have no Margin on the waiting
-    /// list, so `SpeechAuthorizationAsk` remembered their item ids.
-    func retryHeldSourceTranscriptions(itemIds: [String]) {
-        for itemId in itemIds { importedPodcastPlacement.retryAfterSpeechAllowed(itemId: itemId) }
+    /// A Margin's source-window transcription met the hold: Allow schedules it again (unless the Margin itself waits, whose
+    /// retry brings its source window after it). Any other failure is the caller's to report.
+    func noteSourceWindowHeld(_ interjection: Interjection, error: Error) {
+        guard HeldTranscription.isHold(error) else { return }
+        SpeechAskController.shared.transcriptionHeld(.sourceWindow, key: Self.marginIdentity(interjection)) { [weak self] in
+            self?.scheduleSourceWindowContextIfNeeded(for: interjection)
+        }
     }
 
     /// A transcription failure that is only the hold: the Margin waits for the listener's answer. Nothing to report.

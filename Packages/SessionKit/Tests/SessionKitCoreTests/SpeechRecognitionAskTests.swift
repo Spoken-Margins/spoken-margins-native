@@ -247,3 +247,77 @@ final class SpeechAskWaitingListTests: XCTestCase {
         XCTAssertFalse(SpeechAskWaitingList(stored: nil).hasWaitingMargin)
     }
 }
+
+/// Held transcription (director's Default taken on #4715, 2026-11-23).
+final class SpeechAskHeldTranscriptionTests: XCTestCase {
+    /// The audit on #5124: a listener who has never recorded opens a friend's podcast packet whose placement needs a
+    /// transcript. Only that hold makes the card owed, in the friend's words; the other held paths wait quietly.
+    func testHeldTranscriptionOwesTheCardOnlyForAFriendsPacketTable() {
+        typealias Row = (name: String, answer: SpeechRecognitionAsk.Answer, spokenMargin: Bool, held: [HeldTranscription],
+                         owed: Bool, wording: SpeechRecognitionAsk.CardWording)
+        let rows: [Row] = [
+            ("never recorded, friend's packet held", .unanswered, false, [.friendPacketPlacement], true, .friendPlacement),
+            ("never recorded, episode map held", .unanswered, false, [.episodeMap], false, .margins),
+            ("never recorded, source window held", .unanswered, false, [.sourceWindow], false, .margins),
+            ("never recorded, publisher map held", .unanswered, false, [.publisherTextMap], false, .margins),
+            ("never recorded, episode map and source window", .unanswered, false, [.episodeMap, .sourceWindow], false, .margins),
+            ("never recorded, nothing held", .unanswered, false, [], false, .margins),
+            ("answered Not now, friend's packet held", .notNow, false, [.friendPacketPlacement], false, .friendPlacement),
+            ("answered Yes, friend's packet held", .yes, false, [.friendPacketPlacement], false, .friendPlacement),
+            ("spoken Margin and friend's packet held", .unanswered, true, [.friendPacketPlacement], true, .margins),
+            ("spoken Margin, nothing held", .unanswered, true, [], true, .margins),
+        ]
+        for row in rows {
+            var ask = SpeechRecognitionAsk(storedAnswer: row.answer.rawValue, hasSavedSpokenMargin: row.spokenMargin)
+            for kind in row.held { ask.transcriptionHeld(kind) }
+            XCTAssertEqual(ask.isOwed(access: .notDetermined), row.owed, row.name)
+            XCTAssertEqual(ask.cardWording, row.wording, row.name)
+            for decided in [SpeechRecognitionAccessState.authorized, .denied, .restricted] {
+                XCTAssertFalse(ask.isOwed(access: decided), "\(row.name) / \(decided): iOS has decided")
+            }
+        }
+    }
+
+    /// The friend's words name the reason in one line; a spoken Margin saved later switches the card to the Margins words.
+    func testFriendWordingGivesWayOnceASpokenMarginIsSaved() {
+        XCTAssertEqual(SpeechRecognitionAsk.CardWording.friendPlacement.headline,
+                       "Your friend's Margins land at the right moment if you allow speech recognition.")
+        XCTAssertEqual(SpeechRecognitionAsk.CardWording.margins.headline, "Want your Margins as text too?")
+        var ask = SpeechRecognitionAsk(storedAnswer: nil)
+        ask.transcriptionHeld(.friendPacketPlacement)
+        XCTAssertTrue(ask.cardDue(at: .reachedForText, access: .notDetermined, shownThisLaunchForReAsk: false),
+                      "a friend's hold is a reason to show the card when the listener reaches for text")
+        XCTAssertEqual(ask.cardWording, .friendPlacement)
+        _ = ask.cardDue(at: .spokenMarginSaved(hearItLandWillRun: false), access: .notDetermined, shownThisLaunchForReAsk: false)
+        XCTAssertEqual(ask.cardWording, .margins)
+    }
+
+    /// Every held path retries after Allow, whatever bookkeeping it kept (round 1 retried a friend's packet only when
+    /// `requestedURL` was set). A decided no drops them; undecided keeps them; each kind and key is held once.
+    @MainActor
+    func testHeldTranscriptionsRetryOnAllowAndDropOnANo() {
+        var ran: [String] = []
+        let retries = HeldTranscriptionRetries()
+        retries.hold(.friendPacketPlacement, key: "ep-1") { ran.append("friend-ep-1-old") }
+        retries.hold(.episodeMap, key: "ep-1") { ran.append("map-ep-1") }
+        retries.hold(.friendPacketPlacement, key: "ep-1") { ran.append("friend-ep-1") }
+        retries.hold(.sourceWindow, key: "s::m") { ran.append("window-s::m") }
+        retries.hold(.publisherTextMap, key: "article") { ran.append("publisher-article") }
+        XCTAssertEqual(retries.heldKinds, [.friendPacketPlacement, .episodeMap, .sourceWindow, .publisherTextMap])
+
+        XCTAssertEqual(retries.settle(access: .notDetermined), 0)
+        XCTAssertEqual(ran, [], "undecided: nothing runs and nothing is dropped")
+        retries.drop(.sourceWindow, keys: ["s::m"])
+        XCTAssertEqual(retries.settle(access: .authorized), 3)
+        XCTAssertEqual(ran, ["friend-ep-1", "map-ep-1", "publisher-article"], "oldest first, the latest retry kept")
+        XCTAssertTrue(retries.isEmpty)
+        XCTAssertEqual(retries.settle(access: .authorized), 0, "each runs once")
+
+        for no in [SpeechRecognitionAccessState.denied, .restricted] {
+            retries.hold(.friendPacketPlacement, key: "ep-2") { ran.append("never") }
+            XCTAssertEqual(retries.settle(access: no), 0)
+            XCTAssertTrue(retries.isEmpty, "\(no) drops the held work")
+        }
+        XCTAssertFalse(ran.contains("never"))
+    }
+}

@@ -6,7 +6,8 @@ import Foundation
 ///
 /// The card follows `docs/design/first-run.md` section 3, step 6. It is due while iOS says "not determined" and the
 /// listener hasn't answered it, once they have saved a spoken Margin. A written Margin never brings it: there is no audio
-/// to transcribe.
+/// to transcribe. A friend's packet whose placement met the hold brings it too, in its own words, so a listener who has
+/// never recorded can still reach Allow (director's Default taken on #4715, 2026-11-23).
 public struct SpeechRecognitionAsk: Equatable, Sendable {
     public enum Answer: String, Sendable {
         case unanswered, notNow, yes
@@ -31,6 +32,9 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
     public private(set) var answer: Answer
     /// A spoken Margin has been saved, so the card is owed until answered. Survives a relaunch through the waiting list.
     private var hasSavedSpokenMargin: Bool
+    /// A friend's packet placement met the hold. In memory: after a relaunch it is set again only when placement meets the
+    /// hold again.
+    private var friendPlacementHeld = false
 
     /// `hasSavedSpokenMargin` is true at launch when a spoken Margin is on the waiting list.
     public init(storedAnswer: String?, hasSavedSpokenMargin: Bool = false) {
@@ -69,10 +73,39 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
         answer == .yes && access == .notDetermined
     }
 
-    /// The first card is owed: asked of nobody yet, a spoken Margin saved, iOS undecided. The Now pane shows it whenever
-    /// its slot is free, including after a relaunch.
+    /// The first card is owed: asked of nobody yet, a spoken Margin saved or a friend's placement held, iOS undecided. The
+    /// Now pane shows it whenever its slot is free, including after a relaunch.
     public func isOwed(access: SpeechRecognitionAccessState) -> Bool {
-        access == .notDetermined && answer == .unanswered && hasSavedSpokenMargin
+        access == .notDetermined && answer == .unanswered && hasReasonToAsk
+    }
+
+    private var hasReasonToAsk: Bool { hasSavedSpokenMargin || friendPlacementHeld }
+
+    /// Transcription work met the hold. Only a friend's packet placement gives the card a reason; the rest wait quietly
+    /// for whatever answer the listener gives.
+    public mutating func transcriptionHeld(_ kind: HeldTranscription) {
+        if kind.makesAskOwed { friendPlacementHeld = true }
+    }
+
+    /// What the card says. The Margins words fit anyone who has saved a spoken Margin; a listener whose only reason is a
+    /// friend's packet has no Margins of their own to get as text, so they hear why their friend's need it.
+    public struct CardWording: Equatable, Sendable {
+        public let headline: String
+        public let detail: String?
+        public let yesAccessibilityLabel: String
+
+        public static let margins = CardWording(
+            headline: "Want your Margins as text too?",
+            detail: "Then you can search them and copy them into your notes.",
+            yesAccessibilityLabel: "Yes, get my Margins as text")
+        public static let friendPlacement = CardWording(
+            headline: "Your friend's Margins land at the right moment if you allow speech recognition.",
+            detail: nil,
+            yesAccessibilityLabel: "Yes, allow speech recognition")
+    }
+
+    public var cardWording: CardWording {
+        !hasSavedSpokenMargin && friendPlacementHeld ? .friendPlacement : .margins
     }
 
     /// Whether the card shows at `moment`. A save arms the card whatever the answer to whether it shows now.
@@ -86,9 +119,9 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
         case (.spokenMarginSaved(let hearItLandWillRun), .unanswered):
             return !hearItLandWillRun
         case (.hearItLandEnded, .unanswered):
-            return hasSavedSpokenMargin
+            return hasReasonToAsk
         case (.reachedForText, .unanswered):
-            return hasSavedSpokenMargin
+            return hasReasonToAsk
         case (.reachedForText, .notNow):
             return !shownThisLaunchForReAsk
         case (.spokenMarginSaved, .notNow), (.hearItLandEnded, .notNow):

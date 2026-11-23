@@ -67,35 +67,27 @@ final class SpeechAuthorizationAskTests: XCTestCase {
         }
     }
 
-    private func sourceOutcome(
-        item: String, current: SFSpeechRecognizerAuthorizationStatus, mayAsk: Bool
-    ) async -> String? {
+    private func thrown(current: SFSpeechRecognizerAuthorizationStatus, mayAsk: Bool) async -> Error? {
         do {
-            try await SpeechAuthorizationAsk.requireAuthorized(forSourceItem: item, current: current, mayAskSystem: mayAsk) { .authorized }
+            try await SpeechAuthorizationAsk.requireAuthorized(current: current, mayAskSystem: mayAsk) { .authorized }
             return nil
         } catch {
-            return String(describing: error)
+            return error
         }
     }
 
-    /// An imported podcast's placement that met the hold has no Margin to wait on the list, so the gate remembers the
-    /// episode and hands it back on Allow; the app then places it again (#4715). iOS already allowing is never held.
-    func testASourceTranscriptionThatMetTheHoldIsRememberedOnceAndHandedBackOnce() async {
-        _ = SpeechAuthorizationAsk.takeHeldSourceItems()
-        let allowed = await sourceOutcome(item: "ep-allowed", current: .authorized, mayAsk: false)
-        XCTAssertNil(allowed, "iOS already authorizes: source transcription is not blocked by the ask")
+    /// Each caller that meets the hold names it with `HeldTranscription.isHold` on the error the gate throws (#4715), so
+    /// it can make the ask owed and be retried after Allow. Only the open-and-unasked case is a hold; a decided no and an
+    /// allowed answer are not.
+    func testOnlyTheOpenAndUnaskedCaseIsAHoldACallerCanName() async {
+        let held = await thrown(current: .notDetermined, mayAsk: false)
+        XCTAssertTrue(held.map(HeldTranscription.isHold) ?? false)
+        let allowed = await thrown(current: .authorized, mayAsk: false)
+        XCTAssertNil(allowed, "iOS already authorizes: never held")
         for denied in [SFSpeechRecognizerAuthorizationStatus.denied, .restricted] {
-            let error = await sourceOutcome(item: "ep-denied", current: denied, mayAsk: false)
-            XCTAssertTrue(TranscriptionFailureWording.isSpeechRecognitionOff(error: error ?? ""))
+            let error = await thrown(current: denied, mayAsk: false)
+            XCTAssertFalse(error.map(HeldTranscription.isHold) ?? true, "a decided no is not a hold")
         }
-        XCTAssertEqual(SpeechAuthorizationAsk.takeHeldSourceItems(), [], "only the open-and-unasked case is held")
-
-        let first = await sourceOutcome(item: "ep-1", current: .notDetermined, mayAsk: false)
-        XCTAssertTrue(TranscriptionFailureWording.isSpeechRecognitionNotYetAsked(error: first ?? ""))
-        _ = await sourceOutcome(item: "ep-2", current: .notDetermined, mayAsk: false)
-        _ = await sourceOutcome(item: "ep-1", current: .notDetermined, mayAsk: false)
-        XCTAssertEqual(SpeechAuthorizationAsk.takeHeldSourceItems(), ["ep-1", "ep-2"], "oldest first, no repeats")
-        XCTAssertEqual(SpeechAuthorizationAsk.takeHeldSourceItems(), [], "handed back once")
     }
 
     /// Nothing in this process closes the gate, so a macOS tool or test that has no card still asks iOS as it always did.
