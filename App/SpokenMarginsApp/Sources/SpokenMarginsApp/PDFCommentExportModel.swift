@@ -181,7 +181,9 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
             case .success(let (kept, preview)):
                 original = kept
                 placements = preview.placements
-                state = PDFCommentExportState(plan: plan, spots: preview.spots, authorName: state.authorName, document: document)
+                // `self.plan`, not the copy checked against: a tidy version answered while the file was checked has
+                // already changed its words (#4339). Where comments land does not depend on the words.
+                state = PDFCommentExportState(plan: self.plan, spots: preview.spots, authorName: state.authorName, document: document)
             case .failure(let refusal):
                 state.refuseChosenFile(refusal)
             }

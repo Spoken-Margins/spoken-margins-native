@@ -249,6 +249,8 @@ struct PDFCommentTidyReviewSheet: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
     @StateObject private var tidy = MarginTidyCardModel()
+    /// False until the first request comes back, so the sheet never says "Nothing to tidy" before it has asked.
+    @State private var asked = false
     let margin: Interjection
 
     var body: some View {
@@ -266,6 +268,9 @@ struct PDFCommentTidyReviewSheet: View {
                 Section {
                     if tidy.showsCard(for: margin) {
                         MarginTidyCard(margin: margin, card: tidy) { dismiss() }
+                    } else if !asked {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         Text("Nothing to tidy in this Margin.")
                             .foregroundStyle(AppColors.secondaryText)
@@ -284,6 +289,7 @@ struct PDFCommentTidyReviewSheet: View {
             }
             .task(id: MarginTidyCardModel.key(for: margin)) {
                 await tidy.refresh(for: margin, using: model)
+                asked = true
             }
         }
         .presentationDetents([.medium, .large])
