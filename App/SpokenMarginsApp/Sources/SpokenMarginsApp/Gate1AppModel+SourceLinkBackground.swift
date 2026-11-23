@@ -85,7 +85,7 @@ extension Gate1AppModel {
             await Task.detached(priority: .utility) { handoffStore.deleteManagedPDF(at: fileURL) }.value
             return itemId
         }
-        guard let url = URL(string: trimmed),
+        guard let url = URL(string: trimmed).map(ArxivPaperLink.openingURL), // #5049
               let scheme = url.scheme?.lowercased(),
               ["http", "https"].contains(scheme) else {
             throw SessionKitError.persistenceFailed("This share does not contain a valid podcast, RSS, or audio URL.")
