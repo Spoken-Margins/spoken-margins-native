@@ -108,9 +108,11 @@ public struct FootnoteMediaChimeDriver: Equatable, Sendable {
         return low
     }
 
-    /// The player's clock, at least as often as a segment changes (and at each of `runStartsMs`).
+    /// The player's clock, at least as often as a segment changes (and at each of `runStartsMs`). `reachedByPlayback`
+    /// is true for a boundary observer's report: one fires only while the file plays on through its time, never on a
+    /// seek, so its segment was run on into whatever the last periodic report saw.
     public mutating func observe(
-        timeMs: Int, mode: FootnoteMode, appIsActive: Bool, now: TimeInterval
+        timeMs: Int, mode: FootnoteMode, appIsActive: Bool, now: TimeInterval, reachedByPlayback: Bool = false
     ) -> Action {
         let index = segmentIndex(atMs: timeMs)
         guard index != current else { return .none }
@@ -124,14 +126,18 @@ public struct FootnoteMediaChimeDriver: Equatable, Sendable {
         }
         let ranOn = current.map { index == $0 + 1 } ?? false
         let landedFromOwnMove = index == expectedEntry
+        // A step over one segment is a clock report that missed a short segment (the tick is twice a second, slower
+        // under load), not a move: playback ran on, so a note it reaches may cue and an offered card stays. Only the
+        // segment just left counts as heard, and only on a step of one.
+        let missedOne = current.map { index == $0 + 2 } ?? false
+        let playedOn = ranOn || missedOne || reachedByPlayback
         // A jump back, or forward past more than one segment, is a move the driver did not make: the listener's seek or
         // skip. Nothing stays offered or being read, as `playerMovedOnItsOwn()` says, so a card does not outlive the
-        // place it was for. A step over one segment is a clock report that missed a short segment (the tick is twice a
-        // second, slower under load), not a move, and leaves the card alone.
-        if let previous = current, !ranOn, !landedFromOwnMove, index < previous || index > previous + 2 { sequencer.reset() }
+        // place it was for.
+        if current != nil, !playedOn, !landedFromOwnMove { sequencer.reset() }
         // A move the driver made past a note can land on the very next segment; that note was passed over, not heard.
         if ranOn, !landedFromOwnMove { recordCurrentPlayedToEnd() }
-        let runOn = ranOn || landedFromOwnMove
+        let runOn = playedOn || landedFromOwnMove
         expectedEntry = nil
         current = index
         currentEnteredAtStart = runOn

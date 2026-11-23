@@ -56,17 +56,25 @@ public struct FootnoteMediaChimeSession: Equatable, Sendable {
     public mutating func observe(
         timeMs: Int, mode: FootnoteMode, appIsActive: Bool, now: TimeInterval
     ) -> FootnoteMediaChimeDriver.Action {
-        let action = driver.observe(timeMs: timeMs, mode: mode, appIsActive: appIsActive, now: now)
+        report(timeMs: timeMs, mode: mode, appIsActive: appIsActive, now: now, reachedByPlayback: false)
+    }
+
+    private mutating func report(
+        timeMs: Int, mode: FootnoteMode, appIsActive: Bool, now: TimeInterval, reachedByPlayback: Bool
+    ) -> FootnoteMediaChimeDriver.Action {
+        let action = driver.observe(
+            timeMs: timeMs, mode: mode, appIsActive: appIsActive, now: now, reachedByPlayback: reachedByPlayback)
         guard case .cue(let label, let seekToMs) = action else { return action }
         return .cue(label: label, seekToMs: leadInLanding(before: seekToMs))
     }
 
-    /// A boundary observer fired at a run's start. `timeMs` is the player's clock when the report was read.
+    /// A boundary observer fired at a run's start. `timeMs` is the player's clock when the report was read. A boundary
+    /// fires only while the file plays on, so the note may cue whatever segment the last tick saw.
     public mutating func observeBoundary(
         timeMs: Int, mode: FootnoteMode, appIsActive: Bool, now: TimeInterval
     ) -> FootnoteMediaChimeDriver.Action {
         let snapped = runStartsMs.first { abs($0 - timeMs) <= Self.boundarySnapMs }.map { max($0, timeMs) } ?? timeMs
-        return observe(timeMs: snapped, mode: mode, appIsActive: appIsActive, now: now)
+        return report(timeMs: snapped, mode: mode, appIsActive: appIsActive, now: now, reachedByPlayback: true)
     }
 
     /// Where a cue's move lands: `FootnoteCue.leadIn` before `targetMs` when the silence after the note holds it.
@@ -81,6 +89,12 @@ public struct FootnoteMediaChimeSession: Equatable, Sendable {
     /// offered or the listener is hearing. Nil elsewhere, and for a note with nothing left once its lead is removed.
     public func card(atMs timeMs: Int, mode: FootnoteMode) -> FootnoteCard? {
         let tags = driver.tags
+        // The note the tone offered comes first: a cue's lead-in landing is in the silence of its run's last note, which
+        // for "[^2][^3]" is note 3 while the card offers note 2. A note being read shows the note whose words play.
+        if mode == .chime, case .offered(let label) = driver.sequencer.card,
+           let note = tags.firstIndex(where: { $0 == .aside(label) }) {
+            return FootnoteCard.forChunk(at: note, tags: tags, texts: texts)
+        }
         let index = driver.segmentIndex(atMs: timeMs)
         if FootnoteNoteControls.isAside(at: index, tags: tags) {
             return FootnoteCard.forChunk(at: index, tags: tags, texts: texts)

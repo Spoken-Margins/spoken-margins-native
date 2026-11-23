@@ -260,3 +260,64 @@ extension FootnoteMediaChimeSessionTests {
         XCTAssertEqual(session.cardState(mode: .chime), .hidden)
     }
 }
+
+extension FootnoteMediaChimeSessionTests {
+    /// Audit of 81a3936: the citing sentence of note 2 is cut into two short pieces (as a PDF's skipped text cuts a
+    /// chunk), the last tick is in the first piece, and the next report is at the note: the second piece was missed.
+    private func reachNote2(_ session: inout FootnoteMediaChimeSession) throws -> Int {
+        let base = timeline(article, silenceMs: 800)
+        let note = try XCTUnwrap(base.segments.indices.filter { base.segments[$0].startChar != nil
+            && base.segments[$0].startChar == base.segments[$0].endChar }.dropFirst().first)
+        let citing = base.segments[note - 1]
+        let half = (citing.endMs - citing.startMs) / 2
+        var segments = base.segments
+        segments.replaceSubrange((note - 1)...(note - 1), with: [
+            MediaTimelineSegment(id: "\(citing.id)-a", startMs: citing.startMs, endMs: citing.startMs + half,
+                                 startChar: citing.startChar, endChar: citing.endChar, text: "piece a"),
+            MediaTimelineSegment(id: "\(citing.id)-b", startMs: citing.startMs + half, endMs: citing.endMs,
+                                 startChar: citing.startChar, endChar: citing.endChar, text: "piece b"),
+        ])
+        session = try XCTUnwrap(FootnoteMediaChimeSession(
+            itemId: item, mediaKey: file,
+            timeline: TranscriptTimeline(segments: segments, chapters: [], durationMs: base.durationMs), articleText: article))
+        let index = try XCTUnwrap(session.driver.tags.firstIndex(of: .aside("2")))
+        _ = session.observe(timeMs: session.driver.segmentStartsMs[index - 2], mode: .chime, appIsActive: true, now: 0)
+        return index
+    }
+
+    func testATickThatMissedTheCitingSegmentStillCuesTheNote() throws {
+        var session = try makeSession()
+        let note = try reachNote2(&session)
+        guard case .cue(let label, _) = session.observe(
+            timeMs: session.driver.segmentStartsMs[note] + 100, mode: .chime, appIsActive: true, now: 0) else {
+            return XCTFail("cued, not passed over silently")
+        }
+        XCTAssertEqual(label, "2")
+    }
+
+    func testABoundaryReportCuesTheNoteWhateverTheLastTickSaw() throws {
+        var session = try makeSession()
+        _ = session.observe(timeMs: 0, mode: .chime, appIsActive: true, now: 0)
+        let note = try XCTUnwrap(session.driver.tags.firstIndex(of: .aside("2")))
+        XCTAssertGreaterThan(note, 2, "the last tick is well before the note")
+        guard case .cue(let label, _) = session.observeBoundary(
+            timeMs: session.driver.segmentStartsMs[note] - 10, mode: .chime, appIsActive: true, now: 0) else {
+            return XCTFail("cued")
+        }
+        XCTAssertEqual(label, "2")
+    }
+
+    func testTheLeadInOfAMultiNoteCitationShowsTheOfferedNote() throws {
+        var session = try makeSession()
+        let note = try XCTUnwrap(session.driver.tags.firstIndex(of: .aside("2")))
+        XCTAssertEqual(session.driver.tags[note + 1], .aside("3"))
+        _ = session.observe(timeMs: session.driver.segmentStartsMs[note - 1], mode: .chime, appIsActive: true, now: 0)
+        guard case .cue(_, let landing) = session.observe(
+            timeMs: session.driver.segmentStartsMs[note], mode: .chime, appIsActive: true, now: 0) else {
+            return XCTFail("cued")
+        }
+        XCTAssertEqual(session.driver.segmentIndex(atMs: landing), note + 1, "the landing is in note 3's silence")
+        _ = session.observe(timeMs: landing, mode: .chime, appIsActive: true, now: 0)
+        XCTAssertEqual(session.card(atMs: landing, mode: .chime)?.label, "2")
+    }
+}
