@@ -99,24 +99,30 @@ final class ShareAsLinkRenderingTests: XCTestCase {
         }
     }
 
-    /// #4454: the hidden web view may load only the link's own host, and the rule list that says so must be valid JSON
-    /// with the host escaped, or WebKit refuses it and no check can run.
-    func testThePlayCheckWebViewBlocksEverythingButTheLinksHost() throws {
-        let rules = ShareLinkPlayCheckRunner.contentRules(host: "spokenmargins.com")
+    /// #4454, #4783: the hidden web view may load only the hosts it names (the link's, the web listener's, the link
+    /// servers'), and the rule list that says so must be valid JSON with each host escaped, or WebKit refuses it and no
+    /// check can run.
+    func testThePlayCheckWebViewBlocksEverythingButItsOwnHosts() throws {
+        let rules = ShareLinkPlayCheckRunner.contentRules(hosts: ["spokenmargins.com", "app.spokenmargins.com"])
         let parsed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(rules.utf8)) as? [[String: Any]])
-        XCTAssertEqual(parsed.count, 2)
+        XCTAssertEqual(parsed.count, 3)
         let block = try XCTUnwrap(parsed.first)
         XCTAssertEqual((block["action"] as? [String: Any])?["type"] as? String, "block")
         XCTAssertEqual((block["trigger"] as? [String: Any])?["url-filter"] as? String, ".*")
-        let allow = try XCTUnwrap(parsed.last)
-        XCTAssertEqual((allow["action"] as? [String: Any])?["type"] as? String, "ignore-previous-rules")
-        let filter = try XCTUnwrap((allow["trigger"] as? [String: Any])?["url-filter"] as? String)
-        XCTAssertEqual(filter, "^https://spokenmargins\\.com/")
-        let expression = try NSRegularExpression(pattern: filter)
-        func matches(_ url: String) -> Bool { expression.firstMatch(in: url, range: NSRange(url.startIndex..., in: url)) != nil }
+        let filters = try parsed.dropFirst().map { allow -> String in
+            XCTAssertEqual((allow["action"] as? [String: Any])?["type"] as? String, "ignore-previous-rules")
+            return try XCTUnwrap((allow["trigger"] as? [String: Any])?["url-filter"] as? String)
+        }
+        XCTAssertEqual(filters, ["^https://spokenmargins\\.com/", "^https://app\\.spokenmargins\\.com/"])
+        let expressions = try filters.map { try NSRegularExpression(pattern: $0) }
+        func matches(_ url: String) -> Bool {
+            expressions.contains { $0.firstMatch(in: url, range: NSRange(url.startIndex..., in: url)) != nil }
+        }
         XCTAssertTrue(matches("https://spokenmargins.com/l/abc/packet"))
+        XCTAssertTrue(matches("https://app.spokenmargins.com/assets/index.js"))
         XCTAssertFalse(matches("https://spokenmarginsXcom/"), "the dot is escaped")
         XCTAssertFalse(matches("https://spokenmargins.com.evil.example/"), "the host ends at its slash")
+        XCTAssertFalse(matches("https://itunes.apple.com/lookup"), "the page reads Apple only through the app")
         XCTAssertFalse(matches("http://spokenmargins.com/"))
     }
 
