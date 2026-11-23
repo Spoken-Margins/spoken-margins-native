@@ -7,7 +7,9 @@
 # runs cut off at their time limit, which ends `cancelled`), and a hosted Mac job that hangs on a PR.
 # A run that failed only in a setup step, or in a plan step whose log ends in a network error from an outside host
 # (the dequeue notifier's reading of a merge group, #4940), stayed red until a person re-ran it: the web job when the
-# Playwright CDN or Hugging Face is down, the portable job when PyPI or Docker Hub is (#4795's outage, on a PR). That
+# Playwright CDN is down (`Install Playwright browsers`), the portable job when PyPI or Docker Hub is (#4795's outage,
+# on a PR). Hugging Face is not covered: the speech model downloads inside `Playwright suite`, a test step. A log tail
+# that shows a failed test is always the PR's (merge_queue_dequeued.TEST_FAILURE, #5070 audit). That
 # run is re-run once, 90 minutes later (rerun_cancelled_check.RETRY_DELAY_MINUTES), so the outage has time to end; the
 # job sleeps on a Linux runner and reads everything again before it re-runs.
 # scripts/rerun_cancelled_check.py decides, and leaves alone a run a newer push replaced, a second attempt, a run with

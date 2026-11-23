@@ -444,8 +444,10 @@ class TimedWorld(M.World):
     def failed_step(self, file, job_id, kind):
         names = [str(step.get('name') or '') for step in self.raw_job(file, job_id).get('steps') or []]
         plan = next((name for name in names if name in self.PLAN_STEP_NAMES), None)
-        # A job with no plan step that downloads (the web job caches its speech model in a step of its own) fails a
-        # download in setup.
+        # A job with no plan step that downloads fails a download in setup. For the web job that is a stand-in for
+        # `Install Playwright browsers`: its Hugging Face download runs inside `Playwright suite`, a test step the
+        # notifier and rerun-cancelled leave red, so `web/*/outage-90m` covers a Playwright CDN outage, not a Hugging
+        # Face one (#5070 audit).
         if kind == 'setup' or (kind == 'download' and plan is None):
             # A step that is the runner's, never the PR's (the notifier's SETUP_STEPS).
             return next((name for name in ('Install BlackHole (virtual audio output)', 'Speech model cache')

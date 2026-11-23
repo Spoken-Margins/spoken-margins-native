@@ -460,6 +460,25 @@ class SetupFailureTests(unittest.TestCase):
             github = self.github({'hosted fast: Mac rest': self.PLAN}, logs={100: log})
             self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told', log)
 
+    def test_a_failed_test_that_quotes_a_network_error_stays_the_prs(self):
+        # #5070's audit: an assertion message can quote an outside host next to "certificate", "TLS" or "HTTP 502".
+        quoted = "fatal: unable to access 'https://github.com/x/y': SSL certificate problem: certificate has expired"
+        for log in (f'Failed: test_cert_log at scripts/tests/test_x.py:12 — {quoted}',
+                    f'FAIL: test_onnx (test_main_t3.Tests)\n{quoted}', f'{quoted}\nFAILED scripts/tests/test_x.py::T::t',
+                    '--- FAIL: TestFetch (0.01s)\n    fetch_test.go:9: GET https://github.com/a: HTTP 502',
+                    f'{quoted}\nAssertionError: lists differ', f'XCTAssertEqual failed: {quoted}'):
+            github = self.github({'hosted fast: Mac rest': self.PLAN}, logs={100: log})
+            self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told', log)
+
+    def test_ssl_and_tls_count_only_as_words(self):
+        # #4940 committed `\b` as a literal backspace, so SSL and TLS never matched; as words they do, and not inside
+        # another word (#5070 audit).
+        for line in ('see https://github.com/a/classless-tlsish 200 OK', 'https://github.com/a/SSLKit fixture loaded'):
+            self.assertFalse(mq.outside_network_error(line), line)
+        self.assertTrue(mq.outside_network_error('curl https://github.com/a: TLS handshake timeout'))
+        self.assertTrue(mq.outside_network_error('pip: SSL: WRONG_VERSION_NUMBER for https://pypi.org/simple'))
+        self.assertNotIn('\x08', (ROOT / 'scripts/merge_queue_dequeued.py').read_text())
+
     def test_a_step_that_runs_the_prs_own_files_needs_the_network_error_too(self):
         # npm ci, pip, go build, LFS pointers and `actions/setup-*` read the PR's own manifests: their failure is the
         # PR's unless the log names an outside host and a network error (review of #4940).

@@ -97,10 +97,16 @@ EXTERNAL_HOSTS = ('download.onnxruntime.ai', 'pypi.org', 'files.pythonhosted.org
                   'githubusercontent.com', 'huggingface.co', 'hf.co', 'cdn.playwright.dev', 'playwright.azureedge.net',
                   'registry-1.docker.io', 'docker.io', 'ghcr.io', 'formulae.brew.sh', 'brew.sh')
 NETWORK_ERROR = re.compile(
-    r'certificate|SSL|TLS|Could not resolve host|Temporary failure in name resolution|Name or service not known|'
+    r'certificate|\bSSL\b|\bTLS\b|Could not resolve host|Temporary failure in name resolution|Name or service not known|'
     r'nodename nor servname|Connection (?:timed out|reset|refused)|Operation timed out|Network is unreachable|'
     r'curl: \(\d+\)|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|'
     r'\b5\d\d (?:Server Error|Bad Gateway|Service Unavailable|Gateway Time-?out)|HTTP(?: error)? 5\d\d', re.I)
+# A failed test in the step's log tail makes the failure the PR's, whatever network words other lines carry: a test
+# whose assertion message quotes a certificate error next to a github.com URL is still a failed test (#5070 audit). The
+# markers are the runners' own: verify-tests.py `Failed: `, unittest `FAIL: `, pytest `FAILED`, Go `--- FAIL`,
+# XCTest `XCTAssert` and `Test Case ... failed`, Swift Testing `✘`, and a raised AssertionError.
+TEST_FAILURE = re.compile(r'\bFailed: |\bFAIL: |(?:^|\s)FAILED(?:\s|$)|--- FAIL|XCTAssert|Test Case .+ failed|✘|'
+                          r'AssertionError')
 LOG_TAIL_LINES = 80
 JOB_IN_URL = re.compile(r'/job/(\d+)(?:/|$)')
 
@@ -240,8 +246,12 @@ def step_kind(name):
 
 def outside_network_error(log):
     """Whether one line of a log names a host outside GitHub's runners and a network error together. Both on a line,
-    so a test that prints "connection refused" while it checks its own error handling is not read as an outage."""
-    for line in (log or '').splitlines():
+    so a test that prints "connection refused" while it checks its own error handling is not read as an outage, and
+    never when the log shows a failed test (TEST_FAILURE)."""
+    lines = (log or '').splitlines()
+    if any(TEST_FAILURE.search(line) for line in lines):
+        return False
+    for line in lines:
         if NETWORK_ERROR.search(line) and any(host in line for host in EXTERNAL_HOSTS):
             return True
     return False

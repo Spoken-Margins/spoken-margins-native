@@ -12,7 +12,8 @@ cancelled newest run blocks the PR, shows grey rather than red, and nothing in t
 A run that failed only in a setup step, or in a plan step whose log ends in a network error from an outside host
 (merge_queue_dequeued.failed_outside_pr, the same reading the dequeue notifier makes of a merge group, #4940), failed
 for the runner's or the network's reasons, not the PR's: the onnxruntime certificate outage of 2026-11-21 (#4795), a
-runner that fails in `Set up job`, the Playwright CDN or Hugging Face down for the web job. On a PR no merge group
+runner that fails in `Set up job`, the Playwright CDN down for the web job (not Hugging Face: the speech model downloads
+inside `Playwright suite`, a test step). A log tail that shows a failed test is always the PR's. On a PR no merge group
 exists, so the notifier never sees it, and the check stayed red until a person re-ran it (#5057).
 
 rerun-cancelled.yml runs this from main's copy when a `pull_request` run of a workflow that reports a required check
