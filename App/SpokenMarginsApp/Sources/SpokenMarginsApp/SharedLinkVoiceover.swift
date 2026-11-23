@@ -83,8 +83,9 @@ final class SharedLinkVoiceover {
         do {
             // The item check, the earlier text map and the save run in order on one background task, off the main
             // actor (#2507). The listener may have removed the article while the page loaded.
-            let saved = try await StoreReader(store).read { try $0.savePublisherAudioIfItemExists(found) }
-            guard let audio = saved else { return note("item removed") }
+            let result = try await StoreReader(store).read { try $0.savePublisherAudioIfItemExists(found) }
+            if let refusal = result.refusalDiagnostic { return note(refusal) } // #4640
+            guard let audio = result.saved else { return note("item removed") }
             note("saved")
             PublisherAudioTextMapper.start(audio, store: store, transcriber: transcriber) { note($0) }
         } catch {

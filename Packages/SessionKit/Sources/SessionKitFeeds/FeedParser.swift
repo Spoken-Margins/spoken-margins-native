@@ -43,6 +43,13 @@ public struct ParsedFeedItem: Equatable, Sendable {
     /// `banner_image`. Https only; nil when the entry names none. It is never the show's image,
     /// which stays on `ParsedFeed.imageURL`.
     public var imageURL: String? = nil
+    /// The item's first enclosure that isn't a picture, as written, whatever its type (#4640): RSS `<enclosure>`, Atom
+    /// `link rel="enclosure"`, JSON Feed `attachments`. `audioURL` keeps its own rules; the article feed route reads
+    /// these to decide for itself.
+    public var enclosureURL: String? = nil
+    public var enclosureType: String? = nil
+    /// The enclosure's `length` (or JSON Feed `size_in_bytes`), when the feed gives a positive one.
+    public var enclosureLengthBytes: Int? = nil
 }
 
 public struct ParsedFeed: Equatable, Sendable {
@@ -110,7 +117,7 @@ public final class FeedParser: @unchecked Sendable {
     private func parseJSON(_ data: Data) throws -> ParsedFeed {
         struct JSONFeed: Decodable {
             struct Item: Decodable {
-                struct Attachment: Decodable { var url: String; var mime_type: String? }
+                struct Attachment: Decodable { var url: String; var mime_type: String?; var size_in_bytes: Int? }
                 var id: String?
                 var url: String?
                 var external_url: String?
@@ -145,6 +152,7 @@ public final class FeedParser: @unchecked Sendable {
             let rawSummary = item.summary ?? item.content_text ?? item.content_html
             let content = item.content_html.map(FeedArticleBodyText.html) ?? item.content_text.map(sanitize)
             let author = item.authors?.compactMap(\.name).joined(separator: ", ").nilIfEmpty ?? item.author?.name
+            let enclosure = item.attachments?.first { !$0.url.isEmpty && !($0.mime_type ?? "").lowercased().hasPrefix("image/") }
             return ParsedFeedItem(
                 id: item.id ?? url,
                 title: sanitize(item.title ?? "Untitled"),
@@ -157,7 +165,10 @@ public final class FeedParser: @unchecked Sendable {
                 guid: item.id?.nilIfEmpty,
                 imageURL: [item.image, item.banner_image].lazy.compactMap { $0.flatMap(httpsLink) }.first
                     ?? item.attachments?.lazy.filter { ($0.mime_type ?? "").lowercased().hasPrefix("image/") }
-                        .compactMap { httpsLink($0.url) }.first
+                        .compactMap { httpsLink($0.url) }.first,
+                enclosureURL: enclosure?.url,
+                enclosureType: enclosure?.mime_type?.nilIfEmpty,
+                enclosureLengthBytes: enclosure?.size_in_bytes.flatMap { $0 > 0 ? $0 : nil }
             )
         }
         return ParsedFeed(format: .json, title: sanitize(decoded.title), homePageURL: decoded.home_page_url, feedURL: decoded.feed_url, items: items, imageURL: decoded.icon.flatMap(httpsLink))
@@ -212,11 +223,15 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
             if inEntry {
                 if rel == "alternate" { item?.url = href }
                 if rel == "enclosure", (attributeDict["type"] ?? "").lowercased().hasPrefix("audio/") { item?.audioURL = href }
+                if rel == "enclosure" { item?.noteEnclosure(url: href, type: attributeDict["type"], length: attributeDict["length"]) }
                 if rel == "enclosure", (attributeDict["type"] ?? "").lowercased().hasPrefix("image/"), item?.enclosureImage == nil { item?.enclosureImage = href }
             } else if rel == "self" { feedURL = href } else if rel == "alternate" { homePageURL = href }
         }
         if format == .rss, name == "enclosure", (attributeDict["type"] ?? "").lowercased().hasPrefix("audio/") {
             item?.audioURL = attributeDict["url"]
+        }
+        if format == .rss, name == "enclosure", let url = attributeDict["url"] {
+            item?.noteEnclosure(url: url, type: attributeDict["type"], length: attributeDict["length"])
         }
         if format == .rss, name == "enclosure", (attributeDict["type"] ?? "").lowercased().hasPrefix("image/"),
            item?.enclosureImage == nil {
@@ -305,6 +320,13 @@ private struct ItemBuilder {
     var mediaThumbnail: String?
     var mediaContentImage: String?
     var enclosureImage: String?
+    var enclosure: (url: String, type: String?, length: Int?)?
+    /// Keeps the first enclosure that isn't a picture (#4640).
+    mutating func noteEnclosure(url: String, type: String?, length: String?) {
+        guard enclosure == nil, !url.isEmpty, !(type ?? "").lowercased().hasPrefix("image/") else { return }
+        let bytes = length.flatMap { Int($0.trimmingCharacters(in: .whitespaces)) }.flatMap { $0 > 0 ? $0 : nil }
+        enclosure = (url, type?.nilIfEmpty, bytes)
+    }
     func build() -> ParsedFeedItem? {
         // Podcast feeds, paid ones especially, often give episodes audio and a GUID but no
         // <link> (#179). The enclosure then stands in for the link, so identity falls back to
@@ -327,7 +349,10 @@ private struct ItemBuilder {
             content: content?.nilIfEmpty,
             guid: guid?.nilIfEmpty,
             imageURL: [itunesImage, mediaThumbnail, mediaContentImage, enclosureImage].lazy
-                .compactMap { $0.flatMap(httpsLink) }.first
+                .compactMap { $0.flatMap(httpsLink) }.first,
+            enclosureURL: enclosure?.url,
+            enclosureType: enclosure?.type,
+            enclosureLengthBytes: enclosure?.length
         )
     }
 }
