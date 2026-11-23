@@ -6,6 +6,7 @@ import { PauseIcon, PlayIcon } from '../icons.tsx';
 import { useMarginFilePicker, type OpenMarginFile } from '../import.tsx';
 import { libraryVoiceTag } from '../logic/episode-voice-words.ts';
 import { episodeVoice } from '../logic/playability.ts';
+import { libraryEpisodes } from '../logic/library-membership.ts';
 import { libraryRows, libraryRowMatches, marginAuthors, type LibraryRow } from '../logic/library.ts';
 import { usePlayer } from '../player.tsx';
 import { SearchField } from '../search.tsx';
@@ -17,7 +18,10 @@ export function Library({ onPlay, onFindShows, onOpenFile }: { onPlay: () => voi
   // import margins"). The Margins tab keeps the same button.
   const picker = useMarginFilePicker(onOpenFile);
   const [query, setQuery] = useState('');
-  const allRows = useMemo(() => libraryRows(data.episodes, data.shows, data.positions), [data.episodes, data.shows, data.positions]);
+  const allRows = useMemo(
+    () => libraryRows(libraryEpisodes(data.episodes, data.library, data.migrated), data.shows, data.positions),
+    [data.episodes, data.library, data.migrated, data.shows, data.positions],
+  );
   const authors = useMemo(() => marginAuthors(data.margins), [data.margins]);
   const rows = useMemo(() => allRows.filter((row) => libraryRowMatches(query, row, authors)), [allRows, authors, query]);
   const searching = query.trim() !== '';
