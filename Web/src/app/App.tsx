@@ -16,6 +16,7 @@ import { MiniPlayer, NowPlaying } from './screens/NowPlaying.tsx';
 import { Settings } from './screens/Settings.tsx';
 import { useNativeOpenedFiles } from './native-files.ts';
 import { useLaunchedFiles, useSharedFiles } from './shared-files.ts';
+import { SearchProvider, useClearSearches } from './search.tsx';
 import { UiProvider } from './ui.tsx';
 
 type Tab = 'library' | 'following' | 'margins' | 'settings';
@@ -51,10 +52,13 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
   }, []);
 
   const openPlayer = useCallback(() => setNowPlaying(true), []);
+  const clearSearches = useClearSearches();
   const landed = useCallback((at: Landing) => {
+    // Something new came in: an old search must not hide it once Now Playing closes.
+    clearSearches();
     setLanding(at);
     setNowPlaying(true);
-  }, []);
+  }, [clearSearches]);
   const openMarginFile = useOpenMarginFile(landed);
   // Every way a file arrives goes through the same unpacking, so a backup `.zip` shared to the installed app, or
   // opened with the Android app, opens its packets as a picked one does.
@@ -165,9 +169,11 @@ export function App({ launchLink = { kind: 'none' } }: { launchLink?: ParsedLink
     <UiProvider>
       <DataProvider>
         <FeedRefreshProvider>
-          <PlayerProvider>
-            <Shell launchLink={launchLink} />
-          </PlayerProvider>
+          <SearchProvider>
+            <PlayerProvider>
+              <Shell launchLink={launchLink} />
+            </PlayerProvider>
+          </SearchProvider>
         </FeedRefreshProvider>
       </DataProvider>
     </UiProvider>

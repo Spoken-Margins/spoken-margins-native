@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock } from '../../shared/clock.ts';
 import type { Margin } from '../../shared/model.ts';
 import { useData } from '../data.tsx';
@@ -6,7 +6,7 @@ import { ChevronIcon, StarIcon } from '../icons.tsx';
 import { shortDate } from '../format.ts';
 import { useMarginFilePicker, type OpenMarginFile, type OpenShareLink } from '../import.tsx';
 import { parseShareLink } from '../logic/share-link.ts';
-import { marginGroups, newestMarginId, startsCollapsed } from '../logic/library.ts';
+import { marginGroups, marginMatches, newestMarginId, startsCollapsed } from '../logic/library.ts';
 import { threadedRows } from '../logic/margin-threads.ts';
 import { plainError } from '../logic/messages.ts';
 import { firesByItself } from '../logic/margin-autoplay.ts';
@@ -14,7 +14,9 @@ import { parentOf, resumeReplying, stopReplying } from '../logic/reply-choice.ts
 import { replyMarginName, replyTo, rowLine, STOP_REPLYING } from '../logic/reply-words.ts';
 import { canStar, isStarred, shownStar, starTapWrites } from '../logic/star.ts';
 import { NotSavedError } from '../logic/storage.ts';
+import { groupCountLine, marginsMatchLine, noMatchLine, SEARCH_LABELS } from '../logic/search-words.ts';
 import { usePlayer } from '../player.tsx';
+import { SearchField, SearchStatus, useMarginFolds, useTabSearch } from '../search.tsx';
 import { useUi } from '../ui.tsx';
 import { VoiceButton } from '../voice.tsx';
 
@@ -24,11 +26,20 @@ export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkText, setLinkText] = useState('');
   const [opening, setOpening] = useState(false);
-  const groups = marginGroups(data.margins, data.episodes);
-  // The listener's own taps on a group's title; a group never tapped follows `startsCollapsed`.
-  const [toggled, setToggled] = useState<Record<string, boolean>>({});
+  const groups = useMemo(() => marginGroups(data.margins, data.episodes), [data.margins, data.episodes]);
+  // The listener's own taps on a group's title; a group never tapped follows `startsCollapsed`. Taps made while a search is on
+  // are kept apart, so clearing the search brings back the folding it found. Both live above the tabs (#4427).
+  const { toggled, setToggled, searchToggled, setSearchToggled } = useMarginFolds();
+  const { query, setQuery } = useTabSearch('margins');
+  const searching = query.trim() !== '';
   const newestId = newestMarginId(data.margins);
   const showTitle = (showId: string | undefined) => data.shows.find((s) => s.id === showId)?.title;
+  const found = useMemo(() => marginMatches(query, groups, (showId) => data.shows.find((s) => s.id === showId)?.title), [query, groups, data.shows]);
+  // A query ends when the last Margin goes, so Margins that come back aren't hidden by an old one.
+  useEffect(() => {
+    if (data.ready && groups.length === 0 && query.trim() !== '') setQuery('');
+  }, [data.ready, groups.length, query, setQuery]);
+  const shownMargins = found.reduce((n, match) => n + match.margins.length, 0);
 
   return (
     <div className="screen">
@@ -78,16 +89,21 @@ export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void
           </div>
         </form>
       )}
+      {groups.length > 0 && <SearchField label={SEARCH_LABELS.margins} value={query} onChange={setQuery} />}
+      {groups.length > 0 && (
+        <SearchStatus query={query} matchLine={found.length > 0 ? marginsMatchLine(shownMargins, found.length) : undefined} noMatchLine={noMatchLine('margins', query)} />
+      )}
       {data.ready && groups.length === 0 ? (
         <div className="empty">
           <p>Margins you write or record while listening appear here, the newest at the top. Tap one to hear its moment.</p>
           <p>A friend’s Margins arrive as a file ending in .spokenmargins. Open it here, or drop it on this page.</p>
         </div>
       ) : (
-        groups.map((group, index) => {
-          const collapsed = toggled[group.episodeId] ?? startsCollapsed(index, groups.length);
+        found.map(({ group, margins: shown }, shownIndex) => {
+          // While searching, every group shown starts open, whatever its folded state was; its own search-time taps win.
+          const collapsed = searching ? searchToggled[group.episodeId] ?? false : toggled[group.episodeId] ?? startsCollapsed(shownIndex, groups.length);
           const listId = `margin-list-${group.episodeId.replace(/[^A-Za-z0-9_-]/g, '_')}`;
-          const count = group.margins.length === 1 ? '1 Margin' : `${group.margins.length} Margins`;
+          const count = groupCountLine(shown.length, group.margins.length);
           return (
             // Not labelled regions: one landmark per episode would bury the four tabs in a long list.
             // Headings are the way through. The newest Margin carries its own "Newest" tag, so the group
@@ -99,7 +115,7 @@ export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void
                   className="margin-group-toggle"
                   aria-expanded={!collapsed}
                   aria-controls={listId}
-                  onClick={() => setToggled((current) => ({ ...current, [group.episodeId]: !collapsed }))}
+                  onClick={() => (searching ? setSearchToggled : setToggled)((current) => ({ ...current, [group.episodeId]: !collapsed }))}
                 >
                   <span className="margin-group-title">
                     <span className="row-kicker">{showTitle(group.episode?.showId) ?? 'Unfollowed show'}</span>
@@ -112,7 +128,7 @@ export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void
                 </button>
               </h2>
               <ol id={listId} className="margin-list" hidden={collapsed}>
-                {threadedRows(group.margins, data.margins).map(({ margin, indented, line }) => (
+                {threadedRows(shown, data.margins).map(({ margin, indented, line }) => (
                   <MarginRow key={margin.id} margin={margin} parent={parentOf(margin, data.margins)} newest={margin.id === newestId} onPlay={onPlay} indented={indented} threadLine={line} />
                 ))}
               </ol>

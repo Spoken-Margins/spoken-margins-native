@@ -11,6 +11,7 @@ import { suggestionsToShow } from '../logic/suggestions.ts';
 import { usePlayer } from '../player.tsx';
 import { useFeedRefresh } from '../refresh.tsx';
 import { services } from '../services.ts';
+import { useClearSearches } from '../search.tsx';
 import { useRelay, useUi } from '../ui.tsx';
 import { StateTag } from './Library.tsx';
 
@@ -252,6 +253,7 @@ function useFollowFeed(onFollowed?: () => void) {
   const data = useData();
   const relay = useRelay();
   const { toast } = useUi();
+  const clearSearches = useClearSearches();
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string>();
 
@@ -264,6 +266,8 @@ function useFollowFeed(onFollowed?: () => void) {
         // Just read, so the next automatic refresh leaves it for 30 minutes.
         await data.follow({ ...read.show, refreshedAt: new Date().toISOString() }, newestFirst(read.episodes));
         toast(`Following ${read.show.title}. ${read.episodes.length} episodes added to your Library.`);
+        // A followed show must not sit behind a search kept from before. Not through `onFollowed`, which also runs on Close.
+        clearSearches();
         onFollowed?.();
       } catch (error) {
         setProblem(plainError(error));
@@ -271,7 +275,7 @@ function useFollowFeed(onFollowed?: () => void) {
         setBusy(false);
       }
     },
-    [data, relay, toast, onFollowed],
+    [data, relay, toast, onFollowed, clearSearches],
   );
   return { busy, problem, setProblem, followFeed };
 }

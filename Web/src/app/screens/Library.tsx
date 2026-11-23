@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { formatClock } from '../../shared/clock.ts';
 import { useData } from '../data.tsx';
 import { minutes, shortDate } from '../format.ts';
@@ -8,7 +8,8 @@ import { libraryVoiceTag } from '../logic/episode-voice-words.ts';
 import { episodeVoice } from '../logic/playability.ts';
 import { libraryRows, libraryRowMatches, marginAuthors, type LibraryRow } from '../logic/library.ts';
 import { usePlayer } from '../player.tsx';
-import { SearchField } from '../search.tsx';
+import { libraryMatchLine, noMatchLine, SEARCH_LABELS } from '../logic/search-words.ts';
+import { SearchField, SearchStatus, useTabSearch } from '../search.tsx';
 
 export function Library({ onPlay, onFindShows, onOpenFile }: { onPlay: () => void; onFindShows: () => void; onOpenFile: OpenMarginFile }) {
   const data = useData();
@@ -16,11 +17,14 @@ export function Library({ onPlay, onFindShows, onOpenFile }: { onPlay: () => voi
   // A friend's Margin file is opened where a listener looks first (#3039, owner 2026-10-31: "I didn't see a way to
   // import margins"). The Margins tab keeps the same button.
   const picker = useMarginFilePicker(onOpenFile);
-  const [query, setQuery] = useState('');
+  const { query, setQuery } = useTabSearch('library');
   const allRows = useMemo(() => libraryRows(data.episodes, data.shows, data.positions), [data.episodes, data.shows, data.positions]);
   const authors = useMemo(() => marginAuthors(data.margins), [data.margins]);
   const rows = useMemo(() => allRows.filter((row) => libraryRowMatches(query, row, authors)), [allRows, authors, query]);
-  const searching = query.trim() !== '';
+  // A query ends when the Library empties, so rows that come back aren't hidden by an old one.
+  useEffect(() => {
+    if (data.ready && allRows.length === 0 && query.trim() !== '') setQuery('');
+  }, [data.ready, allRows.length, query, setQuery]);
 
   return (
     <div className="screen">
@@ -35,7 +39,7 @@ export function Library({ onPlay, onFindShows, onOpenFile }: { onPlay: () => voi
         </div>
         {picker.input}
       </header>
-      {allRows.length > 0 && <SearchField label="Search the Library" value={query} onChange={setQuery} />}
+      {allRows.length > 0 && <SearchField label={SEARCH_LABELS.library} value={query} onChange={setQuery} />}
       {data.ready && allRows.length === 0 ? (
         <div className="empty">
           <p>Episodes from the shows and Substacks you follow appear here, newest first.</p>
@@ -47,9 +51,7 @@ export function Library({ onPlay, onFindShows, onOpenFile }: { onPlay: () => voi
       ) : (
         <>
           {/* Always on the page, so a screen reader hears the words arrive. */}
-          <p className={searching && rows.length === 0 ? 'empty' : 'visually-hidden'} role="status">
-            {searching && rows.length === 0 ? `Nothing in the Library matches “${query.trim()}”.` : ''}
-          </p>
+          <SearchStatus query={query} matchLine={rows.length > 0 ? libraryMatchLine(rows.length) : undefined} noMatchLine={noMatchLine('library', query)} />
           <ul className="rows" aria-label="Episodes, newest first">
           {rows.map((row) => {
             const current = player.episode?.id === row.episode.id;
