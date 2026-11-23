@@ -126,6 +126,11 @@ public struct SpeechAskWaitingList: Equatable, Sendable {
 
     public func contains(_ id: String) -> Bool { !id.isEmpty && ids.contains(id) }
 
+    /// The Margin is a spoken one still waiting for the listener's answer: listed, and iOS has not decided.
+    public func isWaiting(_ id: String, access: SpeechRecognitionAccessState) -> Bool {
+        access == .notDetermined && contains(id)
+    }
+
     /// False for an empty id or one already waiting.
     @discardableResult
     public mutating func add(_ id: String) -> Bool {

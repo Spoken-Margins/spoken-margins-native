@@ -165,13 +165,13 @@ final class SpeechAskControllerTests: XCTestCase {
         XCTAssertEqual(promptsRaised, 2)
     }
 
+    /// Rows read the stored list off the main actor: a listed Margin waits while iOS is undecided, and not once it decides.
     func testMarginIdentitiesAreReadOffTheMainActor() {
-        defaults = .standard
-        defer { defaults.removeObject(forKey: SpeechAskWaitingList.storageKey) }
         defaults.set(["s1::m1"], forKey: SpeechAskWaitingList.storageKey)
-        // The row reader uses the real iOS answer, which is "not determined" only on a fresh simulator, so only the
-        // negative cases are asserted here.
-        XCTAssertFalse(SpeechAskController.marginIsWaitingForAnswer("s1::other"))
-        XCTAssertFalse(SpeechAskController.marginIsWaitingForAnswer(""))
+        XCTAssertTrue(SpeechAskController.marginIsWaitingForAnswer("s1::m1", defaults: defaults, access: .notDetermined))
+        XCTAssertFalse(SpeechAskController.marginIsWaitingForAnswer("s1::m1", defaults: defaults, access: .authorized))
+        XCTAssertFalse(SpeechAskController.marginIsWaitingForAnswer("s1::m1", defaults: defaults, access: .denied))
+        XCTAssertFalse(SpeechAskController.marginIsWaitingForAnswer("s1::other", defaults: defaults, access: .notDetermined))
+        XCTAssertFalse(SpeechAskController.marginIsWaitingForAnswer("", defaults: defaults, access: .notDetermined))
     }
 }

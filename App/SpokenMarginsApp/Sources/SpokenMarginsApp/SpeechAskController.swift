@@ -65,9 +65,14 @@ final class SpeechAskController: ObservableObject {
     // MARK: What the screens ask
 
     /// Readable off the main actor (rows are plain values): the stored waiting list and iOS's answer, no controller state.
-    nonisolated static func marginIsWaitingForAnswer(_ marginIdentity: String) -> Bool {
-        SpeechAskWaitingList(stored: UserDefaults.standard.stringArray(forKey: SpeechAskWaitingList.storageKey)).contains(marginIdentity)
-            && SpeechRecognitionAccess.state == .notDetermined
+    /// `defaults` and `access` are injectable so a test never reads the real ones.
+    nonisolated static func marginIsWaitingForAnswer(
+        _ marginIdentity: String,
+        defaults: UserDefaults = .standard,
+        access: SpeechRecognitionAccessState = SpeechRecognitionAccess.state
+    ) -> Bool {
+        SpeechAskWaitingList(stored: defaults.stringArray(forKey: SpeechAskWaitingList.storageKey))
+            .isWaiting(marginIdentity, access: access)
     }
 
     /// The cheap answer comes first and `slotIsFree` is lazy: the Now pane redraws on every playback tick, and building the
@@ -82,7 +87,7 @@ final class SpeechAskController: ObservableObject {
 
     /// Whether this Margin is a spoken one still waiting for the listener's answer: it reads "No transcript yet.".
     func isWaiting(marginIdentity: String) -> Bool {
-        waiting.contains(marginIdentity) && access() == .notDetermined
+        waiting.isWaiting(marginIdentity, access: access())
     }
 
     // MARK: What the app tells it

@@ -20,7 +20,7 @@ import PDFKit
 /// Margin identity, retry, delete, star and private notes (#990), moved unchanged out of the central model.
 extension Gate1AppModel {
     static func marginIdentity(_ interjection: Interjection) -> String {
-        "\(interjection.sessionId)::\(interjection.id)"
+        MarginIdentity.make(sessionId: interjection.sessionId, interjectionId: interjection.id)
     }
 
     /// Names a failed transcription's Retry offer, so retrying or transcribing the Margin another way withdraws it.

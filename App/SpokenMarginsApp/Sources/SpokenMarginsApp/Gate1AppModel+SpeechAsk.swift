@@ -11,7 +11,7 @@ extension Gate1AppModel {
     func retryWaitingTranscriptions(identities: [String]) {
         guard let store else { return }
         for identity in identities {
-            guard let (sessionId, interjectionId) = Self.splitMarginIdentity(identity),
+            guard let (sessionId, interjectionId) = MarginIdentity.split(identity),
                   let margin = try? store.loadInterjection(id: interjectionId, sessionId: sessionId) else { continue }
             let (current, verdict) = currentMargin(matching: margin)
             guard verdict == .retry, let current,
@@ -24,15 +24,6 @@ extension Gate1AppModel {
     /// list, so `SpeechAuthorizationAsk` remembered their item ids.
     func retryHeldSourceTranscriptions(itemIds: [String]) {
         for itemId in itemIds { importedPodcastPlacement.retryAfterSpeechAllowed(itemId: itemId) }
-    }
-
-    /// The inverse of `marginIdentity`. Nil for anything that isn't one.
-    static func splitMarginIdentity(_ identity: String) -> (sessionId: String, interjectionId: String)? {
-        guard let separator = identity.range(of: "::") else { return nil }
-        let sessionId = String(identity[..<separator.lowerBound])
-        let interjectionId = String(identity[separator.upperBound...])
-        guard !sessionId.isEmpty, !interjectionId.isEmpty else { return nil }
-        return (sessionId, interjectionId)
     }
 
     /// A transcription failure that is only the hold: the Margin waits for the listener's answer. Nothing to report.

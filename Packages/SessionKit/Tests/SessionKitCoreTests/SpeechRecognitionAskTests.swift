@@ -232,6 +232,16 @@ final class SpeechAskWaitingListTests: XCTestCase {
         XCTAssertTrue(list.add("m1"), "a Margin can wait again after a clear")
     }
 
+    /// A Margin reads "No transcript yet." only while it is on the list and iOS is still undecided.
+    func testAMarginIsWaitingOnlyWhileListedAndIOSIsUndecided() {
+        let list = SpeechAskWaitingList(stored: ["m1"])
+        for access in [SpeechRecognitionAccessState.authorized, .notDetermined, .denied, .restricted] {
+            XCTAssertEqual(list.isWaiting("m1", access: access), access == .notDetermined, "\(access)")
+            XCTAssertFalse(list.isWaiting("m2", access: access), "\(access)")
+        }
+        XCTAssertFalse(list.isWaiting("", access: .notDetermined))
+    }
+
     func testAMarginWaitingArmsTheCard() {
         XCTAssertTrue(SpeechAskWaitingList(stored: ["m1"]).hasWaitingMargin)
         XCTAssertFalse(SpeechAskWaitingList(stored: nil).hasWaitingMargin)
