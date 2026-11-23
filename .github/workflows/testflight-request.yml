@@ -1,0 +1,61 @@
+# The owner's "upload" button (#4915): when he adds the label `upload` to an issue or PR, start testflight-upload as
+# the spoken-margins-agent App.
+#
+# Why a relay: testflight-upload's approval environment prevents self-review, so GitHub refuses the owner's approval
+# on a run his own login started, and cloud sessions act as his login (Anthropic's GitHub proxy swaps in his
+# credential). A run the App starts is one he can approve. Owner's call, 2026-11-23: the App starts every run.
+#
+# Who: only a label added by `uncomposed` does anything (github.event.sender.login). A label added by anyone else is
+# ignored, and the label is left where it is. A cloud session acting as him could add the label too, since the proxy
+# acts as him; that starts a run but cannot finish it: the upload still waits for his own Approve, which GitHub
+# refuses to any session acting as the App, and testflight-upload's gate checks the approval came from him.
+#
+# Trust: no checkout and no branch code. `issues` and `pull_request_target` both run main's copy of this file; it
+# only calls the GitHub API to start the main workflow on `main` and to take the label off again, so the next add
+# fires a new event. Share-link creation stays at the workflow's default (off); any other choice is made by starting
+# testflight-upload by hand as the App.
+#
+# Cost and catch: a few seconds of free hosted Linux per label added by anyone (the job is skipped unless it is the
+# owner's `upload`), no tokens, one owner action. It catches the case the whole relay exists for: with the Mac gone,
+# no one could start an upload he can approve. Waste signal: the label is never used, because uploads keep being
+# started some other way.
+name: testflight-request
+
+on:
+  issues:
+    types: [labeled]
+  pull_request_target:
+    types: [labeled]
+
+permissions: {}
+
+jobs:
+  start:
+    if: github.event.label.name == 'upload' && github.event.sender.login == 'uncomposed'
+    runs-on: ubuntu-latest
+    environment: agent-identity
+    timeout-minutes: 5
+    concurrency:
+      group: testflight-request
+      cancel-in-progress: false
+    steps:
+      - name: Act as the spoken-margins-agent App
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.SM_APP_ID }}
+          private-key: ${{ secrets.SM_APP_PRIVATE_KEY }}
+          # No owner or repositories: the action then scopes the token to this repository alone.
+      - name: Start testflight-upload on main as the App
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SENDER: ${{ github.event.sender.login }}
+          NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          [ "$SENDER" = "uncomposed" ] || { echo "::error::only the owner's label starts an upload"; exit 1; }
+          gh api -X POST "repos/$GITHUB_REPOSITORY/actions/workflows/testflight-upload.yml/dispatches" -f ref=main
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$NUMBER/labels/upload" --silent || true
+          runs="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/testflight-upload.yml"
+          gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" --silent \
+            -f body="Started a TestFlight upload of main as the App: $runs. It checks the build number, then waits for your Approve. If the check refuses, nothing is uploaded and no approval is asked for."
+          echo "Started testflight-upload on main for the owner's label on #$NUMBER." >> "$GITHUB_STEP_SUMMARY"

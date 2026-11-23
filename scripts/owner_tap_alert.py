@@ -93,7 +93,9 @@ OWN_CHECKS = {'owner-tap-alert'}
 # Gates, not tests (#4693): "merge policy" stays red until the PR has its audit and the owner's `owner-tap` label. A
 # red gate must not count as a failed check here, or the audit script (which reads this) never audits an owner-tap PR
 # and this alert never tells the owner it is ready: each waits on the other.
-GATE_CHECKS = {'merge policy', 'merge policy run'}  # the job is named apart from the check it writes (#4986)
+# The job is named apart from the check it writes (#4986), and that check is a commit status, not a check run (#5162),
+# so both lists below skip these names.
+GATE_CHECKS = {'merge policy', 'merge policy run'}
 LABEL = 'owner-tap-check'  # the Mac's and the audit script's way to ask Actions for a check (--via-label)
 OWNER_TAP_LABEL = 'owner-tap'  # the owner's own tap (merge_policy.py reads it); a PR that carries it no longer waits on him
 MERGEABLE_TRIES = 4  # GitHub works `mergeable` out on the first read after a push; ask again a few times (#4939)
@@ -162,7 +164,7 @@ def checks_state(check_runs: list[dict], statuses: list[dict]) -> tuple[str, lis
     seen = set()
     for status in statuses:  # newest first from the API: the first per context is the current one
         context = status.get('context') or '?'
-        if context in seen:
+        if context in seen or context in GATE_CHECKS:
             continue
         seen.add(context)
         if status.get('state') in ('failure', 'error'):
