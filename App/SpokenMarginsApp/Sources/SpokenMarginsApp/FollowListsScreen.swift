@@ -99,7 +99,7 @@ struct FollowListsScreen: View {
                             isExporting = false
                         }
                     } label: {
-                        Label(ListLinkWords.exportAllFollows, systemImage: "square.and.arrow.up")
+                        Label(ListLinkWords.exportAllFollows, systemImage: "doc.text")
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     }
                     .disabled(isExporting)

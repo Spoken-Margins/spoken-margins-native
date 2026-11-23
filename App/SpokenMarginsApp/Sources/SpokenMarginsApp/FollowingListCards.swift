@@ -61,12 +61,13 @@ struct FollowingListCards: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(AppColors.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button(ListLinkWords.review) {
+            Button {
                 reviewed = []
                 reviewNext()
+            } label: {
+                Text(ListLinkWords.review).minimumTapTarget()
             }
             .buttonStyle(.bordered)
-            .frame(minHeight: 44)
             .accessibilityIdentifier("following.listChange.review")
         }
         .padding(12)

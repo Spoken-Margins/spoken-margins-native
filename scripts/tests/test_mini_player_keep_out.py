@@ -32,6 +32,8 @@ NO_PILL = {
     ("FollowListPickerSheet.swift", "*"): "a sheet from the show and Following screens (#4046)",
     ("FollowListScreen.swift", "FollowListAddShowsSheet"): "a sheet from the list screens (#4046)",
     ("RulesScreen.swift", "NewRuleSheet"): "a sheet from the Rules screen (#4046)",
+    ("FollowListScreen.swift", "ShareFollowListSheet"): "a sheet from the list screen (#4046)",
+    ("ListLinkPreviewScreen.swift", "ListChangesSheet"): "a sheet from the change card on Following (#4046)",
     ("Gate1RootView.swift", "Gate1RootView"): "the terms sheet",
     ("Gate1RootView.swift", "InterjectionDetailView"): "pushed inside the Margin detail sheet",
     ("ItemCollectionSheet.swift", "*"): "a sheet",

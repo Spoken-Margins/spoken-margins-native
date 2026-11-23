@@ -161,6 +161,7 @@ struct FollowListScreen: View {
             if let includeURL {
                 ListLinkPreviewScreen(model: model, url: includeURL, includeInto: list) { _ in self.includeURL = nil }
                     .id(includeURL)
+                    .miniPlayerKeepOut()
             }
         }
         .confirmationDialog(
