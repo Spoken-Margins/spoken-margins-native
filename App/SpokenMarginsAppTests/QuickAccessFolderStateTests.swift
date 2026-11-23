@@ -636,9 +636,9 @@ final class QuickAccessFolderStateTests: XCTestCase {
         }
     }
 
-    /// A scan as the scanner gives it: the newest eight as `files`, every file as `inboxFiles`.
+    /// A scan as the scanner gives it: the newest eight as `files`, every file as `allFiles`.
     private static func scan(dated all: [QuickAccessFileCandidate]) -> QuickAccessFolderScan {
-        QuickAccessFolderScan(files: Array(all.prefix(QuickAccessFolderScanner.quickAddLimit)), errorDescription: nil, inboxFiles: all)
+        QuickAccessFolderScan(files: Array(all.prefix(QuickAccessFolderScanner.quickAddLimit)), errorDescription: nil, allFiles: all)
     }
 
     private static func localFiles(_ state: QuickAccessFolderState) -> [QuickAccessFile] {
