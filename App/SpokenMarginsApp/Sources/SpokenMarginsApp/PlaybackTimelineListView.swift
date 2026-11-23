@@ -55,10 +55,10 @@ struct PlaybackTimelineListView<Details: View>: View {
                                     })
                         .equatable()
                         .contextMenu { details(entry.action) }
-                        // The same actions for VoiceOver and Switch Control, which can't long-press (#1917), and on a chapter
-                        // that can fold, folding it without finding the control (#4778).
+                        // The same actions for VoiceOver and Switch Control, which can't long-press (#1917).
+                        .accessibilityActions { details(entry.action) }
+                        // On a chapter that can fold, folding it without finding the control (#4778).
                         .accessibilityActions {
-                            details(entry.action)
                             if canFold {
                                 Button(TimelineRowLines.rowFoldActionName(isFolded: summary != nil)) { toggleChapter(entry.id) }
                             }
