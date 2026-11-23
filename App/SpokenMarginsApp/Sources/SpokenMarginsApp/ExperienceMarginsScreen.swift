@@ -137,6 +137,7 @@ struct ExperienceMarginsScreen: View, Equatable {
             .onChange(of: model.marginCollectionQuery.text) { old, new in
                 if old.isEmpty, !new.isEmpty { SpeechAskController.shared.reachedForText(on: .margins) }
             }
+            .onDisappear { SpeechAskController.shared.surfaceLeft(.margins) }
             .fileShareSheet($markdownFileURL)
             .navigationTitle("Margins")
             .navigationBarTitleDisplayMode(.inline)

@@ -125,6 +125,14 @@ final class SpeechAskController: ObservableObject {
         cardSurface = surface
     }
 
+    /// The listener left the Margins tab or the Margin's screen where the card was drawn without answering. It goes back to
+    /// Now, which is the one surface that always draws it, so it can't vanish for the rest of the launch.
+    func surfaceLeft(_ surface: Surface) {
+        guard cardSurface == surface, surface != .now,
+              ask.cardStaysOnNowAfterSurfaceLeft(access: access()) else { return }
+        cardSurface = .now
+    }
+
     // MARK: What the listener taps
 
     func notNow() {

@@ -59,6 +59,21 @@ final class SpeechAskControllerTests: XCTestCase {
         XCTAssertFalse(controller.isCardShowing(on: .margins, slotIsFree: true), "it shows only on its own surface")
     }
 
+    /// Leaving the surface a re-ask was drawn on, unanswered, puts the card back on Now; an answer does not.
+    func testLeavingTheReaskSurfaceWithoutAnsweringReturnsTheCardToNow() {
+        let controller = makeController()
+        controller.spokenMarginSaved(isWritten: false)
+        controller.getTranscript(on: .detail, model: nil)
+        XCTAssertFalse(controller.isCardShowing(on: .now, slotIsFree: true))
+        controller.surfaceLeft(.detail)
+        XCTAssertTrue(controller.isCardShowing(on: .now, slotIsFree: true))
+
+        controller.getTranscript(on: .margins, model: nil)
+        controller.notNow()
+        controller.surfaceLeft(.margins)
+        XCTAssertNil(controller.cardSurface)
+    }
+
     func testUnansweredCardSurvivesARelaunchWhileAMarginWaits() {
         let first = makeController()
         first.spokenMarginSaved(isWritten: false)

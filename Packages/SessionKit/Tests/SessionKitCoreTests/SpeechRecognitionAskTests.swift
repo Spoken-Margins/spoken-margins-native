@@ -147,6 +147,19 @@ final class SpeechRecognitionAskTests: XCTestCase {
     }
 
     /// `yesAllowRetriesWaiting` / `yesDenyShowsTodaysWording`: after Yes the card never comes back for any reach.
+    /// The card that was drawn on the Margins tab or a Margin's screen moves to Now when the listener leaves, unless the
+    /// question is over (a Yes, or iOS has decided). A Not now that was re-asked is still unanswered, so it stays.
+    func testCardStaysForNowWhenTheListenerLeavesItsSurface() {
+        for access in allAccess {
+            for answer in [SpeechRecognitionAsk.Answer.unanswered, .notNow, .yes] {
+                var ask = SpeechRecognitionAsk(storedAnswer: nil)
+                ask.answered(answer)
+                XCTAssertEqual(ask.cardStaysOnNowAfterSurfaceLeft(access: access), access == .notDetermined && answer != .yes,
+                               "\(access) \(answer)")
+            }
+        }
+    }
+
     func testYesIsFinal() {
         let moments: [SpeechRecognitionAsk.Moment] = [saved, .hearItLandEnded, .reachedForText]
         for moment in moments {

@@ -96,6 +96,13 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
         }
     }
 
+    /// The card was drawn where the listener reached for text (the Margins tab, a Margin's screen) and they left without
+    /// answering. It goes back to the Now pane so it can't vanish for the rest of the launch. Not after a Yes or once iOS
+    /// has decided.
+    public func cardStaysOnNowAfterSurfaceLeft(access: SpeechRecognitionAccessState) -> Bool {
+        access == .notDetermined && answer != .yes
+    }
+
     public mutating func answered(_ answer: Answer) {
         self.answer = answer
     }

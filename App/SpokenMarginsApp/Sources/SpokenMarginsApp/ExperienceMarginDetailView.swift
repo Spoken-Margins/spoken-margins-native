@@ -291,6 +291,7 @@ struct ExperienceMarginDetailView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("marginDetail.screen")
             .navigationTitle("Margin")
+            .onDisappear { SpeechAskController.shared.surfaceLeft(.detail) }
             .navigationBarTitleDisplayMode(.inline)
             .scrollContentBackground(.hidden)
             .background(AppColors.bone)
