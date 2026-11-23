@@ -233,6 +233,9 @@ final class CatalogDrawerModel: ObservableObject {
         switch action {
         case .none:
             break
+        case .playWelcome:
+            // No call site yet: #4714 builds the order with `welcomeOwed` and plays the welcome (#4711 section 3).
+            break
         case .presentDrawer:
             // Opened from Following meanwhile, or already seen: the first-run opening has nothing left to do.
             guard !isPresented, !defaults.bool(forKey: Self.seenKey) else { return }
