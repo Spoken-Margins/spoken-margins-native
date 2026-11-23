@@ -87,10 +87,35 @@ final class SpeechRecognitionAskTests: XCTestCase {
         }
     }
 
-    /// `returningWithOpenAnswerGetsCard` (Default 2): the rule never asks whether the install is new.
-    func testAnOpenAnswerGetsTheCardWhateverTheInstall() {
-        var ask = SpeechRecognitionAsk(storedAnswer: nil)
-        XCTAssertTrue(ask.cardDue(at: saved, access: .notDetermined, shownThisLaunchForReAsk: false))
+    /// Closed while iOS's prompt was up: the Yes was never answered, so it is not carried into the next launch.
+    func testAYesThatIOSNeverAnsweredIsDroppedAtLaunch() {
+        let table: [(String?, SpeechRecognitionAccessState, String?)] = [
+            ("yes", .notDetermined, nil),
+            ("yes", .authorized, "yes"), ("yes", .denied, "yes"), ("yes", .restricted, "yes"),
+            ("notNow", .notDetermined, "notNow"), ("unanswered", .notDetermined, "unanswered"), (nil, .notDetermined, nil),
+            ("garbage", .notDetermined, "garbage"), ("", .notDetermined, "")
+        ]
+        for (stored, access, expected) in table {
+            XCTAssertEqual(SpeechRecognitionAsk.answerToCarryIntoLaunch(stored: stored, access: access), expected, "\(String(describing: stored)) \(access)")
+        }
+        // The card comes back and iOS stays closed.
+        let carried = SpeechRecognitionAsk.answerToCarryIntoLaunch(stored: "yes", access: .notDetermined)
+        let ask = SpeechRecognitionAsk(storedAnswer: carried, hasSavedSpokenMargin: true)
+        XCTAssertTrue(ask.isOwed(access: .notDetermined))
+        XCTAssertFalse(ask.mayAskSystem(access: .notDetermined))
+    }
+
+    /// Get Transcript always reaches the system prompt or the card while iOS is undecided.
+    func testGetTranscriptAlwaysGetsSomewhere() {
+        for stored in [nil, "unanswered", "notNow", "garbage"] as [String?] {
+            XCTAssertEqual(SpeechRecognitionAsk(storedAnswer: stored).getTranscriptStep(access: .notDetermined), .showCard, "\(String(describing: stored))")
+        }
+        XCTAssertEqual(SpeechRecognitionAsk(storedAnswer: "yes").getTranscriptStep(access: .notDetermined), .askSystem)
+        for access in [SpeechRecognitionAccessState.authorized, .denied, .restricted] {
+            for stored in [nil, "notNow", "yes"] as [String?] {
+                XCTAssertEqual(SpeechRecognitionAsk(storedAnswer: stored).getTranscriptStep(access: access), .settle)
+            }
+        }
     }
 
     /// `unansweredSurvivesRelaunch`: the Margin on the waiting list is what arms the card in a new launch.

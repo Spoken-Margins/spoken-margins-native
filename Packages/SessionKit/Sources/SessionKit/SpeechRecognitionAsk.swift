@@ -40,6 +40,30 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
 
     public var storedAnswer: String { answer.rawValue }
 
+    /// The answer to carry into a launch. A stored Yes while iOS still says "not determined" means the app was closed while
+    /// iOS's prompt was up: the listener never answered it. That Yes is dropped, so the card comes back and iOS's prompt
+    /// stays closed until they say Yes again, and it never arrives in the middle of a later save (#5016). Any other pair is
+    /// kept as stored.
+    public static func answerToCarryIntoLaunch(stored: String?, access: SpeechRecognitionAccessState) -> String? {
+        if stored == Answer.yes.rawValue, access == .notDetermined { return nil }
+        return stored
+    }
+
+    /// Get Transcript is a direct request, not a nag: it always gets somewhere while iOS has not decided.
+    public enum GetTranscriptStep: Equatable, Sendable {
+        /// The listener said Yes but iOS has not been answered (or was closed on): ask iOS now.
+        case askSystem
+        /// Show the card where they tapped, whatever the once-per-launch limit says.
+        case showCard
+        /// iOS has decided: settle the Margins that waited.
+        case settle
+    }
+
+    public func getTranscriptStep(access: SpeechRecognitionAccessState) -> GetTranscriptStep {
+        guard access == .notDetermined else { return .settle }
+        return answer == .yes ? .askSystem : .showCard
+    }
+
     /// Only the listener's Yes lets a transcription client call iOS's prompt, and only while iOS has not decided.
     public func mayAskSystem(access: SpeechRecognitionAccessState) -> Bool {
         answer == .yes && access == .notDetermined

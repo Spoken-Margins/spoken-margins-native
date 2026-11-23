@@ -206,7 +206,7 @@ struct ExperienceMarginDetailView: View {
                     }
                     if current.transcriptWaitsForAnswer {
                         Button("Get Transcript", systemImage: "text.bubble") {
-                            SpeechAskController.shared.reachedForText(on: .detail)
+                            SpeechAskController.shared.getTranscript(on: .detail, model: model)
                         }
                         .accessibilityIdentifier("marginDetail.getTranscript.button")
                     } else if current.canRetryTranscription {

@@ -86,7 +86,9 @@ struct SpokenMarginsApp: App {
         if !runningTests {
             LaunchRecorder.shared = LaunchRecorder()
         }
-        SpeechAskController.installGate() // iOS's Speech Recognition prompt waits for the listener's Yes (#5016)
+        // iOS's Speech Recognition prompt waits for the listener's Yes (#5016). Unit tests and scripted journeys have no card
+        // (it is hidden under the first-run suppression) and no way to say Yes, so they keep the gate open as before.
+        if !runningTests, !UITestingHooks.suppressesFirstRun { SpeechAskController.installGate() }
         let model = Gate1AppModel.makeApplicationModel()
         // Memory use and memory kills, in Diagnostics (#122). Unit tests keep nothing on disk.
         let pinnedDiagnostics = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)

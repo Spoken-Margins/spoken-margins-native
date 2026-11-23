@@ -2029,7 +2029,7 @@ private func interjectionPreview(_ interjection: Interjection) -> String {
        !transcript.isEmpty {
         return transcript
     }
-    return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff, speechRecognitionNotYetAsked: SpeechAskController.marginIsWaitingForAnswer(Gate1AppModel.marginIdentity(interjection))) ?? interjection.transcriptionStatus
+    return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff, speechRecognitionNotYetAsked: SpeechAskController.marginIsWaitingForAnswer("\(interjection.sessionId)::\(interjection.id)")) ?? interjection.transcriptionStatus
 }
 
 private struct LightButtonStyle: ButtonStyle {

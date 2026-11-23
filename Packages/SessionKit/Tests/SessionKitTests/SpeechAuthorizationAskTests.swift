@@ -67,12 +67,8 @@ final class SpeechAuthorizationAskTests: XCTestCase {
         }
     }
 
-    func testTheGateIsOneSharedSettingThatDefaultsToTodaysBehaviour() {
-        let saved = SpeechAuthorizationAsk.mayAskSystem
-        defer { SpeechAuthorizationAsk.setMayAskSystem(saved) }
-        SpeechAuthorizationAsk.setMayAskSystem { false }
-        XCTAssertFalse(SpeechAuthorizationAsk.mayAskSystem())
-        SpeechAuthorizationAsk.setMayAskSystem { true }
+    /// Nothing in this process closes the gate, so a macOS tool or test that has no card still asks iOS as it always did.
+    func testTheGateIsOpenUntilTheAppClosesIt() {
         XCTAssertTrue(SpeechAuthorizationAsk.mayAskSystem())
     }
 }

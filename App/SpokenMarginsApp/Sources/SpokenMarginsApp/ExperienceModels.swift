@@ -43,9 +43,9 @@ struct MarginRow: Identifiable, Equatable, Sendable {
         TranscriptionFailureWording.marginAttention(
             transcriptionStatus: interjection.transcriptionStatus,
             speechRecognitionOff: SpeechRecognitionAccess.isOff,
+            speechRecognitionNotYetAsked: transcriptWaitsForAnswer,
             contextUnavailable: interjection.anchorContextStatus == .unavailable,
-            recordingMissing: interjection.audioStatus == "missing",
-            speechRecognitionNotYetAsked: transcriptWaitsForAnswer
+            recordingMissing: interjection.audioStatus == "missing"
         )
     }
 

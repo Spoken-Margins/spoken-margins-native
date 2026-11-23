@@ -18,6 +18,8 @@ final class SpeechAskController: ObservableObject {
     private let defaults: UserDefaults
     private let access: () -> SpeechRecognitionAccessState
     private let isSuppressed: () -> Bool
+    /// iOS's own prompt. Injected so tests never raise it.
+    private let askSystem: @Sendable () async -> Void
     private(set) var ask: SpeechRecognitionAsk
     private(set) var waiting: SpeechAskWaitingList
     private var reAskShownThisLaunch = false
@@ -27,16 +29,19 @@ final class SpeechAskController: ObservableObject {
     init(
         defaults: UserDefaults = .standard,
         access: @escaping () -> SpeechRecognitionAccessState = { SpeechRecognitionAccess.state },
-        isSuppressed: @escaping () -> Bool = { Gate1AppModel.isRunningUnitTests || UITestingHooks.suppressesFirstRun }
+        isSuppressed: @escaping () -> Bool = { Gate1AppModel.isRunningUnitTests || UITestingHooks.suppressesFirstRun },
+        askSystem: @escaping @Sendable () async -> Void = { _ = await SpeechAuthorizationAsk.requestFromSystem() }
     ) {
         self.defaults = defaults
         self.access = access
         self.isSuppressed = isSuppressed
+        self.askSystem = askSystem
         let waiting = SpeechAskWaitingList(stored: defaults.stringArray(forKey: SpeechAskWaitingList.storageKey))
         self.waiting = waiting
-        ask = SpeechRecognitionAsk(
-            storedAnswer: defaults.string(forKey: SpeechRecognitionAsk.storageKey),
-            hasSavedSpokenMargin: waiting.hasWaitingMargin)
+        let stored = defaults.string(forKey: SpeechRecognitionAsk.storageKey)
+        let carried = SpeechRecognitionAsk.answerToCarryIntoLaunch(stored: stored, access: access())
+        if carried != stored { defaults.removeObject(forKey: SpeechRecognitionAsk.storageKey) }
+        ask = SpeechRecognitionAsk(storedAnswer: carried, hasSavedSpokenMargin: waiting.hasWaitingMargin)
         // An unanswered card comes back when the slot is free, including after a relaunch.
         if ask.isOwed(access: access()) { cardSurface = .now }
     }
@@ -44,6 +49,13 @@ final class SpeechAskController: ObservableObject {
     /// Closes iOS's prompt until the listener's Yes, for every transcription client at once. Called first thing at launch,
     /// before anything can transcribe. Reads the stored answer each time, so Yes opens it with no other step.
     nonisolated static func installGate() {
+        // A Yes that iOS never answered (closed while its prompt was up) is dropped first, so the card returns and the
+        // prompt cannot arrive in the middle of the next save.
+        let defaults = UserDefaults.standard
+        let stored = defaults.string(forKey: SpeechRecognitionAsk.storageKey)
+        if SpeechRecognitionAsk.answerToCarryIntoLaunch(stored: stored, access: SpeechRecognitionAccess.state) != stored {
+            defaults.removeObject(forKey: SpeechRecognitionAsk.storageKey)
+        }
         SpeechAuthorizationAsk.setMayAskSystem {
             SpeechRecognitionAsk(storedAnswer: UserDefaults.standard.string(forKey: SpeechRecognitionAsk.storageKey))
                 .mayAskSystem(access: .notDetermined)
@@ -63,6 +75,10 @@ final class SpeechAskController: ObservableObject {
     func isCardShowing(on surface: Surface = .now, slotIsFree: @autoclosure () -> Bool) -> Bool {
         cardSurface == surface && !isSuppressed() && access() == .notDetermined && slotIsFree()
     }
+
+    /// The first card is owed and unanswered: iOS undecided, a spoken Margin saved, no answer yet. It holds through a
+    /// relaunch (the waiting list arms it), so #4672's sheet waits on this and not on whether the card is on screen now.
+    var isOutstanding: Bool { ask.isOwed(access: access()) }
 
     /// Whether this Margin is a spoken one still waiting for the listener's answer: it reads "No transcript yet.".
     func isWaiting(marginIdentity: String) -> Bool {
@@ -85,6 +101,18 @@ final class SpeechAskController: ObservableObject {
         // (a retry) arms it too.
         if cardSurface == nil, ask.answer == .unanswered {
             _ = ask.cardDue(at: .spokenMarginSaved(hearItLandWillRun: true), access: access(), shownThisLaunchForReAsk: false)
+            if ask.isOwed(access: access()) { cardSurface = .now }
+        }
+    }
+
+    /// The listener tapped Get Transcript on a Margin that waits. It is a direct request, so it always gets somewhere while
+    /// iOS is undecided: Yes already said (iOS's prompt lost) asks iOS again; otherwise the card shows right here, whatever
+    /// the once-per-launch limit on re-asks says. Once iOS has decided it settles the waiting Margins.
+    func getTranscript(on surface: Surface, model: Gate1AppModel?) {
+        switch ask.getTranscriptStep(access: access()) {
+        case .askSystem: _ = yes(model: model)
+        case .showCard: cardSurface = surface
+        case .settle: reconcile(model: model)
         }
     }
 
@@ -104,10 +132,11 @@ final class SpeechAskController: ObservableObject {
     }
 
     /// Yes: the app has asked, so iOS may now. Allow transcribes what waited; Don't Allow leaves it reading as #268 says.
-    func yes(model: Gate1AppModel) {
+    @discardableResult
+    func yes(model: Gate1AppModel?) -> Task<Void, Never> {
         record(.yes)
-        Task { [weak self, weak model] in
-            _ = await SpeechAuthorizationAsk.requestFromSystem()
+        return Task { [weak self, weak model, askSystem] in
+            await askSystem()
             guard let self else { return }
             self.reconcile(model: model)
         }

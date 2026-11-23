@@ -3,19 +3,30 @@ import SessionKit
 
 /// #4715 / #5016: the one line the app says before iOS asks about Speech Recognition. It sits in the Now pane's pinned
 /// slot and shows only while `SpeechAskController` says the card is due and nothing else holds the slot (a friend's Margin
-/// card keeps the slot first). The decisions are `SpeechRecognitionAsk`; this only draws them.
+/// card or a footnote card keeps the slot first). The decisions are `SpeechRecognitionAsk`; this only draws them.
 struct SpeechAskCardSlot: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var controller = SpeechAskController.shared
 
     var body: some View {
-        Group {
-            if controller.isCardShowing(slotIsFree: model.pinnedMarginCard == nil && !model.recordingNavigationIsLocked) {
+        // A zero-height view is always present, so the settle below runs whether or not the card is showing.
+        VStack(spacing: 0) {
+            if controller.isCardShowing(slotIsFree: slotIsFree) {
                 SpeechAskCard(controller: controller)
             }
+            Color.clear.frame(height: 0).accessibilityHidden(true)
         }
         // A listener who decided in iOS Settings, or a launch that finds Margins waiting, is settled here.
         .task { controller.reconcile(model: model) }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { controller.reconcile(model: model) }
+        }
+    }
+
+    /// One slot rule: a friend's Margin card, a footnote card and a locked recording all keep the slot.
+    private var slotIsFree: Bool {
+        model.pinnedMarginCard == nil && model.footnoteCard == nil && !model.recordingNavigationIsLocked
     }
 }
 
