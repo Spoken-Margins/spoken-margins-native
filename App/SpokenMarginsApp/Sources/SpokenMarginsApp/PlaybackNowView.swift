@@ -56,6 +56,7 @@ struct PlaybackNowView: View {
                         transcriptionStatus: row.interjection.transcriptionStatus, captureKind: row.interjection.captureKind),
                         detail: row.placeDescription(), countdown: entry.countdown,
                         isShared: false, identifier: "playback.now.margin.\(row.id)",
+                        canPlay: MarginPlacePresentation.offersPlay(row.interjection),
                         goesTo: SilentMarginWords.ownWrittenGoesTo(row.interjection), sourceNoun: model.sourceNoun,
                         star: .ownMargin(row.interjection, place: .now, model: model),
                         showDetails: { selectedMargin = row }, play: { MarginMomentTap.start(row, model: model) })

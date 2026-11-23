@@ -475,11 +475,15 @@ struct ExperienceTimelineRailScreen: View {
                         row.preview,
                         characterLimit: TimelineTextPresentation.marginCharacterLimit
                     ),
-                    detail: [row.cutShort?.tag, row.needsAttention ? row.attentionDescription : "Captured at \(position)%"].compactMap { $0 }.joined(separator: " · "),
+                    detail: [row.cutShort?.tag, row.needsAttention ? row.attentionDescription
+                        : MarginPlacePresentation.timelineDetail(for: row.interjection, position: position)].compactMap { $0 }.joined(separator: " · "),
                     action: .margin(row),
                     precisePosition: preciseSourcePosition(row.interjection, in: item, durationMs: knownDuration),
                     reference: .local(row.interjection.id),
-                    positionLabel: TimelinePositionLabel.label(kind: kind, startMs: row.interjection.anchor.mediaTimeMs, percent: position)
+                    // A Margin with no place (#4233) says so in the corner and sorts after the last placed entry.
+                    positionLabel: row.interjection.hasPlace
+                        ? TimelinePositionLabel.label(kind: kind, startMs: row.interjection.anchor.mediaTimeMs, percent: position)
+                        : MarginPlacePresentation.timelineLabel
                 )
             )
         }
@@ -674,6 +678,8 @@ struct ExperienceTimelineRailScreen: View {
     }
 
     private static func preciseSourcePosition(_ margin: Interjection, in item: ItemDetailState, durationMs: Int?) -> Double? {
+        // A Margin with no place (#4233) has no precise place: its `sortPercent` puts it after every placed entry.
+        guard margin.hasPlace else { return nil }
         if item.isNativeAudio {
             return TimelineRailSortKey.percent(position: margin.anchor.mediaTimeMs, length: durationMs)
         }
@@ -688,7 +694,8 @@ struct ExperienceTimelineRailScreen: View {
         let visited = visited.union([turn.id])
         let sourceIDs = Set(turn.sourceInterjectionIds)
         return item.interjections
-            .filter { $0.sessionId == turn.sessionId && sourceIDs.contains($0.id) }
+            // A source Margin with no place (#4233) says nothing about where the reflection belongs.
+            .filter { $0.sessionId == turn.sessionId && sourceIDs.contains($0.id) && ($0.targetType != .item || $0.hasPlace) }
             .map { margin in
                 if margin.targetType == .item {
                     return preciseSourcePosition(margin, in: item, durationMs: durationMs)
