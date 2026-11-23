@@ -1,6 +1,8 @@
+import AVFoundation
 import Foundation
 import SessionKit
 import SessionKitPersistence
+import SessionKitSupertonic
 import XCTest
 @testable import SpokenMarginsApp
 
@@ -169,5 +171,63 @@ final class FootnotePlanWiringTests: XCTestCase {
         _ = try await prepare(fixture, coordinator: coordinator, asides: false)
         XCTAssertFalse(PreparedSpeechHooks.footnoteAsides(item: fixture.item, articleText: article, store: fixture.store),
                        "audio prepared with the notes at the end keeps them there until it is prepared again")
+    }
+
+    /// "Chime where cited" on an article that is ready offline: the file is assembled from the notes plan as
+    /// `finishBackgroundPreparedAudio` does it and saved as `PreparedTextAudioPersister` saves it, and the media player's
+    /// footnote session is loaded from the store the way the app loads it. A file whose timeline lost the notes' own
+    /// segments, or a session read from the wrong text, would load nothing and the notes would play in full (#3777).
+    func testAnAssembledFileOfTheNotesPlanLoadsAFootnoteSessionFromTheStore() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let plan = PreparedChunkPlan.articlePlan(article, asides: true)
+        _ = try await coordinator.begin(itemId: "item", sourceText: article, signature: signature(), plan: plan, asides: true)
+        for entry in plan {
+            try await coordinator.commit(itemId: "item", signature: signature(), plan: entry, sourceText: article,
+                                         audioURL: template, durationMs: 200, asides: true)
+        }
+        let manifest = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: PreparedAudioCoordinator.manifestId(itemId: "item", signature: signature())))
+        let speech = try XCTUnwrap(PreparedSpeechHooks.texts.resolve(item: fixture.item, documents: fixture.store))
+        let narration = try await SupertonicPreparedAudioAssembler.assemble(
+            itemId: "item",
+            sourceText: speech.itemText,
+            projection: speech.assemblyProjection(asides: true),
+            voice: .m2,
+            chunks: try PreparedAudioCoordinator.assemblyChunks(plan: plan, manifest: manifest, sourceText: article,
+                                                               preparedRoot: fixture.prepared, asides: true),
+            outputDirectory: fixture.root.appending(path: "Narration", directoryHint: .isDirectory)
+        )
+        try fixture.store.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "generated-transcript-item", itemId: "item", createdAt: narration.createdAt, timeline: narration.timeline))
+        var stored = fixture.item
+        stored.text = narration.normalizedText
+        stored.media = narration.media
+        stored.transcriptId = "generated-transcript-item"
+        try fixture.store.saveItem(stored)
+
+        let mediaKey = try XCTUnwrap(narration.media.nativeMediaId)
+        let session = try XCTUnwrap(Gate1AppModel.loadFootnoteMediaChimeSession(store: fixture.store, itemId: "item", mediaKey: mediaKey),
+                                    "the assembled file reads each note in its own segment, so the session finds them")
+        XCTAssertEqual(session.runStartsMs.count, 2, "the fixture cites two notes in two places")
+        XCTAssertNil(Gate1AppModel.loadFootnoteMediaChimeSession(store: fixture.store, itemId: "item", mediaKey: "file:///another.m4a"),
+                     "a session is only for the file the item holds")
+    }
+
+    private func makeTestWAV(duration: TimeInterval) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appending(path: "footnote-chunk-\(UUID().uuidString).wav")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        let frameCount = AVAudioFrameCount(44_100 * duration)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount))
+        buffer.frameLength = frameCount
+        let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+        for frame in 0..<Int(frameCount) {
+            samples[frame] = sin(Float(frame) * 2 * .pi * 440 / 44_100) * 0.1
+        }
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
+        return url
     }
 }
