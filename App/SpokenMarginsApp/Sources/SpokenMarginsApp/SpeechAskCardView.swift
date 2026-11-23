@@ -6,21 +6,11 @@ import SessionKit
 /// card or a footnote card keeps the slot first). The decisions are `SpeechRecognitionAsk`; this only draws them.
 struct SpeechAskCardSlot: View {
     @EnvironmentObject private var model: Gate1AppModel
-    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var controller = SpeechAskController.shared
 
     var body: some View {
-        // A zero-height view is always present, so the settle below runs whether or not the card is showing.
-        VStack(spacing: 0) {
-            if controller.isCardShowing(slotIsFree: slotIsFree) {
-                SpeechAskCard(controller: controller)
-            }
-            Color.clear.frame(height: 0).accessibilityHidden(true)
-        }
-        // A listener who decided in iOS Settings, or a launch that finds Margins waiting, is settled here.
-        .task { controller.reconcile(model: model) }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { controller.reconcile(model: model) }
+        if controller.isCardShowing(slotIsFree: slotIsFree) {
+            SpeechAskCard(controller: controller)
         }
     }
 
