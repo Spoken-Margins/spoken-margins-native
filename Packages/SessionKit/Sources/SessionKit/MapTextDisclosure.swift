@@ -83,19 +83,34 @@ public enum MapTextDisclosure {
         proposals.map { proposal($0, for: item) }
     }
 
-    /// How many scenes of these proposals `proposals(_:for:)` would reduce to bare starts, so the share preview (next PR) can say
-    /// that scene summaries stay on this phone and its map count matches what is sent.
+    /// How many scenes of these proposals `proposals(_:for:)` would reduce to bare starts, so the share review and the
+    /// recipient preview can say that their titles and summaries stay on this phone (#4635).
     public static func withheldSceneCount(_ proposals: [PortableListeningMapProposalArtifact], for item: Item) -> Int {
         guard !allowsModelText(of: item) else { return 0 }
         return proposals.reduce(0) { $0 + $1.scenes.filter(writtenByModel).count }
     }
 
-    /// The share review's note, in plain words, or nil when nothing is held back (#3449).
+    /// The share review's one-sentence note, or nil when nothing is held back (#3449, words from #4635's Design).
+    /// "Isn't confirmed" stays true for every reason a source has no fresh mark: no web address, offline, a paywall,
+    /// a page that doesn't match, or a stale mark.
     public static func withheldNote(sceneCount: Int) -> String? {
+        guard let scenes = sceneFragment(sceneCount) else { return nil }
+        let subject = sceneCount == 1
+            ? "The Listening Map title and summary for \(scenes)"
+            : "Listening Map titles and summaries for \(scenes)"
+        return "\(subject) won't be sent, because this source isn't confirmed as freely available online."
+    }
+
+    /// The recipient preview's "What is included" line for a map with withheld scenes, or nil when nothing is held back,
+    /// so the caller keeps its plain "Listening Map included" (#4635).
+    public static func withheldMapLine(sceneCount: Int) -> String? {
+        guard let scenes = sceneFragment(sceneCount) else { return nil }
+        return "Listening Map included, without titles and summaries for \(scenes)"
+    }
+
+    private static func sceneFragment(_ sceneCount: Int) -> String? {
         guard sceneCount > 0 else { return nil }
-        let scenes = sceneCount == 1 ? "1 scene" : "\(sceneCount) scenes"
-        return "Scene summaries stay on this phone. Your Margins and the scene starts are shared. "
-            + "The titles and summaries the on-device model wrote for \(scenes) are left out, because this source is not marked public."
+        return sceneCount == 1 ? "1 scene" : "\(sceneCount) scenes"
     }
 
     private static func writtenByModel(_ scene: PortableListeningMapScene) -> Bool {
