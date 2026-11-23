@@ -66,8 +66,8 @@ final class PacketOpenFailurePresenter: ObservableObject {
     var onCloseNotice: (@MainActor () -> Void)?
 
     /// Told by the import when a friend's file opened its item; the first-launch drawer's order listens (#4834).
-    var onFriendItemOpened: (@MainActor () -> Void)?
-    func friendItemOpened() { onFriendItemOpened?() }
+    var onFriendItemOpened: (@MainActor (_ itemId: String) -> Void)?
+    func friendItemOpened(itemId: String) { onFriendItemOpened?(itemId) }
 
     /// The sheet's `onDismiss`: it has fully left, so the first-launch drawer comes back now if it is due. True when it
     /// told the drawer.

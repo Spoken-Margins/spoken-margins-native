@@ -96,6 +96,7 @@ struct PlaybackScreen: View {
                                 VStack(alignment: .leading, spacing: 20) {
                                     if model.snapshot.phase == .finished {
                                         Text("Finished").font(.headline).foregroundStyle(AppColors.listeningAccent)
+                                        ArrivalFollowCard()
                                     }
                                     if model.isFirstMarginPromptShowing { FirstMarginPromptCard() }
                                     playbackHeader

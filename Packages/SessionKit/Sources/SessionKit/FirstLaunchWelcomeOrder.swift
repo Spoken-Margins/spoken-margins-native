@@ -55,6 +55,9 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     /// The drawer is owed although the Library will not be empty at the next launch: a friend's file failed, and the
     /// drawer it withdrew has not shown since.
     private var isOwedAfterFailure: Bool
+    /// A friend's file opened its item in this launch (the import's signal, #4834). Stays true once set; the Follow
+    /// card remembers that item as the arrival item (#4672).
+    public private(set) var reachedFriendItem = false
 
     /// What the app keeps for the next launch, in case this one ends now.
     public enum Carry: Equatable, Sendable {
@@ -159,6 +162,7 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     /// failure of another link does not undo the hold-back: that item is in the Library (#4834).
     public mutating func friendItemOpened() {
         guard phase == .waitingForFriendItem || phase == .waitingForLibrary else { return }
+        reachedFriendItem = true
         phase = .waitingForLibrary
     }
 
