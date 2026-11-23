@@ -271,4 +271,60 @@ final class StartEarlierTests: XCTestCase {
             StartEarlier.review(itemId: "item", margin: margin, plan: plan),
             StartEarlier.review(itemId: "item", margins: [margin], plan: plan))
     }
+
+    // MARK: Margins crossed together (audit on #5093)
+
+    private func prompt(_ id: String, media: Int?) -> ImportedCommentaryPrompt {
+        let layer = ImportedCommentaryLayer(id: "layer", itemId: "item", packageDigest: "digest", packageId: "package",
+                                            itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),
+                                            importedAt: Date(timeIntervalSince1970: 0),
+                                            sourceResolutionStatus: .resolved, isEnabled: true)
+        let record = ImportedCommentaryInterjection(
+            id: id, layerId: layer.id, packageScopedId: "packet-\(id)", createdAt: Date(timeIntervalSince1970: 0),
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: "Words",
+            resolution: ImportedAnchorResolution(evidenceClass: .exactEdition, localMediaTimeMs: media))
+        return ImportedCommentaryPrompt(layer: layer, interjection: record, index: 1, count: 1)
+    }
+
+    private func snapshot(_ media: Int) -> SessionSnapshot {
+        var value = SessionSnapshot()
+        value.itemId = "item"
+        value.currentMediaTimeMs = media
+        return value
+    }
+
+    /// Two friend's Margins crossed in one tick: A plays by itself, B waits its turn. A press during A reviews both, so B
+    /// still plays, right after A, although the longer run-up empties the queue and B is already announced.
+    func testAPressDuringAMarginCrossedWithAnotherReviewsTheOneWaitingToo() throws {
+        let all = [prompt("a", media: 600_000), prompt("b", media: 600_300)]
+        var queue = SharedMarginOfferQueue()
+        let offered = try XCTUnwrap(queue.nextOffer(
+            previous: snapshot(599_900), current: snapshot(600_400), selectedItemID: "item", canOffer: true, prompts: all))
+        XCTAssertEqual(offered.id, "a")
+        XCTAssertEqual(queue.waitingIDs, ["b"])
+
+        let entries = StartEarlier.entries(playing: offered, waiting: queue.waitingIDs, among: all)
+        XCTAssertEqual(entries.map(\.interjection.id), ["a", "b"])
+        let plan = try XCTUnwrap(StartEarlier.plan(for: entries[0].anchor, runUpMs: 0))
+        var sequence = try XCTUnwrap(StartEarlier.review(itemId: "item", margins: entries.map(\.anchor), plan: plan))
+        XCTAssertEqual(sequence.startMediaTimeMs, 540_000)
+        XCTAssertEqual(sequence.progressed(from: 599_800, to: 600_100)?.marginId, entries[0].marginId)
+        guard case .playNow(let next) = sequence.marginFinished(sourceAtMediaTimeMs: 600_400) else {
+            return XCTFail("b should play straight after a")
+        }
+        XCTAssertEqual(next.marginId, entries[1].marginId)
+        // Without them (the defect), the queue the jump empties was B's only way to play.
+        XCTAssertNil(queue.nextOffer(
+            previous: snapshot(600_400), current: snapshot(540_000), selectedItemID: "item", canOffer: true, prompts: all))
+        XCTAssertTrue(queue.waitingIDs.isEmpty)
+    }
+
+    func testTheReviewedMarginsSkipTheOnePlayingAndAnyNoLongerOfferedOrUnplaced() {
+        let a = prompt("a", media: 600_000)
+        let all = [a, prompt("b", media: 600_300), prompt("c", media: nil)]
+        XCTAssertEqual(
+            StartEarlier.entries(playing: a, waiting: ["a", "gone", "c", "b"], among: all).map(\.interjection.id), ["a", "b"])
+        XCTAssertEqual(StartEarlier.entries(playing: a, waiting: [], among: []).map(\.interjection.id), ["a"])
+        XCTAssertTrue(StartEarlier.entries(playing: prompt("t", media: nil), waiting: [], among: []).isEmpty)
+    }
 }

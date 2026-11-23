@@ -181,11 +181,8 @@ extension Gate1AppModel {
     /// A friend's Margin playing by itself as the episode reached it, as a review entry: where it plays, and whether that
     /// place is a best guess. Nil on a text item or for a Margin with no place in the episode.
     private var playingSharedMarginEntry: SharedMarginReview.Entry? {
-        guard marginMoment == nil, isMediaPlaybackSnapshot, let playing = playingImportedCommentary,
-              let ms = playing.mediaTimeMs else { return nil }
-        let isApproximate: Bool
-        if case .roughly = playing.plan { isApproximate = true } else { isApproximate = false }
-        return SharedMarginReview.Entry(layer: playing.layer, interjection: playing.interjection, mediaTimeMs: ms, isApproximate: isApproximate)
+        guard marginMoment == nil, isMediaPlaybackSnapshot, let playing = playingImportedCommentary else { return nil }
+        return StartEarlier.entries(playing: playing, waiting: [], among: []).first
     }
 
     /// Ordinary playback had no run-up before that Margin, so the press gives it one minute (`StartEarlier.plan`, `R = 0`).
@@ -205,9 +202,12 @@ extension Gate1AppModel {
             diagnostics["marginMoment.startEarlier"] = "lead_in_ms=\(plan.leadInMs)"
             return
         }
-        guard let entry = playingSharedMarginEntry, let itemId = snapshot.itemId,
+        guard let playing = playingImportedCommentary, let entry = playingSharedMarginEntry, let itemId = snapshot.itemId,
               let plan = StartEarlier.plan(for: entry.anchor, runUpMs: 0) else { return }
-        reviewNewMargins(itemId: itemId, thenContinue: true, entries: [entry], startingEarlier: plan)
+        // The friend's Margins crossed with this one and still waiting their turn play after it (audit on #5093).
+        let entries = StartEarlier.entries(
+            playing: playing, waiting: sharedMarginOffers.waitingIDs, among: importedCommentaryPrompts(includeAnnounced: true))
+        reviewNewMargins(itemId: itemId, thenContinue: true, entries: entries, startingEarlier: plan)
         diagnostics["marginMoment.startEarlier"] = "lead_in_ms=\(plan.leadInMs);from=auto_play"
     }
 
