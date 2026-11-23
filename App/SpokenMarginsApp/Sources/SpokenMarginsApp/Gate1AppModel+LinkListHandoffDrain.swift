@@ -66,7 +66,7 @@ extension Gate1AppModel {
                 unreadable += 1
                 continue
             }
-            let result = await runLinkListArrival(list, route: .handoffFolder)
+            let result = await runLinkListArrival(list, route: .handoffFolder, handoffEntry: entry)
             // Offline, or another import started meanwhile: nothing was tried and nothing is counted. This file and the
             // ones after it wait for the next foreground.
             guard result.attempted else { break }

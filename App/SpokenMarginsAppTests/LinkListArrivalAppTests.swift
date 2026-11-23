@@ -312,6 +312,26 @@ final class LinkListArrivalAppTests: XCTestCase {
         XCTAssertEqual(handoffFolder.pending().map(\.id), [entry.id])
     }
 
+    /// The audit's case: a list that partly failed is kept for a retry, and Undo must take the list back for good.
+    func testUndoOnAPartlyFailedHandoffListRemovesItsFileSoTheNextForegroundDoesNotAddItBack() async throws {
+        let model = try makeModel(playable: playable)
+        let entry = try handoffFolder.save(LinkListFile(title: "Mixed", entries: [
+            .init(url: "https://example.com/one"), .init(url: "https://example.com/broken"),
+        ]))
+        await model.drainLinkListHandoffs()
+        XCTAssertEqual(handoffFolder.pending().map(\.id), [entry.id], "kept for a retry")
+        let undo = try XCTUnwrap(model.feedbackEvent?.action)
+
+        undo.perform()
+        try await pollUntil { !model.libraryCollections.collections.contains { $0.name == "Mixed" } && self.handoffFolder.pending().isEmpty }
+
+        XCTAssertEqual(model.linkListArrival.handoffRetry.tries(for: entry.id), 0)
+        model.linkListArrival.releaseHeldHandoffFiles() // the app comes forward
+        await model.drainLinkListHandoffs()
+        XCTAssertFalse(model.libraryCollections.collections.contains { $0.name == "Mixed" }, "Undo is not reversed")
+        XCTAssertTrue(handoffFolder.pending().isEmpty)
+    }
+
     func testTwoHandoffFilesOnOneForegroundArriveOneAfterTheOther() async throws {
         let model = try makeModel(playable: playable)
         try handoffFolder.save(LinkListFile(title: "First brief", entries: [.init(url: "https://example.com/one")]))
