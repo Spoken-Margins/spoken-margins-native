@@ -2,7 +2,9 @@
 // matches, and clearing it brings every item back. Phone size, against the repo's feed fixture.
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
-import { FEED_ORIGIN, serveFixtures, shot } from './fixtures.ts';
+import { FEED_ORIGIN, followAndAdd, serveFixtures, shot } from './fixtures.ts';
+
+const EPISODES = ['Episode 3: No link, GUID and audio', 'Episode 2: No link, no GUID, audio only', 'Episode 1: Has a link'];
 
 test.beforeEach(async ({ page }, info) => {
   test.skip(info.project.name !== 'phone', 'Runs at phone size (390×844).');
@@ -14,7 +16,8 @@ test('the Library search filters the list as you type, and clearing it brings ev
   await page.getByRole('button', { name: 'Follow a show' }).first().click();
   await page.getByLabel('Show name, or a feed or Substack address').fill(`${FEED_ORIGIN}/enclosure-only-episodes.rss`);
   await page.getByRole('dialog', { name: 'Follow a show' }).getByRole('button', { name: 'Follow' }).click();
-  await expect(page.getByText(/Following .*episode/)).toBeVisible();
+  await expect(page.getByText(/Following .*Open it to pick episodes/)).toBeVisible();
+  await followAndAdd(page, 'Spoken Margins Test Show', EPISODES);
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Library' }).click();
 
   const list = page.getByRole('list', { name: 'Episodes, newest first' });
@@ -49,7 +52,8 @@ async function followFeed(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Follow a show' }).first().click();
   await page.getByLabel('Show name, or a feed or Substack address').fill(`${FEED_ORIGIN}/enclosure-only-episodes.rss`);
   await page.getByRole('dialog', { name: 'Follow a show' }).getByRole('button', { name: 'Follow' }).click();
-  await expect(page.getByText(/Following .*episode/)).toBeVisible();
+  await expect(page.getByText(/Following .*Open it to pick episodes/)).toBeVisible();
+  await followAndAdd(page, 'Spoken Margins Test Show', EPISODES);
 }
 
 /** Opens the friend's packet from the Library, then closes Now Playing. */

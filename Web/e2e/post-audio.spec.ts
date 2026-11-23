@@ -2,7 +2,7 @@
 // play leaves the page usable (#4433: a friend's shared Substack podcast link said "no voice", and after Close nothing on
 // the page could be tapped). Phone size only; every network answer is served from the repo's fixtures.
 import { expect, test, type Page } from '@playwright/test';
-import { feedFixture, seconds, serveAudio, serveFixtures } from './fixtures.ts';
+import { feedFixture, followAndAdd, seconds, serveAudio, serveFixtures } from './fixtures.ts';
 
 const POST = 'https://thezvi.substack.com/p/leaked-anthropic-draft-ai-regulatory';
 const TITLE = 'Leaked Anthropic Draft AI Regulatory Bill Is Unacceptable and Troubling';
@@ -29,6 +29,7 @@ async function followAndOpenLibrary(page: Page) {
   await page.getByLabel('Show name, or a feed or Substack address').fill('https://thezvi.substack.com/feed');
   await page.getByRole('dialog', { name: 'Follow a show' }).getByRole('button', { name: 'Follow' }).click();
   await expect(page.getByText(/Following /)).toBeVisible();
+  await followAndAdd(page, /^Open Don.t Worry About the Vase/, [TITLE]);
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Library' }).click();
 }
 

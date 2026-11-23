@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { devices, expect, test, type Page, type PlaywrightWorkerArgs } from '@playwright/test';
-import { FEED_ORIGIN, serveFixtures, shot } from './fixtures.ts';
+import { FEED_ORIGIN, followAndAdd, serveFixtures, shot } from './fixtures.ts';
 
 const FEED = `${FEED_ORIGIN}/enclosure-only-episodes.rss`;
 const EPISODE = 'Episode 3: No link, GUID and audio';
@@ -40,6 +40,7 @@ async function openEpisode(page: Page) {
   await sheet.getByLabel('Show name, or a feed or Substack address').fill(FEED);
   await sheet.getByRole('button', { name: 'Follow' }).click();
   await expect(page.getByText(/Following Spoken Margins Test Show/)).toBeVisible();
+  await followAndAdd(page, 'Spoken Margins Test Show', [EPISODE]);
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Library' }).click();
   await page.getByRole('button', { name: new RegExp(EPISODE) }).click();
   return page.getByRole('dialog', { name: EPISODE });

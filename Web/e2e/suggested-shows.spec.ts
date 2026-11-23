@@ -3,7 +3,7 @@
 // browser is shown to touch none of them, and no third-party host, before that tap.
 import { expect, test, type Page, type Request } from '@playwright/test';
 import { SUGGESTED_SHOWS } from '../src/app/logic/suggestions.ts';
-import { feedFixture, seconds, serveFixtures, shot } from './fixtures.ts';
+import { feedFixture, followAndAdd, seconds, serveFixtures, shot } from './fixtures.ts';
 
 const RELAY = 'https://relay.test';
 const CONSENT = 'Read this feed through our server?';
@@ -55,7 +55,7 @@ test('a new listener follows a suggested show in one tap, and its episodes play'
   await shot(page, info, '61-suggested-consent');
   await consent.getByRole('button', { name: 'Use the server' }).click();
 
-  await expect(page.getByText('Following Spoken Margins Test Show. 3 episodes added to your Library.')).toBeVisible();
+  await expect(page.getByText('Following Spoken Margins Test Show. Open it to pick episodes for your Library.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Open Spoken Margins Test Show' })).toContainText('3 new');
   // The tapped button left with the empty screen, so focus went to the heading, not to the page.
   await expect(page.getByRole('heading', { name: 'Following' })).toBeFocused();
@@ -65,7 +65,8 @@ test('a new listener follows a suggested show in one tap, and its episodes play'
   const reached = new Set(requests.map((r) => new URL(r.url()).host).filter((host) => publishers.includes(host)));
   expect([...reached]).toEqual([publishers[0]]);
 
-  // Its episodes are in the Library and play, and the clock moves.
+  // An episode the listener adds is in the Library and plays, and the clock moves (#4425).
+  await followAndAdd(page, 'Spoken Margins Test Show', ['Episode 3: No link, GUID and audio']);
   await tab(page, 'Library');
   await page.getByRole('button', { name: /Episode 3: No link, GUID and audio/ }).click();
   const nowPlaying = page.getByRole('dialog', { name: 'Episode 3: No link, GUID and audio' });

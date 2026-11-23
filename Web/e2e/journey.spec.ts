@@ -1,9 +1,11 @@
 // The web app's first journey (#2982): follow a fixture show, play an episode, add a written Margin, find
 // it in the Margins tab and jump back to its moment, then reload and resume. Run at phone and laptop size.
 import { expect, test, type Page } from '@playwright/test';
-import { FEED_ORIGIN, seconds, serveFixtures, shot } from './fixtures.ts';
+import { FEED_ORIGIN, followAndAdd, seconds, serveFixtures, shot } from './fixtures.ts';
 
 const FEED = `${FEED_ORIGIN}/enclosure-only-episodes.rss`;
+const SHOW = 'Spoken Margins Test Show';
+const EPISODES = ['Episode 3: No link, GUID and audio', 'Episode 2: No link, no GUID, audio only', 'Episode 1: Has a link'];
 
 async function tab(page: Page, name: string) {
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name }).click();
@@ -28,10 +30,12 @@ test('follow a show, play, write a Margin, find it in Margins, and resume after 
   await sheet.getByLabel('Show name, or a feed or Substack address').fill(FEED);
   await shot(page, info, '02-follow-sheet');
   await sheet.getByRole('button', { name: 'Follow' }).click();
-  await expect(page.getByText('Following Spoken Margins Test Show. 3 episodes added to your Library.')).toBeVisible();
+  await expect(page.getByText('Following Spoken Margins Test Show. Open it to pick episodes for your Library.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Following' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Open Spoken Margins Test Show' })).toContainText('3 new');
   await shot(page, info, '03-following');
+  // Following adds nothing to the Library: the listener picks episodes on the show's screen (#4425).
+  await followAndAdd(page, SHOW, EPISODES);
 
   // The Library lists the three playable episodes, newest first. The show note and the video trailer
   // have no audio, so they aren't there.
@@ -439,6 +443,7 @@ test('closing a layer puts focus back where the listener was', async ({ page }) 
   await expect.poll(focused).toBe('Spoken Margins Test Show');
   await page.locator('.back-button').click();
   await expect.poll(focused).toMatch(/^Open Spoken Margins Test Show/);
+  await followAndAdd(page, SHOW, [EPISODES[1]!]);
 
   // Now Playing, from a Library row: closing it returns to that row.
   await tab(page, 'Library');

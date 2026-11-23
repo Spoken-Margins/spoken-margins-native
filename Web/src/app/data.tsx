@@ -9,7 +9,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { formatClock } from '../shared/clock.ts';
 import type { Episode, Margin, PlaybackPosition, Show } from '../shared/model.ts';
 import { browserStorage, forgetMirrored, mergeMirror, pruneMirror, readMirror } from './logic/position-mirror.ts';
-import { addedRow, inLibrary, isMigrated, membershipRow, removedRow, restoredRow, stillMovedOut } from './logic/library-membership.ts';
+import { addedRow, inLibrary, isMigrated, membershipRow, prepareLibrary, removedRow, restoredRow, stillMovedOut } from './logic/library-membership.ts';
 import { mergeRefresh } from './logic/refresh.ts';
 import { keepingSharedAs, withSharedAs, type WrittenFacts } from './logic/shared-as.ts';
 import { keepingHeard, keepingStar, withStar } from './logic/star.ts';
@@ -49,9 +49,9 @@ export interface DataApi extends Snapshot {
   migrated: boolean;
   /**
    * Puts an episode in the Library (#4425): writes its "in" row, then updates the mirror at once, so a second call in
-   * the same tick sees it. An episode already in is left alone (its first `at` stays). Failures are always shown
-   * (never a quiet repeat). Without `quiet` it throws a `NotSavedError`, so an Add button can reset; with `quiet` (a
-   * play, an import) it only logs, since nobody waits on it.
+   * the same tick sees it. An episode already in is left alone (its first `at` stays). A failure is shown every
+   * time (never a quiet repeat) and, without `quiet`, thrown as a `NotSavedError` so an Add button can reset. With
+   * `quiet` (a play, an import) it is logged and returned, with no toast, since nobody waits on it.
    */
   addToLibrary(episodeId: string, options?: { quiet?: boolean }): Promise<void>;
   /**
@@ -100,11 +100,36 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     loadAll()
-      .then((snapshot) => {
+      .then(async (snapshot) => {
         // A place copied to localStorage that IndexedDB never got (the page went mid-write) wins if it is newer (#4096).
         const storage = browserStorage();
         const { positions, written } = mergeMirror(snapshot.positions, readMirror(storage), new Set(snapshot.episodes.map((e) => e.id)));
-        setData({ ...snapshot, positions });
+        // The one-time move, then the keep pass on every later load (#4425). `data` is set once, after it, so the Library
+        // never flashes the old list or an empty state first.
+        const merged: Snapshot = { ...snapshot, positions };
+        const prepared = prepareLibrary({ ...merged }, new Date().toISOString());
+        let loaded = merged;
+        if (!isMigrated(snapshot.settings)) {
+          try {
+            // The rows and the moved-out list together, then `libraryModel` alone: a tab closed between the two runs the
+            // move again, and the rows already written keep at least as much.
+            await putMany('settings', prepared.rows);
+            if (prepared.finish) await putMany('settings', [prepared.finish]);
+            loaded = { ...merged, library: prepared.library, settings: { ...merged.settings, libraryMovedOut: prepared.movedOut, libraryModel: 'added' } };
+          } catch (error) {
+            // `libraryModel` stays unset, so the old rule holds for this session: the Library shows every episode.
+            console.error('The Library move failed', error);
+            toast('Your Library couldn’t be updated in this browser, so it shows every episode for now.', 'problem');
+          }
+        } else if (prepared.rows.length > 0) {
+          try {
+            await putMany('settings', prepared.rows);
+          } catch (error) {
+            console.error('The Library keep pass wasn’t saved', error); // Applied for this session; the next load tries again.
+          }
+          loaded = { ...merged, library: prepared.library };
+        }
+        setData(loaded);
         if (written.length > 0) void putMany('positions', written).then(() => pruneMirror(storage, positions), () => undefined);
         else pruneMirror(storage, positions);
       })
@@ -121,7 +146,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   /** Runs a write. On failure, shows `lead` and the reason, and returns the error to throw (or not). */
   const run = useCallback(
-    async (kind: WriteKind, lead: string, write: () => Promise<void>): Promise<NotSavedError | undefined> => {
+    async (kind: WriteKind, lead: string, write: () => Promise<void>, options: { quiet?: boolean } = {}): Promise<NotSavedError | undefined> => {
       try {
         await write();
         gate.current.worked(kind);
@@ -129,7 +154,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         const message = notSavedMessage(lead, error);
         console.error(message, error);
-        if (gate.current.failed(kind)) toast(message, 'problem');
+        // `quiet`: the listener isn't waiting on it (an episode that is already playing), so it is logged, not toasted.
+        if (!options.quiet && gate.current.failed(kind)) toast(message, 'problem');
         return new NotSavedError(message, { cause: error });
       }
     },
@@ -298,7 +324,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       if (inLibrary(episodeId, current.library)) return;
       const title = current.episodes.find((e) => e.id === episodeId)?.title ?? 'that episode';
       const row = addedRow(current.library[episodeId], new Date().toISOString());
-      const failed = await run('library', `Adding “${title}” to your Library wasn’t saved.`, () => putMany('settings', [membershipRow(episodeId, row)]));
+      const failed = await run('library', `Adding “${title}” to your Library wasn’t saved.`, () => putMany('settings', [membershipRow(episodeId, row)]), { quiet: options.quiet });
       if (failed) {
         if (options.quiet) return;
         throw failed;
