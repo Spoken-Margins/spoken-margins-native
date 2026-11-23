@@ -364,6 +364,10 @@ public struct OPMLImportPreview: Equatable, Sendable {
     public var lists: [OPMLPlannedList] = []
     /// #4858: the unusable lines' names, in file order (see `OPMLDocument.unusableNames`).
     public var unusableNames: [String] = []
+    /// The lists the file includes by their web address, for "<title> updates from its web address" (#4046 PR 8).
+    public var includes: [OPMLPlannedInclude] = []
+    /// The rules the file carries (`sm:skip`, `sm:more`), one per show and action, for "This file has <n> rules" (#4046 PR 13).
+    public var rules: [OPMLPlannedRule] = []
 
     /// #4858: the feeds ticked when the preview opens. A feed on a home-network address (`FeedHostClass`) starts
     /// unticked, because it will rarely work away from that network; the listener can still tick it.
@@ -422,7 +426,9 @@ public enum OPMLImportPlanner {
             duplicatesInFile: duplicates,
             unusableOutlineCount: document.unusableOutlineCount,
             lists: OPMLListPlanner.plan(document, existingLists: existingLists),
-            unusableNames: document.unusableNames
+            unusableNames: document.unusableNames,
+            includes: OPMLIncludePlanner.plan(document),
+            rules: OPMLRulePlanner.plan(document)
         )
     }
 
@@ -524,7 +530,8 @@ public enum OPMLExporter {
         lists: [FollowList] = [],
         podcastGUIDs: [String: String] = [:],
         includes: [OPMLExportInclude] = [],
-        includedVia: [String: String] = [:]
+        includedVia: [String: String] = [:],
+        ruleWords: [String: OPMLExportRuleWords] = [:]
     ) -> OPMLExport {
         var rows: [String] = []
         for include in includes {
@@ -535,7 +542,7 @@ public enum OPMLExporter {
         var exported = 0
         var withheld = 0
         var usesGUID = false
-        var usesVia = false
+        var usesSMNamespace = false
         let chipOrdered = FollowListName.chipOrder(lists)
         for subscription in subscriptions.sorted(by: { ($0.source.title ?? "").localizedCaseInsensitiveCompare($1.source.title ?? "") == .orderedAscending }) {
             let url = subscription.source.canonicalURL
@@ -550,14 +557,18 @@ public enum OPMLExporter {
             if let guid { attributes += #" podcast:guid="\#(escape(guid))""#; usesGUID = true }
             if let via = includedVia[subscription.id]?.trimmingCharacters(in: .whitespacesAndNewlines), !via.isEmpty {
                 attributes += #" sm:via="\#(escape(via))""#
-                usesVia = true
+                usesSMNamespace = true
+            }
+            if let words = ruleWords[subscription.id] {
+                if !words.skip.isEmpty { attributes += #" sm:skip="\#(escape(words.skip.joined(separator: ",")))""#; usesSMNamespace = true }
+                if !words.more.isEmpty { attributes += #" sm:more="\#(escape(words.more.joined(separator: ",")))""#; usesSMNamespace = true }
             }
             rows.append("    <outline \(attributes)/>")
             exported += 1
         }
         var root = #"<opml version="2.0""#
         if usesGUID { root += #" xmlns:podcast="https://podcastindex.org/namespace/1.0""# }
-        if usesVia { root += " xmlns:sm=\"\(OPMLSpokenMarginsAttributes.namespace)\"" }
+        if usesSMNamespace { root += " xmlns:sm=\"\(OPMLSpokenMarginsAttributes.namespace)\"" }
         root += ">"
         var lines = [
             #"<?xml version="1.0" encoding="UTF-8"?>"#,
