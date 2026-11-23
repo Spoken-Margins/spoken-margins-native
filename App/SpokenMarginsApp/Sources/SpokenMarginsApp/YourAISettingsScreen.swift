@@ -47,20 +47,17 @@ struct YourAISettingsScreen: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("What your brief is for")
                     .font(.subheadline)
-                TextField(
-                    "What your brief is for",
-                    text: $notes,
-                    prompt: Text("This month I'm learning about soil. Homework: chapter 4 of Dirt."),
-                    axis: .vertical
-                )
-                .lineLimit(2...8)
-                .accessibilityIdentifier("yourAI.notes")
-                .onChange(of: notes) { _, newValue in
-                    // Typing stops at the prompt's limit; a paste is cut to it.
-                    if newValue.count > AssistantSetupPrompt.maxNotesCharacters {
-                        notes = String(newValue.prefix(AssistantSetupPrompt.maxNotesCharacters))
+                // `AppTextField` draws its placeholder in the app's contrast-checked colour (AppColorUsageGuardTests).
+                AppTextField("This month I'm learning about soil. Homework: chapter 4 of Dirt.", text: $notes, axis: .vertical)
+                    .lineLimit(2...8)
+                    .accessibilityLabel("What your brief is for")
+                    .accessibilityIdentifier("yourAI.notes")
+                    .onChange(of: notes) { _, newValue in
+                        // Typing stops at the prompt's limit; a paste is cut to it.
+                        if newValue.count > AssistantSetupPrompt.maxNotesCharacters {
+                            notes = String(newValue.prefix(AssistantSetupPrompt.maxNotesCharacters))
+                        }
                     }
-                }
                 Text("Optional. It stays on this iPhone and goes into the prompt only when you copy or share it.")
                     .font(.footnote)
                     .foregroundStyle(AppColors.secondaryText)
