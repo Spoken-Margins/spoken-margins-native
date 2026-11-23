@@ -640,6 +640,17 @@ def scenarios() -> list[Scenario]:
 
 # --- the simulator --------------------------------------------------------------------------------------------------
 
+def docs_only_rule(text: str) -> str:
+    """The Python the scope job of hosted-portable.yml (given as text) runs with `python3 -c` on the changed-file list
+    to decide docs_only. Raises when the step no longer has one, so a reworded step fails the model, not its verdict."""
+    steps = ((yaml.safe_load(text) or {}).get('jobs') or {}).get('scope', {}).get('steps') or []
+    run = next((step.get('run', '') for step in steps if step.get('id') == 'scope'), '')
+    match = re.search(r"python3 -c '\n(.*?)\n' \"\$list\"", run, re.S)
+    if not match:
+        raise ValueError('the scope step has no python3 -c docs-only check')
+    return match.group(1)
+
+
 class Tree:
     """The repository's own decision code, loaded from one tree (the working tree or an unpacked ref)."""
 
@@ -647,6 +658,7 @@ class Tree:
         self.root = root
         self._modules = {}
         self._scopes = {}
+        self._docs_only, self._docs_rule = {}, None
         self.model = extract(root)
 
     def module(self, name: str, rel: str):
@@ -668,6 +680,27 @@ class Tree:
             ts = self.module('test_scope', 'scripts/test-scope.py')
             self._scopes[key] = ts.classify(list(key), {}, root=self.root)
         return self._scopes[key]
+
+    def docs_only(self, paths: list[str]) -> bool:
+        """The scope job's docs-only verdict, from the Python the workflow itself runs (exit 0 is docs-only). #5048: a
+        copy of its rule here would have kept saying Site/quiz/ is docs after the workflow stopped."""
+        key = tuple(paths)
+        if key not in self._docs_only:
+            if self._docs_rule is None:
+                self._docs_rule = compile(docs_only_rule(self.yaml_text('hosted-portable.yml')), 'docs-only', 'exec')
+            with tempfile.NamedTemporaryFile('w', suffix='.txt') as listing:
+                listing.write(''.join(f'{path}\n' for path in paths))
+                listing.flush()
+                argv, sys.argv = sys.argv, ['-c', listing.name]
+                try:
+                    exec(self._docs_rule, {'__name__': '__main__'})
+                    code = 0
+                except SystemExit as stop:
+                    code = stop.code
+                finally:
+                    sys.argv = argv
+            self._docs_only[key] = code == 0
+        return self._docs_only[key]
 
     def raw(self, file: str) -> dict:
         """The workflow file as parsed YAML, for a step's env or run text."""
@@ -1049,11 +1082,7 @@ def changed_paths(world, ctx):
 def b_scope(world, run, job, ctx, cause):
     ts = world.tree.module('test_scope', 'scripts/test-scope.py')
     mac, _ = ts.mac_checks_required(changed_paths(world, ctx))
-    text = world.tree.yaml_text('hosted-portable.yml')
-    match = re.search(r'docs = (\(.*?\))', text)
-    docs = ast.literal_eval(match.group(1)) if match else ()
-    paths = changed_paths(world, ctx)
-    docs_only = bool(paths) and all(p.endswith('.md') or p.startswith(docs) for p in paths)
+    docs_only = world.tree.docs_only(changed_paths(world, ctx))
     return 'success', {'mac': 'true' if mac else 'false', 'docs_only': 'true' if docs_only else 'false'}
 
 
@@ -1198,10 +1227,12 @@ class FakeDequeueGitHub:
         """What the failed plan step's log ends with: an outside host's bad certificate for a download failure, a
         failing test otherwise."""
         row = next((r for r in getattr(self.w, 'rows', []) if r['id'] == job_id), None)
+        # verify-tests' own lines included: its `<step>: 41s — FAILED` summary must not read as a failed test (#5070).
         if row and getattr(self.w.c, 'fail_in', '') == 'download':
-            return ("fatal: unable to access 'https://download.onnxruntime.ai/pod.zip': "
+            return ("tools: 41s — FAILED\nProcess exit 1; fatal: unable to access 'https://download.onnxruntime.ai/pod.zip': "
                     'SSL certificate problem: certificate has expired')
-        return 'testSomething failed: XCTAssertEqual failed'
+        return ('ops: 30s — FAILED\nProcess exit 1; Failed: test_something (test_x.T.test_something) at '
+                "/w/scripts/tests/test_x.py:12 — AssertionError: GET https://github.com/a: HTTP 502")
 
     def queue_heads(self):
         return set()

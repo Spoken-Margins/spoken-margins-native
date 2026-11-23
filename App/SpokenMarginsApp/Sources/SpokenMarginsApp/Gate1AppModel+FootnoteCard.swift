@@ -7,10 +7,12 @@ import UIKit
 /// cited. The words are `FootnoteCard` and the plan rules behind it are `FootnoteNoteControls`, both in SessionKit; this
 /// reads the player into them. It sits in its own file so `Gate1AppModel` does not grow.
 extension Gate1AppModel {
-    /// Whether the card could be showing: the open item is the one playing, it is not a podcast, and the on-device voice
-    /// (the only player with note chunks) is reading a plan that has notes in it. The card's view polls the player only
-    /// while this is true, so an article without notes, or any other item, costs nothing.
+    /// Whether the card could be showing: the open item is the one playing, it is not a podcast, and either the on-device
+    /// voice is reading a plan that has notes in it or the item's prepared file has a footnote session. The card's view
+    /// polls the player only while this is true, so an article without notes, or any other item, costs nothing.
     var footnoteCardMayShow: Bool {
+        // A prepared article playing as one file: its media session has notes (`Gate1AppModel+FootnoteMediaChime`).
+        if selectedItemFootnoteMediaSession != nil { return true }
         guard !selectedItem.isNativeAudio, snapshot.itemId == selectedItem.id,
               snapshot.status.isPlaybackActive || snapshot.status == .paused,
               let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient else { return false }
@@ -20,6 +22,14 @@ extension Gate1AppModel {
     /// The card for the note being read, or nil. A friend's pinned card wins and the note is not shown for that listen at
     /// all: it does not queue behind the friend's card, and the note stays in the notes chapter (Design, Screens).
     var footnoteCard: FootnoteCard? {
+        if selectedItemFootnoteMediaSession != nil {
+            footnoteMediaChime.session?.expireCard(
+                now: ProcessInfo.processInfo.systemUptime, voiceOverIsOnCard: UIAccessibility.isVoiceOverRunning)
+            guard let timeMs = snapshot.currentMediaTimeMs,
+                  let card = footnoteMediaChime.session?.card(atMs: timeMs, mode: footnoteCardMode),
+                  pinnedMarginCard == nil else { return nil }
+            return card
+        }
         // The player's answer comes first: `pinnedMarginCard` builds a good deal, and a note is the rare case.
         guard footnoteCardMayShow, let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient else { return nil }
         // "Chime where cited": an offered note's card goes after 30 seconds, and never while VoiceOver is running, because
@@ -32,6 +42,9 @@ extension Gate1AppModel {
     /// "Reading" is in the card's header while the note's own words are playing; a note paused on is shown without it. A
     /// note the chime only offered is not being read: the text carries on, so playing says nothing about it.
     var footnoteCardIsReading: Bool {
+        if let session = selectedItemFootnoteMediaSession, case .offered = session.cardState(mode: footnoteCardMode) {
+            return false
+        }
         if let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient, case .offered = client.chimeCardState() {
             return false
         }
@@ -42,9 +55,16 @@ extension Gate1AppModel {
     /// in the other modes, where the card has no button (Design, Screens).
     var footnoteCardButton: FootnoteCardButton? {
         // Only while playing: a seek on a paused session moves its place and plays nothing, so the button would do nothing.
-        guard snapshot.status.isPlaybackActive,
-              let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient else { return nil }
-        switch client.chimeCardState() {
+        guard snapshot.status.isPlaybackActive else { return nil }
+        let state: FootnoteChimeSequencer.Card
+        if let session = selectedItemFootnoteMediaSession {
+            state = session.cardState(mode: footnoteCardMode)
+        } else if let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient {
+            state = client.chimeCardState()
+        } else {
+            return nil
+        }
+        switch state {
         case .hidden: return nil
         case .offered: return .hearNote
         case .reading: return .stopNote
@@ -53,6 +73,7 @@ extension Gate1AppModel {
 
     /// The card's button was pressed.
     func footnoteCardButtonPressed(_ button: FootnoteCardButton) {
+        if footnoteMediaCardButtonPressed(button) { return }
         guard let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient else { return }
         // The move is a text seek through the engine, as Back and Skim are, so the session, the Lock Screen and the card agree
         // where playback is. A seek on a paused session moves its place; the listener's play then reads the note.
@@ -63,6 +84,10 @@ extension Gate1AppModel {
         }
         guard let offset else { return }
         if !seekText(toCharOffset: offset) { client.footnoteMoveFailed() }
+    }
+
+    private var footnoteCardMode: FootnoteMode {
+        FootnoteMode(storedValue: UserDefaults.standard.string(forKey: FootnoteMode.storageKey))
     }
 }
 

@@ -35,8 +35,6 @@ struct SettingsScreen: View, Equatable {
     @State private var showsAllRecentlyDeleted = false
     @State private var isResetConfirmationPresented = false
     @State private var isPreparingDiagnostics = false
-    @State private var isExportingListeningSignals = false
-    @State private var hasNoListeningSignals = false
     @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
     @AppStorage(CommunityMapFetchService.optInKey) private var looksUpCommunityMaps = false
     /// The Supertonic download card's "Open Voices" lands here and opens Voices (#1820).
@@ -417,6 +415,17 @@ struct SettingsScreen: View, Equatable {
                 MarginOutputSettingsSection()
                 HiddenSendersSettingsSection(hidden: model.hiddenSenders, showAgain: { model.showSender($0) }, showMarginAgain: { model.showMargin($0) })
                 Section("Import & Export") {
+                    NavigationLink {
+                        YourAISettingsScreen(model: model).miniPlayerKeepOut()
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("Your AI", systemImage: "text.bubble")
+                            Text("Let Claude, ChatGPT or another AI make your daily brief and suggest shows.")
+                                .font(.footnote)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.yourAI.row")
                     NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
                     NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
                     Toggle(isOn: Binding(
@@ -539,24 +548,10 @@ struct SettingsScreen: View, Equatable {
                     Text("App state and recent playback events, as a file for a bug report. It includes the titles and links of what is in your Library. It stays on this device unless you share it.")
                         .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
-                    Button {
-                        isExportingListeningSignals = true
-                        Task {
-                            defer { isExportingListeningSignals = false }
-                            let url = await model.listeningSignals.exportFileURL()
-                            if let url { ShareFilePresenter.present(fileURL: url) }
-                            hasNoListeningSignals = url == nil
-                        }
-                    } label: {
-                        Label(
-                            hasNoListeningSignals ? "Nothing Recorded Yet" : "Export Listening Signals",
-                            systemImage: "doc.text"
-                        )
-                        .fullRowTapTarget()
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityIdentifier("settings.exportListeningSignals.button")
-                    .disabled(isExportingListeningSignals)
+                    ExportListeningSignalsButton(
+                        exportFileURL: { [model] in await model.listeningSignals.exportFileURL() },
+                        accessibilityIdentifier: "settings.exportListeningSignals.button"
+                    )
                     Text("A private log of listening time, Margins, shares and finishes for followed sources: titles, times and counts, never Margin text or audio. It stays on this device unless you export it.")
                         .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)

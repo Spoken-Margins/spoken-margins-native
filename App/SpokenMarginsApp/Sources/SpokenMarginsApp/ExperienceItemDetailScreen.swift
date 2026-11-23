@@ -90,7 +90,7 @@ struct ExperienceItemDetailScreen: View {
                     let friendIntro = FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin))
                     if let friendIntro { FriendMarginsSenderLine(intro: friendIntro) }
                     hero
-                    if let friendIntro { FriendMarginsSummary(intro: friendIntro) }
+                    if let friendIntro { FriendMarginsSummary(intro: friendIntro, receipt: sharingCoordinator.introReceipt) }
                     if let description = model.selectedItem.descriptionText {
                         ItemDescriptionPreview(text: description).id(model.selectedItem.id)
                     }

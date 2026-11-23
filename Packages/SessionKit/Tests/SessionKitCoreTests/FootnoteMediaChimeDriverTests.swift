@@ -3,9 +3,9 @@ import XCTest
 @testable import SessionKit
 
 /// #3777: "Chime where cited" on an item that plays its assembled prepared audio as one file. The timelines here are
-/// built the way `SupertonicPreparedAudioAssembler.writePCM` builds them: the plan with note chunks, without the notes
-/// chapter's copies, ordered by start, each chunk split by the real `NarrationTimelinePieces`, a second of audio each
-/// and its boundary's silence after it.
+/// built with `AssembledNarrationTimeline`, as `SupertonicPreparedAudioAssembler.writePCM` builds them: the plan with note
+/// chunks, without the notes chapter's copies, ordered by start, a second of audio each and its boundary's silence after
+/// it.
 final class FootnoteMediaChimeDriverTests: XCTestCase {
     private typealias Driver = FootnoteMediaChimeDriver
 
@@ -27,32 +27,24 @@ final class FootnoteMediaChimeDriverTests: XCTestCase {
 
     private func assembledFile(_ text: String) -> File {
         let plan = NarrationChunkPlanner.articlePlan(text, asides: true).chunks
-        let projection = NarrationChunkPlanner.silencedSpeech(source: text, endingWith: text)
-            ?? SpeechTextNormalizer.normalizeWithSourceOffsets(text)
-        let source = Array(text)
+        let article = Item(id: item, title: "T", mediaType: "article", text: text, externalReference: nil, status: "ready")
+        let projection = PreparedSpeechText(item: article, document: nil)!.assemblyProjection(asides: true)
         let ordered = plan.enumerated()
             .filter { if case .definition? = $0.element.footnote { return false } else { return true } }
             .sorted { ($0.element.startOffset, $0.offset) < ($1.element.startOffset, $1.offset) }
             .map(\.element)
-        var segments: [MediaTimelineSegment] = []
+        var timeline = AssembledNarrationTimeline(projection: projection, sourceText: text)
         var owners: [NarrationChunkPlanner.Chunk] = []
         var cursor = 0
         for chunk in ordered {
             let start = cursor
             cursor += 1_000
-            let pieces = NarrationTimelinePieces.pieces(
-                spokenRange: chunk.startOffset..<(chunk.startOffset + chunk.sourceLength),
-                startMs: start, endMs: cursor, projection: projection, source: source)
-            for piece in pieces {
-                segments.append(MediaTimelineSegment(
-                    id: "seg-\(segments.count)", startMs: piece.startMs, endMs: piece.endMs,
-                    startChar: piece.startChar, endChar: piece.endChar,
-                    text: pieces.count == 1 ? chunk.text : "piece"))
-                owners.append(chunk)
-            }
+            let added = timeline.append(startOffset: chunk.startOffset, sourceLength: chunk.sourceLength, text: chunk.text,
+                                        startMs: start, endMs: cursor)
+            owners += Array(repeating: chunk, count: added.count)
             cursor += Int((chunk.boundary.transitionDelay * 1_000).rounded())
         }
-        return File(timeline: TranscriptTimeline(segments: segments, chapters: [], durationMs: cursor), plan: plan, segmentChunks: owners)
+        return File(timeline: TranscriptTimeline(segments: timeline.segments, chapters: [], durationMs: cursor), plan: plan, segmentChunks: owners)
     }
 
     private func driver(_ file: File) throws -> Driver {

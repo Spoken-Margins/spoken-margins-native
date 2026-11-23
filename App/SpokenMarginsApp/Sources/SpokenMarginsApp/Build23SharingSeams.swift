@@ -142,6 +142,9 @@ struct Build23SharingSnapshot: Equatable {
     let needsAutoCleanDecision: Bool
     /// The sheet was opened as "Share replies with <friend>" (#3792, #3906): its review is a receipt, not an editor.
     let isReplyBack: Bool
+    /// The sheet opened with only the starred Margins selected (#4173 PR 4). It holds for the whole sheet, even after the
+    /// listener changes the selection or goes back to Choose; a reply sheet or a one-Margin share never sets it.
+    let startedFromStars: Bool
     let previewState: Build23SharingPreviewState
     let verifiedPreview: Build23VerifiedRecipientPreview?
     let errorMessage: String?
@@ -152,6 +155,14 @@ struct Build23SharingSnapshot: Equatable {
 }
 
 extension Build23SharingSnapshot {
+    static let starredReviewCaption = "Starting with the Margins you starred."
+
+    /// The line under the Review heading (#4173 PR 4), so a listener who sees "Margin 1 of 2" knows why. Nil unless the
+    /// sheet started from stars.
+    var reviewCaption: String? {
+        startedFromStars ? Self.starredReviewCaption : nil
+    }
+
     /// Whether the first-run cleanup question shows when the sheet opens (#3792): only when it can be true.
     var asksAutoCleanQuestion: Bool {
         ShareAutoCleanQuestion.asks(
@@ -223,6 +234,9 @@ struct Build23ImportedLayerSnapshot: Identifiable, Equatable {
     var reportURL: URL? = nil
     /// The random id the sender's packet carried, which "Hide this sender" hides by (#2846). Nil for an older packet.
     var senderId: String? = nil
+    /// "Tell Sam you got it" on this card, when this packet answers one of the listener's own Margins (#3902). Nil for a
+    /// first share.
+    var receipt: ReplyReceipt.Offer? = nil
 }
 
 /// Canonical sender actions. Ultra UI work should call these actions rather
@@ -314,6 +328,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     private var inputChangePending = false
     private var playbackCheckPending = false
     @Published private(set) var importedLayers: [Build23ImportedLayerSnapshot] = []
+    /// The item intro's "Tell Sam you got it": the newest friend's packet on the item that answers one of the listener's
+    /// own Margins, by import time (`ReplyReceipt.newestOffer`). Nil when none does (#3902).
+    @Published private(set) var introReceipt: ReplyReceiptButton.Content? = nil
     /// The links the item's friend Margins came from, for "Report" in the item's ⋯ menu (#2239). Empty for Margins
     /// from a file.
     @Published private(set) var reportEntries: [ShareLinkReport.Entry] = []
@@ -325,12 +342,15 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         #endif
         episodeRecovery = SharedEpisodeRecovery(services: SharedEpisodeRecovery.services(model: model))
         playsThisItem = Self.isPlaying(itemID: model.selectedItem.id, in: model.snapshot)
-        importedLayers = makeImportedLayers(from: model.selectedItem)
+        let initial = makeImportedLayers(from: model.selectedItem)
+        importedLayers = initial.0
+        introReceipt = initial.1
         reportEntries = ShareLinkReport.entries(for: model.selectedItem.importedCommentaryLayers)
         model.$selectedItem.sink { [weak self] item in
             guard let self else { return }
-            let layers = self.makeImportedLayers(from: item)
+            let (layers, receipt) = self.makeImportedLayers(from: item)
             if self.importedLayers != layers { self.importedLayers = layers }
+            if self.introReceipt != receipt { self.introReceipt = receipt }
             let entries = ShareLinkReport.entries(for: item.importedCommentaryLayers)
             if self.reportEntries != entries { self.reportEntries = entries }
         }.store(in: &modelChangeCancellables)
@@ -465,6 +485,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             autoCleanSelectedEnabled: state.autoCleanSelectedEnabled,
             needsAutoCleanDecision: state.needsAutoCleanDecision,
             isReplyBack: state.replyBackTitle != nil,
+            startedFromStars: state.openedFrom == .starred,
             previewState: previewState,
             verifiedPreview: verifiedPreview,
             errorMessage: state.errorMessage,
@@ -541,7 +562,18 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         )
     }
 
-    private func makeImportedLayers(from item: ItemDetailState) -> [Build23ImportedLayerSnapshot] {
+    /// The friends' cards for the item, and the intro's "Tell Sam you got it" (#3902), worked out together so the reply
+    /// graph is built once.
+    private func makeImportedLayers(from item: ItemDetailState) -> ([Build23ImportedLayerSnapshot], ReplyReceiptButton.Content?) {
+        let receipts = ReplyReceipt.offers(on: item)
+        let layers = makeLayerSnapshots(from: item, receipts: receipts)
+        let intro = receipts.newest.flatMap { offer in
+            layers.first { $0.id == offer.layerId }.map { ReplyReceiptButton.Content(offer: offer, itemTitle: $0.itemTitle) }
+        }
+        return (layers, intro)
+    }
+
+    private func makeLayerSnapshots(from item: ItemDetailState, receipts: ReplyReceipt.ItemOffers) -> [Build23ImportedLayerSnapshot] {
         // Paragraph numbers for text positions (#1974); the text is only read as far as the furthest offset.
         let furthestOffset = item.importedCommentaryInterjections.values.joined().compactMap(\.resolution.localStartChar).max()
         let paragraphs = furthestOffset.map { MarginPlaceIndex(chapters: [], text: item.text, readingUpTo: $0) }
@@ -562,7 +594,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                     listeningMapProposalCount: layer.listeningMapProposals?.count ?? 0,
                     margins: margins,
                     reportURL: layer.shareLinkId.flatMap(ShareLinkReport.pageURL(forLinkId:)),
-                    senderId: SenderID.valid(layer.senderId)
+                    senderId: SenderID.valid(layer.senderId),
+                    receipt: receipts.byLayer[layer.id]
                 )
             }
     }
