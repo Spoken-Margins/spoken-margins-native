@@ -123,6 +123,16 @@ final class ReplyGraphSessionKeyTests: XCTestCase {
         XCTAssertEqual(parent(of: .imported("to-item"), in: graph), .local(scoped(first)))
     }
 
+    /// "Play the parent" picks the row the reference names (`Gate1AppModel.playMarginParent`): the replay's own
+    /// "ij-001" for a reply to it, never the first listen's.
+    func testPlayTheParentMatchesOnlyTheNamedPassesMargin() throws {
+        let (margins, replies) = twoPasses
+        let context = try XCTUnwrap(MarginThreadPresentation.parentContext(
+            of: .imported("to-second"), itemId: "item", localMargins: margins, layers: [layer], importedMargins: replies))
+        XCTAssertEqual(margins.filter { context.parent.isOwnMargin($0) }.map(\.sessionId), [second])
+        XCTAssertFalse(MarginReference.imported("ij-001").isOwnMargin(margins[0]))
+    }
+
     private func parent(of reference: MarginReference, in graph: MarginReplyGraph) -> MarginReference? {
         if case .linked(let link)? = graph.states[reference] { return link.parent }
         return nil

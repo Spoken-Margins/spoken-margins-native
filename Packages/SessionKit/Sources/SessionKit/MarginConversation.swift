@@ -135,6 +135,15 @@ public enum MarginReference: Hashable, Sendable {
     case imported(String)
 }
 
+extension MarginReference {
+    /// Whether this reference names `margin`, one of the listener's own (#5133): by session and id, so the same id in
+    /// another pass is not a match.
+    public func isOwnMargin(_ margin: Interjection) -> Bool {
+        if case .local(let key) = self { return key == margin.sessionScopedId }
+        return false
+    }
+}
+
 public struct MarginReplyParent: Equatable, Sendable {
     public let link: MarginReplyLink
     /// The parent in this Library, or nil when the packet it was shared in hasn't been imported.
