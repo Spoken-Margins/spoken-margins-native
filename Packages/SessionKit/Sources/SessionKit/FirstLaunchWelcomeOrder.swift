@@ -55,9 +55,6 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     /// The drawer is owed although the Library will not be empty at the next launch: a friend's file failed, and the
     /// drawer it withdrew has not shown since.
     private var isOwedAfterFailure: Bool
-    /// The import told us (`friendItemOpened`) that a friend's file opened its item since the file arrived. An item
-    /// visit alone proves nothing: the listener may have opened one of their own while the file waited (#4834).
-    private var friendItemHasOpened = false
 
     /// What the app keeps for the next launch, in case this one ends now.
     public enum Carry: Equatable, Sendable {
@@ -132,11 +129,9 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
         case .owed:
             phase = .waitingForFriendItem
             wasHeldBack = true
-            friendItemHasOpened = false
             return .none
         case .drawerShowing:
             guard !drawerHasPicks else { return .none }
-            friendItemHasOpened = false
             phase = .waitingForFriendItem
             wasHeldBack = true
             return .withdrawDrawer
@@ -152,9 +147,8 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     /// an earlier launch's friend's file held it back (that friend's item is in the Library). A failure with the drawer
     /// never withdrawn (it had picks, or nothing was owed) changes nothing.
     public mutating func friendFileFailed(place: Place) -> Action {
-        // Waiting for the Library counts too when no friend's item has opened: the item the listener went to was their
-        // own (#4834).
-        guard phase == .waitingForFriendItem || (phase == .waitingForLibrary && !friendItemHasOpened) else { return .none }
+        // Once the friend's item has opened (`friendItemOpened`) the phase is waitingForLibrary and a failure changes nothing.
+        guard phase == .waitingForFriendItem else { return .none }
         wasHeldBack = wasHeldBackBeforeThisLaunch
         isOwedAfterFailure = true
         phase = .owed
@@ -165,7 +159,6 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     /// failure of another link does not undo the hold-back: that item is in the Library (#4834).
     public mutating func friendItemOpened() {
         guard phase == .waitingForFriendItem || phase == .waitingForLibrary else { return }
-        friendItemHasOpened = true
         phase = .waitingForLibrary
     }
 

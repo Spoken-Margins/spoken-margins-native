@@ -386,8 +386,8 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         var told = 0
         presenter.onCloseNotice = { told += 1 }
         presenter.present(PacketOpenFailureSheetContent(row: .offline), retry: {})
-        let wordsWhenTheOpenBegan = presenter.generation
         presenter.tryAgain()
+        let wordsWhenTheOpenBegan = presenter.openToken
         XCTAssertTrue(presenter.isRetrying)
 
         presenter.openEnded(opened: false, since: wordsWhenTheOpenBegan)
@@ -406,7 +406,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     func testAnOpenThatEndsAfterTheSheetSaidSomethingNewLeavesTheNewWordsUp() async throws {
         let presenter = PacketOpenFailurePresenter()
         presenter.present(PacketOpenFailureSheetContent(row: .offline), retry: {})
-        let before = presenter.generation
+        let before = presenter.openToken
         presenter.present(PacketOpenFailureSheetContent(row: .expired), retry: nil)
 
         presenter.openEnded(opened: false, since: before)

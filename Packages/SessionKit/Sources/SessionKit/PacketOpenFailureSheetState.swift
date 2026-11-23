@@ -39,6 +39,18 @@ public struct PacketOpenFailureSheetState: Equatable, Sendable {
     private var openRunning = false
     /// The sheet has been closed (by the listener or by us) and its `onDismiss` has not run yet.
     private var sheetLeaving = false
+    /// Counts the opens that have started, so only the newest one's end can touch the running flag: a link that was
+    /// replaced (or a Try Again that was closed) may still report after the next one began.
+    private var openSerial = 0
+
+    /// What an open takes when it starts and hands back to `openEnded`.
+    public struct OpenToken: Equatable, Sendable {
+        fileprivate let words: Int
+        fileprivate let serial: Int
+    }
+
+    /// The token for the open that is about to start (take it after `tryAgain` or `anotherLinkStarted`).
+    public var openToken: OpenToken { OpenToken(words: generation, serial: openSerial) }
 
     public init() {}
 
@@ -58,6 +70,7 @@ public struct PacketOpenFailureSheetState: Equatable, Sendable {
         guard presented?.showsTryAgain == true, !isRetrying else { return false }
         isRetrying = true
         openRunning = true
+        openSerial += 1
         return true
     }
 
@@ -68,6 +81,7 @@ public struct PacketOpenFailureSheetState: Equatable, Sendable {
     public mutating func anotherLinkStarted() {
         isRetrying = false
         openRunning = true
+        openSerial += 1
         if let presented { self.presented = Presented(id: presented.id, content: presented.content, canRetry: false) }
     }
 
@@ -79,7 +93,10 @@ public struct PacketOpenFailureSheetState: Equatable, Sendable {
         presented = nil
         isRetrying = false
         sheetLeaving = true
-        if stopsRetry { openRunning = false }
+        if stopsRetry {
+            openRunning = false
+            openSerial += 1
+        }
         return stopsRetry
     }
 
@@ -100,13 +117,15 @@ public struct PacketOpenFailureSheetState: Equatable, Sendable {
     /// had, and the drawer it withdrew comes back. True when the notice is due now: no sheet is up or leaving to
     /// carry it, so the caller tells the drawer.
     @discardableResult
-    public mutating func openEnded(opened: Bool, since generation: Int) -> Bool {
+    public mutating func openEnded(opened: Bool, since token: OpenToken) -> Bool {
+        // An open that was replaced says nothing: the newer one is still running and owns the flag.
+        guard token.serial == openSerial else { return false }
         if opened {
             succeeded()
             return false
         }
         openRunning = false
-        if self.generation == generation, presented != nil {
+        if generation == token.words, presented != nil {
             presented = nil
             isRetrying = false
             sheetLeaving = true

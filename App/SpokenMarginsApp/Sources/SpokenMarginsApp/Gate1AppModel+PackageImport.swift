@@ -145,7 +145,7 @@ extension Gate1AppModel {
             return
         }
         diagnostics["lastShareLink"] = link.key == nil ? "opening:no_key" : "opening"
-        let sheetWords = packetOpenFailures.generation
+        let sheetWords = packetOpenFailures.openToken
         let tryAgain: @MainActor () -> Void = { [weak self] in self?.startShareLinkOpen(url) }
         shareLinkOpener.open(
             link,
@@ -153,8 +153,7 @@ extension Gate1AppModel {
                 guard let self else { return }
                 let opened = await self.stageSpokenMarginsPackageImport(from: file, shareLinkId: link.id)
                 self.diagnostics["lastShareLink"] = opened ? "opened" : "rejected"
-                // A Try Again that worked: the sheet goes and the arrival begins. A refused file has put its own words up;
-                // any other failure went to the banner, and the sheet's old words go so the banner can be seen.
+                // Opened: the sheet goes. A refused file put its own words up; any other failure was a banner (state decides).
                 self.packetOpenFailures.openEnded(opened: opened, since: sheetWords)
             },
             fail: { [weak self] failure in

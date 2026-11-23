@@ -53,12 +53,16 @@ final class PacketOpenFailurePresenter: ObservableObject {
     }
 
     /// An open that began when the sheet was at `generation` has ended; see `PacketOpenFailureSheetState.openEnded`.
-    func openEnded(opened: Bool, since generation: Int) {
-        if state.openEnded(opened: opened, since: generation) { onCloseNotice?() }
+    func openEnded(opened: Bool, since token: PacketOpenFailureSheetState.OpenToken) {
+        if state.openEnded(opened: opened, since: token) { onCloseNotice?() }
     }
 
-    /// Tells the first-launch drawer that the failure it was waiting on is over. Set once by the root view, which knows
-    /// where the listener is. Called only from `sheetDismissed` and `openEnded`, the state's two routes.
+    /// What an open takes when it starts and passes back to `openEnded`.
+    var openToken: PacketOpenFailureSheetState.OpenToken { state.openToken }
+
+    /// Tells the first-launch drawer that the failure it was waiting on is over. Installed where the presenter is built,
+    /// so neither route can hand out the notice before a handler exists. Called only from `sheetDismissed` and
+    /// `openEnded`, the state's two routes.
     var onCloseNotice: (@MainActor () -> Void)?
 
     /// Told by the import when a friend's file opened its item; the first-launch drawer's order listens (#4834).

@@ -548,8 +548,8 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.settleFirstRun(at: .library)
 
         presenter.present(PacketOpenFailureSheetContent(row: .offline), retry: {}, endsOpen: true)
-        let since = presenter.generation
         presenter.tryAgain()
+        let since = presenter.openToken
         presenter.present(PacketOpenFailureSheetContent(row: .expired), retry: nil)
         presenter.close()
         presenter.sheetDismissed()

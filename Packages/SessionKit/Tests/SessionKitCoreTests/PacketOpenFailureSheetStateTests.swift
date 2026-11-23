@@ -81,8 +81,8 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
     func testTheSecondLinkEndingWithNoNewWordsClosesTheSheetAndTellsTheDrawerAfterItLeaves() {
         var state = State()
         state.present(Content(row: .offline), canRetry: true)
-        let words = state.generation
         state.anotherLinkStarted()
+        let words = state.openToken
 
         XCTAssertFalse(state.openEnded(opened: false, since: words), "the sheet is still leaving")
 
@@ -94,8 +94,8 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
     func testTheSecondLinkEndingAsABannerAfterTheOldSheetWentTellsTheDrawerFromOpenEnded() {
         var state = State()
         state.present(Content(row: .offline), canRetry: true)
-        let words = state.generation
         state.anotherLinkStarted()
+        let words = state.openToken
         _ = state.close()
         XCTAssertFalse(state.sheetDismissed(), "B is still opening")
 
@@ -109,8 +109,8 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
     func testTheSecondLinkEndingWhileTheOldSheetIsLeavingWaitsForTheDismissal() {
         var state = State()
         state.present(Content(row: .offline), canRetry: true)
-        let words = state.generation
         state.anotherLinkStarted()
+        let words = state.openToken
         _ = state.close()
 
         XCTAssertFalse(state.openEnded(opened: false, since: words))
@@ -120,8 +120,8 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
     /// With no failure ever owed, a link that ends as a banner owes nothing.
     func testALinkEndingAsABannerWithNoFailureBeforeItOwesNothing() {
         var state = State()
-        let words = state.generation
         state.anotherLinkStarted()
+        let words = state.openToken
 
         XCTAssertFalse(state.openEnded(opened: false, since: words))
         XCTAssertFalse(state.sheetDismissed())
@@ -131,8 +131,8 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
     func testTheSecondLinkOpeningAfterTheOldSheetClosedOwesNothing() {
         var state = State()
         state.present(Content(row: .offline), canRetry: true)
-        let words = state.generation
         state.anotherLinkStarted()
+        let words = state.openToken
         _ = state.close()
 
         XCTAssertFalse(state.openEnded(opened: true, since: words))
@@ -144,8 +144,8 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
     func testTheSecondLinkOpeningOwesNothing() {
         var state = State()
         state.present(Content(row: .offline), canRetry: true)
-        let words = state.generation
         state.anotherLinkStarted()
+        let words = state.openToken
 
         state.openEnded(opened: true, since: words)
 
@@ -158,8 +158,8 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
     func testARefusedFileDuringATryAgainOwesTheNoticeOnlyWhenTheOpenEnds() {
         var state = State()
         state.present(Content(row: .offline), canRetry: true)
-        let words = state.generation
         XCTAssertTrue(state.tryAgain())
+        let words = state.openToken
 
         state.present(Content(row: .expired), canRetry: false)
         XCTAssertFalse(state.isRetrying)
@@ -173,8 +173,8 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
     func testARefusedFileDuringATryAgainWithTheSheetStillUpWaitsForTheDismissal() {
         var state = State()
         state.present(Content(row: .offline), canRetry: true)
-        let words = state.generation
         XCTAssertTrue(state.tryAgain())
+        let words = state.openToken
         state.present(Content(row: .expired), canRetry: false)
 
         XCTAssertFalse(state.openEnded(opened: false, since: words), "the sheet is up with new words")
@@ -187,8 +187,8 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
     func testARefusedFileForTheSecondLinkOwesTheNoticeOnlyWhenItsOpenEnds() {
         var state = State()
         state.present(Content(row: .offline), canRetry: true)
-        let words = state.generation
         state.anotherLinkStarted()
+        let words = state.openToken
         state.present(Content(row: .expired), canRetry: false)
         _ = state.close()
         XCTAssertFalse(state.sheetDismissed(), "B's open has not ended")
@@ -223,8 +223,8 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
     func testATryAgainThatWorksClosesTheSheetAndTellsNobody() {
         var state = State()
         state.present(Content(row: .offline), canRetry: true)
-        let began = state.generation
         XCTAssertTrue(state.tryAgain())
+        let began = state.openToken
 
         state.openEnded(opened: true, since: began)
 
@@ -236,8 +236,8 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
     func testAnOpenThatEndsWithoutNewWordsClosesTheStaleSheetAndOneWithNewWordsLeavesThem() {
         var stale = State()
         stale.present(Content(row: .offline), canRetry: true)
-        let began = stale.generation
         XCTAssertTrue(stale.tryAgain())
+        let began = stale.openToken
         stale.openEnded(opened: false, since: began)
         XCTAssertNil(stale.presented, "a banner behind a sheet cannot be read")
         XCTAssertFalse(stale.isRetrying)
@@ -245,7 +245,7 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
 
         var fresh = State()
         fresh.present(Content(row: .offline), canRetry: true)
-        let before = fresh.generation
+        let before = fresh.openToken
         fresh.present(Content(row: .expired), canRetry: false)
         fresh.openEnded(opened: false, since: before)
         XCTAssertEqual(fresh.presented?.content.row, .expired)
@@ -262,13 +262,15 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
         case tryAgain
         case close              // OK, Close or a swipe
         case dismissed          // the sheet's onDismiss
-        case openEndedBanner    // the open ends, the failure went to a banner (no new words)
+        case openEndedBanner    // the newest open ends, the failure went to a banner (no new words)
+        case firstOpenEndedBanner  // the first link's open ends late, after a newer open began (it was replaced)
         case openEndedOpened    // the open ends, it opened
     }
 
     private func run(_ events: [Event], file: StaticString = #filePath, line: UInt = #line) -> [Bool] {
         var state = State()
-        var words = state.generation
+        // Every open that has started, oldest first: the first link, then each second link or Try Again.
+        var opens = [state.openToken]
         var notices: [Bool] = []
         for event in events {
             switch event {
@@ -279,12 +281,12 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
                 state.present(Content(row: .expired), canRetry: false)
                 notices.append(false)
             case .anotherLink:
-                words = state.generation
                 state.anotherLinkStarted()
+                opens.append(state.openToken)
                 notices.append(false)
             case .tryAgain:
-                words = state.generation
                 _ = state.tryAgain()
+                opens.append(state.openToken)
                 notices.append(false)
             case .close:
                 _ = state.close()
@@ -292,9 +294,11 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
             case .dismissed:
                 notices.append(state.sheetDismissed())
             case .openEndedBanner:
-                notices.append(state.openEnded(opened: false, since: words))
+                notices.append(state.openEnded(opened: false, since: opens[opens.count - 1]))
             case .openEndedOpened:
-                notices.append(state.openEnded(opened: true, since: words))
+                notices.append(state.openEnded(opened: true, since: opens[opens.count - 1]))
+            case .firstOpenEndedBanner:
+                notices.append(state.openEnded(opened: false, since: opens[0]))
             }
         }
         return notices
@@ -320,6 +324,12 @@ final class PacketOpenFailureSheetStateTests: XCTestCase {
             ("try again works: nothing", [.failure, .tryAgain, .openEndedOpened, .dismissed], []),
             ("two links overlap: A, B, B refused, B ends, close, dismissed", [.failure, .anotherLink, .refusedFile, .openEndedBanner, .close, .dismissed], [5]),
             ("two links overlap: A, B, C (another), close, dismissed: still running", [.failure, .anotherLink, .anotherLink, .close, .dismissed], []),
+            ("replaced link's banner while the newest runs: A fails, B, close, dismissed, C, A's banner ends: nothing",
+             [.failure, .anotherLink, .close, .dismissed, .anotherLink, .firstOpenEndedBanner], []),
+            ("the same, then C's banner ends: the notice comes",
+             [.failure, .anotherLink, .close, .dismissed, .anotherLink, .firstOpenEndedBanner, .openEndedBanner], [6]),
+            ("a closed Try Again hands the notice at its dismissal; later ends owe nothing more",
+             [.failure, .tryAgain, .close, .dismissed, .anotherLink, .firstOpenEndedBanner, .openEndedBanner], [3]),
             ("a banner with no failure ever: nothing", [.anotherLink, .openEndedBanner, .dismissed], []),
             ("a failure with no second link, close, dismissed", [.failure, .close, .dismissed, .openEndedBanner], [2]),
         ]

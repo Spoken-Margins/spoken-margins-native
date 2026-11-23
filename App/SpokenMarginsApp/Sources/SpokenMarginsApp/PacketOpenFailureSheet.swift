@@ -106,14 +106,6 @@ private struct PacketOpenFailureSheetModifier: ViewModifier {
             onDismiss: { presenter.sheetDismissed() },
             content: { presented in PacketOpenFailureSheet(presenter: presenter, presented: presented) }
         )
-        .onAppear {
-            // The one place the drawer is told (#4834): the presenter calls this from `sheetDismissed` and `openEnded`
-            // only, so it never presents while the failure sheet is still leaving.
-            presenter.onCloseNotice = { [weak model, weak drawer] in
-                guard let model, let drawer else { return }
-                drawer.friendFileFailed(at: drawer.isPresented ? .elsewhere : FirstLaunchWelcomeOrder.Place(model))
-            }
-        }
     }
 }
 
