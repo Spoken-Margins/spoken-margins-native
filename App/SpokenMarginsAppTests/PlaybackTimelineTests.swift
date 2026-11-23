@@ -550,4 +550,48 @@ final class PlaybackTimelineTests: XCTestCase {
         snapshot.itemId = nil
         XCTAssertNil(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot))
     }
+
+    /// #4233, PR 3c: a Margin moved onto a podcast with no saved place sits after every placed entry on the Timeline, its
+    /// corner and detail say "No place", and it never sorts at the start from its stored zeros. The two placed Margins and
+    /// the chapter are the control.
+    func testAMarginWithNoPlaceSitsAfterThePlacedEntriesOnThePodcastTimeline() {
+        func margin(_ id: String, ms: Int?, percent: Int, unplaced: Bool = false) -> Interjection {
+            var margin = Interjection(
+                id: id, itemId: "podcast", sessionId: "session", targetType: .item, targetId: "podcast",
+                createdAt: Date(timeIntervalSince1970: 1_780_000_000), roughPercent: percent,
+                anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: ms),
+                audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed",
+                transcript: id, cleanedTranscript: nil, displayText: id, status: "active", captureKind: .written)
+            if unplaced {
+                margin.movedOrigin = MovedMarginOrigin(
+                    marginId: id, itemId: "podcast", sessionId: "session", liveMarginId: "live-\(id)", fromLiveSessionId: "live",
+                    fromLiveSessionTitle: "Quick session", sessionPlaceLabel: nil, markedAt: margin.createdAt,
+                    movedAt: margin.createdAt.addingTimeInterval(60), placeKnown: false)
+            }
+            return margin
+        }
+        var item = ItemDetailState(id: "podcast", title: "Episode", text: "")
+        item.isNativeAudio = true
+        item.mediaDurationMs = 100_000
+        item.mediaChapters = [MediaTimelineChapter(id: "late", title: "Late chapter", startMs: 95_000, transcriptSegmentId: "seg-late")]
+        item.interjections = [
+            margin("unplaced", ms: 0, percent: 0, unplaced: true),
+            margin("early", ms: 10_000, percent: 10),
+            margin("end", ms: 99_000, percent: 99)
+        ]
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        let ids = entries.map(\.id)
+        let unplacedIndex = ids.firstIndex(of: "session::unplaced")
+        XCTAssertEqual(unplacedIndex, ids.indices.last, "after the last placed entry: \(ids)")
+        let unplaced = entries.first { $0.id == "session::unplaced" }
+        XCTAssertEqual(unplaced?.cornerLabel, "No place")
+        XCTAssertEqual(unplaced?.spokenPosition, "No place")
+        XCTAssertEqual(unplaced?.detail, "No place")
+        let end = entries.first { $0.id == "session::end" }
+        XCTAssertEqual(end?.detail, "Captured at 99%", "a placed Margin reads as before")
+        XCTAssertNotEqual(end?.cornerLabel, "No place")
+        XCTAssertEqual(InterjectionPositionPresentation.sortPercent(for: item.interjections[0], durationMs: 100_000),
+                       MarginPlacePresentation.timelineSortPosition)
+        XCTAssertEqual(InterjectionPositionPresentation.sortPercent(for: item.interjections[1], durationMs: 100_000), 10)
+    }
 }
