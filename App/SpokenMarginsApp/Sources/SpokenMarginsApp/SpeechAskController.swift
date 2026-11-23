@@ -94,9 +94,16 @@ final class SpeechAskController: ObservableObject {
     // MARK: What the app tells it
 
     /// A spoken Margin was saved (a written one brings no card).
-    func spokenMarginSaved(isWritten: Bool) {
-        guard let moment = SpeechRecognitionAsk.Moment.forSavedMargin(isWritten: isWritten, hearItLandWillRun: false) else { return }
+    /// `hearItLandWillRun`: the save plays back in place first (#4713), so the card waits for `hearItLandEnded()`.
+    func spokenMarginSaved(isWritten: Bool, hearItLandWillRun: Bool = false) {
+        guard let moment = SpeechRecognitionAsk.Moment.forSavedMargin(isWritten: isWritten, hearItLandWillRun: hearItLandWillRun) else { return }
         if ask.cardDue(at: moment, access: access(), shownThisLaunchForReAsk: false) { cardSurface = .now }
+    }
+
+    /// Hear it land's playback is over: its voice ended or was skipped, or it was cancelled or could not start. The card
+    /// that waited for it is due now.
+    func hearItLandEnded() {
+        if ask.cardDue(at: .hearItLandEnded, access: access(), shownThisLaunchForReAsk: false) { cardSurface = .now }
     }
 
     /// The Margin's transcription met the hold: it waits for the answer. `marginIdentity` is `Gate1AppModel.marginIdentity`.

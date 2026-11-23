@@ -378,6 +378,13 @@ extension Gate1AppModel {
         if momentVoiceIsOpenInLog { recordMarginVoiceEvent("stop", player: "moment") }
     }
 
+    /// The Margin moment is being ended (`endMarginMoment`): its voice's stop is logged, and a hear-it-land playback that
+    /// never reported its end is forgotten, so it can't leave its card line behind (#4713).
+    func recordMarginMomentEnded() {
+        recordMarginMomentVoiceEnded()
+        hearItLandPlaybackCancelled()
+    }
+
     /// The log's last moment entry is a start with no stop after it.
     private var momentVoiceIsOpenInLog: Bool {
         let events = diagnostics["marginVoice.events"]?.components(separatedBy: " | ") ?? []

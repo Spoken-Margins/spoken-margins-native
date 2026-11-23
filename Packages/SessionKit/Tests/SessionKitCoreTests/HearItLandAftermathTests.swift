@@ -32,17 +32,17 @@ final class HearItLandAftermathTests: XCTestCase {
 
     func testOnlyTheMarginThatBeganIsTheHearItLandRun() {
         var aftermath = HearItLandAftermath()
-        XCTAssertEqual(aftermath.run(forMomentTarget: "s1::m1"), .moment)
+        XCTAssertEqual(aftermath.run(forMomentTarget: "s1::m1", now: t0), .moment)
         aftermath.began(identity: "s1::m1", at: t0)
-        XCTAssertEqual(aftermath.run(forMomentTarget: "s1::m1"), .hearItLand)
-        XCTAssertEqual(aftermath.run(forMomentTarget: "s1::other"), .moment, "another Margin's moment keeps its ordinary card")
+        XCTAssertEqual(aftermath.run(forMomentTarget: "s1::m1", now: t0), .hearItLand)
+        XCTAssertEqual(aftermath.run(forMomentTarget: "s1::other", now: t0), .moment, "another Margin's moment keeps its ordinary card")
     }
 
     func testTheRunEndsWithTheVoice() {
         var aftermath = HearItLandAftermath()
         aftermath.began(identity: "s1::m1", at: t0)
         aftermath.voiceEnded(identity: "s1::m1", at: t0.addingTimeInterval(36))
-        XCTAssertEqual(aftermath.run(forMomentTarget: "s1::m1"), .moment, "Play this moment later is an ordinary moment")
+        XCTAssertEqual(aftermath.run(forMomentTarget: "s1::m1", now: t0), .moment, "Play this moment later is an ordinary moment")
     }
 
     func testTheLeadInCardWordsAreTheDesigns() {
@@ -66,7 +66,7 @@ final class HearItLandAftermathTests: XCTestCase {
         aftermath.began(identity: "s1::m1", at: t0)
         aftermath.voiceEnded(identity: "s1::friend", at: t0.addingTimeInterval(10))
         XCTAssertNil(aftermath.playbackEndedAt)
-        XCTAssertEqual(aftermath.run(forMomentTarget: "s1::m1"), .hearItLand, "still waiting for its own voice")
+        XCTAssertEqual(aftermath.run(forMomentTarget: "s1::m1", now: t0), .hearItLand, "still waiting for its own voice")
     }
 
     func testAnAbandonedPlaybackDoesNotReopenTheWindowWhenItIsPlayedLater() {
@@ -82,6 +82,67 @@ final class HearItLandAftermathTests: XCTestCase {
         aftermath.voiceEnded(identity: "s1::m1", at: t0.addingTimeInterval(40))
         aftermath.voiceEnded(identity: "s1::m1", at: t0.addingTimeInterval(500))
         XCTAssertEqual(aftermath.playbackEndedAt, t0.addingTimeInterval(40))
+    }
+
+    // MARK: a cancelled playback leaves no line behind
+
+    func testACancelledPlaybackLeavesNoHearItLandLineForALaterPlayThisMoment() {
+        var aftermath = HearItLandAftermath()
+        aftermath.began(identity: "s1::m1", at: t0)
+        XCTAssertTrue(aftermath.cancelled(), "a playback was running")
+        XCTAssertEqual(aftermath.run(forMomentTarget: "s1::m1", now: t0.addingTimeInterval(5)), .moment)
+        XCTAssertNil(aftermath.playbackEndedAt, "a cancel is not an end: the friend's window does not start")
+        XCTAssertFalse(aftermath.cancelled(), "nothing left to cancel")
+    }
+
+    func testAMomentThatEndedItsVoiceHasNothingLeftToCancel() {
+        var aftermath = HearItLandAftermath()
+        aftermath.began(identity: "s1::m1", at: t0)
+        XCTAssertTrue(aftermath.voiceEnded(identity: "s1::m1", at: t0.addingTimeInterval(20)))
+        XCTAssertFalse(aftermath.cancelled(), "the speech ask is told once, at the voice's end")
+        XCTAssertEqual(aftermath.playbackEndedAt, t0.addingTimeInterval(20), "ending the moment later keeps the window")
+    }
+
+    func testTheRunIgnoresAPlaybackOlderThanTheSpan() {
+        var aftermath = HearItLandAftermath()
+        aftermath.began(identity: "s1::m1", at: t0)
+        let late = t0.addingTimeInterval(HearItLandAftermath.playbackSpan + 1)
+        XCTAssertEqual(aftermath.run(forMomentTarget: "s1::m1", now: late), .moment, "a playback that never reported its end")
+        XCTAssertEqual(aftermath.run(forMomentTarget: "s1::m1", now: t0.addingTimeInterval(HearItLandAftermath.playbackSpan)), .hearItLand)
+    }
+
+    func testAnotherMarginsEndReportsNothingToTheSpeechAsk() {
+        var aftermath = HearItLandAftermath()
+        aftermath.began(identity: "s1::m1", at: t0)
+        XCTAssertFalse(aftermath.voiceEnded(identity: "s1::friend", at: t0.addingTimeInterval(3)))
+    }
+
+    // MARK: finding the saved Margin (the lookup the model used to do inline)
+
+    private func margin(id: String, createdAt: Date, spoken: Bool = true, audio: String? = "interjections/a.m4a", ms: Int? = 252_000) -> Interjection {
+        Interjection(
+            id: id, itemId: "item", sessionId: "s1", targetType: .item, targetId: "item", createdAt: createdAt, roughPercent: 50,
+            anchor: Anchor(anchorType: .transcript, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: ms),
+            audioPath: audio, audioStatus: "recorded", transcriptionStatus: "pending", transcript: nil, cleanedTranscript: nil,
+            displayText: spoken ? nil : "typed", status: "active")
+    }
+
+    func testTheSavedMarginIsFoundOnlyWhenItIsRecentAndPlaceable() throws {
+        let fresh = margin(id: "m1", createdAt: t0.addingTimeInterval(-2))
+        let old = margin(id: "m0", createdAt: t0.addingTimeInterval(-60))
+        let noAudio = margin(id: "m2", createdAt: t0, audio: nil)
+        let noPlace = margin(id: "m3", createdAt: t0, ms: nil)
+        let all = [old, fresh, noAudio, noPlace]
+        func find(_ id: String, at ms: Int? = 252_000) -> HearItLand.SavedPlayback? {
+            HearItLand.savedPlayback(savedId: id, among: all, now: t0, clock: .media, targetMediaTimeMs: ms, textForItem: { _ in "" })
+        }
+        let found = try XCTUnwrap(find("m1"))
+        XCTAssertEqual(found.saved.id, "m1")
+        XCTAssertEqual(found.target.mediaTimeMs, 252_000)
+        XCTAssertNil(find("m0"), "an id left behind by an earlier save must not play an older Margin")
+        XCTAssertNil(find("m2"), "no recording to play")
+        XCTAssertNil(find("m3", at: nil), "no place on the clock")
+        XCTAssertNil(find("missing"))
     }
 
     // MARK: the written card (writtenWhilePausedShowsCard, the card itself)

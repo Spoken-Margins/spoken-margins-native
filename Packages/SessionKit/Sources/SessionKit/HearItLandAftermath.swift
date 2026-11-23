@@ -49,18 +49,32 @@ public struct HearItLandAftermath: Equatable, Sendable {
         playbackEndedAt = nil
     }
 
-    /// The card's `Run` for a moment about `identity`: `.hearItLand` only while that Margin's own playback runs.
-    public func run(forMomentTarget identity: String) -> PinnedMarginCard.Run {
-        playingIdentity == identity ? .hearItLand : .moment
+    /// The card's `Run` for a moment about `identity`: `.hearItLand` only while that Margin's own playback runs, and only
+    /// within `playbackSpan` of its start (a playback left behind never reopens the line).
+    public func run(forMomentTarget identity: String, now: Date) -> PinnedMarginCard.Run {
+        guard playingIdentity == identity, let started = playingStartedAt, now.timeIntervalSince(started) <= Self.playbackSpan else {
+            return .moment
+        }
+        return .hearItLand
     }
 
-    /// A moment's voice stopped, at its end or skipped. Counts only for the Margin this run began, once.
-    public mutating func voiceEnded(identity: String, at now: Date) {
-        guard playingIdentity == identity, let started = playingStartedAt else { return }
+    /// A moment's voice stopped, at its end or skipped. Counts only for the Margin this run began, once. Returns whether
+    /// it was this run's playback, so the caller tells the speech ask once.
+    @discardableResult
+    public mutating func voiceEnded(identity: String, at now: Date) -> Bool {
+        guard playingIdentity == identity, let started = playingStartedAt else { return false }
         playingIdentity = nil
         playingStartedAt = nil
-        guard now.timeIntervalSince(started) <= Self.playbackSpan else { return }
-        playbackEndedAt = now
+        if now.timeIntervalSince(started) <= Self.playbackSpan { playbackEndedAt = now }
+        return true
+    }
+
+    /// The moment ended without its voice ending (another item, a recording, leaving playback). Forgets the playback so a
+    /// later "Play this moment" of that Margin shows the ordinary line. Returns whether one was running.
+    @discardableResult
+    public mutating func cancelled() -> Bool {
+        defer { playingIdentity = nil; playingStartedAt = nil }
+        return playingIdentity != nil
     }
 
     /// A written first Margin was saved at `atMs` of `itemId`.
