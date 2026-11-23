@@ -63,6 +63,19 @@ class ExpressionTests(unittest.TestCase):
         self.assertTrue(self.check("always() && vars.MERGE_QUEUE == 'on'", ['failure']))
 
 
+    def test_the_scope_job_runs_the_workflows_own_docs_only_check(self):
+        # #5048: the model used to rebuild the rule from the workflow's `docs` tuple, so a change to the rule beside the
+        # tuple (Site/quiz/ is code) left the model saying docs-only. It now runs the step's Python.
+        self.assertTrue(TREE.docs_only(['Site/privacy/index.html', 'docs/a.md']))
+        self.assertFalse(TREE.docs_only(['Site/quiz/page.js']))
+        self.assertFalse(TREE.docs_only(['scripts/x.py']))
+        self.assertFalse(TREE.docs_only([]))
+        for text in ('jobs: {scope: {steps: [{id: scope, run: "echo docs_only=true"}]}}', 'jobs: {scope: {steps: []}}',
+                     'jobs: {}', ''):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                ci_model.docs_only_rule(text)
+
+
 class FilterAndCronTests(unittest.TestCase):
     def test_paths_with_negation(self):
         patterns = ['App/**', 'Packages/**', '!Packages/SessionKit/Tests/**']

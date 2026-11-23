@@ -308,12 +308,15 @@ jobs:
             echo "app=true" | tee -a "$GITHUB_OUTPUT"
           fi
           grep -q '^app=' "$GITHUB_OUTPUT" || echo "app=true" >> "$GITHUB_OUTPUT"
-          # Docs-only: every changed path is one the old paths-ignore list skipped. No list says false.
+          # Docs-only: every changed path is one the old paths-ignore list skipped. No list says false. The Site/
+          # folders that hold code with tests are not docs (Site/quiz/, #5048): a change there runs the portable plan,
+          # whose runner tests in the merge group include test_quiz_page.
           if [ -s "$list" ] && python3 -c '
           import sys
           docs = ("docs/", "research/", "Design/", "references/", "Site/", "Contracts/docs/")
+          code = ("Site/quiz/",)
           paths = [p.strip() for p in open(sys.argv[1]) if p.strip()]
-          sys.exit(0 if paths and all(p.endswith(".md") or p.startswith(docs) for p in paths) else 1)
+          sys.exit(0 if paths and all(p.endswith(".md") or (p.startswith(docs) and not p.startswith(code)) for p in paths) else 1)
           ' "$list"; then
             echo "docs_only=true" | tee -a "$GITHUB_OUTPUT"
           else
