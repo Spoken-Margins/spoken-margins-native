@@ -11,6 +11,11 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).parent))
 import dial_gate as g  # noqa: E402
 
+# The fixtures below are dated against the Saturday-reset week of 2026-09/10, so they pin that weekday. The Monday
+# default (from 2026-11-23) is covered by MondayReset at the end.
+DEFAULT_RESET_WEEKDAY = g.RESET_WEEKDAY
+g.RESET_WEEKDAY = 5
+
 BODY = """Tap one box in each group.
 
 **Mode**
@@ -927,6 +932,35 @@ class StaleEstimateChargesForWhatRan(unittest.TestCase):
         # three threads for about 10.3 hours each
         self.assertIn('30.9 thread-hours', text)
         self.assertIn('Holding', text)       # about 65 + 4 + 17 = 86%, far ahead of the trend
+
+
+class MondayReset(unittest.TestCase):
+    """The weekly reset moved from Saturday to Monday on 2026-11-23."""
+
+    def test_the_default_reset_is_monday(self):
+        self.assertEqual(DEFAULT_RESET_WEEKDAY, 0)
+
+    def test_the_next_reset_is_the_coming_monday(self):
+        with mock.patch.object(g, 'RESET_WEEKDAY', 0):
+            # Wed 2026-11-25 -> Mon 2026-11-30 at the reset hour
+            self.assertEqual(g.next_reset(dt.datetime(2026, 11, 25, 13, 0, tzinfo=dt.timezone.utc)),
+                             dt.datetime(2026, 11, 30, g.RESET_HOUR_UTC, 0, tzinfo=dt.timezone.utc))
+            # Monday before the reset hour: that same morning
+            self.assertEqual(g.next_reset(dt.datetime(2026, 11, 30, 3, 0, tzinfo=dt.timezone.utc)),
+                             dt.datetime(2026, 11, 30, g.RESET_HOUR_UTC, 0, tzinfo=dt.timezone.utc))
+            # Monday after the reset hour: a week later
+            self.assertEqual(g.next_reset(dt.datetime(2026, 11, 30, 20, 0, tzinfo=dt.timezone.utc)),
+                             dt.datetime(2026, 12, 7, g.RESET_HOUR_UTC, 0, tzinfo=dt.timezone.utc))
+
+    def test_finish_by_boxes_read_the_same_under_either_labelling(self):
+        def hours(label):
+            body = BODY.replace('- [x] Fri noon', '- [ ] Fri noon')
+            body = body.replace('- [ ] Sat 7 AM (the weekly reset)', f'- [x] {label}')
+            return g.parse_dial(body)
+        for label, early in (('Sat 7 AM (the weekly reset)', 0), ('Mon 7 AM (the weekly reset)', 0),
+                             ('Mon 7 AM', 0), ('Fri noon', 19), ('Sun noon', 19), ('Fri 7 AM', 24), ('Sun 7 AM', 24)):
+            d = hours(label)
+            self.assertEqual((label, d['hours_early']), (label, early))
 
 
 if __name__ == '__main__':
