@@ -39,8 +39,36 @@ public struct FollowingShowRow: Equatable, Identifiable, Sendable {
     /// "3 new", nil when nothing is new (the row then shows no badge).
     public var newLabel: String? { newCount > 0 ? "\(newCount) new" : nil }
 
+    /// The tag on the show's picture: "3 new", "99+ new" above 99, nil when nothing is new (#4723). The row's spoken label keeps the exact count.
+    public var newBadgeText: String? { FollowingNewBadge.text(count: newCount) }
+
     /// "1 pick", "2 picks", nil when none.
     public var pickLabel: String? { pickCount > 0 ? "\(pickCount) \(pickCount == 1 ? "pick" : "picks")" : nil }
+}
+
+/// The "N new" tag drawn on a Following row's picture (#4723). It is capped so a noisy show's tag can't grow wider than
+/// the picture it hangs from; VoiceOver reads the row's label, which keeps the exact number.
+public enum FollowingNewBadge {
+    public static let cap = 99
+
+    /// "1 new" to "99 new", "99+ new" above 99, nil for 0 or less.
+    public static func text(count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return count > cap ? "\(cap)+ new" : "\(count) new"
+    }
+}
+
+/// What the status slot on a show row's last line holds, besides the date: exactly one of these or nothing (#4723).
+public enum FollowingRowStatus: Equatable, Sendable {
+    case adding
+    case inLibrary
+
+    /// "Adding…" while a swipe Add fetches (hidden while ▶ is starting on the same episode, which shows its own spinner);
+    /// otherwise "In Library" when the previewed episode is saved.
+    public static func resolve(isAdding: Bool, isPlayStarting: Bool, isNewestInLibrary: Bool) -> FollowingRowStatus? {
+        if isAdding && !isPlayStarting { return .adding }
+        return isNewestInLibrary ? .inLibrary : nil
+    }
 }
 
 public struct FollowingShowList: Equatable, Sendable {

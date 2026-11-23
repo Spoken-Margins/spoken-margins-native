@@ -514,7 +514,9 @@ private struct FollowingShowRowsReload: View {
     }
 }
 
-/// One show on Following: artwork, name, the newest episode, "N new", ▶ and ›.
+/// One show on Following: artwork with its "N new" tag, name, the newest episode, date, status, ▶ and › (#4723).
+/// At accessibility text sizes the row stacks: the picture, ▶ and › on a top line, and the text at the row's full width
+/// below, so a title never breaks inside a word. The picture stays 56 pt at every size.
 private struct FollowingShowRowView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let row: FollowingShowRow
@@ -530,97 +532,194 @@ private struct FollowingShowRowView: View {
     var queue: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 0) {
-            Button(action: open) {
-                HStack(alignment: .center, spacing: 12) {
-                    ShowArtworkView(url: artworkURL, title: row.title, size: 56)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(row.title)
-                            .font(.headline)
-                            .foregroundStyle(AppColors.text)
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                        if let episode = row.newestEpisodeTitle {
-                            Text(episode)
-                                .font(.subheadline)
-                                .foregroundStyle(AppColors.secondaryText)
-                                .multilineTextAlignment(.leading)
-                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-                        }
-                        HStack(spacing: 8) {
-                            if let label = row.newLabel {
-                                Text(label)
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(AppColors.onEvergreen)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 2)
-                                    .background(AppColors.evergreen, in: Capsule())
-                            }
-                            if let date = row.dateLabel {
-                                Text(date)
-                                    .font(.caption)
-                                    .foregroundStyle(AppColors.secondaryText)
-                            }
-                            if isAdding && !isPlayStarting { // ▶ on the same episode shows its own spinner
-                                HStack(spacing: 4) {
-                                    ProgressView().controlSize(.mini)
-                                    Text("Adding…")
-                                        .font(.caption)
-                                        .foregroundStyle(AppColors.secondaryText)
-                                }
-                                .accessibilityElement(children: .combine)
-                                .accessibilityIdentifier("sources.show.\(row.id).adding")
-                            } else if row.isNewestInLibrary {
-                                Label("In Library", systemImage: "checkmark.circle")
-                                    .font(.caption)
-                                    .foregroundStyle(AppColors.secondaryText)
-                            }
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        pictureWithTag
+                        Spacer(minLength: 0)
+                        playButton
+                        chevronButton
+                    }
+                    openButton { textColumn }
+                        .accessibilitySortPriority(1) // VoiceOver reads the row, then ▶, as at every size
+                }
+                .accessibilityElement(children: .contain)
+            } else {
+                HStack(spacing: 0) {
+                    openButton {
+                        HStack(alignment: .center, spacing: 12) {
+                            pictureWithTag
+                            textColumn
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    playButton
+                    chevronButton
                 }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(row.accessibilityLabel)
-            .accessibilityHint("Opens the show.")
-            .accessibilityAction(named: "Add newest episode to Library") { if row.addEntryID != nil { add() } }
-            .accessibilityActions {
-                if let queueAction { Button(queueAction.newestEpisodeTitle, action: queue) }
-            }
-            .accessibilityIdentifier("sources.show.\(row.id)")
-            if row.playEntryID != nil {
-                Button(action: play) {
-                    Group {
-                        if isPlayStarting {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "play.circle.fill").font(.title2)
-                        }
-                    }
-                    .foregroundStyle(AppColors.evergreen)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(isPlayStarting)
-                .accessibilityLabel("Play \(row.newestEpisodeTitle ?? "next episode") from \(row.title)")
-                .accessibilityIdentifier("sources.show.\(row.id).play")
-            }
-            Button(action: open) {
-                Image(systemName: "chevron.right")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppColors.secondaryText)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHidden(true)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(AppColors.panel)
     }
+
+    private var pictureWithTag: some View {
+        ShowArtworkView(url: artworkURL, title: row.title, size: 56)
+            .followingNewBadge(row.newBadgeText)
+    }
+
+    private func openButton<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        Button(action: open) {
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(row.accessibilityLabel)
+        .accessibilityHint("Opens the show.")
+        .accessibilityAction(named: "Add newest episode to Library") { if row.addEntryID != nil { add() } }
+        .accessibilityActions {
+            if let queueAction { Button(queueAction.newestEpisodeTitle, action: queue) }
+        }
+        .accessibilityIdentifier("sources.show.\(row.id)")
+    }
+
+    private var textColumn: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(row.title)
+                .font(.headline)
+                .foregroundStyle(AppColors.text)
+                .multilineTextAlignment(.leading)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+            if let episode = row.newestEpisodeTitle {
+                Text(episode)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+            }
+            if row.dateLabel != nil || status != nil {
+                AdaptiveStack(alignment: .firstTextBaseline, spacing: 8) {
+                    if let date = row.dateLabel {
+                        Text(date)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                    if let status {
+                        FollowingShowStatusView(status: status, showID: row.id)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var status: FollowingRowStatus? {
+        FollowingRowStatus.resolve(isAdding: isAdding, isPlayStarting: isPlayStarting, isNewestInLibrary: row.isNewestInLibrary)
+    }
+
+    @ViewBuilder private var playButton: some View {
+        if row.playEntryID != nil {
+            Button(action: play) {
+                Group {
+                    if isPlayStarting {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "play.circle.fill").font(.title2)
+                    }
+                }
+                .foregroundStyle(AppColors.evergreen)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isPlayStarting)
+            .accessibilityLabel("Play \(row.newestEpisodeTitle ?? "next episode") from \(row.title)")
+            .accessibilityIdentifier("sources.show.\(row.id).play")
+        }
+    }
+
+    private var chevronButton: some View {
+        Button(action: open) {
+            Image(systemName: "chevron.right")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AppColors.secondaryText)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The status on a show row's last line: "Adding…" or "In Library". "In Library" is one `Text` with the glyph inline, so a
+/// narrow column can only break it at the space, never inside "Library" (#4723).
+struct FollowingShowStatusView: View {
+    let status: FollowingRowStatus
+    let showID: String
+
+    var body: some View {
+        switch status {
+        case .adding:
+            HStack(spacing: 4) {
+                ProgressView().controlSize(.mini)
+                Text("Adding…")
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("sources.show.\(showID).adding")
+        case .inLibrary:
+            Text("\(Image(systemName: "checkmark.circle")) In Library")
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+        }
+    }
+}
+
+/// The "N new" tag that hangs on the bottom edge of a Following row's picture (#4723): the evergreen capsule the rows
+/// used to carry in their text. Both the show and the friend row use it, so "new" looks the same on every row.
+struct FollowingArtworkNewBadge: View {
+    let text: String
+    let fontSize: CGFloat
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: fontSize, weight: .bold))
+            .monospacedDigit()
+            .foregroundStyle(AppColors.onEvergreen)
+            .lineLimit(1)
+            .padding(.horizontal, fontSize * 0.45)
+            .frame(height: fontSize * 1.45)
+            .background(AppColors.evergreen, in: Capsule())
+            .overlay(Capsule().strokeBorder(AppColors.panel, lineWidth: fontSize * 0.18))
+            .fixedSize()
+            .accessibilityHidden(true)
+    }
+}
+
+private struct FollowingNewBadgeModifier: ViewModifier {
+    @ScaledMetric(relativeTo: .caption) private var tagFontSize: CGFloat = 12
+    let text: String?
+
+    private var size: CGFloat { min(max(tagFontSize, 12), 20) }
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .bottom) {
+                if let text {
+                    FollowingArtworkNewBadge(text: text, fontSize: size)
+                        .offset(y: size * 1.45 / 2)
+                }
+            }
+            // Always reserved, tag or not, so the row's height doesn't jump when a count appears or clears.
+            .padding(.vertical, size * 1.45 / 2)
+    }
+}
+
+extension View {
+    /// Hangs the "N new" tag on the bottom edge of a Following row's picture; nil text draws no tag but keeps the room.
+    func followingNewBadge(_ text: String?) -> some View { modifier(FollowingNewBadgeModifier(text: text)) }
 }
 
 /// A show's artwork, or its first letter on a tinted square.
