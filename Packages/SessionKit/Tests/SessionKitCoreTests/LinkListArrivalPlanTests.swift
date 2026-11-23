@@ -100,6 +100,13 @@ final class LinkListArrivalPlanTests: XCTestCase {
         XCTAssertNotEqual(plan(untitled).key, plan(base).key)
     }
 
+    func testKeyIgnoresWhitespaceAroundTheTitle() throws {
+        // The collection takes the trimmed title, so two copies of one list that differ only there are one collection.
+        let entries = [LinkListFile.Entry(url: "https://example.org/a")]
+        XCTAssertEqual(plan(LinkListFile(title: "Brief", entries: entries)).key, plan(LinkListFile(title: "  Brief \n", entries: entries)).key)
+        XCTAssertEqual(plan(LinkListFile(title: nil, entries: entries)).key, plan(LinkListFile(title: "   ", entries: entries)).key)
+    }
+
     func testKeyIgnoresSkippedEntriesAndEntryTitles() throws {
         let base = try recognized(briefJSON)
         var other = base

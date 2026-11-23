@@ -14,17 +14,24 @@ final class AIFollowSuggestionsModel: ObservableObject {
         suggestions = store.all()
     }
 
-    /// Stores a list's shows and returns how many were new (already waiting, already followed and not-a-feed links are skipped).
+    /// Stores a list's shows and returns the links that were new (already waiting, already followed and not-a-feed links
+    /// are skipped), so an Undo can take back exactly those and not a show an earlier arrival of the same list suggested.
     @discardableResult
-    func merge(urls: [String], listKey: String, listTitle: String?, followed: Set<String>, now: Date = Date()) -> Int {
-        let added = store.merge(urls: urls, listKey: listKey, listTitle: listTitle, addedAt: now, followed: followed)
+    func merge(urls: [String], listKey: String, listTitle: String?, followed: Set<String>, now: Date = Date()) -> [String] {
+        let before = Set(store.all().compactMap { FeedURLKey.make($0.url) })
+        store.merge(urls: urls, listKey: listKey, listTitle: listTitle, addedAt: now, followed: followed)
         reload()
-        return added
+        let after = Set(store.all().compactMap { FeedURLKey.make($0.url) })
+        var seen = Set<String>()
+        return urls.filter { url in
+            guard let key = FeedURLKey.make(url), after.contains(key), !before.contains(key) else { return false }
+            return seen.insert(key).inserted
+        }
     }
 
-    /// Undo of an arrival: the suggestions that list brought go back out.
-    func remove(listKey: String) {
-        store.remove(listKey: listKey)
+    /// Undo of an arrival: the shows it suggested go back out.
+    func remove(urls: [String]) {
+        store.remove(urls: urls)
         reload()
     }
 

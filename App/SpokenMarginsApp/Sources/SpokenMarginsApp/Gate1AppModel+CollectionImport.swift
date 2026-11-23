@@ -28,7 +28,8 @@ extension Gate1AppModel {
             bookmark: try? folder.bookmarkData(), name: folder.lastPathComponent,
             folders: libraryCollections.folders, collections: libraryCollections.collections, now: Date(),
             collectionID: "collection-\(UUID().uuidString)", makeItemID: Self.collectionImportItemID)
-        return await runCollectionImport(start, capture: capture, store: store)?.summary
+        let result = await runCollectionImport(start, capture: capture, store: store)
+        return result?.deleted == true ? nil : result?.summary
     }
 
     /// What a finished collection import tells its caller (#4683): the line to show, which collection it filled, whether
@@ -39,6 +40,9 @@ extension Gate1AppModel {
         var isNew: Bool
         var addedItemIDs: [String]
         var failed: Int
+        /// The listener deleted the collection while it filled. The items that landed are in the Library, and the
+        /// collection stays deleted; this is not a failure, so nothing is retried.
+        var deleted = false
     }
 
     /// A link list with a title, picked in Files: a collection of its links in the list's order. Picking the same list
@@ -54,9 +58,10 @@ extension Gate1AppModel {
             reportConfirmation(banner.message)
             return LibraryCollectionImport.Summary(message: banner.message, kind: banner.kind)
         }
-        return await importLinkListAsCollection(
+        let result = await importLinkListAsCollection(
             pickedPath: LibraryFolderRecord.standardizedPath(of: url), walkName: url.lastPathComponent, list: itemList, title: title,
-            reportsBanner: true, onboarding: [.addedOwnSource, .addedFromFiles])?.summary
+            reportsBanner: true, onboarding: [.addedOwnSource, .addedFromFiles])
+        return result?.deleted == true ? nil : result?.summary
     }
 
     /// A link list that arrived (#4683): the same collection whichever way it came, because its path is the list's
@@ -143,7 +148,12 @@ extension Gate1AppModel {
         _ = try? await reloadLibraryRowsOffMain(store: store)
         if added > 0 { markOnboardingSteps(onboarding) }
         // Deleted while it filled: the items that landed are in the Library, and the listener chose to drop the collection.
-        guard !deleted else { return nil }
+        guard !deleted else {
+            return CollectionImportResult(
+                summary: LibraryCollectionImport.summary(
+                    name: name, isNew: start.isNew, added: added, failed: failed, notAdded: settling.record.notAdded.count),
+                collectionID: id, isNew: start.isNew, addedItemIDs: addedItemIDs, failed: failed, deleted: true)
+        }
         let summary = LibraryCollectionImport.summary(
             name: name, isNew: start.isNew, added: added, failed: failed, notAdded: settling.record.notAdded.count)
         if reportsBanner { reportPastImportCapture { present(summary) } }

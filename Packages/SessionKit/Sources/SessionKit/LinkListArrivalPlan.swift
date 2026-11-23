@@ -70,7 +70,7 @@ public struct LinkListArrivalPlan: Equatable, Sendable {
     /// `linklist:` plus the lowercase hex SHA-256 of the list's title (or nothing) and each entry's link, joined by
     /// newlines, in file order. A list saved under the same name each day with new links is a new key, so a new collection.
     public static func key(for list: LinkListFile) -> String {
-        let text = ([list.title ?? ""] + list.entries.map(\.url)).joined(separator: "\n")
+        let text = ([list.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""] + list.entries.map(\.url)).joined(separator: "\n")
         let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
         return keyPrefix + digest
     }

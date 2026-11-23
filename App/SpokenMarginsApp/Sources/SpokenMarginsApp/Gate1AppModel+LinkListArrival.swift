@@ -46,7 +46,7 @@ extension Gate1AppModel {
         let urls = list.entries.filter(\.follow).map(\.url)
         guard !urls.isEmpty else { return 0 }
         return aiFollowSuggestionsModel.merge(
-            urls: urls, listKey: LinkListArrivalPlan.key(for: list), listTitle: list.title, followed: followedFeedKeys)
+            urls: urls, listKey: LinkListArrivalPlan.key(for: list), listTitle: list.title, followed: followedFeedKeys).count
     }
 
     /// What Undo needs to know, and the one tap it allows.
@@ -55,15 +55,18 @@ extension Gate1AppModel {
         let title: String?
         /// The Quick Folder file this list came from, so Undo can stop its retries.
         let quickFolderFileID: String?
+        /// The shows this arrival newly suggested, so Undo takes back those and no earlier arrival's.
+        let suggestedURLs: [String]
         let collectionID: String?
         let addedItemIDs: [String]
         let libraryBefore: Set<String>
         var isUsed = false
 
-        init(key: String, title: String?, quickFolderFileID: String?, collectionID: String?, addedItemIDs: [String], libraryBefore: Set<String>) {
+        init(key: String, title: String?, quickFolderFileID: String?, suggestedURLs: [String], collectionID: String?, addedItemIDs: [String], libraryBefore: Set<String>) {
             self.key = key
             self.title = title
             self.quickFolderFileID = quickFolderFileID
+            self.suggestedURLs = suggestedURLs
             self.collectionID = collectionID
             self.addedItemIDs = addedItemIDs
             self.libraryBefore = libraryBefore
@@ -96,6 +99,7 @@ extension Gate1AppModel {
         var collectionIsNew = false
         var failed = 0
         var importAlreadyReported = false
+        var collectionDeleted = false
         if plan.hasLinks {
             if let title = plan.title {
                 if let result = await importLinkListAsCollection(
@@ -105,6 +109,7 @@ extension Gate1AppModel {
                     collectionID = result.collectionID
                     collectionIsNew = result.isNew
                     failed = result.failed
+                    collectionDeleted = result.deleted
                 } else {
                     // Refused, deleted while it filled, or the collection couldn't be saved: it said why itself where it could.
                     importAlreadyReported = true
@@ -117,14 +122,21 @@ extension Gate1AppModel {
                 failed = loose.failed
             }
         }
-        let suggested = plan.followURLs.isEmpty ? 0 : aiFollowSuggestionsModel.merge(
+        let suggestedURLs = plan.followURLs.isEmpty ? [] : aiFollowSuggestionsModel.merge(
             urls: plan.followURLs, listKey: plan.key, listTitle: plan.title, followed: followedFeedKeys)
+        let suggested = suggestedURLs.count
 
         let madeItems = addedItemIDs.contains { !libraryBefore.contains($0) }
         if madeItems || suggested > 0 {
             LinkListArrivalRecord(title: plan.title, date: Date()).save()
         }
         if suggested > 0 { markOnboardingSteps(steps) }
+        // The listener deleted the collection while it filled: their choice, not a failure. The items that landed are in the
+        // Library, nothing is retried, and no banner offers to undo what they already undid.
+        guard !collectionDeleted else {
+            return LinkListArrivalResult(
+                attempted: true, notTried: nil, allLanded: true, changedAnything: true, message: nil, kind: nil)
+        }
         guard !importAlreadyReported else {
             return LinkListArrivalResult(
                 attempted: true, notTried: nil, allLanded: false, changedAnything: suggested > 0, message: nil, kind: nil)
@@ -140,7 +152,7 @@ extension Gate1AppModel {
             presentLinkListBanner(
                 banner,
                 undo: banner.offersUndo
-                    ? LinkListArrivalUndo(key: plan.key, title: plan.title, quickFolderFileID: quickFolderFileID, collectionID: collectionID,
+                    ? LinkListArrivalUndo(key: plan.key, title: plan.title, quickFolderFileID: quickFolderFileID, suggestedURLs: suggestedURLs, collectionID: collectionID,
                                           addedItemIDs: addedItemIDs, libraryBefore: libraryBefore)
                     : nil)
         }
@@ -175,7 +187,7 @@ extension Gate1AppModel {
             quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union([fileID])
             linkListArrival.hold(fileID)
         }
-        aiFollowSuggestionsModel.remove(listKey: undo.key)
+        aiFollowSuggestionsModel.remove(urls: undo.suggestedURLs)
         let newItemIDs = LinkListArrivalPlan.undoItemIDs(
             added: undo.addedItemIDs, libraryBefore: undo.libraryBefore, playing: snapshot.itemId)
         if !newItemIDs.isEmpty { moveItemsToTrash(newItemIDs) }
