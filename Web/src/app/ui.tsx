@@ -166,11 +166,11 @@ export function useUi(): UiApi {
   return api;
 }
 
-/** Runs a feed read, asking once for the relay when the browser can't read the feed itself. */
 /**
  * Wraps a feed read so a feed the browser can't read asks the listener before anything goes through the server.
- * `options.link` is the address being read: a private-looking one (a paid show's RSS link) is never sent through the
- * server silently, even with the server on, and the pop-up names it (#4176, owner 2026-11-21).
+ * `options.link` is the address being read: following a private-looking one (a paid show's RSS link) never sends it
+ * through the server without asking, even with the server on, and the pop-up names it (#4176, owner 2026-11-21).
+ * That named yes also covers the show's later refreshes (refresh.tsx), which use the standing server setting.
  */
 export function useRelay() {
   const { settings, setSetting } = useData();
