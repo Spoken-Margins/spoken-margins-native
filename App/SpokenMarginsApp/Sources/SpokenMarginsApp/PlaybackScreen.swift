@@ -244,22 +244,11 @@ struct PlaybackScreen: View {
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                // One meaning for the top-left arrow on every tab: leave the screen. The exception is the Timeline editor
-                // with the keyboard up, where the tab switch is hidden and this is the way back to Now (#4027).
-                let leading = PlaybackLeadingControl.control(
+                PlaybackLeadingToolbar(
                     pane: leadingControlPane, timelineEditorHasFocus: timelineDock.hidesDock,
-                    nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio)
-                if leading == .libraryExit {
-                    ToolbarItem(placement: .topBarLeading) { libraryExitButton }
-                } else if leading == .returnToNow {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button { selectedPane = .now } label: {
-                            Label("Now Playing", systemImage: "arrow.left")
-                        }
-                        .tint(AppColors.listeningAccent)
-                        .accessibilityIdentifier("timeline.nowPlaying.button")
-                    }
-                }
+                    nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio,
+                    returnToNow: { selectedPane = .now }
+                ) { libraryExitButton }
             }
             .scrollDismissesKeyboard(.interactively)
             .trackedSheet(item: $selectedInterjection) { interjection in
