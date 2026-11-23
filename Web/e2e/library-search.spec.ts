@@ -80,15 +80,22 @@ test('the Library says how many episodes match once typing pauses, and a query i
   await tab(page, 'Margins').click();
   const margins = page.getByRole('searchbox', { name: 'Search your Margins' });
   await margins.fill('zzzz');
+  await tab(page, 'Following').click();
+  const following = page.getByRole('searchbox', { name: 'Search the shows you follow' });
+  await following.fill('episode 1');
   await tab(page, 'Library').click();
   await expect(library).toHaveValue('EPISODE 3');
   await expect(page.getByRole('list', { name: 'Episodes, newest first' }).getByRole('listitem')).toHaveCount(1);
   await tab(page, 'Margins').click();
   await expect(margins).toHaveValue('zzzz');
+  await tab(page, 'Following').click();
+  await expect(following).toHaveValue('episode 1');
 
   await page.reload();
   await tab(page, 'Margins').click();
   await expect(margins).toHaveValue('');
+  await tab(page, 'Following').click();
+  await expect(following).toHaveValue('');
   await tab(page, 'Library').click();
   await expect(library).toHaveValue('');
 });
@@ -100,8 +107,13 @@ test('opening a friend’s file clears the Library search', async ({ page }) => 
   const library = page.getByRole('searchbox', { name: 'Search the Library' });
   await library.fill('episode 3');
   await expect(library).toHaveValue('episode 3');
+  await tab(page, 'Following').click();
+  const following = page.getByRole('searchbox', { name: 'Search the shows you follow' });
+  await following.fill('test show');
   await openFriendsFile(page);
   await expect(library).toHaveValue('');
+  await tab(page, 'Following').click();
+  await expect(following).toHaveValue('');
 });
 
 test('following a show clears the Library search, and its episodes show', async ({ page }) => {
@@ -110,7 +122,11 @@ test('following a show clears the Library search, and its episodes show', async 
   const library = page.getByRole('searchbox', { name: 'Search the Library' });
   await library.fill('zzzz');
   await expect(page.getByRole('status').filter({ hasText: 'Nothing in the Library matches' })).toBeVisible();
+  await tab(page, 'Following').click();
+  const following = page.getByRole('searchbox', { name: 'Search the shows you follow' });
+  await following.fill('zzzz');
   await followFeed(page);
+  await expect(following).toHaveValue('');
   await tab(page, 'Library').click();
   await expect(library).toHaveValue('');
   await expect(page.getByRole('list', { name: 'Episodes, newest first' })).toContainText('Episode 3');

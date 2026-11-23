@@ -2600,3 +2600,14 @@ body:not(:has(.mini-player)) .toasts {
     padding: 0 9px;
   }
 }
+
+/* Following search (#4427): the Shows and Episodes headings, and a Look for button that wraps a long query. */
+.section-heading {
+  font-size: 1.1rem;
+  color: var(--ink);
+}
+
+.look-for {
+  overflow-wrap: anywhere;
+  text-align: start;
+}
