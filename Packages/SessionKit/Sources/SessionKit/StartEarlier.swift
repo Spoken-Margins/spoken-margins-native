@@ -29,10 +29,24 @@ public enum StartEarlier {
     /// The press starts a review of that one Margin with a run-up of `plan.leadInMs`. The Margin carries the length itself,
     /// because a sender's own length would otherwise win over the review's. The episode plays on after it.
     public static func review(itemId: String, margin: MarginMomentAnchor, plan: Plan) -> MarginMomentSequence? {
-        let lengthened = MarginMomentAnchor(
-            marginId: margin.marginId, mediaTimeMs: margin.mediaTimeMs, label: margin.label,
-            isApproximate: margin.isApproximate, caption: margin.caption, isYours: margin.isYours,
-            isReadAloud: margin.isReadAloud, leadInMs: nil)
-        return MarginMomentSequence(itemId: itemId, reviewing: [lengthened], leadInMs: plan.leadInMs)
+        review(itemId: itemId, margins: [margin], plan: plan)
+    }
+
+    /// The same review over the steps the app's review builds for that Margin (a friend's reply is played after the
+    /// listener's own Margin it answers, #3221). Every step drops its sender length, so the run-up is `plan.leadInMs`.
+    /// `returnToMediaTimeMs` is where the source stood when the press came; the review plays on from the Margin unless
+    /// the listener's place was beyond it (`MarginMomentSequence.marginFinished`).
+    public static func review(
+        itemId: String, margins: [MarginMomentAnchor], returnToMediaTimeMs: Int? = nil, plan: Plan
+    ) -> MarginMomentSequence? {
+        let lengthened = margins.map { margin in
+            MarginMomentAnchor(
+                marginId: margin.marginId, mediaTimeMs: margin.mediaTimeMs, label: margin.label,
+                isApproximate: margin.isApproximate, caption: margin.caption, isYours: margin.isYours,
+                isReadAloud: margin.isReadAloud, leadInMs: nil)
+        }
+        return MarginMomentSequence(
+            itemId: itemId, reviewing: lengthened, returnToMediaTimeMs: returnToMediaTimeMs, resumesAtEnd: true,
+            leadInMs: plan.leadInMs)
     }
 }

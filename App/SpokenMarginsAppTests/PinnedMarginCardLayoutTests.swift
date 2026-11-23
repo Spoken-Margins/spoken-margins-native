@@ -81,6 +81,28 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
                 found.append(("\(who) \(stageName)", card, run == .review))
             }
         }
+        return found.map { (name: $0.0, card: $0.1, isReview: $0.2) } + startEarlierCards()
+    }
+
+    /// The stages that carry "Start a minute earlier" (#4171), for a friend with a short and a long name. The listener's own
+    /// Margin never has it, so it has no rows here.
+    private static func startEarlierCards() -> [(name: String, card: PinnedMarginCard, isReview: Bool)] {
+        var found: [(name: String, card: PinnedMarginCard, isReview: Bool)] = []
+        for (who, subject) in [("short", PinnedMarginCard.Subject.friend("Cole")), ("long", .friend(longName))] {
+            let stages: [(String, PinnedMarginCard.Stage, PinnedMarginCard.Run, NextMarginPress)] = [
+                ("speaking", .speaking, .none, .unavailable),
+                ("moment speaking", .speaking, .moment, .skipVoice),
+                ("review speaking", .speaking, .review, .skipVoice),
+                ("moment comingUp", .comingUp(msRemaining: 8_000), .moment, .unavailable),
+                ("review comingUp near", .comingUp(msRemaining: 8_000), .review, .playMarginNow),
+            ]
+            for (stageName, stage, run, press) in stages {
+                let card = PinnedMarginCard(
+                    subject: subject, stage: stage, position: "2 of 3", voiceTime: "0:14 of 0:41", noun: .episode,
+                    nextPress: press, run: run, canStartEarlier: true)
+                found.append((name: "\(who) \(stageName) with Start a minute earlier", card: card, isReview: run == .review))
+            }
+        }
         return found
     }
 
@@ -105,7 +127,8 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
                 XCTAssertEqual(detailNode.label, detail, "\(context): the detail's spoken label is not the card's plain words")
                 let buttons = mounted.nodes().filter { $0.traits.contains(.button) }
                     .sorted { ($0.frame.minY, $0.frame.minX) < ($1.frame.minY, $1.frame.minX) }
-                XCTAssertEqual(buttons.map { $0.label ?? "" }, card.actions.map(\.title),
+                // At accessibility3 "Start a minute earlier" is left off (#4171): the card draws `shownActions`, not every action.
+                XCTAssertEqual(buttons.map { $0.label ?? "" }, card.shownActions(atAccessibility3OrLarger: size >= .accessibility3).map(\.title),
                                "\(context): the buttons' labels differ from the actions' titles")
                 for button in buttons {
                     // `mount` draws the card from the window's top, so the card spans 0 to `height`.
@@ -141,6 +164,21 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
                 let height = Self.height(of: body, size: size)
                 XCTAssertLessThanOrEqual(height, maxHeight, "\(name) at \(sizeLabel) with the longest note: \(height) pt; the budget is \(maxHeight) pt")
             }
+        }
+    }
+
+    /// #4171 Design: the stages with "Start a minute earlier" also hold at the largest size below the accessibility sizes,
+    /// where it is still drawn (three stacked buttons in the run-up). The budget there is the accessibility3 one, half the
+    /// screen. If a row goes over, the Design says to stop and report it, not to trim the other buttons.
+    func testTheStartEarlierRowsFitAtTheLargestTextSizeThatStillShowsIt() throws {
+        let cards = Self.startEarlierCards()
+        XCTAssertEqual(cards.count, 10)
+        for (name, card, isReview) in cards {
+            XCTAssertTrue(card.shownActions(atAccessibility3OrLarger: false).contains { $0.job == .startEarlier }, name)
+            XCTAssertFalse(card.shownActions(atAccessibility3OrLarger: true).contains { $0.job == .startEarlier }, name)
+            let body = PinnedMarginCardBody(card: card, detail: card.detail, isReview: isReview, navigationLocked: false, perform: { _ in })
+            let height = Self.height(of: body, size: .xxxLarge)
+            XCTAssertLessThanOrEqual(height, 430, "\(name) at xxxLarge: \(height) pt; the budget is 430 pt")
         }
     }
 

@@ -462,9 +462,10 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertEqual(card(cole, .upNext(msRemaining: 90_000, arrival: .playsByItself), press: .playMarginNow).actions[0].hint, "Plays the next Margin now.")
     }
 
-    func testOnlyTheNextMarginButtonFollowsTheRecordingLock() {
+    func testOnlyTheButtonsThatMoveThePlayheadFollowTheRecordingLock() {
         XCTAssertTrue(PinnedMarginCard.Action.Job.goToNextMargin.followsNavigationLock)
-        for job in [PinnedMarginCard.Action.Job.skipThisMargin, .retry, .playMomentNow, .keepListening, .stopReview, .stopPlayingMine, .listen, .dismiss] {
+        XCTAssertTrue(PinnedMarginCard.Action.Job.startEarlier.followsNavigationLock, "#4171: it seeks back, like Next Margin")
+        for job in [PinnedMarginCard.Action.Job.skipThisMargin, .retry, .playMomentNow, .keepListening, .stopReview, .stopPlayingMine, .listen, .dismiss, .dismissSilentMargin] {
             XCTAssertFalse(job.followsNavigationLock, "\(job)")
         }
     }

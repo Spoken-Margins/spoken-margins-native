@@ -95,6 +95,7 @@ struct PinnedMarginCardView: View {
         case .listen: model.listenToPendingImportedCommentary()
         case .dismiss: model.skipPendingImportedCommentary()
         case .dismissSilentMargin: model.dismissSilentMarginLanding()
+        case .startEarlier: model.startMarginEarlier()
         }
     }
 
@@ -237,10 +238,11 @@ struct PinnedMarginCardBody: View {
         return "marginCard.headline"
     }
 
-    /// One row, one button per job; a stage with nowhere to go draws no row at all.
+    /// One row, one button per job; a stage with nowhere to go draws no row at all. At accessibility3 and above "Start a
+    /// minute earlier" is left off, so the stacked card keeps within its height budget (#4171).
     @ViewBuilder
     private var buttons: some View {
-        let actions = card.actions
+        let actions = card.shownActions(atAccessibility3OrLarger: dynamicTypeSize >= .accessibility3)
         if !actions.isEmpty {
             let row = isLargeText ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
             row { ForEach(actions, id: \.job) { button($0) } }
@@ -295,6 +297,7 @@ struct PinnedMarginCardBody: View {
         case .listen: "importedCommentary.listen"
         case .dismiss: "importedCommentary.dismiss"
         case .dismissSilentMargin: "marginCard.silent.dismiss"
+        case .startEarlier: "marginCard.startEarlier"
         }
     }
 
@@ -305,6 +308,7 @@ struct PinnedMarginCardBody: View {
         case .retry: "arrow.clockwise"
         case .playMomentNow, .listen: "play.fill"
         case .keepListening, .stopReview, .stopPlayingMine, .dismiss, .dismissSilentMargin: "xmark"
+        case .startEarlier: "gobackward.60"
         }
     }
 }

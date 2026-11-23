@@ -346,6 +346,62 @@ final class RealPlayerMarginMomentTests: XCTestCase {
         try fixture.pump(until: { fixture.events.contains("voice:b") }, "b still plays")
     }
 
+    // MARK: Start a minute earlier (#4171)
+
+    /// While a review's Margin speaks: the voice stops without counting as finished, the source goes back a minute and a
+    /// run-up further and plays, the review keeps its count, and the same Margin plays again when the episode gets there.
+    func testStartingEarlierWhileAMarginSpeaksPlaysItAgainAfterALongerRunUp() throws {
+        let fixture = try ReviewFixture(margins: [("a", 90_000), ("b", 200_000)], returnTo: nil, resumes: true)
+        defer { fixture.cleanUp() }
+
+        fixture.conductor.start()
+        fixture.reach(90_000)
+        XCTAssertEqual(fixture.events, ["seek:70000", "pause", "voice:a"])
+        XCTAssertTrue(fixture.conductor.isPlayingVoice)
+        let plan = try XCTUnwrap(fixture.conductor.sequence.startEarlierPlan(currentMediaTimeMs: 90_200))
+        XCTAssertEqual(plan.leadInMs, 80_000, "the review's 20 sec and a minute")
+
+        fixture.conductor.restartLonger(plan)
+        XCTAssertFalse(fixture.conductor.isPlayingVoice, "never two voices: the first one stopped")
+        XCTAssertEqual(Array(fixture.events.suffix(2)), ["seek:10000", "resume"], "back to the longer run-up, playing")
+        XCTAssertEqual(fixture.conductor.sequence.review?.count, 2)
+        XCTAssertEqual(fixture.conductor.sequence.target.marginId, "a")
+        fixture.pump(forSeconds: 0.6)
+        XCTAssertEqual(fixture.log.resumed, 1, "the stopped voice did not finish and move the review on")
+        XCTAssertFalse(fixture.events.contains("voice:b"))
+
+        fixture.reach(90_000)
+        XCTAssertEqual(Array(fixture.events.suffix(2)), ["pause", "voice:a"], "the same Margin plays again")
+    }
+
+    /// In the run-up, the source is already playing: the press only moves it earlier.
+    func testStartingEarlierInTheRunUpOnlyMovesTheSource() throws {
+        let fixture = try ReviewFixture(margins: [("a", 90_000)], returnTo: nil, resumes: true)
+        defer { fixture.cleanUp() }
+
+        fixture.conductor.start()
+        fixture.conductor.observe(mediaTimeMs: 75_000)
+        let plan = try XCTUnwrap(fixture.conductor.sequence.startEarlierPlan(currentMediaTimeMs: 75_000))
+        fixture.conductor.restartLonger(plan)
+        XCTAssertEqual(fixture.events, ["seek:70000", "seek:10000"], "no pause and no resume")
+        // The next reading after the jump is playback from the new start, and it does not cross the Margin.
+        fixture.conductor.observe(mediaTimeMs: 10_400)
+        XCTAssertFalse(fixture.events.contains("voice:a"))
+        XCTAssertEqual(fixture.conductor.sequence.targetCountdown(currentMediaTimeMs: 10_000), "1:20")
+    }
+
+    /// A plan for another Margin (stale by a tick) does nothing.
+    func testAPlanForAMarginThatIsNotPlayingOrNextDoesNothing() throws {
+        let fixture = try ReviewFixture(margins: [("a", 90_000), ("b", 200_000)], returnTo: nil, resumes: true)
+        defer { fixture.cleanUp() }
+
+        fixture.conductor.start()
+        let stale = try XCTUnwrap(StartEarlier.plan(for: MarginMomentAnchor(marginId: "b", mediaTimeMs: 200_000), runUpMs: 20_000))
+        fixture.conductor.restartLonger(stale)
+        XCTAssertEqual(fixture.events, ["seek:70000"])
+        XCTAssertEqual(fixture.conductor.sequence.target.marginId, "a")
+    }
+
     @MainActor
     private final class ReviewFixture {
         final class Log {

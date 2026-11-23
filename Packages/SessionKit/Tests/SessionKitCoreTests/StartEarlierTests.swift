@@ -244,4 +244,31 @@ final class StartEarlierTests: XCTestCase {
         XCTAssertTrue(target.isReadAloud)
         XCTAssertFalse(target.isYours)
     }
+
+    /// PR 3b: the app's review of a Margin playing by itself passes its playlist steps and the place the source stood. A
+    /// friend's reply plays after the listener's own Margin it answers (#3221), so the steps can be two.
+    func testTheAppsReviewOfAPlayingMarginDropsEverySendersLengthAndPlaysOnFromTheMargin() throws {
+        let yours = MarginMomentAnchor(marginId: "mine", mediaTimeMs: 880_000, isYours: true)
+        let reply = anchor("reply", at: 900_000, leadInMs: 120_000)
+        let plan = try XCTUnwrap(StartEarlier.plan(for: reply, runUpMs: 0))
+        var sequence = try XCTUnwrap(StartEarlier.review(
+            itemId: "item", margins: [yours, reply], returnToMediaTimeMs: 900_000, plan: plan))
+        XCTAssertEqual(sequence.review?.count, 2)
+        XCTAssertEqual(sequence.review?.returnToMediaTimeMs, 900_000)
+        XCTAssertEqual(sequence.review?.resumesAtEnd, true, "the episode plays on after the Margin")
+        XCTAssertEqual(sequence.startMediaTimeMs, 820_000, "a minute before the first step, not the sender's two")
+        XCTAssertTrue(sequence.unplayed.allSatisfy { $0.leadInMs == nil })
+        XCTAssertEqual(sequence.progressed(from: 879_800, to: 880_100)?.marginId, "mine")
+        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 880_100), .continueSource)
+        XCTAssertEqual(sequence.progressed(from: 899_800, to: 900_100)?.marginId, "reply")
+        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 900_100), .reviewDone(returnToMediaTimeMs: nil, resumes: true))
+    }
+
+    func testTheOneMarginFormIsTheAppsFormWithOneStep() throws {
+        let margin = anchor("a", at: 900_000, leadInMs: 45_000)
+        let plan = try XCTUnwrap(StartEarlier.plan(for: margin, runUpMs: 0))
+        XCTAssertEqual(
+            StartEarlier.review(itemId: "item", margin: margin, plan: plan),
+            StartEarlier.review(itemId: "item", margins: [margin], plan: plan))
+    }
 }
