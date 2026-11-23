@@ -10,12 +10,26 @@ extension Gate1AppModel {
     /// A Margin deleted while it waited is skipped. `identities` are `marginIdentity` values ("session::margin").
     func retryWaitingTranscriptions(identities: [String]) {
         guard let store else { return }
-        for identity in identities {
-            guard let (sessionId, interjectionId) = MarginIdentity.split(identity),
-                  let margin = try? store.loadInterjection(id: interjectionId, sessionId: sessionId) else { continue }
-            let (current, verdict) = currentMargin(matching: margin)
-            guard verdict == .retry, let current,
-                  retryingInterjectionTranscriptionIds.insert(Self.marginIdentity(current)).inserted else { continue }
+        Task { [weak self] in
+            // Every read, `currentMargin`'s included, runs off the main thread (#2256); only the retry bookkeeping and
+            // scheduling come back here.
+            let due = (try? await Self.offMain { () -> [Interjection] in
+                identities.compactMap { identity in
+                    guard let (sessionId, interjectionId) = MarginIdentity.split(identity),
+                          let margin = try? store.loadInterjection(id: interjectionId, sessionId: sessionId) else { return nil }
+                    let current = (try? store.loadInterjections(sessionId: sessionId))?.first { $0.id == interjectionId }
+                    let itemDeletedAt = (try? store.loadItemSummary(id: margin.itemId))?.deletedAt
+                    guard MarginTranscriptionRetry.verdict(current: current, itemDeletedAt: itemDeletedAt) == .retry else { return nil }
+                    return current
+                }
+            }) ?? []
+            guard let self else { return }
+            hangTelemetry.labels.scoped("speechAskRetryWaiting") { scheduleWaitingRetries(due) }
+        }
+    }
+
+    private func scheduleWaitingRetries(_ margins: [Interjection]) {
+        for current in margins where retryingInterjectionTranscriptionIds.insert(Self.marginIdentity(current)).inserted {
             scheduleRetriedTranscription(for: current)
         }
     }

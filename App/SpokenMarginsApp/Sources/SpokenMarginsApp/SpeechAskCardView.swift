@@ -7,11 +7,16 @@ import SessionKit
 struct SpeechAskCardSlot: View {
     @EnvironmentObject private var model: Gate1AppModel
     @ObservedObject private var controller = SpeechAskController.shared
+    @State private var playbackTick = 0 // bumped by each progress tick: `slotIsFree` reads the pinned card, which follows the playhead (#2074)
 
     var body: some View {
-        if controller.isCardShowing(slotIsFree: slotIsFree) {
-            SpeechAskCard(controller: controller)
+        let _ = playbackTick
+        Group {
+            if controller.isCardShowing(slotIsFree: slotIsFree) {
+                SpeechAskCard(controller: controller)
+            }
         }
+        .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
     }
 
     /// One slot rule: a friend's Margin card, a footnote card and a locked recording all keep the slot.
