@@ -13,7 +13,8 @@ final class SpeechAskController: ObservableObject {
         case now, margins, detail
     }
 
-    static let shared = SpeechAskController()
+    /// Tests swap it for one with their own defaults and access, and put the real one back.
+    static var shared = SpeechAskController()
 
     private let defaults: UserDefaults
     private let access: () -> SpeechRecognitionAccessState

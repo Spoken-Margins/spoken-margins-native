@@ -77,6 +77,18 @@ public struct HearItLandAftermath: Equatable, Sendable {
         return playingIdentity != nil
     }
 
+    /// Whether a hear-it-land playback is running (began, and neither its voice nor a cancel has ended it).
+    public var isPlaying: Bool { playingIdentity != nil }
+
+    /// A new playback is about to replace the running one (a second save during the lead-in). The first is forgotten
+    /// quietly: it returns nothing, so it never tells the speech ask that "the playback ended". Only the playback that
+    /// takes its place does, once, when its voice ends. Call it before ending the first's moment, whose cancel would
+    /// otherwise report it.
+    public mutating func replaced() {
+        playingIdentity = nil
+        playingStartedAt = nil
+    }
+
     /// A written first Margin was saved at `atMs` of `itemId`.
     public mutating func wrote(itemId: String, atMs: Int?, at now: Date) {
         written = Written(itemId: itemId, atMs: atMs, savedAt: now)

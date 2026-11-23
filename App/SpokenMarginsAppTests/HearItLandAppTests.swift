@@ -13,6 +13,8 @@ final class HearItLandAppTests: XCTestCase {
     private var priorTermsDate: Any?
     private var root: URL!
     private var originalOutcomeCue: MarginOutcomeCuePlaying!
+    private var originalSpeech: SpeechAskController!
+    private var speechDefaultsSuite: String!
 
     private final class SilentOutcomeCue: MarginOutcomeCuePlaying {
         func play(_ cue: MarginOutcomeCue) -> String { "skipped:test" }
@@ -44,10 +46,19 @@ final class HearItLandAppTests: XCTestCase {
         root = FileManager.default.temporaryDirectory.appending(path: "hear-it-land-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         HearItLandState.shared.reset()
+        // Each test gets its own speech controller: undecided iOS answer, no earlier answer, no armed card, its own defaults.
+        // The shared one carries whatever an earlier save in this process left on it.
+        originalSpeech = SpeechAskController.shared
+        speechDefaultsSuite = "HearItLandAppTests-\(UUID().uuidString)"
+        SpeechAskController.shared = SpeechAskController(
+            defaults: UserDefaults(suiteName: speechDefaultsSuite)!, access: { .notDetermined }, isSuppressed: { false },
+            askSystem: {})
     }
 
     override func tearDownWithError() throws {
         HearItLandState.shared.reset()
+        SpeechAskController.shared = originalSpeech
+        UserDefaults.standard.removePersistentDomain(forName: speechDefaultsSuite)
         MarginOutcomeCuePlayer.shared = originalOutcomeCue
         try? FileManager.default.removeItem(at: root)
         let restored: [(Any?, String)] = [
@@ -78,19 +89,21 @@ final class HearItLandAppTests: XCTestCase {
         return model
     }
 
-    private func finish(_ model: Gate1AppModel) {
+    /// Saves the recording and waits for the playback's start, which reads the Margins off the main thread.
+    private func finish(_ model: Gate1AppModel) async {
         model.finishInterjection()
         XCTAssertFalse(model.snapshot.isRecording, "precondition: the Margin saved")
+        await HearItLandState.shared.pendingStart?.value
     }
 
     // MARK: the Design's four
 
     /// A first spoken save on a playing source starts the Margin's own moment with the five-second lead-in, the source plays
     /// on under it, and when the voice ends the card's line goes and the event "first Margin heard" is recorded.
-    func testHearItLandPlaysAndResumes() throws {
+    func testHearItLandPlaysAndResumes() async throws {
         let model = try recordingModel()
         defer { model.endMarginMoment(); model.pause() }
-        finish(model)
+        await finish(model)
 
         let moment = try XCTUnwrap(model.marginMoment, "the saved Margin plays back in place")
         XCTAssertEqual(model.diagnostics["hearItLand"], "playBack")
@@ -108,20 +121,20 @@ final class HearItLandAppTests: XCTestCase {
     }
 
     /// "Save & resume" asks the source to play, so a spoken first save from a paused source plays back too (Default 2).
-    func testPausedSpokenSavePlaysBack() throws {
+    func testPausedSpokenSavePlaysBack() async throws {
         let model = try recordingModel(sourcePaused: true)
         defer { model.endMarginMoment(); model.pause() }
-        finish(model)
+        await finish(model)
 
         XCTAssertNotNil(model.marginMoment)
         XCTAssertEqual(model.diagnostics["hearItLand"], "playBack")
     }
 
     /// An upgrade marks "first Margin heard" done (#4711), so a returning listener never gets the playback.
-    func testReturningNeverPlaysBack() throws {
+    func testReturningNeverPlaysBack() async throws {
         let model = try recordingModel(heardFirstMargin: true)
         defer { model.endMarginMoment(); model.pause() }
-        finish(model)
+        await finish(model)
 
         XCTAssertNil(model.marginMoment)
         XCTAssertNil(model.diagnostics["hearItLand"])
@@ -130,10 +143,10 @@ final class HearItLandAppTests: XCTestCase {
 
     /// A Margin saved over a held voice (#1672) leaves that voice to play on, so it gets no playback. Setting up a held
     /// voice needs the voice players, so this drives the model's decision and its save-end call with the held flag on.
-    func testHeldVoiceGetsNoPlayback() throws {
+    func testHeldVoiceGetsNoPlayback() async throws {
         let model = try recordingModel()
         defer { model.endMarginMoment(); model.pause() }
-        finish(model)
+        await finish(model)
         model.endMarginMoment()
         HearItLandState.shared.reset()
 
@@ -145,14 +158,15 @@ final class HearItLandAppTests: XCTestCase {
 
     // MARK: the playback, then the ask
 
-    /// A save while the speech card is owed: the playback runs first, and the card shows when its voice ends.
-    func testSaveWhileTheSpeechCardIsOwedPlaysBackThenShowsTheCard() throws {
+    /// A save while the speech card is owed: the playback runs first, and the card shows when its voice ends. It runs on a
+    /// controller of its own, so no earlier save in the process can have armed or answered it.
+    func testSaveWhileTheSpeechCardIsOwedPlaysBackThenShowsTheCard() async throws {
         let speech = SpeechAskController.shared
-        try XCTSkipUnless(SpeechRecognitionAccess.state == .notDetermined, "iOS has already answered Speech Recognition on this simulator")
-        try XCTSkipUnless(speech.ask.answer == .unanswered && speech.cardSurface == nil, "an earlier test in this process already answered or armed the card")
+        XCTAssertNil(speech.cardSurface, "precondition: a fresh controller has no card")
+        XCTAssertEqual(speech.ask.answer, .unanswered, "precondition: a fresh controller has no answer")
         let model = try recordingModel()
         defer { model.endMarginMoment(); model.pause() }
-        finish(model)
+        await finish(model)
 
         let moment = try XCTUnwrap(model.marginMoment, "the playback runs first")
         XCTAssertNil(speech.cardSurface, "the card waits for the playback")
@@ -163,17 +177,41 @@ final class HearItLandAppTests: XCTestCase {
         XCTAssertEqual(speech.cardSurface, .now, "then the card shows")
     }
 
-    /// A playback cancelled before its voice ends lets the card show, and leaves no hear-it-land line for a later
-    /// "Play this moment" of that Margin.
-    func testACancelledPlaybackLetsTheCardShowAndLeavesNoLine() throws {
+    /// A second save during the lead-in replaces the first playback. The first is cut short without telling the speech ask,
+    /// so the card stays away until the second playback's voice ends, and is let out once.
+    func testASecondSaveDuringTheLeadInLetsTheCardOutOnlyAtTheSecondPlaybacksEnd() async throws {
+        let speech = SpeechAskController.shared
         let model = try recordingModel()
         defer { model.endMarginMoment(); model.pause() }
-        finish(model)
+        await finish(model)
+        _ = try XCTUnwrap(model.marginMoment, "the first playback runs")
+        let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        let savedId = try XCTUnwrap(try model.store?.loadInterjections(sessionId: sessionId).last?.id)
+
+        model.hearItLandAfterSpokenSave(willPlayBack: true, savedId: savedId)
+        await HearItLandState.shared.pendingStart?.value
+
+        let second = try XCTUnwrap(model.marginMoment, "the second playback replaced it")
+        XCTAssertNil(speech.cardSurface, "cutting the first short must not let the card out")
+        XCTAssertTrue(HearItLandState.shared.aftermath.isPlaying)
+
+        model.marginMomentVoiceEnded(second.target, itemId: second.itemId, reachedEnd: true)
+
+        XCTAssertEqual(speech.cardSurface, .now, "the card shows when the playback that runs ends")
+    }
+
+    /// A playback cancelled before its voice ends lets the card show, and leaves no hear-it-land line for a later
+    /// "Play this moment" of that Margin.
+    func testACancelledPlaybackLetsTheCardShowAndLeavesNoLine() async throws {
+        let model = try recordingModel()
+        defer { model.endMarginMoment(); model.pause() }
+        await finish(model)
         let moment = try XCTUnwrap(model.marginMoment)
         XCTAssertEqual(model.hearItLandRun(forMomentTarget: moment.target.marginId), .hearItLand)
 
         model.endMarginMoment()
 
         XCTAssertEqual(model.hearItLandRun(forMomentTarget: moment.target.marginId), .moment)
+        XCTAssertEqual(SpeechAskController.shared.cardSurface, .now, "and the card that waited for the playback shows")
     }
 }

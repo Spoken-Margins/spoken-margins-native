@@ -10,9 +10,11 @@ import UIKit
 final class HearItLandState {
     static let shared = HearItLandState()
     var aftermath = HearItLandAftermath()
+    /// The save's playback start, which reads the Margins off the main thread first. Tests wait on it.
+    var pendingStart: Task<Void, Never>?
 
     /// Back to nothing, for tests that share `shared`.
-    func reset() { aftermath = HearItLandAftermath() }
+    func reset() { aftermath = HearItLandAftermath(); pendingStart?.cancel(); pendingStart = nil }
 }
 
 /// Hear it land: right after a new listener saves a Margin, the app plays it back in place (spoken) or shows its card
@@ -33,7 +35,7 @@ extension Gate1AppModel {
         HearItLand.order(
             kind: .spoken, heardFirstMargin: isOnboardingStepComplete(.heardFirstMargin), hadSavedMarginBefore: hadSavedMarginBefore,
             savedOverHeldVoice: heldVoice, sourcePlaysAfterSave: snapshot.status.isPlaybackActive,
-            surroundings: hearItLandSurroundings).plan == .playBack
+            surroundings: hearItLandSurroundings).playsBack
     }
 
     /// Called at the very end of a spoken save, after the engine's own resume, the held voice's resume and the speech queue's
@@ -42,15 +44,32 @@ extension Gate1AppModel {
     /// speech card has been waiting for it, so when the playback can't start it is let go here.
     func hearItLandAfterSpokenSave(willPlayBack: Bool, savedId: String?) {
         guard willPlayBack else { return }
-        guard !snapshot.isRecording, let savedId, let store, let sessionId = snapshot.sessionId,
-              let interjections = try? store.loadInterjections(sessionId: sessionId) else { return hearItLandPlaybackDidNotStart() }
+        guard !snapshot.isRecording, let savedId, let store, let sessionId = snapshot.sessionId else { return hearItLandPlaybackDidNotStart() }
+        let itemId = snapshot.itemId
+        // The Margins are read off the main thread (#2256); only the start comes back here, under its own label.
+        HearItLandState.shared.pendingStart = Task { [weak self] in
+            let interjections = try? await Self.offMain { try store.loadInterjections(sessionId: sessionId) }
+            guard let self, !Task.isCancelled else { return }
+            hangTelemetry.labels.scoped("hearItLandStart") {
+                startHearItLandPlayback(savedId: savedId, itemId: itemId, among: interjections)
+            }
+        }
+    }
+
+    /// The main-thread half of `hearItLandAfterSpokenSave`, once the Margins are read. The listener may have moved on while
+    /// the read ran (a new recording, another item), which is the same as the playback not being able to start.
+    private func startHearItLandPlayback(savedId: String, itemId: String, among interjections: [Interjection]?) {
         let clock: MarginMomentClock = snapshot.targetType == TargetType.itemTextTTS.rawValue ? .liveNarration : .media
-        guard let playback = HearItLand.savedPlayback(
+        guard !snapshot.isRecording, snapshot.itemId == itemId, let interjections,
+              let playback = HearItLand.savedPlayback(
                 savedId: savedId, among: interjections, now: Date(), clock: clock, targetMediaTimeMs: snapshot.currentMediaTimeMs,
                 textForItem: { selectedItem.text(forItem: $0) ?? "" }),
               let path = playback.saved.audioPath, let voice = resolvedInterjectionAudioURL(for: path) else {
             return hearItLandPlaybackDidNotStart()
         }
+        // A second save during the lead-in replaces the first playback. The first is forgotten quietly, so the speech ask
+        // hears "the playback ended" once for the playback that runs, not again for the one it cut short.
+        HearItLandState.shared.aftermath.replaced()
         endMarginMoment()
         HearItLandState.shared.aftermath.began(identity: playback.target.marginId, at: Date())
         startMarginMoment(
@@ -59,9 +78,11 @@ extension Gate1AppModel {
         diagnostics["hearItLand"] = "playBack"
     }
 
-    /// The playback the speech card waited for will not run.
+    /// The playback the speech card waited for will not run. While an earlier playback still runs, the card keeps waiting for
+    /// that one's end, which tells the speech ask itself.
     private func hearItLandPlaybackDidNotStart() {
         diagnostics["hearItLand"] = "playBackFailedToStart"
+        guard !HearItLandState.shared.aftermath.isPlaying else { return }
         SpeechAskController.shared.hearItLandEnded()
     }
 

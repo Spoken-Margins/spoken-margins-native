@@ -164,4 +164,36 @@ final class HearItLandAftermathTests: XCTestCase {
         let card = try XCTUnwrap(aftermath.writtenCard(now: t0, itemId: "item"))
         XCTAssertEqual(card.headline, "Your Margin is saved")
     }
+
+    // MARK: a second playback replaces the first
+
+    /// The app's sequence for a second save during the lead-in, counting how often the speech ask is told the playback ended:
+    /// `replaced()`, the first moment's cancel (`cancelled()`), the second `began`, the second voice's end.
+    func testASecondPlaybackTellsTheSpeechAskOnceNotTwice() {
+        var aftermath = HearItLandAftermath()
+        var told = 0
+        aftermath.began(identity: "s1::m1", at: t0)
+
+        aftermath.replaced()
+        if aftermath.cancelled() { told += 1 }
+        XCTAssertEqual(told, 0, "the replaced playback is forgotten quietly, so the card is not let out early")
+        aftermath.began(identity: "s1::m2", at: t0.addingTimeInterval(1))
+        XCTAssertEqual(aftermath.run(forMomentTarget: "s1::m2", now: t0.addingTimeInterval(1)), .hearItLand)
+
+        XCTAssertFalse(aftermath.voiceEnded(identity: "s1::m1", at: t0.addingTimeInterval(2)), "the first's voice is no longer this run's")
+        if aftermath.voiceEnded(identity: "s1::m2", at: t0.addingTimeInterval(6)) { told += 1 }
+        XCTAssertEqual(told, 1, "once per playback: only the second one's end")
+    }
+
+    func testIsPlayingFollowsTheRun() {
+        var aftermath = HearItLandAftermath()
+        XCTAssertFalse(aftermath.isPlaying)
+        aftermath.began(identity: "s1::m1", at: t0)
+        XCTAssertTrue(aftermath.isPlaying)
+        aftermath.replaced()
+        XCTAssertFalse(aftermath.isPlaying)
+        aftermath.began(identity: "s1::m2", at: t0)
+        _ = aftermath.voiceEnded(identity: "s1::m2", at: t0)
+        XCTAssertFalse(aftermath.isPlaying)
+    }
 }

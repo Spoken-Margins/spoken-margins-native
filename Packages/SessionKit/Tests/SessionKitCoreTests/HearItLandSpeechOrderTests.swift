@@ -14,11 +14,18 @@ final class HearItLandSpeechOrderTests: XCTestCase {
                          sourcePlaysAfterSave: sourcePlays, surroundings: around)
     }
 
-    /// What the speech card does through a save: due at the save, then due when the playback ends.
-    private func cardTimeline(_ order: HearItLand.Order, access: SpeechRecognitionAccessState = .notDetermined) -> (atSave: Bool, atEnd: Bool) {
+    /// What the speech card does through a save, by the path the app takes: `Gate1AppModel.hearItLandWillPlayBack` answers
+    /// `order.playsBack`, `finishInterjection` hands it to `transcribeAndRecordSavedSpokenMargin(hearItLandWillRun:)`, which
+    /// asks `SpeechRecognitionAsk.Moment.forSavedMargin` and `SpeechAskController.spokenMarginSaved` for the card at the save;
+    /// the playback's end (or its failure to start) is `SpeechAskController.hearItLandEnded`. The app never reads
+    /// `Order.speechAtSave`, so this does not either.
+    private func cardTimeline(
+        _ order: HearItLand.Order, isWritten: Bool = false, access: SpeechRecognitionAccessState = .notDetermined
+    ) -> (atSave: Bool, atEnd: Bool) {
         var ask = SpeechRecognitionAsk(storedAnswer: nil)
-        let atSave = order.speechAtSave.map { ask.cardDue(at: $0, access: access, shownThisLaunchForReAsk: false) } ?? false
-        let atEnd = order.speechAtPlaybackEnd.map { ask.cardDue(at: $0, access: access, shownThisLaunchForReAsk: false) } ?? false
+        let atSave = SpeechRecognitionAsk.Moment.forSavedMargin(isWritten: isWritten, hearItLandWillRun: order.playsBack)
+            .map { ask.cardDue(at: $0, access: access, shownThisLaunchForReAsk: false) } ?? false
+        let atEnd = order.playsBack ? ask.cardDue(at: .hearItLandEnded, access: access, shownThisLaunchForReAsk: false) : false
         return (atSave, atEnd)
     }
 
@@ -27,6 +34,7 @@ final class HearItLandSpeechOrderTests: XCTestCase {
         XCTAssertEqual(chosen.plan, .playBack)
         XCTAssertEqual(chosen.speechAtSave, .spokenMarginSaved(hearItLandWillRun: true))
         XCTAssertEqual(chosen.speechAtPlaybackEnd, .hearItLandEnded)
+        XCTAssertTrue(chosen.playsBack)
         let card = cardTimeline(chosen)
         XCTAssertFalse(card.atSave, "the card does not take the slot at the save")
         XCTAssertTrue(card.atEnd, "it is due when the playback ends")
@@ -48,10 +56,10 @@ final class HearItLandSpeechOrderTests: XCTestCase {
         ]
         for (name, chosen, plan, cardAtSave, cardAtEnd) in rows {
             XCTAssertEqual(chosen.plan, plan, name)
-            let card = cardTimeline(chosen)
+            let card = cardTimeline(chosen, isWritten: plan == .showWritten)
             XCTAssertEqual(card.atSave, cardAtSave, "\(name): card at the save")
             XCTAssertEqual(card.atEnd, cardAtEnd, "\(name): card at the playback's end")
-            XCTAssertEqual(chosen.speechAtPlaybackEnd != nil, plan == .playBack, "\(name): an end moment only when something plays")
+            XCTAssertEqual(chosen.playsBack, plan == .playBack, "\(name): the app's answer to the speech ask")
         }
     }
 

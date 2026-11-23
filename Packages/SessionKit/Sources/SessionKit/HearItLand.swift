@@ -38,6 +38,9 @@ public enum HearItLand {
         public var speechAtSave: SpeechRecognitionAsk.Moment?
         /// What it hears when the playback's voice ends or the playback is cancelled. Nil when no playback runs.
         public var speechAtPlaybackEnd: SpeechRecognitionAsk.Moment?
+        /// The answer the app hands the speech ask as `hearItLandWillRun`: the one `Gate1AppModel.hearItLandWillPlayBack` returns,
+        /// which `transcribeAndRecordSavedSpokenMargin` passes to `SpeechRecognitionAsk.Moment.forSavedMargin`.
+        public var playsBack: Bool { plan == .playBack }
     }
 
     /// The plan and the speech ask's two moments from one decision, taken before the speech ask hears of the save. The
