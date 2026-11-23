@@ -7,6 +7,7 @@ extension Gate1AppModel {
     func startHangTelemetry() {
         guard !Self.isRunningUnitTests else { return }
         defer { hangTelemetry.setForeground(true) }
+        hangTelemetry.hangObserver = { LaunchRecorder.shared?.noteHang($0) } // a launch's first minute (#3752)
         hangTelemetry.start(
             record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) },
             context: { [weak self] in

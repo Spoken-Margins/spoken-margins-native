@@ -108,6 +108,19 @@ final class HangTelemetryTests: XCTestCase {
         XCTAssertEqual(written.count, HangTelemetry.maxHangRecordsPerWindow * 2)
     }
 
+    // MARK: The observer
+
+    /// #3752: the launch history keeps a launch's stalls, including ones the event log's allowance leaves out.
+    @MainActor func testTheObserverHearsEveryHangEvenOnesTheAllowanceLeavesOut() async {
+        var heard: [MainThreadHangProbe.Hang] = []
+        telemetry.hangObserver = { heard.append($0) }
+        let limit = HangTelemetry.maxHangRecordsPerWindow
+        for index in 0..<(limit + 3) { report(hang(300 + index, operation: "op\(index)")) }
+        XCTAssertEqual(written.count, limit)
+        XCTAssertEqual(heard.count, limit + 3)
+        XCTAssertEqual(heard.last?.operation, "op\(limit + 2)")
+    }
+
     // MARK: Taps
 
     @MainActor func testNoTapReadsNone() async {

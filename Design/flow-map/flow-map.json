@@ -2511,7 +2511,7 @@
    "anchor": "Button { model.openMarginItemExport(itemID: group.itemID) }",
    "present_line": null,
    "condition": "Not the Shared filter",
-   "notes": "openMarginItemExport picks the newest session with Margins and calls prepareExportShareInterjections -> isSharingInterjectionsPresented = true; sheet is in Gate1RootView.swift:95 (Build23SenderSharingHost wrapping Build23SenderSharingExperience). Fails with a message if the item has no Margins."
+   "notes": "openMarginItemExport reads every session of the item once and keeps the shareable Margins of all of them (ItemShareCandidates, #4688), sets exportSessionId to the newest session with a sendable Margin, and calls prepareShareInterjections -> isSharingInterjectionsPresented = true; sheet is in Gate1RootView.swift:95 (Build23SenderSharingHost wrapping Build23SenderSharingExperience). Fails with a message if the item has no Margins."
   },
   {
    "id": "e148",

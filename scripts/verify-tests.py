@@ -780,6 +780,8 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_repeat_trigger_scan', 'test_ordered_store_requests', 'test_system_callback_isolation',
                        'test_listener_words', 'test_recorder_failed_start',
                        'test_starter_catalog',
+                       # The quiz page's tests read Contracts/quiz/, Contracts/fixtures/find-something/ and Site/quiz/ (#4707).
+                       'test_quiz_page',
                        # The accessibility source scans read App/ Swift files (#2041).
                        'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
                        'test_row_accessibility_actions', 'test_voiceover_label_nits',

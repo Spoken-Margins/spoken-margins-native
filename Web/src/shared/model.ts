@@ -90,6 +90,17 @@ export interface Margin {
    * Only ever `true`; absent means not starred.
    */
   starred?: true;
+  /**
+   * The listener has listened to some of this friend's Margin (part of #3216): its clip or its read-aloud words started.
+   * Reading or looking at it never sets this. Kept in this browser only, like `starred`: never written to a packet or a
+   * backup. Only ever `true`; absent means not heard yet.
+   */
+  heard?: true;
+  /**
+   * The source text just before a friend's Margin, from the packet's anchor (`prefix`), for the Margins tab's "After …"
+   * line. Kept in this browser only; the packet writer never reads it.
+   */
+  leadIn?: string;
 }
 
 /**

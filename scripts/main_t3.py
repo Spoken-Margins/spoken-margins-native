@@ -62,6 +62,7 @@ MARKER = '<!-- main-t3-failure -->'
 STATE_MARKER = re.compile(r'<!-- main-t3-state: (\{.*?\}) -->')
 ISSUE_LABEL = 'regression'
 BOT = 'github-actions[bot]'
+TRUSTED_APP_SLUGS = ('spoken-margins-agent',)  # the agents' GitHub App (#4915); kept equal to comment_trust.py's
 TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
 TARGET_PREFIX = 'SpokenMarginsAppTests/'
 PLANS = ('app', 'adapters')  # lane-runner.py's PLANS keys: AppBehavior and AudioAdapters, in that order
@@ -249,7 +250,8 @@ def last_green(nodes: list, exclude: str = '') -> str | None:
 
 
 def trusted(item: dict) -> bool:
-    return (item.get('user') or {}).get('login') == BOT or item.get('author_association') in TRUSTED_ASSOCIATIONS
+    bots = (BOT,) + tuple(f'{slug}[bot]' for slug in TRUSTED_APP_SLUGS)
+    return (item.get('user') or {}).get('login') in bots or item.get('author_association') in TRUSTED_ASSOCIATIONS
 
 
 def find_open_issue(issues: list) -> dict | None:

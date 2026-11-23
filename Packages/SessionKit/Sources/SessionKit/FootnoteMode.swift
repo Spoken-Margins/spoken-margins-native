@@ -4,8 +4,7 @@ import Foundation
 /// never in the database, so older builds are unaffected. A missing or unreadable value means `whereCited`: the default
 /// needs no touch (Design, Defaults taken 1), and an existing listener gets it too, because nothing was stored.
 ///
-/// `chime` is stored and understood here before any picker offers it, so the value a later build writes is already
-/// read the same way by this one. Until the chime player exists the picker offers `pickerChoices` only.
+/// The picker offers all three (`pickerChoices`); `chime` joined it with the chime player (Design PR 6).
 public enum FootnoteMode: String, CaseIterable, Equatable, Sendable {
     /// A note is read right after the sentence that cites it, and its marker is silent.
     case whereCited
@@ -21,9 +20,8 @@ public enum FootnoteMode: String, CaseIterable, Equatable, Sendable {
         self = storedValue.flatMap(FootnoteMode.init(rawValue:)) ?? .default
     }
 
-    /// What Settings → Voice → Controls offers. `chime` joins it with the chime player (Design PR 6), so no option is
-    /// half-built.
-    public static let pickerChoices: [FootnoteMode] = [.whereCited, .atEnd]
+    /// What Settings → Voice → Controls offers, in the order it shows them (Design, Screens).
+    public static let pickerChoices: [FootnoteMode] = [.whereCited, .chime, .atEnd]
 
     /// The row's words in Settings → Voice → Controls (Design, Screens).
     public var pickerTitle: String {
@@ -35,10 +33,10 @@ public enum FootnoteMode: String, CaseIterable, Equatable, Sendable {
     }
 
     /// The caption under the picker, for the choices it offers.
-    public static let pickerCaption = "Where cited: a footnote is read right after the sentence that points to it. At the end: footnotes are read in the notes section, as before."
+    public static let pickerCaption = "Where cited: a footnote is read right after the sentence that points to it. Chime: you hear a tone and can tap to hear the note. At the end: footnotes are read in the notes section, as before."
 
-    /// The picker's selection for a stored value. A value the picker does not offer (a later build's `chime`, or text
-    /// that is not a mode) shows as the default, so the row never shows nothing selected; it is not written back.
+    /// The picker's selection for a stored value. A value the picker does not offer (text that is not a mode) shows as
+    /// the default, so the row never shows nothing selected; it is not written back.
     public static func pickerSelection(storedValue: String?) -> FootnoteMode {
         let stored = FootnoteMode(storedValue: storedValue)
         return pickerChoices.contains(stored) ? stored : .default

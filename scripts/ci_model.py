@@ -32,6 +32,7 @@ import ast
 import contextlib
 import copy
 import dataclasses
+import datetime
 import fnmatch
 import heapq
 import importlib.util
@@ -706,6 +707,10 @@ class World:
         heapq.heappush(self.queue, (at, event['id'], event))
         return event
 
+    def clock(self):
+        """The simulated time as the API prints it, for the markers the scripts write (the model starts at 10:00 UTC)."""
+        return datetime.datetime(2026, 11, 20, 10, 0, tzinfo=datetime.timezone.utc) + datetime.timedelta(minutes=self.now)
+
     def note(self, event, text):
         self.log.append({'at': self.now, 'event': event['id'] if event else None, 'text': text})
 
@@ -1113,6 +1118,9 @@ class FakeBridgeGitHub:
     def open_pulls(self):
         return [self.pull(1)] if self.w.merged_at is None else []
 
+    def now(self):
+        return self.w.clock()
+
     def comments(self, number):
         return '\n'.join(c['body'] for c in self.w.comments)
 
@@ -1163,12 +1171,35 @@ class FakeDequeueGitHub:
                                        'created_at': f'{r["id"]:06d}'} for r in w.runs if r['event'] == 'merge_group']}
         if path.startswith('commits/'):
             sha = path.split('/')[1]
-            return {'check_runs': [{'name': c['name'], 'conclusion': None if c['conclusion'] == 'pending' else c['conclusion'],
-                                    'status': 'in_progress' if c['conclusion'] == 'pending' else 'completed',
-                                    'completed_at': 'x', 'html_url': ''} for c in w.checks.get(sha, {}).values()]}
+            rows = []
+            for c in w.checks.get(sha, {}).values():
+                held = c['conclusion'] == 'pending'  # a check run left in progress (#4986)
+                row = {'name': c['name'], 'conclusion': None if held else c['conclusion'],
+                       'status': 'in_progress' if held else 'completed', 'completed_at': 'x', 'html_url': ''}
+                if c.get('id') is not None:   # the timed harness gives every check run an id, as Actions does
+                    row['id'] = c['id']
+                    row['details_url'] = f'https://github.com/{REPO}/actions/runs/{c["run"]}/job/{c["id"]}'
+                rows.append(row)
+            return {'check_runs': rows}
+        if path.startswith('actions/jobs/'):
+            row = next((r for r in getattr(w, 'rows', []) if r['id'] == int(path.rsplit('/', 1)[1])), None)
+            step = (row or {}).get('failed_step')
+            return {'steps': [{'number': 1, 'name': step, 'conclusion': 'failure'}] if step else []}
         if path.startswith('issues/'):
             return list(w.comments)
         return {'workflow_runs': []}
+
+    def now(self):
+        return self.w.clock()
+
+    def log_tail(self, job_id):
+        """What the failed plan step's log ends with: an outside host's bad certificate for a download failure, a
+        failing test otherwise."""
+        row = next((r for r in getattr(self.w, 'rows', []) if r['id'] == job_id), None)
+        if row and getattr(self.w.c, 'fail_in', '') == 'download':
+            return ("fatal: unable to access 'https://download.onnxruntime.ai/pod.zip': "
+                    'SSL certificate problem: certificate has expired')
+        return 'testSomething failed: XCTAssertEqual failed'
 
     def queue_heads(self):
         return set()

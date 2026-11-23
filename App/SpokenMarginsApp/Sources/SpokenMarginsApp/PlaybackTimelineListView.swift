@@ -140,7 +140,7 @@ private struct TimelineRailRow: View, Equatable {
                     (dynamicTypeSize.isAccessibilitySize
                         ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
                         : AnyLayout(HStackLayout(alignment: .firstTextBaseline))) {
-                        Label(entry.provenanceLabel, systemImage: entry.provenance.systemImage)
+                        Label(entry.provenanceLabel, systemImage: entry.provenanceSystemImage)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(provenanceColor)
                             .fixedSize(horizontal: false, vertical: true)

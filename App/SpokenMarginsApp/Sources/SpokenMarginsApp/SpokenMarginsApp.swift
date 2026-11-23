@@ -90,6 +90,9 @@ struct SpokenMarginsApp: App {
         // Memory use and memory kills, in Diagnostics (#122). Unit tests keep nothing on disk.
         let pinnedDiagnostics = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)
         LaunchRecorder.shared?.attach { key, value in pinnedDiagnostics.set(key, value) }
+        // The hang probe starts when the root view appears, not only when the app turns active, so a slow cold
+        // launch's stall is reported (#3752). `startHangTelemetry` can run again at any time.
+        LaunchRecorder.shared?.onRootAppeared = { [weak model] in model?.startHangTelemetry() }
         let memoryFootprint = MemoryFootprintRecorder(diagnostics: pinnedDiagnostics,
                                                       fileURL: runningTests ? nil : MemoryFootprintRecorder.defaultFileURL)
         memoryFootprint.start(observing: model)

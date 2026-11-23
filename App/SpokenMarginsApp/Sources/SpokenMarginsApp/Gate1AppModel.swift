@@ -301,6 +301,8 @@ final class Gate1AppModel: ObservableObject {
     }
     let quickAccess = QuickAccessFolderState() // the Quick Folder; its changes are relayed in init (#981)
     let libraryCollections = LibraryCollectionModel() // the Library's collection chips; relayed in init (#4343)
+    let linkListArrival = LinkListArrivalState() // Paste & go's wait on a pasted link list and the Quick Folder's retries (#4683)
+    let aiFollowSuggestionsModel = AIFollowSuggestionsModel() // shows the listener's AI suggested following (#4683)
     @Published var sourceImportProgressMessage: String?
     @Published var importInbox: [ImportInboxEntry] = []
     @Published var sourceLinksWaitingForNetwork = 0 // shared links left pending while offline (#1546)
@@ -549,12 +551,6 @@ final class Gate1AppModel: ObservableObject {
         return encoder
     }()
 
-    enum PendingPlaybackAfterTerms {
-        case startCurrentItem
-        case resumeSession(String)
-        case jumpToChapter(String, fromTimeline: Bool)
-        case playSourceFromBeginning(fromTimeline: Bool)
-    }
     static func availableSpeechVoiceOptions() -> [SpeechVoiceChoice] {
         #if canImport(AVFoundation)
         // `AVSpeechSynthesisVoice.speechVoices()` can crash inside the iOS
@@ -813,6 +809,8 @@ final class Gate1AppModel: ObservableObject {
             }
         case .playSourceFromBeginning(let fromTimeline):
             playSourceFromBeginning(fromTimeline: fromTimeline)
+        case .playFootnote(let label, let fromTimeline):
+            playFootnote(label: label, fromTimeline: fromTimeline)
         }
     }
 
@@ -1020,6 +1018,7 @@ final class Gate1AppModel: ObservableObject {
         }
         syncPlaybackProgressForLifecycle()
         gate2CompactControls.reconcileLiveActivities()
+        linkListArrival.releaseHeldHandoffFiles() // a saved link list that failed online earlier gets its next try now
         importPendingSourceLinkHandoffs()
         backgroundRefresh.requestAnnouncement() // the reload that publishes also announces audio that finished while away and schedules audio and episode-map preparation (they walk the fresh rows)
         refreshLibraryRowsInBackground(mustPublish: true)

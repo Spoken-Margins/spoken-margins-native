@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page, type Request } from '@playwright/test';
-import { feedFixture, serveAudio, serveFixtures } from './fixtures.ts';
+import { feedFixture, nowTab, serveAudio, serveFixtures } from './fixtures.ts';
 
 const STUB = 'http://127.0.0.1:4174';
 const vector = JSON.parse(
@@ -56,6 +56,10 @@ async function friendPage(page: Page): Promise<void> {
   await serveAudio(page, 'https://example.com/podcast/**');
 }
 
+// The arrival preview's start from 0:00 (part of #3216). Exact, since a bare 'Play' also matches the preview's
+// "Autoplay: Unheard Margins" menu.
+const START = { name: 'Start from the beginning', exact: true } as const;
+
 test('a share link for an Apple Podcasts episode with only its page plays that episode and the sender’s Margins', async ({ page }) => {
   const log: Request[] = [];
   page.on('request', (request) => log.push(request));
@@ -70,7 +74,7 @@ test('a share link for an Apple Podcasts episode with only its page plays that e
   await expect(arrival.getByRole('heading', { name: TITLE })).toBeVisible();
   await expect(arrival.getByText('2 Margins', { exact: false })).toBeVisible();
   await expect(arrival.getByText('no audio the browser can play')).toHaveCount(0);
-  await expect(arrival.getByRole('button', { name: 'Play' })).toBeEnabled();
+  await expect(arrival.getByRole('button', START)).toBeEnabled();
   expect(asked).toEqual(['https://itunes.apple.com/lookup?id=1445582279&entity=podcastEpisode&limit=200']);
   for (const request of log.filter((r) => r.url().includes('apple.com'))) {
     expect(request.method()).toBe('GET');
@@ -79,9 +83,10 @@ test('a share link for an Apple Podcasts episode with only its page plays that e
   }
 
   // 2. Play starts the episode that matches the page's own episode id (not the neighbour), from the https address.
-  await arrival.getByRole('button', { name: 'Play' }).click();
+  await arrival.getByRole('button', START).click();
   const playing = page.getByRole('dialog', { name: TITLE });
   await expect(playing).toBeVisible();
+  await nowTab(page); // a friend's unheard Margins open Now Playing on its Margins tab; the countdown is on Now
   await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThan(0.3);
   const src = await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.currentSrc);
   expect(src).toBe('https://example.com/podcast/people-parks-and-policy.mp3');
@@ -101,7 +106,7 @@ test('an Apple Podcasts episode that Apple does not list says it cannot play her
   await expect(arrival.getByText('no audio the browser can play', { exact: false })).toBeVisible();
   await expect(arrival.getByText('Spoken Margins app on iPhone', { exact: false })).toBeVisible();
   await expect(arrival.getByRole('button', { name: /^Keep .* Margins$/ })).toBeVisible();
-  await expect(arrival.getByRole('button', { name: 'Play' })).toHaveCount(0);
+  await expect(arrival.getByRole('button', START)).toHaveCount(0);
 });
 
 test('when Apple does not answer, Play asks again and says so plainly, never that the post has no voice', async ({ page }) => {
@@ -109,9 +114,9 @@ test('when Apple does not answer, Play asks again and says so plainly, never tha
   const asked = await appleLookup(page, 'down');
   await page.goto(LINK);
   const arrival = page.getByTestId('arrival');
-  await expect(arrival.getByRole('button', { name: 'Play' })).toBeVisible();
+  await expect(arrival.getByRole('button', START)).toBeVisible();
   expect(asked).toHaveLength(1);
-  await arrival.getByRole('button', { name: 'Play' }).click();
+  await arrival.getByRole('button', START).click();
   await expect(page.getByText('Apple Podcasts can’t look this episode up right now', { exact: false }).first()).toBeVisible();
   await expect(page.getByText('neither the writer nor Substack', { exact: false })).toHaveCount(0);
   expect(asked.length).toBeGreaterThanOrEqual(2);
@@ -155,8 +160,8 @@ test('an Apple episode the lookup does not list plays from the show\'s feed, mat
   const arrival = page.getByTestId('arrival');
   await expect(arrival.getByRole('heading', { name: OUTSIDE_TITLE })).toBeVisible();
   await expect(arrival.getByText('no audio the browser can play')).toHaveCount(0);
-  await expect(arrival.getByRole('button', { name: 'Play' })).toBeEnabled();
-  await arrival.getByRole('button', { name: 'Play' }).click();
+  await expect(arrival.getByRole('button', START)).toBeEnabled();
+  await arrival.getByRole('button', START).click();
   await expect(page.getByRole('dialog', { name: OUTSIDE_TITLE })).toBeVisible();
   await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThan(0.3);
   expect(await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.currentSrc)).toBe(ENCLOSURE);
@@ -171,9 +176,9 @@ test('when the feed refuses browsers, Play asks once to read it through the serv
   const asked = await outsideLookupPage(page, 'refused-by-browsers');
   await page.goto(OUTSIDE_LINK);
   const arrival = page.getByTestId('arrival');
-  await expect(arrival.getByRole('button', { name: 'Play' })).toBeEnabled();
+  await expect(arrival.getByRole('button', START)).toBeEnabled();
   await expect(arrival.getByText('no audio the browser can play')).toHaveCount(0);
-  await arrival.getByRole('button', { name: 'Play' }).click();
+  await arrival.getByRole('button', START).click();
   const ask = page.getByRole('dialog', { name: 'Read this feed through our server?' });
   await expect(ask).toBeVisible();
   await ask.getByRole('button', { name: 'Use the server' }).click();
@@ -192,5 +197,5 @@ test('two episodes in the feed with the packet\'s title are never guessed betwee
   const arrival = page.getByTestId('arrival');
   await expect(arrival.getByRole('heading', { name: OUTSIDE_TITLE })).toBeVisible();
   await expect(arrival.getByText('no audio the browser can play', { exact: false })).toBeVisible();
-  await expect(arrival.getByRole('button', { name: 'Play' })).toHaveCount(0);
+  await expect(arrival.getByRole('button', START)).toHaveCount(0);
 });

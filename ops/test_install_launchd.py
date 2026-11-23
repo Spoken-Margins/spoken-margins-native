@@ -62,10 +62,21 @@ class TemplateTests(unittest.TestCase):
             with self.subTest(name):
                 data = plistlib.loads(rendered[name].encode())
                 ops = f'{HOME}/SpokenMarginsOps/repo'
-                self.assertTrue(data['ProgramArguments'][1].startswith(ops + '/scripts/'))
+                arguments = data['ProgramArguments']
+                self.assertTrue(arguments[arguments.index('/usr/bin/python3') + 1].startswith(ops + '/scripts/'))
                 self.assertEqual(data['WorkingDirectory'], ops)
                 self.assertEqual(data['EnvironmentVariables']['SM_PIN_CHECKOUT'], ops)
                 self.assertNotIn('Documents/GitHub', rendered[name].replace('(~/Documents/GitHub', ''))
+
+    def test_agent_jobs_act_as_the_app_through_the_wrapper(self):
+        # #4915: these jobs reach GitHub as spoken-margins-agent[bot]; sm-agent-env refreshes the App token file
+        # every run, so long worker sessions keep a live token. Removing SM_AGENT_AS_APP is the rollback.
+        rendered = render_all()
+        for name in ('claude-worker', 'integration-run', 'phone-build', 'daily-phone-plan'):
+            with self.subTest(name):
+                data = plistlib.loads(rendered[name].encode())
+                self.assertEqual(data['ProgramArguments'][:2], [f'{HOME}/.claude/bin/sm-agent-env', '/usr/bin/python3'])
+                self.assertEqual(data['EnvironmentVariables']['SM_AGENT_AS_APP'], '1')
 
     def test_no_rendered_job_holds_a_token(self):
         """Tokens live in the login Keychain; a reinstall must never write one into a LaunchAgent (2026-11-04).

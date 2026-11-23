@@ -112,6 +112,33 @@ class LiveFaultTests(unittest.TestCase):
 
 
 class TableTests(unittest.TestCase):
+    def test_a_merge_group_that_fails_outside_the_pr_merges_after_one_retry_and_a_test_failure_does_not_(self):
+        # #4940: a Mac job that fails in a setup step, or downloads from a host that is down, is retried once by the
+        # notifier and the bridge; a test that fails is the PR's and stops at once. Without the failing step the
+        # notifier cannot tell them apart and every flake needs a person.
+        for kind in ('sessionkit', 'app-audio'):
+            for fault in ('mac-fail-once', 'mac-download-fail-once'):
+                flake = H.case(kind, 'person', fault)
+                tree = fresh_tree()
+                result = H.simulate(flake, tree)
+                self.assertEqual(H.violations(flake, result, tree), [], f'{kind} {fault}')
+                self.assertTrue(result['merged'], f'{kind} {fault}')
+                self.assertTrue(any('left the queue on a failure outside the PR' in line for line in result['log']))
+            real = H.case(kind, 'person', 'mac-test-fail-once')
+            tree = fresh_tree()
+            result = H.simulate(real, tree)
+            self.assertFalse(result['merged'])
+            self.assertIn('needs-fix', result['labels'], 'a failed test is the PR\'s: needs-fix at once')
+            self.assertFalse(any('left the queue on a failure outside the PR' in line for line in result['log']))
+            self.assertEqual(H.violations(real, result, tree), [])
+
+    def test_the_known_entries_for_setup_failures_are_the_ones_on_the_pr_itself(self):
+        # The merge-queue half of #4940 is fixed, so no kind that runs its Mac jobs in the queue is known to need a
+        # person; what remains fails on a PR-level check, where only #5057's re-run can help.
+        self.assertNotIn('*/mac-fail-once/*: needs-person', H.KNOWN)
+        for pattern in ('web/*/mac-fail-once/*: needs-person', 'web/*/mac-download-fail-once/*: needs-person'):
+            self.assertIn(pattern, H.KNOWN)
+
     def test_every_external_download_names_a_real_job(self):
         workflows = fresh_tree().model['workflows']
         for (file, job), hosts in H.EXTERNAL_DOWNLOADS.items():
