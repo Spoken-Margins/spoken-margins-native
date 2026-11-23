@@ -337,6 +337,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     private let model: Gate1AppModel
     /// Plays "Hear it as your friend will" (#4171). One for the sheet, so only one Margin's preview plays.
     private let leadInPreview = LeadInPreviewPlayer()
+    /// Whether the main player was playing when the preview started, so its resuming (AirPods, the Lock Screen) is seen.
+    private var mainPlaybackActiveAtPreview = false
     /// The item read before a preview starts; a Stop or another start cancels it.
     private var leadInPreviewStart: Task<Void, Never>?
     private var leadInPreviewStartID: String?
@@ -427,6 +429,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             self.inputChangePending = false
             if self.playbackCheckPending {
                 self.playbackCheckPending = false
+                self.stopLeadInPreviewIfMainPlaybackResumed()
                 let playing = Self.isPlaying(itemID: self.model.selectedItem.id, in: self.model.snapshot)
                 if playing != self.playsThisItem {
                     self.playsThisItem = playing
@@ -967,9 +970,20 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             guard !Task.isCancelled, self.model.selectedItem.id == itemID else { return }
             self.model.hangTelemetry.labels.scoped("leadInPreviewStart") {
                 if episodeURL != nil { self.model.pauseForSenderPreview() }
+                self.mainPlaybackActiveAtPreview = self.model.snapshot.status.isPlaybackActive
                 self.leadInPreview.start(marginID: id, episodeURL: episodeURL, plan: plan, voiceURL: voiceURL)
             }
         }
+    }
+
+    /// The main player keeps its remote commands while the preview plays, so AirPods or the Lock Screen can start it
+    /// again. The two never play over each other: the main player starting stops the preview (audit on #5108).
+    private func stopLeadInPreviewIfMainPlaybackResumed() {
+        let active = model.snapshot.status.isPlaybackActive
+        defer { mainPlaybackActiveAtPreview = active }
+        guard active, !mainPlaybackActiveAtPreview, leadInPreview.playingMarginID != nil else { return }
+        leadInPreviewStart?.cancel()
+        leadInPreview.stop()
     }
 
     private func currentDraftFingerprint() -> String {

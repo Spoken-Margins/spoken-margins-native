@@ -73,6 +73,14 @@ final class LeadInPreviewPlayer: NSObject, ObservableObject, AVAudioPlayerDelega
             failedMarginID = marginID
             return
         }
+        // The app's playback session, as every other player sets it before it plays: without it a cold launch is still
+        // in iOS's default mode, and the Ring/Silent switch mutes the whole preview with no failure shown (audit on #5108).
+        do {
+            try Self.activatePlaybackSession()
+        } catch {
+            failedMarginID = marginID
+            return
+        }
         NotificationCenter.default.post(name: .shareReviewPreviewDidStart, object: self)
         let run = generation
         playingMarginID = marginID
@@ -116,6 +124,16 @@ final class LeadInPreviewPlayer: NSObject, ObservableObject, AVAudioPlayerDelega
                 self.episodePlayer?.play()
             }
         }
+    }
+
+    /// The playback category (ducking other apps' audio, which a short sample shouldn't stop) and an active session.
+    static func activatePlaybackSession() throws {
+        #if os(iOS)
+        try MainThreadOperationLabels.shared.scoped("shareReviewPreview.audioSession") {
+            try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [.duckOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+        }
+        #endif
     }
 
     func stop() {

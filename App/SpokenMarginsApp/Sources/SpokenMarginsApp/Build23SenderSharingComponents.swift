@@ -1288,6 +1288,9 @@ private final class Build23AudioPreviewPlayer: NSObject, ObservableObject, AVAud
 
         do {
             audioPlayer?.stop()
+            // The same session setup as "Hear it as your friend will": a cold launch would otherwise play this muted
+            // on Silent (audit on #5108).
+            try LeadInPreviewPlayer.activatePlaybackSession()
             let nextPlayer = try AVAudioPlayer(contentsOf: url)
             nextPlayer.delegate = self
             nextPlayer.prepareToPlay()
