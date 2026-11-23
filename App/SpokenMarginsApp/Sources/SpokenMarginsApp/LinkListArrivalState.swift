@@ -21,14 +21,33 @@ final class LinkListArrivalState: ObservableObject {
     /// Failed tries of Quick Folder lists, over `UserDefaults`, so a count survives a relaunch.
     let quickFolderRetry: LinkListRetryLedger
 
+    /// Failed tries of saved handoff files (the Shortcuts action's lists), over `UserDefaults`, so a count survives a relaunch.
+    let handoffRetry: LinkListRetryLedger
+
+    /// True while `drainLinkListHandoffs()` runs, so two foregrounds at once can't read the same file twice.
+    var isDrainingHandoffs = false
+
     /// Quick Folder files not to try again on their own until the app comes forward again: they waited offline or
     /// failed this time. Without it, the refresh that ends an import would start the next try at once and spend all
     /// three tries in a few seconds. Kept in memory, so a relaunch tries them again.
     private(set) var heldQuickFolderFiles: Set<String> = []
 
-    init(quickFolderRetry: LinkListRetryLedger = LinkListRetryLedger(key: LinkListRetryLedger.quickFolderKey)) {
+    init(
+        quickFolderRetry: LinkListRetryLedger = LinkListRetryLedger(key: LinkListRetryLedger.quickFolderKey),
+        handoffRetry: LinkListRetryLedger = LinkListRetryLedger(key: LinkListRetryLedger.handoffKey)
+    ) {
         self.quickFolderRetry = quickFolderRetry
+        self.handoffRetry = handoffRetry
     }
+
+    /// Saved handoff files (the Shortcuts action's lists) that failed online this time: not tried again until the app
+    /// next comes forward. The drain also runs for a share, a Retry and the network's return, and without this a list with
+    /// one dead link would spend all three tries in a few seconds. In memory, so a relaunch tries them again.
+    private(set) var heldHandoffFiles: Set<String> = []
+
+    func holdHandoff(_ fileName: String) { heldHandoffFiles.insert(fileName) }
+    func isHandoffHeld(_ fileName: String) -> Bool { heldHandoffFiles.contains(fileName) }
+    func releaseHeldHandoffFiles() { heldHandoffFiles.removeAll() }
 
     func hold(_ fileID: String) { heldQuickFolderFiles.insert(fileID) }
     func isHeld(_ fileID: String) -> Bool { heldQuickFolderFiles.contains(fileID) }

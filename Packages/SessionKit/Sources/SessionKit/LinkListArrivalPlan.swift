@@ -168,6 +168,31 @@ public struct LinkListArrivalPlan: Equatable, Sendable {
         if allLanded { return .done }
         return triesAfterThisAttempt >= LinkListRetryLedger.maxTries ? .stayForTap : .retryLater
     }
+
+    // MARK: - The handoff folder (#4683 PR 3b, Design section 2g)
+
+    /// What happens to a saved handoff file once the drain has dealt with it.
+    public enum HandoffSettlement: Equatable, Sendable {
+        /// The file leaves the folder: every link landed, it failed its third try (the arrival's banner is the last
+        /// word), or it could not be read at all.
+        case remove
+        /// The file stays for the next foreground: the phone was offline or another import was running (nothing was
+        /// tried, nothing is counted), or a link failed online and tries are left.
+        case keep
+    }
+
+    /// - Parameters:
+    ///   - attempted: the arrival tried the links. False when the phone was offline or another import was running.
+    ///   - allLanded: no link failed.
+    ///   - triesAfterThisAttempt: the ledger's count after this attempt, counted only when it failed online.
+    public static func handoffSettlement(attempted: Bool, allLanded: Bool, triesAfterThisAttempt: Int) -> HandoffSettlement {
+        guard attempted else { return .keep }
+        if allLanded { return .remove }
+        return triesAfterThisAttempt >= LinkListRetryLedger.maxTries ? .remove : .keep
+    }
+
+    /// The banner for a saved file that can't be read as a list (it is removed at once, so it is told only once).
+    public static let unreadableHandoffMessage = "A saved link list couldn't be read, so nothing was added from it."
 }
 
 /// The last link list that added an item or a suggestion, kept in `UserDefaults` so the Your AI screen (PR 4 of

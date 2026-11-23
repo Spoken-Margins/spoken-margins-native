@@ -13,7 +13,7 @@ import Foundation
 /// Entries the list had to skip (not https, no url) are not stored: the Shortcut's own dialog and the arrival's banner
 /// work from the links that remain. Follow flags are kept.
 ///
-/// No call site yet: PR 3b of #4683 adds the Shortcuts action and the drain.
+/// The Shortcuts action (`LinkListShortcutAction`) writes here; the app's `drainLinkListHandoffs()` reads and removes.
 public struct LinkListHandoffFolder: @unchecked Sendable {
     public static let directoryName = "LinkListHandoffs"
     /// At most this many lists wait; the next write throws `.full`.

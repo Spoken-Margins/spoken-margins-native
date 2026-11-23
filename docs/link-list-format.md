@@ -50,7 +50,7 @@ A listener can paste the whole reply from their own assistant, which is prose ar
 
 ## Arrival
 
-Every route (Quick Folder, Paste & go; the handoff folder comes later) runs one arrival (`LinkListArrivalPlan`, #4683):
+Every route (Quick Folder, Paste & go, the handoff folder) runs one arrival (`LinkListArrivalPlan`, #4683):
 
 1. One arrival at a time. If another import is running, a Quick Folder list stays where it is and is tried at the next refresh; Paste & go says the app is busy.
 2. Offline, nothing is tried and no try is counted. The Quick Folder list stays; Paste & go asks the listener to paste it again online.
@@ -65,5 +65,11 @@ A link list saved in the Quick Folder shows in the Quick Add list like any other
 With the Quick Folder feeding the play queue, a new link list arrives the same way, ahead of the text files that arrived with it. Its links are not queued.
 
 A list that didn't fully land while the phone was online is counted and tried again at the next refresh once the app comes forward, up to three tries; then it waits in the Quick Add list for a tap. Offline opens don't count. The count is kept over relaunches (`quickFolderLinkListRetryV1`).
+
+## Shortcuts: Add Link List to Spoken Margins
+
+The listener's own automation (for example one that gets a list from their AI at 6:00) can run **Add Link List to Spoken Margins** with a file or text (#4683). The action runs without opening the app: `LinkListShortcutAction` checks the list (the same recognition as a file or a pasted reply, so text may be a whole reply) and saves it in `LinkListHandoffs/` in the App Group, then says "Saved “«title»” with «n» links. Open Spoken Margins to add them." It refuses what a file or paste would refuse, with the same messages, and says "Give this action a link list file or text." when it gets neither. At most 20 lists wait (the 21st is refused with "Spoken Margins already has 20 lists waiting. Open the app to add them first."), each at most 1 MB, written readable after the first unlock so a locked phone still saves.
+
+The app adds the waiting lists once the share drain has finished its pass, at launch and whenever it comes forward (`drainLinkListHandoffs()`): oldest first, one arrival at a time, through the same arrival as every other route. It stops at the first closed gate or when the phone is offline, and nothing is tried or counted then. A list whose links all landed is removed. One that failed while online is counted (`linkListHandoffTriesV1`), is tried at most once per foreground (a share, a Retry or the network's return can't spend its tries), and is removed on its third failed try, the arrival's banner being the last word. Unreadable files are told once, after the drain. A file that can't be read is removed at once with "A saved link list couldn't be read, so nothing was added from it."
 
 Not yet: a batch of more than eight new files arriving whole, and a list becoming a Library folder (#3769).

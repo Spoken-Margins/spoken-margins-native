@@ -55,6 +55,8 @@ extension Gate1AppModel {
         let title: String?
         /// The Quick Folder file this list came from, so Undo can stop its retries.
         let quickFolderFileID: String?
+        /// The saved handoff file (the Shortcuts action's list) this list came from, so Undo can remove it and its retry count.
+        let handoffEntry: LinkListHandoffFolder.Entry?
         /// The shows this arrival newly suggested, so Undo takes back those and no earlier arrival's.
         let suggestedURLs: [String]
         let collectionID: String?
@@ -62,10 +64,11 @@ extension Gate1AppModel {
         let libraryBefore: Set<String>
         var isUsed = false
 
-        init(key: String, title: String?, quickFolderFileID: String?, suggestedURLs: [String], collectionID: String?, addedItemIDs: [String], libraryBefore: Set<String>) {
+        init(key: String, title: String?, quickFolderFileID: String?, handoffEntry: LinkListHandoffFolder.Entry? = nil, suggestedURLs: [String], collectionID: String?, addedItemIDs: [String], libraryBefore: Set<String>) {
             self.key = key
             self.title = title
             self.quickFolderFileID = quickFolderFileID
+            self.handoffEntry = handoffEntry
             self.suggestedURLs = suggestedURLs
             self.collectionID = collectionID
             self.addedItemIDs = addedItemIDs
@@ -83,7 +86,7 @@ extension Gate1AppModel {
     /// - An untitled list is loose items.
     @discardableResult
     func runLinkListArrival(
-        _ list: LinkListFile, route: LinkListArrivalPlan.Route, quickFolderFileID: String? = nil
+        _ list: LinkListFile, route: LinkListArrivalPlan.Route, quickFolderFileID: String? = nil, handoffEntry: LinkListHandoffFolder.Entry? = nil
     ) async -> LinkListArrivalResult {
         let plan = LinkListArrivalPlan.make(list: list, followedFeedKeys: followedFeedKeys, isOffline: connectivity.isOffline)
         guard plan.attempt == .attempt else { return .skipped(.offline) }
@@ -152,7 +155,7 @@ extension Gate1AppModel {
             presentLinkListBanner(
                 banner,
                 undo: banner.offersUndo
-                    ? LinkListArrivalUndo(key: plan.key, title: plan.title, quickFolderFileID: quickFolderFileID, suggestedURLs: suggestedURLs, collectionID: collectionID,
+                    ? LinkListArrivalUndo(key: plan.key, title: plan.title, quickFolderFileID: quickFolderFileID, handoffEntry: handoffEntry, suggestedURLs: suggestedURLs, collectionID: collectionID,
                                           addedItemIDs: addedItemIDs, libraryBefore: libraryBefore)
                     : nil)
         }
@@ -186,6 +189,15 @@ extension Gate1AppModel {
         if let fileID = undo.quickFolderFileID {
             quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union([fileID])
             linkListArrival.hold(fileID)
+        }
+        // The same for a saved Shortcuts list: its file and its count go now, so the next foreground doesn't add it back.
+        // Removed off the main actor, and a relaunch finds nothing to retry.
+        if let entry = undo.handoffEntry {
+            linkListArrival.handoffRetry.clear(entry.id)
+            linkListArrival.holdHandoff(entry.id)
+            if let folder = try? resolvedLinkListHandoffFolder() {
+                Task.detached(priority: .userInitiated) { folder.remove(entry) }
+            }
         }
         aiFollowSuggestionsModel.remove(urls: undo.suggestedURLs)
         let newItemIDs = LinkListArrivalPlan.undoItemIDs(

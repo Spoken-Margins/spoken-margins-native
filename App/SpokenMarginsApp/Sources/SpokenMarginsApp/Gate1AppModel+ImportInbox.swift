@@ -143,10 +143,13 @@ extension Gate1AppModel {
         // A request made while a drain runs (Retry, a link opened) makes it go round once more; before, it was
         // dropped and the "queued" banner was false (#2136).
         guard pendingHandoffDrainGate.request() else { return }
-        defer { refreshImportInbox() }
         repeat {
             await drainPendingHandoffsOnce()
         } while pendingHandoffDrainGate.finishPass() != nil
+        refreshImportInbox() // before the link lists, so a failed share shows in the inbox while a long arrival runs
+        // Link lists the Shortcuts action saved (#4683). After the share pass has released its gate, so a long list never
+        // holds up a Safari share.
+        await drainLinkListHandoffs()
     }
 
     private func drainPendingHandoffsOnce() async {
