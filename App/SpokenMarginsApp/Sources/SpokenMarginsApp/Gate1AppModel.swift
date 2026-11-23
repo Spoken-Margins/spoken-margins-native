@@ -176,6 +176,10 @@ final class Gate1AppModel: ObservableObject {
     @Published var exportFormat = UserDefaults.standard.string(forKey: "exportFormat") ?? "markdown"
     @Published var exportScope = UserDefaults.standard.string(forKey: "exportScope") ?? "full_session"
     @Published var exportIncludesSourceText = UserDefaults.standard.object(forKey: "exportIncludesSourceText") as? Bool ?? false
+    /// Source Text for the listener's own spoken notes, remembered apart from articles' and on by default (#4782).
+    @Published var exportIncludesSpokenNoteText = UserDefaults.standard.object(forKey: "exportIncludesSpokenNoteText") as? Bool ?? true
+    /// The line under a note's Source Text when its words aren't all there (#4782). Set with the preview, cleared with it.
+    @Published var exportSpokenNoteFootnote: String?
     @Published var exportIncludesReference = UserDefaults.standard.object(forKey: "exportIncludesReference") as? Bool ?? true
     @Published var exportIncludesListeningMap = UserDefaults.standard.object(forKey: "exportIncludesListeningMap") as? Bool ?? true
     @Published var exportIncludesInterjections = UserDefaults.standard.object(forKey: "exportIncludesInterjections") as? Bool ?? true
@@ -2044,7 +2048,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var exportSourceTextAvailable: Bool {
-        !selectedItem.isNativeAudio
+        !selectedItem.isNativeAudio || selectedItem.isSpokenNote
     }
 
     func openCurrentPlaybackItem() {
@@ -2477,7 +2481,7 @@ final class Gate1AppModel: ObservableObject {
         let loadedProfile = try loadProfile(id: selectedProfileId)
         let profile = loadedProfile.limitedToOnDeviceAI(foundationModelAvailable: localFoundationModelAvailable)
         let provider: AIProviderClient = AppleFoundationAIProvider()
-        return PublicSourceChecks.attached(to: SessionEngine(
+        let engine = PublicSourceChecks.attached(to: SessionEngine(
             profile: profile,
             repository: store,
             audio: try makeAudioPlaybackClient(),
@@ -2486,6 +2490,9 @@ final class Gate1AppModel: ObservableObject {
             linkResolver: sourceLinkResolver ?? PublicPodcastLinkResolver(),
             textAudio: try makeTextAudioPreparationClient()
         ))
+        // A spoken note's own file, for its Export (#4782). Read off the main thread by the engine, only in note mode.
+        engine.spokenNoteLoader = SpokenNoteExportInput.loader(applicationSupport: try? applicationSupportDirectory())
+        return engine
     }
 
     private func makeTextAudioPreparationClient() throws -> TextAudioPreparationClient? {

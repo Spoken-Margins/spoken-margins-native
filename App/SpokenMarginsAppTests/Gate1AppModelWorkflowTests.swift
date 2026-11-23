@@ -1693,6 +1693,38 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.exportSourceTextAvailable)
     }
 
+    /// A spoken note plays as native audio, but its words are the listener's own, so its Source Text is offered (#4782).
+    func testASpokenNoteKeepsSourceTextAvailableThoughItPlaysAsNativeAudio() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(id: "note", title: "Note", isNativeAudio: true, isSpokenNote: true)
+        XCTAssertTrue(model.exportSourceTextAvailable)
+    }
+
+    /// A note's Source Text is remembered apart from articles': on by default, and turning it off leaves articles
+    /// alone and survives a new model (#4782).
+    func testNoteSourceTextChoiceSurvivesANewModelAndLeavesArticlesAlone() {
+        let noteKey = "exportIncludesSpokenNoteText", articleKey = "exportIncludesSourceText"
+        let priorNote = UserDefaults.standard.object(forKey: noteKey)
+        let priorArticle = UserDefaults.standard.object(forKey: articleKey)
+        defer {
+            restoreUserDefault(priorNote, forKey: noteKey)
+            restoreUserDefault(priorArticle, forKey: articleKey)
+        }
+        UserDefaults.standard.removeObject(forKey: noteKey)
+        UserDefaults.standard.set(false, forKey: articleKey)
+        let first = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        XCTAssertTrue(first.exportIncludesSpokenNoteText, "notes read as on before the key is set")
+        XCTAssertFalse(first.exportIncludesSourceText)
+
+        first.exportIncludesSpokenNoteText = false
+        first.exportOptionsChanged()
+
+        let relaunched = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        XCTAssertFalse(relaunched.exportIncludesSpokenNoteText)
+        XCTAssertFalse(relaunched.exportIncludesSourceText, "articles keep their own value")
+        XCTAssertNil(relaunched.exportSpokenNoteFootnote)
+    }
+
     func testDeletedInterjectionsAreNeverEligibleForAnotherSummary() {
         let active = Interjection(
             id: "active",
