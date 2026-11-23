@@ -34,10 +34,10 @@ final class ListeningMomentTests: XCTestCase {
     }
 
     func testAMarginNearTheStartClampsToZeroAndSaysSo() {
-        let early = ListeningMoment.Margin(id: "ij-001", position: 5_000)
+        let early = ListeningMoment.Margin(id: "ij-001", position: 3_000)
         for use in ListeningMoment.Use.allCases {
             let moment = ListeningMoment(use: use, margin: early, source: .media())
-            XCTAssertEqual(moment.leadIn.span, .init(start: 0, end: 5_000), "\(use)")
+            XCTAssertEqual(moment.leadIn.span, .init(start: 0, end: 3_000), "\(use)")
             XCTAssertEqual(moment.leadInClamp, .sourceStart, "\(use)")
         }
         let exact = ListeningMoment(use: .listenBack, margin: .init(id: "ij-002", position: 8_000), source: .media())
