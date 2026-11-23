@@ -425,8 +425,10 @@ class WorkflowTests(unittest.TestCase):
             self.assertNotIn('concurrency', job, name)
 
     def test_the_rules_come_from_main_with_a_read_only_token(self):
-        # `checks: write` only for the job's own check run (#4986); never `contents: write` or `pull-requests: write`.
-        self.assertEqual(self.workflow['permissions'], {'contents': 'read', 'pull-requests': 'read', 'checks': 'write'})
+        # `statuses: write` only for the job's own commit status (#5162); never `contents: write`, `pull-requests: write`
+        # or `checks: write` (the job writes no check run: one made through the Checks API raced into the label bridge's
+        # check suite and the merge queue did not count it).
+        self.assertEqual(self.workflow['permissions'], {'contents': 'read', 'pull-requests': 'read', 'statuses': 'write'})
         job = self.workflow['jobs']['policy']
         checkout = job['steps'][0]
         self.assertTrue(checkout['uses'].startswith('actions/checkout@'))
@@ -434,18 +436,19 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(checkout['with']['persist-credentials'])
         run = job['steps'][1]['run']
         self.assertNotIn('${{', run)  # event data reaches the shell only through env
+        self.assertNotIn('check-runs', run)
         self.assertNotIn('pull_request_target', (ROOT / '.github/workflows/merge-policy.yml').read_text())
 
-    def run_step(self, event, *, knows_report_flag, exit_code=0):
-        """Run the workflow's real shell step with a fake script and a fake `gh`; return (exit code, script args, gh calls)."""
+    def run_step(self, event, *, writes_statuses, exit_code=0):
+        """Run the workflow's real shell step with a fake script and a fake `gh`; return (exit code, script args, gh calls).
+        <writes_statuses>: the fake script is a #5162 one (it names the Statuses API), not an older one."""
         run = self.workflow['jobs']['policy']['steps'][1]['run']
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             (tmp / 'scripts').mkdir()
-            help_text = 'usage: merge_policy.py [--report-sha SHA]' if knows_report_flag else 'usage: merge_policy.py [--pr PR]'
+            marker = "# posts to repos/<repo>/statuses/<sha>\n" if writes_statuses else "# posts to check-runs\n"
             (tmp / 'scripts/merge_policy.py').write_text(
-                'import sys\n'
-                f'if "--help" in sys.argv: print({help_text!r}); sys.exit(0)\n'
+                'import sys\n' + marker +
                 'open("args.txt", "a").write(" ".join(sys.argv[1:]) + "\\n")\n'
                 'print("verdict line")\n'
                 f'sys.exit({exit_code})\n')
@@ -460,45 +463,51 @@ class WorkflowTests(unittest.TestCase):
             read = lambda name: (tmp / name).read_text().splitlines() if (tmp / name).exists() else []  # noqa: E731
             return done.returncode, read('args.txt'), read('gh.txt')
 
+    def test_the_real_script_is_one_the_workflow_hands_the_status_to(self):
+        # The step picks the script's own path by looking for the Statuses API in it.
+        self.assertIn('statuses/', (SCRIPTS / 'merge_policy.py').read_text())
+        self.assertNotIn('check-runs', (SCRIPTS / 'merge_policy.py').read_text())
+
     def test_with_the_new_script_a_pull_request_and_the_queue_report_and_a_dispatch_does_not(self):
-        code, args, gh = self.run_step('pull_request', knows_report_flag=True)
-        self.assertEqual((code, gh), (0, []))  # the script writes the check run, not the workflow
+        code, args, gh = self.run_step('pull_request', writes_statuses=True)
+        self.assertEqual((code, gh), (0, []))  # the script writes the status, not the workflow
         self.assertIn('--pr 7 --head ' + 'a' * 40, args[0])
         self.assertIn('--report-sha ' + 'a' * 40, args[0])
         self.assertIn('--details-url https://example.test/run/1', args[0])
-        _, args, _ = self.run_step('merge_group', knows_report_flag=True)
+        _, args, _ = self.run_step('merge_group', writes_statuses=True)
         self.assertIn('--group-head ' + 'b' * 40, args[0])
-        self.assertIn('--report-sha ' + 'b' * 40, args[0])
-        code, args, gh = self.run_step('workflow_dispatch', knows_report_flag=True)
+        self.assertIn('--report-sha ' + 'b' * 40, args[0])  # the queue's status goes on the merge group's head
+        code, args, gh = self.run_step('workflow_dispatch', writes_statuses=True)
         self.assertNotIn('--report-sha', args[0])
         self.assertEqual(gh, [])
 
     def test_with_the_new_script_a_failing_verdict_fails_the_step(self):
-        code, _, _ = self.run_step('pull_request', knows_report_flag=True, exit_code=1)
+        code, _, _ = self.run_step('pull_request', writes_statuses=True, exit_code=1)
         self.assertEqual(code, 1)
 
-    def test_before_main_has_the_flag_the_workflow_writes_the_check_run_itself(self):
-        # The PR that adds --report-sha runs main's script (checkout ref: main) under its own workflow file, so the
-        # first run saw "unrecognized arguments" and no `merge policy` check was ever written (#5011, 2026-11-22).
+    def test_before_main_writes_a_status_the_workflow_writes_the_status_itself(self):
+        # The PR that moves the check to a status (#5162) runs main's script (checkout ref: main) under its own workflow
+        # file, whose token may no longer write check runs. As with #5011, the workflow writes the status itself.
         for event, sha in (('pull_request', 'a' * 40), ('merge_group', 'b' * 40)):
-            for exit_code, conclusion in ((0, 'success'), (1, 'failure')):
+            for exit_code, state in ((0, 'success'), (1, 'failure')):
                 with self.subTest(event=event, exit_code=exit_code):
-                    code, args, gh = self.run_step(event, knows_report_flag=False, exit_code=exit_code)
+                    code, args, gh = self.run_step(event, writes_statuses=False, exit_code=exit_code)
                     # The step exits 0 either way: main's audit and owner-tap alert ignore a red `merge policy` but
                     # not a red `merge policy run`, so a red job would stop the PR being audited (#5011).
                     self.assertEqual(code, 0)
                     self.assertNotIn('--report-sha', args[0])
                     self.assertEqual(len(gh), 1, gh)
-                    self.assertIn('repos/o/r/check-runs', gh[0])
-                    self.assertIn('name=merge policy', gh[0])
-                    self.assertIn(f'head_sha={sha}', gh[0])
-                    self.assertIn(f'conclusion={conclusion}', gh[0])
-        code, args, gh = self.run_step('workflow_dispatch', knows_report_flag=False)
-        self.assertEqual((code, gh), (0, []))  # a dispatched run never writes a check run
+                    self.assertIn(f'repos/o/r/statuses/{sha}', gh[0])
+                    self.assertNotIn('check-runs', gh[0])
+                    self.assertIn('context=merge policy', gh[0])
+                    self.assertIn(f'state={state}', gh[0])
+                    self.assertIn('target_url=https://example.test/run/1', gh[0])
+        code, args, gh = self.run_step('workflow_dispatch', writes_statuses=False)
+        self.assertEqual((code, gh), (0, []))  # a dispatched run never writes a status
 
 
-class FakeChecksGitHub:
-    """Records the Checks API calls CheckRun makes through GitHub._gh, so a test reads what GitHub would show."""
+class FakeStatusGitHub:
+    """Records the Statuses API calls CommitStatus makes through GitHub._gh, so a test reads what GitHub would show."""
     repo = 'o/r'
 
     def __init__(self, fail_start=False, fail_finish=False):
@@ -506,21 +515,19 @@ class FakeChecksGitHub:
 
     def _gh(self, args):
         self.calls.append(list(args))
-        if args[:3] == ['api', '-X', 'POST'] and self.fail_start:
+        if self.fail_start and len(self.calls) == 1:
             raise policy.ReadFailed('no')
-        if args[:3] == ['api', '-X', 'PATCH'] and self.fail_finish:
+        if self.fail_finish and len(self.calls) > 1:
             raise policy.ReadFailed('no')
-        return json.dumps({'id': 99})
+        return json.dumps({'id': len(self.calls), 'state': 'pending'})
 
     def fields(self, call):
         return dict(arg.split('=', 1) for arg in call if '=' in arg and not arg.startswith('/'))
 
     @property
     def shown(self):
-        """(status, conclusion) of the check run after the last call."""
-        patch = [c for c in self.calls if c[:3] == ['api', '-X', 'PATCH']]
-        last = self.fields(patch[-1] if patch else next(c for c in self.calls if c[:3] == ['api', '-X', 'POST']))
-        return last.get('status'), last.get('conclusion')
+        """The state of the `merge policy` status after the last call: GitHub reads the newest one per context."""
+        return self.fields(self.calls[-1]).get('state')
 
 
 def found_for(*reasons_per_pr, unread=False):
@@ -593,7 +600,8 @@ class VerdictTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
-    """The check run the script writes (#4986): in progress first, finished last, and an interrupted run stays blocked."""
+    """The commit status the script writes (#4986, #5162): pending first, the verdict last, and an interrupted run stays
+    blocked."""
 
     def run_report(self, repo, github, *, queue=False, prs_of=None, **kwargs):
         out = io.StringIO()
@@ -607,105 +615,130 @@ class ReportTests(unittest.TestCase):
         self.addCleanup(repo.close)
         return repo
 
-    def test_a_clean_pr_completes_the_check_as_success(self):
-        repo, checks = self.make({'scripts/tool.py': 'x\n'}), FakeChecksGitHub()
-        code, out = self.run_report(repo, _Both(FakeGitHub(), checks))
+    def test_a_clean_pr_ends_as_success(self):
+        repo, statuses = self.make({'scripts/tool.py': 'x\n'}), FakeStatusGitHub()
+        code, out = self.run_report(repo, _Both(FakeGitHub(), statuses))
         self.assertEqual(code, 0)
-        self.assertEqual(checks.shown, ('completed', 'success'))
+        self.assertEqual(statuses.shown, 'success')
         self.assertIn('may merge', out)
 
-    def test_the_check_is_created_first_under_the_required_name_on_the_head(self):
-        repo, checks = self.make({'scripts/tool.py': 'x\n'}), FakeChecksGitHub()
-        self.run_report(repo, _Both(FakeGitHub(), checks))
-        post = checks.calls[0]
-        self.assertEqual(post[:4], ['api', '-X', 'POST', 'repos/o/r/check-runs'])
-        fields = checks.fields(post)
-        self.assertEqual((fields['name'], fields['head_sha'], fields['status']), ('merge policy', repo.head, 'in_progress'))
-        self.assertEqual(fields['details_url'], 'https://example.test/run/1')
-        self.assertEqual(checks.calls[1][:4], ['api', '-X', 'PATCH', 'repos/o/r/check-runs/99'])
+    def test_it_writes_commit_statuses_on_the_head_under_the_required_name_never_a_check_run(self):
+        # #5162: a check run made through the Checks API was filed into the first Actions check suite on the commit,
+        # and the merge queue did not count it when that was the label bridge's. A status belongs to no suite.
+        repo, statuses = self.make({'scripts/tool.py': 'x\n'}), FakeStatusGitHub()
+        self.run_report(repo, _Both(FakeGitHub(), statuses))
+        self.assertEqual(len(statuses.calls), 2)
+        for call in statuses.calls:
+            self.assertEqual(call[:4], ['api', '-X', 'POST', f'repos/o/r/statuses/{repo.head}'])
+            self.assertFalse(any('check-runs' in arg for arg in call), call)
+            fields = statuses.fields(call)
+            self.assertEqual(fields['context'], 'merge policy')
+            self.assertEqual(fields['target_url'], 'https://example.test/run/1')
+        self.assertEqual(statuses.fields(statuses.calls[0])['state'], 'pending')
 
-    def test_an_owner_tap_wait_leaves_the_check_in_progress_and_exits_zero(self):
-        repo, checks = self.make({'.github/x.yml': 'x\n'}), FakeChecksGitHub()
-        code, out = self.run_report(repo, _Both(FakeGitHub(), checks))
+    def test_an_owner_tap_wait_stays_pending_and_exits_zero(self):
+        repo, statuses = self.make({'.github/x.yml': 'x\n'}), FakeStatusGitHub()
+        code, out = self.run_report(repo, _Both(FakeGitHub(), statuses))
         self.assertEqual(code, 0)
-        self.assertEqual(checks.shown, ('in_progress', None))
+        self.assertEqual(statuses.shown, 'pending')
+        self.assertEqual(len(statuses.calls), 2)  # the wait is posted, with its reason, not left as the start's pending
         self.assertIn('may not merge', out)  # the log and the summary still say why
-        self.assertEqual(checks.fields(checks.calls[-1])['output[title]'], "Waiting for the owner's tap")
+        self.assertEqual(statuses.fields(statuses.calls[-1])['description'], "Waiting for the owner's tap")
 
     def test_the_same_pr_in_the_queue_fails(self):
-        repo, checks = self.make({'.github/x.yml': 'x\n'}), FakeChecksGitHub()
-        code, _ = self.run_report(repo, _Both(FakeGitHub(), checks), queue=True)
+        repo, statuses = self.make({'.github/x.yml': 'x\n'}), FakeStatusGitHub()
+        code, _ = self.run_report(repo, _Both(FakeGitHub(), statuses), queue=True)
         self.assertEqual(code, 1)
-        self.assertEqual(checks.shown, ('completed', 'failure'))
+        self.assertEqual(statuses.shown, 'failure')
 
-    def test_a_real_hold_fails_the_check(self):
-        repo, checks = Repo({'.github/x.yml': 'x\n'}, message='No sign-off here'), FakeChecksGitHub()
+    def test_a_real_hold_fails_with_its_reason_in_the_description(self):
+        repo, statuses = Repo({'.github/x.yml': 'x\n'}, message='No sign-off here'), FakeStatusGitHub()
         self.addCleanup(repo.close)
-        code, _ = self.run_report(repo, _Both(FakeGitHub(association='NONE', login='stranger'), checks))
+        code, _ = self.run_report(repo, _Both(FakeGitHub(association='NONE', login='stranger'), statuses))
         self.assertEqual(code, 1)  # an outsider's unsigned commit is held beside the tap wait
-        self.assertEqual(checks.shown, ('completed', 'failure'))
+        self.assertEqual(statuses.shown, 'failure')
+        self.assertTrue(statuses.fields(statuses.calls[-1])['description'].startswith('May not merge: #7 at '))
 
-    def test_the_label_that_clears_the_tap_completes_it_as_success(self):
-        repo, checks = self.make({'.github/x.yml': 'x\n'}), FakeChecksGitHub()
-        code, _ = self.run_report(repo, _Both(FakeGitHub(labels=('owner-tap',)), checks))
-        self.assertEqual((code, checks.shown), (0, ('completed', 'success')))
+    def test_the_label_that_clears_the_tap_ends_it_as_success(self):
+        repo, statuses = self.make({'.github/x.yml': 'x\n'}), FakeStatusGitHub()
+        code, _ = self.run_report(repo, _Both(FakeGitHub(labels=('owner-tap',)), statuses))
+        self.assertEqual((code, statuses.shown), (0, 'success'))
 
-    def test_a_failed_read_of_the_prs_fails_the_check_rather_than_leaving_it_waiting(self):
-        repo, checks = self.make({'scripts/tool.py': 'x\n'}), FakeChecksGitHub()
+    def test_a_failed_read_of_the_prs_fails_rather_than_leaving_it_pending(self):
+        repo, statuses = self.make({'scripts/tool.py': 'x\n'}), FakeStatusGitHub()
 
         def prs_of():
             raise policy.ReadFailed('queue unreadable')
-        code, out = self.run_report(repo, _Both(FakeGitHub(), checks), prs_of=prs_of)
-        self.assertEqual((code, checks.shown), (1, ('completed', 'failure')))
+        code, out = self.run_report(repo, _Both(FakeGitHub(), statuses), prs_of=prs_of)
+        self.assertEqual((code, statuses.shown), (1, 'failure'))
         self.assertIn('so it holds the merge', out)
 
     def test_a_rate_limited_read_of_a_pr_fails_even_though_nothing_else_is_wrong(self):
-        repo, checks = self.make({'scripts/tool.py': 'x\n'}), FakeChecksGitHub()
+        repo, statuses = self.make({'scripts/tool.py': 'x\n'}), FakeStatusGitHub()
 
         class Limited(FakeGitHub):
             def pull(self, number):
                 raise policy.ReadFailed('HTTP 403 rate limit')
-        code, _ = self.run_report(repo, _Both(Limited(), checks))
-        self.assertEqual((code, checks.shown), (1, ('completed', 'failure')))
+        code, _ = self.run_report(repo, _Both(Limited(), statuses))
+        self.assertEqual((code, statuses.shown), (1, 'failure'))
 
-    def test_a_cancel_marks_the_check_cancelled_and_never_success(self):
-        repo, checks = self.make({'scripts/tool.py': 'x\n'}), FakeChecksGitHub()
+    def test_a_cancel_posts_error_and_never_success(self):
+        repo, statuses = self.make({'scripts/tool.py': 'x\n'}), FakeStatusGitHub()
 
         class Cancelled(FakeGitHub):
             def pull(self, number):
                 raise KeyboardInterrupt
         with self.assertRaises(KeyboardInterrupt):
-            self.run_report(repo, _Both(Cancelled(), checks))
-        self.assertEqual(checks.shown, ('completed', 'cancelled'))
+            self.run_report(repo, _Both(Cancelled(), statuses))
+        self.assertEqual(statuses.shown, 'error')
 
-    def test_a_crash_fails_the_check_and_still_raises(self):
-        repo, checks = self.make({'scripts/tool.py': 'x\n'}), FakeChecksGitHub()
+    def test_a_kill_after_the_start_leaves_it_pending(self):
+        # SIGKILL or a lost runner gives the script no chance to post again: the start's pending is what stays.
+        repo, statuses = self.make({'scripts/tool.py': 'x\n'}), FakeStatusGitHub(fail_finish=True)
+        with self.assertRaises(policy.ReadFailed):
+            self.run_report(repo, _Both(FakeGitHub(), statuses))
+        posted = [statuses.fields(c)['state'] for c in statuses.calls[:1]]
+        self.assertEqual(posted, ['pending'])
+
+    def test_a_crash_fails_and_still_raises(self):
+        repo, statuses = self.make({'scripts/tool.py': 'x\n'}), FakeStatusGitHub()
 
         class Broken(FakeGitHub):
             def pull(self, number):
                 raise ZeroDivisionError('boom')
         with self.assertRaises(ZeroDivisionError):
-            self.run_report(repo, _Both(Broken(), checks))
-        self.assertEqual(checks.shown, ('completed', 'failure'))
+            self.run_report(repo, _Both(Broken(), statuses))
+        self.assertEqual(statuses.shown, 'failure')
 
-    def test_a_check_run_that_cannot_be_created_stops_before_any_verdict(self):
-        repo, checks = self.make({'scripts/tool.py': 'x\n'}), FakeChecksGitHub(fail_start=True)
+    def test_a_status_that_cannot_be_posted_stops_before_any_verdict(self):
+        repo, statuses = self.make({'scripts/tool.py': 'x\n'}), FakeStatusGitHub(fail_start=True)
         with self.assertRaises(policy.ReadFailed):
-            self.run_report(repo, _Both(FakeGitHub(), checks))
-        self.assertEqual(len(checks.calls), 1)  # nothing was patched: no check run exists, so the merge is blocked
+            self.run_report(repo, _Both(FakeGitHub(), statuses))
+        self.assertEqual(len(statuses.calls), 1)  # nothing else was posted: no status exists, so the merge is blocked
 
-    def test_a_long_summary_is_cut_to_what_the_api_accepts(self):
-        checks = FakeChecksGitHub()
-        run = policy.CheckRun(checks, 'a' * 40)
-        run.start()
-        run.finish('failure', 'T' * 1000, 'S' * 70000)
-        fields = checks.fields(checks.calls[-1])
-        self.assertLessEqual(len(fields['output[title]']), 250)
-        self.assertLessEqual(len(fields['output[summary]']), 65535)
+    def test_each_verdict_maps_to_its_status_state(self):
+        for verdict, state in (('waiting', 'pending'), ('success', 'success'), ('failure', 'failure'),
+                               ('cancelled', 'error')):
+            with self.subTest(verdict=verdict):
+                statuses = FakeStatusGitHub()
+                status = policy.CommitStatus(statuses, 'a' * 40, 'https://example.test/run/1')
+                status.start()
+                status.finish(verdict, 'Title', 'line one\nline two')
+                self.assertEqual(statuses.shown, state)
+
+    def test_a_long_description_is_cut_to_what_the_api_accepts(self):
+        statuses = FakeStatusGitHub()
+        status = policy.CommitStatus(statuses, 'a' * 40)
+        status.start()
+        status.finish('failure', 'T' * 100, 'S' * 70000)
+        description = statuses.fields(statuses.calls[-1])['description']
+        self.assertEqual(len(description), 140)
+        self.assertTrue(description.endswith('…'))
+        self.assertNotIn('target_url', statuses.fields(statuses.calls[-1]))  # no run URL given, none sent
 
 
 class _Both:
-    """The rule reads (FakeGitHub) and the Checks API writes (FakeChecksGitHub) behind one object, as GitHub is."""
+    """The rule reads (FakeGitHub) and the Statuses API writes (FakeStatusGitHub) behind one object, as GitHub is."""
 
     def __init__(self, reads, writes):
         self.reads, self.writes = reads, writes
