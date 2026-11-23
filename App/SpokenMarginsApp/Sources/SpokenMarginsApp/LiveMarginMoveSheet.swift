@@ -58,7 +58,7 @@ struct LiveMarginMoveSheet: View {
         .task { await sheet.loadIfNeeded() }
         .confirmationDialog(
             sheet.dialogTitle,
-            isPresented: Binding(get: { sheet.pendingPlan != nil }, set: { if !$0 { sheet.pendingPlan = nil } }),
+            isPresented: $sheet.isAsking,
             titleVisibility: .visible
         ) {
             Button(sheet.confirmTitle) {

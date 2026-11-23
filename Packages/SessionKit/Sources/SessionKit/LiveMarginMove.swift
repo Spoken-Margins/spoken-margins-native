@@ -187,16 +187,19 @@ public enum LiveMarginMove {
     static func execute(
         plan: Plan, repository: Repository, movedAt: Date, afterEachWrite: (Int) throws -> Void
     ) throws -> [Interjection] {
-        let existing = Dictionary(
-            ((try? repository.loadInterjections(sessionId: plan.targetSessionId)) ?? []).map { ($0.id, $0) },
-            uniquingKeysWith: { first, _ in first })
-        let rows = plan.margins.map { planned -> (Interjection, MovedMarginOrigin) in
-            let id = movedMarginId(liveMarginId: planned.margin.id)
-            if let already = existing[id], let origin = already.movedOrigin { return (already, origin) }
-            return build(planned, plan: plan, movedAt: movedAt)
-        }
+        // What is already written is read inside the transaction, so two overlapping calls of one move can't both
+        // write it: the second sees the first's rows and returns them (Design 2.9.4).
+        var rows: [(Interjection, MovedMarginOrigin)] = []
         var written: [(Interjection, MovedMarginOrigin)] = []
         func write() throws {
+            let existing = Dictionary(
+                try repository.loadInterjections(sessionId: plan.targetSessionId).map { ($0.id, $0) },
+                uniquingKeysWith: { first, _ in first })
+            rows = plan.margins.map { planned -> (Interjection, MovedMarginOrigin) in
+                let id = movedMarginId(liveMarginId: planned.margin.id)
+                if let already = existing[id], let origin = already.movedOrigin { return (already, origin) }
+                return build(planned, plan: plan, movedAt: movedAt)
+            }
             for (margin, origin) in rows where existing[margin.id]?.movedOrigin == nil {
                 try repository.saveInterjection(margin)
                 written.append((margin, origin))

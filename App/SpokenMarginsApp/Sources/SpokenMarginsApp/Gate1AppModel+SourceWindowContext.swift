@@ -388,6 +388,13 @@ extension Gate1AppModel {
                     transcript = try await interjectionTranscriptionHandler(audioPath)
                 }
                 await MainActor.run {
+                    // A moved Margin whose move was undone meanwhile has no row any more (#4233 Design 2.9.2): the job
+                    // ends quietly, with no failure and no write.
+                    if LiveMarginMoving.wasTakenBack(interjection.id) {
+                        MarginEndPhraseSaving.finish(endPhraseCut, wordsSaved: false)
+                        retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
+                        return
+                    }
                     let wordsSaved = run { engine in
                         if let savedTranscript {
                             snapshot = try engine.transcriptionCompleted(
@@ -414,6 +421,10 @@ extension Gate1AppModel {
                 }
             } catch {
                 await MainActor.run {
+                    guard !LiveMarginMoving.wasTakenBack(interjection.id) else {
+                        retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
+                        return
+                    }
                     let failure = String(describing: error)
                     let diagnostic = SafeErrorText.describe(error)
                     let wasRetry = retryingInterjectionTranscriptionIds.contains(Self.marginIdentity(interjection))

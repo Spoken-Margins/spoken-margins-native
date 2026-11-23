@@ -8,6 +8,12 @@ import SessionKitPersistence
 /// app. Undo lives here and not on the sheet, because the sheet has closed by the time the banner's Undo is tapped.
 @MainActor
 enum LiveMarginMoving {
+    /// Ids of moved Margins whose item rows an Undo removed this launch. A transcription that finishes after that ends
+    /// quietly instead of reporting a failure on a row that is gone (Design 2.9.2).
+    private static var takenBackIds: Set<String> = []
+
+    static func wasTakenBack(_ interjectionId: String) -> Bool { takenBackIds.contains(interjectionId) }
+
     /// What a finished move tells the screen that started it.
     struct Moved {
         let plan: LiveMarginMove.Plan
@@ -44,6 +50,7 @@ enum LiveMarginMoving {
             model.recordDeveloperDiagnostic("liveMarginMove.failed", ["error": SafeErrorText.describe(error)])
             return nil
         }
+        takenBackIds.subtract(moved.map(\.id))
         let removal = try? await files.removeMovedMargins(ids: plan.liveMarginIds, fromSession: plan.session.id)
         NotificationCenter.default.post(name: LiveSessionSpokenMargins.changedOnDisk, object: nil)
         model.liveMarginsMoved(moved)
@@ -58,6 +65,8 @@ enum LiveMarginMoving {
     /// words a transcription found meanwhile.
     static func undo(plan: LiveMarginMove.Plan, moved: [Interjection], model: Gate1AppModel, files: LiveSessionFileWorker = .shared) async {
         guard let store = model.store else { return }
+        // A second tap on the same banner's Undo: the first already put them back.
+        if !moved.isEmpty, moved.allSatisfy({ wasTakenBack($0.id) }) { return }
         if await files.currentDeletions().deletedSession(plan.session.id) {
             return model.reportFailure(LiveMarginMove.UndoRefusal.discarded.message)
         }
@@ -74,6 +83,7 @@ enum LiveMarginMoving {
             return model.reportFailure(error, context: "Couldn't put the Margins back")
         }
         guard let words else { return model.reportFailure(LiveMarginMove.UndoRefusal.changedOnItem(title: plan.itemTitle).message) }
+        takenBackIds.formUnion(moved.map(\.id))
         let margins = plan.margins.map { planned -> LiveSessionMargin in
             var margin = planned.margin
             if margin.isSpoken, margin.spokenTranscript == nil, let found = words[margin.id] { margin.text = found }
@@ -100,10 +110,16 @@ enum LiveMarginMoving {
 
     /// Finishes a move the app was stopped in the middle of (Design 2.9.4 step 3): once both stores are open, and before
     /// the Watch inbox is filed, any live Margin whose moved copy is active on an item leaves its session.
-    static func reconcileAtLaunch(store: SQLiteSessionStore, files: LiveSessionFileWorker = .shared) async {
-        let liveIds = (try? await StoreReader(store).read(priority: .utility) { try $0.loadMovedMarginOrigins() })?.map(\.liveMarginId) ?? []
-        guard !liveIds.isEmpty else { return }
+    /// False when the item side couldn't be read, so the caller tries again on its next pass.
+    @discardableResult
+    static func reconcileAtLaunch(store: SQLiteSessionStore, files: LiveSessionFileWorker = .shared) async -> Bool {
+        guard let origins = try? await StoreReader(store).read(priority: .utility, { try $0.loadMovedMarginOrigins() }) else {
+            return false
+        }
+        let liveIds = origins.map(\.liveMarginId)
+        guard !liveIds.isEmpty else { return true }
         let touched = await files.reconcileMovedMargins(liveMarginIds: Set(liveIds))
         if !touched.isEmpty { NotificationCenter.default.post(name: LiveSessionSpokenMargins.changedOnDisk, object: nil) }
+        return true
     }
 }

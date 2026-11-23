@@ -121,6 +121,9 @@ final class LiveMarginMoveSheetModelTests: XCTestCase {
     func testConfirmRunsTheMoveOnce() async {
         let model = sheet(quick([spoken("a", at: 1)]))
         await model.choose(itemId: "ep")
+        XCTAssertTrue(model.isAsking)
+        // SwiftUI hides the dialog before the button's Task runs: the plan must still be there for it.
+        model.isAsking = false
         var runs = 0
         let first = await model.confirm { _ in runs += 1; return true }
         let second = await model.confirm { _ in runs += 1; return true }

@@ -174,8 +174,7 @@ final class WatchMarginReceiver: NSObject {
     private func fileWaiting() async -> [LiveSessionFileWorker.FiledMargin] {
         if !reconciledMovedMargins, let store = movedMarginStore() {
             // Before the inbox is filed, so the Library row, the Watch and the screen never see a moved Margin twice.
-            reconciledMovedMargins = true
-            await LiveMarginMoving.reconcileAtLaunch(store: store, files: files)
+            reconciledMovedMargins = await LiveMarginMoving.reconcileAtLaunch(store: store, files: files)
         }
         var changed = await apply(drainResumes())
         let marks = drainMarks()

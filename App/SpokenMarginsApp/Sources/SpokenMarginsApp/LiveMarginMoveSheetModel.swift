@@ -27,8 +27,11 @@ final class LiveMarginMoveSheetModel: ObservableObject {
     @Published private(set) var load: Load = .loading
     @Published var query = ""
     @Published private(set) var chosenIds: Set<String>
-    /// The move the confirmation dialog asks about.
-    @Published var pendingPlan: LiveMarginMove.Plan?
+    /// The move the confirmation dialog asks about. It outlives the dialog: SwiftUI hides the dialog before a button's
+    /// `Task` runs, so the dialog shows `isAsking` and only `confirm` or a new choice clears the plan.
+    @Published private(set) var pendingPlan: LiveMarginMove.Plan?
+    /// The confirmation dialog is showing.
+    @Published var isAsking = false
     /// "Couldn't move the Margins. Nothing was changed.", or "Those Margins are no longer in this session."
     @Published private(set) var failureLine: String?
     @Published private(set) var isWorking = false
@@ -117,8 +120,10 @@ final class LiveMarginMoveSheetModel: ObservableObject {
         isWorking = true
         defer { isWorking = false }
         failureLine = nil
+        pendingPlan = nil
         do {
             pendingPlan = try await makePlan(chosenMargins, itemId)
+            isAsking = true
         } catch LiveMarginMove.Failure.nothingToMove {
             failureLine = LiveMarginMove.Wording.marginsGone
         } catch {
@@ -132,6 +137,7 @@ final class LiveMarginMoveSheetModel: ObservableObject {
         isWorking = true
         defer { isWorking = false }
         pendingPlan = nil
+        isAsking = false
         let moved = await perform(plan)
         if !moved { failureLine = LiveMarginMove.Wording.moveFailed(count: plan.count) }
         return moved
