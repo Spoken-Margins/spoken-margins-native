@@ -77,7 +77,6 @@ struct SettingsScreen: View, Equatable {
         var automaticAudioPreparationPolicy: AutomaticAudioPreparationPolicy
         var automaticEpisodeMapPreparationPolicy: AutomaticEpisodeMapPreparationPolicy
         var recentlyDeletedItems: [LibraryItemRow]
-        var quickFolderFeedsQueue: Bool
         var sourceLinksWaitingForNetwork: Int
         var importInbox: [ImportInboxEntry]
         var localFoundationModelAvailabilityDescription: String
@@ -109,7 +108,6 @@ struct SettingsScreen: View, Equatable {
             automaticAudioPreparationPolicy = model.automaticAudioPreparationPolicy
             automaticEpisodeMapPreparationPolicy = model.automaticEpisodeMapPreparationPolicy
             recentlyDeletedItems = model.recentlyDeletedItems
-            quickFolderFeedsQueue = model.quickAccess.inboxFeedsQueue
             sourceLinksWaitingForNetwork = model.sourceLinksWaitingForNetwork
             importInbox = model.importInbox
             localFoundationModelAvailabilityDescription = model.localFoundationModelAvailabilityDescription
@@ -430,18 +428,6 @@ struct SettingsScreen: View, Equatable {
                     .accessibilityIdentifier("settings.yourAI.row")
                     NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
                     NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
-                    Toggle(isOn: Binding(
-                        get: { model.quickAccess.inboxFeedsQueue },
-                        set: { model.quickAccess.inboxFeedsQueue = $0 }
-                    )) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Queue New Quick Folder Files")
-                            Text("Files that appear in your Quick Folder are imported and added to the end of your play queue, in filename order. Choose the folder under Add to Library.")
-                                .font(.caption)
-                                .foregroundStyle(AppColors.secondaryText)
-                        }
-                    }
-                    .accessibilityIdentifier("settings.quickFolderQueue.toggle")
                     DisclosureGroup("Import Inbox", isExpanded: $showsImportInbox) {
                         PendingLinksWaitingLine(count: inputs.sourceLinksWaitingForNetwork)
                         if inputs.importInbox.isEmpty {
