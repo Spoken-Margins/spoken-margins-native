@@ -9,13 +9,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { formatClock } from '../shared/clock.ts';
 import type { Episode, Margin, PlaybackPosition, Show } from '../shared/model.ts';
 import { browserStorage, forgetMirrored, mergeMirror, pruneMirror, readMirror } from './logic/position-mirror.ts';
-import { addedRow, inLibrary, isMigrated, membershipRow, stillMovedOut } from './logic/library-membership.ts';
+import { addedRow, inLibrary, isMigrated, membershipRow, removedRow, restoredRow, stillMovedOut } from './logic/library-membership.ts';
 import { mergeRefresh } from './logic/refresh.ts';
 import { keepingSharedAs, withSharedAs, type WrittenFacts } from './logic/shared-as.ts';
 import { keepingHeard, keepingStar, withStar } from './logic/star.ts';
 import { FailureGate, NotSavedError, notSavedMessage, shouldAskToPersist, type PersistState, type WriteKind } from './logic/storage.ts';
 import type { FeedRead } from './ports.ts';
 import { DEFAULT_SETTINGS, loadAll, putMany, putMargin, putSetting, putShowWithEpisodes, remove, removeShow, type Settings, type Snapshot } from './store/db.ts';
+import type { Membership } from './store/schema.ts';
 import { useUi } from './ui.tsx';
 
 export interface DataApi extends Snapshot {
@@ -53,6 +54,17 @@ export interface DataApi extends Snapshot {
    * play, an import) it only logs, since nobody waits on it.
    */
   addToLibrary(episodeId: string, options?: { quiet?: boolean }): Promise<void>;
+  /**
+   * Takes an episode out of the Library (#4424): writes an "out" row, then updates the mirror at once. Nothing else is
+   * deleted. Returns the row it replaced (undefined if there was none), for `putBackInLibrary`. An episode already out
+   * is left alone and its "out" row returned. Throws a `NotSavedError` when the write fails, and the row stays.
+   */
+  removeFromLibrary(episodeId: string): Promise<Membership | undefined>;
+  /**
+   * Undo for `removeFromLibrary`: writes `previous` back, unless the episode was added again meanwhile (that newer "in"
+   * row stays). Throws a `NotSavedError` when the write fails.
+   */
+  putBackInLibrary(episodeId: string, previous: Membership | undefined): Promise<void>;
   /** The Library notice's Put them back: an "in" row for each moved-out episode still without a row. Returns how many. */
   putBackMovedOut(): Promise<number>;
   /** The Library notice's Got it: forgets the moved-out list. */
@@ -299,6 +311,39 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [run],
   );
 
+  const removeFromLibrary = useCallback(
+    async (episodeId: string) => {
+      const previous = dataRef.current.library[episodeId];
+      if (previous && !previous.in) return previous;
+      const title = dataRef.current.episodes.find((e) => e.id === episodeId)?.title ?? 'that episode';
+      const row = removedRow(new Date().toISOString());
+      const failed = await run('library', `Removing “${title}” from your Library wasn’t saved.`, () => putMany('settings', [membershipRow(episodeId, row)]));
+      if (failed) throw failed;
+      const next = (d: Snapshot): Snapshot => ({ ...d, library: { ...d.library, [episodeId]: row } });
+      setData(next);
+      dataRef.current = next(dataRef.current);
+      return previous;
+    },
+    [run],
+  );
+
+  const putBackInLibrary = useCallback(
+    async (episodeId: string, previous: Membership | undefined) => {
+      const current = dataRef.current;
+      const title = current.episodes.find((e) => e.id === episodeId)?.title ?? 'that episode';
+      const now = new Date().toISOString();
+      // With no earlier row the episode goes in as of now, the same as an Add.
+      const row = restoredRow(current.library[episodeId], previous ?? { in: true, at: now });
+      const failed = await run('library', `Putting “${title}” back in your Library wasn’t saved.`, () => putMany('settings', [membershipRow(episodeId, row)]));
+      if (failed) throw failed;
+      // Applied to the latest mirror, so a re-add that landed during the write is not undone.
+      const next = (d: Snapshot): Snapshot => ({ ...d, library: { ...d.library, [episodeId]: restoredRow(d.library[episodeId], row) } });
+      setData(next);
+      dataRef.current = next(dataRef.current);
+    },
+    [run],
+  );
+
   const putBackMovedOut = useCallback(async () => {
     const current = dataRef.current;
     const ids = stillMovedOut(current.settings.libraryMovedOut, current.episodes, current.library);
@@ -321,8 +366,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const migrated = isMigrated(data.settings);
 
   const api = useMemo<DataApi>(
-    () => ({ ...data, ready, persist, migrated, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, putBackMovedOut, dismissLibraryNotice }),
-    [data, ready, persist, migrated, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, putBackMovedOut, dismissLibraryNotice],
+    () => ({ ...data, ready, persist, migrated, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, removeFromLibrary, putBackInLibrary, putBackMovedOut, dismissLibraryNotice }),
+    [data, ready, persist, migrated, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, removeFromLibrary, putBackInLibrary, putBackMovedOut, dismissLibraryNotice],
   );
   return <DataContext.Provider value={api}>{children}</DataContext.Provider>;
 }
