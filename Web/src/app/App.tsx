@@ -36,6 +36,8 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
   const [tab, setTabState] = useState<Tab>(tabFromHash);
   const [nowPlaying, setNowPlaying] = useState(false);
   const [followOpen, setFollowOpen] = useState(false);
+  // The name a Following search found nothing for, which the Follow sheet opens looking for.
+  const [followQuery, setFollowQuery] = useState<string>();
   const [dropping, setDropping] = useState(false);
   // Where the last opened file left the listener, so Now Playing can offer to start there (#3039).
   const [landing, setLanding] = useState<Landing>();
@@ -141,7 +143,22 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
             onGoFollowing={() => setTab('following')}
           />
         )}
-        {tab === 'following' && <Following onPlay={openPlayer} followOpen={followOpen} setFollowOpen={setFollowOpen} />}
+        {tab === 'following' && (
+          <Following
+            onPlay={openPlayer}
+            followOpen={followOpen}
+            setFollowOpen={(open) => {
+              setFollowOpen(open);
+              // Every way the sheet closes passes here, so a later "Follow a show" opens with an empty field.
+              if (!open) setFollowQuery(undefined);
+            }}
+            followQuery={followQuery}
+            onLookFor={(query) => {
+              setFollowQuery(query);
+              setFollowOpen(true);
+            }}
+          />
+        )}
         {tab === 'margins' && <Margins onPlay={openPlayer} onOpenFile={openMarginFile} onOpenLink={openShareLink} />}
         {tab === 'settings' && <Settings />}
       </main>
