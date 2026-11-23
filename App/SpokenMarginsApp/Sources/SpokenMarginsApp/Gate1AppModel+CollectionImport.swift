@@ -54,7 +54,7 @@ extension Gate1AppModel {
         guard !itemList.entries.isEmpty else {
             // Only shows to follow: no collection to make.
             let banner = LinkListArrivalPlan.banner(
-                base: nil, suggested: suggested, madeItems: false, isTitled: true, collectionIsNew: false, mentionsFollowing: false)
+                base: nil, suggested: suggested, madeItems: false, isTitled: true, collectionIsNew: false, mentionsFollowing: true)
             reportConfirmation(banner.message)
             return LibraryCollectionImport.Summary(message: banner.message, kind: banner.kind)
         }

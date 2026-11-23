@@ -17,6 +17,8 @@ struct ExperienceSourcesScreen: View, Equatable {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     /// A show row's queue button reads the queue as it is now (#4044).
     @ObservedObject private var playQueue = PlayQueueState.shared
+    /// The shows the listener's own AI suggested (#4683): its own object, so a new suggestion redraws the row.
+    @ObservedObject private var aiSuggestions: AIFollowSuggestionsModel
 
     /// Following's follow flow lives on its own sheet so this tab stays a list of shows (#141, #3205).
     @State private var isShowingFollowSheet = false
@@ -49,6 +51,7 @@ struct ExperienceSourcesScreen: View, Equatable {
     init(model: Gate1AppModel) {
         self.model = model
         _feed = StateObject(wrappedValue: ScreenInputsFeed(model: model, read: Inputs.init))
+        _aiSuggestions = ObservedObject(wrappedValue: model.aiFollowSuggestionsModel)
     }
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
@@ -115,6 +118,12 @@ struct ExperienceSourcesScreen: View, Equatable {
                     Label("Showing the last local snapshot", systemImage: "wifi.slash")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(AppColors.secondaryText)
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                }
+                // Above the Quick Folder, in the same pinned spot, under any list chip and above the empty state (#4683).
+                if let suggestionsRow = AIFollowSuggestionsRow.make(pending: aiSuggestions.pending(
+                    excluding: Set(inputs.subscriptions.compactMap { FeedURLKey.make($0.source.canonicalURL) }))) {
+                    aiSuggestionsRow(suggestionsRow)
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
                 if inputs.quickFolderFileCount > 0 {
@@ -444,6 +453,47 @@ struct ExperienceSourcesScreen: View, Equatable {
         .accessibilityValue(isQuietExpanded ? "Expanded" : "Collapsed")
         .accessibilityHint("Shows you have set to Quiet.")
         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+    }
+
+    /// "Suggested by your AI" (#4683, Design 2h): the Quick Folder row's look, two lines. A tap opens the follow preview
+    /// titled for the AI; a swipe's Dismiss drops them all, with Undo.
+    private func aiSuggestionsRow(_ row: AIFollowSuggestionsRow) -> some View {
+        Button { model.openAIFollowSuggestions(row, in: catalogDrawer) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "text.bubble")
+                    .foregroundStyle(AppColors.evergreen)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(AIFollowSuggestionsRow.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppColors.text)
+                    Text(row.detail)
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .lineLimit(2)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(row.accessibilityLabel)
+        .accessibilityHint(AIFollowSuggestionsRow.accessibilityHint)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(named: "Dismiss") { model.dismissAIFollowSuggestionsWithUndo() }
+        .accessibilityIdentifier("sources.aiSuggestions")
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button { model.dismissAIFollowSuggestionsWithUndo() } label: {
+                Label("Dismiss", systemImage: "xmark")
+            }
+            .tint(AppColors.swipePlum)
+        }
     }
 
     private func quickFolderRow(count: Int) -> some View {

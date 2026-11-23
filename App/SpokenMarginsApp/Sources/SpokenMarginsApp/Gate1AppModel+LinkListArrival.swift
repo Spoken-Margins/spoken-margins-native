@@ -146,7 +146,7 @@ extension Gate1AppModel {
         }
         let banner = LinkListArrivalPlan.banner(
             base: base, suggested: suggested, madeItems: madeItems, isTitled: plan.isTitled, collectionIsNew: collectionIsNew,
-            mentionsFollowing: false) // Following's suggestions row comes in PR 3c; until then a sentence about it would point at nothing
+            mentionsFollowing: true) // Following's "Suggested by your AI" row shows them
         let result = LinkListArrivalResult(
             attempted: true, notTried: nil, allLanded: failed == 0, changedAnything: madeItems || suggested > 0,
             message: banner.message, kind: banner.kind)
