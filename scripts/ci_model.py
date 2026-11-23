@@ -1180,10 +1180,12 @@ class FakeDequeueGitHub:
         """What the failed plan step's log ends with: an outside host's bad certificate for a download failure, a
         failing test otherwise."""
         row = next((r for r in getattr(self.w, 'rows', []) if r['id'] == job_id), None)
+        # verify-tests' own lines included: its `<step>: 41s — FAILED` summary must not read as a failed test (#5070).
         if row and getattr(self.w.c, 'fail_in', '') == 'download':
-            return ("fatal: unable to access 'https://download.onnxruntime.ai/pod.zip': "
+            return ("tools: 41s — FAILED\nProcess exit 1; fatal: unable to access 'https://download.onnxruntime.ai/pod.zip': "
                     'SSL certificate problem: certificate has expired')
-        return 'testSomething failed: XCTAssertEqual failed'
+        return ('tools: 41s — FAILED\nProcess exit 1; Failed: testSomething at /w/SomethingTests.swift:12 — '
+                'XCTAssertEqual failed')
 
     def queue_heads(self):
         return set()

@@ -102,11 +102,18 @@ NETWORK_ERROR = re.compile(
     r'curl: \(\d+\)|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|'
     r'\b5\d\d (?:Server Error|Bad Gateway|Service Unavailable|Gateway Time-?out)|HTTP(?: error)? 5\d\d', re.I)
 # A failed test in the step's log tail makes the failure the PR's, whatever network words other lines carry: a test
-# whose assertion message quotes a certificate error next to a github.com URL is still a failed test (#5070 audit). The
-# markers are the runners' own: verify-tests.py `Failed: `, unittest `FAIL: `, pytest `FAILED`, Go `--- FAIL`,
-# XCTest `XCTAssert` and `Test Case ... failed`, Swift Testing `✘`, and a raised AssertionError.
-TEST_FAILURE = re.compile(r'\bFailed: |\bFAIL: |(?:^|\s)FAILED(?:\s|$)|--- FAIL|XCTAssert|Test Case .+ failed|✘|'
-                          r'AssertionError')
+# whose assertion message quotes a certificate error next to a github.com URL is still a failed test (#5070 audit).
+# Only the forms a test runner prints for one failed test count, never a wrapper's word for a failed step: verify-tests
+# ends every failed step with `<step>: 41s — FAILED`, a network failure included (second audit of #5070). The forms:
+# verify-tests.py's `Failed: <test> at <file:line>` (report_unittest_failures, also inside its `Process exit 1; ...`
+# error), unittest's `FAIL:`/`ERROR: test (module.Class)`, pytest's `FAILED path::test`, Go's `--- FAIL: Test`,
+# XCTest's `Test Case '-[...]' failed` and `error: -[...] : XCTAssert`, Swift Testing's `✘ Test ... failed` and a
+# raised `AssertionError`. They are read after the Actions timestamp that starts every job-log line.
+TEST_FAILURE = re.compile(
+    r'(?:^|; |\s)Failed: \S+ at (?:\S+:\d+|no traceback)|^(?:FAIL|ERROR): \w+ \([\w.]+\)|^FAILED \S+::|'
+    r"^\s*--- FAIL: \w|Test Case '-\[.+\]' failed|error: -\[.+\] : XCTAssert|✘ Test .+ (?:failed|recorded an issue)|"
+    r'^\s*AssertionError\b')
+LOG_TIMESTAMP = re.compile(r'^\ufeff?\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ?')
 LOG_TAIL_LINES = 80
 JOB_IN_URL = re.compile(r'/job/(\d+)(?:/|$)')
 
@@ -248,7 +255,7 @@ def outside_network_error(log):
     """Whether one line of a log names a host outside GitHub's runners and a network error together. Both on a line,
     so a test that prints "connection refused" while it checks its own error handling is not read as an outage, and
     never when the log shows a failed test (TEST_FAILURE)."""
-    lines = (log or '').splitlines()
+    lines = [LOG_TIMESTAMP.sub('', line) for line in (log or '').splitlines()]
     if any(TEST_FAILURE.search(line) for line in lines):
         return False
     for line in lines:

@@ -158,6 +158,25 @@ class FailedOutsideThePrTests(unittest.TestCase):
         self.assertEqual(action, 'wait', why)
 
 
+class RealVerifyTestsLogTests(unittest.TestCase):
+    def test_the_4795_outage_in_portable_fast_plan_waits_then_re_runs(self):
+        # Second audit of #5070: verify-tests' own `tools: 41s — FAILED` line must not hide the outside host's error.
+        import merge_queue_dequeued as mqd
+        sys.path.insert(0, str(SCRIPTS / 'tests'))
+        from test_merge_queue_dequeued import SetupFailureTests
+
+        class Jobs:
+            def get(self, path):
+                return {'steps': [{'number': 9, 'name': 'Portable fast plan', 'conclusion': 'failure'}]}
+
+            def log_tail(self, job_id):
+                return SetupFailureTests.VERIFY_TESTS_OUTAGE
+        checks = [check(70, 'hosted fast: portable', 500, 'failure')]
+        action, why = rc.decide(run(conclusion='failure', name='hosted-portable'), [pull()], checks,
+                                outside=lambda failed: mqd.failed_outside_pr(Jobs(), failed), waited=False)
+        self.assertEqual(action, 'wait', why)
+
+
 class FakeGitHub:
     def __init__(self, answers, fail=None):
         self.answers, self.fail, self.reruns, self.waits, self.after_wait = dict(answers), fail, [], [], None
