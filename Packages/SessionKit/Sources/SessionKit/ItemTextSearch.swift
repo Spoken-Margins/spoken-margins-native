@@ -93,30 +93,49 @@ public enum ItemTextSearch {
         guard !pattern.isEmpty else { return Result(matches: [], hasMore: false) }
 
         let original = Array(text)
-        let folded = normalize(original)
-        let hay = folded.chars
-        let origin = folded.origins
-        guard hay.count >= pattern.count else { return Result(matches: [], hasMore: false) }
-
-        var matches: [Match] = []
-        var hasMore = false
-        var i = 0
-        let last = hay.count - pattern.count
-        while i <= last {
-            guard hay[i] == pattern[0], hay[i..<(i + pattern.count)].elementsEqual(pattern) else { i += 1; continue }
-            if matches.count == maxMatches { hasMore = true; break }
-            let start = origin[i]
-            let end = origin[i + pattern.count - 1] + 1
-            matches.append(makeMatch(start: start, end: end, original: original, chapters: chapters, skipped: skipped))
-            i += pattern.count
+        // Two views of the text: a line-end hyphen dropped ("hyphen-\nation" is "hyphenation"), and kept
+        // ("well-\nknown" is "well-known"), so a typed hyphen finds a compound that wrapped too.
+        var spans = scan(pattern, in: normalize(original, dropBreakHyphens: true))
+        if pattern.contains("-") {
+            let kept = scan(pattern, in: normalize(original, dropBreakHyphens: false))
+            var seen = Set(spans.map { $0.0 })
+            for span in kept where !seen.contains(span.0) { spans.append(span); seen.insert(span.0) }
+            spans.sort { $0.0 < $1.0 }
+            var cleaned: [(Int, Int)] = []
+            for span in spans where cleaned.last.map({ span.0 >= $0.1 }) ?? true { cleaned.append(span) }
+            spans = cleaned
+        }
+        let hasMore = spans.count > maxMatches
+        let matches = spans.prefix(maxMatches).map {
+            makeMatch(start: $0.0, end: $0.1, original: original, chapters: chapters, skipped: skipped)
         }
         return Result(matches: matches, hasMore: hasMore)
+    }
+
+    /// Non-overlapping matches of `pattern` as original-text (start, end), at most `maxMatches + 1` of them.
+    private static func scan(_ pattern: [Character], in folded: (chars: [Character], origins: [Int])) -> [(Int, Int)] {
+        let hay = folded.chars
+        let origin = folded.origins
+        guard hay.count >= pattern.count else { return [] }
+        var found: [(Int, Int)] = []
+        var i = 0
+        let last = hay.count - pattern.count
+        while i <= last, found.count <= maxMatches {
+            guard hay[i] == pattern[0], hay[i..<(i + pattern.count)].elementsEqual(pattern) else { i += 1; continue }
+            let start = origin[i]
+            let end = origin[i + pattern.count - 1] + 1
+            found.append((start, end))
+            // One original Character can fold to several, so step past every one that shares the match's span.
+            i += pattern.count
+            while i < hay.count, origin[i] < end { i += 1 }
+        }
+        return found
     }
 
     // MARK: Normalization
 
     /// The comparison copy of `original`, with the original Character index each comparison character came from.
-    private static func normalize(_ original: [Character]) -> (chars: [Character], origins: [Int]) {
+    private static func normalize(_ original: [Character], dropBreakHyphens: Bool = true) -> (chars: [Character], origins: [Int]) {
         var chars: [Character] = []
         var origins: [Int] = []
         chars.reserveCapacity(original.count)
@@ -125,6 +144,7 @@ public enum ItemTextSearch {
         var i = 0
         while i < original.count {
             let ch = original[i]
+            if ch == "\u{00AD}" { i += 1; continue }
             if ch.isWhitespace {
                 // A run of whitespace is one space, mapped to the run's first character.
                 if !lastWasSpace { chars.append(" "); origins.append(i) }
@@ -133,9 +153,9 @@ public enum ItemTextSearch {
                 continue
             }
             lastWasSpace = false
-            if ch == "\u{00AD}" { i += 1; continue }
             if ch == "-" || ch == "\u{2010}", i > 0, original[i - 1].isLetter,
                let next = hyphenBreakEnd(after: i, in: original) {
+                if !dropBreakHyphens { chars.append("-"); origins.append(i) }
                 i = next
                 continue
             }
