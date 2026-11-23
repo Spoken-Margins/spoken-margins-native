@@ -96,7 +96,10 @@ public struct FootnoteChimeSequencer: Equatable, Sendable {
         }
         rebaseRuns(onto: tags)
         if let hearing {
-            if hearing.chunks.contains(index) { return .play }
+            // The chunks that lead into the note belong to the request too: the Hear note seek lands on the citing sentence, and a
+            // rebuilt plan can put more than one chunk of it before the note (a stand-in voice cuts a long first chunk in two).
+            // A listener's own move back is cleared by the player at the seek (`chimeMoveStartedAt`), not here.
+            if hearing.chunks.contains(index) || index < hearing.chunks.lowerBound { return .play }
             // The note was read to its end, or the player moved on past it: the card has done its job.
             self.hearing = nil
             if card.isReading { clearCard() }

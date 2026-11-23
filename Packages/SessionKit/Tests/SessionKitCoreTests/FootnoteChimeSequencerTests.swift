@@ -391,6 +391,22 @@ final class FootnoteChimeSequencerTests: XCTestCase {
         XCTAssertEqual(sequencer.card, .hidden, "the text after the note clears the card, as it does in an unchanged plan")
     }
 
+    /// The bundled voice cuts a long first chunk in two, so two chunks of the citing sentence sit before the note and the
+    /// seam asks about the second one first. Every chunk on the way in is part of the request.
+    func testEveryChunkThatLeadsIntoANoteBeingReadKeepsTheRequest() {
+        var sequencer = Sequencer()
+        _ = step(&sequencer, 2)
+        _ = sequencer.hearOfferedNote(tags: tags)
+        for index in [1, 2, 3] {
+            XCTAssertEqual(step(&sequencer, index, tags: rebuilt), .play, "chunk \(index) of the rebuilt plan")
+            XCTAssertEqual(sequencer.card, .reading(label: "1"), "chunk \(index) of the rebuilt plan")
+        }
+        XCTAssertEqual(step(&sequencer, 4, tags: rebuilt), .play)
+        XCTAssertEqual(sequencer.card, .hidden)
+        // The next citation is a new request for nothing: it is cued as ever.
+        XCTAssertEqual(step(&sequencer, 5, tags: rebuilt), .cue(run: Sequencer.Run(chunks: 5..<7, labels: ["a", "b"]), continueAt: 7))
+    }
+
     func testHearNoteFindsTheOfferedNoteInARebuiltPlan() {
         var sequencer = Sequencer()
         _ = step(&sequencer, 2)
