@@ -3,7 +3,8 @@ import SwiftUI
 
 /// One list's own screen (#4046 PR 3): its shows, **Add shows**, and a menu to rename or delete it. A list only groups
 /// shows, so nothing here follows or unfollows anything: **Remove** takes a show out of this list only, and deleting the
-/// list leaves every show followed. Share, Updates, Include and Rules arrive with later slices.
+/// list leaves every show followed. **Rules for this list** opens the Rules screen for the rules scoped to it (PR 10b).
+/// Share, Updates and Include arrive with later slices.
 ///
 /// The model is passed in, not observed, so the screen redraws for the lists and the shows it is handed, not for every
 /// publish of `Gate1AppModel` (#4028).
@@ -14,6 +15,7 @@ struct FollowListScreen: View {
     let listID: String
 
     @ObservedObject private var listsState = FollowListsState.shared
+    @ObservedObject private var rulesState = ListeningRulesState.shared
     @Environment(\.dismiss) private var dismiss
     @State private var isRenaming = false
     @State private var renameText = ""
@@ -34,7 +36,10 @@ struct FollowListScreen: View {
                 Color.clear.onAppear { dismiss() }
             }
         }
-        .task { await model.reloadFollowLists() }
+        .task {
+            await model.reloadFollowLists()
+            await model.reloadListeningRules()
+        }
         // Its own alert, on the group rather than the list, so it can follow the rename alert's dismissal.
         .alert("Can’t save that name", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
             Button("OK", role: .cancel) {}
@@ -63,6 +68,16 @@ struct FollowListScreen: View {
                 } header: {
                     Text(FollowListWords.showsHeader(count: shows.count))
                 }
+            }
+            Section {
+                NavigationLink {
+                    RulesScreen(model: model, subscriptions: subscriptions, onlyListID: list.id)
+                        .miniPlayerKeepOut()
+                } label: {
+                    LabeledContent("Rules for this list", value: ListeningRuleScreens.rowValue(rules: rulesState.rules, onlyList: list.id))
+                        .frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("followList.rules")
             }
         }
         .scrollContentBackground(.hidden)
