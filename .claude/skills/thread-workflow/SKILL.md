@@ -32,7 +32,14 @@ A project thread works one issue and ends. When its PR is armed, or the issue is
 
 1. One PR into `main`. The body names the issue as `Closes #N` (finishes it) or `Part of #N` (doesn't). A recurring cost needs a **Cost and catch** heading.
    - **`Closes #N` on a listener-facing issue needs its real-use proof on the PR or the issue, or the `merge policy` check holds the PR** (the reason says what is missing). If you could not run it before the merge (an app change with no simulator in your session), write `Part of #N`, say "Merged, not yet shown working" in the PR, and put an `**Owner check**` or a `ready` follow-up on the issue for the run; the issue closes when the proof is recorded. `Real-use proof waived: <reason>` is only for work with no listener surface.
-2. Arm it with the [lane-request skill](../lane-request/SKILL.md): add `automerge`. A `/lane T3` request is optional and never holds the merge.
+   - **In a cloud session, don't open the PR yourself (#4915).** The cloud's proxy sends everything as the owner, so a PR you open is his, and GitHub won't let him approve it. Push and ask the App instead; a session on the owner's Mac that acts as the App still opens its PR with `gh pr create`. Write the PR message to a file outside the repository (never commit it): line 1 `PR: <title>`, a blank line, the body as above, and, as the last paragraph, `PR-Labels: automerge` when step 2 would arm it (only `automerge` is honoured; leave it off for a step 4 PR). Then:
+     ```
+     git commit --allow-empty --cleanup=verbatim -s -F /tmp/pr-message.txt
+     git push origin HEAD
+     gh api -X POST repos/Spoken-Margins/spoken-margins-native/actions/workflows/open-cloud-prs.yml/dispatches -f ref=main -f "inputs[branch]=$(git branch --show-current)"
+     ```
+     `open-cloud-prs` (on `main`) opens the PR as `spoken-margins-agent[bot]`, usually within a minute; if the dispatch call fails, its 20-minute schedule picks the branch up. Find the PR with `gh api "repos/Spoken-Margins/spoken-margins-native/pulls?head=Spoken-Margins:$(git branch --show-current)" --jq '.[0].html_url'`. Only a `claude/` branch pushed in the last 7 days that never had a PR is opened, from its newest `PR:` commit; a closed PR is never reopened, so push a new branch instead. Later pushes, labels and comments on the open PR work as before.
+2. Arm it with the [lane-request skill](../lane-request/SKILL.md): add `automerge` (in a cloud session, the `PR-Labels: automerge` line above does it). A `/lane T3` request is optional and never holds the merge.
 3. The runner merges on PASS of the fast checks, signoff and, for audio, persistence or packet diffs, a clean "Codex audit (Astra) on <sha>" of the head. Don't wait for the audit, the lane or the merge; don't ask anyone to merge; set no timers on your own PRs.
 4. PRs touching `.github/` or `scripts/lane-runner.py` are the owner's merge tap. Arm nothing there; the coordinator brings it to him.
 
