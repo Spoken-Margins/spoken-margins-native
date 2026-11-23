@@ -245,6 +245,7 @@ struct ExperienceItemDetailScreen: View {
                 PDFCommentExportSheet(export: export) { count in
                     model.presentFeedback(UserFeedbackEvent(kind: .success, message: PDFCommentExportState.doneMessage(count: count)))
                 }
+                .environmentObject(model) // the Tidy version card it opens acts through the model (#4339)
             }
             .trackedSheet(item: $collectionItem) { item in
                 ItemCollectionSheet(item: item).environmentObject(model)

@@ -36,7 +36,8 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
     private let originals: ItemOriginalStore?
     /// The page count the item's text recorded, which a chosen PDF must match.
     private var expectedPageCount = 0
-    private let margins: [Interjection]
+    /// The listener's own Margins as last read: when the sheet opened, and again after a tidy version is answered.
+    private var margins: [Interjection]
     private let store: SQLiteSessionStore?
     private let defaults: UserDefaults
     private var plan = MarginCommentPlan(entries: [])
@@ -71,6 +72,25 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
     }
 
     func toggle(_ id: String) { state.toggle(id) }
+
+    /// The Margin behind a row, for its Tidy version card (#4339).
+    func margin(id: String) -> Interjection? { margins.first { $0.id == id } }
+
+    /// Reads each listed Margin from the store again, off the main thread, and takes its words and its "Tidy version to
+    /// review" into the plan and the rows (#4339): after the author answers a tidy version, the comment carries the text
+    /// they chose. Where each comment lands, what is included and the sheet's phase stay as they were.
+    func reloadWords() async {
+        guard let store else { return }
+        let listed = margins
+        let fresh: [Interjection] = await Task.detached(priority: .userInitiated) {
+            listed.map { margin in
+                (try? store.loadInterjection(id: margin.id, sessionId: margin.sessionId)) ?? margin
+            }
+        }.value
+        margins = fresh
+        plan = plan.updatingWords(from: fresh)
+        state.updateWords(from: plan)
+    }
     func dismissFailure() { state.dismissFailure() }
 
     /// Reads the item's text, plans the comments and places them on the kept file, off the main thread. Runs once. A PDF
