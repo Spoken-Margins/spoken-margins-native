@@ -138,6 +138,7 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
               setTab('following');
               setFollowOpen(true);
             }}
+            onGoFollowing={() => setTab('following')}
           />
         )}
         {tab === 'following' && <Following onPlay={openPlayer} followOpen={followOpen} setFollowOpen={setFollowOpen} />}

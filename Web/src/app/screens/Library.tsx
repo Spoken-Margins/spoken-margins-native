@@ -6,14 +6,16 @@ import { PauseIcon, PlayIcon } from '../icons.tsx';
 import { useMarginFilePicker, type OpenMarginFile } from '../import.tsx';
 import { libraryVoiceTag } from '../logic/episode-voice-words.ts';
 import { episodeVoice } from '../logic/playability.ts';
-import { libraryEpisodes } from '../logic/library-membership.ts';
+import { followsAShow, libraryEpisodes, stillMovedOut } from '../logic/library-membership.ts';
 import { libraryRows, libraryRowMatches, marginAuthors, type LibraryRow } from '../logic/library.ts';
 import { usePlayer } from '../player.tsx';
+import { useUi } from '../ui.tsx';
 import { libraryMatchLine, noMatchLine, SEARCH_LABELS } from '../logic/search-words.ts';
 import { SearchField, SearchStatus, useTabSearch } from '../search.tsx';
 
-export function Library({ onPlay, onFindShows, onOpenFile }: { onPlay: () => void; onFindShows: () => void; onOpenFile: OpenMarginFile }) {
+export function Library({ onPlay, onFindShows, onGoFollowing, onOpenFile }: { onPlay: () => void; onFindShows: () => void; onGoFollowing: () => void; onOpenFile: OpenMarginFile }) {
   const data = useData();
+  const { toast } = useUi();
   const player = usePlayer();
   // A friend's Margin file is opened where a listener looks first (#3039, owner 2026-10-31: "I didn't see a way to
   // import margins"). The Margins tab keeps the same button.
@@ -25,6 +27,8 @@ export function Library({ onPlay, onFindShows, onOpenFile }: { onPlay: () => voi
   );
   const authors = useMemo(() => marginAuthors(data.margins), [data.margins]);
   const rows = useMemo(() => allRows.filter((row) => libraryRowMatches(query, row, authors)), [allRows, authors, query]);
+  // What the one-time move left on Following that the listener hasn't since added, played or removed (#4425).
+  const movedOutCount = data.migrated ? stillMovedOut(data.settings.libraryMovedOut, data.episodes, data.library).length : 0;
   // A query ends when the Library empties, so rows that come back aren't hidden by an old one.
   useEffect(() => {
     if (data.ready && allRows.length === 0 && query.trim() !== '') setQuery('');
@@ -43,13 +47,50 @@ export function Library({ onPlay, onFindShows, onOpenFile }: { onPlay: () => voi
         </div>
         {picker.input}
       </header>
+      {movedOutCount > 0 && (
+        <section className="library-notice" aria-label="What moved out of your Library">
+          <p>
+            {movedOutCount === 1
+              ? 'Your Library now holds only what you add, play or get from a friend. 1 episode you hadn’t started is still on Following, under its show.'
+              : `Your Library now holds only what you add, play or get from a friend. ${movedOutCount} episodes you hadn’t started are still on Following, under their shows.`}
+          </p>
+          <div className="library-notice-actions">
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                data.putBackMovedOut().then(
+                  (n) => toast(n === 1 ? 'Put 1 episode back in your Library.' : `Put ${n} episodes back in your Library.`),
+                  () => undefined, // Already shown, and the notice stays.
+                );
+              }}
+            >
+              Put them back
+            </button>
+            <button type="button" className="button" onClick={() => void data.dismissLibraryNotice()}>
+              Got it
+            </button>
+          </div>
+        </section>
+      )}
       {allRows.length > 0 && <SearchField label={SEARCH_LABELS.library} value={query} onChange={setQuery} />}
       {data.ready && allRows.length === 0 ? (
         <div className="empty">
-          <p>Episodes from the shows and Substacks you follow appear here, newest first.</p>
-          <button type="button" className="button button-primary" onClick={onFindShows}>
-            Find a show to follow
-          </button>
+          {data.migrated && followsAShow(data.shows) ? (
+            <>
+              <p>Nothing in your Library yet. Open a show on Following and tap Add, or play an episode, and it appears here.</p>
+              <button type="button" className="button button-primary" onClick={onGoFollowing}>
+                Go to Following
+              </button>
+            </>
+          ) : (
+            <>
+              <p>Episodes you add from the shows you follow, and the ones friends send you, appear here.</p>
+              <button type="button" className="button button-primary" onClick={onFindShows}>
+                Find a show to follow
+              </button>
+            </>
+          )}
           <p>Got a .spokenmargins file from a friend? Choose Open a Margin file above. It opens at their first Margin, ready to play.</p>
         </div>
       ) : (

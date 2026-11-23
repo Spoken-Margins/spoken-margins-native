@@ -5,7 +5,7 @@ import { useData } from '../data.tsx';
 import { minutes, shortDate } from '../format.ts';
 import { ChevronIcon, CloseIcon, PlayIcon, PlusIcon, RefreshIcon } from '../icons.tsx';
 import { followingRows, libraryRows, newestFirst } from '../logic/library.ts';
-import { inLibrary } from '../logic/library-membership.ts';
+import { inLibrary, libraryCountForShow } from '../logic/library-membership.ts';
 import { plainError } from '../logic/messages.ts';
 import { checkedLabel, needsRelayLine } from '../logic/refresh.ts';
 import { suggestionsToShow } from '../logic/suggestions.ts';
@@ -72,7 +72,7 @@ export function Following({ onPlay, followOpen, setFollowOpen }: { onPlay: () =>
       {rows.length > 0 && <RefreshNotes />}
       {data.ready && rows.length === 0 ? (
         <div className="empty">
-          <p>Follow a podcast or a Substack, and its newest episodes show up here and in your Library.</p>
+          <p>Follow a podcast or a Substack. Its newest episodes show up here, and you choose which ones go in your Library.</p>
           <button type="button" className="button button-primary" onClick={() => setFollowOpen(true)}>
             Follow a show
           </button>
@@ -207,8 +207,10 @@ function ShowScreen({ show, onBack, onPlay }: { show: Show; onBack: () => void; 
           type="button"
           className="button"
           onClick={() => {
+            // Counted before the write, while those episodes are still stored.
+            const leaving = libraryCountForShow(show.id, data.episodes, data.library, data.migrated);
             void data.unfollow(show.id).then(
-              () => toast(`Unfollowed ${show.title}. Its Margins stay in the Margins tab.`),
+              () => toast(unfollowedLine(show.title, leaving)),
               () => undefined, // Already shown: the show is still followed, and the problem says why.
             );
             onBack();
@@ -245,6 +247,13 @@ function ShowScreen({ show, onBack, onPlay }: { show: Show; onBack: () => void; 
       </ul>
     </div>
   );
+}
+
+/** The unfollow toast, saying how many episodes leave the Library (#4425). */
+function unfollowedLine(title: string, leaving: number): string {
+  const tail = 'Its Margins stay in the Margins tab.';
+  if (leaving === 0) return `Unfollowed ${title}. ${tail}`;
+  return `Unfollowed ${title}. ${leaving === 1 ? '1 episode leaves' : `${leaving} episodes leave`} your Library. ${tail}`;
 }
 
 /** The show screen's Add, or the words "In Library" once the episode is in (#4425). Only drawn once the store is migrated. */
@@ -292,7 +301,7 @@ function useFollowFeed(onFollowed?: () => void) {
         const read = await relay((relayAllowed) => services.sources.readFeed(feedUrl, { relayAllowed }));
         // Just read, so the next automatic refresh leaves it for 30 minutes.
         await data.follow({ ...read.show, refreshedAt: new Date().toISOString() }, newestFirst(read.episodes));
-        toast(`Following ${read.show.title}. ${read.episodes.length} episodes added to your Library.`);
+        toast(`Following ${read.show.title}. Open it to pick episodes for your Library.`);
         // A followed show must not sit behind a search kept from before. Not through `onFollowed`, which also runs on Close.
         clearSearches();
         onFollowed?.();

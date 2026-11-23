@@ -293,6 +293,27 @@ button:disabled {
   flex: none;
 }
 
+/* What the one-time move left on Following (#4425): a card in the page flow, no timer, so nobody reads it against a clock. */
+.library-notice {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--panel-radius);
+}
+
+.library-notice p {
+  margin: 0;
+}
+
+.library-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .row {
   display: flex;
   align-items: center;
