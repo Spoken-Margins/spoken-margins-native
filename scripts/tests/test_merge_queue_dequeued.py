@@ -340,6 +340,231 @@ class NotifyTests(unittest.TestCase):
         self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'skipped: post failed')
 
 
+class SetupFailureTests(unittest.TestCase):
+    """A group whose every failed job failed outside the PR gets one delayed retry (#4940)."""
+
+    NOW = mq.datetime.datetime(2026, 11, 23, 5, 0, 0, tzinfo=mq.datetime.timezone.utc)
+    WHEN = '2026-11-23T05:30:00Z'
+
+    def github(self, jobs, comments=(), logs=None):
+        """`jobs`: {check name: [(step name, conclusion), ...]}; each check gets its own job id."""
+        checks, gets = [], {}
+        for index, (name, steps) in enumerate(jobs.items(), start=100):
+            checks.append({'id': index, 'name': name, 'conclusion': 'failure', 'completed_at': f'2026-11-23T04:5{index - 100}:00Z',
+                           'html_url': f'https://example.test/run/9/job/{index}',
+                           'details_url': f'https://example.test/run/9/job/{index}'})
+            gets[f'actions/jobs/{index}'] = {'steps': [{'number': n, 'name': step, 'conclusion': conclusion}
+                                                       for n, (step, conclusion) in enumerate(steps, start=1)]}
+        github = FakeGitHub({
+            'actions/runs?event=merge_group': {'workflow_runs': [run(2, LIVE, f'{mq.QUEUE_PREFIX}pr-7-new')]},
+            f'commits/{LIVE}/check-runs': {'check_runs': checks},
+            'issues/7/comments': list(comments), **gets})
+        github.now = lambda: self.NOW
+        github.log_tail = lambda job_id: (logs or {}).get(job_id, '')
+        return github
+
+    SETUP = [('Set up job', 'success'), ('Install BlackHole (virtual audio output)', 'failure'),
+             ('Mac rest of the fast plan', 'skipped')]
+    TEST = [('Set up job', 'success'), ('Install BlackHole (virtual audio output)', 'success'),
+            ('Mac rest of the fast plan', 'failure')]
+
+    def test_a_setup_failure_stays_armed_with_a_not_before_time_and_no_label(self):
+        github = self.github({'hosted fast: Mac rest': self.SETUP})
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told: setup retry')
+        (path, body), = github.posts
+        self.assertEqual(path, 'issues/7/comments')
+        self.assertIn(mq.SETUP_RETRY_MARKER.format(when=self.WHEN), body['body'])
+        self.assertIn('"hosted fast: Mac rest" in its step "Install BlackHole (virtual audio output)"', body['body'])
+        self.assertIn('keeps `automerge`', body['body'])
+        self.assertEqual(github.deletes, [])      # no `automerge` removal, no `needs-fix`
+        self.assertEqual(github.requeued, 0)      # the bridge's sweep queues it after the delay, not now
+
+    def test_every_failed_job_must_have_failed_outside_the_pr(self):
+        github = self.github({'hosted fast: Mac rest': self.SETUP, 'hosted app: build (no tests)': self.TEST})
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+        self.assertIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
+        self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
+
+    def test_a_failed_test_step_is_a_failure_at_once(self):
+        github = self.github({'hosted fast: Mac rest': self.TEST})
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+        self.assertIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
+
+    def test_a_second_setup_failure_is_held_as_a_failure(self):
+        first = self.github({'hosted fast: Mac rest': self.SETUP})
+        mq.notify(first, event(), out=io.StringIO())
+        told = [{'body': first.posts[0][1]['body'].replace(LIVE, 'f' * 40), 'user': {'login': mq.BOT}}]   # the earlier group's comment
+        github = self.github({'hosted fast: Mac rest': self.SETUP}, comments=told)
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+        comment = github.posts[0][1]['body']
+        self.assertIn('held as a failure this time', comment)
+        self.assertNotIn('setup-retry not-before', comment)   # a held failure must not start another retry
+        self.assertIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
+        self.assertEqual(github.deletes, ['issues/7/labels/automerge'])
+
+    def test_a_pr_without_automerge_is_never_retried_here(self):
+        # An owner-tap PR would be queued by the bridge without his tap, and a hand-tapped Merge would spend its one
+        # retry on nothing: both get the plain failure, as before #4940.
+        github = self.github({'hosted fast: Mac rest': self.SETUP})
+        self.assertEqual(mq.notify(github, event(armed=False), out=io.StringIO()), 'told')
+        self.assertNotIn('setup-retry', github.posts[0][1]['body'])
+        self.assertNotIn('held as a failure', github.posts[0][1]['body'])
+        self.assertEqual(github.deletes, [])
+
+    def test_a_marker_from_anyone_but_the_workflow_does_not_count_as_a_retry(self):
+        marker = mq.SETUP_RETRY_MARKER.format(when='2026-11-23T05:30:00Z')
+        for login in ('someone', '', None):
+            github = self.github({'hosted fast: Mac rest': self.SETUP}, comments=[{'body': marker, 'user': {'login': login}}])
+            self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told: setup retry', login)
+
+    def test_the_retry_cap_reads_past_the_first_hundred_comments(self):
+        marker = {'body': mq.SETUP_RETRY_MARKER.format(when='2026-11-23T05:30:00Z'), 'user': {'login': mq.BOT}}
+        filler = [{'body': 'lane report', 'user': {'login': mq.BOT}}] * 100
+        github = self.github({'hosted fast: Mac rest': self.SETUP})
+        get = github.get
+        github.get = lambda path: (filler if 'issues/7/comments' in path and '&page=1' in path else
+                                   [marker] if 'issues/7/comments' in path and '&page=2' in path else get(path))
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')   # held: the marker on page 2 was found
+        self.assertIn('held as a failure', github.posts[0][1]['body'])
+
+    def test_a_job_that_cannot_be_read_is_the_prs_failure(self):
+        github = self.github({'hosted fast: Mac rest': self.SETUP})
+        github.gets['actions/jobs/100'] = mq.ReadFailed('jobs')
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+        self.assertIn(('issues/7/labels', {'labels': ['needs-fix']}), github.posts)
+
+    def test_a_check_with_no_job_id_is_the_prs_failure(self):
+        github = self.github({'hosted fast: Mac rest': self.SETUP})
+        for check in github.gets[f'commits/{LIVE}/check-runs']['check_runs']:
+            check.pop('id'), check.pop('details_url'), check.pop('html_url')
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+
+    def test_the_first_failed_step_decides_not_a_later_one(self):
+        # An `if: failure()` upload step after a failed test step also reads `failure` when it fails: the earlier step decides.
+        steps = [('Mac rest of the fast plan', 'failure'), ('Run actions/upload-artifact@ea165f8', 'failure')]
+        github = self.github({'hosted fast: Mac rest': steps})
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+
+    PLAN = [('Mac rest of the fast plan', 'failure')]
+    ONNX = ('swift package resolve\nfatal: unable to access \'https://download.onnxruntime.ai/pod.zip\': '
+            'SSL certificate problem: certificate has expired\nerror: tools failed')
+
+    def test_a_plan_step_that_ends_in_a_network_error_from_an_outside_host_is_outside_the_pr(self):
+        github = self.github({'hosted fast: Mac rest': self.PLAN}, logs={100: self.ONNX})
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told: setup retry')
+
+    def test_a_network_word_without_an_outside_host_on_the_line_is_a_test_failure(self):
+        # A test that prints "connection refused" while checking its own error handling is not an outage.
+        for log in ('testOfflineBanner: Connection refused (expected)\nFAILED', 'GET https://pypi.org/simple 200 OK\nFAILED 3 tests',
+                    'AssertionError: certificate row 3 differs\nFAILED'):
+            github = self.github({'hosted fast: Mac rest': self.PLAN}, logs={100: log})
+            self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told', log)
+
+    def test_a_step_that_runs_the_prs_own_files_needs_the_network_error_too(self):
+        # npm ci, pip, go build, LFS pointers and `actions/setup-*` read the PR's own manifests: their failure is the
+        # PR's unless the log names an outside host and a network error (review of #4940).
+        for step in ('Python tools and Node packages', 'Install packages', 'Fetch LFS files',
+                     'Caddy and smserver for the Caddyfile tests', 'Run actions/setup-node@49933ea'):
+            github = self.github({'hosted fast: portable': [(step, 'failure')]}, logs={100: 'npm ERR! code EUSAGE lockfile'})
+            self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told', step)
+            github = self.github({'hosted fast: portable': [(step, 'failure')]}, logs={100: self.ONNX})
+            self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told: setup retry', step)
+
+    def test_the_log_is_cut_at_the_failing_steps_error_line(self):
+        # A real log (2026-11-23): the failing step ends at `##[error]Process completed with exit code 1.`; the steps
+        # after it (`if: always()` uploads, post steps) must not push its last lines out of the window.
+        lines = ['early step output'] * 500 + ['download.onnxruntime.ai: SSL certificate problem', '##[error]Process completed with exit code 1.'] \
+            + ['post step noise'] * 500
+        stub = mq.GitHub('o/r', sleep=lambda seconds: None)
+        stub._gh = lambda args, data=None: subprocess.CompletedProcess(args, 0, '\n'.join(lines), '')
+        tail = stub.log_tail(1)
+        self.assertIn('SSL certificate problem', tail)
+        self.assertNotIn('post step noise', tail)
+        self.assertLessEqual(len(tail.splitlines()), mq.LOG_TAIL_LINES)
+        lines[:] = ['no error marker'] * 200
+        self.assertEqual(len(stub.log_tail(1).splitlines()), mq.LOG_TAIL_LINES)
+
+    def test_the_log_is_read_only_for_a_plan_step(self):
+        github = self.github({'hosted fast: Mac rest': self.SETUP})
+        reads = []
+        github.log_tail = lambda job_id: reads.append(job_id) or ''
+        mq.notify(github, event(), out=io.StringIO())
+        self.assertEqual(reads, [])
+
+    def test_a_conflict_or_a_manual_removal_never_looks_at_jobs(self):
+        for reason in ('MANUAL', 'INVALID_MERGE_COMMIT', 'MERGE'):
+            github = self.github({'hosted fast: Mac rest': self.SETUP})
+            mq.notify(github, event(reason=reason), out=io.StringIO())
+            self.assertFalse(any(path.startswith('actions/jobs') for path in github.reads), reason)
+
+    def test_the_marker_in_the_comment_is_the_one_the_bridge_reads(self):
+        import merge_queue_label_bridge as bridge
+        text = mq.SETUP_RETRY_MARKER.format(when=self.WHEN)
+        self.assertEqual(bridge.SETUP_RETRY.findall(text), [self.WHEN])
+        self.assertEqual(bridge.SETUP_RETRY_MINUTES, int(mq.SETUP_RETRY_DELAY.total_seconds() // 60))
+
+
+class StepTableTests(unittest.TestCase):
+    """Every step of the workflows that run in a merge group has a decision here, so a new step is never classified by
+    accident (#4940). `uses:` steps appear in the Actions API as `Run <action>@<ref>`."""
+
+    SETUP, PLAN, TEST = 'setup', 'plan', 'test'
+    KINDS = {
+        'Start the clock': SETUP, 'Merge the base in (dispatch with a base)': TEST,
+        'Read the Go toolchain from go.mod': TEST, 'Caddy and smserver for the Caddyfile tests': PLAN,
+        'Python tools and Node packages': PLAN, 'Portable fast plan': PLAN, 'Pipeline harness': TEST,
+        'SessionKitCoreTests on Linux': PLAN, 'Keep the Linux test list': TEST, 'Keep the step logs': TEST,
+        'Record what was tested, for the lane runner': TEST, 'Report time': TEST,
+        'Do the Mac checks have anything to test?': TEST, 'Python tools': PLAN,
+        'SessionKit build and SessionKitCoreTests': PLAN, 'List LFS objects': PLAN, 'Fetch LFS files': PLAN,
+        'Unpack the compilation cache': SETUP, 'Build the app for the simulator (build-for-testing, no tests)': PLAN,
+        'Keep the build log': TEST, 'How long it took': TEST, 'Keep the Mac test list': TEST,
+        'Install BlackHole (virtual audio output)': SETUP, 'Changed files': TEST, 'Mac rest of the fast plan': PLAN,
+        'Cancel the Mac jobs of this run': TEST, 'Tally the Linux retry-passes on': TEST,
+        'Alert the owner if this PR is ready for his merge tap': TEST,
+        'Start the merge run of each armed PR on this head': TEST, 'Changed web paths': TEST,
+        'Is there a web app to test yet?': TEST, 'Install packages': PLAN, 'Build': TEST,
+        'Install Playwright browsers': PLAN, 'Speech model cache': SETUP, 'Playwright suite': TEST,
+        'List tests that passed on retry': TEST, 'Keep the Playwright report': TEST, 'Check the merge rules': TEST,
+    }
+
+    def steps(self):
+        import yaml
+        for path in sorted((ROOT / '.github/workflows').glob('*.yml')):
+            workflow = yaml.safe_load(path.read_text())
+            triggers = workflow.get(True) or workflow.get('on') or {}
+            if 'merge_group' not in triggers:
+                continue
+            for job_id, job in workflow['jobs'].items():
+                for step in job.get('steps') or []:
+                    if step.get('name'):
+                        yield path.name, job_id, str(step['name']).strip()
+                    else:
+                        yield path.name, job_id, 'Run ' + step['uses'].split('@')[0]
+
+    def test_every_named_step_of_a_merge_group_workflow_has_a_decision(self):
+        names = {name for _, _, name in self.steps() if not name.startswith('Run ')}
+        self.assertEqual(sorted(names - set(self.KINDS)), [], 'a new step: decide whether a failure in it is the PR\'s')
+        self.assertEqual(sorted(set(self.KINDS) - names), [], 'a step that no longer exists: remove it from the table')
+
+    def test_the_notifiers_lists_agree_with_the_table(self):
+        for name, kind in self.KINDS.items():
+            self.assertEqual(mq.step_kind(name), kind, name)
+
+    def test_every_action_step_is_setup_and_the_plan_steps_are_named_in_the_workflows(self):
+        for file, job, name in self.steps():
+            if name.startswith('Run '):
+                kind = 'plan' if name.startswith('Run actions/setup-') else 'setup'
+                self.assertEqual(mq.step_kind(name + '@0123456789abcdef'), kind, f'{file} {job} {name}')
+        self.assertEqual(mq.step_kind('Post Run actions/cache@abc'), 'setup')
+        self.assertEqual(mq.step_kind('A step nobody has heard of'), 'test')
+        self.assertEqual(mq.step_kind(None), 'test')
+        self.assertEqual(sorted(mq.PLAN_STEPS), sorted(n for n, k in self.KINDS.items() if k == self.PLAN))
+        self.assertEqual(mq.step_kind('Run actions/setup-go@40f1582'), 'plan')
+        self.assertEqual(sorted(mq.SETUP_STEPS - {'Set up job', 'Initialize containers', 'Complete job'}),
+                         sorted(n for n, k in self.KINDS.items() if k == self.SETUP))
+
+
 class RetryTests(unittest.TestCase):
     def test_reads_retry_then_raise_read_failed(self):
         github = mq.GitHub('o/r', sleep=lambda _: None)
