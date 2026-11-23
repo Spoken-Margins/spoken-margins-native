@@ -64,8 +64,10 @@ extension Gate1AppModel {
 
     /// The page "See why" asked Settings to show, once: reading it clears it.
     func takeSettingsPageRequest() -> SettingsPage? {
-        defer { requestedSettingsPage = nil }
-        return requestedSettingsPage
+        // Every Settings visit asks; setting nil over nil would still publish to every screen's feed (#4028).
+        guard let page = requestedSettingsPage else { return nil }
+        requestedSettingsPage = nil
+        return page
     }
 
     /// True when the retry was queued, so the Inbox page can hold that entry's Retry while its import runs.
@@ -78,6 +80,9 @@ extension Gate1AppModel {
             case .browserText:
                 try resolvedBrowserTextHandoffStore().retryFailed(payloadID: entry.payloadID)
             }
+            // The entry leaves the list now, so if it fails the same way again it comes back as a change and the
+            // Inbox page turns its Retry back on (#4781).
+            refreshImportInbox()
             importPendingSourceLinkHandoffs()
             reportConfirmation("Import retry queued.")
             return true
