@@ -64,7 +64,13 @@ extension Gate1AppModel {
 
     /// The store's own reasons by name; anything else by its type only, so no file path reaches Diagnostics.
     private static func notForMeFailure(_ error: Error) -> String {
-        if let error = error as? NotForMeStore.StoreError { return "failed:\(error)" }
+        if let storeError = error as? NotForMeStore.StoreError {
+            switch storeError {
+            case .unusableFeedURL: return "failed:unusableFeedURL"
+            case .unidentifiableItem: return "failed:unidentifiableItem"
+            case .fileNotReadable: return "failed:fileNotReadable"
+            }
+        }
         return "failed:\(String(describing: type(of: error)))"
     }
 }
