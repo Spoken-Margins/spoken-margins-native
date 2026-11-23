@@ -56,6 +56,7 @@ struct ApplePodcastsImportGuide: View {
                         Text(ApplePodcastsImportShortcut.manualClosing).fontWeight(.semibold)
                     }
                     .padding(.vertical, 4)
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("applePodcasts.guide.manualSteps")
                 } label: {
                     Text(ApplePodcastsImportShortcut.manualTitle)
