@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Find-something quiz (#4707)",
+  "description": "The questions and the prompt template of the open quiz that builds a prompt for a listener's own AI assistant. The site, the web listener and the app read the same file, so the wording cannot drift. Rules the schema cannot say (who comes first, every non-who question has promptLine and promptLineSelf holding {answer} once, every option has prompt text) are checked by the page's Node test.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "title",
+    "intro",
+    "questions",
+    "prompt",
+    "followUp",
+    "noneWorked"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "intro": {
+      "type": "string",
+      "minLength": 1
+    },
+    "questions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/choiceQuestion"
+          },
+          {
+            "$ref": "#/$defs/textQuestion"
+          }
+        ]
+      }
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "friend",
+        "self"
+      ],
+      "properties": {
+        "friend": {
+          "$ref": "#/$defs/promptAudience"
+        },
+        "self": {
+          "$ref": "#/$defs/promptAudience"
+        }
+      }
+    },
+    "followUp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "opening",
+        "closing"
+      ],
+      "properties": {
+        "opening": {
+          "type": "string",
+          "minLength": 1
+        },
+        "closing": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "noneWorked": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "$defs": {
+    "choiceQuestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "label",
+        "options"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "choice"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "labelSelf": {
+          "type": "string",
+          "minLength": 1
+        },
+        "default": {
+          "type": "string",
+          "minLength": 1
+        },
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/option"
+          }
+        },
+        "promptLine": {
+          "type": "string",
+          "minLength": 1
+        },
+        "promptLineSelf": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "textQuestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "text"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "labelSelf": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hintSelf": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fills": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "promptLine": {
+          "type": "string",
+          "minLength": 1
+        },
+        "promptLineSelf": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "label"
+      ],
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "labelSelf": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "promptSelf": {
+          "type": "string",
+          "minLength": 1
+        },
+        "only": {
+          "enum": [
+            "friend",
+            "self"
+          ]
+        }
+      }
+    },
+    "promptAudience": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "opening",
+        "aboutHeader",
+        "closing"
+      ],
+      "properties": {
+        "opening": {
+          "type": "string",
+          "minLength": 1
+        },
+        "aboutHeader": {
+          "type": "string",
+          "minLength": 1
+        },
+        "closing": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
