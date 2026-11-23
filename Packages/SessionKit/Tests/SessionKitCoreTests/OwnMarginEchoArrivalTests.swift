@@ -122,8 +122,9 @@ final class OwnMarginEchoArrivalTests: XCTestCase {
 
     func testACopyThatCannotPlayIsStillACopy() {
         let f = fixture()
-        var silent = f.copies[0]
-        silent.audioPath = nil
+        let silent = ImportedCommentaryInterjection(
+            id: "silent", layerId: "mine", packageScopedId: identity(1).packageScopedId, createdAt: when,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "Listen.", resolution: placed)
         XCTAssertEqual(
             SharedPacketArrival.ownCopiesCount(importedIds: [silent.id], saved: [silent], layer: f.echoLayer, ownMargins: f.ownMargins), 1)
     }
@@ -141,7 +142,7 @@ final class OwnMarginEchoArrivalTests: XCTestCase {
             try store.saveInterjection(own("one", session: "s1", sharedAs: nil))
             try store.saveInterjection(own("two", session: "s2", sharedAs: nil))
             try store.saveInterjection(own("gone", session: "s2", sharedAs: nil, status: "deleted"))
-            let state = try ItemDetailLoader.load(id: "a", store: store, snapshotItemId: "a", snapshotSessionId: "s2")
+            let state = try ItemDetailLoader.load(id: "a", store: store, snapshotItemId: "a", snapshotSessionId: "s2", placementPasses: SharedMarginPlacementPasses())
             XCTAssertEqual(Set(state.itemOwnMargins.map(\.id)), ["one", "two"])
             XCTAssertEqual(state.interjections.map(\.id), ["two"], "the active session's list is unchanged")
         }
