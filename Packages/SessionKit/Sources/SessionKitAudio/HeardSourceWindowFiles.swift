@@ -107,6 +107,15 @@ public final class HeardSourceWindowFiles {
         windows.removeValue(forKey: key)
     }
 
+    /// A transcription that `take`s a window ended with `outcome`. Returns the files the caller deletes. One the Speech
+    /// Recognition hold stopped gives its window back, so the retry Allow runs finds it (#4715); a newer hand-over kept for
+    /// the Margin meanwhile wins, and the taken files go instead.
+    public func finishTranscription(of taken: [Segment], key: String, outcome: SourceWindowTranscriptionOutcome) -> [Segment] {
+        guard outcome.keepsAudio, !taken.isEmpty, windows[key] == nil else { return taken }
+        windows[key] = taken
+        return []
+    }
+
     /// Drops a window nothing will use, and its files.
     public func discard(_ key: String) {
         if let segments = windows.removeValue(forKey: key) { Self.delete(segments) }
