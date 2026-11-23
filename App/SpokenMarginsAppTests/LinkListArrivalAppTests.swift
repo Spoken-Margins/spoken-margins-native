@@ -297,6 +297,7 @@ final class LinkListArrivalAppTests: XCTestCase {
         XCTAssertTrue(handoffFolder.pending().isEmpty, "the third failed try removes it")
         XCTAssertEqual(model.linkListArrival.handoffRetry.tries(for: entry.id), 0)
         XCTAssertEqual(model.feedbackEvent?.kind, .warning, "the arrival's banner names what couldn't be added")
+        XCTAssertEqual(model.feedbackEvent?.message, "“Mixed” has 1 item. 1 couldn't be added.", "the retry says what the list holds (#5071)")
     }
 
     /// A share, a Retry and the network's return all run the drain: within one foreground a list with a dead link is tried once.

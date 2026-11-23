@@ -161,7 +161,8 @@ public enum LibraryCollectionImport {
         }
     }
 
-    public static func summary(name: String, isNew: Bool, added: Int, failed: Int, notAdded: Int) -> Summary {
+    /// - Parameter held: how many items the collection held before this pick (0 for a new one).
+    public static func summary(name: String, isNew: Bool, added: Int, failed: Int, notAdded: Int, held: Int = 0) -> Summary {
         // A re-pick that brought nothing new and lost nothing new is up to date, even when the walk still skips files it
         // skipped the first time (a packet, a second copy): those were reported then (#3769).
         if !isNew, added == 0, failed == 0 { return Summary(message: "“\(name)” is up to date.", kind: .success) }
@@ -172,6 +173,11 @@ public enum LibraryCollectionImport {
                 return isNew
                     ? Summary(message: "There's nothing in “\(name)” the app can add.", kind: .failure)
                     : Summary(message: "“\(name)” is up to date.", kind: .success)
+            }
+            // A re-pick to a collection that already holds what landed before (a link list's retry) lost only what it
+            // tried again: the collection is still there, so say what it holds, as a warning (#5071).
+            if !isNew, held > 0 {
+                return Summary(message: "“\(name)” has \(LibraryBulkAction.items(held)).\(missingWords)", kind: .warning)
             }
             let what = missing == 1 ? "The 1 item in “\(name)” couldn't be added." : "None of the \(missing) items in “\(name)” could be added."
             return Summary(message: what, kind: .failure)
