@@ -869,6 +869,7 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
     'test_phone_build.PhoneBuildTests.test_a_lane_tested_commit_without_a_green_slow_tier_runs_it_first': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_a_green_slow_tier_on_the_commit_is_not_run_again': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_a_red_slow_tier_stops_the_build': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_commit_from_before_the_slow_tier_is_built_without_it': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_if_changed_skips_when_latest_is_the_tip': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_plan_starts_at_the_installed_build': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_release_cache_and_source_survive_and_are_reused_for_the_next_tip': PHONE_BUILD_NEEDS_MAC,
@@ -2258,7 +2259,8 @@ class Run:
         self.save()
         print('runner-tests left out to the nightly slow tier (scripts/slow_tier.py, #5145): ' + ', '.join(modules),
               flush=True)
-        return modules
+        # With the dot: parallel_unittest.py matches by prefix, and a future test_sm_status_x must not leave too.
+        return [f'{module}.' for module in modules]
 
     def slow(self):
         """--plan slow (#5145): exactly the tests --leave-out-slow leaves out, for main-slow.yml and phone-build."""

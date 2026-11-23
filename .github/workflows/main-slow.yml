@@ -77,6 +77,10 @@ jobs:
           if ! git merge-base --is-ancestor "$sha" "$head"; then
             echo "::error::$sha is not on $SM_TRUNK"; exit 1
           fi
+          # The test job runs the commit's own scripts; a commit from before the slow tier has none to run.
+          if ! git cat-file -e "$sha:scripts/main_slow.py" 2>/dev/null; then
+            echo "::error::$sha is from before the slow tier (#5145): it has no scripts/main_slow.py"; exit 1
+          fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Decide
         id: decide

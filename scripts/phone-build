@@ -383,16 +383,21 @@ def trusted_comment_lines(raw: str | None) -> list[dict]:
     return comment_trust.trusted_only(found)
 
 
-def slow_tier_green(sha: str) -> bool:
-    """Whether main-slow.yml recorded a green `main-slow` status on this commit (#5145). Unreadable counts as no."""
+def slow_tier_state(sha: str) -> str | None:
+    """The newest `main-slow` status main-slow.yml recorded on this commit (#5145): success, failure, error, pending,
+    or None when it has none or GitHub could not be read."""
     raw = gh('api', f'repos/{REPO}/commits/{sha}/statuses?per_page=100')
     try:
         statuses = json.loads(raw) if raw else []
     except ValueError:
-        return False
+        return None
     ours = sorted((s for s in statuses if isinstance(s, dict) and s.get('context') == 'main-slow'),
                   key=lambda s: s.get('created_at') or '', reverse=True)
-    return bool(ours) and ours[0].get('state') == 'success'
+    return ours[0].get('state') if ours else None
+
+
+def slow_tier_green(sha: str) -> bool:
+    return slow_tier_state(sha) == 'success'
 
 
 def runner_tested(sha: str) -> str | None:
@@ -2149,6 +2154,9 @@ def build(sha: str) -> int:
                 raise BuildFailed('the simulator build failed')
             shutil.rmtree(work / 'dd-sim', ignore_errors=True)
             checks = 'host tests (--plan fast) and the simulator build passed here, on this exact commit'
+        elif not (src / 'scripts/slow_tier.py').is_file():
+            # A commit from before the slow tier: its merge checks still ran every test.
+            checks += '; from before the slow tier (#5145), so its merge checks ran every test'
         elif not slow_tier_green(sha):
             # #5145: PR and merge-group runs leave the slow tier out; main-slow.yml runs it nightly and before builds.
             # A commit it hasn't passed on gets it here, before the build (the full --plan fast above includes it).
@@ -2225,6 +2233,14 @@ def take_hosted(commit: str | None, if_changed: bool, tip: str = '') -> int:
         else:
             clear_misses()
     sha = hosted['sha']
+    # #5145: PRs leave the slow tier out and nothing here can run it, so a commit main-slow found red is refused.
+    slow = slow_tier_state(sha)
+    if slow == 'failure':
+        say(f'refused the hosted build of {sha[:7]}: main-slow failed on it (the slow tier, #5145); '
+            'waiting for a commit it passes, or build on the Mac')
+        return 0 if if_changed else 1
+    if slow != 'success':
+        say(f'note: no green main-slow on {sha[:7]} yet ({slow or "no status"}); the slow tier has not run on it')
     if latest_build().get('sha') == sha and (if_changed or not commit):
         say(f'latest is already the hosted build of {sha[:7]}; nothing to do')
         return 0

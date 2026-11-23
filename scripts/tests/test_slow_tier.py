@@ -87,7 +87,10 @@ class LeaveOutTests(unittest.TestCase):
         self.assertEqual(expected, {other, rest})  # another target's test is that target's step's business
         self.assertEqual(args[0], '--skip')
         self.assertEqual(sorted(run.manifest['slow_tier_left_out']), sorted(core))
-        self.assertEqual(verification.Run.runner_leave_out(run), ['test_sm_status'])
+        self.assertEqual(verification.Run.runner_leave_out(run), ['test_sm_status.'])
+        parallel = load('parallel_unittest_slow_tier', 'parallel_unittest.py')
+        self.assertTrue(parallel.wholly_left_out('test_sm_status', ('test_sm_status.',)))
+        self.assertFalse(parallel.wholly_left_out('test_sm_status_more', ('test_sm_status.',)))
 
     def test_the_flag_goes_only_with_the_split_plans(self):
         done = subprocess.run([sys.executable, str(SCRIPTS / 'verify-tests.py'), '--plan', 'fast', '--leave-out-slow',
@@ -167,6 +170,7 @@ class MainSlowTests(unittest.TestCase):
         lost = workflow[workflow.index('- name: Record a lost run'):]
         self.assertIn("steps.report.outcome != 'success'", lost[:lost.index('run:')])  # a failed report still clears pending
         self.assertIn('fetch-depth: 0', workflow)  # the merges since the last green need history
+        self.assertIn('git cat-file -e "$sha:scripts/main_slow.py"', workflow)  # an older commit has no scripts to run
 
 
 if __name__ == '__main__':

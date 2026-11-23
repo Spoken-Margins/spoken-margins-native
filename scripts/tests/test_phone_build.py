@@ -813,10 +813,14 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn('fast hot-file-ok=1 scripts/verify-tests.py --plan fast', self.log.read_text())
 
-    def commit_the_host_check_python(self, subject):
+    def commit_the_host_check_python(self, subject, slow_tier=False):
         """Commit a fake `.venv/bin/python` (what the build runs verify-tests.py with) as the new tip.
 
-        It logs its command line to FAKE_LOG and exits with FAKE_FAST_EXIT."""
+        It logs its command line to FAKE_LOG and exits with FAKE_FAST_EXIT. `slow_tier`: the commit has
+        scripts/slow_tier.py, so it is from after the slow tier (#5145)."""
+        if slow_tier:
+            (self.repo / 'scripts/slow_tier.py').write_text('SLOW_SWIFT_TESTS = {}\n')
+            self.git('add', 'scripts/slow_tier.py')
         (self.repo / '.venv/bin').mkdir(parents=True)
         python = self.repo / '.venv/bin/python'
         python.write_text('#!/bin/sh\necho "fast $*" >> "$FAKE_LOG"\nexit ${FAKE_FAST_EXIT:-0}\n')
@@ -825,9 +829,9 @@ class PhoneBuildTests(unittest.TestCase):
         self.git('commit', '-q', '-m', subject)
         self.tip = self.git('rev-parse', 'HEAD')
 
-    def build_the_merge_commit(self, runs_checks, **extra):
+    def build_the_merge_commit(self, runs_checks, slow_tier=False, **extra):
         """Build a tip that reads "Merge pull request #12: ..." (the fake gh serves PR 12's merge check)."""
-        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing')
+        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing', slow_tier=slow_tier)
         done = self.run_build(**{'FAKE_TIP': self.tip, **extra})
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         calls = self.log.read_text()
@@ -842,20 +846,27 @@ class PhoneBuildTests(unittest.TestCase):
 
     def test_a_lane_tested_commit_without_a_green_slow_tier_runs_it_first(self):
         # #5145: PRs leave the slow tier out, so a lane-tested commit main-slow hasn't passed gets it before the build.
-        self.build_the_merge_commit(runs_checks=False, FAKE_SLOW_STATE='none')
+        self.build_the_merge_commit(runs_checks=False, slow_tier=True, FAKE_SLOW_STATE='none')
         calls = self.log.read_text()
         self.assertIn('fast scripts/verify-tests.py --plan slow', calls)
         checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
         self.assertIn('slow tier (--plan slow) ran on this exact commit', checks)
 
     def test_a_green_slow_tier_on_the_commit_is_not_run_again(self):
-        self.build_the_merge_commit(runs_checks=False, FAKE_SLOW_STATE='success')
+        self.build_the_merge_commit(runs_checks=False, slow_tier=True, FAKE_SLOW_STATE='success')
         self.assertNotIn('--plan slow', self.log.read_text())
         checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
         self.assertIn('main-slow passed on this exact commit', checks)
 
+    def test_a_commit_from_before_the_slow_tier_is_built_without_it(self):
+        # Its own verify-tests.py has no --plan slow, and its merge checks ran every test (#5145 audit).
+        self.build_the_merge_commit(runs_checks=False, FAKE_SLOW_STATE='none')
+        self.assertNotIn('--plan slow', self.log.read_text())
+        checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
+        self.assertIn('from before the slow tier', checks)
+
     def test_a_red_slow_tier_stops_the_build(self):
-        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing')
+        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing', slow_tier=True)
         done = self.run_build(FAKE_TIP=self.tip, FAKE_SLOW_STATE='failure', FAKE_FAST_EXIT='1')
         self.assert_build_stopped(done, 'the slow tier (--plan slow) failed', builds_after=False)
 
@@ -1088,6 +1099,13 @@ class HostedPhoneBuildTests(unittest.TestCase):
         archive = app.parent / 'SpokenMarginsApp.app.zip'
         subprocess.check_call(['ditto', '-c', '-k', '--keepParent', str(app), str(archive)])
         return archive
+
+    def test_refuses_a_hosted_build_main_slow_found_red(self):
+        # #5145 audit: nothing here can run the slow tier, so a commit it failed on never reaches the phone.
+        done = self.run_build(FAKE_SLOW_STATE='failure')
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn('main-slow failed on it', done.stdout)
+        self.assertFalse((self.phone / 'latest').exists())
 
     def test_refuses_a_hosted_build_without_the_phone_settings(self):
         """#3354: the hosted archive dropped SM_PHONE_BUILD and SM_SHARE_LINK_CREATION, and nothing noticed."""
