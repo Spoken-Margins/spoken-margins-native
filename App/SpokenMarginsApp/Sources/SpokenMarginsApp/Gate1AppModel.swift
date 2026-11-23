@@ -551,12 +551,6 @@ final class Gate1AppModel: ObservableObject {
         return encoder
     }()
 
-    enum PendingPlaybackAfterTerms {
-        case startCurrentItem
-        case resumeSession(String)
-        case jumpToChapter(String, fromTimeline: Bool)
-        case playSourceFromBeginning(fromTimeline: Bool)
-    }
     static func availableSpeechVoiceOptions() -> [SpeechVoiceChoice] {
         #if canImport(AVFoundation)
         // `AVSpeechSynthesisVoice.speechVoices()` can crash inside the iOS
@@ -815,6 +809,8 @@ final class Gate1AppModel: ObservableObject {
             }
         case .playSourceFromBeginning(let fromTimeline):
             playSourceFromBeginning(fromTimeline: fromTimeline)
+        case .playFootnote(let label, let fromTimeline):
+            playFootnote(label: label, fromTimeline: fromTimeline)
         }
     }
 

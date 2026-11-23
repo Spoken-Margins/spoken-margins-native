@@ -1199,6 +1199,29 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         return spokenOffset.map { sourceOffset(forSpokenOffset: $0) }
     }
 
+    /// A Timeline row's tap on "Footnote `label`", first half (#3777, Design PR 7): the same move as the card's Hear note, for
+    /// a note the listener names instead of one the chime offered. The sequencer starts hearing the note's run, so in "Chime
+    /// where cited" the player reads it instead of passing over it, and the answer is the source offset the app seeks to (the
+    /// citing sentence's last chunk, then the note, then the text after the citation). Nil when this client holds no plan
+    /// with notes for `targetId` (another item, a plan prepared without notes, the system voice, or nothing started yet): the
+    /// caller then goes to the citation itself. `footnoteMoveFailed()` undoes this when the app refuses the seek.
+    func beginHearingFootnote(label: String, targetId: String) -> Int? {
+        let spokenOffset = lock.withLock { () -> Int? in
+            guard !fallbackIsActive, generationHasAsides, currentTargetId == targetId else { return nil }
+            let tags = generationPlan.map(\.footnote)
+            guard let note = tags.firstIndex(where: { $0 == .aside(label) }),
+                  let first = chimeSequencer.beginHearing(chunkAt: note, tags: tags) else { return nil }
+            guard let offset = FootnoteNoteControls.heldStartOffset(
+                forChunkAt: first, tags: tags, startOffsets: generationPlan.map(\.startOffset)) else {
+                chimeSequencer.reset()
+                return nil
+            }
+            chimeMoveStartedAt = ProcessInfo.processInfo.systemUptime
+            return offset
+        }
+        return spokenOffset.map { sourceOffset(forSpokenOffset: $0) }
+    }
+
     /// The card's Stop note, first half: the source offset where the text goes on after the citation, or the end of the
     /// text. Nil when no note is being read. See `beginHearingOfferedFootnote()`.
     func beginStoppingFootnote() -> Int? {

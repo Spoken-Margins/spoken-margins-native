@@ -48,6 +48,43 @@ extension Gate1AppModel {
         }
     }
 
+    /// A Timeline row for a footnote was tapped (#3777, Design PR 7): go to the note, read it, and go on from the sentence
+    /// after its citation, as the Footnote card's Hear note does. When the player holds this item's plan with notes in it,
+    /// the move is that plan's own (`beginHearingFootnote`): the citing sentence's last chunk, then the note. Otherwise (the
+    /// item was not playing, or its audio was prepared with the notes at the end) it goes to the start of the citing
+    /// sentence, never to the citation itself: a seek at the place a note is cited means the text after the note. The
+    /// narrator then reads the sentence and, in "Read where cited", the note after it; "Chime where cited" offers it with
+    /// the tone and card instead, because the player has no plan yet to ask for the note by.
+    func playFootnote(label: String, fromTimeline: Bool = false) {
+        let mode = FootnoteMode(storedValue: UserDefaults.standard.string(forKey: FootnoteMode.storageKey))
+        guard let note = FootnoteTimelineEntries.entry(label: label, for: selectedItem, mode: mode) else {
+            reportFailure("That footnote is no longer in this item.")
+            return
+        }
+        let itemId = activeItemId
+        let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient
+        navigateFromChapterControl(
+            .playFootnote(label: label, fromTimeline: fromTimeline), fromTimeline: fromTimeline,
+            message: "Playing \(note.title)."
+        ) { engine in
+            let startedSelectedItem = try ensureSessionForSelectedItem(engine)
+            // A session just started has no plan to ask: the client learns the article when its first play begins.
+            let hearing = startedSelectedItem ? nil : client?.beginHearingFootnote(label: label, targetId: itemId)
+            synchronizeStreamingSpeechAnchorIfNeeded()
+            do {
+                snapshot = try engine.seekText(toCharOffset: hearing ?? note.sentenceStart)
+            } catch {
+                if hearing != nil { client?.footnoteMoveFailed() }
+                throw error
+            }
+            streamingSpeechQueue.relinquishToCanonicalPlayback()
+            // A seek on a paused session moves its place and plays nothing: the tap is a request to hear the note.
+            if !snapshot.status.isPlaybackActive {
+                snapshot = try engine.resumePlayback()
+            }
+        }
+    }
+
     private func jumpToEngineChapter(id: String, title: String, fromTimeline: Bool) {
         navigateFromChapterControl(.jumpToChapter(id, fromTimeline: fromTimeline), fromTimeline: fromTimeline, message: "Jumped to \(title).") { engine in
             _ = try ensureSessionForSelectedItem(engine)

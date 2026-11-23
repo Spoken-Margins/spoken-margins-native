@@ -305,8 +305,10 @@ struct ExperienceTimelineRailScreen: View {
         }
     }
 
+    /// `footnoteMode` is the listener's Footnotes setting. Its default lists no footnote rows, so a caller that doesn't
+    /// pass it gets the rail it always had; the screen passes the stored setting (#3777).
     static func makeEntries(from item: ItemDetailState, sessionID: String?, playbackDurationMs: Int? = nil,
-                            clips: TimelineClipSource = .none) -> [TimelineRailEntry] {
+                            clips: TimelineClipSource = .none, footnoteMode: FootnoteMode = .atEnd) -> [TimelineRailEntry] {
         var result: [TimelineRailEntry] = []
         let sourceLength = item.timelineSource.characterCount > 0 ? item.timelineSource.characterCount : item.text.count
         // A podcast or audio file speaks in clock time, like its scrubber; an article or PDF speaks in percent (#3862).
@@ -322,6 +324,16 @@ struct ExperienceTimelineRailScreen: View {
                 title: entry.label ?? entry.role.timelineTitle,
                 detail: TimelineTextPresentation.excerpt(entry.text, characterLimit: TimelineTextPresentation.supportingCharacterLimit),
                 action: .sourceText(entry), precisePosition: position))
+        }
+
+        // A footnote the narrator reads where it is cited has a row at its citation: a tap goes to the note, reads it and goes
+        // on after the sentence that cites it. In "Read at the end" the notes are in their own chapter, so there are none
+        // (#3777, Design PR 7).
+        for note in FootnoteTimelineEntries.entries(for: item, mode: footnoteMode) {
+            let position = TimelineRailSortKey.percent(position: note.citationStart, length: sourceLength) ?? 0
+            result.append(TimelineRailEntry(
+                id: note.id, position: Int(position.rounded()), rank: 0, provenance: .source,
+                title: note.title, detail: note.detail, action: .footnote(note), precisePosition: position))
         }
 
         // A figure with no printed text of its own (a photo, a micrograph) has a row only when its picture was cut: the
@@ -540,7 +552,8 @@ struct ExperienceTimelineRailScreen: View {
     /// row appears then without another listing being started (#4587).
     private func rebuildRows(from item: ItemDetailState) {
         entries = Self.makeEntries(from: item, sessionID: model.snapshot.sessionId,
-                                   playbackDurationMs: model.snapshot.currentPlaybackDurationMs, clips: clipSource)
+                                   playbackDurationMs: model.snapshot.currentPlaybackDurationMs, clips: clipSource,
+                                   footnoteMode: FootnoteMode(storedValue: UserDefaults.standard.string(forKey: FootnoteMode.storageKey)))
         // Applies the starting state the first time the rail has chapters, and keeps folds in step with rows.
         folding.sync(rows: foldingRows, currentIDs: currentEntryIDs)
     }
@@ -690,6 +703,8 @@ struct ExperienceTimelineRailScreen: View {
             model.jumpToMediaChapter(chapter, fromTimeline: true)
         case .listeningMapScene(let scene):
             model.jumpToListeningMapScene(scene, fromTimeline: true)
+        case .footnote(let note):
+            model.playFootnote(label: note.label, fromTimeline: true)
         case .sharedMargin(let row):
             // #158: play the moment directly; details stay on long-press. A written Margin set not to be read aloud, or with
             // no voice on this phone (#3402), has nothing to play: when it has a place the tap goes there with no voice (#4934),
@@ -814,6 +829,8 @@ struct TimelineRailEntry: Identifiable, Equatable {
         case chapter(Chapter)
         case mediaChapter(MediaTimelineChapter)
         case listeningMapScene(MediaTimelineChapter)
+        /// A note read where it is cited (#3777).
+        case footnote(FootnoteTimelineEntry)
         case margin(MarginRow)
         case sharedMargin(SharedMarginRow)
         case turn(ConversationTurn)
@@ -852,7 +869,14 @@ struct TimelineRailEntry: Identifiable, Equatable {
     var provenanceLabel: String {
         if case .sourceText = action { return "Source" }
         if case .sourceElement(let element) = action { return element.kind.timelineName }
+        if case .footnote = action { return "Footnote" }
         return provenance.label
+    }
+
+    /// The symbol beside the provenance label: a footnote has its own (Design, Screens), the rest follow their provenance.
+    var provenanceSystemImage: String {
+        if case .footnote = action { return "text.append" }
+        return provenance.systemImage
     }
 
     var currentLabel: String {
@@ -869,6 +893,7 @@ struct TimelineRailEntry: Identifiable, Equatable {
         case .chapter(let chapter): "timeline.chapter.jump.\(chapter.id)"
         case .mediaChapter(let chapter): "timeline.mediaChapter.jump.\(chapter.id)"
         case .listeningMapScene(let scene): "timeline.listeningMapScene.jump.\(scene.id)"
+        case .footnote(let note): "timeline.footnote.play.\(note.label)"
         case .beginning: "timeline.source.beginning"
         case .sourceText(let entry): "timeline.sourceText.\(entry.id)"
         case .sourceElement(let element): "timeline.sourceElement.\(element.id)"
