@@ -5,8 +5,11 @@ import Foundation
 ///
 /// The text is built here, with the date, locale, time zone, the listener's notes and the Quick Folder's name passed
 /// in, so a host test can feed the example block in it to `LinkListText.find` and prove the prompt never teaches a
-/// format the app refuses. No call site yet: PR 4 of #4683 (the Your AI screen) copies and shares it.
+/// format the app refuses. The Your AI screen in Settings copies and shares it (PR 4 of #4683).
 public enum AssistantSetupPrompt {
+    /// Where the Your AI screen keeps what the listener's brief is for. It stays on the phone and goes into the prompt only
+    /// when they copy or share it.
+    public static let notesDefaultsKey = "aiBriefNotesV1"
     /// The most characters of the listener's notes that go into the prompt.
     public static let maxNotesCharacters = 500
     /// How many things the prompt asks a daily brief to hold. A prompt constant, not a `LinkListFile` limit.
@@ -67,7 +70,7 @@ public enum AssistantSetupPrompt {
         lines.append("")
         lines.append("If I share \"Spoken Margins listening signals.jsonl\", it lists what I finished, shared and left Margins on, for shows I follow, as counts and titles. Use it to learn what I like. If I share an AI Handoff Markdown file, it holds my Margins' words; use them only to help me.")
         lines.append("")
-        lines.append("You can't change my settings, but you can tell me where they are: voices and speaking rate are in Settings > Voice; \"Queue New Quick Folder Files\" is in Settings > Import & Export; Quiet and Unfollow this show are on a show's screen in Following.")
+        lines.append("You can't change my settings, but you can tell me where they are: voices and speaking rate are in Settings > Voice; your Quick Folder is in Settings > Import & Export > Your AI; Quiet and Unfollow this show are on a show's screen in Following.")
         return lines.joined(separator: "\n")
     }
 
