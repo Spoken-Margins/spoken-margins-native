@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/template/rss.xsl"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podaccess="https://access.acast.com/schema/1.0/" xmlns:acast="https://schema.acast.com/1.0/">
+   <script src="https://feeds.acast.com/global/feed/xslt-polyfill.min.js" xmlns="http://www.w3.org/1999/xhtml"></script>
+	<channel>
+		<ttl>60</ttl>
+		<generator>acast.com</generator>
+		<title>The Ancients</title>
+		<link>https://www.historyhit.com</link>
+		<atom:link href="https://access.acast.com/rss/f2925f7a-eb08-471a-9958-387cb5ee6353/default" rel="self" type="application/rss+xml"/>
+
+    <language>en</language>
+		<copyright>Hit Networks</copyright>
+		<itunes:keywords/>
+		<itunes:author>History Hit</itunes:author>
+		<itunes:subtitle>A podcast for all ancient history fans! The Ancients is dedicated to discussing our distant past. Featuring interviews with historians and archaeologists, each episode covers a specific theme from antiquity. From Neolithic Britain to the Fall of Rome.</itunes:subtitle>
+		<itunes:summary>&lt;p&gt;A podcast for all ancient history fans! The Ancients is dedicated to discussing our distant past. Featuring interviews with historians and archaeologists, each episode covers a specific theme from antiquity. From Neolithic Britain to the Fall of Rome. Hosted by Tristan Hughes.&amp;nbsp;&lt;/p&gt;&lt;br&gt;&lt;p&gt;New episodes every Sunday and Thursday.&lt;/p&gt;&lt;br&gt;&lt;p&gt;From History Hit, the world&apos;s best history channel and creators of award-winning podcasts Dan Snow&apos;s History Hit, Gone Medieval, and Betwixt the Sheets.&lt;/p&gt;&lt;br&gt;&lt;p&gt;History Hit is part of Little Dot Studios, a Certified B Corp™&lt;/p&gt;&lt;br&gt;&lt;p&gt;Sign up to History Hit for hundreds of hours of original documentaries, with a new release every week and ad-free podcasts. Sign up at &lt;a href=&quot;https://www.historyhit.com/subscribe&quot; rel=&quot;noopener noreferrer&quot; target=&quot;_blank&quot;&gt;&lt;u&gt;https://www.historyhit.com/subscribe&lt;/u&gt;&lt;/a&gt;.&amp;nbsp;&amp;nbsp;&lt;/p&gt;
+
+&lt;hr&gt;&lt;p style=&apos;color:grey; font-size:0.75em;&apos;&gt; Hosted on Acast. See &lt;a style=&apos;color:grey;&apos; target=&apos;_blank&apos; rel=&apos;noopener noreferrer&apos; href=&apos;https://acast.com/privacy&apos;&gt;acast.com/privacy&lt;/a&gt; for more information.&lt;/p&gt;</itunes:summary>
+		<description>&lt;p&gt;A podcast for all ancient history fans! The Ancients is dedicated to discussing our distant past. Featuring interviews with historians and archaeologists, each episode covers a specific theme from antiquity. From Neolithic Britain to the Fall of Rome. Hosted by Tristan Hughes.&amp;nbsp;&lt;/p&gt;&lt;br&gt;&lt;p&gt;New episodes every Sunday and Thursday.&lt;/p&gt;&lt;br&gt;&lt;p&gt;From History Hit, the world&apos;s best history channel and creators of award-winning podcasts Dan Snow&apos;s History Hit, Gone Medieval, and Betwixt the Sheets.&lt;/p&gt;&lt;br&gt;&lt;p&gt;History Hit is part of Little Dot Studios, a Certified B Corp™&lt;/p&gt;&lt;br&gt;&lt;p&gt;Sign up to History Hit for hundreds of hours of original documentaries, with a new release every week and ad-free podcasts. Sign up at &lt;a href=&quot;https://www.historyhit.com/subscribe&quot; rel=&quot;noopener noreferrer&quot; target=&quot;_blank&quot;&gt;&lt;u&gt;https://www.historyhit.com/subscribe&lt;/u&gt;&lt;/a&gt;.&amp;nbsp;&amp;nbsp;&lt;/p&gt;
+
+&lt;hr&gt;&lt;p style=&apos;color:grey; font-size:0.75em;&apos;&gt; Hosted on Acast. See &lt;a style=&apos;color:grey;&apos; target=&apos;_blank&apos; rel=&apos;noopener noreferrer&apos; href=&apos;https://acast.com/privacy&apos;&gt;acast.com/privacy&lt;/a&gt; for more information.&lt;/p&gt;</description>
+		<itunes:explicit>false</itunes:explicit>
+		<itunes:owner>
+			<itunes:name>History Hit</itunes:name>
+			<itunes:email>steve.lanham@historyhit.com</itunes:email>
+		</itunes:owner>
+		<acast:showId>f2925f7a-eb08-471a-9958-387cb5ee6353</acast:showId>
+		<acast:showUrl>the-ancients</acast:showUrl>
+		<acast:signature key="EXAMPLE" algorithm="aes-256-cbc"><![CDATA[wbG1Z7+6h9QOi+CR1Dv0uQ==]]></acast:signature>
+		<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmStkiTEE0CNxIPxmLPEYNwMKCHLDRL22sHQZ4ElCEGqt3fze1jZ6iH+IMFJT2mYmZObec5FMNw9P452orbx5qYh3/+hd2g6MfR66jvFHApYX1j8Vv7LLwi2Tf1Y+i9wO0bQQEohjHZBhbgn2cW5PMbC0Qy+ony/xkq+VPB/9yfP1TWMGer/zyQLFL3QfzYtSu6AO5dE9UvnHED58C2VFIZTVr22Bxjau8fb7u/SxK3Tjotak9Hca+LcgDfbvzKdcHgwWSYph8x0jKzyiePM1QRY=]]></acast:settings>
+		<acast:network id="9221b5ec-26da-8157-6a50-5a6044907ab6" slug="hit-networks-ltd"><![CDATA[HIT Networks LTD]]></acast:network>
+		<acast:importedFeed>https://rss.acast.com/the-ancients</acast:importedFeed>
+		<itunes:type>episodic</itunes:type>
+		<itunes:image href="https://assets.pippa.io/shows/6215f9e74b795a6299fd3b58/1688118301033-5d81dbbb93ddec91bc01fee4bb292511.jpeg"/>
+
+  <image>
+			<url>https://assets.pippa.io/shows/6215f9e74b795a6299fd3b58/1688118301033-5d81dbbb93ddec91bc01fee4bb292511.jpeg</url>
+			<link>https://www.historyhit.com</link>
+			<title>The Ancients</title>
+		</image>
+			

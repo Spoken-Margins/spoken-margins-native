@@ -1,0 +1,471 @@
+{
+ "note": "Persona packs (#4285). Each feed is the publisher's own (its site or feed page), never Apple's lookup (#1732). A show with no feed listed has none found yet; the build replaces it with the next alternate of the same kind. build_catalog.py reads this file; see README.md.",
+ "packs": [
+  {
+   "id": "curious-generalist",
+   "title": "The curious generalist",
+   "summary": "Big ideas from every field, the kind you'll want to answer back.",
+   "subjects": [
+    "society-culture"
+   ],
+   "podcasts": [
+    {
+     "title": "Freakonomics Radio",
+     "feed": "https://feeds.simplecast.com/Y8lFbOT4"
+    },
+    {
+     "title": "Search Engine",
+     "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/search-engine"
+    },
+    {
+     "title": "99% Invisible",
+     "feed": "https://feeds.simplecast.com/BqbsxVfO"
+    },
+    {
+     "title": "Hidden Brain",
+     "feed": "https://feeds.simplecast.com/kwWc0lhf"
+    },
+    {
+     "title": "Radiolab",
+     "feed": "https://feeds.simplecast.com/EmVW7VGp"
+    },
+    {
+     "title": "Cautionary Tales",
+     "feed": "https://omny.fm/shows/cautionary-tales-with-tim-harford/playlists/podcast.rss"
+    }
+   ],
+   "podcastAlternates": [
+    {
+     "title": "Throughline",
+     "feed": "https://feeds.npr.org/510333/podcast.xml"
+    },
+    {
+     "title": "Planet Money",
+     "feed": "https://feeds.npr.org/510289/podcast.xml"
+    }
+   ],
+   "newsletters": [
+    {
+     "title": "Experimental History",
+     "feed": "https://www.experimental-history.com/feed"
+    },
+    {
+     "title": "Astral Codex Ten",
+     "feed": "https://www.astralcodexten.com/feed"
+    }
+   ],
+   "newsletterAlternates": [
+    {
+     "title": "The Marginalian",
+     "feed": "https://www.themarginalian.org/feed/"
+    }
+   ]
+  },
+  {
+   "id": "science-no-dumbing",
+   "title": "Science without the dumbing down",
+   "summary": "Working scientists, real papers, and the doubts left in.",
+   "subjects": [
+    "science"
+   ],
+   "podcasts": [
+    {
+     "title": "Sean Carroll's Mindscape",
+     "feed": "https://rss.libsyn.com/shows/604590/destinations/5264190.xml"
+    },
+    {
+     "title": "The Joy of Why"
+    },
+    {
+     "title": "Short Wave",
+     "feed": "https://feeds.npr.org/510351/podcast.xml"
+    },
+    {
+     "title": "Science Friday",
+     "feed": "https://feeds.simplecast.com/h18ZIZD_"
+    },
+    {
+     "title": "Nature Podcast"
+    },
+    {
+     "title": "Unexplainable",
+     "feed": "https://feeds.megaphone.fm/unexplainable"
+    }
+   ],
+   "podcastAlternates": [
+    {
+     "title": "Science Vs",
+     "feed": "https://feeds.megaphone.fm/sciencevs"
+    },
+    {
+     "title": "BBC Inside Science",
+     "feed": "https://podcasts.files.bbci.co.uk/b036f7w2.rss"
+    }
+   ],
+   "newsletters": [
+    {
+     "title": "Your Local Epidemiologist",
+     "feed": "https://yourlocalepidemiologist.substack.com/feed"
+    },
+    {
+     "title": "The Intrinsic Perspective",
+     "feed": "https://www.theintrinsicperspective.com/feed"
+    }
+   ],
+   "newsletterAlternates": [
+    {
+     "title": "In the Pipeline"
+    }
+   ]
+  },
+  {
+   "id": "other-side",
+   "title": "Hear the other side",
+   "summary": "Smart people who disagree, with each other and maybe with you.",
+   "subjects": [
+    "news",
+    "society-culture"
+   ],
+   "podcasts": [
+    {
+     "title": "Open to Debate",
+     "feed": "https://feeds.megaphone.fm/PNP1207584390"
+    },
+    {
+     "title": "Left, Right & Center"
+    },
+    {
+     "title": "The Ezra Klein Show",
+     "feed": "https://feeds.simplecast.com/kEKXbjuJ"
+    },
+    {
+     "title": "EconTalk",
+     "feed": "https://feeds.simplecast.com/wgl4xEgL"
+    },
+    {
+     "title": "Conversations with Tyler",
+     "feed": "https://cowenconvos.libsyn.com/rss"
+    },
+    {
+     "title": "The Good Fight",
+     "feed": "https://feeds.megaphone.fm/thegoodfight"
+    }
+   ],
+   "podcastAlternates": [
+    {
+     "title": "The Remnant"
+    },
+    {
+     "title": "The Dispatch Podcast"
+    }
+   ],
+   "newsletters": [
+    {
+     "title": "Noahpinion",
+     "feed": "https://www.noahpinion.blog/feed"
+    },
+    {
+     "title": "Slow Boring",
+     "feed": "https://www.slowboring.com/feed"
+    }
+   ],
+   "newsletterAlternates": [
+    {
+     "title": "The Honest Broker",
+     "feed": "https://www.honest-broker.com/feed"
+    }
+   ]
+  },
+  {
+   "id": "tech-skeptic",
+   "title": "Tech, skeptically",
+   "summary": "What technology is doing to us, from people who don't sell it.",
+   "subjects": [
+    "technology"
+   ],
+   "podcasts": [
+    {
+     "title": "Decoder with Nilay Patel",
+     "feed": "https://feeds.megaphone.fm/recodedecode"
+    },
+    {
+     "title": "Hard Fork",
+     "feed": "https://feeds.simplecast.com/6HKOhNgS"
+    },
+    {
+     "title": "Tech Won't Save Us",
+     "feed": "https://feeds.buzzsprout.com/1004689.rss"
+    },
+    {
+     "title": "Your Undivided Attention"
+    },
+    {
+     "title": "Mystery AI Hype Theater 3000",
+     "feed": "https://feeds.buzzsprout.com/2126417.rss"
+    },
+    {
+     "title": "Big Technology Podcast"
+    }
+   ],
+   "podcastAlternates": [
+    {
+     "title": "The Vergecast",
+     "feed": "https://feeds.megaphone.fm/vergecast"
+    },
+    {
+     "title": "Better Offline"
+    }
+   ],
+   "newsletters": [
+    {
+     "title": "Pluralistic",
+     "feed": "https://pluralistic.net/feed/"
+    },
+    {
+     "title": "One Useful Thing",
+     "feed": "https://www.oneusefulthing.org/feed"
+    }
+   ],
+   "newsletterAlternates": [
+    {
+     "title": "Platformer",
+     "feed": "https://www.platformer.news/rss/"
+    }
+   ]
+  },
+  {
+   "id": "history-argues",
+   "title": "History that argues back",
+   "summary": "The past as a fight over evidence, not a list of dates.",
+   "subjects": [
+    "history"
+   ],
+   "podcasts": [
+    {
+     "title": "In Our Time",
+     "feed": "https://podcasts.files.bbci.co.uk/b006qykl.rss"
+    },
+    {
+     "title": "Throughline",
+     "feed": "https://feeds.npr.org/510333/podcast.xml"
+    },
+    {
+     "title": "The Rest Is History",
+     "feed": "https://feeds.megaphone.fm/GLT4787413333"
+    },
+    {
+     "title": "Past Present"
+    },
+    {
+     "title": "Fall of Civilizations",
+     "feed": "https://anchor.fm/s/101adcf44/podcast/rss"
+    },
+    {
+     "title": "Revolutions",
+     "feed": "https://rss.libsyn.com/shows/47475/destinations/159998.xml"
+    }
+   ],
+   "podcastAlternates": [
+    {
+     "title": "You're Dead to Me",
+     "feed": "https://podcasts.files.bbci.co.uk/p07mdbhg.rss"
+    },
+    {
+     "title": "Ben Franklin's World"
+    }
+   ],
+   "newsletters": [
+    {
+     "title": "A Collection of Unmitigated Pedantry",
+     "feed": "https://acoup.blog/feed/"
+    },
+    {
+     "title": "Res Obscura",
+     "feed": "https://resobscura.substack.com/feed"
+    }
+   ],
+   "newsletterAlternates": [
+    {
+     "title": "The Marginalian",
+     "feed": "https://www.themarginalian.org/feed/"
+    }
+   ]
+  },
+  {
+   "id": "money-works",
+   "title": "How money works",
+   "summary": "Economics you can check against your own bills.",
+   "subjects": [
+    "business"
+   ],
+   "podcasts": [
+    {
+     "title": "Odd Lots",
+     "feed": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/8a94442e-5a74-4fa2-8b8d-ae27003a8d6b/982f5071-765c-403d-969d-ae27003a8d83/podcast.rss"
+    },
+    {
+     "title": "Planet Money",
+     "feed": "https://feeds.npr.org/510289/podcast.xml"
+    },
+    {
+     "title": "Capitalisn't"
+    },
+    {
+     "title": "Macro Musings",
+     "feed": "https://macromusings.libsyn.com/rss"
+    },
+    {
+     "title": "The Indicator from Planet Money",
+     "feed": "https://feeds.npr.org/510325/podcast.xml"
+    },
+    {
+     "title": "The Economics Show with Soumaya Keynes",
+     "feed": "https://feeds.acast.com/public/shows/the-economics-show-with-soumaya-keynes"
+    }
+   ],
+   "podcastAlternates": [
+    {
+     "title": "Trade Talks",
+     "feed": "https://tradetalkspodcast.com/feed/podcast"
+    },
+    {
+     "title": "Money Talks from The Economist",
+     "feed": "https://feeds.acast.com/public/shows/theeconomistmoneytalks"
+    }
+   ],
+   "newsletters": [
+    {
+     "title": "Construction Physics",
+     "feed": "https://www.construction-physics.com/feed"
+    },
+    {
+     "title": "Apricitas Economics",
+     "feed": "https://www.apricitas.io/feed"
+    }
+   ],
+   "newsletterAlternates": [
+    {
+     "title": "Noahpinion",
+     "feed": "https://www.noahpinion.blog/feed"
+    }
+   ]
+  },
+  {
+   "id": "big-questions",
+   "title": "Big questions, slowly",
+   "summary": "Philosophy for people who like to pause and talk back.",
+   "subjects": [
+    "education",
+    "society-culture"
+   ],
+   "podcasts": [
+    {
+     "title": "Philosophy Bites",
+     "feed": "https://philosophybites.libsyn.com/rss"
+    },
+    {
+     "title": "Philosophize This!",
+     "feed": "https://feeds.megaphone.fm/QCD6036500916"
+    },
+    {
+     "title": "Hi-Phi Nation",
+     "feed": "https://feeds.megaphone.fm/hiphination"
+    },
+    {
+     "title": "Philosophy Talk",
+     "feed": "https://philosophytalk.org/feed/podcast"
+    },
+    {
+     "title": "History of Philosophy without any gaps",
+     "feed": "https://historyofphilosophy.net/rss.xml"
+    },
+    {
+     "title": "Sean Carroll's Mindscape",
+     "feed": "https://rss.libsyn.com/shows/604590/destinations/5264190.xml"
+    }
+   ],
+   "podcastAlternates": [
+    {
+     "title": "Elucidations"
+    },
+    {
+     "title": "Overthink"
+    }
+   ],
+   "newsletters": [
+    {
+     "title": "The Marginalian",
+     "feed": "https://www.themarginalian.org/feed/"
+    },
+    {
+     "title": "Aeon Essays",
+     "feed": "https://aeon.co/feed.rss"
+    }
+   ],
+   "newsletterAlternates": [
+    {
+     "title": "Experimental History",
+     "feed": "https://www.experimental-history.com/feed"
+    }
+   ]
+  },
+  {
+   "id": "health-argued",
+   "title": "Health advice, argued over",
+   "summary": "The loudest health voices, and the people who check their claims.",
+   "subjects": [
+    "health-fitness",
+    "science"
+   ],
+   "podcasts": [
+    {
+     "title": "Huberman Lab",
+     "feed": "https://feeds.megaphone.fm/hubermanlab"
+    },
+    {
+     "title": "The Peter Attia Drive",
+     "feed": "https://peterattiadrive.libsyn.com/rss"
+    },
+    {
+     "title": "The Studies Show"
+    },
+    {
+     "title": "Sensible Medicine",
+     "feed": "https://api.substack.com/feed/podcast/1000397.rss"
+    },
+    {
+     "title": "Science Vs",
+     "feed": "https://feeds.megaphone.fm/sciencevs"
+    },
+    {
+     "title": "Hidden Brain",
+     "feed": "https://feeds.simplecast.com/kwWc0lhf"
+    }
+   ],
+   "podcastAlternates": [
+    {
+     "title": "Unbiased Science"
+    },
+    {
+     "title": "BBC Inside Health",
+     "feed": "https://podcasts.files.bbci.co.uk/b019dl1b.rss"
+    }
+   ],
+   "newsletters": [
+    {
+     "title": "Your Local Epidemiologist",
+     "feed": "https://yourlocalepidemiologist.substack.com/feed"
+    },
+    {
+     "title": "Science-Based Medicine",
+     "feed": "https://sciencebasedmedicine.org/feed/"
+    }
+   ],
+   "newsletterAlternates": [
+    {
+     "title": "In the Pipeline"
+    }
+   ]
+  }
+ ]
+}

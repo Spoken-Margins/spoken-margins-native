@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/recodedecode" rel="self" type="application/rss+xml"/>
+    <title>Decoder with Nilay Patel</title>
+    <link>https://theverge.com</link>
+    <language>en</language>
+    <copyright>© 2020 Vox Media, Inc. All Rights Reserved</copyright>
+    <description>Decoder is a show from The Verge about big ideas — and other problems. Verge editor-in-chief Nilay Patel talks to a diverse cast of innovators and policymakers at the frontiers of business and technology to reveal how they’re navigating an ever-changing landscape, what keeps them up at night, and what it all means for our shared future.</description>
+    <image>
+      <url>https://megaphone-images.spotifycdn.com/podcasts/5c6a4f4a-e69c-11e8-8066-17a10182e4c8/image/893066b59c33b28520ea09510cc6a37e.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>Decoder with Nilay Patel</title>
+      <link>https://theverge.com</link>
+    </image>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle>A business show about big ideas — and other problems.</itunes:subtitle>
+    <itunes:author>The Verge</itunes:author>
+    <itunes:summary>Decoder is a show from The Verge about big ideas — and other problems. Verge editor-in-chief Nilay Patel talks to a diverse cast of innovators and policymakers at the frontiers of business and technology to reveal how they’re navigating an ever-changing landscape, what keeps them up at night, and what it all means for our shared future.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>Decoder is a show from The Verge about big ideas — and other problems. Verge editor-in-chief Nilay Patel talks to a diverse cast of innovators and policymakers at the frontiers of business and technology to reveal how they’re navigating an ever-changing landscape, what keeps them up at night, and what it all means for our shared future.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Vox Media Podcast Network</itunes:name>
+      <itunes:email>decoder@theverge.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone-images.spotifycdn.com/podcasts/5c6a4f4a-e69c-11e8-8066-17a10182e4c8/image/893066b59c33b28520ea09510cc6a37e.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Business">
+    </itunes:category>
+    <itunes:category text="Technology">
+    </itunes:category>
+    <itunes:new-feed-url>https://feeds.megaphone.fm/recodedecode</itunes:new-feed-url>
+    
