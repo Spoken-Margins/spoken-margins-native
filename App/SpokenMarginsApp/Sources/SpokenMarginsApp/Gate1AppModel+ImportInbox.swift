@@ -54,7 +54,23 @@ extension Gate1AppModel {
         importInbox = entries
     }
 
-    func retryImportInboxEntry(_ entry: ImportInboxEntry) {
+    /// "See why" on a failure banner: the Settings tab, showing the Import Inbox page (#4781). It refuses while a
+    /// Margin is being recorded or written, and then leaves no request behind for a later visit to Settings.
+    func openImportInbox() {
+        guard !rejectNavigationOrSessionMutationWhileRecording("open_import_inbox") else { return }
+        requestedSettingsPage = .importInbox
+        showSettingsTab()
+    }
+
+    /// The page "See why" asked Settings to show, once: reading it clears it.
+    func takeSettingsPageRequest() -> SettingsPage? {
+        defer { requestedSettingsPage = nil }
+        return requestedSettingsPage
+    }
+
+    /// True when the retry was queued, so the Inbox page can hold that entry's Retry while its import runs.
+    @discardableResult
+    func retryImportInboxEntry(_ entry: ImportInboxEntry) -> Bool {
         do {
             switch entry.kind {
             case .sourceLink:
@@ -64,8 +80,10 @@ extension Gate1AppModel {
             }
             importPendingSourceLinkHandoffs()
             reportConfirmation("Import retry queued.")
+            return true
         } catch {
             reportFailure(error, context: "Import retry failed")
+            return false
         }
     }
 
@@ -267,6 +285,14 @@ extension Gate1AppModel {
         guard let first = failures.first else { return }
         let lead = failures.count == 1 ? "A shared link couldn't be imported" : "\(failures.count) shared links couldn't be imported"
         let reason = first.hasSuffix(".") ? first : first + "."
-        reportFailure("\(lead): \(reason) Retry or remove it in Settings, Import Inbox.")
+        reportFailure(
+            "\(lead): \(reason) Retry or remove it in Settings, Import Inbox.",
+            action: UserFeedbackEvent.Action(
+                title: "See why",
+                accessibilityLabel: "See why the shared \(failures.count == 1 ? "link" : "links") couldn't be imported",
+                identifier: "feedback.sharedLinkFailed.seeWhy",
+                perform: { [weak self] in self?.openImportInbox() }
+            )
+        )
     }
 }
