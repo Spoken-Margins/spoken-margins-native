@@ -172,8 +172,29 @@ struct SpokenMarginsApp: App {
             },
             libraryHoldsFriendPacket: { [weak model] in await model?.libraryHoldsFriendPacket() ?? true },
             openFriendLink: { [weak model] url in model?.openShareLink(url) },
-            packetOpenFailures: model.packetOpenFailures
+            packetOpenFailures: model.packetOpenFailures,
+            packs: CatalogDrawerPackActions(
+                // Follow all (#4285): the first source fetches its episodes at once, the rest wait for one refresh.
+                followQuietly: { [weak model] feedURL in
+                    guard let model else { throw CancellationError() }
+                    return try await model.followCatalogFeed(feedURL, refreshAfter: false)
+                },
+                refreshAfterBatch: { [weak model] in
+                    _ = await model?.performFollowedSourceRefresh(force: false, trigger: .afterFollow)
+                },
+                notForMe: { [weak model] in
+                    await model?.loadNotForMe()
+                    return model?.notForMeSnapshot ?? .empty
+                },
+                hiddenSources: { [weak model] in await model?.notForMeHiddenSources() ?? [] },
+                hide: { [weak model] entry, sourceId in
+                    await model?.hideNotForMeSource(feedURL: entry.feedURL, title: entry.title, artworkURL: entry.artworkURL, sourceId: sourceId)
+                },
+                showAgain: { [weak model] feedURL in await model?.showNotForMeSourceAgain(feedURL: feedURL) },
+                unfollow: { [weak model] feedURL in await model?.unfollowCatalogFeed(feedURL) ?? false }
+            )
         )
+        model.notForMe.catalog = { [weak drawer] in drawer?.catalog }
         // A closed "Suggested by your AI" preview drops what it settled: what it followed, and what it couldn't offer.
         drawer.importClosed = { [weak model] importer in
             guard importer.origin == .assistant else { return }
