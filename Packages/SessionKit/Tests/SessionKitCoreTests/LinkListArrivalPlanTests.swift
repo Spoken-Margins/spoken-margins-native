@@ -297,6 +297,100 @@ final class LinkListArrivalPlanTests: XCTestCase {
         XCTAssertTrue(second.isExhausted(file))
     }
 
+    // MARK: The handoff folder (network, relaunch, unreadable)
+
+    func testHandoffSettlement() {
+        // Nothing was tried (offline, or another import running): the file stays, whatever the count says.
+        XCTAssertEqual(LinkListArrivalPlan.handoffSettlement(attempted: false, allLanded: false, triesAfterThisAttempt: 0), .keep)
+        XCTAssertEqual(LinkListArrivalPlan.handoffSettlement(attempted: false, allLanded: false, triesAfterThisAttempt: 5), .keep)
+        // Every link landed: gone.
+        XCTAssertEqual(LinkListArrivalPlan.handoffSettlement(attempted: true, allLanded: true, triesAfterThisAttempt: 0), .remove)
+        XCTAssertEqual(LinkListArrivalPlan.handoffSettlement(attempted: true, allLanded: true, triesAfterThisAttempt: 2), .remove)
+        // A link failed online: kept for two tries, removed on the third (the banner is the last word).
+        XCTAssertEqual(LinkListArrivalPlan.handoffSettlement(attempted: true, allLanded: false, triesAfterThisAttempt: 1), .keep)
+        XCTAssertEqual(LinkListArrivalPlan.handoffSettlement(attempted: true, allLanded: false, triesAfterThisAttempt: 2), .keep)
+        XCTAssertEqual(LinkListArrivalPlan.handoffSettlement(attempted: true, allLanded: false, triesAfterThisAttempt: 3), .remove)
+        XCTAssertEqual(LinkListArrivalPlan.handoffSettlement(attempted: true, allLanded: false, triesAfterThisAttempt: 9), .remove)
+    }
+
+    /// The drain's steps over a real folder and a real ledger: a file that waits offline is still there and uncounted, and
+    /// the count survives a relaunch (a new ledger over the same defaults) until the third failed try removes it.
+    func testAHandoffFileStaysOfflineAndIsRemovedOnTheThirdFailedTryAcrossARelaunch() throws {
+        let suite = "arrival-handoff-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let folder = LinkListHandoffFolder(baseDirectory: directory)
+        let entry = try folder.save(LinkListFile(title: "Brief", entries: [.init(url: "https://example.com/a")]))
+
+        func drainOnce(attempted: Bool, allLanded: Bool, ledger: LinkListRetryLedger) {
+            let tries = (attempted && !allLanded) ? ledger.recordFailedTry(for: entry.id) : 0
+            switch LinkListArrivalPlan.handoffSettlement(attempted: attempted, allLanded: allLanded, triesAfterThisAttempt: tries) {
+            case .remove: folder.remove(entry); ledger.clear(entry.id)
+            case .keep: break
+            }
+        }
+
+        let first = LinkListRetryLedger(defaults: defaults, key: LinkListRetryLedger.handoffKey)
+        drainOnce(attempted: false, allLanded: false, ledger: first) // offline
+        drainOnce(attempted: false, allLanded: false, ledger: first) // offline again
+        XCTAssertEqual(folder.pending().map(\.id), [entry.id])
+        XCTAssertEqual(first.tries(for: entry.id), 0, "offline opens never count")
+
+        drainOnce(attempted: true, allLanded: false, ledger: first)
+        drainOnce(attempted: true, allLanded: false, ledger: first)
+        XCTAssertEqual(folder.pending().map(\.id), [entry.id])
+
+        // relaunch: the count is read back and the third failed try removes the file and its count.
+        let second = LinkListRetryLedger(defaults: defaults, key: LinkListRetryLedger.handoffKey)
+        XCTAssertEqual(second.tries(for: entry.id), 2)
+        drainOnce(attempted: true, allLanded: false, ledger: second)
+        XCTAssertTrue(folder.pending().isEmpty)
+        XCTAssertEqual(second.tries(for: entry.id), 0)
+    }
+
+    func testAHandoffFileThatLandedInFullIsRemovedAndItsCountForgotten() throws {
+        let suite = "arrival-handoff-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let folder = LinkListHandoffFolder(baseDirectory: directory)
+        let ledger = LinkListRetryLedger(defaults: defaults, key: LinkListRetryLedger.handoffKey)
+        let entry = try folder.save(LinkListFile(title: "Brief", entries: [.init(url: "https://example.com/a")]))
+        ledger.recordFailedTry(for: entry.id) // failed once, landed on the second try
+
+        XCTAssertEqual(LinkListArrivalPlan.handoffSettlement(attempted: true, allLanded: true, triesAfterThisAttempt: 0), .remove)
+        folder.remove(entry); ledger.clear(entry.id)
+
+        XCTAssertTrue(folder.pending().isEmpty)
+        XCTAssertEqual(ledger.tries(for: entry.id), 0)
+    }
+
+    /// A file the Shortcut never wrote that way (cut short, edited, not a list) reads as not a list or as rejected; the
+    /// drain removes it at once and says so.
+    func testAnUnreadableHandoffFileReadsAsNotAListSoTheDrainRemovesItAtOnce() throws {
+        let folder = LinkListHandoffFolder(baseDirectory: directory)
+        let entry = try folder.save(LinkListFile(title: "Brief", entries: [.init(url: "https://example.com/a")]))
+        try Data("{ not json".utf8).write(to: entry.url)
+
+        XCTAssertEqual(folder.read(entry), .notALinkList)
+        XCTAssertEqual(LinkListArrivalPlan.unreadableHandoffMessage, "A saved link list couldn't be read, so nothing was added from it.")
+        folder.remove(entry)
+        XCTAssertTrue(folder.pending().isEmpty)
+
+        let wrongVersion = try folder.save(LinkListFile(title: "Brief", entries: [.init(url: "https://example.com/a")]))
+        try Data(#"{"schemaVersion":"spoken-margins.link-list.v9","entries":[{"url":"https://example.com/a"}]}"#.utf8).write(to: wrongVersion.url)
+        guard case .rejected = folder.read(wrongVersion) else { return XCTFail("a list of another version is rejected") }
+    }
+
+    /// Two files on one foreground arrive oldest first, one after the other.
+    func testHandoffFilesComeOutOldestFirst() throws {
+        // Saved five seconds apart, so the file names sort by time and not by their random uuid.
+        let clock = ClockBox([1_700_000_005, 1_700_000_010])
+        let folder = LinkListHandoffFolder(baseDirectory: directory, now: { clock.next() })
+        let first = try folder.save(LinkListFile(title: "First", entries: [.init(url: "https://example.com/a")]))
+        let second = try folder.save(LinkListFile(title: "Second", entries: [.init(url: "https://example.com/b")]))
+        XCTAssertEqual(folder.pending().map(\.id), [first.id, second.id])
+    }
+
     // MARK: The record of the last arrival (relaunch)
 
     func testLastArrivalRecordSurvivesANewReadOverTheSameDefaults() throws {
@@ -331,5 +425,15 @@ final class LinkListArrivalPlanTests: XCTestCase {
     func testEveryRouteIsListed() {
         XCTAssertEqual(Set(LinkListArrivalPlan.Route.allCases.map(\.rawValue)),
                        ["quickFolderAutomatic", "quickFolderTapped", "pasteAndGo", "handoffFolder"])
+    }
+}
+
+/// A clock that hands out the given times in order (the last one repeats), safe to read from the folder's `@Sendable` closure.
+private final class ClockBox: @unchecked Sendable {
+    private var times: [TimeInterval]
+    private let lock = NSLock()
+    init(_ times: [TimeInterval]) { self.times = times }
+    func next() -> Date {
+        lock.withLock { Date(timeIntervalSince1970: times.count > 1 ? times.removeFirst() : times[0]) }
     }
 }

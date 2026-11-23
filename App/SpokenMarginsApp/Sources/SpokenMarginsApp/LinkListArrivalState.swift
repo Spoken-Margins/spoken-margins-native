@@ -21,13 +21,23 @@ final class LinkListArrivalState: ObservableObject {
     /// Failed tries of Quick Folder lists, over `UserDefaults`, so a count survives a relaunch.
     let quickFolderRetry: LinkListRetryLedger
 
+    /// Failed tries of saved handoff files (the Shortcuts action's lists), over `UserDefaults`, so a count survives a relaunch.
+    let handoffRetry: LinkListRetryLedger
+
+    /// True while `drainLinkListHandoffs()` runs, so two foregrounds at once can't read the same file twice.
+    var isDrainingHandoffs = false
+
     /// Quick Folder files not to try again on their own until the app comes forward again: they waited offline or
     /// failed this time. Without it, the refresh that ends an import would start the next try at once and spend all
     /// three tries in a few seconds. Kept in memory, so a relaunch tries them again.
     private(set) var heldQuickFolderFiles: Set<String> = []
 
-    init(quickFolderRetry: LinkListRetryLedger = LinkListRetryLedger(key: LinkListRetryLedger.quickFolderKey)) {
+    init(
+        quickFolderRetry: LinkListRetryLedger = LinkListRetryLedger(key: LinkListRetryLedger.quickFolderKey),
+        handoffRetry: LinkListRetryLedger = LinkListRetryLedger(key: LinkListRetryLedger.handoffKey)
+    ) {
         self.quickFolderRetry = quickFolderRetry
+        self.handoffRetry = handoffRetry
     }
 
     func hold(_ fileID: String) { heldQuickFolderFiles.insert(fileID) }

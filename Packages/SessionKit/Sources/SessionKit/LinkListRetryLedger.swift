@@ -8,7 +8,7 @@ import Foundation
 /// handoff file's name, a Quick Folder file's id) to its failed tries. Only a failed try while online counts; opening
 /// the app offline never does, so the caller simply doesn't call `recordFailedTry`.
 ///
-/// No call site yet: PR 3 of #4683 wires the arrival, the handoff drain and the Quick Folder refresh to it.
+/// The Quick Folder refresh (PR 3a) and the handoff drain (PR 3b) count their failed tries here.
 public final class LinkListRetryLedger: @unchecked Sendable {
     /// `UserDefaults` key for link list handoff files: file name to failed tries.
     public static let handoffKey = "linkListHandoffTriesV1"

@@ -147,6 +147,9 @@ extension Gate1AppModel {
         repeat {
             await drainPendingHandoffsOnce()
         } while pendingHandoffDrainGate.finishPass() != nil
+        // Link lists the Shortcuts action saved (#4683). After the share pass has released its gate, so a long list never
+        // holds up a Safari share.
+        await drainLinkListHandoffs()
     }
 
     private func drainPendingHandoffsOnce() async {
