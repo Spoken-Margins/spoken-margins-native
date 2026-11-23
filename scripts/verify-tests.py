@@ -32,7 +32,7 @@ import lane_sim_pool
 import node_modules_drift
 import third_party_notices
 import xcodebuild_finish
-from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
+from lane_slots import (acquire_simulator_slot, acquire_test_runner, build_slot, host_test_slot, release_handle,
                         state_dir, SIMULATOR_SLOTS)
 
 from test_inventory import ROOT, plan_tests, swift_tests, target_tests, validate
@@ -371,11 +371,17 @@ def capture(command):
     return subprocess.check_output(command, cwd=ROOT, text=True).strip()
 
 
+def device_state(udid):
+    """The simulator's state now (Booted, Shutdown, ...), or None when it no longer exists."""
+    devices = json.loads(capture(['xcrun', 'simctl', 'list', 'devices', '--json']))['devices']
+    return next((entry.get('state') for group in devices.values() for entry in group if entry.get('udid') == udid), None)
+
+
 def inherited_simulator_slot(fd):
     """Borrow a parent's real locked simulator-slot descriptor; never trust an env flag.
 
-    The parent keeps the decision lock too, excluding a second simulator job for
-    an unattended integration run. Closing this duplicate preserves its lock.
+    The parent keeps the slot for the whole job; closing this duplicate preserves its lock. The shared Test Runner is
+    guarded by its own lock, which xcode() takes for every run without --device (#4736).
     """
     try:
         info = os.fstat(fd)
@@ -2360,7 +2366,26 @@ class Run:
         slot = inherited_simulator_slot(simulator_slot_fd) if simulator_slot_fd is not None else (
             acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS)
             if booted_here else None)
+        # Our own Test Runner is shared by every checkout's run without --device, so it is locked Mac-wide from here
+        # until it is shut down (#4736). The lock comes after the slot, and its holder waits for no slot. The device's
+        # state is read again under the lock: the one read before the build may belong to the run that held it.
+        uses_test_runner = device is None and chosen.get('name') == TEST_RUNNER_NAME
+        runner_lock = None
+        if uses_test_runner:
+            booted_here = False  # nothing here boots or shuts it down until the lock is ours
         try:
+            if uses_test_runner:
+                runner_lock = acquire_test_runner(f'verify-tests {plan}', out=sys.stdout,
+                                                  max_wait=max(BUILD_SLOT_WAIT_SECONDS, timeout))
+                state = device_state(chosen['udid'])
+                if state is None:
+                    raise RuntimeError(f'{TEST_RUNNER_NAME} ({chosen["udid"]}) was deleted while this run waited for '
+                                       'it; run again')
+                chosen = dict(chosen, state=state)
+                refuse_borrowed(chosen, device, simulator_slot_fd)
+                booted_here = state != 'Booted'
+                self.manifest['destination'] = chosen
+                self.save()
             if booted_here:
                 # Lane boot rules (scripts/lane_sim.py): one boot at a time, no builds meanwhile, no retry
                 # after a failed boot, stop at the first crash. Two crash floods followed boots (#184).
@@ -2489,6 +2514,8 @@ class Run:
             if booted_here:
                 # Don't leave an idle simulator holding memory after the run.
                 shut_down_without_hiding_the_error(chosen['udid'])
+            if runner_lock:
+                release_handle(runner_lock)
             if slot:
                 if simulator_slot_fd is not None:
                     slot.close()

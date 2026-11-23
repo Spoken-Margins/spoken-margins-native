@@ -659,3 +659,43 @@ class DecisionLockTests(unittest.TestCase):
         result = self.take_slot(max_wait=2)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('simulator slot 1/2 acquired', result.stdout)
+
+
+class TestRunnerLockTests(unittest.TestCase):
+    """Two checkouts' verify-tests runs can't use the shared Test Runner at once; the second waits visibly (#4736)."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.state = Path(self.temporary.name) / 'state'
+        self.state.mkdir()
+        self.env = {**os.environ, 'SM_LANE_STATE_DIR': str(self.state)}
+
+    def take(self, max_wait):
+        code = ('import sys; sys.path.insert(0, sys.argv[1]); import lane_slots; '
+                'lane_slots.POLL_SECONDS = 0.2; '
+                'lane_slots.acquire_test_runner("second checkout", out=sys.stdout, max_wait=float(sys.argv[2]))')
+        return subprocess.run([sys.executable, '-c', code, str(SCRIPTS), str(max_wait)], env=self.env,
+                              capture_output=True, text=True, timeout=max_wait + 15)
+
+    def test_a_held_test_runner_is_waited_on_with_a_note_naming_its_holder(self):
+        code = ('import sys, time; sys.path.insert(0, sys.argv[1]); import lane_slots; '
+                'held = lane_slots.acquire_test_runner("integration run", out=sys.stderr); print("locked", flush=True); '
+                'time.sleep(60)')
+        holder = subprocess.Popen([sys.executable, '-c', code, str(SCRIPTS)], env=self.env, stdout=subprocess.PIPE,
+                                  stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+        self.addCleanup(lambda: (holder.kill(), holder.wait(), holder.stdout.close()))
+        self.assertEqual(holder.stdout.readline().strip(), 'locked')
+        result = self.take(max_wait=1)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('waiting for a Test Runner lock', result.stdout)
+        self.assertIn('integration run', result.stdout)
+        self.assertIn('TimeoutError', result.stderr)
+        holder.kill()
+        holder.wait()
+        self.assertEqual(self.take(max_wait=1).returncode, 0, 'the lock ends with its holder')
+
+    def test_a_free_test_runner_is_taken_at_once(self):
+        result = self.take(max_wait=0)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Test Runner lock acquired', result.stdout)
