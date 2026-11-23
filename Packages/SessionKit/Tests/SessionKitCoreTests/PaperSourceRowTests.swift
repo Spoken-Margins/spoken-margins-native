@@ -9,7 +9,7 @@ final class PaperSourceRowTests: XCTestCase {
 
     private func paper(_ key: String, joined: Double?, doi: String? = nil, abstract: String? = nil, pdf: String? = nil,
                        stored: String? = nil, reachable: Bool = false, page: String? = "https://example.org/p") -> PaperEntry {
-        PaperEntry(id: "zotero:1:\(key)", provider: .zotero, title: "Paper \(key)", authors: ["Smith"], journal: "Nature", year: 2021,
+        PaperEntry(id: stored == nil ? "zotero:1:\(key)" : "zotero:user:7:\(key)", provider: .zotero, title: "Paper \(key)", authors: ["Smith"], journal: "Nature", year: 2021,
                    doi: doi, abstract: abstract, pdfURL: pdf.flatMap(URL.init(string:)), storedPDFAttachmentKey: stored,
                    storedPDFReachable: reachable, pageURL: page.flatMap(URL.init(string:)), dateJoined: joined.map(date))
     }
@@ -65,17 +65,19 @@ final class PaperSourceRowTests: XCTestCase {
     func testAPaperRowSitsBetweenAFriendAndAShowByItsDate() throws {
         let friendRows = FollowingFeed.rows(friends: [], shows: [show("newer", at: 100), show("older", at: 10)])
         let paperRow = PaperSourceRow(record: record("C", papers: [paper("p", joined: 50)]))
-        let merged = FollowingFeed.rows(friendRows, splicingPapers: [paperRow])
+        let merged = FollowingFeed.rows(friendRows, splicingPapers: [paperRow], showsLoaded: true)
         XCTAssertEqual(merged.map(\.id), ["show::newer", "papers::\(paperRow.id)", "show::older"])
-        XCTAssertEqual(FollowingFeed.rows(friendRows, splicingPapers: []), friendRows, "no lists, no change (J13)")
+        XCTAssertEqual(FollowingFeed.rows(friendRows, splicingPapers: [], showsLoaded: true), friendRows, "no lists, no change (J13)")
         let tie = PaperSourceRow(record: record("T", papers: [paper("t", joined: 10)]))
-        XCTAssertEqual(FollowingFeed.rows(friendRows, splicingPapers: [tie]).map(\.id).last, "papers::\(tie.id)", "a tie keeps the show first")
+        XCTAssertEqual(FollowingFeed.rows(friendRows, splicingPapers: [tie], showsLoaded: true).map(\.id).last, "papers::\(tie.id)", "a tie keeps the show first")
         XCTAssertEqual(merged[1].sortDate, date(50))
     }
 
     func testUnderAListChipPaperRowsAreHiddenLikeFriends() {
         let paperRow = PaperSourceRow(record: record("C", papers: [paper("p", joined: 50)]))
-        let rows = FollowingFeed.rows([], splicingPapers: [paperRow])
+        XCTAssertEqual(FollowingFeed.rows([], splicingPapers: [paperRow], showsLoaded: false), [],
+                       "nothing until the shows are in, so the list row never snaps down (#3753)")
+        let rows = FollowingFeed.rows([], splicingPapers: [paperRow], showsLoaded: true)
         let list = FollowList(id: "l", name: "News", createdAt: date(0))
         let screen = FollowingByList.screen(selected: "l", lists: [list], feedRows: rows, shows: FollowingShowList(), subscriptions: [])
         XCTAssertEqual(screen.rows, [])
@@ -108,8 +110,8 @@ final class PaperSourceRowTests: XCTestCase {
         let index = PaperLibraryIndex(items: [libraryItem])
         let rows = PaperSourceScreen.rows(
             record: record("C", papers: entries), index: index, added: ["zotero:1:ADDED": "nope"], adding: ["zotero:1:ABS"],
-            pdfFailed: ["zotero:1:FAIL", "zotero:1:FAILABS"], keyConnected: true)
-        let byKey = Dictionary(uniqueKeysWithValues: rows.map { ($0.id.replacingOccurrences(of: "zotero:1:", with: ""), $0) })
+            pdfFailed: ["zotero:1:FAIL", "zotero:1:FAILABS"], connectedUserID: 7)
+        let byKey = Dictionary(uniqueKeysWithValues: rows.map { ($0.id.replacingOccurrences(of: "zotero:1:", with: "").replacingOccurrences(of: "zotero:user:7:", with: ""), $0) })
         XCTAssertEqual(byKey["PDF"]?.button, .add)
         XCTAssertEqual(byKey["PDF"]?.statusTitle, "PDF")
         XCTAssertEqual(byKey["PDF"]?.statusSymbol, "doc.fill")
@@ -128,15 +130,39 @@ final class PaperSourceRowTests: XCTestCase {
 
     func testAPaperAddedFromTheScreenIsInLibraryBeforeTheIndexIsRebuilt() {
         let rows = PaperSourceScreen.rows(record: record("C", papers: [paper("A", joined: 1, abstract: "x")]), index: nil,
-                                          added: ["zotero:1:A": "new-item"], adding: [], pdfFailed: [], keyConnected: false)
+                                          added: ["zotero:1:A": "new-item"], adding: [], pdfFailed: [], connectedUserID: nil)
         XCTAssertEqual(rows.first?.button, .inLibrary(itemId: "new-item"))
     }
 
     func testAStoredPDFIsOutOfReachOnceTheKeyIsDisconnected() {
         let stored = paper("S", joined: 1, abstract: "Words.", stored: "ATTACH01", reachable: true)
-        let rows = PaperSourceScreen.rows(record: record("C", papers: [stored]), index: nil, adding: [], pdfFailed: [], keyConnected: false)
+        let rows = PaperSourceScreen.rows(record: record("C", papers: [stored]), index: nil, adding: [], pdfFailed: [], connectedUserID: nil)
         XCTAssertEqual(rows.first?.status, .abstractOnly)
         XCTAssertEqual(rows.first?.button, .add)
+        let otherUser = PaperSourceScreen.rows(record: record("C", papers: [stored]), index: nil, adding: [], pdfFailed: [], connectedUserID: 8)
+        XCTAssertEqual(otherUser.first?.status, .abstractOnly, "another user's key can't fetch this library's file")
+        let owner = PaperSourceScreen.rows(record: record("C", papers: [stored]), index: nil, adding: [], pdfFailed: [], connectedUserID: 7)
+        XCTAssertEqual(owner.first?.status, .pdf)
+    }
+
+    func testAStoredPDFIsKeptUnderThePapersOwnAddressAndReadsInLibraryAfterARelaunch() throws {
+        let withDOI = paper("D", joined: 1, doi: "10.1000/x", stored: "ATTACH01", reachable: true, page: "https://doi.org/10.1000/x")
+        XCTAssertEqual(withDOI.storedPDFSourceURL?.absoluteString, "https://doi.org/10.1000/x")
+        let bare = paper("B", joined: 1, stored: "ATTACH02", reachable: true, page: nil)
+        let address = try XCTUnwrap(bare.storedPDFSourceURL)
+        XCTAssertEqual(address.absoluteString, "zotero-file://attachment/ATTACH02")
+        XCTAssertFalse(address.absoluteString.contains("api.zotero.org"))
+        XCTAssertFalse(address.absoluteString.contains("users"), "never names the listener's user ID")
+        XCTAssertEqual(bare.zoteroUserID, 7)
+        XCTAssertNil(paper("G", joined: 1).zoteroUserID, "a group paper has no owner")
+        XCTAssertNil(paper("X", joined: 1, stored: "bad/key", page: nil).storedPDFSourceURL)
+
+        // After a relaunch the in-memory "added" map is empty: the Library index alone must find the stored PDF.
+        let imported = Item(id: "item-stored", title: "Paper B", mediaType: "pdf", text: "x", externalReference: nil,
+                            status: "ready", sourceURL: address.absoluteString)
+        let index = PaperLibraryIndex(items: [imported])
+        XCTAssertEqual(index.itemId(for: bare), "item-stored")
+        XCTAssertNil(index.itemId(for: paper("C", joined: 1, stored: "ATTACH03", reachable: true, page: nil)), "another attachment")
     }
 
     func testHeaderWords() {

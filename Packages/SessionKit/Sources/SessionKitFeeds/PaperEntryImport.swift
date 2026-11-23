@@ -125,7 +125,9 @@ public struct PaperLibraryIndex: Sendable {
             var dois: [String] = []
             if let doi = ZoteroPaperReader.normalizedDOI(item.documentStructure?.bibliography?.doi) { dois.append(doi) }
             for address in [item.externalReference, item.sourceURL].compactMap({ $0 }) {
-                if let doi = Self.doi(inAddress: address) {
+                if let file = Self.storedFileKey(address) {
+                    if itemIdByAddress[file] == nil { itemIdByAddress[file] = item.id }
+                } else if let doi = Self.doi(inAddress: address) {
                     dois.append(doi)
                 } else if let key = Self.addressKey(address) {
                     if itemIdByAddress[key] == nil { itemIdByAddress[key] = item.id }
@@ -142,7 +144,20 @@ public struct PaperLibraryIndex: Sendable {
         for address in addresses {
             if let key = Self.addressKey(address), let id = itemIdByAddress[key] { return id }
         }
+        if let file = entry.storedPDFSourceURL.flatMap({ Self.storedFileKey($0.absoluteString) }), let id = itemIdByAddress[file] {
+            return id
+        }
         return nil
+    }
+
+    /// A stored Zotero PDF's local name (`PaperEntry.storedPDFSourceURL` with no public address), keyed apart from
+    /// web addresses. Attachment keys are upper-case, so only the scheme and host are folded.
+    static func storedFileKey(_ address: String) -> String? {
+        guard let components = URLComponents(string: address.trimmingCharacters(in: .whitespacesAndNewlines)),
+              components.scheme?.lowercased() == "zotero-file", components.host?.lowercased() == "attachment"
+        else { return nil }
+        let key = components.percentEncodedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return key.isEmpty ? nil : "zotero-file:" + key
     }
 
     /// The DOI a `doi.org` address names, normalized as Zotero's DOIs are.

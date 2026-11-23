@@ -92,15 +92,23 @@ final class PaperSourcesState: ObservableObject {
     @Published private(set) var collections: [ZoteroCollection] = []
     @Published private(set) var collectionsProblem: String?
     @Published private(set) var isLoadingCollections = false
+    /// Why a list's last read failed, by list id, until a read succeeds: its screen says so above the papers.
+    @Published private(set) var refreshProblems: [String: PaperFetchProblem] = [:]
 
     private let credentials: ZoteroCredentialStore
     private let transport: PaperTransport
     private var storeForRecords: SQLiteSessionStore?
+    /// Bumped by each read of the stored lists; only the newest read publishes, so a slow older read never wins.
+    private var readGeneration = 0
+    /// The key, read from the Keychain once at launch and kept in step with Connect and Disconnect, so a refresh or
+    /// an Add never reads the Keychain on the main thread again.
+    private var apiKey: String?
 
     init(credentials: ZoteroCredentialStore = .keychain, transport: PaperTransport? = nil) {
         self.credentials = credentials
         self.transport = transport ?? PaperSourceSession.transport
         connection = credentials.connection()
+        apiKey = connection == nil ? nil : credentials.apiKey()
     }
 
     var visibleRows: [PaperSourceRow] { PaperSourceRow.visible(records) }
@@ -124,28 +132,46 @@ final class PaperSourcesState: ObservableObject {
     }
 
     private func reload(store: SQLiteSessionStore) async {
+        readGeneration += 1
+        let generation = readGeneration
         let read = await Task.detached(priority: .userInitiated) { (try? store.loadPaperSources()) ?? [] }.value
+        guard generation == readGeneration else { return }
         storeForRecords = store
         if read != records { records = read }
         loaded = true
     }
 
     /// Following opened or was pulled: read the lists that are due, one at a time (Zotero asks for no more than four
-    /// requests at once). A failure keeps the last snapshot quietly; the list's own screen says nothing went wrong
-    /// because nothing the listener did failed.
-    func refresh(model: Gate1AppModel, pulled: Bool) async {
+    /// requests at once). A failure keeps the last snapshot; Following stays quiet about it, and the list's own screen
+    /// says why (offline, a key Zotero no longer accepts). `only` limits a pull on one list's screen to that list.
+    func refresh(model: Gate1AppModel, pulled: Bool, only id: String? = nil) async {
         await load(model: model)
         guard let store = model.store, !isRefreshing else { return }
-        let due = PaperSourceFollowing.due(records, keyConnected: connection != nil, now: Date(), pulled: pulled)
+        let candidates = id.map { id in records.filter { $0.id == id } } ?? records
+        let due = PaperSourceFollowing.due(candidates, connectedUserID: connection?.userID, now: Date(), pulled: pulled)
         guard !due.isEmpty else { return }
         isRefreshing = true
         defer { isRefreshing = false }
         let following = following(store)
-        let key = credentials.apiKey()
+        let key = apiKey
         for record in due {
-            _ = await following.refresh(record, apiKey: record.source.needsZoteroKey ? key : nil, now: Date())
+            let result = await Task.detached(priority: .utility) {
+                await following.refresh(record, apiKey: record.source.needsZoteroKey ? key : nil, now: Date())
+            }.value
+            switch result {
+            case .success: refreshProblems[record.id] = nil
+            case .failure(let problem): refreshProblems[record.id] = problem
+            }
         }
         await reload(store: store)
+    }
+
+    /// The line a list's screen shows above its papers when its last read failed: the Design's offline line, or the
+    /// fetch problem's own words ("Zotero didn't accept that key." after a key is revoked).
+    func refreshProblemLine(id: String) -> String? {
+        guard let problem = refreshProblems[id] else { return nil }
+        if problem == .offline { return PaperSourceScreen.offlineSnapshotLine }
+        return problem.message(zoteroConnected: connection != nil)
     }
 
     // MARK: Follow
@@ -160,7 +186,7 @@ final class PaperSourcesState: ObservableObject {
     func follow(pasted: String, model: Gate1AppModel) async -> FollowResult {
         guard let store = model.store else { return .problem("Couldn't save that. Try again.") }
         let following = following(store)
-        let key = credentials.apiKey()
+        let key = apiKey
         let connected = connection != nil
         let outcome = await Task.detached(priority: .userInitiated) {
             await following.follow(pasted: pasted, apiKey: key, zoteroConnected: connected, now: Date())
@@ -191,7 +217,7 @@ final class PaperSourcesState: ObservableObject {
         guard let connection, let store = model.store else { return .problem(PaperFetchProblem.keyRefused.message(zoteroConnected: false)) }
         let source = PaperSource.zoteroUser(userID: connection.userID, collectionKey: collection?.key)
         let following = following(store)
-        let key = credentials.apiKey()
+        let key = apiKey
         let outcome = await Task.detached(priority: .userInitiated) {
             await following.follow(source: source, link: source.pageURL().absoluteString, apiKey: key, zoteroConnected: true, now: Date())
         }.value
@@ -279,7 +305,7 @@ final class PaperSourcesState: ObservableObject {
 
     func rows(for record: PaperSourceRecord, index: PaperLibraryIndex?) -> [PaperSourceScreen.Row] {
         PaperSourceScreen.rows(record: record, index: index, added: added, adding: adding, pdfFailed: pdfFailed,
-                               keyConnected: connection != nil)
+                               connectedUserID: connection?.userID)
     }
 
     // MARK: Add
@@ -289,7 +315,7 @@ final class PaperSourcesState: ObservableObject {
     func add(_ entry: PaperEntry, model: Gate1AppModel) async {
         guard !adding.contains(entry.id), added[entry.id] == nil else { return }
         var entry = entry
-        if connection == nil { entry.storedPDFReachable = false }
+        if entry.zoteroUserID == nil || entry.zoteroUserID != connection?.userID { entry.storedPDFReachable = false }
         adding.insert(entry.id)
         defer { adding.remove(entry.id) }
         let citation: @Sendable (PDFBibliography?) -> PDFBibliography? = { [entry] extracted in
@@ -311,7 +337,7 @@ final class PaperSourcesState: ObservableObject {
                 pdfFailedFirst = true
                 route = PaperEntryImportRoute.afterPDFFailed(for: entry)
             case .storedPDF(let attachmentKey):
-                if let itemId = await addStoredPDF(attachmentKey: attachmentKey, citation: citation, model: model) {
+                if let itemId = await addStoredPDF(entry: entry, attachmentKey: attachmentKey, citation: citation, model: model) {
                     added[entry.id] = itemId
                     model.reportConfirmation(PaperAddMessage.added(title: entry.title))
                     return
@@ -336,14 +362,19 @@ final class PaperSourcesState: ObservableObject {
         }
     }
 
-    /// A PDF stored in the listener's own library, fetched with their key, then imported like any PDF.
-    private func addStoredPDF(attachmentKey: String, citation: @escaping @Sendable (PDFBibliography?) -> PDFBibliography?,
+    /// A PDF stored in the listener's own library, fetched with their key (only for a paper of that same user's
+    /// library), then imported like any PDF. It is kept under the paper's own address, never the API's, which names
+    /// the user ID (#853), and titled with the paper when the PDF names no title.
+    private func addStoredPDF(entry: PaperEntry, attachmentKey: String,
+                              citation: @escaping @Sendable (PDFBibliography?) -> PDFBibliography?,
                               model: Gate1AppModel) async -> String? {
-        guard let connection, let key = credentials.apiKey() else { return nil }
+        guard let connection, connection.userID == entry.zoteroUserID, let key = apiKey,
+              let keptAs = entry.storedPDFSourceURL else { return nil }
         let url = ZoteroPaperAPI.fileURL(userID: connection.userID, attachmentKey: attachmentKey)
         let request = ZoteroPaperAPI.request(url, apiKey: key)
         guard let reply = try? await transport(request), (200..<300).contains(reply.status) else { return nil }
-        return try? await model.importDownloadedPDF(reply.data, sourceURL: url, onboardingSteps: [.addedOwnSource], bibliography: citation)
+        return try? await model.importDownloadedPDF(reply.data, sourceURL: keptAs, fallbackTitle: entry.title,
+                                                    onboardingSteps: [.addedOwnSource], bibliography: citation)
     }
 
     /// The abstract as a short text item titled with the paper, whose source line says "Abstract".
@@ -381,6 +412,8 @@ final class PaperSourcesState: ObservableObject {
             return problem.message(zoteroConnected: true)
         case .success(let (name, found)):
             credentials.keep(userID: typed.userID, apiKey: typed.apiKey, libraryName: name)
+            apiKey = typed.apiKey
+            refreshProblems = [:]
             connection = ZoteroConnection(userID: typed.userID, libraryName: name)
             collections = found
             collectionsProblem = nil
@@ -392,6 +425,7 @@ final class PaperSourcesState: ObservableObject {
     /// again once it is connected again.
     func disconnect() {
         credentials.clear()
+        apiKey = nil
         connection = nil
         collections = []
         collectionsProblem = nil
@@ -399,7 +433,7 @@ final class PaperSourcesState: ObservableObject {
 
     /// "Your collections" on Follow papers.
     func loadCollections() async {
-        guard let connection, let key = credentials.apiKey(), !isLoadingCollections else { return }
+        guard let connection, let key = apiKey, !isLoadingCollections else { return }
         isLoadingCollections = true
         defer { isLoadingCollections = false }
         let fetcher = fetcher

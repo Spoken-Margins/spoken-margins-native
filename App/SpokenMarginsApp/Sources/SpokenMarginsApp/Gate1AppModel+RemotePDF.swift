@@ -33,11 +33,13 @@ extension Gate1AppModel {
 
     /// A PDF's bytes, already fetched: checked to be a PDF (a login page is refused), extracted off the main thread, and
     /// added as an item. `bibliography` may fill the citation the extractor found (#4341: a paper source's metadata
-    /// fills it when the PDF names no DOI).
+    /// fills it when the PDF names no DOI). `fallbackTitle` names the item when the PDF has no title of its own, in
+    /// place of the address's last part.
     @discardableResult
     func importDownloadedPDF(
         _ data: Data,
         sourceURL url: URL,
+        fallbackTitle: String? = nil,
         onboardingSteps: Set<OnboardingStep> = [.addedOwnSource, .addedFromSafari],
         bibliography: @escaping @Sendable (PDFBibliography?) -> PDFBibliography? = { $0 }
     ) async throws -> String {
@@ -61,7 +63,7 @@ extension Gate1AppModel {
             captureMode: .markdownFile,
             source: BrowserTextSource(
                 url: url.absoluteString,
-                title: extracted.title ?? (fileTitle.isEmpty ? "Shared PDF" : fileTitle)
+                title: extracted.title ?? fallbackTitle ?? (fileTitle.isEmpty ? "Shared PDF" : fileTitle)
             ),
             text: extracted.document.text,
             contentFormat: .plainText,

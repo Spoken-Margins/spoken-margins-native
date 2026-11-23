@@ -30,6 +30,19 @@ public enum PaperSource: Codable, Hashable, Sendable {
         return false
     }
 
+    /// The Zotero user whose own library this list reads; nil for a public group or PubMed.
+    public var zoteroUserID: Int? {
+        if case .zoteroUser(let userID, _) = self { return userID }
+        return nil
+    }
+
+    /// Whether a connected key belongs to this list: a group or PubMed list needs none, a list of a listener's own
+    /// library needs that same user's key (a key connected for another user is never sent for it).
+    public func isReadable(connectedUserID: Int?) -> Bool {
+        guard let owner = zoteroUserID else { return true }
+        return owner == connectedUserID
+    }
+
     public var identifier: String {
         switch self {
         case .zoteroGroup(let groupID, let collectionKey):
@@ -114,6 +127,24 @@ public struct PaperEntry: Codable, Equatable, Identifiable, Sendable {
         storedPDFReachable = (try? box.decodeIfPresent(Bool.self, forKey: .storedPDFReachable)) ?? false
         pageURL = try? box.decodeIfPresent(URL.self, forKey: .pageURL)
         dateJoined = try? box.decodeIfPresent(Date.self, forKey: .dateJoined)
+    }
+
+    /// The Zotero user whose own library the paper came from (entry ids are `zotero:user:<id>:<key>`).
+    public var zoteroUserID: Int? {
+        let parts = id.split(separator: ":")
+        guard parts.count == 4, parts[0] == "zotero", parts[1] == "user" else { return nil }
+        return Int(parts[2])
+    }
+
+    /// The address a PDF fetched from Zotero's file storage is kept under: the paper's own public address when it has
+    /// one, else a local `zotero-file://` name built from the attachment key. Never the API address, which names the
+    /// listener's Zotero user ID, so neither Diagnostics nor a shared item ever carries it (#853). The Library index
+    /// matches it, so the paper reads In Library after a relaunch.
+    public var storedPDFSourceURL: URL? {
+        if let pageURL { return pageURL }
+        guard let key = storedPDFAttachmentKey, !key.isEmpty, key.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) })
+        else { return nil }
+        return URL(string: "zotero-file://attachment/\(key)")
     }
 
     public var status: PaperEntryStatus {

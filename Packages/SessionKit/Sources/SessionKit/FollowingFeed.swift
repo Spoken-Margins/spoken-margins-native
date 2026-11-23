@@ -52,8 +52,10 @@ public enum FollowingFeed {
 
     /// Splices the followed reading lists (#4341), already newest first (`PaperSourceRow.visible`), into Following's
     /// rows. Every row keeps its order; between the two, the newer date wins and a tie keeps the friend or show first.
-    /// Rows with no date stay last.
-    public static func rows(_ rows: [Row], splicingPapers papers: [PaperSourceRow]) -> [Row] {
+    /// Rows with no date stay last. Until the show list has loaded once nothing is drawn, lists included, so the first
+    /// frame is already in its final order (#3753).
+    public static func rows(_ rows: [Row], splicingPapers papers: [PaperSourceRow], showsLoaded: Bool) -> [Row] {
+        guard showsLoaded else { return [] }
         guard !papers.isEmpty else { return rows }
         var merged: [Row] = []
         merged.reserveCapacity(rows.count + papers.count)

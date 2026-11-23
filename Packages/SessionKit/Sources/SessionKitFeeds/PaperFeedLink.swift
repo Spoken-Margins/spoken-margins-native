@@ -72,7 +72,11 @@ public enum ZoteroPaperAPI {
     public static func attachmentsURL(library: Library, collectionKey: String?, start: Int = 0) -> URL {
         listURL(
             library: library, collectionKey: collectionKey, tail: "/items",
-            extra: [URLQueryItem(name: "itemType", value: "attachment")], start: start
+            // Newest first like the papers, so in a library past the 1,000-attachment read the PDFs left out are the
+            // ones of the oldest papers, which the 500-paper list has already dropped.
+            extra: [URLQueryItem(name: "itemType", value: "attachment"), URLQueryItem(name: "sort", value: "dateAdded"),
+                    URLQueryItem(name: "direction", value: "desc")],
+            start: start
         )
     }
 

@@ -107,9 +107,11 @@ public enum ZoteroPaperReader {
             pdfURL: pdfURL,
             storedPDFAttachmentKey: storedKey,
             storedPDFReachable: ownLibrary && storedKey != nil,
+            // The Zotero page of an item in a listener's own library names their username, so it is never kept:
+            // it would reach an abstract item's link or a stored PDF's address (#853).
             pageURL: doi.flatMap(doiAddress)
                 ?? webURL(data.url)
-                ?? webURL(record.links?.alternate?.href),
+                ?? (ownLibrary ? nil : webURL(record.links?.alternate?.href)),
             dateJoined: data.dateAdded.flatMap(date(from:))
         )
     }

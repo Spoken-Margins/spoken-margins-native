@@ -20,9 +20,11 @@ final class PaperSourcesAppTests: XCTestCase {
     private final class Replies: @unchecked Sendable {
         var byPath: [String: PaperFetchReply] = [:]
         var requests: [URLRequest] = []
+        var offline = false
         var transport: PaperTransport {
             { [self] request in
                 requests.append(request)
+                if offline { throw URLError(.notConnectedToInternet) }
                 return byPath[request.url!.path] ?? PaperFetchReply(status: 404, data: Data("Not found".utf8))
             }
         }
@@ -104,7 +106,7 @@ final class PaperSourcesAppTests: XCTestCase {
         let record = try XCTUnwrap(papers.records.first)
         XCTAssertEqual(record.title, "PHIL 330 readings")
         XCTAssertEqual(papers.visibleRows.map(\.detail), ["Zotero · 2 papers"])
-        XCTAssertEqual(FollowingFeed.rows([], splicingPapers: papers.visibleRows).map(\.id), ["papers::\(record.id)"])
+        XCTAssertEqual(FollowingFeed.rows([], splicingPapers: papers.visibleRows, showsLoaded: true).map(\.id), ["papers::\(record.id)"])
 
         // The list's screen: one PDF paper (stored in the listener's library), one abstract paper.
         var index = await papers.libraryIndex(model: model)
@@ -139,6 +141,22 @@ final class PaperSourcesAppTests: XCTestCase {
             XCTAssertFalse(request.url!.absoluteString.contains(Self.key))
         }
         XCTAssertFalse(model.diagnostics.values.contains { $0.contains(Self.key) }, "the key is never in Diagnostics")
+        XCTAssertFalse(model.diagnostics.values.contains { $0.contains("/users/\(Self.userID)") }, "nor the user ID (#853)")
+        guard case .inLibrary(let pdfItemID) = rows[0].button else { return XCTFail("PDF row") }
+        let pdfItem = try XCTUnwrap(model.store).loadItem(id: pdfItemID)
+        XCTAssertFalse((pdfItem.sourceURL ?? "").contains("api.zotero.org"), "kept under the paper's own address, never the API's")
+        XCTAssertFalse((pdfItem.externalReference ?? "").contains("api.zotero.org"))
+
+        // A key revoked on zotero.org: the list keeps its papers and its screen says why; offline says so too.
+        replies.byPath["\(base)/collections/READING1/items/top"] = PaperFetchReply(status: 403, data: Data("Forbidden".utf8))
+        await papers.refresh(model: model, pulled: true, only: record.id)
+        XCTAssertEqual(papers.refreshProblemLine(id: record.id), "Zotero didn't accept that key.")
+        XCTAssertEqual(papers.record(id: record.id)?.entries.count, 2, "the last papers stay")
+        replies.byPath["\(base)/collections/READING1/items/top"] = nil
+        replies.offline = true
+        await papers.refresh(model: model, pulled: true, only: record.id)
+        XCTAssertEqual(papers.refreshProblemLine(id: record.id), "Showing the last local snapshot")
+        replies.offline = false
 
         // Unfollow leaves the papers in the Library; Disconnect forgets the key.
         await papers.unfollow(id: record.id, model: model, offerUndo: false)

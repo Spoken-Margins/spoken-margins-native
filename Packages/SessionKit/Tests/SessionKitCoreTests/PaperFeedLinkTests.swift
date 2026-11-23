@@ -183,7 +183,7 @@ final class PaperFeedLinkTests: XCTestCase {
                        "https://api.zotero.org/groups/2205533/collections/DMKBHP6P/items/top?sort=dateAdded&direction=desc&format=json&limit=100&start=200")
         XCTAssertEqual(source.pageURL(start: -5).absoluteString, source.pageURL().absoluteString, "a negative start is zero")
         XCTAssertEqual(ZoteroPaperAPI.attachmentsURL(groupID: 2205533, collectionKey: "DMKBHP6P").absoluteString,
-                       "https://api.zotero.org/groups/2205533/collections/DMKBHP6P/items?itemType=attachment&format=json&limit=100&start=0")
+                       "https://api.zotero.org/groups/2205533/collections/DMKBHP6P/items?itemType=attachment&sort=dateAdded&direction=desc&format=json&limit=100&start=0")
         XCTAssertEqual(ZoteroPaperAPI.itemsURL(groupID: 2205533, collectionKey: nil).absoluteString,
                        "https://api.zotero.org/groups/2205533/items/top?sort=dateAdded&direction=desc&format=json&limit=100&start=0")
         XCTAssertEqual(ZoteroPaperAPI.requestHeaders, ["Zotero-API-Version": "3"])

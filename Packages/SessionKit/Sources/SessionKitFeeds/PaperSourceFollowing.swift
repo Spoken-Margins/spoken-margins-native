@@ -75,10 +75,10 @@ public struct PaperSourceFollowing: Sendable {
     }
 
     /// The lists due a refresh: never read, or read longer ago than `refreshInterval`; every list when pulled. A list of
-    /// the listener's own library waits while no key is connected.
-    public static func due(_ records: [PaperSourceRecord], keyConnected: Bool, now: Date, pulled: Bool) -> [PaperSourceRecord] {
+    /// the listener's own library waits while no key, or another user's key, is connected.
+    public static func due(_ records: [PaperSourceRecord], connectedUserID: Int?, now: Date, pulled: Bool) -> [PaperSourceRecord] {
         records.filter { record in
-            if record.source.needsZoteroKey && !keyConnected { return false }
+            if !record.source.isReadable(connectedUserID: connectedUserID) { return false }
             if case .pubMedRSS = record.source { return false }
             if pulled { return true }
             guard let last = record.lastRefreshedAt else { return true }
@@ -184,6 +184,8 @@ public enum PaperSourceScreen {
     }
 
     public static let emptyText = "No papers in this collection yet."
+    /// Above the papers when the list couldn't be read because the phone is offline: Following's own offline line.
+    public static let offlineSnapshotLine = "Showing the last local snapshot"
 
     /// The rows, newest joined first.
     /// - Parameters:
@@ -191,14 +193,15 @@ public enum PaperSourceScreen {
     ///   - added: papers added from this screen since it opened, by entry id: the index predates them.
     ///   - adding: papers whose Add is under way.
     ///   - pdfFailed: papers whose PDF couldn't be fetched this time; with no abstract their button becomes Open.
-    ///   - keyConnected: a stored PDF of the listener's own library is reachable only while their key is connected.
+    ///   - connectedUserID: a stored PDF of the listener's own library is reachable only while that user's key is
+    ///     connected.
     public static func rows(
         record: PaperSourceRecord, index: PaperLibraryIndex?, added: [String: String] = [:], adding: Set<String>,
-        pdfFailed: Set<String>, keyConnected: Bool
+        pdfFailed: Set<String>, connectedUserID: Int?
     ) -> [Row] {
         record.entries.map { stored in
             var entry = stored
-            if !keyConnected { entry.storedPDFReachable = false }
+            if entry.zoteroUserID == nil || entry.zoteroUserID != connectedUserID { entry.storedPDFReachable = false }
             let existing = added[entry.id] ?? index?.itemId(for: entry)
             let button: Button
             if let existing {

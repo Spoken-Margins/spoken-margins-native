@@ -270,11 +270,13 @@ final class PaperSourceFollowingTests: XCTestCase {
         let own = record(.zoteroUser(userID: 3, collectionKey: nil), refreshed: nil)
         let future = record(.zoteroGroup(groupID: 4, collectionKey: nil), refreshed: 9_999)
         let all = [fresh, stale, never, own, future]
-        XCTAssertEqual(PaperSourceFollowing.due(all, keyConnected: false, now: date(100), pulled: false).map(\.id),
+        XCTAssertEqual(PaperSourceFollowing.due(all, connectedUserID: nil, now: date(100), pulled: false).map(\.id),
                        [stale.id, never.id, future.id], "a clock set back counts as due")
-        XCTAssertEqual(PaperSourceFollowing.due(all, keyConnected: true, now: date(100), pulled: false).map(\.id),
+        XCTAssertEqual(PaperSourceFollowing.due(all, connectedUserID: 3, now: date(100), pulled: false).map(\.id),
                        [stale.id, never.id, own.id, future.id])
-        XCTAssertEqual(PaperSourceFollowing.due(all, keyConnected: false, now: date(100), pulled: true).count, 4, "a pull reads all but the keyless own library")
+        XCTAssertEqual(PaperSourceFollowing.due(all, connectedUserID: 9, now: date(100), pulled: false).map(\.id),
+                       [stale.id, never.id, future.id], "another user's key is never sent for this library")
+        XCTAssertEqual(PaperSourceFollowing.due(all, connectedUserID: nil, now: date(100), pulled: true).count, 4, "a pull reads all but the keyless own library")
     }
 
     // MARK: The listener's own library and the key
@@ -301,6 +303,9 @@ final class PaperSourceFollowingTests: XCTestCase {
         let thesis = try XCTUnwrap(record.entries.first { $0.id == "zotero:user:42:JA3W6QNM" })
         XCTAssertEqual(thesis.status, .pdf, "a stored file of the listener's own library can be fetched")
         XCTAssertEqual(PaperEntryImportRoute.route(for: thesis, existingItemId: nil), .storedPDF(attachmentKey: "5B74JAMI"))
+        // An own-library item's Zotero page names the listener's username: it is never kept as the paper's address.
+        XCTAssertFalse(record.entries.contains { $0.pageURL?.host?.contains("zotero.org") == true }, "\(record.entries.compactMap(\.pageURL))")
+        XCTAssertTrue(record.entries.allSatisfy { $0.zoteroUserID == 42 })
     }
 
     func testARevokedKeySaysSoAndConnectChecksTheKey() async throws {

@@ -59,6 +59,14 @@ struct FollowedPapersScreen: View {
             .tint(AppColors.evergreen)
             .accessibilityIdentifier("papers.quiet")
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+            // The last read failed: the papers below are the last ones read, and this says why.
+            if let line = papers.refreshProblemLine(id: record.id) {
+                Label(line, systemImage: line == PaperSourceScreen.offlineSnapshotLine ? "wifi.slash" : "exclamationmark.triangle")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityIdentifier("papers.problem")
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+            }
             Section {
                 if rows.isEmpty {
                     Text(PaperSourceScreen.emptyText)
@@ -97,7 +105,7 @@ struct FollowedPapersScreen: View {
         }
         .scrollContentBackground(.hidden)
         .listStyle(.plain)
-        .refreshable { await papers.refresh(model: model, pulled: true) }
+        .refreshable { await papers.refresh(model: model, pulled: true, only: record.id) }
         .navigationTitle(record.title)
         .navigationBarTitleDisplayMode(.inline)
     }

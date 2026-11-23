@@ -70,6 +70,8 @@ struct ExperienceSourcesScreen: View, Equatable {
         var list: FollowingShowList
         var feedRows: [FollowingFeed.Row]
         var showsEmptyState: Bool
+        /// The show list has loaded once; reading lists are drawn only after, like friends (#3753).
+        var showsLoaded: Bool
         var hasFollowCandidates: Bool
         var isOfflineSnapshot: Bool
         var quickFolderFileCount: Int
@@ -94,6 +96,7 @@ struct ExperienceSourcesScreen: View, Equatable {
             list = model.followingShowListCache
             feedRows = model.followingFeedRows(friends: friends)
             showsEmptyState = model.followingShowsEmptyState(friends: friends)
+            showsLoaded = model.followingShowListLoaded
             hasFollowCandidates = !model.followedSourceCandidates.isEmpty
             isOfflineSnapshot = model.selectedProfileId.contains("offline")
             // New files in the Quick Folder. They used to arrive in Following's stream; the folder is a place to open now.
@@ -122,7 +125,7 @@ struct ExperienceSourcesScreen: View, Equatable {
         // friends and shows under All, by the newest date a paper joined them, and are hidden under a chip like friends.
         let byList = FollowingByList.screen(
             selected: selectedList, lists: listsState.lists,
-            feedRows: FollowingFeed.rows(inputs.feedRows, splicingPapers: papers.visibleRows), shows: inputs.list,
+            feedRows: FollowingFeed.rows(inputs.feedRows, splicingPapers: papers.visibleRows, showsLoaded: inputs.showsLoaded), shows: inputs.list,
             subscriptions: inputs.subscriptions
         )
         let quietPapers = selectedList == nil ? papers.quietRows : []

@@ -110,6 +110,7 @@ public struct PaperSourceFetcher: Sendable {
             else { break }
             attachmentPages.append(reply.data)
             if count < ZoteroPaperAPI.pageSize { break }
+            if let total = reply.totalResults, start + count >= total { break }
         }
         var entries: [PaperEntry] = []
         for page in itemPages {
