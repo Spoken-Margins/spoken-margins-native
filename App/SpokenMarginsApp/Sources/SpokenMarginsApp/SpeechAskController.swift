@@ -166,7 +166,7 @@ final class SpeechAskController: ObservableObject {
         return Task { [weak self, weak model, askSystem] in
             await askSystem()
             guard let self else { return }
-            self.reconcile(model: model)
+            MainThreadOperationLabels.shared.scoped("speechAsk.yes") { self.reconcile(model: model) } // so a slow settle names its step (#2256)
         }
     }
 
