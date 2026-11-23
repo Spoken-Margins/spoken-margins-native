@@ -44,8 +44,7 @@ extension Gate1AppModel {
     /// speech card has been waiting for it, so when the playback can't start it is let go here.
     func hearItLandAfterSpokenSave(willPlayBack: Bool, savedId: String?) {
         guard willPlayBack else { return }
-        guard !snapshot.isRecording, let savedId, let store, let sessionId = snapshot.sessionId else { return hearItLandPlaybackDidNotStart() }
-        let itemId = snapshot.itemId
+        guard !snapshot.isRecording, let savedId, let store, let sessionId = snapshot.sessionId, let itemId = snapshot.itemId else { return hearItLandPlaybackDidNotStart() }
         // The Margins are read off the main thread (#2256); only the start comes back here, under its own label.
         HearItLandState.shared.pendingStart = Task { [weak self] in
             let interjections = try? await Self.offMain { try store.loadInterjections(sessionId: sessionId) }
