@@ -66,6 +66,9 @@ public struct ItemDetailState: Equatable, Sendable {
     }
     public var sessionRows: [SessionPresentation] = []
     public var interjections: [Interjection] = []
+    /// Every session's active own Margins for the item (#4910), for the rule that leaves the listener's own copies out
+    /// of a friend's Margins. `interjections` is the active session's only.
+    public var itemOwnMargins: [Interjection] = []
     public var importedCommentaryLayers: [ImportedCommentaryLayer] = []
     public var importedCommentaryInterjections: [String: [ImportedCommentaryInterjection]] = [:]
     public var sharedMarginPlacement: SharedMarginPlacementPasses.Pass?
@@ -110,6 +113,7 @@ public struct ItemDetailState: Equatable, Sendable {
         addedAgainAt: Date? = nil,
         sessionRows: [SessionPresentation] = [],
         interjections: [Interjection] = [],
+        itemOwnMargins: [Interjection] = [],
         importedCommentaryLayers: [ImportedCommentaryLayer] = [],
         importedCommentaryInterjections: [String: [ImportedCommentaryInterjection]] = [:],
         sharedMarginPlacement: SharedMarginPlacementPasses.Pass? = nil,
@@ -144,6 +148,7 @@ public struct ItemDetailState: Equatable, Sendable {
         self.addedAgainAt = addedAgainAt
         self.sessionRows = sessionRows
         self.interjections = interjections
+        self.itemOwnMargins = itemOwnMargins
         self.importedCommentaryLayers = importedCommentaryLayers
         self.importedCommentaryInterjections = importedCommentaryInterjections
         self.sharedMarginPlacement = sharedMarginPlacement
