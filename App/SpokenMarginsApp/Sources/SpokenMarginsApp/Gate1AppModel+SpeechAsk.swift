@@ -5,10 +5,9 @@ import SessionKit
 /// carrying-out is `SpeechAskController`; this is only what needs the model's store and transcription path. It sits in its
 /// own file so `Gate1AppModel` does not grow.
 extension Gate1AppModel {
-    /// Allow: transcribes the Margins that waited, oldest first, through the same retry a tap on Retry uses (and its
-    /// source-window context after it). Quiet: the listener's own Yes is the confirmation, so no "Retranscribing" banner.
-    /// A Margin deleted while it waited is skipped. `identities` are `marginIdentity` values ("session::margin"). The task
-    /// ends true once every one was scheduled or found no longer due; nil (no store) and false scheduled nothing.
+    /// Allow: transcribes the Margins that waited, oldest first, quietly, through the retry a tap on Retry uses (source window
+    /// after it). A Margin deleted while it waited is skipped. `identities` are `marginIdentity` values. The task ends true
+    /// once each was scheduled or found no longer due; nil (no store) and false scheduled nothing.
     func retryWaitingTranscriptions(identities: [String]) -> Task<Bool, Never>? {
         guard let store else { return nil }
         return Task { [weak self] in
@@ -25,14 +24,10 @@ extension Gate1AppModel {
                 }
             }
             guard let due, let self else { return false }
-            hangTelemetry.labels.scoped("speechAskRetryWaiting") { scheduleWaitingRetries(due) }
+            hangTelemetry.labels.scoped("speechAskRetryWaiting") {
+                for current in due where retryingInterjectionTranscriptionIds.insert(Self.marginIdentity(current)).inserted { scheduleRetriedTranscription(for: current) }
+            }
             return true
-        }
-    }
-
-    private func scheduleWaitingRetries(_ margins: [Interjection]) {
-        for current in margins where retryingInterjectionTranscriptionIds.insert(Self.marginIdentity(current)).inserted {
-            scheduleRetriedTranscription(for: current)
         }
     }
 
