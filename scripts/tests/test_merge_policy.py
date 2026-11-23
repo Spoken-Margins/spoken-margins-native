@@ -411,7 +411,11 @@ class WorkflowTests(unittest.TestCase):
         for trigger in on.values():
             self.assertNotIn('paths', trigger or {})
             self.assertNotIn('paths-ignore', trigger or {})
-        self.assertEqual([job['name'] for job in self.workflow['jobs'].values()], ['merge policy'])
+        # The job is not named `merge policy`: the script writes the check run of that name (#4986), so that it can stay
+        # in progress while a PR waits for an audit or the owner, without a runner holding it.
+        self.assertEqual([job['name'] for job in self.workflow['jobs'].values()], ['merge policy run'])
+        self.assertEqual(self.workflow['jobs']['policy']['env']['SM_REPORTS_CHECK'], 'merge policy')
+        self.assertEqual(policy.CHECK_NAME, 'merge policy')
 
     def test_no_run_of_the_check_can_cancel_another(self):
         # Two label events in one second (a re-arm) started two runs; the concurrency group cancelled one, and a
@@ -421,7 +425,8 @@ class WorkflowTests(unittest.TestCase):
             self.assertNotIn('concurrency', job, name)
 
     def test_the_rules_come_from_main_with_a_read_only_token(self):
-        self.assertEqual(self.workflow['permissions'], {'contents': 'read', 'pull-requests': 'read'})
+        # `checks: write` only for the job's own check run (#4986); never `contents: write` or `pull-requests: write`.
+        self.assertEqual(self.workflow['permissions'], {'contents': 'read', 'pull-requests': 'read', 'checks': 'write'})
         job = self.workflow['jobs']['policy']
         checkout = job['steps'][0]
         self.assertTrue(checkout['uses'].startswith('actions/checkout@'))
@@ -430,6 +435,287 @@ class WorkflowTests(unittest.TestCase):
         run = job['steps'][1]['run']
         self.assertNotIn('${{', run)  # event data reaches the shell only through env
         self.assertNotIn('pull_request_target', (ROOT / '.github/workflows/merge-policy.yml').read_text())
+
+    def run_step(self, event, *, knows_report_flag, exit_code=0):
+        """Run the workflow's real shell step with a fake script and a fake `gh`; return (exit code, script args, gh calls)."""
+        run = self.workflow['jobs']['policy']['steps'][1]['run']
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / 'scripts').mkdir()
+            help_text = 'usage: merge_policy.py [--report-sha SHA]' if knows_report_flag else 'usage: merge_policy.py [--pr PR]'
+            (tmp / 'scripts/merge_policy.py').write_text(
+                'import sys\n'
+                f'if "--help" in sys.argv: print({help_text!r}); sys.exit(0)\n'
+                'open("args.txt", "a").write(" ".join(sys.argv[1:]) + "\\n")\n'
+                'print("verdict line")\n'
+                f'sys.exit({exit_code})\n')
+            (tmp / 'bin').mkdir()
+            gh = tmp / 'bin/gh'
+            gh.write_text('#!/bin/sh\necho "$@" >> "' + str(tmp / 'gh.txt') + '"\n')
+            gh.chmod(0o755)
+            env = {'PATH': f'{tmp / "bin"}:/usr/bin:/bin', 'GITHUB_STEP_SUMMARY': str(tmp / 'summary.md'),
+                   'GH_REPO': 'o/r', 'EVENT': event, 'PR': '7', 'HEAD_SHA': 'a' * 40 if event != 'merge_group' else '',
+                   'GROUP_HEAD': 'b' * 40 if event == 'merge_group' else '', 'DETAILS_URL': 'https://example.test/run/1'}
+            done = subprocess.run(['bash', '-e', '-c', run], cwd=tmp, env=env, capture_output=True, text=True)
+            read = lambda name: (tmp / name).read_text().splitlines() if (tmp / name).exists() else []  # noqa: E731
+            return done.returncode, read('args.txt'), read('gh.txt')
+
+    def test_with_the_new_script_a_pull_request_and_the_queue_report_and_a_dispatch_does_not(self):
+        code, args, gh = self.run_step('pull_request', knows_report_flag=True)
+        self.assertEqual((code, gh), (0, []))  # the script writes the check run, not the workflow
+        self.assertIn('--pr 7 --head ' + 'a' * 40, args[0])
+        self.assertIn('--report-sha ' + 'a' * 40, args[0])
+        self.assertIn('--details-url https://example.test/run/1', args[0])
+        _, args, _ = self.run_step('merge_group', knows_report_flag=True)
+        self.assertIn('--group-head ' + 'b' * 40, args[0])
+        self.assertIn('--report-sha ' + 'b' * 40, args[0])
+        code, args, gh = self.run_step('workflow_dispatch', knows_report_flag=True)
+        self.assertNotIn('--report-sha', args[0])
+        self.assertEqual(gh, [])
+
+    def test_with_the_new_script_a_failing_verdict_fails_the_step(self):
+        code, _, _ = self.run_step('pull_request', knows_report_flag=True, exit_code=1)
+        self.assertEqual(code, 1)
+
+    def test_before_main_has_the_flag_the_workflow_writes_the_check_run_itself(self):
+        # The PR that adds --report-sha runs main's script (checkout ref: main) under its own workflow file, so the
+        # first run saw "unrecognized arguments" and no `merge policy` check was ever written (#5011, 2026-11-22).
+        for event, sha in (('pull_request', 'a' * 40), ('merge_group', 'b' * 40)):
+            for exit_code, conclusion in ((0, 'success'), (1, 'failure')):
+                with self.subTest(event=event, exit_code=exit_code):
+                    code, args, gh = self.run_step(event, knows_report_flag=False, exit_code=exit_code)
+                    # The step exits 0 either way: main's audit and owner-tap alert ignore a red `merge policy` but
+                    # not a red `merge policy run`, so a red job would stop the PR being audited (#5011).
+                    self.assertEqual(code, 0)
+                    self.assertNotIn('--report-sha', args[0])
+                    self.assertEqual(len(gh), 1, gh)
+                    self.assertIn('repos/o/r/check-runs', gh[0])
+                    self.assertIn('name=merge policy', gh[0])
+                    self.assertIn(f'head_sha={sha}', gh[0])
+                    self.assertIn(f'conclusion={conclusion}', gh[0])
+        code, args, gh = self.run_step('workflow_dispatch', knows_report_flag=False)
+        self.assertEqual((code, gh), (0, []))  # a dispatched run never writes a check run
+
+
+class FakeChecksGitHub:
+    """Records the Checks API calls CheckRun makes through GitHub._gh, so a test reads what GitHub would show."""
+    repo = 'o/r'
+
+    def __init__(self, fail_start=False, fail_finish=False):
+        self.calls, self.fail_start, self.fail_finish = [], fail_start, fail_finish
+
+    def _gh(self, args):
+        self.calls.append(list(args))
+        if args[:3] == ['api', '-X', 'POST'] and self.fail_start:
+            raise policy.ReadFailed('no')
+        if args[:3] == ['api', '-X', 'PATCH'] and self.fail_finish:
+            raise policy.ReadFailed('no')
+        return json.dumps({'id': 99})
+
+    def fields(self, call):
+        return dict(arg.split('=', 1) for arg in call if '=' in arg and not arg.startswith('/'))
+
+    @property
+    def shown(self):
+        """(status, conclusion) of the check run after the last call."""
+        patch = [c for c in self.calls if c[:3] == ['api', '-X', 'PATCH']]
+        last = self.fields(patch[-1] if patch else next(c for c in self.calls if c[:3] == ['api', '-X', 'POST']))
+        return last.get('status'), last.get('conclusion')
+
+
+def found_for(*reasons_per_pr, unread=False):
+    return [(n + 1, 'a' * 40, list(reasons), unread) for n, reasons in enumerate(reasons_per_pr)]
+
+
+TAP = 'it touches `.github/x.yml`, which only the owner merges (owner rule 2026-10-09, #1203); it needs the `owner-tap` label, which only the owner adds'
+AUDIT = 'it touches the lane, which has no Codex or Claude audit comment yet'
+FINDINGS = 'it touches the lane, whose audit of its head has blocking findings'
+HOLDS = ('real-use proof is missing for #5', '1 commit(s) have no `Signed-off-by:` line (abc1234); see CONTRIBUTING.md',
+         'the check could not read what it needs (rate limit), so it holds the merge')
+
+
+class VerdictTests(unittest.TestCase):
+    """Which holds only wait (pending, no runner) and which are failures (#4986)."""
+
+    def test_nothing_held_succeeds(self):
+        self.assertEqual(policy.verdict(found_for([]), queue=False), 'success')
+        self.assertEqual(policy.verdict(found_for([]), queue=True), 'success')
+
+    def test_a_missing_audit_or_a_missing_owner_tap_alone_or_together_waits(self):
+        for reasons in ([AUDIT], [TAP], [AUDIT, TAP]):
+            with self.subTest(reasons=reasons):
+                self.assertEqual(policy.verdict(found_for(reasons), queue=False), 'waiting')
+
+    def test_every_other_hold_fails_even_beside_a_wait(self):
+        for hold in HOLDS + (FINDINGS,):
+            for reasons in ([hold], [AUDIT, hold], [hold, TAP]):
+                with self.subTest(reasons=reasons):
+                    self.assertEqual(policy.verdict(found_for(reasons), queue=False), 'failure')
+
+    def test_an_unread_pr_fails_even_when_its_text_looks_like_a_wait(self):
+        self.assertEqual(policy.verdict(found_for([AUDIT], unread=True), queue=False), 'failure')
+
+    def test_the_queue_never_waits(self):
+        # A held entry must fail and leave the queue, or the whole queue waits behind it.
+        for reasons in ([AUDIT], [TAP], [AUDIT, TAP]):
+            with self.subTest(reasons=reasons):
+                self.assertEqual(policy.verdict(found_for(reasons), queue=True), 'failure')
+
+    def test_one_failing_pr_in_a_group_fails_the_group(self):
+        self.assertEqual(policy.verdict(found_for([AUDIT], [HOLDS[0]]), queue=False), 'failure')
+        self.assertEqual(policy.verdict(found_for([AUDIT], []), queue=False), 'waiting')
+
+    def test_the_wait_words_are_what_the_rules_say(self):
+        # is_waiting reads the rules' own words, so a reworded reason can't turn a wait into a failure silently.
+        rules = policy.rules()
+        repo = Repo({'scripts/lane_slots.py': 'x\n'})
+        self.addCleanup(repo.close)
+        lane = lambda paths, diffs: scope_of(paths, diffs, lane_paths=paths)  # noqa: E731
+        cases = (([], True), ([audit('0' * 40)], True), ([audit(repo.head, 'One blocking finding: x')], False))
+        for comments, waits in cases:
+            with self.subTest(waits=waits):
+                reasons = policy.blockers(FakeGitHub(comments=comments), repo.tree, 'main', 7, repo.head,
+                                          classify=lane, inherited=lambda c: [])
+                self.assertEqual(len(reasons), 1, reasons)
+                self.assertEqual(policy.is_waiting(reasons[0]), waits, reasons[0])
+        self.assertTrue(rules.AUDIT_MISSING in AUDIT)
+        tap = Repo({'.github/x.yml': 'x\n'})
+        self.addCleanup(tap.close)
+        reasons = policy.blockers(FakeGitHub(), tap.tree, 'main', 7, tap.head, classify=scope_of, inherited=lambda c: [])
+        self.assertTrue(all(policy.is_waiting(r) for r in reasons) and reasons, reasons)
+
+    def test_a_missing_real_use_proof_and_unsigned_commits_are_not_waits(self):
+        repo = Repo({'scripts/tool.py': 'x\n'}, message='Change without sign-off')
+        self.addCleanup(repo.close)
+        reasons = policy.blockers(FakeGitHub(association='NONE', login='stranger'), repo.tree, 'main', 7, repo.head,
+                                  classify=scope_of, inherited=lambda c: [])
+        self.assertTrue(reasons and not any(policy.is_waiting(r) for r in reasons), reasons)
+
+
+class ReportTests(unittest.TestCase):
+    """The check run the script writes (#4986): in progress first, finished last, and an interrupted run stays blocked."""
+
+    def run_report(self, repo, github, *, queue=False, prs_of=None, **kwargs):
+        out = io.StringIO()
+        code = policy.report(github, repo.tree, 'main', prs_of or (lambda: [(7, repo.head)]), repo.head, queue,
+                             'https://example.test/run/1', out=out, classify=scope_of, inherited=lambda c: [],
+                             **kwargs)
+        return code, out.getvalue()
+
+    def make(self, files):
+        repo = Repo(files)
+        self.addCleanup(repo.close)
+        return repo
+
+    def test_a_clean_pr_completes_the_check_as_success(self):
+        repo, checks = self.make({'scripts/tool.py': 'x\n'}), FakeChecksGitHub()
+        code, out = self.run_report(repo, _Both(FakeGitHub(), checks))
+        self.assertEqual(code, 0)
+        self.assertEqual(checks.shown, ('completed', 'success'))
+        self.assertIn('may merge', out)
+
+    def test_the_check_is_created_first_under_the_required_name_on_the_head(self):
+        repo, checks = self.make({'scripts/tool.py': 'x\n'}), FakeChecksGitHub()
+        self.run_report(repo, _Both(FakeGitHub(), checks))
+        post = checks.calls[0]
+        self.assertEqual(post[:4], ['api', '-X', 'POST', 'repos/o/r/check-runs'])
+        fields = checks.fields(post)
+        self.assertEqual((fields['name'], fields['head_sha'], fields['status']), ('merge policy', repo.head, 'in_progress'))
+        self.assertEqual(fields['details_url'], 'https://example.test/run/1')
+        self.assertEqual(checks.calls[1][:4], ['api', '-X', 'PATCH', 'repos/o/r/check-runs/99'])
+
+    def test_an_owner_tap_wait_leaves_the_check_in_progress_and_exits_zero(self):
+        repo, checks = self.make({'.github/x.yml': 'x\n'}), FakeChecksGitHub()
+        code, out = self.run_report(repo, _Both(FakeGitHub(), checks))
+        self.assertEqual(code, 0)
+        self.assertEqual(checks.shown, ('in_progress', None))
+        self.assertIn('may not merge', out)  # the log and the summary still say why
+        self.assertEqual(checks.fields(checks.calls[-1])['output[title]'], "Waiting for the owner's tap")
+
+    def test_the_same_pr_in_the_queue_fails(self):
+        repo, checks = self.make({'.github/x.yml': 'x\n'}), FakeChecksGitHub()
+        code, _ = self.run_report(repo, _Both(FakeGitHub(), checks), queue=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(checks.shown, ('completed', 'failure'))
+
+    def test_a_real_hold_fails_the_check(self):
+        repo, checks = Repo({'.github/x.yml': 'x\n'}, message='No sign-off here'), FakeChecksGitHub()
+        self.addCleanup(repo.close)
+        code, _ = self.run_report(repo, _Both(FakeGitHub(association='NONE', login='stranger'), checks))
+        self.assertEqual(code, 1)  # an outsider's unsigned commit is held beside the tap wait
+        self.assertEqual(checks.shown, ('completed', 'failure'))
+
+    def test_the_label_that_clears_the_tap_completes_it_as_success(self):
+        repo, checks = self.make({'.github/x.yml': 'x\n'}), FakeChecksGitHub()
+        code, _ = self.run_report(repo, _Both(FakeGitHub(labels=('owner-tap',)), checks))
+        self.assertEqual((code, checks.shown), (0, ('completed', 'success')))
+
+    def test_a_failed_read_of_the_prs_fails_the_check_rather_than_leaving_it_waiting(self):
+        repo, checks = self.make({'scripts/tool.py': 'x\n'}), FakeChecksGitHub()
+
+        def prs_of():
+            raise policy.ReadFailed('queue unreadable')
+        code, out = self.run_report(repo, _Both(FakeGitHub(), checks), prs_of=prs_of)
+        self.assertEqual((code, checks.shown), (1, ('completed', 'failure')))
+        self.assertIn('so it holds the merge', out)
+
+    def test_a_rate_limited_read_of_a_pr_fails_even_though_nothing_else_is_wrong(self):
+        repo, checks = self.make({'scripts/tool.py': 'x\n'}), FakeChecksGitHub()
+
+        class Limited(FakeGitHub):
+            def pull(self, number):
+                raise policy.ReadFailed('HTTP 403 rate limit')
+        code, _ = self.run_report(repo, _Both(Limited(), checks))
+        self.assertEqual((code, checks.shown), (1, ('completed', 'failure')))
+
+    def test_a_cancel_marks_the_check_cancelled_and_never_success(self):
+        repo, checks = self.make({'scripts/tool.py': 'x\n'}), FakeChecksGitHub()
+
+        class Cancelled(FakeGitHub):
+            def pull(self, number):
+                raise KeyboardInterrupt
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_report(repo, _Both(Cancelled(), checks))
+        self.assertEqual(checks.shown, ('completed', 'cancelled'))
+
+    def test_a_crash_fails_the_check_and_still_raises(self):
+        repo, checks = self.make({'scripts/tool.py': 'x\n'}), FakeChecksGitHub()
+
+        class Broken(FakeGitHub):
+            def pull(self, number):
+                raise ZeroDivisionError('boom')
+        with self.assertRaises(ZeroDivisionError):
+            self.run_report(repo, _Both(Broken(), checks))
+        self.assertEqual(checks.shown, ('completed', 'failure'))
+
+    def test_a_check_run_that_cannot_be_created_stops_before_any_verdict(self):
+        repo, checks = self.make({'scripts/tool.py': 'x\n'}), FakeChecksGitHub(fail_start=True)
+        with self.assertRaises(policy.ReadFailed):
+            self.run_report(repo, _Both(FakeGitHub(), checks))
+        self.assertEqual(len(checks.calls), 1)  # nothing was patched: no check run exists, so the merge is blocked
+
+    def test_a_long_summary_is_cut_to_what_the_api_accepts(self):
+        checks = FakeChecksGitHub()
+        run = policy.CheckRun(checks, 'a' * 40)
+        run.start()
+        run.finish('failure', 'T' * 1000, 'S' * 70000)
+        fields = checks.fields(checks.calls[-1])
+        self.assertLessEqual(len(fields['output[title]']), 250)
+        self.assertLessEqual(len(fields['output[summary]']), 65535)
+
+
+class _Both:
+    """The rule reads (FakeGitHub) and the Checks API writes (FakeChecksGitHub) behind one object, as GitHub is."""
+
+    def __init__(self, reads, writes):
+        self.reads, self.writes = reads, writes
+        self.repo = writes.repo
+
+    def __getattr__(self, name):
+        return getattr(self.reads, name)
+
+    def _gh(self, args):
+        return self.writes._gh(args)
 
 
 if __name__ == '__main__':
