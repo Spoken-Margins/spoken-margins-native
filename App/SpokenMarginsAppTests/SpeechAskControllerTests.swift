@@ -103,15 +103,18 @@ final class SpeechAskControllerTests: XCTestCase {
         XCTAssertTrue(controller.isWaiting(marginIdentity: "s1::m1"))
     }
 
-    func testYesAsksIOSOnceAndAllowedClearsTheWaitingList() async {
+    /// Allow with nothing that can retry the waiting Margins (no Library open): they stay listed, and stored, for the next
+    /// settle, rather than being cleared before anything transcribed them.
+    func testYesAsksIOSOnceAndAllowedKeepsTheListUntilItsRetriesAreScheduled() async {
         let controller = makeController()
         controller.spokenMarginSaved(isWritten: false)
         controller.marginIsWaiting(marginIdentity: "s1::m1")
         iosAnswer = .authorized
         await controller.yes(model: nil).value
         XCTAssertEqual(promptsRaised, 1)
-        XCTAssertFalse(controller.isWaiting(marginIdentity: "s1::m1"))
-        XCTAssertNil(defaults.stringArray(forKey: SpeechAskWaitingList.storageKey))
+        XCTAssertFalse(controller.isWaiting(marginIdentity: "s1::m1"), "allowed: it no longer reads as waiting")
+        XCTAssertEqual(controller.waiting.ids, ["s1::m1"])
+        XCTAssertEqual(defaults.stringArray(forKey: SpeechAskWaitingList.storageKey), ["s1::m1"])
         XCTAssertEqual(defaults.string(forKey: SpeechRecognitionAsk.storageKey), "yes")
     }
 

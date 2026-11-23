@@ -221,10 +221,17 @@ final class SpeechAskController: ObservableObject {
         case .authorized:
             let identities = waiting.ids
             guard !identities.isEmpty || !heldRetries.isEmpty else { return }
-            clearWaiting()
+            forgetHeldAcrossLaunch()
             // A waiting Margin gets its source window after its own transcription, never before it.
             heldRetries.drop(.sourceWindow, keys: Set(identities))
-            if !identities.isEmpty { model?.retryWaitingTranscriptions(identities: identities) }
+            // The list is cleared only once its retries were scheduled, and only of those: with no store yet, or a read
+            // that failed, the Margins stay listed (and stored) for the next settle instead of being forgotten.
+            if !identities.isEmpty, let retrying = model?.retryWaitingTranscriptions(identities: identities) {
+                Task { [weak self] in
+                    guard await retrying.value, let self else { return }
+                    setWaiting(SpeechAskSettling.waiting(waiting, afterSettling: identities))
+                }
+            }
             heldRetries.settle(access: .authorized)
         case .denied, .restricted:
             heldRetries.settle(access: access())
@@ -238,9 +245,17 @@ final class SpeechAskController: ObservableObject {
 
     /// Either answer settles the waiting list and the sweeps' records: their retries ran or were dropped together.
     private func clearWaiting() {
-        waiting.clear()
-        defaults.removeObject(forKey: SpeechAskWaitingList.storageKey)
+        setWaiting(SpeechAskWaitingList(stored: nil))
         forgetHeldAcrossLaunch()
+    }
+
+    private func setWaiting(_ list: SpeechAskWaitingList) {
+        waiting = list
+        if list.hasWaitingMargin {
+            defaults.set(list.stored, forKey: SpeechAskWaitingList.storageKey)
+        } else {
+            defaults.removeObject(forKey: SpeechAskWaitingList.storageKey)
+        }
     }
 
     private func forgetHeldAcrossLaunch() {
