@@ -77,11 +77,14 @@ public struct PDFCommentExportState: Equatable, Sendable {
         case pageNoExactSpot(page: Int)
         case transcriptPending
         case noTranscript
+        /// This iPhone has no copy of the PDF yet, so where the comment lands is not known until the listener chooses the
+        /// file (#4338, PR 6). It will be sent once they do.
+        case waitingForPDF
 
         /// Whether the listener can choose to send this Margin at all. A Margin with no words is left out.
         public var canBeIncluded: Bool {
             switch self {
-            case .onItsSentence, .onItsSentenceStart, .inItsParagraph, .atTheStart, .pageNoExactSpot: return true
+            case .onItsSentence, .onItsSentenceStart, .inItsParagraph, .atTheStart, .pageNoExactSpot, .waitingForPDF: return true
             case .transcriptPending, .noTranscript: return false
             }
         }
@@ -96,6 +99,7 @@ public struct PDFCommentExportState: Equatable, Sendable {
             case .pageNoExactSpot(let page): return "On page \(page + 1), no exact spot"
             case .transcriptPending: return "Left out: transcript not ready yet"
             case .noTranscript: return "Left out: no transcript"
+            case .waitingForPDF: return "Waiting for the PDF"
             }
         }
 
@@ -109,6 +113,7 @@ public struct PDFCommentExportState: Equatable, Sendable {
             case .pageNoExactSpot: return "doc"
             case .transcriptPending: return "hourglass"
             case .noTranscript: return "exclamationmark.bubble"
+            case .waitingForPDF: return "questionmark.folder"
             }
         }
     }
@@ -135,6 +140,11 @@ public struct PDFCommentExportState: Equatable, Sendable {
         case locked
         /// The kept file or the item's text could not be read, so no comment can be placed.
         case unreadable
+        /// This iPhone has no copy of the PDF (added before copies were kept, or synced from another iPhone): the sheet asks
+        /// the listener to choose the same file (#4338, PR 6).
+        case originalMissing
+        /// The file the listener chose is not the PDF the item was made from, or takes no comments. They can choose another.
+        case wrongFile(PDFOriginalCheck.Refusal)
     }
 
     public private(set) var rows: [Row]
@@ -151,9 +161,20 @@ public struct PDFCommentExportState: Equatable, Sendable {
     ///   - spots: where each Margin of the plan was placed, by Margin id, or nil while placement is still running.
     ///   - authorName: the name last used on comments, or empty.
     public init(plan: MarginCommentPlan, spots: [String: Spot]?, authorName: String = "", document: Document = .pdf) {
+        self.init(plan: plan, spots: spots, authorName: authorName, document: document, waitingForPDF: false)
+    }
+
+    /// The sheet for a PDF this iPhone has no copy of (#4338, PR 6): the listener's Margins by the page the item's text
+    /// puts them on, each "Waiting for the PDF", and a card asking for the file. Nothing can be exported until a file is
+    /// chosen and accepted (`PDFOriginalCheck`); the sheet is then built again with the spots found in it.
+    public static func waitingForOriginal(plan: MarginCommentPlan, authorName: String = "") -> PDFCommentExportState {
+        PDFCommentExportState(plan: plan, spots: nil, authorName: authorName, document: .pdf, waitingForPDF: true)
+    }
+
+    private init(plan: MarginCommentPlan, spots: [String: Spot]?, authorName: String, document: Document, waitingForPDF: Bool) {
         self.authorName = authorName
         self.document = document
-        self.phase = spots == nil ? .loading : .ready
+        self.phase = waitingForPDF ? .originalMissing : (spots == nil ? .loading : .ready)
         let built: [(page: Int?, row: Row)] = plan.entries.map { entry in
             let status: RowStatus
             let page: Int?
@@ -163,6 +184,9 @@ public struct PDFCommentExportState: Equatable, Sendable {
                 page = entry.pageIndex
             case .noTranscript:
                 status = .noTranscript
+                page = entry.pageIndex
+            case .included where waitingForPDF:
+                status = .waitingForPDF
                 page = entry.pageIndex
             case .included:
                 switch spots?[entry.marginId] {
@@ -221,6 +245,35 @@ public struct PDFCommentExportState: Equatable, Sendable {
     public var canExport: Bool { phase == .ready && includedCount > 0 }
     /// Rows can be toggled and the name edited only while the sheet is waiting for the listener.
     public var isEditable: Bool { phase == .ready }
+
+    /// Whether the sheet is asking for the PDF: no copy on this iPhone, or the chosen file was refused.
+    public var asksForFile: Bool {
+        switch phase {
+        case .originalMissing, .wrongFile: return true
+        default: return false
+        }
+    }
+
+    /// The card above the list while the sheet asks for the PDF, nil otherwise.
+    public var fileCardMessage: String? {
+        switch phase {
+        case .originalMissing: return Self.originalMissingMessage
+        case .wrongFile(let refusal): return refusal.message
+        default: return nil
+        }
+    }
+
+    /// The card's button: "Choose the PDF" the first time, "Choose another" after a refusal.
+    public var chooseFileTitle: String? {
+        switch phase {
+        case .originalMissing: return "Choose the PDF"
+        case .wrongFile: return "Choose another"
+        default: return nil
+        }
+    }
+
+    public static let originalMissingMessage =
+        "This iPhone doesn't have a copy of this PDF. Choose the same file and your comments go into it."
 
     /// The pinned button's words.
     public var buttonTitle: String {
@@ -292,6 +345,20 @@ public struct PDFCommentExportState: Equatable, Sendable {
     /// "Try again" after a failure: back to the full list.
     public mutating func dismissFailure() {
         if phase == .writeFailed { phase = .ready }
+    }
+
+    /// The listener chose a file: the sheet shows "Finding where each Margin goes…" while it is checked. False (and no
+    /// change) unless the sheet was asking for the file, so a second pick while one is checked starts nothing.
+    public mutating func beginCheckingChosenFile() -> Bool {
+        guard asksForFile else { return false }
+        phase = .loading
+        return true
+    }
+
+    /// The chosen file was refused: the card says why and offers "Choose another".
+    public mutating func refuseChosenFile(_ refusal: PDFOriginalCheck.Refusal) {
+        guard phase == .loading else { return }
+        phase = .wrongFile(refusal)
     }
 
     /// The file takes no comments.
