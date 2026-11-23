@@ -55,6 +55,8 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
             let builds = source.components(separatedBy: "FollowedSourceCoordinator(repository:").dropFirst()
             XCTAssertFalse(builds.isEmpty, "\(file) no longer builds the coordinator: update this guard")
             for build in builds {
+                // Only the call's first line is read: a call wrapped across lines fails here loudly (no `signals:` on
+                // its first line), never passes silently, so wrapping one means widening this guard on purpose.
                 let line = String(build.prefix { $0 != "\n" })
                 // `signals: .app` ends the call or is followed by more arguments (`suppressedEntry:`, #4285).
                 XCTAssertTrue(Self.passesTheAppSignalLog(line), "\(file): the coordinator needs the app's signal log, got: \(line)")
