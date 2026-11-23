@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import UniformTypeIdentifiers
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -10,6 +11,8 @@ import UIKit
 struct PDFCommentExportSheet: View {
     @StateObject private var export: PDFCommentExportModel
     @Environment(\.dismiss) private var dismiss
+    /// The Files picker for "Choose the PDF" (#4338, PR 6).
+    @State private var choosesFile = false
     /// Called with the number of comments once the share sheet reports the file was sent.
     let onExported: (Int) -> Void
 
@@ -47,6 +50,10 @@ struct PDFCommentExportSheet: View {
             EmptyView()
             #endif
         }
+        .fileImporter(isPresented: $choosesFile, allowedContentTypes: [.pdf]) { result in
+            // A cancelled picker reports nothing to do; a failure to hand over the file leaves the card as it was.
+            if case .success(let url) = result { export.chooseFile(at: url) }
+        }
         .interactiveDismissDisabled(export.state.phase == .exporting && export.shareFile == nil)
         .accessibilityIdentifier("pdfExport.sheet")
     }
@@ -68,7 +75,7 @@ struct PDFCommentExportSheet: View {
             refusal(PDFCommentExportState.lockedMessage, identifier: "pdfExport.locked")
         case .unreadable:
             refusal(PDFCommentExportState.unreadableMessage(document: export.document), identifier: "pdfExport.unreadable")
-        case .ready, .exporting, .writeFailed:
+        case .ready, .exporting, .writeFailed, .originalMissing, .wrongFile:
             list
         }
     }
@@ -91,6 +98,17 @@ struct PDFCommentExportSheet: View {
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
                     .listRowBackground(Color.clear)
+                if let message = export.state.fileCardMessage, let title = export.state.chooseFileTitle {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label(message, systemImage: "doc.badge.plus")
+                        Button(title) { choosesFile = true }
+                            .filledActionButton()
+                            .accessibilityIdentifier("pdfExport.chooseFile.button")
+                    }
+                    .padding(.vertical, 4)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier(export.state.phase == .originalMissing ? "pdfExport.originalMissing" : "pdfExport.wrongFile")
+                }
                 if export.state.phase == .writeFailed {
                     VStack(alignment: .leading, spacing: 8) {
                         Label(PDFCommentExportState.writeFailedMessage(document: export.document), systemImage: "exclamationmark.triangle")
@@ -151,7 +169,7 @@ struct PDFCommentExportSheet: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!row.status.canBeIncluded)
+        .disabled(!row.status.canBeIncluded || !export.state.isEditable)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(row.pageLabel.map { "\($0). " } ?? "")\(row.text). \(row.status.words)")
         .accessibilityValue(row.status.canBeIncluded ? (row.isIncluded ? "Included" : "Not included") : "")
@@ -163,7 +181,7 @@ struct PDFCommentExportSheet: View {
     @ViewBuilder
     private var exportButton: some View {
         switch export.state.phase {
-        case .ready, .exporting, .writeFailed:
+        case .ready, .exporting, .writeFailed, .originalMissing, .wrongFile:
             Button {
                 export.export()
             } label: {
