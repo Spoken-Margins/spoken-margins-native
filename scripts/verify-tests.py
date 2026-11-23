@@ -28,6 +28,7 @@ import lane_conditions
 import lane_sim
 import sm_build_cache
 import sessionkit_pass
+import slow_tier
 import lane_sim_pool
 import node_modules_drift
 import third_party_notices
@@ -865,6 +866,10 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
     'test_phone_build.PhoneBuildTests.test_a_merge_check_that_says_fail_does_not_count_so_the_host_checks_run': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_a_safe_remerge_builds_release_without_repeating_host_or_simulator_checks': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_builds_writes_plan_and_points_latest': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_lane_tested_commit_without_a_green_slow_tier_runs_it_first': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_green_slow_tier_on_the_commit_is_not_run_again': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_red_slow_tier_stops_the_build': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_commit_from_before_the_slow_tier_is_built_without_it': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_if_changed_skips_when_latest_is_the_tip': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_plan_starts_at_the_installed_build': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_release_cache_and_source_survive_and_are_reused_for_the_next_tip': PHONE_BUILD_NEEDS_MAC,
@@ -2065,8 +2070,8 @@ class Run:
         if pr_quick:
             self.skip('runner-tests', PR_QUICK_LEFT_OUT['runner-tests'])
         elif portable:
-            self.command('runner-tests', [*PARALLEL_RUNNER, '--leave-out', *PORTABLE_RUNNER_TESTS_LEFT_OUT],
-                         **RUNNER_TESTS_LIMITS)
+            self.command('runner-tests', [*PARALLEL_RUNNER, '--leave-out', *PORTABLE_RUNNER_TESTS_LEFT_OUT,
+                                          *self.runner_leave_out()], **RUNNER_TESTS_LIMITS)
         elif in_codex_sandbox():
             self.skip('runner-tests')
         elif scope == 'none':
@@ -2172,7 +2177,11 @@ class Run:
         try:
             if split and not core_elsewhere:
                 self.package_core(core)
-            self.command('package', [*PACKAGE_RUNNER, '--rest' if split else '--skip-build'],
+            rest_skip = []
+            if split:
+                rest_expected, rest_skip = self.slow_left_out(expected - core, ('SessionKitTests', 'SessionKitTraceTests'))
+                expected = rest_expected | core
+            self.command('package', [*PACKAGE_RUNNER, '--rest' if split else '--skip-build', *rest_skip],
                          timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
                          expected=expected - core if split else expected, tests=True,
                          allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
@@ -2208,8 +2217,9 @@ class Run:
         or unreadable result file, a timeout) is run again serially, and the serial run decides: parallel
         tests can fail on shared state that serial runs never meet, and the result file's format is SwiftPM's."""
         xunit = self.output / 'package-core.xunit.xml'
+        expected, skip = self.slow_left_out(expected, ('SessionKitCoreTests',))
         try:
-            self.command('package-core', [*PACKAGE_RUNNER, '--core-parallel', str(xunit)],
+            self.command('package-core', [*PACKAGE_RUNNER, '--core-parallel', str(xunit), *skip],
                          timeout=PARALLEL_CORE_TIMEOUT, ceiling=PARALLEL_CORE_CEILING,
                          stall_seconds=PARALLEL_CORE_STALL_SECONDS, expected=expected, tests=True,
                          allowed_skips=CORE_ALLOWED_SKIPS, record_source=lambda: xunit_records(xunit))
@@ -2223,9 +2233,56 @@ class Run:
                 f'SessionKitCoreTests: the parallel run failed, so they ran again serially ({str(error)[:300]})')
             self.save()
             print('package-core: parallel run failed; running SessionKitCoreTests serially', flush=True)
-        self.command('package-core-serial', [*PACKAGE_RUNNER, '--core-serial'],
+        self.command('package-core-serial', [*PACKAGE_RUNNER, '--core-serial', *skip],
                      timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
                      expected=expected, tests=True, allowed_skips=CORE_ALLOWED_SKIPS)
+
+    def slow_left_out(self, expected, targets):
+        """(expected, extra runner args) with the slow tier's tests of these targets left out (#5145), when this run
+        was asked to (--leave-out-slow). Each left-out test is named in the run and its manifest."""
+        if not self.manifest.get('leave_out_slow'):
+            return expected, []
+        moved = slow_tier.swift_tests_in(targets) & set(expected)
+        if not moved:
+            return expected, []
+        self.manifest.setdefault('slow_tier_left_out', []).extend(sorted(moved))
+        self.save()
+        print('left out to the nightly slow tier (scripts/slow_tier.py, #5145): ' + ', '.join(sorted(moved)), flush=True)
+        return set(expected) - moved, ['--skip', slow_tier.swift_regex(moved)]
+
+    def runner_leave_out(self):
+        """parallel_unittest.py --leave-out names for the slow tier's runner modules, under --leave-out-slow."""
+        if not self.manifest.get('leave_out_slow'):
+            return []
+        modules = sorted(slow_tier.SLOW_RUNNER_MODULES)
+        self.manifest.setdefault('slow_tier_left_out', []).extend(modules)
+        self.save()
+        print('runner-tests left out to the nightly slow tier (scripts/slow_tier.py, #5145): ' + ', '.join(modules),
+              flush=True)
+        # With the dot: parallel_unittest.py matches by prefix, and a future test_sm_status_x must not leave too.
+        return [f'{module}.' for module in modules]
+
+    def slow(self):
+        """--plan slow (#5145): exactly the tests --leave-out-slow leaves out, for main-slow.yml and phone-build."""
+        modules = sorted(slow_tier.SLOW_RUNNER_MODULES)
+        if modules:
+            self.command('slow-runner-tests', [sys.executable, '-c', MAC_REST_RUNNER_LOADER,
+                                               *(f'{m}.' for m in modules)], **RUNNER_TESTS_LIMITS)
+        tests = set(slow_tier.SLOW_SWIFT_TESTS)
+        if not tests:
+            return
+        if sys.platform != 'darwin':
+            raise RuntimeError('--plan slow runs SessionKit tests with the Swift toolchain on macOS')
+        # KittenRendererTests renders real audio: a Mac whose output won't start is a runner fault, not main (#909, #1956).
+        audio = self.manifest['audio_output'] = host_audio.audio_output()
+        if audio.get('stuck') and not in_codex_sandbox():
+            self.manifest['lane_fault'] = f'no audio output: {audio["why"]}'
+            self.save()
+            raise RuntimeError(f'lane fault, not the code: {self.manifest["lane_fault"]}')
+        self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
+        self.command('slow-swift', [*PACKAGE_RUNNER, '--only', slow_tier.swift_regex(tests)],
+                     timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
+                     expected=tests, tests=True)
 
     def skip(self, name, reason=None):
         reason = reason or CODEX_SANDBOX_SKIPS[name]
@@ -2545,7 +2602,7 @@ def read_changed_files(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--plan', choices=['fast', 'fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest', *PLANS],
+    parser.add_argument('--plan', choices=['fast', 'fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest', 'slow', *PLANS],
                         default='fast')
     parser.add_argument('--device', help='Supported simulator UDID (including iPad); overrides phone preference')
     parser.add_argument('--ios', type=int, help='Required iOS major version, e.g. 26 or 27; never falls back to another OS')
@@ -2560,6 +2617,9 @@ def main():
                              'skips the runner and ops tests nothing in the diff can affect; without it every step runs')
     parser.add_argument('--pr-quick', action='store_true',
                         help='--plan fast-portable on a PR: leave runner-tests to the merge group (PR_QUICK_LEFT_OUT)')
+    parser.add_argument('--leave-out-slow', action='store_true',
+                        help='PR and merge-group runs of the split plans: leave out the slow tier (scripts/slow_tier.py, '
+                             '#5145), which --plan slow runs nightly and before builds')
     parser.add_argument('--list', action='store_true', help='Inspect selection without running tests')
     parser.add_argument('--only-testing', action='append', default=[], metavar='CLASS[/METHOD]',
                         help='Xcode plans: run only these tests of the plan (repeatable); unknown ones fail the run')
@@ -2570,6 +2630,8 @@ def main():
         parser.error('--build-only takes no --device, --require-build or --only-testing')
     if args.pr_quick and args.plan != 'fast-portable':
         parser.error('--pr-quick goes with --plan fast-portable only')
+    if args.leave_out_slow and args.plan not in FAST_SPLIT_PLANS:
+        parser.error('--leave-out-slow goes with ' + ', '.join(f'--plan {p}' for p in FAST_SPLIT_PLANS) + ' only')
     if errors := validate():
         parser.error('; '.join(errors))
     from test_inventory import probation_batches, scripted_journeys  # only the journeys plan reads the list
@@ -2582,6 +2644,9 @@ def main():
               else ('fast-portable runs ' + ', '.join(s for s in PORTABLE_STEPS if not (args.pr_quick and s in PR_QUICK_LEFT_OUT))
                     + '; it leaves out ' + ', '.join([*PORTABLE_LEFT_OUT, *(PR_QUICK_LEFT_OUT if args.pr_quick else ())])
                     if args.plan == 'fast-portable'
+                    else 'slow tier (scripts/slow_tier.py): ' + ', '.join([*sorted(slow_tier.SLOW_RUNNER_MODULES),
+                                                                           *sorted(slow_tier.SLOW_SWIFT_TESTS)])
+                    if args.plan == 'slow'
                     else 'hot-file ratchet, runner-tests, ops tests, contracts, surfaces, inventory, browser, all SessionKit tests'))
         return 0
     if journeys is not None and not any(journeys.values()):
@@ -2600,12 +2665,17 @@ def main():
         if args.pr_quick:
             run.manifest['pr_quick'] = True
             run.save()  # in the evidence from the start, not only from the first step's save
+        if args.leave_out_slow:
+            run.manifest['leave_out_slow'] = True
+            run.save()
         try:
             if args.build_only:
                 run.xcode_build(args.plan, args.runtime, args.rebuild)
             elif args.plan in ('fast', *FAST_SPLIT_PLANS, 'release'):
                 run.fast()
-            if args.plan not in ('fast', *FAST_SPLIT_PLANS) and not args.build_only:
+            elif args.plan == 'slow':
+                run.slow()
+            if args.plan not in ('fast', *FAST_SPLIT_PLANS, 'slow') and not args.build_only:
                 if journeys:
                     run.manifest['scripted_journeys'] = journeys
                     run.xcode(args.plan, args.device, args.rebuild, args.ios,
