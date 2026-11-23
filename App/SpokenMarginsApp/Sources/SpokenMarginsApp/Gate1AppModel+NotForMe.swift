@@ -62,9 +62,9 @@ extension Gate1AppModel {
         }
     }
 
-    /// The store's own reasons by name; anything else by its type only, so no file path reaches Diagnostics.
+    /// The store's own reasons by case name (`SafeErrorText` keeps an enum's case name); anything else by domain and
+    /// code only, so no file path reaches Diagnostics.
     private static func notForMeFailure(_ error: Error) -> String {
-        if let error = error as? NotForMeStore.StoreError { return "failed:\(error)" }
-        return "failed:\(String(describing: type(of: error)))"
+        "failed:\(SafeErrorText.describe(error))"
     }
 }
