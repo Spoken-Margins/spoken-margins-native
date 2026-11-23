@@ -2690,44 +2690,6 @@ final class Gate1AppModel: ObservableObject {
         return data
     }
 
-    private func scheduleFullSourceTranscriptionForListeningMap(for item: Item, localSourceURL: URL? = nil) {
-        guard item.transcriptId == nil,
-              let sourceURLString = item.media?.url,
-              let canonicalURL = URL(string: sourceURLString) else {
-            return
-        }
-        guard importedPodcastPlacement.beginFullSourceTranscription(itemId: item.id) else { return }
-        let sourceURL = localSourceURL
-            ?? podcastDownloadCoordinator?.validatedLocalURL(for: item.id)
-            ?? canonicalURL
-        guard sourceURL.isFileURL else {
-            importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
-            diagnostics["sourceTranscriptionStatus"] = "waiting_for_local_audio"
-            return
-        }
-        diagnostics["sourceTranscriptionStatus"] = "transcribing"
-        if activeItemId == item.id {
-            sourceTranscriptStatus = "transcribing"
-            snapshot.sourceTranscriptStatus = "transcribing"
-            statusMessage = "Transcribing source audio..."
-        }
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let timeline = try await self.sourceTranscriptionClient.transcribeSourceAudio(
-                    url: sourceURL,
-                    itemId: item.id,
-                    durationMs: item.media?.durationMs
-                )
-                await self.finishFullSourceTranscription(timeline, itemId: item.id)
-            } catch {
-                await MainActor.run {
-                    self.failFullSourceTranscription(itemId: item.id, error: error)
-                }
-            }
-        }
-    }
-
     func setImportedCommentaryLayerEnabled(_ layerID: String, enabled: Bool) {
         updateImportedCommentaryLayer(layerID) { $0.isEnabled = enabled }
     }

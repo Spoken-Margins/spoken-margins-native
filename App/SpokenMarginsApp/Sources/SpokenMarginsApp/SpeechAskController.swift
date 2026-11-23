@@ -22,6 +22,8 @@ final class SpeechAskController: ObservableObject {
     private let askSystem: @Sendable () async -> Void
     private(set) var ask: SpeechRecognitionAsk
     private(set) var waiting: SpeechAskWaitingList
+    /// Transcription work other than a spoken Margin's that met the hold. Allow runs each retry; a no drops them.
+    let heldRetries = HeldTranscriptionRetries()
     private var reAskShownThisLaunch = false
     private var announcedForThisAsk = false
     /// Nil while no card is due. The slot and the list draw it only on their own surface.
@@ -82,7 +84,7 @@ final class SpeechAskController: ObservableObject {
         cardSurface == surface && !isSuppressed() && access() == .notDetermined && slotIsFree()
     }
 
-    /// The first card is owed and unanswered: iOS undecided, a spoken Margin saved, no answer yet. It holds through a
+    /// The first card is owed and unanswered: iOS undecided, a spoken Margin saved or a friend's packet held, no answer yet. It holds through a
     /// relaunch (the waiting list arms it), so #4672's sheet waits on this and not on whether the card is on screen now.
     var isOutstanding: Bool { ask.isOwed(access: access()) }
 
@@ -109,6 +111,14 @@ final class SpeechAskController: ObservableObject {
             _ = ask.cardDue(at: .spokenMarginSaved(hearItLandWillRun: true), access: access(), shownThisLaunchForReAsk: false)
             if ask.isOwed(access: access()) { cardSurface = .now }
         }
+    }
+
+    /// Transcription work met the hold (`HeldTranscription`): `retry` runs on Allow, whatever bookkeeping the caller kept.
+    /// A friend's packet also makes the card owed, so a listener who has never recorded can still reach Allow (#4715).
+    func transcriptionHeld(_ kind: HeldTranscription, key: String, retry: @escaping @MainActor () -> Void) {
+        heldRetries.hold(kind, key: key, retry: retry)
+        ask.transcriptionHeld(kind)
+        if cardSurface == nil, ask.isOwed(access: access()) { cardSurface = .now }
     }
 
     /// The listener tapped Get Transcript on a Margin that waits. It is a direct request, so it always gets somewhere while
@@ -179,13 +189,14 @@ final class SpeechAskController: ObservableObject {
             return
         case .authorized:
             let identities = waiting.ids
-            let heldSources = SpeechAuthorizationAsk.takeHeldSourceItems()
-            guard !identities.isEmpty || !heldSources.isEmpty else { return }
+            guard !identities.isEmpty || !heldRetries.isEmpty else { return }
             clearWaiting()
+            // A waiting Margin gets its source window after its own transcription, never before it.
+            heldRetries.drop(.sourceWindow, keys: Set(identities))
             if !identities.isEmpty { model?.retryWaitingTranscriptions(identities: identities) }
-            if !heldSources.isEmpty { model?.retryHeldSourceTranscriptions(itemIds: heldSources) }
+            heldRetries.settle(access: .authorized)
         case .denied, .restricted:
-            _ = SpeechAuthorizationAsk.takeHeldSourceItems()
+            heldRetries.settle(access: access())
             guard waiting.hasWaitingMargin else { return }
             clearWaiting()
             model?.refreshMarginRowsInBackground()

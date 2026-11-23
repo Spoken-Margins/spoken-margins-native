@@ -110,6 +110,7 @@ extension Gate1AppModel {
                     parts.append((file.startMediaTimeMs, analysis.timeline))
                 } catch {
                     failure = SafeErrorText.describe(error)
+                    self.noteSourceWindowHeld(interjection, error: error)
                 }
                 // The scratch folder holds a whole exported window; clear it off the main actor (#2510).
                 _ = try? await Self.offMain {
@@ -313,6 +314,7 @@ extension Gate1AppModel {
                     }
                 }
             } catch {
+                self.noteSourceWindowHeld(interjection, error: error)
                 self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "failed:\(SafeErrorText.describe(error))"
                 self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "unavailable"
                 self.pendingSourceContextInterjectionIds.remove(identity)

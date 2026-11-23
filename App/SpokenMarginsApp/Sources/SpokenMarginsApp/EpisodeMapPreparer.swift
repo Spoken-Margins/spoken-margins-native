@@ -449,6 +449,14 @@ final class EpisodeMapPreparer {
                 host.recordEpisodeMapDiagnostic("episodeMapPreparation:\(item.id)", diagnostic)
             } catch {
                 job.lastFailureCode = SafeErrorText.describe(error)
+                if HeldTranscription.isHold(error) {
+                    // #4715: the map waits quietly for the listener's answer and starts again on Allow.
+                    SpeechAskController.shared.transcriptionHeld(.episodeMap, key: item.id) { [weak self] in
+                        MainThreadOperationLabels.shared.scoped("episodeMap.heldRetry") {
+                            self?.prepare(itemId: item.id, policy: initialJob.policy, trigger: trigger)
+                        }
+                    }
+                }
                 try? await self.saveJob(job, store: host.store)
                 self.status = "Failed"
                 host.recordEpisodeMapDiagnostic(
