@@ -40,6 +40,11 @@ export interface Episode {
   audioOrigin?: AudioOrigin;
   durationSeconds?: number;
   publishedAt?: string;
+  /**
+   * The show's own title as a friend's packet named it, kept only on an episode filed under a "Shared by …" holder (#4689).
+   * The holder's title is the web's, not the show's, so a reply packet carries this one instead.
+   */
+  showTitle?: string;
 }
 
 /** A Margin, anchored by time in its episode's audio. */
