@@ -542,9 +542,7 @@ struct FollowingShowRowView: View {
                         chevronButton
                     }
                     openButton { textColumn }
-                        .accessibilitySortPriority(1) // VoiceOver reads the row, then ▶, as at every size
                 }
-                .accessibilityElement(children: .contain)
             } else {
                 HStack(spacing: 0) {
                     openButton {
@@ -677,11 +675,13 @@ struct FollowingShowStatusView: View {
     }
 }
 
-/// The "N new" tag that hangs on the bottom edge of a Following row's picture (#4723): the evergreen capsule the rows
-/// used to carry in their text. Both the show and the friend row use it, so "new" looks the same on every row.
+/// The "N new" tag on the bottom edge of a Following row's picture (#4723): the evergreen capsule the rows used to carry
+/// in their text. Both the show and the friend row use it, so "new" looks the same on every row. It sits inside the
+/// picture and is an overlay, so it takes no layout space: a row is as tall with it as without it.
 struct FollowingArtworkNewBadge: View {
     let text: String
     let fontSize: CGFloat
+    let maxWidth: CGFloat
 
     var body: some View {
         Text(text)
@@ -689,37 +689,38 @@ struct FollowingArtworkNewBadge: View {
             .monospacedDigit()
             .foregroundStyle(AppColors.onEvergreen)
             .lineLimit(1)
-            .padding(.horizontal, fontSize * 0.45)
-            .frame(height: fontSize * 1.45)
+            .minimumScaleFactor(0.6)
+            .padding(.horizontal, 5)
+            .frame(maxWidth: maxWidth, minHeight: fontSize * 1.45)
+            .fixedSize(horizontal: false, vertical: true)
             .background(AppColors.evergreen, in: Capsule())
-            .overlay(Capsule().strokeBorder(AppColors.panel, lineWidth: fontSize * 0.18))
-            .fixedSize()
+            .overlay(Capsule().strokeBorder(AppColors.panel, lineWidth: 1.5))
             .accessibilityHidden(true)
     }
 }
 
+/// Overlays the tag on the picture's bottom edge. The text grows with Dynamic Type from 11 to 14 pt and shrinks to fit
+/// the picture's width (`minimumScaleFactor`), so "99+ new" stays within the picture at every size.
 private struct FollowingNewBadgeModifier: ViewModifier {
-    @ScaledMetric(relativeTo: .caption) private var tagFontSize: CGFloat = 12
+    @ScaledMetric(relativeTo: .caption) private var tagFontSize: CGFloat = 11
     let text: String?
-
-    private var size: CGFloat { min(max(tagFontSize, 12), 20) }
+    let width: CGFloat
 
     func body(content: Content) -> some View {
-        content
-            .overlay(alignment: .bottom) {
-                if let text {
-                    FollowingArtworkNewBadge(text: text, fontSize: size)
-                        .offset(y: size * 1.45 / 2)
-                }
+        content.overlay(alignment: .bottom) {
+            if let text {
+                FollowingArtworkNewBadge(text: text, fontSize: min(max(tagFontSize, 11), 14), maxWidth: width - 4)
+                    .padding(.bottom, 2)
             }
-            // Always reserved, tag or not, so the row's height doesn't jump when a count appears or clears.
-            .padding(.vertical, size * 1.45 / 2)
+        }
     }
 }
 
 extension View {
-    /// Hangs the "N new" tag on the bottom edge of a Following row's picture; nil text draws no tag but keeps the room.
-    func followingNewBadge(_ text: String?) -> some View { modifier(FollowingNewBadgeModifier(text: text)) }
+    /// Puts the "N new" tag on the bottom edge of a Following row's picture; it reserves no layout space.
+    func followingNewBadge(_ text: String?, pictureWidth: CGFloat = 56) -> some View {
+        modifier(FollowingNewBadgeModifier(text: text, width: pictureWidth))
+    }
 }
 
 /// A show's artwork, or its first letter on a tinted square.
