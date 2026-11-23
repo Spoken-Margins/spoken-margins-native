@@ -286,7 +286,7 @@ final class AccessibilityFixProofTests: XCTestCase {
 
     private func inboxRowHeight(title: String, textSize: DynamicTypeSize) -> CGFloat {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
-        model.quickAccess.recentFiles = []
+        model.quickAccess.followingPool = []
         model.libraryItems = []
         model.feedSubscriptions = []
         model.followedSourceEntries = [FeedEntry(id: "episode", subscriptionId: "show", canonicalURL: "https://example.com/e/1",
