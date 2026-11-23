@@ -460,6 +460,66 @@ class SetupFailureTests(unittest.TestCase):
             github = self.github({'hosted fast: Mac rest': self.PLAN}, logs={100: log})
             self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told', log)
 
+    def test_a_failed_test_that_quotes_a_network_error_stays_the_prs(self):
+        # #5070's audit: an assertion message can quote an outside host next to "certificate", "TLS" or "HTTP 502".
+        quoted = "fatal: unable to access 'https://github.com/x/y': SSL certificate problem: certificate has expired"
+        stamp = '2026-11-23T06:48:40.7049815Z '
+        for log in (f'Failed: test_cert_log at /work/scripts/tests/test_x.py:12 — {quoted}',
+                    f'tools: 41s — FAILED\nProcess exit 1; Failed: test_cert_log at /w/test_x.py:12 — {quoted}',
+                    f'FAIL: test_onnx (test_main_t3.Tests)\n{quoted}', f'{quoted}\nFAILED scripts/tests/test_x.py::T::t',
+                    '--- FAIL: TestFetch (0.01s)\n    fetch_test.go:9: GET https://github.com/a: HTTP 502',
+                    f'{quoted}\nAssertionError: lists differ',
+                    f'/w/T.swift:12: error: -[SessionKitTests.T testFetch] : XCTAssertEqual failed: {quoted}',
+                    f'{quoted}\n✘ Test fetchFails() recorded an issue at T.swift:9:5',
+                    f'{stamp}FAIL: test_onnx (test_main_t3.Tests)\n{stamp}{quoted}'):
+            github = self.github({'hosted fast: Mac rest': self.PLAN}, logs={100: log})
+            self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told', log)
+
+    # What verify-tests prints when its `tools` step fails on #4795's bad certificate, as the Actions log shows it: the
+    # step's own `FAILED` summary line is not a failed test (second audit of #5070).
+    VERIFY_TESTS_OUTAGE = '\n'.join('2026-11-21T14:02:1{}.1234567Z {}'.format(i, line) for i, line in enumerate((
+        'swift package resolve',
+        "fatal: unable to access 'https://download.onnxruntime.ai/pod.zip': SSL certificate problem: certificate has expired",
+        'tools: 41s — FAILED',
+        "Process exit 1; fatal: unable to access 'https://download.onnxruntime.ai/pod.zip': SSL certificate problem: "
+        'certificate has expired (see artifacts/verification/fast-mac-rest/tools.log)',
+        'Evidence: artifacts/verification/fast-mac-rest/manifest.json')))
+
+    def test_verify_tests_real_failure_lines_stay_the_prs(self):
+        # Third audit of #5070: verify-tests prints its own lines, not the runners'. Build them with its functions.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('verify_tests', ROOT / 'scripts/verify-tests.py')
+        vt = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(vt)
+        quoted = "AssertionError: \"fatal: unable to access 'https://github.com/x/y': SSL certificate problem\""
+        unittest_lines = vt.report_unittest_failures('ops', [(
+            'test_equal (test_main_t3.Sample.test_equal)', '/home/runner/work/r/r/scripts/tests/test_main_t3.py:380',
+            quoted)])
+        xctest = 'Failed: SessionKitTests/FetchTests/testCert' + vt.failure_reason(
+            {'retry_failures': ["GET https://github.com/a/b: HTTP 502 Bad Gateway"]})
+        stamp = '2026-11-23T07:20:00.1234567Z '
+        for first in (*unittest_lines, xctest):
+            for log in (first, f'{first}\nops: 30s — FAILED\nProcess exit 1; {first}',
+                        f'{stamp}ops: 30s — FAILED\n{stamp}Process exit 1; {first}'):
+                with self.subTest(log=log):
+                    self.assertFalse(mq.outside_network_error(log))
+                    github = self.github({'hosted fast: Mac rest': self.PLAN}, logs={100: log})
+                    self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+
+    def test_verify_tests_own_failed_line_does_not_hide_an_outside_outage(self):
+        github = self.github({'hosted fast: Mac rest': self.PLAN}, logs={100: self.VERIFY_TESTS_OUTAGE})
+        self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told: setup retry')
+        self.assertTrue(mq.outside_network_error(self.VERIFY_TESTS_OUTAGE))
+
+    def test_ssl_and_tls_count_only_as_words(self):
+        # #4940 committed `\b` as a literal backspace, so SSL and TLS never matched; as words they do, and not inside
+        # another word (#5070 audit).
+        for line in ('see https://github.com/a/classless-tlsish 200 OK', 'https://github.com/a/SSLKit fixture loaded'):
+            self.assertFalse(mq.outside_network_error(line), line)
+        self.assertTrue(mq.outside_network_error('curl https://github.com/a: TLS handshake timeout'))
+        self.assertTrue(mq.outside_network_error('pip: SSL: WRONG_VERSION_NUMBER for https://pypi.org/simple'))
+        self.assertNotIn('\x08', (ROOT / 'scripts/merge_queue_dequeued.py').read_text())
+
     def test_a_step_that_runs_the_prs_own_files_needs_the_network_error_too(self):
         # npm ci, pip, go build, LFS pointers and `actions/setup-*` read the PR's own manifests: their failure is the
         # PR's unless the log names an outside host and a network error (review of #4940).
