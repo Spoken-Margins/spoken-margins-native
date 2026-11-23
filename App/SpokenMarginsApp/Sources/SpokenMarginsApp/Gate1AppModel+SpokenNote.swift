@@ -19,6 +19,7 @@ extension Gate1AppModel {
             },
             libraryChanged: { [weak self] in
                 self?.refreshLibraryRowsInBackground(mustPublish: true) // one saved note, no whole-table read on main (#2505)
+                NotificationCenter.default.post(name: .spokenNoteChanged, object: nil) // an open Now re-reads its note (#4780)
             },
             beginBackgroundWork: { Gate2AppState.beginBackgroundTask($0) }
         )

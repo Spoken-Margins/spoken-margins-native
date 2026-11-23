@@ -27,11 +27,23 @@ public struct PlaybackNowSceneState: Sendable {
     public private(set) var clipHoldStarts: [Int: Int] = [:]
     private var clipAnchors: [PDFClipAnchor] = []
     private var savedClipIds: Set<String> = []
+    /// A spoken note's scene (#4780): its own sentences, its own end line, and its Margins as rows.
+    private let isNote: Bool
+    private var noteMargins: [SpokenNoteNowPassage.MarginItem] = []
+    /// Each Margin row's id, handed out the first time the Margin is seen, so adding an earlier Margin never renumbers
+    /// the rows after it.
+    private var marginRowIds: [String: Int] = [:]
+    private var nextMarginRowId = -1_000_000
 
-    public init(text: String, chapters: [Chapter] = []) {
-        index = PlaybackLivePassage.Index(text: text, chapters: chapters)
+    /// - Parameters:
+    ///   - sentenceStarts: each sentence's start, when the source knows its own sentences (a spoken note); nil splits the
+    ///     text at its stops.
+    ///   - isNote: a spoken note's scene: "End of the note" after its last sentence.
+    public init(text: String, chapters: [Chapter] = [], sentenceStarts: [Int]? = nil, isNote: Bool = false) {
+        index = PlaybackLivePassage.Index(text: text, chapters: chapters, sentenceStarts: sentenceStarts)
         self.chapters = chapters
         textLength = text.count
+        self.isNote = isNote
     }
 
     /// The Character count of the text, for building Margins' offsets.
@@ -66,7 +78,7 @@ public struct PlaybackNowSceneState: Sendable {
     }
 
     public var endLine: EndLine {
-        guard !chapters.isEmpty else { return EndLine(heading: "End of the text", next: nil) }
+        guard !chapters.isEmpty else { return EndLine(heading: isNote ? "End of the note" : "End of the text", next: nil) }
         let position = chapters.firstIndex { max(0, min($0.startChar, textLength)) == shownScene.chapterStart }
         if let position, chapters.indices.contains(position + 1) {
             return EndLine(heading: "End of this scene", next: chapters[position + 1].title)
@@ -111,15 +123,41 @@ public struct PlaybackNowSceneState: Sendable {
         sceneRevision += 1
     }
 
+    /// A spoken note's Margins, as rows after their sentences (`SpokenNoteNowPassage.Words.marginItems`). Only a change
+    /// rebuilds the rows, and the revision moves so the view can tell.
+    public mutating func setNoteMargins(_ items: [SpokenNoteNowPassage.MarginItem]) {
+        guard items != noteMargins else { return }
+        noteMargins = items
+        for item in items where marginRowIds[item.key] == nil {
+            marginRowIds[item.key] = nextMarginRowId
+            nextMarginRowId -= 1
+        }
+        rebuildItems()
+        sceneRevision += 1
+    }
+
     private mutating func rebuildItems() {
-        guard !clipAnchors.isEmpty, !savedClipIds.isEmpty else {
+        if !clipAnchors.isEmpty, !savedClipIds.isEmpty {
+            let placed = PlaybackLivePassage.ClipPlacement.items(scene: shownScene, anchors: clipAnchors, saved: savedClipIds)
+            shownItems = placed.items
+            clipHoldStarts = placed.holdStarts
+        } else {
             shownItems = shownScene.sentences.map { .sentence($0) }
             clipHoldStarts = [:]
-            return
         }
-        let placed = PlaybackLivePassage.ClipPlacement.items(scene: shownScene, anchors: clipAnchors, saved: savedClipIds)
-        shownItems = placed.items
-        clipHoldStarts = placed.holdStarts
+        guard !noteMargins.isEmpty else { return }
+        var after: [Int: [PlaybackLivePassage.SceneItem]] = [:]
+        for item in noteMargins {
+            guard let id = marginRowIds[item.key] else { continue }
+            after[item.afterRowId, default: []].append(.margin(item, id: id))
+        }
+        var items: [PlaybackLivePassage.SceneItem] = []
+        items.reserveCapacity(shownItems.count + noteMargins.count)
+        for item in shownItems {
+            items.append(item)
+            if case .sentence(let sentence) = item, let margins = after[sentence.id] { items.append(contentsOf: margins) }
+        }
+        shownItems = items
     }
 
     public mutating func scrollCameToRest(litSentenceIsVisible: Bool) {
