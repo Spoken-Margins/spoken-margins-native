@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ShareLinkError } from './logic/share-link.ts';
 import { messageForFailure, messageForOpened, messageForOpenedSettled, playCheckHandler, reportPlayCheck, type PlayCheckMessage } from './play-check.ts';
 import { feedFixture } from '../sources/fixtures.ts';
-import type { CheckReadReply, CheckReadRequest } from './play-check-reads.ts';
+import { READ_REFUSED, type CheckReadReply, type CheckReadRequest } from './play-check-reads.ts';
 
 const margin = { id: 'm', episodeId: 'e', atSeconds: 5, createdAt: '2026-11-17T10:00:00Z', text: 'x', author: 'Cole' };
 const episode = (e: object) => ({ title: 'T', ...e }) as never;
@@ -164,14 +164,10 @@ test('only a Substack post\'s page is read, and only with both of the app\'s han
   // #4767: a page that is not a Substack post has no voice a browser could find, so it is a plain "can't play", not "couldn't tell".
   assert.deepEqual(await messageForOpenedSettled(essay, other.host, canPlay), { type: 'verdict', verdict: 'cannot', reason: 'no-episode-audio' });
   assert.deepEqual(other.asked, [], 'a page that is not a Substack post is never read');
-  // #4783: an Apple Podcasts episode page is looked up by the friend's own page when they open the link. The check can't
-  // make that lookup (the web view loads nothing but the link and the app's reads cover a Substack page and audio only), so
-  // it says "couldn't tell", never "can't play" for an episode the friend will be able to hear, and never reads Apple.
+  // #4783: an Apple Podcasts episode page is looked up (the tests below). Without the app's handlers nothing is read, so it
+  // says "couldn't tell", never "can't play" for an episode the friend will be able to hear.
   const apple = post('https://podcasts.apple.com/us/podcast/people-parks-and-policy-with-rffs-margaret-walls/id1445582279?i=1000427709574');
-  const unclear = { type: 'verdict', verdict: 'unverified', why: 'post-voice' };
-  assert.deepEqual(await messageForOpenedSettled(apple, other.host, canPlay), unclear);
-  assert.deepEqual(await messageForOpenedSettled(apple, {}, canPlay), unclear, 'and without the app\'s handlers too');
-  assert.deepEqual(other.asked, []);
+  assert.deepEqual(await messageForOpenedSettled(apple, {}, canPlay), { type: 'verdict', verdict: 'unverified', why: 'post-voice' });
   // An Apple show page with no episode id has nothing to look up: a plain "can't play".
   const show = post('https://podcasts.apple.com/us/podcast/people-parks-and-policy/id1445582279');
   assert.deepEqual(await messageForOpenedSettled(show, other.host, canPlay), { type: 'verdict', verdict: 'cannot', reason: 'no-episode-audio' });
@@ -182,4 +178,109 @@ test('only a Substack post\'s page is read, and only with both of the app\'s han
   delete (readOnly.host.webkit.messageHandlers as { smPlayCheck?: unknown }).smPlayCheck;
   assert.deepEqual(await messageForOpenedSettled(post(POST), readOnly.host, canPlay), { type: 'verdict', verdict: 'unverified', why: 'post-voice' });
   assert.deepEqual(readOnly.asked, [], 'with no probe handler nobody would hear a verdict, so nothing is read');
+});
+
+// An Apple Podcasts episode with no audio address (#4783, the owner's yes on 2026-11-23): the check makes the friend's page's
+// own lookup through the app (Apple's lookup, then the show's feed), so the sender's line and the friend's card agree.
+const APPLE_PAGE = 'https://podcasts.apple.com/us/podcast/people-parks-and-policy-with-rffs-margaret-walls/id1445582279?i=1000427709574';
+const LOOKUP = 'https://itunes.apple.com/lookup?id=1445582279&entity=podcastEpisode&limit=200';
+const FEED = 'https://feeds.soundcloud.com/users/soundcloud:users:1/sounds.rss';
+const TITLE = 'People, Parks, and Policy with RFF\u2019s Margaret Walls';
+const ENCLOSURE = 'https://feeds.soundcloud.com/stream/559432260-resourcesradio-people-parks-and-policy-with-rffs-margaret-walls.mp3';
+const appleEpisode = { episode: episode({ title: TITLE, pageUrl: APPLE_PAGE }), margins: [margin] as never, percentMargins: [] as never };
+const showRow = (feedUrl = FEED) => ({ wrapperType: 'track', kind: 'podcast', collectionId: 1445582279, feedUrl });
+const listed = { wrapperType: 'podcastEpisode', trackId: 1000427709574, episodeUrl: ENCLOSURE };
+const otherEpisode = { wrapperType: 'podcastEpisode', trackId: 1000427709000, episodeUrl: 'https://example.com/other.mp3' };
+const rss = (...titles: string[]) =>
+  `<?xml version="1.0"?><rss version="2.0"><channel><title>Resources Radio</title>${titles
+    .map((t, i) => `<item><title>${t}</title><guid>g${i}</guid><enclosure type="audio/mpeg" url="${i === titles.length - 1 ? ENCLOSURE : `https://example.com/${i}.mp3`}" length="1"/></item>`)
+    .join('')}</channel></rss>`;
+const UNCLEAR = { type: 'verdict', verdict: 'unverified', why: 'post-voice' };
+const NO_AUDIO = { type: 'verdict', verdict: 'cannot', reason: 'no-episode-audio' };
+
+/** The app's reads, answered by kind; `refuse` lists kinds the app won't read (an older build refuses kinds it predates). */
+function appleReads(answers: { lookup?: CheckReadReply | Error; feed?: CheckReadReply | Error; audio?: CheckReadReply | Error }, refuse: string[] = []) {
+  const asked: CheckReadRequest[] = [];
+  const host = {
+    webkit: {
+      messageHandlers: {
+        smPlayCheck: { postMessage: () => undefined },
+        smPlayCheckRead: {
+          postMessage: async (request: CheckReadRequest) => {
+            asked.push(request);
+            if (refuse.includes(request.kind)) throw new Error(READ_REFUSED);
+            const reply = request.kind === 'apple-lookup' ? answers.lookup : request.kind === 'feed' ? answers.feed : request.kind === 'audio-start' ? answers.audio : undefined;
+            if (reply instanceof Error || reply === undefined) throw reply ?? new Error(`no answer for ${request.kind}`);
+            return reply;
+          },
+        },
+      },
+    },
+  };
+  return { host, asked };
+}
+const json = (results: object[]): CheckReadReply => ({ status: 200, url: LOOKUP, body: JSON.stringify({ resultCount: results.length, results }) });
+const AUDIO_OK: CheckReadReply = { status: 206, contentType: 'audio/mpeg' };
+
+test('an Apple episode Apple lists plays: one lookup and one audio start, through the app, no feed read', async () => {
+  const { host, asked } = appleReads({ lookup: json([showRow(), listed]), audio: AUDIO_OK });
+  assert.deepEqual(await messageForOpenedSettled(appleEpisode, host, canPlay), { type: 'verdict', verdict: 'plays' });
+  assert.deepEqual(asked, [{ kind: 'apple-lookup', url: LOOKUP }, { kind: 'audio-start', url: ENCLOSURE }]);
+});
+
+test('the owner\'s 2019 episode: Apple doesn\'t list it, the show\'s feed has it by its exact title, and it plays', async () => {
+  const { host, asked } = appleReads({ lookup: json([showRow(), otherEpisode]), feed: { status: 200, url: FEED, body: rss('Newest', TITLE) }, audio: AUDIO_OK });
+  assert.deepEqual(await messageForOpenedSettled(appleEpisode, host, canPlay), { type: 'verdict', verdict: 'plays' });
+  assert.deepEqual(asked, [{ kind: 'apple-lookup', url: LOOKUP }, { kind: 'feed', url: FEED }, { kind: 'audio-start', url: ENCLOSURE }]);
+});
+
+test('an Apple episode with no audio to find says what the friend\'s card says, never a guess between two titles', async () => {
+  const run = async (answers: Parameters<typeof appleReads>[0]) => messageForOpenedSettled(appleEpisode, appleReads(answers).host, canPlay);
+  // Apple lists it with no audio address, and the feed holds no item with its title.
+  assert.deepEqual(await run({ lookup: json([showRow(), { ...listed, episodeUrl: undefined }]), feed: { status: 200, url: FEED, body: rss('Newest', 'Another episode') } }), NO_AUDIO);
+  // Two feed items with the same title: ambiguous, so not played (the friend's page refuses it the same way).
+  assert.deepEqual(await run({ lookup: json([showRow(), otherEpisode]), feed: { status: 200, url: FEED, body: rss(TITLE, TITLE) } }), NO_AUDIO);
+  // Apple names no feed for the show, or answers with no results.
+  assert.deepEqual(await run({ lookup: json([{ wrapperType: 'track', kind: 'podcast' }, otherEpisode]) }), NO_AUDIO);
+  assert.deepEqual(await run({ lookup: { status: 200, url: LOOKUP, body: '{"resultCount":0,"results":[]}' } }), NO_AUDIO);
+  // A feed address that is not a feed.
+  assert.deepEqual(await run({ lookup: json([showRow(), otherEpisode]), feed: { status: 200, url: FEED, body: 'just text, not a feed' } }), NO_AUDIO);
+});
+
+test('a found Apple episode whose audio a browser can\'t use says why', async () => {
+  const run = async (audio: CheckReadReply) => messageForOpenedSettled(appleEpisode, appleReads({ lookup: json([showRow(), listed]), audio }).host, canPlay);
+  assert.deepEqual(await run({ status: 404, contentType: 'text/html' }), { type: 'verdict', verdict: 'cannot', reason: 'audio-refused' });
+  assert.deepEqual(await run({ status: 200, contentType: 'audio/x-ms-wma' }), { type: 'verdict', verdict: 'cannot', reason: 'audio-format' });
+  assert.deepEqual(await run({ status: 503 }), { type: 'failed', reason: 'server' });
+});
+
+test('a lookup or feed read that fails is "couldn\'t check", never a warning', async () => {
+  const run = async (answers: Parameters<typeof appleReads>[0]) => messageForOpenedSettled(appleEpisode, appleReads(answers).host, canPlay);
+  const FAILED = { type: 'failed', reason: 'server' };
+  assert.deepEqual(await run({ lookup: new Error('offline') }), FAILED);
+  assert.deepEqual(await run({ lookup: { status: 503, url: LOOKUP, body: '' } }), FAILED);
+  assert.deepEqual(await run({ lookup: { status: 200, url: LOOKUP, body: '<html>not json</html>' } }), FAILED);
+  assert.deepEqual(await run({ lookup: json([showRow(), otherEpisode]), feed: new Error('The read failed.') }), FAILED);
+  assert.deepEqual(await run({ lookup: json([showRow(), otherEpisode]), feed: { status: 500, url: FEED, body: '' } }), FAILED);
+});
+
+test('a feed over the size cap says what the friend\'s browser says, which stops at the same size: no audio to find', async () => {
+  const { host } = appleReads({ lookup: json([showRow(), otherEpisode]), feed: { status: 200, url: FEED, tooLarge: true } });
+  assert.deepEqual(await messageForOpenedSettled(appleEpisode, host, canPlay), NO_AUDIO);
+});
+
+test('an app that predates these reads refuses them, and the check says "couldn\'t tell" as before', async () => {
+  const old = appleReads({ lookup: json([showRow(), listed]), audio: AUDIO_OK }, ['apple-lookup', 'feed']);
+  assert.deepEqual(await messageForOpenedSettled(appleEpisode, old.host, canPlay), UNCLEAR);
+  assert.deepEqual(old.asked.map((r) => r.kind), ['apple-lookup']);
+  // A feed read the app refuses (it names a feed Apple's answer didn't) is the same "couldn't tell".
+  const feedRefused = appleReads({ lookup: json([showRow(), otherEpisode]) }, ['feed']);
+  assert.deepEqual(await messageForOpenedSettled(appleEpisode, feedRefused.host, canPlay), UNCLEAR);
+});
+
+test('a feed Apple names as http:// is asked of the app as https://, and its title still matches', async () => {
+  const httpFeed = 'http://feeds.soundcloud.com/users/soundcloud:users:1/sounds.rss';
+  const { host, asked } = appleReads({ lookup: json([showRow(httpFeed), otherEpisode]), feed: { status: 200, url: FEED, body: rss(TITLE) }, audio: AUDIO_OK });
+  assert.deepEqual(await messageForOpenedSettled(appleEpisode, host, canPlay), { type: 'verdict', verdict: 'plays' });
+  assert.deepEqual(asked[1], { kind: 'feed', url: FEED });
 });

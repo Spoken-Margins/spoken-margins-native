@@ -488,7 +488,9 @@ class TimedWorld(M.World):
         job = wf['jobs'][job_id]
         outcome = event['outcome']
         if outcome in ('hang', 'cancel'):  # G5
-            self.finish_job(run, job_id, 'cancelled', {})
+            # A job that writes its own check run (merge policy, #4986) is killed before it can mark it: GitHub marks
+            # a job's check cancelled itself, but this one stays in progress in a run that has ended.
+            self.finish_job(run, job_id, 'cancelled', {'check': 'pending'} if job.get('own_check') else {})
             return
         if outcome == 'fail':
             row = run['rows'].get(job_id)
@@ -506,7 +508,9 @@ class TimedWorld(M.World):
 
     def finish_job(self, run, job_id, result, outputs):
         row = run['rows'].get(job_id)
-        if row:
+        if row and outputs.get('check') == 'pending':  # the job succeeded and left its check run in progress (#4986)
+            row['status'], row['conclusion'] = 'in_progress', None
+        elif row:
             row['status'], row['conclusion'] = 'completed', result
         run['jobs'][job_id] = {'result': result, 'outputs': outputs}
         run['state'][job_id] = 'done'

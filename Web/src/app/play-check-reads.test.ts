@@ -76,3 +76,9 @@ test('the browser\'s own canPlayType answer is only asked, and a page that can\'
   // In node there is no document: the answer is "maybe", never an empty string that would warn.
   assert.notEqual(browserCanPlayType('audio/x-ms-wma'), '');
 });
+
+test('an answer over the app\'s size cap is the read path\'s own ReadTooLarge, as a browser\'s read would be', async () => {
+  const { ReadTooLarge } = await import('../sources/read.ts');
+  const transport = checkTransport({ postMessage: async () => ({ status: 200, url: 'https://x.example/feed', tooLarge: true }) }, 'feed');
+  await assert.rejects(transport.fetch('https://x.example/feed'), ReadTooLarge);
+});

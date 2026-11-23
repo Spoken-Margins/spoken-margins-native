@@ -278,7 +278,11 @@ def extract(root: Path = ROOT) -> dict:
             needs = job.get('needs') or []
             jobs[job_id] = {
                 'id': job_id,
-                'check': str(job.get('name') or job_id),
+                # A job that posts its own check run under another name says so in `SM_REPORTS_CHECK` (merge-policy.yml,
+                # #4986): the job is named `merge policy run`, the check the ruleset requires is `merge policy`.
+                'check': str((job.get('env') or {}).get('SM_REPORTS_CHECK') or job.get('name') or job_id),
+                # The job writes that check run itself, so a cancel kills it before it can mark it (#4986).
+                'own_check': bool((job.get('env') or {}).get('SM_REPORTS_CHECK')),
                 'if': None if job.get('if') is None else str(job['if']).strip(),
                 'needs': [needs] if isinstance(needs, str) else list(needs),
                 'concurrency': job.get('concurrency'),
@@ -848,8 +852,10 @@ class World:
                         result = 'failure'
                     results[job_id] = {'result': result, 'outputs': outputs}
                 if sha:
-                    self.checks.setdefault(sha, {})[(job['check'], file)] = {'name': job['check'],'conclusion': results[job_id]['result'],
-                                                                     'run': run['id'], 'event': event_name}
+                    held = results[job_id]['outputs'].get('check') == 'pending'
+                    self.checks.setdefault(sha, {})[(job['check'], file)] = {
+                        'name': job['check'], 'conclusion': 'pending' if held else results[job_id]['result'],
+                        'run': run['id'], 'event': event_name}
             if not progressed:
                 break
         run['jobs'] = results
@@ -875,8 +881,10 @@ class World:
             found = [c for c in checks.values() if c['name'] == name and c['event'] in ('pull_request', 'merge_group')]
             if not found:  # A3, A4
                 missing.append(name)
-            elif any(c['conclusion'] not in ('success', 'skipped', 'neutral') for c in found):  # A2
+            elif any(c['conclusion'] not in ('success', 'skipped', 'neutral', 'pending') for c in found):  # A2
                 failed.append(name)
+            elif any(c['conclusion'] == 'pending' for c in found):  # an in-progress check run is not yet a pass (#4986)
+                missing.append(name)
         if failed:
             return 'failed', failed
         if missing:
@@ -1085,7 +1093,15 @@ def b_merge_policy(world, run, job, ctx, cause):
                                   classify=lambda paths, diffs: world.tree.classify(paths), inherited=lambda c: [])
     finally:
         policy.fetch_head, policy.changes, policy.unsigned_commits, policy.commit_messages = saved
-    return ('failure' if reasons else 'success'), {'reasons': '; '.join(reasons) or 'may merge'}
+    if not hasattr(policy, 'verdict'):  # a tree from before #4986 (ci_harness.py --diff reads old trees): red for any hold
+        return ('failure' if reasons else 'success'), {'reasons': '; '.join(reasons) or 'may merge'}
+    state = policy.verdict([(1, world.head, reasons, False)], queue=ctx['github']['event_name'] == 'merge_group')
+    # What the check run shows (#4986): a PR that is only waiting for an audit or the owner's tap leaves the `merge
+    # policy` check in progress and the job succeeds, so no runner waits and nothing reads red.
+    outputs = {'reasons': '; '.join(reasons) or 'may merge'}
+    if state == 'waiting':
+        outputs['check'] = 'pending'
+    return ('failure' if state == 'failure' else 'success'), outputs
 
 
 class FakeBridgeGitHub:
@@ -1159,7 +1175,9 @@ class FakeDequeueGitHub:
             sha = path.split('/')[1]
             rows = []
             for c in w.checks.get(sha, {}).values():
-                row = {'name': c['name'], 'conclusion': c['conclusion'], 'completed_at': 'x', 'html_url': ''}
+                held = c['conclusion'] == 'pending'  # a check run left in progress (#4986)
+                row = {'name': c['name'], 'conclusion': None if held else c['conclusion'],
+                       'status': 'in_progress' if held else 'completed', 'completed_at': 'x', 'html_url': ''}
                 if c.get('id') is not None:   # the timed harness gives every check run an id, as Actions does
                     row['id'] = c['id']
                     row['details_url'] = f'https://github.com/{REPO}/actions/runs/{c["run"]}/job/{c["id"]}'
@@ -1239,7 +1257,8 @@ def b_claude_audit(world, run, job, ctx, cause):
     tap_checks_done = False
     if audit.lane_report_missing_for_head(why):
         if audit.touches_owner_tap(files) or audit.risky_areas(world.paths):
-            runs = [{'name': c['name'], 'status': 'completed', 'conclusion': c['conclusion']}
+            runs = [{'name': c['name'], 'status': 'in_progress' if c['conclusion'] == 'pending' else 'completed',
+                     'conclusion': None if c['conclusion'] == 'pending' else c['conclusion']}
                     for c in world.checks.get(world.head, {}).values()]
             state, _ = audit.owner_tap_alert.checks_state(runs, [])
             tap_checks_done = state == 'ok' and bool(runs)

@@ -429,4 +429,74 @@ final class FootnoteChimeSequencerTests: XCTestCase {
         XCTAssertNil(sequencer.hearOfferedNote(tags: [nil, nil, nil]))
         XCTAssertEqual(sequencer.card, .hidden)
     }
+
+    // MARK: - A Timeline tap before the player holds a plan (#3777, after Design PR 7)
+
+    func testARequestBeforeThePlanReadsTheNoteWhenThePlayerReachesIt() {
+        var sequencer = Sequencer()
+        sequencer.requestHearing(label: "1")
+        XCTAssertEqual(sequencer.card, .hidden, "nothing to show until a plan is in force")
+        XCTAssertEqual(step(&sequencer, 1), .play, "the citing sentence plays")
+        XCTAssertEqual(sequencer.card, .reading(label: "1"))
+        XCTAssertEqual(step(&sequencer, 2), .play, "the note is read, not offered with a tone")
+        XCTAssertEqual(step(&sequencer, 3), .play, "then the sentence after the citation")
+        XCTAssertEqual(sequencer.card, .hidden)
+        XCTAssertEqual(
+            step(&sequencer, 4), .cue(run: Sequencer.Run(chunks: 4..<6, labels: ["a", "b"]), continueAt: 6),
+            "the next citation is offered as ever")
+    }
+
+    func testARequestFirstAskedAboutAtTheNoteItselfReadsIt() {
+        var sequencer = Sequencer()
+        sequencer.requestHearing(label: "b")
+        XCTAssertEqual(step(&sequencer, 4), .play)
+        XCTAssertEqual(sequencer.card, .reading(label: "b"))
+        XCTAssertEqual(step(&sequencer, 5), .play, "the whole run at that citation is read")
+        XCTAssertEqual(step(&sequencer, 6), .play)
+        XCTAssertEqual(sequencer.card, .hidden)
+    }
+
+    func testARequestFindsTheNoteInWhicheverPlanIsInForce() {
+        var sequencer = Sequencer()
+        sequencer.requestHearing(label: "1")
+        XCTAssertEqual(step(&sequencer, 0, tags: rebuilt), .play)
+        XCTAssertEqual(step(&sequencer, 3, tags: rebuilt), .play, "note 1 sits at chunk 3 in the rebuilt plan")
+        XCTAssertEqual(sequencer.card, .reading(label: "1"))
+    }
+
+    func testARequestForANoteThePlanDoesNotCarryIsDropped() {
+        var sequencer = Sequencer()
+        sequencer.requestHearing(label: "9")
+        XCTAssertEqual(step(&sequencer, 1), .play)
+        XCTAssertEqual(sequencer.card, .hidden)
+        XCTAssertEqual(step(&sequencer, 2), .cue(run: Sequencer.Run(chunks: 2..<3, labels: ["1"]), continueAt: 3))
+    }
+
+    func testARequestIsDroppedByResetAModeChangeAndTheEndOfTheText() {
+        for drop in ["reset", "mode", "end"] {
+            var sequencer = Sequencer()
+            sequencer.requestHearing(label: "1")
+            switch drop {
+            case "reset": sequencer.reset()
+            case "mode": XCTAssertEqual(step(&sequencer, 0, mode: .whereCited), .play)
+            default: XCTAssertEqual(step(&sequencer, tags.count), .play)
+            }
+            XCTAssertEqual(step(&sequencer, 1), .play, drop)
+            XCTAssertEqual(
+                step(&sequencer, 2), .cue(run: Sequencer.Run(chunks: 2..<3, labels: ["1"]), continueAt: 3),
+                "\(drop): the note is offered, not read")
+        }
+    }
+
+    func testARequestReplacesAnOfferedCard() {
+        var sequencer = Sequencer()
+        _ = step(&sequencer, 2)
+        XCTAssertEqual(sequencer.card, .offered(label: "1"))
+        sequencer.requestHearing(label: "a")
+        XCTAssertEqual(sequencer.card, .hidden)
+        XCTAssertNil(sequencer.hearOfferedNote(tags: tags), "the old offer is gone")
+        XCTAssertEqual(step(&sequencer, 3), .play)
+        XCTAssertEqual(step(&sequencer, 4), .play)
+        XCTAssertEqual(sequencer.card, .reading(label: "a"))
+    }
 }

@@ -15,9 +15,12 @@ HEAD = 'a' * 40
 NEWER = 'b' * 40
 
 
-def check(id_, name, run_id, conclusion):
-    return {'id': id_, 'name': name, 'conclusion': conclusion,
-            'details_url': f'https://github.com/o/r/actions/runs/{run_id}/job/{id_ * 10}'}
+def check(id_, name, run_id, conclusion, status=None):
+    row = {'id': id_, 'name': name, 'conclusion': conclusion,
+           'details_url': f'https://github.com/o/r/actions/runs/{run_id}/job/{id_ * 10}'}
+    if status:
+        row['status'] = status
+    return row
 
 
 def pull(number=7, head=HEAD, labels=('automerge',), state='open', draft=False):
@@ -39,6 +42,32 @@ class DecideTests(unittest.TestCase):
         action, why = rc.decide(run(), [pull()], STUCK)
         self.assertEqual(action, 'rerun', why)
         self.assertIn('merge policy', why)
+
+    def test_a_check_the_cancelled_run_left_in_progress_is_re_run(self):
+        # merge-policy.yml's script writes the `merge policy` check run itself (#4986). A cancel, a timeout or a lost
+        # runner kills it before it can mark the check, so GitHub leaves it in progress, in a run that has ended.
+        left = [check(10, 'merge policy', 499, 'success', 'completed'),
+                check(11, 'merge policy', 500, None, 'in_progress')]
+        action, why = rc.decide(run(), [pull()], left)
+        self.assertEqual(action, 'rerun', why)
+        self.assertIn('merge policy', why)
+
+    def test_an_in_progress_check_of_another_run_or_an_older_one_is_not_this_runs(self):
+        for label, checks in {
+            'a newer run is the newest': [check(11, 'merge policy', 500, None, 'in_progress'),
+                                           check(12, 'merge policy', 501, 'success', 'completed')],
+            'the in-progress one belongs to another run': [check(11, 'merge policy', 500, 'success', 'completed'),
+                                                           check(12, 'merge policy', 501, None, 'in_progress')],
+        }.items():
+            with self.subTest(label):
+                action, why = rc.decide(run(), [pull()], checks)
+                self.assertEqual(action, 'leave', why)
+
+    def test_a_waiting_check_of_a_successful_run_is_left_alone(self):
+        # The designed pending state: the job succeeded and left the check in progress. Nothing to re-run.
+        waiting = [check(11, 'merge policy', 500, None, 'in_progress')]
+        action, why = rc.decide(run(conclusion='success'), [pull()], waiting)
+        self.assertEqual(action, 'leave', why)
 
     def test_cases_left_alone(self):
         table = {

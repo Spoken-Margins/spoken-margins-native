@@ -85,6 +85,12 @@ class ExtractTests(unittest.TestCase):
             events = {e for p in producers for e in p['events']}
             self.assertTrue({'pull_request', 'merge_group'} <= events, name)
 
+    def test_a_job_that_posts_its_own_check_run_is_known_by_the_name_it_reports(self):
+        # merge-policy.yml's job is `merge policy run`; the check run the ruleset requires is `merge policy` (#4986).
+        job = TREE.model['workflows']['merge-policy.yml']['jobs']['policy']
+        self.assertEqual(job['check'], 'merge policy')
+        self.assertEqual(TREE.model['required_checks']['merge policy'][0]['workflow'], 'merge-policy.yml')
+
     def test_tokens_and_effects(self):
         workflows = TREE.model['workflows']
         self.assertEqual(workflows['merge-queue-label-bridge.yml']['jobs']['bridge']['token'], 'secret:MERGE_QUEUE_TOKEN')

@@ -92,4 +92,75 @@ final class ShareLinkPlayCheckReadsTests: XCTestCase {
         XCTAssertEqual(Set(codes).count, outcomes.count, "one code for each outcome")
         for code in codes { XCTAssertFalse(code.contains("/") || code.contains(" "), code) }
     }
+
+    // MARK: Apple's lookup and the show's feed (#4783, the owner's yes on 2026-11-23)
+
+    private let lookup = "https://itunes.apple.com/lookup?id=1445582279&entity=podcastEpisode&limit=200"
+    private let feed = "https://feeds.soundcloud.com/users/soundcloud:users:1/sounds.rss"
+
+    private func lookupAnswer(_ feedUrls: [Any?]) -> Data {
+        let rows: [[String: Any]] = feedUrls.map { url in
+            var row: [String: Any] = ["wrapperType": "track", "kind": "podcast"]
+            if let url { row["feedUrl"] = url }
+            return row
+        } + [["wrapperType": "podcastEpisode", "trackId": 1, "episodeUrl": "https://cdn.example.com/a.mp3"]]
+        return try! JSONSerialization.data(withJSONObject: ["resultCount": rows.count, "results": rows])
+    }
+
+    func testOnlyApplesLookupInItsOwnShapeIsReadAsALookup() {
+        XCTAssertEqual(request("apple-lookup", lookup), .appleLookup(URL(string: lookup)!))
+        let refused: [(String, String)] = [
+            ("http://itunes.apple.com/lookup?id=1445582279&entity=podcastEpisode&limit=200", "not https"),
+            ("https://itunes.apple.com.evil.example/lookup?id=1&entity=podcastEpisode&limit=200", "a lookalike host"),
+            ("https://podcasts.apple.com/lookup?id=1&entity=podcastEpisode&limit=200", "another Apple host"),
+            ("https://itunes.apple.com/search?id=1&entity=podcastEpisode&limit=200", "another path"),
+            ("https://itunes.apple.com/lookup?id=1&entity=podcastEpisode&limit=200&callback=x", "an extra parameter"),
+            ("https://itunes.apple.com/lookup?id=abc&entity=podcastEpisode&limit=200", "an id that is not a number"),
+            ("https://itunes.apple.com/lookup?id=&entity=podcastEpisode&limit=200", "no id"),
+            ("https://itunes.apple.com/lookup?id=12345678901234567890&entity=podcastEpisode&limit=200", "an id too long"),
+            ("https://itunes.apple.com/lookup?entity=podcastEpisode&limit=200&id=1", "another order"),
+            ("https://itunes.apple.com/lookup?id=1&entity=podcastEpisode&limit=200#x", "a fragment"),
+            ("https://example.com/feed.rss", "a page that is not the lookup"),
+        ]
+        for (url, why) in refused {
+            XCTAssertNil(request("apple-lookup", url), why)
+        }
+        // A lookup asked as a page is not a Substack post: refused as before.
+        XCTAssertNil(request("page", lookup))
+    }
+
+    func testAFeedIsReadOnlyWhenApplesAnswerNamedIt() throws {
+        let named = try XCTUnwrap(request("feed", feed))
+        let elsewhere = try XCTUnwrap(request("feed", "https://attacker.example/feed.rss"))
+        var budget = ShareLinkPlayCheck.ReadBudget()
+        XCTAssertFalse(budget.allow(named), "no lookup answer yet: no feed")
+        XCTAssertTrue(budget.allow(try XCTUnwrap(request("apple-lookup", lookup))))
+        XCTAssertFalse(budget.allow(try XCTUnwrap(request("apple-lookup", lookup))), "one lookup")
+        budget.noteLookupAnswer(lookupAnswer([feed]))
+        XCTAssertFalse(budget.allow(elsewhere), "a feed Apple didn't name")
+        XCTAssertTrue(budget.allow(named))
+        XCTAssertFalse(budget.allow(named), "one feed read")
+    }
+
+    func testFeedsAppleNamesAreKeptAsHttpsAndInOneSpelling() throws {
+        // Apple lists some feeds as http://; the page asks for them as https://. Host case and port 443 don't matter.
+        var budget = ShareLinkPlayCheck.ReadBudget()
+        budget.noteLookupAnswer(lookupAnswer(["http://Feeds.SoundCloud.com/users/soundcloud:users:1/sounds.rss"]))
+        XCTAssertTrue(budget.allow(try XCTUnwrap(request("feed", "https://feeds.soundcloud.com:443/users/soundcloud:users:1/sounds.rss"))))
+
+        let addresses = ShareLinkPlayCheck.ReadBudget.feedAddresses(inLookupAnswer: lookupAnswer([
+            feed, "  https://a.example/f.xml  ", nil, "", "not a url", "ftp://a.example/f", "file:///etc/passwd",
+            "https://localhost/f.xml", "https://192.168.1.5/f.xml", 42,
+        ]))
+        XCTAssertEqual(addresses.map(\.absoluteString), [feed, "https://a.example/f.xml"])
+        XCTAssertEqual(ShareLinkPlayCheck.ReadBudget.feedAddresses(inLookupAnswer: Data("<html>".utf8)), [])
+        XCTAssertEqual(ShareLinkPlayCheck.ReadBudget.feedAddresses(inLookupAnswer: Data("{\"results\":{}}".utf8)), [])
+    }
+
+    func testANewLookupAnswerReplacesTheFeedsAnEarlierOneNamed() throws {
+        var budget = ShareLinkPlayCheck.ReadBudget()
+        budget.noteLookupAnswer(lookupAnswer([feed]))
+        budget.noteLookupAnswer(lookupAnswer([]))
+        XCTAssertFalse(budget.allow(try XCTUnwrap(request("feed", feed))))
+    }
 }
