@@ -51,7 +51,7 @@ STATE_FILE = Path(os.environ.get('SM_DIAL_STATE', '/var/lib/sm-dial/state.json')
 MARGIN = 3                      # points below the stop line where new work holds
 TREND_SLACK = 10                # Paced may run this many points ahead of the trend line (owner 2026-10-19)
 RESET_WEEKDAY = int(os.environ.get('SM_DIAL_RESET_WEEKDAY', '0'))   # Monday (Mon=0); it was Saturday (5) until 2026-11-23
-RESET_HOUR_UTC = int(os.environ.get('SM_DIAL_RESET_HOUR', '11'))    # 07:00 EDT
+RESET_HOUR_UTC = int(os.environ.get('SM_DIAL_RESET_HOUR', '18'))    # about 18:00 UTC Monday (owner 2026-11-23, "about right now"); was 11 for Saturday 07:00 EDT
 # Hours before the reset. The labels name the weekday of the reset they were written for, so both the Saturday-reset
 # boxes still on #589 and their Monday-reset equivalents (Sun noon, Sun 7 AM) are read the same way.
 FINISH_BY = {'reset': 0, 'mon 7': 0, 'sat 7': 0, 'fri noon': 19, 'sun noon': 19, 'fri 7': 24, 'sun 7': 24}

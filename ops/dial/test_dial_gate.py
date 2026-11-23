@@ -14,7 +14,9 @@ import dial_gate as g  # noqa: E402
 # The fixtures below are dated against the Saturday-reset week of 2026-09/10, so they pin that weekday. The Monday
 # default (from 2026-11-23) is covered by MondayReset at the end.
 DEFAULT_RESET_WEEKDAY = g.RESET_WEEKDAY
+DEFAULT_RESET_HOUR_UTC = g.RESET_HOUR_UTC
 g.RESET_WEEKDAY = 5
+g.RESET_HOUR_UTC = 11
 
 BODY = """Tap one box in each group.
 
@@ -939,6 +941,7 @@ class MondayReset(unittest.TestCase):
 
     def test_the_default_reset_is_monday(self):
         self.assertEqual(DEFAULT_RESET_WEEKDAY, 0)
+        self.assertEqual(DEFAULT_RESET_HOUR_UTC, 18)
 
     def test_the_next_reset_is_the_coming_monday(self):
         with mock.patch.object(g, 'RESET_WEEKDAY', 0):
