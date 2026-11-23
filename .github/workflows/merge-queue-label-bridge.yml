@@ -32,7 +32,8 @@
 # when any PR's check finishes would queue a PR whose merge group just failed, or one taken out by hand, before
 # merge_queue_dequeued.py has taken `automerge` off it (ci_model scenario d showed the second failing group).
 #
-# Cost and catch: one Linux job of seconds per `automerge` label change, title edit or draft, plus a seconds-long
+# Cost and catch: one Linux job of seconds per `automerge` label change, title edit or draft, one more per push to or
+# opening of an unarmed PR (the `new-head` job, #5162), plus a seconds-long
 # sweep every 15 minutes (only with MERGE_QUEUE on; otherwise each run is a skipped job). Its real cost is the merge
 # group runs each queueing starts (Linux, plus a Mac for a Swift diff). The `needs-fix` guard bounds that to one group
 # per arming: a PR whose group failed gets `needs-fix` and loses `automerge` (merge_queue_dequeued.py), and is not
@@ -104,3 +105,24 @@ jobs:
           else
             python3 scripts/merge_queue_label_bridge.py --repo "$GH_REPO" --sweep
           fi
+
+  # The required `merge policy` check is a check run merge_policy.py makes through the API, and GitHub files it in the
+  # first GitHub Actions check suite made for the head SHA (#5162). When that first suite is this workflow's run and
+  # its only job was skipped (an unarmed PR's `opened` or `synchronize`), the suite reads "skipped", and GitHub then
+  # refuses to queue the PR with "Required status check 'merge policy' is expected" although the check passed: on
+  # 2026-11-23 eleven armed PRs (#5147, #5155 among them) sat green and unqueued, and every one had its check in a
+  # skipped bridge suite. This job runs exactly when `bridge` skips on a new head, so this workflow's suite always
+  # ends `success` there. It does nothing else: no checkout, no token use.
+  new-head:
+    name: merge queue label bridge (new head)
+    if: >-
+      vars.MERGE_QUEUE == 'on' && github.event_name == 'pull_request_target' &&
+      (github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize' ||
+       github.event.action == 'ready_for_review') &&
+      !contains(github.event.pull_request.labels.*.name, 'automerge')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Nothing to queue
+        run: echo "Not armed with automerge; this job only keeps the check suite from reading skipped (#5162)."

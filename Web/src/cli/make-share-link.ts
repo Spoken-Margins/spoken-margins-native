@@ -2,7 +2,11 @@
 // iPhone can make one (#3239, then #487). It reads the packet with the web importer, builds the preview the web app
 // would, seals both with the shared sealing code and uploads them. The key stays in the link's `#` part.
 //
-//   scripts/make-share-link <file.spokenmargins> [--server https://spokenmargins.com]
+//   scripts/make-share-link [--intro] <file.spokenmargins> [--server https://spokenmargins.com]
+//
+// `--intro` makes an introduction link (#4784): the sealed preview carries `answers: "none"`, so a browser that opens
+// it keeps the listener's Margins in the browser and never offers the sender as a destination. Without it the
+// preview is byte-for-byte what it was.
 //
 // This runs only from a checkout on the Mac. The web app cannot make links (owner, 2026-11-05, #3542); nothing here is
 // bundled into it.
@@ -36,7 +40,7 @@ export interface MadeLink {
  * The preview sealed next to the packet, as the web app once built it, plus the words of text Margins, since
  * the iPhone exports article packets too. Words only: no quoted source text, as for a podcast.
  */
-export function previewOf(read: ReadPacketResult): LinkPreview {
+export function previewOf(read: ReadPacketResult, options: { intro?: boolean } = {}): LinkPreview {
   const margins = [...read.margins, ...read.textMargins]
     .map((m) => (m.text ?? '').trim())
     .filter((text) => text !== '')
@@ -44,7 +48,12 @@ export function previewOf(read: ReadPacketResult): LinkPreview {
   if (margins.length === 0) throw new MakeShareLinkError('None of these Margins have words, so there is nothing to put in a link.');
   const url = shareableLink(read.episode.pageUrl);
   const show = read.episode.showTitle?.trim();
-  return { schema: 'spokenmargins.link-preview.v1', source: { title: read.episode.title, ...(show && { show }), ...(url && { url }) }, margins };
+  return {
+    schema: 'spokenmargins.link-preview.v1',
+    source: { title: read.episode.title, ...(show && { show }), ...(url && { url }) },
+    margins,
+    ...(options.intro && { answers: 'none' as const }),
+  };
 }
 
 const megabytes = (n: number): string => (n < 1 << 20 ? `${Math.ceil(n / 1024)} KB` : `${(n / (1 << 20)).toFixed(1)} MB`);
@@ -52,10 +61,10 @@ const megabytes = (n: number): string => (n < 1 << 20 ? `${Math.ceil(n / 1024)} 
 /** Reads, seals and uploads one packet. Refuses an oversized packet before anything is sent. */
 export async function makeShareLink(
   packet: Uint8Array,
-  options: { fileName: string; server?: string; fetch?: typeof fetch },
+  options: { fileName: string; server?: string; fetch?: typeof fetch; intro?: boolean },
 ): Promise<MadeLink> {
   const read = await readPacket(packet, { fileName: options.fileName });
-  const preview = previewOf(read);
+  const preview = previewOf(read, { intro: options.intro });
   const sealed = await sealPacket(packet, preview);
   if (sealed.packet.length > MAX_SEALED_PACKET_BYTES) {
     throw new MakeShareLinkError(
@@ -67,13 +76,15 @@ export async function makeShareLink(
   return { ...made, preview, sealedPacketBytes: sealed.packet.length };
 }
 
-const USAGE = 'usage: scripts/make-share-link <file.spokenmargins> [--server https://spokenmargins.com]';
+const USAGE = 'usage: scripts/make-share-link [--intro] <file.spokenmargins> [--server https://spokenmargins.com]';
 
 async function main(args: string[]): Promise<number> {
   let server = DEFAULT_SERVER;
+  let intro = false;
   const files: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--server') server = args[++i] ?? '';
+    else if (args[i] === '--intro') intro = true;
     else if (args[i] === '-h' || args[i] === '--help') {
       console.log(USAGE);
       return 0;
@@ -85,9 +96,10 @@ async function main(args: string[]): Promise<number> {
   }
   const path = files[0] as string;
   try {
-    const made = await makeShareLink(new Uint8Array(readFileSync(path)), { fileName: basename(path), server });
+    const made = await makeShareLink(new Uint8Array(readFileSync(path)), { fileName: basename(path), server, intro });
     console.error(`${made.preview.source.title}: ${made.preview.margins.length} Margins with words, ${megabytes(made.sealedPacketBytes)} sealed`);
     if (made.expiresAt) console.error(`expires ${made.expiresAt}`);
+    if (intro) console.error('Introduction link: answers stay with each listener.');
     console.log(made.url);
     return 0;
   } catch (error) {

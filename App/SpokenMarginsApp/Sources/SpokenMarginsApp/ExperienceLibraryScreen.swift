@@ -303,7 +303,7 @@ struct ExperienceLibraryScreen: View {
         VStack(alignment: .leading, spacing: 12) {
             AppSearchField("Search title, source, author, or friend", text: $model.libraryQuery.query, identifier: "library.search.field")
 
-            HStack(spacing: 8) {
+            LibraryChipRowLayout(spacing: 8, forcesColumn: dynamicTypeSize.isAccessibilitySize) {
                 libraryFiltersMenu
                 sortMenu
             }
@@ -410,8 +410,11 @@ struct ExperienceLibraryScreen: View {
         }
     }
 
+    // The chip names what narrows the list, from the query alone (#4762); the summary line below the chips keeps its own
+    // rule (`hasActiveFilters`), so the everyday Unfinished view stays quiet (#4698).
     private var libraryFiltersMenu: some View {
-        Menu {
+        let chip = LibraryQueryEngine.libraryFilterChip(query: model.libraryQuery)
+        return Menu {
             Section("Content type") {
                 Picker("Content type", selection: $model.libraryQuery.contentType) {
                     ForEach(LibraryContentTypeFilter.allCases, id: \.self) { option in
@@ -441,18 +444,19 @@ struct ExperienceLibraryScreen: View {
                 }
             }
         } label: {
-            if dynamicTypeSize.isAccessibilitySize {
-                Image(systemName: "line.3.horizontal.decrease.circle")
-                    .font(.title2)
-                    .frame(minWidth: 52, minHeight: 52)
-                    .foregroundStyle(AppColors.evergreen)
-            } else {
-                ExperienceFilterChip(isActive: hasActiveFilters) {
-                    Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
-                }
+            // Words at every text size, so the fill never carries the state alone (#4762).
+            ExperienceFilterChip(isActive: chip.isNarrowing, allowsWrapping: true) {
+                Label(
+                    chip.title,
+                    systemImage: chip.isNarrowing ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
+                )
             }
         }
-        .accessibilityLabel(hasActiveFilters ? "Filter Library, active filters" : "Filter Library")
+        .accessibilityLabel("Filter Library")
+        .accessibilityValue(chip.accessibilityValue)
+        // A Menu may not pass its label's selected trait through to VoiceOver, so it is repeated here.
+        .accessibilityAddTraits(chip.isNarrowing ? .isSelected : [])
+        .accessibilityInputLabels(["Filter", chip.title, "Filter Library"])
         .accessibilityIdentifier("library.filter.menu")
     }
 
@@ -464,19 +468,13 @@ struct ExperienceLibraryScreen: View {
                 }
             }
         } label: {
-            if dynamicTypeSize.isAccessibilitySize {
-                Image(systemName: "arrow.up.arrow.down")
-                    .font(.title2)
-                    .frame(minWidth: 52, minHeight: 52)
-                    .foregroundStyle(AppColors.evergreen)
-            } else {
-                ExperienceFilterChip(isActive: model.libraryQuery.sort != .recentlyAdded) {
-                    Label(displayName(model.libraryQuery.sort.rawValue), systemImage: "arrow.up.arrow.down")
-                }
+            ExperienceFilterChip(isActive: model.libraryQuery.sort != .recentlyAdded, allowsWrapping: true) {
+                Label(displayName(model.libraryQuery.sort.rawValue), systemImage: "arrow.up.arrow.down")
             }
         }
         .accessibilityLabel("Sort Library")
         .accessibilityValue(displayName(model.libraryQuery.sort.rawValue))
+        .accessibilityInputLabels(["Sort", displayName(model.libraryQuery.sort.rawValue), "Sort Library"])
         .accessibilityIdentifier("library.sort.menu")
     }
 
@@ -1146,5 +1144,55 @@ struct LibraryRowPlayLabel: View {
             }
             .accessibilityHidden(true)
         }
+    }
+}
+
+/// The Library's Filter and Sort chips: side by side when both fit at their natural width, otherwise stacked, Filter
+/// above Sort, each as wide as its words and aligned to the leading edge; always stacked at accessibility sizes (#4762).
+/// It is a `Layout`, not `ViewThatFits` or `AdaptiveStack`, so each `Menu` keeps one identity: a pick that changes a
+/// label's width (such as `Needs Repreparation`) then never rebuilds the chip under VoiceOver focus as its menu closes.
+/// Internal for its test.
+struct LibraryChipRowLayout: Layout {
+    var spacing: CGFloat
+    var forcesColumn: Bool
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let ideal = subviews.map { $0.sizeThatFits(.unspecified) }
+        if isRow(ideal: ideal, width: proposal.width) {
+            let width = ideal.reduce(0) { $0 + $1.width } + gaps(subviews.count)
+            return CGSize(width: width, height: ideal.map(\.height).max() ?? 0)
+        }
+        let sizes = subviews.map { $0.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)) }
+        var width = sizes.map(\.width).max() ?? 0
+        if let limit = proposal.width { width = min(width, limit) }
+        return CGSize(width: width, height: sizes.reduce(0) { $0 + $1.height } + gaps(subviews.count))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let ideal = subviews.map { $0.sizeThatFits(.unspecified) }
+        if isRow(ideal: ideal, width: bounds.width) {
+            var x = bounds.minX
+            for (subview, size) in zip(subviews, ideal) {
+                subview.place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            return
+        }
+        // Never `.unspecified` here: a label only wraps when it is offered the column's width.
+        let offer = ProposedViewSize(width: bounds.width, height: nil)
+        var y = bounds.minY
+        for subview in subviews {
+            let size = subview.sizeThatFits(offer)
+            subview.place(at: CGPoint(x: bounds.minX, y: y), anchor: .topLeading, proposal: offer)
+            y += size.height + spacing
+        }
+    }
+
+    private func isRow(ideal: [CGSize], width: CGFloat?) -> Bool {
+        !forcesColumn && ideal.reduce(0) { $0 + $1.width } + gaps(ideal.count) <= (width ?? .infinity)
+    }
+
+    private func gaps(_ count: Int) -> CGFloat {
+        spacing * CGFloat(max(count - 1, 0))
     }
 }

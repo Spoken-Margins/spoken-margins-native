@@ -16,6 +16,12 @@ export interface LinkPreview {
   schema: 'spokenmargins.link-preview.v1';
   source: { title: string; show?: string; url?: string };
   margins: { text: string; before?: string; after?: string }[];
+  /**
+   * `"none"` marks an introduction link (#4784): answers stay with each listener, so the web listener never offers the
+   * sender as a destination. Set by `make-share-link --intro` only; absent on every other link. It lives in the sealed
+   * preview, never in the packet, and older readers ignore it.
+   */
+  answers?: 'none';
 }
 
 export interface SealedLink {
