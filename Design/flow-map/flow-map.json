@@ -3231,7 +3231,7 @@
    "via": [],
    "target": "ExperienceRecordingView",
    "final_cost": 1,
-   "final": "Speak, then tap Save & resume. Saying “stop margin” instead ends it with no tap (Settings, on by default, #3940).",
+   "final": "Speak, then tap Save & resume. Saying “stop margin” can end it with no tap instead (Settings, on by default, #3940), but listening is best effort: the first Margin before Speech Recognition is allowed has no phrase.",
    "note": "The entry is one action: a Back Tap, the Action Button or a Home Screen tap that runs the Record a Margin shortcut (#4923); recording starts with no tap. Setting up Back Tap once is not counted. With a live session running (a Kindle book read by Speak Screen) the route is the live session's recording screen instead: see job L19 in docs/design/live-sessions/live-sessions.json and its Kindle comparison in SITUATIONS.md."
   }
  ]

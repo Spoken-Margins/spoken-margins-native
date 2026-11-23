@@ -890,11 +890,11 @@
    },
    "today": {
     "taps": 3,
-    "how": "As built since #4923: Back Tap, Save & resume, back to the book. The live session's recording has no spoken stop phrase; the Lock Screen card's Finish also ends it."
+    "how": "Built since #4923 (the base flow map has no live-session screens, so compute-taps.py files the count under proposed): Back Tap, Save & resume, back to the book. The live session's recording has no spoken stop phrase; the Lock Screen card's Finish also ends it."
    },
    "taps": {
-    "as_built": 3,
-    "proposed": null,
+    "as_built": null,
+    "proposed": 3,
     "route": [
      "Back Tap runs Record a Margin: Spoken Margins opens and the live session's spoken Margin starts with no tap"
     ]

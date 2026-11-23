@@ -31,7 +31,9 @@ class BeatKindleJobTableTests(unittest.TestCase):
         # leaves the intent, the count no longer describes the code and must be redone.
         intent = (ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp" / "RecordMarginShortcutIntent.swift").read_text(encoding="utf-8")
         edge = next(e for e in self.table.edges if e["id"] == "ls19")
-        self.assertIn(edge["anchor"], intent)
+        lines = intent.splitlines()
+        case = next(i for i, line in enumerate(lines) if line.strip() == "case .liveSession:")
+        self.assertIn(edge["anchor"], lines[case + 1], "a running live session no longer takes the counted route")
         self.assertIn("static let openAppWhenRun = true", intent)
         edges = [e for e in self.table.edges if e["id"] != "ls19"]
         self.assertIsNone(self.table.ct.compute_all(edges, self.table.jobs, self.table.start)["L19"])
