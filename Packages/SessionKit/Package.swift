@@ -164,6 +164,7 @@ let package = Package(
                 "SessionKitEPUB",
                 "SessionKitFeeds",
                 "SessionKitSpeechFrontEnd",
+                "SessionKitSharing",
                 "SessionKitTestInputs",
                 "SubstackCanaryCore",
                 .product(name: "ZIPFoundation", package: "ZIPFoundation")
@@ -207,7 +208,7 @@ let package = Package(
 // which Linux XCTest lacks. CryptoKit comes from swift-crypto (same API,
 // module `Crypto`), and SQLite3 from a system-library module over libsqlite3.
 let linuxTargets: Set<String> = [
-    "SessionKit", "SessionKitPersistence", "SessionKitAI", "SessionKitEPUB", "SessionKitFeeds",
+    "SessionKit", "SessionKitPersistence", "SessionKitAI", "SessionKitEPUB", "SessionKitFeeds", "SessionKitSharing",
     "SessionKitSpeechFrontEnd", "SessionKitTestInputs", "SessionKitCoreTests",
     // The Substack canary (#2027) runs on the VPS runner; "substack-canary" is its product's name.
     "SubstackCanaryCore", "SubstackCanary", "substack-canary",
@@ -220,7 +221,7 @@ package.dependencies = [
     .package(url: "https://github.com/apple/swift-crypto.git", exact: "3.15.1"),
 ]
 package.targets.append(.systemLibrary(name: "SQLite3", path: "Linux/SQLite3", providers: [.apt(["libsqlite3-dev"])]))
-for target in package.targets where target.name == "SessionKit" || target.name == "SessionKitFeeds" || target.name == "SessionKitCoreTests" {
+for target in package.targets where target.name == "SessionKit" || target.name == "SessionKitFeeds" || target.name == "SessionKitSharing" || target.name == "SessionKitCoreTests" {
     target.dependencies.append(.product(name: "Crypto", package: "swift-crypto"))
 }
 for target in package.targets where target.name == "SessionKit" {
