@@ -13,6 +13,9 @@ public enum FootnoteCue {
     public static let attackSeconds = 0.03
     /// Peak amplitude, the same as `SharedMarginCue`'s so the two sit at one loudness.
     public static let peak = 0.30
+    /// How long narration waits at a cited note in chime mode: the tone and a short gap, so the passage after the note
+    /// starts after the tone has sounded and not on top of it (Design, Flow 5: "a pause of about 0.4 s").
+    public static let leadIn: TimeInterval = 0.4
 
     public static func wavData() -> Data {
         let count = Int(Double(sampleRate) * seconds)

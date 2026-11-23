@@ -489,6 +489,23 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     #endif
     private let articleText: ArticleTextLookup?
     private let footnoteAsides: FootnoteAsidesLookup?
+    /// The listener's Footnotes choice, read at each seam (#3777). nil in tests that don't set it: `whereCited`.
+    private let footnoteMode: (@Sendable () -> FootnoteMode)?
+    /// Plays the tone that marks a cited note in `chime` mode (#3777). nil in tests that don't listen.
+    private let footnoteCue: (@Sendable () -> Void)?
+    /// What "Chime where cited" does at each cited note: tone, card, Hear note, Stop note (#3777). The plan carries the
+    /// same note chunks in `chime` and `whereCited`; this passes over them at play time unless the listener asked for a
+    /// note. Guarded by `lock`.
+    private var chimeSequencer = FootnoteChimeSequencer()
+    /// Set by `followingChunk` when the seam it chose cues a note; the end of the chunk plays the tone and holds the next
+    /// chunk for it. Guarded by `lock`.
+    private var chimeCuePending = false
+    /// When the Hear note or Stop note button asked for its move, until the play that move makes consumes it, so that play
+    /// is not mistaken for a listener's seek that clears the card. A move whose play never comes (the seek was refused, or
+    /// the session was paused and the listener went elsewhere) is older than `chimeMoveWindow` at the next play, and that
+    /// play clears the card instead. Guarded by `lock`.
+    private var chimeMoveStartedAt: TimeInterval?
+    private static let chimeMoveWindow: TimeInterval = 5
     /// Whether `preparedSpeechProjection` is the one with the article's matched citations silent (#3777). Reset by
     /// `prepareSpeechText`, set by `applyFootnoteSilencing` when a play starts. Guarded by `lock`.
     private var projectionHasAsides = false
@@ -567,6 +584,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onPreparedChunk: PreparedChunkHandler? = nil,
         articleText: ArticleTextLookup? = nil,
         footnoteAsides: FootnoteAsidesLookup? = nil,
+        footnoteMode: (@Sendable () -> FootnoteMode)? = nil,
+        footnoteCue: (@Sendable () -> Void)? = nil,
         preparedChunkLookup: PreparedChunkLookup? = nil,
         bundledVoiceChunkLookup: PreparedChunkLookup? = nil,
         onPreparedAudio: PreparedAudioHandler? = nil,
@@ -644,6 +663,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.stallRecoveryCooldown = stallRecoveryCooldown
         self.articleText = articleText
         self.footnoteAsides = footnoteAsides
+        self.footnoteMode = footnoteMode
+        self.footnoteCue = footnoteCue
         self.onResumeDecision = onResumeDecision
         self.renderWaitLimit = renderWaitLimit
         self.backgroundGapWaitLimit = backgroundGapWaitLimit
@@ -696,6 +717,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     func prepareSpeechText(_ text: String) throws -> String {
         let projection = SpeechTextNormalizer.normalizeWithSourceOffsets(text)
         lock.withLock {
+            // The engine re-prepares the same text before every play, so only a different text clears what the chime
+            // offered or is reading; another item is caught by `play` (#3777).
+            if preparedSourceText != text { chimeSequencer.reset() }
             preparedSourceText = text
             preparedSpeechProjection = projection
             // The plain projection until a play of an article with notes silences their citations (#3777).
@@ -795,6 +819,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return
         }
         applyFootnoteSilencing(targetId: targetId)
+        // A seek the sequencer did not make, or another item, offers nothing: the card goes (#3777). The Hear note and Stop
+        // note moves are the sequencer's own and keep their state.
+        lock.withLock {
+            let moveStartedAt = chimeMoveStartedAt
+            chimeMoveStartedAt = nil
+            if let moveStartedAt, ProcessInfo.processInfo.systemUptime - moveStartedAt <= Self.chimeMoveWindow {
+                return
+            }
+            if moveStartedAt != nil || isSeek || currentTargetId != targetId { chimeSequencer.reset() }
+        }
         let requestedSpokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
         // A skip that left a note while paused marks it (`noteLeftChunk`); this play must not bring the note back, so it
         // is read before `spokenOffsetBeforeNote` consumes the mark (#3777). A chunk key holds no item, so the mark
@@ -1118,16 +1152,79 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// the note into. Nil when the chunk now playing (or held, while paused) is not an aside, when the voice has handed
     /// over to the system voice, and for a note with nothing left once its lead is removed. Called twice a second by the
     /// card's view, so it looks at the one current chunk first and builds the plan's tags only on a note.
+    ///
+    /// In `chime` mode the card also shows while a note is offered (the tone sounded and the text carries on), for the note
+    /// the sequencer names; it is that note's words, which are in the plan though the player passes over them.
     func currentFootnoteCard() -> FootnoteCard? {
         // No `applyQueuedAdvance` here, unlike `footnoteContinuationSourceOffset`: the view calls this twice a second from
         // the main thread, and that call reaches chunk start-up work (the main-thread-reads ratchet lists it). The player's
         // own timer and the playback tick apply a queued advance, so the card follows within a tick of the note ending.
         return lock.withLock { () -> FootnoteCard? in
-            guard !fallbackIsActive,
-                  let index = generationPlan.firstIndex(where: { $0.key == currentChunk }),
-                  generationPlan[index].isAside else { return nil }
+            guard !fallbackIsActive else { return nil }
+            if let index = generationPlan.firstIndex(where: { $0.key == currentChunk }), generationPlan[index].isAside {
+                return FootnoteCard.forChunk(
+                    at: index, tags: generationPlan.map(\.footnote), texts: generationPlan.map(\.text))
+            }
+            guard footnoteMode?() == .chime, let label = chimeSequencer.card.label,
+                  let index = generationPlan.firstIndex(where: { $0.footnote == .aside(label) }) else { return nil }
             return FootnoteCard.forChunk(
                 at: index, tags: generationPlan.map(\.footnote), texts: generationPlan.map(\.text))
+        }
+    }
+
+    /// What the Footnote card's button says, for the chime mode: `hidden` in any other mode, so a card left over from a
+    /// choice the listener changed offers nothing (#3777).
+    func chimeCardState() -> FootnoteChimeSequencer.Card {
+        lock.withLock { footnoteMode?() == .chime ? chimeSequencer.card : .hidden }
+    }
+
+    /// The card's Hear note, first half: the sequencer starts hearing the offered note, and the answer is the source offset
+    /// the app seeks to (`Gate1AppModel.seekText`): the start of the sentence that cited the note. The listener hears that
+    /// chunk again, then the note, then the text after the citation (Design, Flow 5: "a sentence or two again"). Nil when
+    /// no note is offered. The seek's own play keeps the sequencer's state (`chimeMoveStartedAt`); `footnoteMoveFailed()`
+    /// undoes this when the app refuses the seek.
+    func beginHearingOfferedFootnote() -> Int? {
+        let spokenOffset = lock.withLock { () -> Int? in
+            guard !fallbackIsActive, generationHasAsides, currentTargetId != nil else { return nil }
+            let tags = generationPlan.map(\.footnote)
+            guard let first = chimeSequencer.hearOfferedNote(tags: tags) else { return nil }
+            guard let offset = FootnoteNoteControls.heldStartOffset(
+                forChunkAt: first, tags: tags, startOffsets: generationPlan.map(\.startOffset)) else {
+                chimeSequencer.reset()
+                return nil
+            }
+            chimeMoveStartedAt = ProcessInfo.processInfo.systemUptime
+            return offset
+        }
+        return spokenOffset.map { sourceOffset(forSpokenOffset: $0) }
+    }
+
+    /// The card's Stop note, first half: the source offset where the text goes on after the citation, or the end of the
+    /// text. Nil when no note is being read. See `beginHearingOfferedFootnote()`.
+    func beginStoppingFootnote() -> Int? {
+        let spokenOffset = lock.withLock { () -> Int? in
+            guard !fallbackIsActive, currentTargetId != nil, let identity = articleIdentity,
+                  let resume = chimeSequencer.stopHearing(
+                    tags: generationPlan.map(\.footnote), itemId: identity, heard: heardNotes) else { return nil }
+            chimeMoveStartedAt = ProcessInfo.processInfo.systemUptime
+            return resume.continueAt.map { generationPlan[$0].startOffset } ?? preparedSpeechProjection.text.count
+        }
+        return spokenOffset.map { sourceOffset(forSpokenOffset: $0) }
+    }
+
+    /// The app refused the seek a card button asked for: nothing is offered or read any more.
+    func footnoteMoveFailed() {
+        lock.withLock {
+            chimeMoveStartedAt = nil
+            chimeSequencer.reset()
+        }
+    }
+
+    /// Takes the offered card away when its 30 seconds are up (#3777). `voiceOverIsOnCard` is true while VoiceOver is
+    /// running: the app can't see where its focus is, so the card stays for as long as VoiceOver is on.
+    func expireChimeCardIfDue(voiceOverIsOnCard: Bool) {
+        lock.withLock {
+            _ = chimeSequencer.expireCard(now: ProcessInfo.processInfo.systemUptime, voiceOverIsOnCard: voiceOverIsOnCard)
         }
     }
 
@@ -1325,6 +1422,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         defer { releaseHandOverBackgroundTimeIfHeld() }
         let stopped = lock.withLock { () -> (urls: [URL], renderControl: RenderTaskControl?) in
             generation = UUID()
+            // Nothing is offered or read after a stop: a start of the same item must not find a note still "being read".
+            chimeSequencer.reset()
+            chimeMoveStartedAt = nil
+            chimeCuePending = false
             let renderControl = activeRenderControl
             activeRenderControl = nil
             player?.pause()
@@ -1492,11 +1593,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             (player?.currentItem === item || (player != nil && activeItem === item)) && transportIntent == .playing
         }) else { return }
         removePlaybackEndObserver()
+        let appIsActiveAtSeam = applicationIsActive?() ?? true
         let snapshot = lock.withLock { () -> (Int, String?, Int, CachedAudio?, TimeInterval, UUID, URL?, RenderedSpeechChunkBoundary, ChunkKey, Bool) in
             // Set with the finished player detached, so the monitor never sees the old player as the next one.
             handOverHoldRequested = handOverHold != nil
             recordHeardNote()
-            let next = followingChunk()
+            let next = followingChunk(appIsActive: appIsActiveAtSeam)
             let nextOffset = next.offset
             // Commit audible progress before detaching the finished player.
             // During an underrun, timeout/fallback and pause/resume must start
@@ -1524,6 +1626,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 next.isAside
             )
         }
+        // A cited note in chime mode: the tone sounds now and the passage after the note waits for it (#3777), the way a
+        // change of voice is introduced (#934).
+        let chimeCue = lock.withLock { () -> Bool in
+            defer { chimeCuePending = false }
+            return chimeCuePending
+        }
+        if chimeCue { footnoteCue?() }
         holdBackgroundTimeForHandOver()
         if let finishedURL = snapshot.6,
            !lock.withLock({ generationResults.values.contains(where: { $0.audioURL == finishedURL }) }) {
@@ -1538,6 +1647,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 completedTargetId = snapshot.1
                 playbackComplete = true
                 transportIntent = .stopped
+                // The text is over: a note read to its last chunk has no later chunk to clear its card.
+                chimeSequencer.reset()
                 if generationState == .ready || generationState == .stopped {
                     return (generationState, generationStopReason)
                 }
@@ -1570,7 +1681,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 && (applicationIsInBackground?() ?? true)
         }
         if let cached = snapshot.3 {
-            playRenderedAudio(cached.url, duration: cached.duration, request: cached.request, delay: snapshot.4)
+            playRenderedAudio(
+                cached.url, duration: cached.duration, request: cached.request,
+                delay: snapshot.4 + (chimeCue ? FootnoteCue.leadIn : 0))
         } else if let reason = lock.withLock({ failedRenderReasons[request.key] }) {
             activateSystemFallback(
                 targetId: targetId,
@@ -3611,7 +3724,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// the step: an aside has no source characters, so stepping by offset would skip the aside or play the sentence
     /// before it again. Anywhere else, the old rule: the offset where this chunk's source ends (#3777).
     /// Call with the lock held.
-    private func followingChunk() -> (key: ChunkKey, offset: Int, isAside: Bool) {
+    ///
+    /// In `chime` mode the run of notes at a citation is passed over unless the listener asked for it, and the step may
+    /// cue the note (`chimeCuePending`): see `FootnoteChimeSequencer`. `appIsActive` is read by the caller outside `lock`.
+    /// `isLookahead` is the background queue asking early, while the chunk still plays: the sequencer's answer is used and
+    /// none of its state changes, so the card and a note being read stay as they are until the seam is real.
+    private func followingChunk(appIsActive: Bool, isLookahead: Bool = false) -> (key: ChunkKey, offset: Int, isAside: Bool) {
         let next = chunkAfterCurrent()
         guard let identity = articleIdentity,
               let index = generationPlan.firstIndex(where: { $0.key == next.key }) else { return next }
@@ -3621,6 +3739,26 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         var heard = heardNotes
         if let current = generationPlan.firstIndex(where: { $0.key == currentChunk }) {
             heard.recordPlayedToEnd(chunkAt: current, tags: generationPlan.map(\.footnote), itemId: identity)
+        }
+        if generationHasAsides {
+            let tags = generationPlan.map(\.footnote)
+            var sequencer = chimeSequencer
+            let step = sequencer.willStartChunk(
+                at: index, tags: tags, itemId: identity, mode: footnoteMode?() ?? .whereCited,
+                appIsActive: appIsActive, heard: heard, now: ProcessInfo.processInfo.systemUptime)
+            if !isLookahead { chimeSequencer = sequencer }
+            switch step {
+            case .play:
+                break
+            case .skip(let continueAt), .cue(_, let continueAt):
+                if case .cue = step, !isLookahead { chimeCuePending = true }
+                guard let continueAt else {
+                    let end = preparedSpeechProjection.text.count
+                    return (ChunkKey(startOffset: end), end, false)
+                }
+                let target = generationPlan[continueAt]
+                return (target.key, target.startOffset, target.isAside)
+            }
         }
         guard heard.skips(generationPlan[index].footnote, itemId: identity) else { return next }
         // A note's definition in the notes chapter, for a note already read where it was cited: on to the first chunk
@@ -3899,7 +4037,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             // to, when the end of the chunk before it was heard first (#1762).
             guard !appIsActive, let queue = player as? AVQueuePlayer, let playing = activeItem,
                   queue.items().last === playing else { return }
-            let next = followingChunk()
+            let next = followingChunk(appIsActive: appIsActive, isLookahead: true)
             let nextCached = renderedCache[next.key]
             let facts = BackgroundChunkSeam.Facts(
                 appIsActive: appIsActive,
@@ -3989,6 +4127,15 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             currentTargetId = request.targetId
             recordHeardNote() // the chunk the queue moved on from played to its end
             currentChunk = request.key
+            // The queue moved on with no app code: the sequencer hears of the new chunk as it does at any other seam, so a
+            // note read in the background does not leave its "Reading" card up over the text that follows (#3777).
+            if generationHasAsides, let identity = articleIdentity,
+               let index = generationPlan.firstIndex(where: { $0.key == request.key }) {
+                _ = chimeSequencer.willStartChunk(
+                    at: index, tags: generationPlan.map(\.footnote), itemId: identity,
+                    mode: footnoteMode?() ?? .whereCited, appIsActive: false, heard: heardNotes,
+                    now: ProcessInfo.processInfo.systemUptime)
+            }
             currentChunkLength = request.sourceLength
             currentChunkBoundary = request.boundary
             pendingStartTargetId = nil

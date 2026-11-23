@@ -19,20 +19,20 @@ final class FootnoteModeTests: XCTestCase {
         XCTAssertEqual(FootnoteMode.storageKey, "footnoteMode")
     }
 
-    func testThePickerOffersOnlyWhatIsBuilt() {
-        XCTAssertEqual(FootnoteMode.pickerChoices, [.whereCited, .atEnd])
+    func testThePickerOffersEveryModeInTheDesignsOrder() {
+        XCTAssertEqual(FootnoteMode.pickerChoices, [.whereCited, .chime, .atEnd])
+        XCTAssertEqual(Set(FootnoteMode.pickerChoices), Set(FootnoteMode.allCases), "no mode is stored that the picker cannot show")
         XCTAssertTrue(FootnoteMode.pickerChoices.contains(.default), "the default is a choice the picker can show selected")
     }
 
     func testThePickerShowsAChoiceForEveryStoredValue() {
-        XCTAssertEqual(FootnoteMode.pickerChoices.map(\.pickerTitle), ["Read where cited", "Read at the end"])
+        XCTAssertEqual(FootnoteMode.pickerChoices.map(\.pickerTitle), ["Read where cited", "Chime where cited", "Read at the end"])
         XCTAssertEqual(FootnoteMode.chime.pickerTitle, "Chime where cited")
         for stored in [nil, "", "garbage", "whereCited"] as [String?] {
             XCTAssertEqual(FootnoteMode.pickerSelection(storedValue: stored), .whereCited, "\(String(describing: stored))")
         }
         XCTAssertEqual(FootnoteMode.pickerSelection(storedValue: "atEnd"), .atEnd)
-        XCTAssertEqual(FootnoteMode.pickerSelection(storedValue: "chime"), .whereCited,
-                       "a later build's value is shown as the default; this build plans it like where cited")
+        XCTAssertEqual(FootnoteMode.pickerSelection(storedValue: "chime"), .chime)
     }
 
     func testOnlyReadingAtTheEndLeavesNoNoteChunksInThePlan() {

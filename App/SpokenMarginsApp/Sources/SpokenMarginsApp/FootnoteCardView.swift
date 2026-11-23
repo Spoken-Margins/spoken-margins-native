@@ -15,10 +15,41 @@ struct FootnoteCardPinnedView: View {
             if model.footnoteCardMayShow {
                 TimelineView(.periodic(from: .now, by: 0.5)) { _ in
                     if let card = model.footnoteCard {
-                        FootnoteCardBody(card: card, reading: model.footnoteCardIsReading)
+                        let button = model.footnoteCardButton
+                        FootnoteCardBody(
+                            card: card, reading: model.footnoteCardIsReading, button: button,
+                            onButton: { if let button { model.footnoteCardButtonPressed(button) } })
                     }
                 }
             }
+        }
+    }
+}
+
+/// The button on the card in "Chime where cited" (Design, Screens): Hear note while a note is offered, Stop note while
+/// it reads.
+enum FootnoteCardButton: Equatable {
+    case hearNote
+    case stopNote
+
+    var title: String {
+        switch self {
+        case .hearNote: "Hear note"
+        case .stopNote: "Stop note"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .hearNote: "speaker.wave.2"
+        case .stopNote: "stop.fill"
+        }
+    }
+
+    var accessibilityIdentifier: String {
+        switch self {
+        case .hearNote: "footnoteCard.hearNote"
+        case .stopNote: "footnoteCard.stopNote"
         }
     }
 }
@@ -28,6 +59,8 @@ struct FootnoteCardPinnedView: View {
 struct FootnoteCardBody: View {
     let card: FootnoteCard
     let reading: Bool
+    var button: FootnoteCardButton?
+    var onButton: () -> Void = {}
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// The note's words, up to this many lines; the full note is in the text reader's notes chapter, so there is no
@@ -35,7 +68,13 @@ struct FootnoteCardBody: View {
     /// header wraps there, and six lines of body plus a wrapped header ran 1.7 pt past the 430 pt budget (half the screen,
     /// what is left for the title, the transport and the Auto-play row) at accessibility3 on iPhone 17 (#4991). The budget
     /// is the rule, so the cap moves, not the number; two lines of slack keep a font-metric change from tipping it again.
-    static func bodyLineLimit(for size: DynamicTypeSize) -> Int { size.isAccessibilitySize ? 4 : 6 }
+    ///
+    /// The chime mode's button (Hear note, Stop note) takes room too, and the budget does not grow for it, so the note gets
+    /// two lines fewer with it: four, and at the accessibility sizes two.
+    static func bodyLineLimit(for size: DynamicTypeSize, hasButton: Bool = false) -> Int {
+        let lines = size.isAccessibilitySize ? 4 : 6
+        return hasButton ? lines - 2 : lines
+    }
 
     private var isLargeText: Bool { dynamicTypeSize >= .xLarge }
 
@@ -46,37 +85,50 @@ struct FootnoteCardBody: View {
         // listed in `AppColorUsageGuardTests.systemColorBaseline`. `AppColors.watch*` is not an option: only `Playback*`
         // files may use it, and a new tint needs its own audited pair.
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "text.append")
-                    .foregroundStyle(.white)
-                    .accessibilityHidden(true)
-                Text(card.header(reading: reading))
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .lineLimit(isLargeText ? nil : 1)
-                    .minimumScaleFactor(isLargeText ? 1 : 0.8)
+            // One element that reads "Footnote 3. <the whole note>". It posts no announcement: narration is already reading
+            // it. The button, when there is one, is its own element after it: "Hear note, button".
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "text.append")
+                        .foregroundStyle(.white)
+                        .accessibilityHidden(true)
+                    Text(card.header(reading: reading))
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .lineLimit(isLargeText ? nil : 1)
+                        .minimumScaleFactor(isLargeText ? 1 : 0.8)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityHidden(true)
+                        .accessibilityIdentifier("footnoteCard.headline")
+                    Spacer(minLength: 0)
+                }
+                Text(card.body)
+                    .font(.footnote)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(Self.bodyLineLimit(for: dynamicTypeSize, hasButton: button != nil))
+                    .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                     .accessibilityHidden(true)
-                    .accessibilityIdentifier("footnoteCard.headline")
-                Spacer(minLength: 0)
+                    .accessibilityIdentifier("footnoteCard.body")
             }
-            Text(card.body)
-                .font(.footnote)
-                .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(Self.bodyLineLimit(for: dynamicTypeSize))
-                .truncationMode(.tail)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .accessibilityHidden(true)
-                .accessibilityIdentifier("footnoteCard.body")
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(card.voiceOverLabel)
+            .accessibilityIdentifier("footnoteCard")
+            if let button {
+                Button(action: onButton) {
+                    Label(button.title, systemImage: button.symbol)
+                        .lineLimit(isLargeText ? nil : 1)
+                        .minimumScaleFactor(isLargeText ? 1 : 0.8)
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .accessibilityIdentifier(button.accessibilityIdentifier)
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
-        // One element that reads "Footnote 3. <the whole note>". It posts no announcement: narration is already reading it.
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(card.voiceOverLabel)
-        .accessibilityIdentifier("footnoteCard")
         .padding(.horizontal, 22)
         .padding(.vertical, 8)
         .frame(maxWidth: 620)
