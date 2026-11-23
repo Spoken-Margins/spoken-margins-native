@@ -1,41 +1,22 @@
 import Foundation
+import SessionKit
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
-// #4341 PR 2 (hidden): what a listener pastes into "Follow papers". One recognizer for both providers, so the
-// field can teach where each link lives and every other link still goes to today's feed follow. It reads the
-// text only: no request is made, nothing is stored, and nothing in the app calls it yet.
+// #4341: what a listener pastes into "Follow papers". One recognizer for both providers, so the field can teach
+// where each link lives and every other link still goes to today's feed follow. It reads the text only: no request is
+// made and nothing is stored.
 
-/// A reading list the listener can follow as papers. Its `identifier` is the stable key a stored record uses
-/// (PR 4); two links to the same list give the same value.
-public enum PaperSource: Hashable, Sendable {
-    /// A public Zotero group library, or one collection of it (`collectionKey`). Needs no key.
-    case zoteroGroup(groupID: Int, collectionKey: String?)
-    /// A PubMed saved search's RSS link, made with its Create RSS button. `limit` is the item count the link asks
-    /// for, when it names a sensible one.
-    case pubMedRSS(token: String, limit: Int?)
-
-    public enum Provider: String, Sendable { case zotero, pubmed }
-
-    public var provider: Provider {
-        switch self {
-        case .zoteroGroup: return .zotero
-        case .pubMedRSS: return .pubmed
-        }
-    }
-
-    public var identifier: String {
-        switch self {
-        case .zoteroGroup(let groupID, let collectionKey):
-            return "zotero:group:\(groupID)" + (collectionKey.map { ":collection:\($0)" } ?? "")
-        case .pubMedRSS(let token, _):
-            return "pubmed:rss:\(token)"
-        }
-    }
-
-    /// The address to fetch the list's first page from (Zotero: `items/top`, 100 papers a page; PubMed: the RSS).
+extension PaperSource {
+    /// The address to fetch the list's first page from (Zotero: `items/top`, newest joined first, 100 papers a page;
+    /// PubMed: the RSS).
     public func pageURL(start: Int = 0) -> URL {
         switch self {
         case .zoteroGroup(let groupID, let collectionKey):
             return ZoteroPaperAPI.itemsURL(groupID: groupID, collectionKey: collectionKey, start: start)
+        case .zoteroUser(let userID, let collectionKey):
+            return ZoteroPaperAPI.itemsURL(library: .user(userID), collectionKey: collectionKey, start: start)
         case .pubMedRSS(let token, let limit):
             var components = URLComponents()
             components.scheme = "https"
@@ -47,30 +28,107 @@ public enum PaperSource: Hashable, Sendable {
     }
 }
 
-/// Zotero's web API, public and read-only here. Every request sends `Zotero-API-Version: 3` and pages by 100.
+/// Zotero's web API, read-only here. Every request sends `Zotero-API-Version: 3` and pages by 100. Only a request for the
+/// listener's own library carries their key (`ZoteroPaperAPI.request`), and only to this host.
 public enum ZoteroPaperAPI {
     public static let host = "api.zotero.org"
     public static let pageSize = 100
     public static let requestHeaders = ["Zotero-API-Version": "3"]
+    /// The header the key travels in. It is never put in an address, so no log line that prints an address holds it.
+    public static let keyHeader = "Zotero-API-Key"
 
-    /// The papers of a library or collection: top-level items only, so an attachment or note is not a paper.
+    /// A public group's library, or the listener's own.
+    public enum Library: Equatable, Sendable {
+        case group(Int)
+        case user(Int)
+
+        var pathPrefix: String {
+            switch self {
+            case .group(let id): return "/groups/\(id)"
+            case .user(let id): return "/users/\(id)"
+            }
+        }
+    }
+
+    /// The papers of a library or collection: top-level items only, so an attachment or note is not a paper. Newest
+    /// joined first, so the 500 a list keeps are the newest.
     public static func itemsURL(groupID: Int, collectionKey: String?, start: Int = 0) -> URL {
-        listURL(groupID: groupID, collectionKey: collectionKey, tail: "/items/top", extra: [], start: start)
+        itemsURL(library: .group(groupID), collectionKey: collectionKey, start: start)
+    }
+
+    public static func itemsURL(library: Library, collectionKey: String?, start: Int = 0) -> URL {
+        listURL(
+            library: library, collectionKey: collectionKey, tail: "/items/top",
+            extra: [URLQueryItem(name: "sort", value: "dateAdded"), URLQueryItem(name: "direction", value: "desc")],
+            start: start
+        )
     }
 
     /// The attachments of the same list. A paper's PDF is one of these, found by its `parentItem`.
     public static func attachmentsURL(groupID: Int, collectionKey: String?, start: Int = 0) -> URL {
+        attachmentsURL(library: .group(groupID), collectionKey: collectionKey, start: start)
+    }
+
+    public static func attachmentsURL(library: Library, collectionKey: String?, start: Int = 0) -> URL {
         listURL(
-            groupID: groupID, collectionKey: collectionKey, tail: "/items",
+            library: library, collectionKey: collectionKey, tail: "/items",
             extra: [URLQueryItem(name: "itemType", value: "attachment")], start: start
         )
     }
 
-    private static func listURL(groupID: Int, collectionKey: String?, tail: String, extra: [URLQueryItem], start: Int) -> URL {
+    /// A library's collections, for "Your collections" (the listener's own library only).
+    public static func collectionsURL(library: Library, start: Int = 0) -> URL {
+        listURL(library: library, collectionKey: nil, tail: "/collections", extra: [], start: start)
+    }
+
+    /// One collection's own record, which carries its name.
+    public static func collectionURL(library: Library, collectionKey: String) -> URL {
         var components = URLComponents()
         components.scheme = "https"
         components.host = host
-        components.path = "/groups/\(groupID)" + (collectionKey.map { "/collections/\($0)" } ?? "") + tail
+        components.path = library.pathPrefix + "/collections/\(collectionKey)"
+        components.queryItems = [URLQueryItem(name: "format", value: "json")]
+        return components.url!
+    }
+
+    /// A group's own record, which carries its name.
+    public static func groupURL(groupID: Int) -> URL {
+        URL(string: "https://\(host)/groups/\(groupID)")!
+    }
+
+    /// A stored file of the listener's own library.
+    public static func fileURL(userID: Int, attachmentKey: String) -> URL {
+        URL(string: "https://\(host)/users/\(userID)/items/\(attachmentKey)/file")!
+    }
+
+    /// The request for one Zotero address: the version header always, the key only for the listener's own library and
+    /// only when the address is on Zotero's API host.
+    public static func request(_ url: URL, apiKey: String?) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 30
+        request.httpShouldHandleCookies = false
+        for (name, value) in requestHeaders { request.setValue(value, forHTTPHeaderField: name) }
+        if let apiKey, !apiKey.isEmpty, url.scheme?.lowercased() == "https", url.host?.lowercased() == host,
+           url.path.hasPrefix("/users/") {
+            request.setValue(apiKey, forHTTPHeaderField: keyHeader)
+        }
+        return request
+    }
+
+    /// A redirect from a key-carrying request (a stored file is served from another host): the key header stays only
+    /// on Zotero's own API host, and a hop that leaves https is refused.
+    public static func redirectRequest(_ proposed: URLRequest) -> URLRequest? {
+        guard let url = proposed.url, url.scheme?.lowercased() == "https" else { return nil }
+        var request = proposed
+        if url.host?.lowercased() != host { request.setValue(String?.none, forHTTPHeaderField: keyHeader) }
+        return request
+    }
+
+    private static func listURL(library: Library, collectionKey: String?, tail: String, extra: [URLQueryItem], start: Int) -> URL {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = host
+        components.path = library.pathPrefix + (collectionKey.map { "/collections/\($0)" } ?? "") + tail
         components.queryItems = extra + [
             URLQueryItem(name: "format", value: "json"),
             URLQueryItem(name: "limit", value: String(pageSize)),
@@ -84,17 +142,22 @@ public enum ZoteroPaperAPI {
 public enum PaperFeedLinkProblem: Equatable, Sendable {
     /// A PubMed results page, not the RSS link its Create RSS button makes.
     case pubMedSearchPage
-    /// A Zotero user library. Only public group libraries can be followed until a key can be connected (PR 6).
+    /// A Zotero user library: it is followed from Your collections once the listener connects it in Settings.
     case zoteroPrivateLibrary
     /// A zotero.org address that isn't a group library or collection, or whose collection key is malformed.
     case zoteroNotUnderstood
 
-    public var message: String {
+    /// The words with no library connected.
+    public var message: String { message(zoteroConnected: false) }
+
+    public func message(zoteroConnected: Bool) -> String {
         switch self {
         case .pubMedSearchPage:
             return "That's a PubMed search page. Use its Create RSS link instead."
         case .zoteroPrivateLibrary:
-            return "That Zotero library is private. Only public group collections can be followed for now."
+            return zoteroConnected
+                ? "That Zotero library is private. Follow it from Your collections."
+                : "That Zotero library is private. Connect your library in Settings to follow it."
         case .zoteroNotUnderstood:
             return "Zotero couldn't find that collection. Check the link."
         }

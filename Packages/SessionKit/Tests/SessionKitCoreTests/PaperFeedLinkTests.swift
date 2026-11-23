@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import SessionKit
 @testable import SessionKitFeeds
 
 /// #4341 PR 2: what the "Follow papers" field makes of a pasted link. Nothing is fetched.
@@ -177,14 +178,14 @@ final class PaperFeedLinkTests: XCTestCase {
     func testRequestAddressesAskForOneHundredAtATimeAndSendTheVersionHeader() {
         let source = PaperSource.zoteroGroup(groupID: 2205533, collectionKey: "DMKBHP6P")
         XCTAssertEqual(source.pageURL().absoluteString,
-                       "https://api.zotero.org/groups/2205533/collections/DMKBHP6P/items/top?format=json&limit=100&start=0")
+                       "https://api.zotero.org/groups/2205533/collections/DMKBHP6P/items/top?sort=dateAdded&direction=desc&format=json&limit=100&start=0")
         XCTAssertEqual(source.pageURL(start: 200).absoluteString,
-                       "https://api.zotero.org/groups/2205533/collections/DMKBHP6P/items/top?format=json&limit=100&start=200")
+                       "https://api.zotero.org/groups/2205533/collections/DMKBHP6P/items/top?sort=dateAdded&direction=desc&format=json&limit=100&start=200")
         XCTAssertEqual(source.pageURL(start: -5).absoluteString, source.pageURL().absoluteString, "a negative start is zero")
         XCTAssertEqual(ZoteroPaperAPI.attachmentsURL(groupID: 2205533, collectionKey: "DMKBHP6P").absoluteString,
                        "https://api.zotero.org/groups/2205533/collections/DMKBHP6P/items?itemType=attachment&format=json&limit=100&start=0")
         XCTAssertEqual(ZoteroPaperAPI.itemsURL(groupID: 2205533, collectionKey: nil).absoluteString,
-                       "https://api.zotero.org/groups/2205533/items/top?format=json&limit=100&start=0")
+                       "https://api.zotero.org/groups/2205533/items/top?sort=dateAdded&direction=desc&format=json&limit=100&start=0")
         XCTAssertEqual(ZoteroPaperAPI.requestHeaders, ["Zotero-API-Version": "3"])
         XCTAssertEqual(PaperSource.pubMedRSS(token: "abc", limit: 15).pageURL().absoluteString,
                        "https://pubmed.ncbi.nlm.nih.gov/rss/search/abc/?limit=15")

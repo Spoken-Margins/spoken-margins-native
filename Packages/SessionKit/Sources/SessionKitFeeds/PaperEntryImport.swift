@@ -1,8 +1,8 @@
 import Foundation
 import SessionKit
 
-// #4341 PR 3 (hidden): what Add does with one paper from a followed reading list. The rules are here so they run on
-// Linux; fetching the PDF and saving the item stay in the app. Nothing in the app calls these yet (PR 5 does).
+// #4341: what Add does with one paper from a followed reading list. The rules are here so they run on Linux; fetching
+// the PDF and saving the item stay in the app (`PaperSourcesState`).
 
 /// What tapping Add (or the row's button) on a paper does.
 public enum PaperEntryImportRoute: Equatable, Sendable {
@@ -11,6 +11,8 @@ public enum PaperEntryImportRoute: Equatable, Sendable {
     /// Fetch this PDF through the existing remote PDF import, with the feed's metadata as the citation fallback
     /// (`PaperCitation.merged`).
     case pdf(URL)
+    /// Fetch the PDF stored in the listener's own Zotero library, with their key, then import it as `.pdf` does.
+    case storedPDF(attachmentKey: String)
     /// Add the abstract as a short text item (`AbstractItemBuilder`).
     case abstract
     /// Nothing to add: the button is Open, which shows the paper's page. Nil only when the record names no address.
@@ -19,6 +21,7 @@ public enum PaperEntryImportRoute: Equatable, Sendable {
     public static func route(for entry: PaperEntry, existingItemId: String?) -> Self {
         if let existingItemId { return .inLibrary(itemId: existingItemId) }
         if let pdfURL = entry.pdfURL { return .pdf(pdfURL) }
+        if entry.storedPDFReachable, let key = entry.storedPDFAttachmentKey { return .storedPDF(attachmentKey: key) }
         if hasAbstract(entry) { return .abstract }
         return .open(entry.pageURL)
     }
