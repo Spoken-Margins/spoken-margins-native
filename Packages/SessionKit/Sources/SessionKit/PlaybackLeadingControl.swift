@@ -32,7 +32,8 @@ public enum PlaybackLeadingControl: Equatable, Sendable {
 /// the largest text sizes that moved the screen enough to put a header sitting at the edge back on the other side of a
 /// single threshold: the arrow flipped on every layout pass, and the app hung at 100% CPU on first launch. Two
 /// thresholds break that loop: the header is gone only once almost none of it shows, and back only once almost all of
-/// it does. Nothing a bar layout can do moves a header across that whole gap, so one pass can't undo the last.
+/// it does. A bar layout that moves the header less than that gap can't undo the last pass. That the move is smaller is
+/// read from the code, not measured on a device; the first-run run at AX3 in dark mode on #4739 is the check.
 public struct NowHeaderVisibility: Equatable, Sendable {
     /// Below this share of the header on screen, it is gone and the toolbar shows the arrow.
     public static let goneBelow = 0.01
