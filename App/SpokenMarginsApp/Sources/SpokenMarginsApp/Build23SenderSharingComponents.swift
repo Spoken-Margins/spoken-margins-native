@@ -367,11 +367,14 @@ struct Build23SendWaitRow: View {
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("build23.sender.sendWait.row")
 
-            Button(ShareReviewCardWords.stopSharing, role: .cancel, action: onStop)
-                .buttonStyle(.borderless)
-                .tint(AppColors.evergreen)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .accessibilityIdentifier("build23.sender.sendWait.stop")
+            Button(role: .cancel, action: onStop) {
+                Text(ShareReviewCardWords.stopSharing)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .tint(AppColors.evergreen)
+            .accessibilityIdentifier("build23.sender.sendWait.stop")
         }
     }
 }
