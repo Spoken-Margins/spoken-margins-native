@@ -405,11 +405,21 @@ struct ExperienceAddSourceFlow: View {
                 Text("Quick Folder").font(.headline)
                 Text(model.quickAccessFolderName)
                     .foregroundStyle(AppColors.secondaryText)
+                // Where it is, once a scan has learned it, so two folders with the same name can be told apart (#3770).
+                if let location = model.quickAccess.status().settingsLocationLine {
+                    Text(location)
+                        .font(.footnote)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .accessibilityIdentifier("quickFolder.location")
+                }
                 Button("Choose Folder", systemImage: "folder.badge.plus") {
                     presentFileImporter(.quickFolder)
                 }
                 .filledActionButton()
                 .accessibilityIdentifier("quickFolder.choose.button")
+                Text(QuickFolderStatus.addSheetFootnote)
+                    .font(.footnote)
+                    .foregroundStyle(AppColors.secondaryText)
                 if !model.quickAccessRecentFiles.isEmpty {
                     Divider()
                     ForEach(model.quickAccessRecentFiles) { file in

@@ -69,12 +69,21 @@ struct ExperienceSourcesScreen: View, Equatable {
         var hasFollowCandidates: Bool
         var isOfflineSnapshot: Bool
         var quickFolderFileCount: Int
+        /// The folder's name, location and problem (#3770), so the row redraws when it is renamed, moved or can't be opened.
+        var quickFolderName: String?
+        var quickFolderPath: String?
+        var quickFolderProblem: QuickFolderStatus.Problem?
         var isRefreshingQuickAddFeed: Bool
         var importingEntryIds: Set<String>
         var subscriptionIDs: [String]
         /// What `FollowingByList` needs to tell which rows are in a list.
         var subscriptions: [FeedSubscription]
         var isRefreshingFollowedSources: Bool
+
+        /// The words for the Quick Folder row. It shows no check time, so the clock doesn't matter here.
+        var quickFolderStatus: QuickFolderStatus {
+            QuickFolderStatus(name: quickFolderName, path: quickFolderPath, problem: quickFolderProblem, newCount: quickFolderFileCount)
+        }
 
         @MainActor init(_ model: Gate1AppModel) {
             let friends = model.followingFriends
@@ -84,7 +93,11 @@ struct ExperienceSourcesScreen: View, Equatable {
             hasFollowCandidates = !model.followedSourceCandidates.isEmpty
             isOfflineSnapshot = model.selectedProfileId.contains("offline")
             // New files in the Quick Folder. They used to arrive in Following's stream; the folder is a place to open now.
-            quickFolderFileCount = model.quickAddCandidates.filter { if case .localFile = $0 { true } else { false } }.count
+            quickFolderFileCount = model.quickFolderNewFiles.count
+            let folder = model.quickAccess.status()
+            quickFolderName = folder.name
+            quickFolderPath = folder.path
+            quickFolderProblem = folder.problem
             isRefreshingQuickAddFeed = model.isRefreshingQuickAddFeed
             importingEntryIds = model.importingFollowedSourceEntryIds
             subscriptionIDs = model.feedSubscriptions.map(\.id)
@@ -126,8 +139,10 @@ struct ExperienceSourcesScreen: View, Equatable {
                     aiSuggestionsRow(suggestionsRow)
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
-                if inputs.quickFolderFileCount > 0 {
-                    quickFolderRow(count: inputs.quickFolderFileCount)
+                // Listed with new files, and also when the folder can't be opened: a silent broken folder is what #3770 answers.
+                let quickFolder = inputs.quickFolderStatus
+                if quickFolder.isListedOnFollowing {
+                    quickFolderRow(quickFolder)
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
                 if inputs.showsEmptyState {
@@ -496,15 +511,27 @@ struct ExperienceSourcesScreen: View, Equatable {
         }
     }
 
-    private func quickFolderRow(count: Int) -> some View {
+    /// The folder's name, with "Quick Folder · 3 new" (or "· can't open this folder", with its icon) under it (#3770).
+    private func quickFolderRow(_ status: QuickFolderStatus) -> some View {
         Button { isShowingQuickFolder = true } label: {
             HStack(spacing: 10) {
                 Image(systemName: "folder")
                     .foregroundStyle(AppColors.evergreen)
                     .accessibilityHidden(true)
-                Text("Quick Folder · \(count) new")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppColors.text)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(status.followingTitle)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppColors.text)
+                    if let symbol = status.followingSymbol {
+                        Label(status.followingSubtitle, systemImage: symbol)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.text)
+                    } else {
+                        Text(status.followingSubtitle)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                }
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.subheadline.weight(.semibold))
@@ -515,6 +542,9 @@ struct ExperienceSourcesScreen: View, Equatable {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(status.followingAccessibilityLabel)
+        .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("sources.quickFolder")
     }
 
@@ -701,15 +731,28 @@ struct ShowArtworkView: View {
     }
 }
 
-/// New files in the Quick Folder, which used to arrive in Following's stream. Each keeps its row actions.
+/// New files in the Quick Folder, which used to arrive in Following's stream. Each keeps its row actions. Titled with the
+/// folder's name, with where it is under it; when the folder can't be opened, the same section and buttons as Settings (#3770).
 private struct QuickFolderFilesScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let artwork: FollowingArtworkCache
 
     var body: some View {
+        let files = model.quickFolderNewFiles
+        let status = model.quickAccess.status(newCount: files.count)
         List {
-            ForEach(model.quickAddCandidates.filter { if case .localFile = $0 { true } else { false } }) { candidate in
+            Text(status.followingScreenFirstLine)
+                .font(.subheadline)
+                .foregroundStyle(AppColors.secondaryText)
+                .listRowSeparator(.hidden)
+                .listRowBackground(AppColors.bone)
+                .accessibilityIdentifier("sources.quickFolder.location")
+            if status.cantOpen {
+                QuickFolderCantOpenSection(model: model, isChecking: model.quickAccess.isRefreshing)
+                    .listRowBackground(AppColors.bone)
+            }
+            ForEach(files) { candidate in
                 SourceInboxRow(candidate: candidate, artwork: artwork)
                     .listRowInsets(EdgeInsets(top: 0, leading: horizontalSizeClass == .regular ? 28 : 16, bottom: 0, trailing: horizontalSizeClass == .regular ? 28 : 16))
                     .listRowSeparator(.hidden)
@@ -719,7 +762,7 @@ private struct QuickFolderFilesScreen: View {
         .background(AppColors.bone)
         .scrollContentBackground(.hidden)
         .listStyle(.plain)
-        .navigationTitle("Quick Folder")
+        .navigationTitle(status.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("sources.quickFolder.screen")
     }
@@ -920,7 +963,7 @@ struct SourceInboxRow: View {
 
     private var provenanceLead: String {
         switch candidate {
-        case .localFile(let file): "Quick Folder · \(file.modifiedAtDescription)"
+        case .localFile(let file): model.quickAccess.status().fileCaption(dateText: file.modifiedAtDescription)
         case .followedSource(let entry): showTitle(of: entry) ?? "Followed feed"
         }
     }
