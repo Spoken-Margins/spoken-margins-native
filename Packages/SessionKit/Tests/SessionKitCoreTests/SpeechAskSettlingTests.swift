@@ -18,4 +18,14 @@ final class SpeechAskSettlingTests: XCTestCase {
         XCTAssertEqual(SpeechAskSettling.waiting(list, afterSettling: ["s1::a", "s1::b"]).ids, [])
         XCTAssertEqual(SpeechAskSettling.waiting(list, afterSettling: ["s9::z"]).ids, ["s1::a", "s1::b"])
     }
+
+    /// A hold reported after iOS answered is settled at once; only an undecided iOS waits for the answer.
+    func testAHoldReportedAfterTheAnswerIsSettledAtOnce() {
+        let table: [(SpeechRecognitionAccessState, Bool)] = [
+            (.notDetermined, false), (.authorized, true), (.denied, true), (.restricted, true)
+        ]
+        for (access, expected) in table {
+            XCTAssertEqual(SpeechAskSettling.settlesOnReport(access: access), expected, "\(access)")
+        }
+    }
 }

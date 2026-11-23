@@ -118,6 +118,23 @@ final class SpeechAskControllerTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: SpeechRecognitionAsk.storageKey), "yes")
     }
 
+    /// A hold met before the answer but reported after it was settled is retried at once on Allow, and dropped on a no,
+    /// not left for the next time the app comes forward.
+    func testAHoldReportedAfterTheAnswerIsSettledAtOnce() {
+        let controller = makeController()
+        var retried = 0
+        iosAnswer = .authorized
+        controller.transcriptionHeld(.episodeMap, key: "item-1") { retried += 1 }
+        XCTAssertEqual(retried, 1)
+        XCTAssertTrue(controller.heldRetries.isEmpty)
+        XCTAssertNil(controller.cardSurface)
+
+        iosAnswer = .denied
+        controller.transcriptionHeld(.episodeMap, key: "item-2") { retried += 1 }
+        XCTAssertEqual(retried, 1, "a no drops it")
+        XCTAssertTrue(controller.heldRetries.isEmpty)
+    }
+
     func testDeniedClearsTheWaitingListSoTheOldWordingApplies() async {
         let controller = makeController()
         controller.spokenMarginSaved(isWritten: false)

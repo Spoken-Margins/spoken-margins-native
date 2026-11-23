@@ -10,4 +10,11 @@ public enum SpeechAskSettling {
         let done = Set(settled)
         return SpeechAskWaitingList(stored: list.ids.filter { !done.contains($0) })
     }
+
+    /// Whether held work is settled the moment it is reported. A hold met while iOS was undecided can be reported after
+    /// the listener answered (the gate's report hops to the main actor), when that answer has already been settled: it
+    /// is settled at once then, retried on Allow and dropped on a no, rather than left until the app next comes forward.
+    public static func settlesOnReport(access: SpeechRecognitionAccessState) -> Bool {
+        access != .notDetermined
+    }
 }

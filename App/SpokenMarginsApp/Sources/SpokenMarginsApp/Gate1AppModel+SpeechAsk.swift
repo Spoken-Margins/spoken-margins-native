@@ -47,6 +47,6 @@ extension Gate1AppModel {
     /// A transcription failure that is only the hold: the Margin waits for the listener's answer. Nothing to report.
     func noteTranscriptionWaitsForAnswer(_ interjection: Interjection, failure: String) {
         guard TranscriptionFailureWording.isSpeechRecognitionNotYetAsked(error: failure) else { return }
-        SpeechAskController.shared.marginIsWaiting(marginIdentity: Self.marginIdentity(interjection))
+        SpeechAskController.shared.marginIsWaiting(marginIdentity: Self.marginIdentity(interjection), model: self)
     }
 }
