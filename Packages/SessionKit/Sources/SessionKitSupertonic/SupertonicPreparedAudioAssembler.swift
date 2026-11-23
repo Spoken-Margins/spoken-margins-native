@@ -2,18 +2,26 @@ import AVFoundation
 import CryptoKit
 import Foundation
 import SessionKit
-import SessionKitSupertonic
 
-struct SupertonicPreparedChunk: Sendable {
-    var startOffset: Int
-    var sourceLength: Int
-    var text: String
-    var boundary: RenderedSpeechChunkBoundary
-    var audioURL: URL
+/// One rendered chunk handed to assembly. Moved from the app with `SupertonicSpeechPlaybackClient` (#4691).
+public struct SupertonicPreparedChunk: Sendable {
+    public var startOffset: Int
+    public var sourceLength: Int
+    public var text: String
+    public var boundary: RenderedSpeechChunkBoundary
+    public var audioURL: URL
+
+    public init(startOffset: Int, sourceLength: Int, text: String, boundary: RenderedSpeechChunkBoundary, audioURL: URL) {
+        self.startOffset = startOffset
+        self.sourceLength = sourceLength
+        self.text = text
+        self.boundary = boundary
+        self.audioURL = audioURL
+    }
 }
 
-enum SupertonicPreparedAudioAssembler {
-    static func assemble(
+public enum SupertonicPreparedAudioAssembler {
+    public static func assemble(
         itemId: String,
         sourceText: String,
         projection: NormalizedSpeechText,
