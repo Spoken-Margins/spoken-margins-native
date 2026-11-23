@@ -46,8 +46,7 @@ public struct LibraryCollectionRow: Identifiable, Equatable, Sendable {
     public static func rowID(collectionID: String) -> String { "collection:" + collectionID }
 }
 
-/// One row of the Library list in Collections view: an item, or a collection standing for its items (#3769). Named apart
-/// from the folder listing's `LibraryListing` until that listing is retired (owner, 2026-11-20).
+/// One row of the Library list in Collections view: an item, or a collection standing for its items (#3769).
 public enum LibraryCollectionEntry: Identifiable, Equatable, Sendable {
     case item(LibraryItemRow, isCurrent: Bool)
     case collection(LibraryCollectionRow, isCurrent: Bool)
