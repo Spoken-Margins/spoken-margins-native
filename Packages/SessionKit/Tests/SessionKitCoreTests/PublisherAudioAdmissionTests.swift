@@ -87,4 +87,31 @@ final class PublisherAudioAdmissionTests: XCTestCase {
                            "duration \(String(describing: duration)) length \(String(describing: length)) words \(String(describing: words))")
         }
     }
+
+    // MARK: The mapper's download
+
+    func testTheMapDownloadStopsPast150MB() {
+        let cap = Int64(150 * 1_024 * 1_024)
+        XCTAssertFalse(PublisherAudioMapDownload.shouldCancel(bytesWritten: cap, expectedBytes: cap))
+        XCTAssertTrue(PublisherAudioMapDownload.shouldCancel(bytesWritten: cap + 1, expectedBytes: -1))
+        XCTAssertTrue(PublisherAudioMapDownload.shouldCancel(bytesWritten: 0, expectedBytes: 160 * 1_024 * 1_024))
+        XCTAssertFalse(PublisherAudioMapDownload.shouldCancel(bytesWritten: 10, expectedBytes: -1), "an unknown length goes on")
+    }
+
+    func testTheStatusAfterTheDownload() {
+        XCTAssertEqual(PublisherAudioMapDownload.statusAfterDownload(durationMs: 45 * 60_000, byteCount: 40_000_000, wordCount: 900), "not_narration")
+        XCTAssertEqual(PublisherAudioMapDownload.statusAfterDownload(durationMs: 20_000, byteCount: 300_000, wordCount: 900), "not_narration")
+        XCTAssertEqual(PublisherAudioMapDownload.statusAfterDownload(durationMs: nil, byteCount: 160 * 1_024 * 1_024, wordCount: 900), "too_large")
+        XCTAssertNil(PublisherAudioMapDownload.statusAfterDownload(durationMs: 6 * 60_000, byteCount: 6_000_000, wordCount: 900))
+        XCTAssertNil(PublisherAudioMapDownload.statusAfterDownload(durationMs: nil, byteCount: 6_000_000, wordCount: 900),
+                     "a duration that couldn't be read leaves the size rule")
+    }
+
+    #if !canImport(FoundationNetworking)
+    func testTheMapDownloadNeverUsesCellularOrLowDataMode() {
+        let configuration = PublisherAudioMapDownload.configuration()
+        XCTAssertFalse(configuration.allowsExpensiveNetworkAccess)
+        XCTAssertFalse(configuration.allowsConstrainedNetworkAccess)
+    }
+    #endif
 }

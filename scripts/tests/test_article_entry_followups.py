@@ -77,6 +77,37 @@ class ArticleEntryFollowUpTests(unittest.TestCase):
         self.assertIn('retryVoiceoverLookupIfNeeded', navigation,
                       'the open-time retry is what the open-time files in INVENTORY rely on')
 
+    def test_the_article_feed_route_runs_only_on_open_or_play(self):
+        """#4640: an article's own feed is asked for its audio only on the listener's open or play, never at import."""
+        navigation = (SOURCES / 'Gate1AppModel+Navigation.swift').read_text(encoding='utf-8')
+        self.assertIn('retryVoiceoverLookupIfNeeded(itemId: id, trigger: .open)', navigation)
+        publisher = (SOURCES / 'Gate1AppModel+PublisherAudio.swift').read_text(encoding='utf-8')
+        self.assertIn('retryVoiceoverLookupIfNeeded(itemId: itemId, trigger: .play)', publisher)
+        for name in ('Gate1AppModel+SourceLinkForeground.swift', 'Gate1AppModel+SourceLinkBackground.swift'):
+            text = (SOURCES / name).read_text(encoding='utf-8')
+            for line in text.splitlines():
+                if 'rememberSharedLinkVoiceover(' in line and 'func ' not in line:
+                    self.assertNotIn('articleFeed', line, f'{name}: an import must not take the article feed route')
+        for path in sorted(SOURCES.glob('*.swift')):
+            text = path.read_text(encoding='utf-8')
+            for match in re.finditer(r'retryVoiceoverLookupIfNeeded\(itemId: [^,]+, trigger: \.(\w+)\)', text):
+                self.assertIn(match.group(1), ('open', 'play'), f'{path.name}: only open and play trigger the lookup')
+
+    def test_the_article_feed_audio_call_stays_in_listener_gated_files(self):
+        allowed = {
+            'FollowedSourceCoordinator.swift', 'SharedPostVoiceoverLookup.swift',
+            'Gate1AppModel+SourceLinkBackground.swift',
+        }
+        found = set()
+        for folder in ('App', 'Packages'):
+            for path in (ROOT / folder).rglob('*.swift'):
+                parts = path.relative_to(ROOT).parts
+                if '.build' in parts or any(part.endswith('Tests') for part in parts):
+                    continue
+                if 'articleFeedAudio(' in path.read_text(errors='replace'):
+                    found.add(path.name)
+        self.assertEqual(found, allowed, 'a new file calls the article feed route outside the listener-gated path')
+
 
 if __name__ == '__main__':
     unittest.main()

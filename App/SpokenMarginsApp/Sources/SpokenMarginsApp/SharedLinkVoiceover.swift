@@ -55,12 +55,15 @@ final class SharedLinkVoiceover {
         fetched: FetchedPageMemo?,
         store: SQLiteSessionStore,
         transcriber: any SourceTranscriptionClient,
+        articleFeedAudio: SharedPostVoiceoverLookup.ArticleFeedAudio? = nil,
+        status: (@MainActor (String) -> Void)? = nil,
         report: @escaping @MainActor (String) -> Void
     ) async {
-        let note: @MainActor (String) -> Void = { [weak self] status in
+        let note: @MainActor (String) -> Void = { [weak self] value in
+            status?(value)
             guard let self else { return }
-            ledger.record(status: status, itemId: itemId, now: now())
-            log.record(status, for: itemId)
+            ledger.record(status: value, itemId: itemId, now: now())
+            log.record(value, for: itemId)
             report(log.summary)
         }
         let fetchPage = fetchPage
@@ -70,7 +73,7 @@ final class SharedLinkVoiceover {
         let outcome = await Task.detached(priority: .utility) {
             await SharedPostVoiceoverLookup.find(
                 sharedURL: sharedURL, articleURL: articleURL, itemId: itemId, fetched: fetched, fetchPage: fetchPage,
-                fetchNarration: fetchNarration
+                fetchNarration: fetchNarration, articleFeedAudio: articleFeedAudio
             )
         }.value
         let found: PublisherAudio

@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Speech
 import SessionKit
@@ -63,14 +64,19 @@ enum PublisherAudioTextMapper {
             report("transcribing")
             var updated: PublisherAudio
             do {
-                let transcript = try await transcribe(remoteURL, durationMs: audio.durationMs, transcriber: transcriber)
+                let wordCount = PublisherAudioDetector.wordCount(articleText)
+                let transcript = try await transcribe(remoteURL, durationMs: audio.durationMs, wordCount: wordCount, transcriber: transcriber)
                 let alignment = await Task.detached(priority: .utility) {
                     PublisherAudioAligner.align(articleText: articleText, recognised: transcript)
                 }.value
                 updated = audio.recordingTextMap(alignment)
+            } catch let skip as PublisherAudioMapSkip {
+                // Not this article's narration, or too big: a verdict on the recording, so it isn't fetched again (#4640).
+                updated = audio.recordingTextMapFailure(skip.status)
             } catch {
-                // No connection is not a verdict on the recording: leave the record without a status, so opening the item tries again.
-                if OfflineFailure.isConnectivity(error) {
+                // No connection, or only cellular or Low Data Mode (the download is Wi-Fi only, #4640), is not a verdict
+                // on the recording: leave the record without a status, so opening the item tries again.
+                if OfflineFailure.isConnectivity(error) || PublisherAudioCappedDownload.isWaitingForWiFi(error) {
                     running.remove(audio.itemId)
                     return report("waiting_for_network")
                 }
@@ -111,27 +117,23 @@ enum PublisherAudioTextMapper {
     private nonisolated static func transcribe(
         _ remoteURL: URL,
         durationMs: Int?,
+        wordCount: Int,
         transcriber: any SourceTranscriptionClient
     ) async throws -> TranscriptTimeline {
-        let (downloadedURL, response) = try await URLSession.shared.download(from: remoteURL)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 200
-        guard (200..<300).contains(status) else {
-            try? FileManager.default.removeItem(at: downloadedURL)
-            throw URLError(.badServerResponse, userInfo: [NSLocalizedDescriptionKey: "HTTP \(status)"])
-        }
         let pathExtension = remoteURL.pathExtension.isEmpty ? "mp3" : remoteURL.pathExtension
-        let localURL: URL
-        do {
-            let directory = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-                .appending(path: "PublisherAudioTextMaps", directoryHint: .isDirectory)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            localURL = directory.appending(path: "\(UUID().uuidString).\(pathExtension)")
-            try FileManager.default.moveItem(at: downloadedURL, to: localURL)
-        } catch {
-            try? FileManager.default.removeItem(at: downloadedURL)
-            throw error
-        }
+        let directory = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            .appending(path: "PublisherAudioTextMaps", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let localURL = directory.appending(path: "\(UUID().uuidString).\(pathExtension)")
         defer { try? FileManager.default.removeItem(at: localURL) }
+        // Wi-Fi only and at most 150 MB, for every source (#4640).
+        let byteCount = try await PublisherAudioCappedDownload.download(remoteURL, to: localURL)
+        // A file far longer or shorter than the article takes to read is not its narration: it isn't transcribed.
+        let seconds = try? await AVURLAsset(url: localURL).load(.duration).seconds
+        let fileDurationMs = seconds.flatMap { $0.isFinite && $0 > 0 ? Int($0 * 1_000) : nil }
+        if let status = PublisherAudioMapDownload.statusAfterDownload(durationMs: fileDurationMs, byteCount: byteCount, wordCount: wordCount) {
+            throw PublisherAudioMapSkip(status: status)
+        }
         // The transcriber caches the chunks it cuts from a recording under the id it is given and
         // reuses them. A key per try stops a replacement recording from being transcribed from the
         // old one's chunks; the chunks are removed afterwards.
@@ -146,5 +148,81 @@ enum PublisherAudioTextMapper {
         for folder in SourceTranscriptionCaches.Folder.allCases {
             try? SourceTranscriptionCaches.remove(folder, itemId: key, cachesDirectory: caches)
         }
+    }
+}
+
+/// The mapper's download was refused for its length or size (#4640); `status` is saved on the record.
+struct PublisherAudioMapSkip: Error {
+    let status: String
+}
+
+/// One download of a publisher recording for its text map (#4640): on a session that never uses cellular or Low
+/// Data Mode, cancelled once it passes 150 MB or the server says it is bigger, and moved to `destination` when done.
+final class PublisherAudioCappedDownload: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let destination: URL
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Int, Error>?
+    private var moved: Result<Int, Error>?
+    private var cancelledForSize = false
+
+    private init(destination: URL) {
+        self.destination = destination
+    }
+
+    /// Downloads `url` to `destination` and returns its size in bytes.
+    static func download(_ url: URL, to destination: URL) async throws -> Int {
+        let delegate = PublisherAudioCappedDownload(destination: destination)
+        let session = URLSession(configuration: PublisherAudioMapDownload.configuration(), delegate: delegate, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                delegate.lock.withLock { delegate.continuation = continuation }
+                session.downloadTask(with: URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60)).resume()
+            }
+        } onCancel: {
+            session.invalidateAndCancel()
+        }
+    }
+
+    /// A refusal because only cellular or Low Data Mode was available: the next open on Wi-Fi tries again.
+    static func isWaitingForWiFi(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        return urlError.networkUnavailableReason == .expensive || urlError.networkUnavailableReason == .constrained
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
+                    totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        guard PublisherAudioMapDownload.shouldCancel(bytesWritten: totalBytesWritten, expectedBytes: totalBytesExpectedToWrite) else { return }
+        lock.withLock { cancelledForSize = true }
+        downloadTask.cancel()
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        // The file at `location` is removed when this returns, so it is moved now.
+        let result: Result<Int, Error>
+        let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 200
+        if !(200..<300).contains(status) {
+            result = .failure(URLError(.badServerResponse, userInfo: [NSLocalizedDescriptionKey: "HTTP \(status)"]))
+        } else {
+            do {
+                try FileManager.default.moveItem(at: location, to: destination)
+                let size = (try FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? NSNumber)?.intValue ?? 0
+                result = .success(size)
+            } catch {
+                result = .failure(error)
+            }
+        }
+        lock.withLock { moved = result }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        let (continuation, moved, tooLarge) = lock.withLock { () -> (CheckedContinuation<Int, Error>?, Result<Int, Error>?, Bool) in
+            defer { self.continuation = nil }
+            return (self.continuation, self.moved, cancelledForSize)
+        }
+        guard let continuation else { return }
+        if tooLarge { return continuation.resume(throwing: PublisherAudioMapSkip(status: PublisherAudioMapDownload.tooLargeStatus)) }
+        if let error { return continuation.resume(throwing: error) }
+        continuation.resume(with: moved ?? .failure(URLError(.cannotCreateFile)))
     }
 }

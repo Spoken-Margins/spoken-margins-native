@@ -120,3 +120,42 @@ public enum PublisherAudioNarrationFit {
         return nil
     }
 }
+
+/// The bounds on the one temporary download the app makes of a publisher recording, to line it up with the article's
+/// text (#4640). It is an automatic download, like an episode's: Wi-Fi only, at most 150 MB, and only for a file whose
+/// length fits a narration of the article. The app's mapper uses these; they live here so they can be host-tested.
+public enum PublisherAudioMapDownload {
+    /// The status saved on the record when the download is refused for its size or length. A status means the map
+    /// is not tried again for that recording.
+    public static let notNarrationStatus = "not_narration"
+    public static let tooLargeStatus = "too_large"
+
+    #if !canImport(FoundationNetworking)
+    /// The session settings: never on cellular or in Low Data Mode, no cache, no cookies. Apple platforms only:
+    /// swift-corelibs-foundation has no expensive or constrained network settings.
+    public static func configuration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.allowsExpensiveNetworkAccess = false
+        configuration.allowsConstrainedNetworkAccess = false
+        configuration.urlCache = nil
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        return configuration
+    }
+    #endif
+
+    /// Whether a download should stop now: past 150 MB written, or a server that says the file is bigger.
+    public static func shouldCancel(bytesWritten: Int64, expectedBytes: Int64) -> Bool {
+        bytesWritten > Int64(PublisherAudioNarrationFit.maximumBytes) || expectedBytes > Int64(PublisherAudioNarrationFit.maximumBytes)
+    }
+
+    /// The status to save after the download, before transcribing: nil to go on, or why the file is not this
+    /// article's narration.
+    public static func statusAfterDownload(durationMs: Int?, byteCount: Int, wordCount: Int) -> String? {
+        if byteCount > PublisherAudioNarrationFit.maximumBytes { return tooLargeStatus }
+        switch PublisherAudioNarrationFit.verdict(durationMs: durationMs, lengthBytes: byteCount, wordCount: wordCount) {
+        case .tooLong?, .tooShort?: return notNarrationStatus
+        case .fits?, nil: return nil
+        }
+    }
+}

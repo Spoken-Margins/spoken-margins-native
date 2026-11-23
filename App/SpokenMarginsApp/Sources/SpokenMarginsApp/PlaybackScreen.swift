@@ -214,6 +214,13 @@ struct PlaybackScreen: View {
                 // "Go to this moment in the source" lands on Now for a written Margin too (#3961); a spoken one is also covered
                 // above, and both set the same pane. The first value is never acted on, so a later open never jumps panes.
                 .onChange(of: model.showNowRequests) { _, _ in selectedPane = .now }
+                .onChange(of: model.snapshot.publisherAudioSource) { old, new in
+                    // VoiceOver hears the automatic switches; a tapped switch is announced by the row's redraw (#4640).
+                    guard UIAccessibility.isVoiceOverRunning, !PublisherVoiceSwitchTap.pending, (old == nil) != (new == nil) else { return }
+                    UIAccessibility.post(notification: .announcement, argument: new != nil
+                        ? "Playing the publisher's audio."
+                        : "The publisher's audio stopped. Reading on with the app's voice.")
+                }
                 // The dock returns only once the keyboard has left the Timeline editor (#4043); a missed hide can't
                 // strand it.
                 .tracksKeyboard(for: $timelineDock)
@@ -287,6 +294,7 @@ struct PlaybackScreen: View {
                                 fraction: model.renderedFractionForPlayback,
                                 isNativeAudio: model.selectedItem.isNativeAudio
                             )
+                            ListeningOptionsVoiceRow()
                             onDeviceSpeechGenerationControl
                             reflectionOptions
                             conversation
@@ -711,6 +719,17 @@ struct PlaybackScreen: View {
                     .font(.subheadline)
                     .foregroundStyle(AppColors.watchSecondary)
                     .accessibilityIdentifier("playback.showTitle")
+            }
+
+            // Whose audio reads the article (#4640): only while the publisher's recording plays it.
+            if titleMode.showsSeparateShowLine, !model.selectedItem.isNativeAudio, model.snapshot.itemId == model.selectedItem.id,
+               let line = PublisherAudioAttribution.headerLine(
+                   source: model.snapshot.publisherAudioSource,
+                   siteHost: PublisherAudioAttribution.siteName(fromOriginalLink: model.selectedItem.originalSourceURL?.absoluteString)) {
+                Text(line)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .accessibilityIdentifier("playback.publisherAudioLine")
             }
 
             // The line is about the listener's own Margins, so it waits while a friend's Margin has the screen (#3790).

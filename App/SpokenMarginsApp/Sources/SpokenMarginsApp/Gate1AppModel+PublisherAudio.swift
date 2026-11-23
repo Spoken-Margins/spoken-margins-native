@@ -57,10 +57,12 @@ extension Gate1AppModel {
     /// or a Following import that waited for the listener, #2368) is looked up when the listener opens or starts it:
     /// once per launch, and again after a failure, such as being offline. The store is read off the main actor, and
     /// Diagnostics says why a lookup did not happen (#2789).
-    func retryVoiceoverLookupIfNeeded(itemId: String) {
+    /// `trigger` is the listener's open or play: only those may take the article feed route (#4640).
+    func retryVoiceoverLookupIfNeeded(itemId: String, trigger: VoiceoverLookupDecision.Trigger) {
         guard let store else { return }
         listenForPublisherMaps()
         let alreadyLookedUp = !sharedLinkVoiceover.mayLookUp(itemId: itemId)
+        let subscriptions = feedSubscriptions
         Task { [weak self] in
             let read = try? await StoreReader(store).read { store -> (decision: VoiceoverLookupDecision, title: String) in
                 // The summary, so no article text is decoded on every open (#2508).
@@ -69,16 +71,21 @@ extension Gate1AppModel {
                     textCharacterCount: item.textCharacterCount,
                     externalReference: item.externalReference,
                     hasPublisherAudioRecord: try store.loadPublisherAudio(itemId: itemId) != nil,
-                    alreadyLookedUp: alreadyLookedUp
+                    alreadyLookedUp: alreadyLookedUp,
+                    trigger: trigger,
+                    mediaType: item.mediaType,
+                    externalReferenceType: item.externalReferenceType,
+                    itemId: item.id,
+                    siteIsFollowed: FollowedSourceMatching.isItemAlreadyFollowed(item, subscriptions: subscriptions)
                 )
                 return (decision, item.title)
             }
             guard let self, let read else { return }
             self.hangTelemetry.labels.scoped("voiceLookupOnOpen") {
                 switch read.decision {
-                case .lookUp(let address):
+                case .lookUp(let address, let route):
                     self.noteVoiceLookup(itemId: itemId, "lookup_started")
-                    self.lookUpVoiceover(itemId: itemId, address: address, title: read.title)
+                    self.lookUpVoiceover(itemId: itemId, address: address, title: read.title, route: route)
                 case .skip(let reason):
                     self.noteVoiceLookup(itemId: itemId, "skipped:\(reason)")
                 }
@@ -89,7 +96,7 @@ extension Gate1AppModel {
     /// For callers that start or resume an item (Library Play, Continue, the play queue): the same voice lookup and
     /// map try as opening its screen (#2789). A page is read only for an item the listener acted on.
     func listenerStartedItem(itemId: String) {
-        retryVoiceoverLookupIfNeeded(itemId: itemId)
+        retryVoiceoverLookupIfNeeded(itemId: itemId, trigger: .play)
         guard let store else { return }
         PublisherAudioTextMapper.resume(itemId: itemId, store: store, transcriber: sourceTranscriptionClient) { [weak self] in
             self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)"
@@ -121,15 +128,71 @@ extension Gate1AppModel {
         }
     }
 
+    // MARK: Reading voice (#4640)
+
+    /// The Reading voice row for `itemId` in Listening options: the record and the listener's choice are read off the
+    /// main actor. Nil hides the row.
+    func publisherAudioVoiceRow(itemId: String) async -> PublisherAudioAttribution.VoiceRow? {
+        guard let store else { return nil }
+        let record = try? await StoreReader(store).read { try $0.loadPublisherAudio(itemId: itemId) }
+        let playingSource = snapshot.itemId == itemId ? snapshot.publisherAudioSource : nil
+        // State B belongs to the item being played now; the row is hidden for any other item.
+        guard playingSource != nil || (snapshot.itemId == itemId && snapshot.sessionId != nil) else { return nil }
+        let site = selectedItem.id == itemId ? PublisherAudioAttribution.siteName(fromOriginalLink: selectedItem.originalSourceURL?.absoluteString) : nil
+        return PublisherAudioAttribution.voiceRow(
+            playingSource: playingSource, recordSource: record?.detectedFrom, siteHost: site,
+            hasReadyMap: record?.textMap?.segments.isEmpty == false)
+    }
+
+    /// "Use the App's Voice": keeps the choice for this article, then reads on from the same sentence in the voice it
+    /// would have with no publisher audio. Not a failure, so nothing holds the recording back afterwards.
+    func useAppVoice(itemId: String) async {
+        await switchPublisherVoice(itemId: itemId, prefersAppVoice: true)
+    }
+
+    /// "Play Publisher's Audio": removes the choice, tries the recording again at once even after a recent failure,
+    /// and plays it from the same sentence.
+    func playPublisherAudio(itemId: String) async {
+        await switchPublisherVoice(itemId: itemId, prefersAppVoice: false)
+    }
+
+    private func switchPublisherVoice(itemId: String, prefersAppVoice: Bool) async {
+        guard let store else { return }
+        PublisherVoiceSwitchTap.pending = true
+        defer { PublisherVoiceSwitchTap.pending = false }
+        do {
+            let choice = PublisherAudioChoice(itemId: itemId, prefersAppVoice: true, chosenAt: Date())
+            try await StoreReader(store).read { store in
+                if prefersAppVoice { try store.savePublisherAudioChoice(choice) } else { try store.deletePublisherAudioChoice(itemId: itemId) }
+            }
+            // The sheet belongs to the playing item; for any other item the choice is kept and nothing plays.
+            guard let engine, snapshot.itemId == itemId, hasActiveSession else { return }
+            let switched = try engine.replanVoice(itemId: itemId, retryNow: !prefersAppVoice)
+            snapshot = try applyPreferredPlaybackRate(to: switched, engine: engine)
+            diagnostics["publisherVoiceSwitch"] = "\(itemId): \(prefersAppVoice ? "listener_chose_app_voice" : "listener_chose_publisher_audio")"
+        } catch {
+            reportFailure(error, context: "Reading voice change failed", itemId: itemId)
+        }
+    }
+
     private func noteVoiceLookup(itemId: String, _ outcome: String) {
         let line = "\(itemId): \(outcome)"
         if diagnostics["voiceLookupOnOpen"] != line { diagnostics["voiceLookupOnOpen"] = line }
     }
 
-    private func lookUpVoiceover(itemId: String, address: String, title: String) {
+    /// `route` comes from `VoiceoverLookupDecision` on an open or play. With no route (a clipped page), only a Substack
+    /// or Type III address is looked up, as before #4640.
+    private func lookUpVoiceover(itemId: String, address: String, title: String, route: VoiceoverLookupDecision.Route? = nil) {
         guard let url = URL(string: address),
-              PublisherNarrationEvidence.mayHaveVoiceover(url) || TypeIIIAudioNarration.postURL(for: url) != nil else { return }
+              route == .articleFeed || PublisherNarrationEvidence.mayHaveVoiceover(url) || TypeIIIAudioNarration.postURL(for: url) != nil else { return }
         let article = BrowserTextHandoff(captureMode: .readablePage, source: BrowserTextSource(url: address, title: title), text: "")
-        rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: FetchedPageMemo())
+        rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: FetchedPageMemo(), articleFeed: route == .articleFeed)
     }
+}
+
+/// Set while a Reading voice tap is switching, so the Now pane doesn't announce the switch the listener asked for
+/// (#4640): only the automatic hand-over and the fallback are announced.
+@MainActor
+enum PublisherVoiceSwitchTap {
+    static var pending = false
 }
