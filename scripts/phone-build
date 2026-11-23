@@ -400,6 +400,34 @@ def slow_tier_green(sha: str) -> bool:
     return slow_tier_state(sha) == 'success'
 
 
+# main-slow.yml's runs land on whichever commit was main's head at its tick, so the commit a build takes often has no
+# status of its own. The nearest result in its history says whether a break it would carry is already known (#5145).
+SLOW_HISTORY_QUERY = '''query($owner: String!, $name: String!, $expr: String!) {
+  repository(owner: $owner, name: $name) { object(expression: $expr) { ... on Commit {
+    history(first: 100) { nodes { oid status { context(name: "main-slow") { state } } } } } } } }'''
+
+
+def nearest_slow_result(nodes: list) -> tuple[str | None, str | None]:
+    """(success|failure, oid) of the newest commit in a history, the commit itself first, that main-slow passed or
+    failed on; (None, None) when none did. `pending` and `error` (a runner fault) say nothing about the tests."""
+    for node in nodes or []:
+        state = (((node or {}).get('status') or {}).get('context') or {}).get('state') or ''
+        if state.lower() in ('success', 'failure'):
+            return state.lower(), node.get('oid')
+    return None, None
+
+
+def slow_tier_nearest(sha: str) -> tuple[str | None, str | None]:
+    owner, name = REPO.split('/', 1)
+    raw = gh('api', 'graphql', '-f', f'query={SLOW_HISTORY_QUERY}', '-f', f'owner={owner}', '-f', f'name={name}',
+             '-f', f'expr={sha}')
+    try:
+        nodes = json.loads(raw)['data']['repository']['object']['history']['nodes'] if raw else []
+    except (ValueError, KeyError, TypeError):
+        nodes = []
+    return nearest_slow_result(nodes)
+
+
 def runner_tested(sha: str) -> str | None:
     """Evidence that the lane's host-test gate covers this commit, or None (runner_evidence says why not)."""
     return runner_evidence(sha)[0]
@@ -2068,6 +2096,8 @@ def fetch_hosted(hosted: dict) -> int:
         checks = (f'{evidence}; built and signed on a GitHub-hosted Mac ({hosted.get("run_url")})' if evidence else
                   f'built and signed on a GitHub-hosted Mac ({hosted.get("run_url")}); no lane host-test evidence '
                   f'was found for this commit: {why}')
+        if hosted.get('slow_note'):
+            checks += f'; {hosted["slow_note"]}'
         deliver(app, info, sha, stamp, log, int(hosted_info.get('build_seconds') or 0), checks,
                 built_at=local_time(hosted.get('built_at')) or local_time(hosted_info.get('built_at')),
                 extra={'built_on': 'github-hosted', 'run_url': hosted.get('run_url')},
@@ -2233,14 +2263,19 @@ def take_hosted(commit: str | None, if_changed: bool, tip: str = '') -> int:
         else:
             clear_misses()
     sha = hosted['sha']
-    # #5145: PRs leave the slow tier out and nothing here can run it, so a commit main-slow found red is refused.
-    slow = slow_tier_state(sha)
+    # #5145: PRs leave the slow tier out and nothing here can run it. The build's commit rarely has a main-slow result
+    # of its own, so the nearest one in its history decides: a red one means the break may be in this commit too.
+    slow, where = slow_tier_nearest(sha)
     if slow == 'failure':
-        say(f'refused the hosted build of {sha[:7]}: main-slow failed on it (the slow tier, #5145); '
+        on = 'on it' if where == sha else f'on {where[:7]}, the nearest result in its history'
+        say(f'refused the hosted build of {sha[:7]}: main-slow failed {on} (the slow tier, #5145); '
             'waiting for a commit it passes, or build on the Mac')
         return 0 if if_changed else 1
-    if slow != 'success':
-        say(f'note: no green main-slow on {sha[:7]} yet ({slow or "no status"}); the slow tier has not run on it')
+    if where != sha:
+        slow_note = (f'the slow tier (main-slow) has not run on this commit; nearest result: passed on {where[:7]}'
+                     if where else 'the slow tier (main-slow) has not run on this commit or any recent one before it')
+        say(f'note: {slow_note}')
+        hosted = {**hosted, 'slow_note': slow_note}
     if latest_build().get('sha') == sha and (if_changed or not commit):
         say(f'latest is already the hosted build of {sha[:7]}; nothing to do')
         return 0
